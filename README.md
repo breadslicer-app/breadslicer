@@ -13,7 +13,7 @@ Feel free to visit the online [SoulCrafted community](https://www.soulcrafted.it
 to learn more about it.
 
 You can also participate in the "real-time" discussions on our
-[Discord server](https://discord.gg/YjjHNjDj).
+[Discord server](https://discord.gg/Z68pDczNv6).
 
 ## Live Roadmap
 
