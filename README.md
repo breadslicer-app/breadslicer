@@ -7,8 +7,13 @@ printers, backed by
 [crowdfunding](https://www.myminifactory.com/frontier/soulcrafted-slicer-5006)
 and brought to life by [MyMiniFactory](https://www.myminifactory.com/).
 
+## Community
+
 Feel free to visit the online [SoulCrafted community](https://www.soulcrafted.it/)
 to learn more about it.
+
+You can also participate in the "real-time" discussions on our
+[Discord server](https://discord.gg/YjjHNjDj).
 
 ## Live Roadmap
 
