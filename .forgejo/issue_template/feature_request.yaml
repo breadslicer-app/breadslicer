@@ -1,0 +1,45 @@
+name: "💌 Feature Request"
+about: "Request a new feature"
+title: "💌 Feature Request: "
+ref: "main"
+labels:
+  - "Report/Feature Request"
+  - "Tracking/Triage"
+body:
+  - type: "markdown"
+    attributes:
+      value: "Thank you for submitting your feature request! We'll try to triage it ASAP!"
+
+  - type: "markdown"
+    attributes:
+      value: |
+        Feature requests that don't follow this template will be closed.
+        Please provide a clear and concise description of what you want.
+
+  - type: "textarea"
+    id: "problem_to_be_solved"
+    attributes:
+      label: "Why do you need a new feature?"
+      description: |
+        Provide an explanation on what are you trying to do without success
+        because of that missing feature.
+      placeholder: |
+        Example: I am trying to do A, but it takes me N times more than what it should
+        because not having the feature B forces me to perform too many extra
+        steps: X, Y, Z, ...
+    validations:
+      required: true
+
+  - type: "textarea"
+    id: "proposed_feature"
+    attributes:
+      label: "Proposed Feature"
+      description: |
+        Explain in detail what new feature would you like the Slicer to have,
+        and how do you think it would help to improve the user experience.
+      placeholder: |
+        Example: I'd like the Slicer to load 3MF object files because that would save me
+        the extra steps of converting it to another format, while also avoiding
+        the added risks of errors during the conversion process...
+    validations:
+      required: true
