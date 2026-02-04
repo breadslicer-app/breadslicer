@@ -6,11 +6,27 @@ You don't have to be a developer to contribute, here is a list of ways in which
 you can help this project to thrive:
 
 - Testing alpha & beta releases
+- [Contributing Knowledge](#contributing-knowledge)
 - [Reporting bugs](#reporting-bugs)
 - [Proposing new features or improvements](#proposing-feature-requests)
 - [Improving the current documentation](#contributing-documentation)
 - [Helping with translations](#contributing-translations)
 - [Contributing code](#contributing-code)
+
+## Contributing Knowledge
+
+Creating a modern slicer for 3d printers is a complex task that requires the
+work of highly skilled people. They won't be always have time to be directly
+involved, but their insights might still be very useful.
+
+If you think you can contribute with your knowledge or insights, there are
+different ways for you to do that:
+- We have a [Discord server](https://discord.gg/Z68pDczNv6) where you can
+  participate in our chat conversations.
+- We also have
+  [asynchronous discussions](https://codeberg.org/SoulCrafted/Slicer/issues?q=&type=all&state=open&labels=1147840)
+  that we use to gather insights before making important decisions about the
+  future of the project.
 
 ## Reporting Bugs
 
