@@ -9,6 +9,14 @@ and brought to life by [MyMiniFactory](https://www.myminifactory.com/).
 
 ## Community
 
+The SoulCrafted initiative seeks to protect and empower creators by introducing
+the concept of a digital label — a declaration that content originates from
+human creativity and spirit, not machines.
+
+The vision is to create a positive system that allows creators to differentiate
+their work, resonate with audiences, and potentially capture higher value to
+support their livelihood with sustainability.
+
 Feel free to visit the online [SoulCrafted community](https://www.soulcrafted.it/)
 to learn more about it.
 
