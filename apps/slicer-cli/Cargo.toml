@@ -1,0 +1,10 @@
+[package]
+name = "sc-slicer-cli"
+version = "0.0.1"
+edition = "2024"
+
+[[bin]]
+name = "sc-slicer-cli"
+
+[dependencies]
+bpaf = "0.9.23"

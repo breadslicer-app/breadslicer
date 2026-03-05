@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/slicer-cli",
+    "apps/slicer-gui",
+    "libs/mesh-formats",
+    "libs/remote-printers",
+    "libs/sla-formats",
+    "libs/sl1cer"
+, "libs/supports"]
+
+[workspace.dependencies]
