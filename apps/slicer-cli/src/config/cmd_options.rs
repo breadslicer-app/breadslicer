@@ -3,11 +3,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use bpaf::{OptionParser, Parser, construct};
+use std::ffi::OsString;
+
+use bpaf::{OptionParser, Parser, construct, long, short};
 
 #[derive(Clone, Debug)]
 pub enum CmdOptions {
-    Convert {},
+    Convert {
+        source: OsString,
+        source_format: Option<OsString>,
+        target: OsString,
+        target_format: Option<OsString>,
+    },
     Diagnose {},
     Fix {},
     Inspect {},
@@ -16,7 +23,32 @@ pub enum CmdOptions {
 }
 
 fn get_convert_options() -> impl Parser<CmdOptions> {
-    construct!(CmdOptions::Convert {})
+    let source = short('s')
+        .long("source")
+        .help("Specify the path of the file to be converted")
+        .argument::<OsString>("SOURCE_FILEPATH");
+
+    let source_format = long("source-format")
+        .help("Specify the file format of the source file (in case it cannot be automatically infered by the slicer)")
+        .argument::<OsString>("SOURCE_FORMAT")
+        .optional();
+
+    let target = short('t')
+        .long("target")
+        .help("Specify the path for the converted file")
+        .argument::<OsString>("TARGET_FILEPATH");
+
+    let target_format = long("target-format")
+        .help("Specify the file format of the target file (in case it cannot be automatically infered by the slicer)")
+        .argument::<OsString>("TARGET_FORMAT")
+        .optional();
+
+    construct!(CmdOptions::Convert {
+        source,
+        source_format,
+        target,
+        target_format,
+    })
 }
 
 fn get_diagnose_options() -> impl Parser<CmdOptions> {

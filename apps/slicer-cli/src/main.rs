@@ -1,6 +1,8 @@
 /*
  * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd
  * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
 mod config;
@@ -11,7 +13,12 @@ fn main() {
     let cmd_options = get_cmd_options().run();
 
     match cmd_options {
-        CmdOptions::Convert {} => {
+        CmdOptions::Convert {
+            source,
+            source_format,
+            target,
+            target_format,
+        } => {
             todo!("Not yet implemented :(");
         }
         CmdOptions::Diagnose {} => {
