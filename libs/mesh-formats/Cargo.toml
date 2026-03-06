@@ -1,6 +1,9 @@
 [package]
-name = "mesh-formats"
+name = "sc-mesh-formats"
 version = "0.0.1"
 edition = "2024"
 
 [dependencies]
+anyhow.workspace = true
+
+serde = { version = "1.0.228", features = ["derive"] }

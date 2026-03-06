@@ -10,3 +10,6 @@ members = [
 , "libs/supports"]
 
 [workspace.dependencies]
+sc-mesh-formats = { path = "libs/mesh-formats" }
+
+anyhow = "1.0.102"

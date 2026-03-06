@@ -7,4 +7,8 @@ edition = "2024"
 name = "sc-slicer-cli"
 
 [dependencies]
+sc-mesh-formats.workspace = true
+
+anyhow.workspace = true
+
 bpaf = "0.9.23"

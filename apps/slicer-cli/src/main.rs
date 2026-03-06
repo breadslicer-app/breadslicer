@@ -5,11 +5,16 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
+mod commands;
 mod config;
+mod filesystem;
 
+use anyhow::Result;
+
+use commands::convert::convert;
 use config::cmd_options::{CmdOptions, get_cmd_options};
 
-fn main() {
+fn main() -> Result<()> {
     let cmd_options = get_cmd_options().run();
 
     match cmd_options {
@@ -18,9 +23,7 @@ fn main() {
             source_format,
             target,
             target_format,
-        } => {
-            todo!("Not yet implemented :(");
-        }
+        } => convert(source, source_format, target, target_format),
         CmdOptions::Diagnose {} => {
             todo!("Not yet implemented :(");
         }
@@ -36,6 +39,7 @@ fn main() {
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
             println!("SoulCrafted Slicer (CLI) v{}", &SLICER_CLI_VERSION);
+            Ok(())
         }
     }
 }

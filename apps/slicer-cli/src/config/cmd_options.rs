@@ -7,13 +7,15 @@ use std::ffi::OsString;
 
 use bpaf::{OptionParser, Parser, construct, long, short};
 
+use sc_mesh_formats::SourceMeshFileType;
+
 #[derive(Clone, Debug)]
 pub enum CmdOptions {
     Convert {
         source: OsString,
-        source_format: Option<OsString>,
+        source_format: Option<SourceMeshFileType>,
         target: OsString,
-        target_format: Option<OsString>,
+        target_format: Option<SourceMeshFileType>,
     },
     Diagnose {},
     Fix {},
@@ -29,8 +31,8 @@ fn get_convert_options() -> impl Parser<CmdOptions> {
         .argument::<OsString>("SOURCE_FILEPATH");
 
     let source_format = long("source-format")
-        .help("Specify the file format of the source file (in case it cannot be automatically infered by the slicer)")
-        .argument::<OsString>("SOURCE_FORMAT")
+        .help("Specify the file format of the source file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
+        .argument::<SourceMeshFileType>("SOURCE_FORMAT")
         .optional();
 
     let target = short('t')
@@ -39,8 +41,8 @@ fn get_convert_options() -> impl Parser<CmdOptions> {
         .argument::<OsString>("TARGET_FILEPATH");
 
     let target_format = long("target-format")
-        .help("Specify the file format of the target file (in case it cannot be automatically infered by the slicer)")
-        .argument::<OsString>("TARGET_FORMAT")
+        .help("Specify the file format of the target file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
+        .argument::<SourceMeshFileType>("TARGET_FORMAT")
         .optional();
 
     construct!(CmdOptions::Convert {
