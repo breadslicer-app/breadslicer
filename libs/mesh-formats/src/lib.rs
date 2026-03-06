@@ -19,7 +19,7 @@ impl Display for InvalidSourceMeshFileType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 pub enum SourceMeshFileType {
     Stl,
     StlAscii,

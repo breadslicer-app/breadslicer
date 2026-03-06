@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fs::copy;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
@@ -16,6 +17,10 @@ pub fn convert(
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let target_path = validate_targetfile_path(PathBuf::from(target))?;
 
+    if source_path == target_path {
+        return Err(anyhow!("Source file path and target file path are the same"));
+    }
+
     let source_format = match source_format {
         Some(f) => f,
         None => infer_mesh_file_format_from_extension(&source_path)?,
@@ -24,6 +29,17 @@ pub fn convert(
         Some(f) => f,
         None => infer_mesh_file_format_from_extension(&target_path)?,
     };
+
+    if source_format == target_format {
+        eprintln!("Warning: copying file without performing any format conversion");
+
+        return match copy(&source_path, &target_path) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err.into())
+        }
+    }
+
+    // TODO: Do the actual work
 
     Err(anyhow!("Unable to convert file"))
 }
