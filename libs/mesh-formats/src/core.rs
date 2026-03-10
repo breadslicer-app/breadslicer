@@ -39,6 +39,6 @@ pub struct IndexedTriangle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
-    vertices: Vec<Vertex>, // TODO: Make it generic (don't rush it)
-    faces: Vec<IndexedTriangle>,
+    pub vertices: Vec<Vertex>, // TODO: Make it generic (don't rush it)
+    pub faces: Vec<IndexedTriangle>,
 }

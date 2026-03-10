@@ -13,7 +13,44 @@ use crate::core::{IndexedMesh, IndexedTriangle, Normal, Triangle, Vertex};
 
 pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
     fn as_indexed_mesh(&mut self) -> Result<IndexedMesh> {
-        todo!("Not implemented yet!");
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        let mut vertex_to_index = std::collections::HashMap::new();
+
+        // Do not reserve memory in those structures based on size_hint, because we might have just
+        // read bogus data.
+        let mut vertex_indices: [u32; 3] = [0; 3];
+        for t in self {
+            let t = t?;
+            for (i, vertex) in t.vertices.iter().enumerate() {
+                // f32 has no Eq and no Hash, but comparing the bits will do.
+                // This has the effect that if any coordinate is NaN (which does not make sense
+                // anyway), its NaN payload bits will be used as the identity of the vertex.
+                let bitpattern = vertex.0.map(f32::to_bits);
+                let index = *vertex_to_index
+                    .entry(bitpattern)
+                    .or_insert_with(|| vertices.len());
+
+                if index == vertices.len() {
+                    vertices.push(*vertex);
+                }
+
+                vertex_indices[i] = index as u32;
+            }
+
+            triangles.push(IndexedTriangle {
+                normal: t.normal,
+                vertices: vertex_indices,
+            });
+        }
+
+        vertices.shrink_to_fit();
+        triangles.shrink_to_fit();
+
+        Ok(IndexedMesh {
+            vertices,
+            faces: triangles,
+        })
     }
 }
 
@@ -203,6 +240,20 @@ where
     R: std::io::Read + std::io::Seek,
 {
     create_stl_reader(read)?.as_indexed_mesh()
+}
+
+pub fn read_stla<R>(read: &mut R) -> Result<IndexedMesh>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    AsciiStlReader::create_triangles_iterator(read)?.as_indexed_mesh()
+}
+
+pub fn read_stlb<R>(read: &mut R) -> Result<IndexedMesh>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    todo!("Not yet implemented")
 }
 
 pub fn create_stl_reader<'a, R>(

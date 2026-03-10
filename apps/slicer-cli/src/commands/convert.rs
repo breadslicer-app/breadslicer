@@ -1,10 +1,11 @@
 use std::ffi::OsString;
-use std::fs::copy;
+use std::fs::{File, copy};
+use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 
-use sc_mesh_formats::{SourceMeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::{SourceMeshFileType, infer_mesh_file_format_from_extension, read_stl};
 
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -40,6 +41,9 @@ pub fn convert(
             Err(err) => Err(err.into()),
         };
     }
+
+    let mut source_file = File::open(&source_path)?;
+    let source_mesh = read_stl(&mut source_file)?;
 
     // TODO: Do the actual work
 
