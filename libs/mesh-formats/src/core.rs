@@ -3,10 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
- use anyhow::Result;
+use anyhow::Result;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub [F; 3]);
+
+impl<F: Copy + PartialEq + PartialOrd> Vector3D<F> {
+    pub const fn new(v: [F; 3]) -> Self {
+        Self(v)
+    }
+}
 
 impl<F: Copy + PartialEq + PartialOrd> From<Vector3D<F>> for [F; 3] {
     fn from(v: Vector3D<F>) -> Self {

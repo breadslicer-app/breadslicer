@@ -9,6 +9,7 @@ mod stlb;
 use anyhow::Result;
 
 use stla::AsciiStlReader;
+use stlb::BinaryStlReader;
 
 use crate::core::{IndexedMesh, Triangle, TriangleIterator};
 
@@ -30,7 +31,7 @@ pub fn read_stlb<R>(read: &mut R) -> Result<IndexedMesh>
 where
     R: std::io::Read + std::io::Seek,
 {
-    todo!("Not yet implemented")
+    BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh()
 }
 
 pub fn create_stl_reader<'a, R>(
@@ -42,7 +43,6 @@ where
     if AsciiStlReader::probe(read)? {
         AsciiStlReader::create_triangles_iterator(read)
     } else {
-        todo!("Not implemented yet")
-        // BinaryStlReader::create_triangle_iterator(read)
+        BinaryStlReader::create_triangles_iterator(read)
     }
 }
