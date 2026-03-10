@@ -18,7 +18,9 @@ pub fn convert(
     let target_path = validate_targetfile_path(PathBuf::from(target))?;
 
     if source_path == target_path {
-        return Err(anyhow!("Source file path and target file path are the same"));
+        return Err(anyhow!(
+            "Source file path and target file path are the same"
+        ));
     }
 
     let source_format = match source_format {
@@ -35,8 +37,8 @@ pub fn convert(
 
         return match copy(&source_path, &target_path) {
             Ok(_) => Ok(()),
-            Err(err) => Err(err.into())
-        }
+            Err(err) => Err(err.into()),
+        };
     }
 
     // TODO: Do the actual work
