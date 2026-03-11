@@ -11,8 +11,7 @@ use regex::Regex;
 
 use crate::core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
-static BSTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[a-zA-Z0-9_]+").unwrap());
+static BSTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z0-9_]+").unwrap());
 
 pub struct BinaryStlReader<'a> {
     reader: Box<dyn Read + 'a>,
@@ -54,7 +53,9 @@ impl<'a> BinaryStlReader<'a> {
             return Err(anyhow!("Mesh name is not single word"));
         }
 
-        Ok(MeshMetadata::StlMetadata { name: Some(mesh_name.into()) })
+        Ok(MeshMetadata::StlMetadata {
+            name: Some(mesh_name.into()),
+        })
     }
 
     pub fn create_triangles_iterator(

@@ -13,6 +13,8 @@ use crate::core::{MeshMetadata, Normal, Triangle, Vertex};
 use crate::stl::TriangleIterator;
 
 static ASTL_HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"solid (?P<name>[a-zA-Z0-9_]*)").unwrap());
+static ASTL_HEADER_RE_LN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"solid (?P<name>[a-zA-Z0-9_]*)\n").unwrap());
 
 pub struct AsciiStlReader<'a> {
@@ -41,7 +43,7 @@ impl<'a> AsciiStlReader<'a> {
 
         // static RE: LazyLock<Regex> =
         //     LazyLock::new(|| Regex::new(r"solid [a-zA-Z0-9_]*\n").unwrap());
-        return Ok(ASTL_HEADER_RE.is_match(&header));
+        return Ok(ASTL_HEADER_RE_LN.is_match(&header));
     }
 
     pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
@@ -52,7 +54,7 @@ impl<'a> AsciiStlReader<'a> {
         read.seek(std::io::SeekFrom::Start(0))?;
         maybe_read_error?; // Unwraps any potential error
 
-        match ASTL_HEADER_RE.captures(&header) {
+        match ASTL_HEADER_RE_LN.captures(&header) {
             Some(c) => Ok(MeshMetadata::StlMetadata {
                 name: match c.name("name") {
                     Some(n) => {
@@ -219,8 +221,8 @@ impl<'a> AsciiStlReader<'a> {
 impl<'a> TriangleIterator for AsciiStlReader<'a> {}
 
 #[cfg(test)]
-mod test {
-    use crate::core::MeshMetadata;
+mod test_ascii_stl_reader {
+    use crate::core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
     use super::AsciiStlReader;
 
@@ -245,7 +247,7 @@ endsolid foobar";
 endsolid";
 
     #[test]
-    fn ascii_stl_reader_probe() {
+    fn test_probe() {
         let mut reader_1 = std::io::Cursor::new(STL_1.clone());
         assert!(AsciiStlReader::probe(&mut reader_1).unwrap());
 
@@ -260,13 +262,43 @@ endsolid";
     }
 
     #[test]
-    fn ascii_stl_reader_extract_metadata() {
+    fn test_extract_metadata() {
         let mut reader_1 = std::io::Cursor::new(STL_1.clone());
         let metadata_1 = AsciiStlReader::extract_metadata(&mut reader_1).unwrap();
-        assert_eq!(MeshMetadata::StlMetadata { name: Some("foobar".into()) }, metadata_1);
+        assert_eq!(
+            MeshMetadata::StlMetadata {
+                name: Some("foobar".into())
+            },
+            metadata_1
+        );
 
         let mut reader_2 = std::io::Cursor::new(STL_2.clone());
         let metadata_2 = AsciiStlReader::extract_metadata(&mut reader_2).unwrap();
         assert_eq!(MeshMetadata::StlMetadata { name: None }, metadata_2);
+    }
+
+    #[test]
+    fn test_as_indexed_mesh() {
+        let mut reader_1 = std::io::Cursor::new(STL_1.clone());
+        let mesh = AsciiStlReader::create_triangles_iterator(&mut reader_1)
+            .unwrap()
+            .as_indexed_mesh(None)
+            .unwrap();
+
+        assert_eq!(
+            IndexedMesh {
+                meta: None,
+                vertices: vec![
+                    Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
+                    Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
+                    Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+                ],
+                faces: vec![IndexedTriangle {
+                    normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+                    vertices: [0, 1, 2],
+                }],
+            },
+            mesh
+        );
     }
 }

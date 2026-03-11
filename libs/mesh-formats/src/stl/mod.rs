@@ -17,8 +17,8 @@ pub fn read_stl<R>(read: &mut R) -> Result<IndexedMesh>
 where
     R: std::io::Read + std::io::Seek,
 {
-    let is_ascii= AsciiStlReader::probe(read)?;
-    
+    let is_ascii = AsciiStlReader::probe(read)?;
+
     let metadata = if is_ascii {
         AsciiStlReader::extract_metadata(read)
     } else {
@@ -30,7 +30,7 @@ where
     } else {
         BinaryStlReader::create_triangles_iterator(read)
     }?;
-    
+
     stl_reader.as_indexed_mesh(Some(metadata))
 }
 
