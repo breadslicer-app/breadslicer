@@ -3,11 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
+use std::sync::LazyLock;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use regex::Regex;
 
-use crate::core::{Normal, Triangle, TriangleIterator, Vertex};
+use crate::core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
+
+static BSTL_HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[a-zA-Z0-9_]+").unwrap());
 
 pub struct BinaryStlReader<'a> {
     reader: Box<dyn Read + 'a>,
@@ -30,6 +35,27 @@ impl<'a> Iterator for BinaryStlReader<'a> {
 }
 
 impl<'a> BinaryStlReader<'a> {
+    pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
+        let mut reader = Box::new(BufReader::new(&mut *read));
+        let mut header = [0u8; 80];
+
+        reader.read_exact(&mut header)?;
+        read.seek(std::io::SeekFrom::Start(0))?;
+
+        let mesh_name = str::from_utf8(&header)?;
+
+        if !mesh_name.is_ascii() {
+            return Err(anyhow!("Mesh name is not ASCII"));
+        }
+        if mesh_name.is_empty() {
+            return Ok(MeshMetadata::StlMetadata { name: None });
+        }
+        if !BSTL_HEADER_RE.is_match(mesh_name) {
+            return Err(anyhow!("Mesh name is not single word"));
+        }
+
+        Ok(MeshMetadata::StlMetadata { name: Some(mesh_name.into()) })
+    }
 
     pub fn create_triangles_iterator(
         read: &'a mut dyn Read,
@@ -68,7 +94,7 @@ impl<'a> BinaryStlReader<'a> {
             Vertex::new([f(24), f(28), f(32)]),
             Vertex::new([f(36), f(40), f(44)]),
         ];
-        // buf[48..50] is the attribute byte count, ignored
+        // buf[48..50] is the attribute byte count, ignored. TODO: check
 
         Ok(Triangle { normal, vertices })
     }

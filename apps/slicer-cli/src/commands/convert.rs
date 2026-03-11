@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 
-use sc_mesh_formats::{SourceMeshFileType, infer_mesh_file_format_from_extension, read_stl};
+use sc_mesh_formats::{
+    SourceMeshFileType, infer_mesh_file_format_from_extension, read_stl, read_stla, read_stlb,
+};
 
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -43,7 +45,13 @@ pub fn convert(
     }
 
     let mut source_file = File::open(&source_path)?;
-    let source_mesh = read_stl(&mut source_file)?;
+
+    let source_mesh = match source_format {
+        SourceMeshFileType::Stl => read_stl(&mut source_file)?,
+        SourceMeshFileType::StlAscii => read_stla(&mut source_file)?,
+        SourceMeshFileType::StlBin => read_stlb(&mut source_file)?,
+        _ => todo!("Not implemented yet!"),
+    };
 
     // TODO: Do the actual work
 

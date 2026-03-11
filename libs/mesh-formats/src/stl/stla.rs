@@ -9,11 +9,11 @@ use std::sync::LazyLock;
 use anyhow::Result;
 use regex::Regex;
 
-use crate::core::{Normal, Triangle, Vertex};
+use crate::core::{MeshMetadata, Normal, Triangle, Vertex};
 use crate::stl::TriangleIterator;
 
 static ASTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"solid [a-zA-Z0-9_]*\n").unwrap());
+    LazyLock::new(|| Regex::new(r"solid (?P<name>[a-zA-Z0-9_]*)\n").unwrap());
 
 pub struct AsciiStlReader<'a> {
     lines: Box<dyn Iterator<Item = Result<Vec<String>>> + 'a>,
@@ -42,6 +42,31 @@ impl<'a> AsciiStlReader<'a> {
         // static RE: LazyLock<Regex> =
         //     LazyLock::new(|| Regex::new(r"solid [a-zA-Z0-9_]*\n").unwrap());
         return Ok(ASTL_HEADER_RE.is_match(&header));
+    }
+
+    pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
+        let mut header = String::new();
+        let maybe_read_error = BufReader::new(&mut *read).read_line(&mut header);
+
+        // Try to seek back to start before evaluating potential read errors.
+        read.seek(std::io::SeekFrom::Start(0))?;
+        maybe_read_error?; // Unwraps any potential error
+
+        match ASTL_HEADER_RE.captures(&header) {
+            Some(c) => Ok(MeshMetadata::StlMetadata {
+                name: match c.name("name") {
+                    Some(n) => {
+                        if n.len() > 0 {
+                            Some(String::from(n.as_str()))
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                },
+            }),
+            None => Ok(MeshMetadata::StlMetadata { name: None }),
+        }
     }
 
     pub fn create_triangles_iterator(
@@ -195,6 +220,8 @@ impl<'a> TriangleIterator for AsciiStlReader<'a> {}
 
 #[cfg(test)]
 mod test {
+    use crate::core::MeshMetadata;
+
     use super::AsciiStlReader;
 
     static STL_1: &'static [u8; 304] = b"solid foobar
@@ -230,5 +257,16 @@ endsolid";
         else",
         );
         assert!(!AsciiStlReader::probe(&mut reader_3).unwrap());
+    }
+
+    #[test]
+    fn ascii_stl_reader_extract_metadata() {
+        let mut reader_1 = std::io::Cursor::new(STL_1.clone());
+        let metadata_1 = AsciiStlReader::extract_metadata(&mut reader_1).unwrap();
+        assert_eq!(MeshMetadata::StlMetadata { name: Some("foobar".into()) }, metadata_1);
+
+        let mut reader_2 = std::io::Cursor::new(STL_2.clone());
+        let metadata_2 = AsciiStlReader::extract_metadata(&mut reader_2).unwrap();
+        assert_eq!(MeshMetadata::StlMetadata { name: None }, metadata_2);
     }
 }

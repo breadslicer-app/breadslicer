@@ -31,6 +31,11 @@ impl<F: Copy + PartialEq + PartialOrd> std::ops::Index<usize> for Vector3D<F> {
 pub type Vertex = Vector3D<f32>;
 pub type Normal = Vector3D<f32>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeshMetadata {
+    StlMetadata { name: Option<String> },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Triangle {
     pub normal: Normal,
@@ -47,12 +52,13 @@ pub struct IndexedTriangle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
+    pub meta: Option<MeshMetadata>,
     pub vertices: Vec<Vertex>, // TODO: Make it generic (don't rush it)
     pub faces: Vec<IndexedTriangle>,
 }
 
 pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
-    fn as_indexed_mesh(&mut self) -> Result<IndexedMesh> {
+    fn as_indexed_mesh(&mut self, meta: Option<MeshMetadata>) -> Result<IndexedMesh> {
         let mut vertices = Vec::new();
         let mut triangles = Vec::new();
         let mut vertex_to_index = std::collections::HashMap::new();
@@ -88,6 +94,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
         triangles.shrink_to_fit();
 
         Ok(IndexedMesh {
+            meta,
             vertices,
             faces: triangles,
         })
