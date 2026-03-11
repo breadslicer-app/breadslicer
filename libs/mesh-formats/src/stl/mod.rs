@@ -5,13 +5,16 @@
 
 mod stla;
 mod stlb;
+mod writers;
 
 use anyhow::Result;
 
 use stla::AsciiStlReader;
 use stlb::BinaryStlReader;
 
-use crate::core::{IndexedMesh, Triangle, TriangleIterator};
+use crate::core::{IndexedMesh, MeshMetadata, TriangleIterator};
+
+pub use writers::{write_stla, write_stlb};
 
 pub fn read_stl<R>(read: &mut R) -> Result<IndexedMesh>
 where
@@ -48,16 +51,3 @@ where
 {
     BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh(None)
 }
-
-// fn create_stl_reader<'a, R>(
-//     read: &'a mut R,
-// ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>> + 'a>>
-// where
-//     R: std::io::Read + std::io::Seek,
-// {
-//     if AsciiStlReader::probe(read)? {
-//         AsciiStlReader::create_triangles_iterator(read)
-//     } else {
-//         BinaryStlReader::create_triangles_iterator(read)
-//     }
-// }

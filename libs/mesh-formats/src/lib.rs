@@ -13,4 +13,4 @@ pub use filetypes::{
     InvalidSourceMeshFileType, SourceMeshFileType, infer_mesh_file_format_from_extension,
 };
 
-pub use stl::{read_stl, read_stla, read_stlb};
+pub use stl::{read_stl, read_stla, read_stlb, write_stla, write_stlb};

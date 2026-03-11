@@ -13,9 +13,9 @@ use crate::core::{MeshMetadata, Normal, Triangle, Vertex};
 use crate::stl::TriangleIterator;
 
 static ASTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"solid (?P<name>[a-zA-Z0-9_]*)").unwrap());
+    LazyLock::new(|| Regex::new(r"solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)").unwrap());
 static ASTL_HEADER_RE_LN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"solid (?P<name>[a-zA-Z0-9_]*)\n").unwrap());
+    LazyLock::new(|| Regex::new(r"solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n").unwrap());
 
 pub struct AsciiStlReader<'a> {
     lines: Box<dyn Iterator<Item = Result<Vec<String>>> + 'a>,
