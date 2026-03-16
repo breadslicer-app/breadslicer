@@ -1,0 +1,16 @@
+name: Test
+
+on: [push]
+
+jobs:
+  check:
+    name: Check, Clippy & Build
+    runs-on: codeberg-tiny
+    container:
+      image: rust:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check
+        run: cargo check
+      - name: Clippy
+        run: cargo clippy -- -D warnings
