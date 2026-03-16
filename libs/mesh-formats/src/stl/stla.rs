@@ -40,9 +40,11 @@ impl<'a> AsciiStlReader<'a> {
 
         // Try to seek back to start before evaluating potential read errors.
         read.seek(std::io::SeekFrom::Start(0))?;
-        maybe_read_error?; // Unwraps any potential error
 
-        Ok(ASTL_HEADER_RE_LN.is_match(&header))
+        match maybe_read_error {
+            Ok(_) => Ok(ASTL_HEADER_RE_LN.is_match(&header)),
+            Err(_) => Ok(false),
+        }
     }
 
     pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
-use sc_mesh_formats::stl::{read_stl, write_stlb};
+use sc_mesh_formats::stl::{read_stl, write_stla, write_stlb};
 
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -64,7 +64,7 @@ pub fn convert(
         }
         SourceMeshFileType::StlAscii => {
             let mut output_file = File::create(&target_path)?;
-            write_stlb(&source_mesh, &mut output_file)?;
+            write_stla(&source_mesh, &mut output_file)?;
         }
         SourceMeshFileType::StlBin => {
             let mut output_file = File::create(&target_path)?;

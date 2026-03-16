@@ -5,15 +5,10 @@
 
 use std::ffi::CStr;
 use std::io::{BufReader, Read, Seek};
-use std::sync::LazyLock;
 
 use anyhow::{Result, anyhow};
-use regex::Regex;
 
 use crate::core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
-
-static BSTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*$").unwrap());
 
 pub struct BinaryStlReader<'a> {
     reader: Box<dyn Read + 'a>,
@@ -38,25 +33,20 @@ impl<'a> Iterator for BinaryStlReader<'a> {
 impl<'a> BinaryStlReader<'a> {
     pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
         let mut reader = Box::new(BufReader::new(&mut *read));
-        let mut header = [0u8; 80];
+        let mut header = [0u8; 81]; // 1 byte extra for null-termination
 
         reader.read_exact(&mut header)?;
         read.seek(std::io::SeekFrom::Start(0))?;
 
-        // TODO: Does STL accept 80-characters names without null termination?
+        header[80] = 0u8; // To ensure we have a null-terminated string
         let mesh_name_cstr = CStr::from_bytes_until_nul(&header)?;
-        let mesh_name = mesh_name_cstr.to_str()?;
+        let mesh_name = mesh_name_cstr.to_str()?.trim();
 
         if !mesh_name.is_ascii() {
             return Err(anyhow!("Mesh name is not ASCII"));
         }
         if mesh_name.is_empty() {
             return Ok(MeshMetadata::StlMetadata { name: None });
-        }
-        if !BSTL_HEADER_RE.is_match(mesh_name) {
-            return Err(anyhow!(
-                "Mesh name does not match '^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*$'"
-            ));
         }
 
         Ok(MeshMetadata::StlMetadata {
