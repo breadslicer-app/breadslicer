@@ -29,6 +29,14 @@ jobs:
             ~/.cargo/git/db/
           key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: "Get pre-compiled code from cache"
+        uses: "actions/cache@v5"
+        id: "compilations-cache"
+        with:
+          path: |
+            target/
+          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}
+
       - name: "Install Rust"
         if: "steps.rustup-cache.outputs.cache-hit != 'true'"
         run: |
@@ -42,3 +50,6 @@ jobs:
 
       - name: "Clippy Checks"
         run: "cargo clippy -- -D warnings"
+
+      - name: "Compile"
+        run: "cargo build"
