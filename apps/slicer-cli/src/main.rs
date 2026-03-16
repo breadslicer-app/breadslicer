@@ -30,6 +30,14 @@ fn main() -> Result<()> {
         CmdOptions::Fix {} => {
             todo!("Not yet implemented :(");
         }
+        CmdOptions::Help => {
+            let help_text = get_cmd_options()
+                .run_inner(&["-h"])
+                .unwrap_err()
+                .unwrap_stdout();
+            println!("{}", help_text);
+            Ok(())
+        }
         CmdOptions::Inspect {} => {
             todo!("Not yet implemented :(");
         }
@@ -38,7 +46,7 @@ fn main() -> Result<()> {
         }
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-            println!("SoulCrafted Slicer (CLI) v{}", &SLICER_CLI_VERSION);
+            println!("Version: {}", &SLICER_CLI_VERSION);
             Ok(())
         }
     }

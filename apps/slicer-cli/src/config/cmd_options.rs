@@ -18,6 +18,7 @@ pub enum CmdOptions {
     },
     Diagnose {},
     Fix {},
+    Help,
     Inspect {},
     Slice {},
     Version,
@@ -85,13 +86,24 @@ pub fn get_cmd_options() -> OptionParser<CmdOptions> {
         .to_options()
         .descr("Inspect a file to obtain some details")
         .command("inspect");
+    let help = construct!(CmdOptions::Help {})
+        .to_options()
+        .descr("Prints help information")
+        .command("help");
     let slice = get_slice_options()
         .to_options()
         .descr("Slice a given 3d model file")
         .command("slice");
     let version = construct!(CmdOptions::Version {})
         .to_options()
+        .descr("Prints version information")
         .command("version");
 
-    construct!([convert, diagnose, fix, inspect, slice, version]).to_options()
+    construct!([convert, diagnose, fix, help, inspect, slice, version])
+        .to_options()
+        .descr("sc-slicer-cli (SoulCrafter Slicer, CLI) is an FLOSS command line slicer for resin 3d printers")
+        // .header(header) // TODO: Implement these lines for the embedded help
+        .footer("Add `--help` after any of the subcommands to learn more about them.")
+        .fallback_to_usage()
+        .version(env!("CARGO_PKG_VERSION"))
 }
