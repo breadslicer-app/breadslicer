@@ -13,9 +13,10 @@ use crate::core::{MeshMetadata, Normal, Triangle, Vertex};
 use crate::stl::TriangleIterator;
 
 static ASTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)").unwrap());
-static ASTL_HEADER_RE_LN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n").unwrap());
+    LazyLock::new(|| Regex::new(r"^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$").unwrap());
+static ASTL_HEADER_RE_LN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$").unwrap()
+});
 
 pub struct AsciiStlReader<'a> {
     lines: Box<dyn Iterator<Item = Result<Vec<String>>> + 'a>,
@@ -41,9 +42,7 @@ impl<'a> AsciiStlReader<'a> {
         read.seek(std::io::SeekFrom::Start(0))?;
         maybe_read_error?; // Unwraps any potential error
 
-        // static RE: LazyLock<Regex> =
-        //     LazyLock::new(|| Regex::new(r"solid [a-zA-Z0-9_]*\n").unwrap());
-        return Ok(ASTL_HEADER_RE_LN.is_match(&header));
+        Ok(ASTL_HEADER_RE_LN.is_match(&header))
     }
 
     pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
@@ -58,7 +57,7 @@ impl<'a> AsciiStlReader<'a> {
             Some(c) => Ok(MeshMetadata::StlMetadata {
                 name: match c.name("name") {
                     Some(n) => {
-                        if n.len() > 0 {
+                        if !n.is_empty() {
                             Some(String::from(n.as_str()))
                         } else {
                             None

@@ -12,7 +12,7 @@ use anyhow::Result;
 use stla::AsciiStlReader;
 use stlb::BinaryStlReader;
 
-use crate::core::{IndexedMesh, MeshMetadata, TriangleIterator};
+use crate::core::{IndexedMesh, TriangleIterator};
 
 pub use writers::{write_stla, write_stlb};
 
@@ -49,5 +49,6 @@ pub fn read_stlb<R>(read: &mut R) -> Result<IndexedMesh>
 where
     R: std::io::Read + std::io::Seek,
 {
-    BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh(None)
+    let metadata = BinaryStlReader::extract_metadata(read)?;
+    BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))
 }

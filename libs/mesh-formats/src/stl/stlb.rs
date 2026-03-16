@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::ffi::CStr;
 use std::io::{BufReader, Read, Seek};
 use std::sync::LazyLock;
 
@@ -12,7 +13,7 @@ use regex::Regex;
 use crate::core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
 static BSTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*").unwrap());
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*$").unwrap());
 
 pub struct BinaryStlReader<'a> {
     reader: Box<dyn Read + 'a>,
@@ -42,7 +43,9 @@ impl<'a> BinaryStlReader<'a> {
         reader.read_exact(&mut header)?;
         read.seek(std::io::SeekFrom::Start(0))?;
 
-        let mesh_name = str::from_utf8(&header)?;
+        // TODO: Does STL accept 80-characters names without null termination?
+        let mesh_name_cstr = CStr::from_bytes_until_nul(&header)?;
+        let mesh_name = mesh_name_cstr.to_str()?;
 
         if !mesh_name.is_ascii() {
             return Err(anyhow!("Mesh name is not ASCII"));
@@ -51,7 +54,9 @@ impl<'a> BinaryStlReader<'a> {
             return Ok(MeshMetadata::StlMetadata { name: None });
         }
         if !BSTL_HEADER_RE.is_match(mesh_name) {
-            return Err(anyhow!("Mesh name is not single word"));
+            return Err(anyhow!(
+                "Mesh name does not match '^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*$'"
+            ));
         }
 
         Ok(MeshMetadata::StlMetadata {

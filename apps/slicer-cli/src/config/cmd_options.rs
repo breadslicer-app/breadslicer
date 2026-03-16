@@ -6,8 +6,7 @@
 use std::ffi::OsString;
 
 use bpaf::{OptionParser, Parser, construct, long, short};
-
-use sc_mesh_formats::SourceMeshFileType;
+use sc_mesh_formats::filetypes::SourceMeshFileType;
 
 #[derive(Clone, Debug)]
 pub enum CmdOptions {

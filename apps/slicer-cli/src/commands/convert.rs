@@ -1,13 +1,17 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * SoulCrafted Slicer - An open source slicer for resin 3d printers
+ */
+
 use std::ffi::OsString;
 use std::fs::{File, copy};
-use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-
-use sc_mesh_formats::{
-    SourceMeshFileType, infer_mesh_file_format_from_extension, read_stl, read_stla, read_stlb, write_stla, write_stlb,
-};
+use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::stl::{read_stl, write_stlb};
 
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -48,8 +52,8 @@ pub fn convert(
 
     let source_mesh = match source_format {
         SourceMeshFileType::Stl => read_stl(&mut source_file)?,
-        SourceMeshFileType::StlAscii => read_stla(&mut source_file)?,
-        SourceMeshFileType::StlBin => read_stlb(&mut source_file)?,
+        SourceMeshFileType::StlAscii => read_stl(&mut source_file)?,
+        SourceMeshFileType::StlBin => read_stl(&mut source_file)?,
         _ => todo!("Not implemented yet!"),
     };
 
@@ -57,15 +61,15 @@ pub fn convert(
         SourceMeshFileType::Stl => {
             let mut output_file = File::create(&target_path)?;
             write_stlb(&source_mesh, &mut output_file)?;
-        },
+        }
         SourceMeshFileType::StlAscii => {
             let mut output_file = File::create(&target_path)?;
-            write_stla(&source_mesh, &mut output_file)?;
-        },
+            write_stlb(&source_mesh, &mut output_file)?;
+        }
         SourceMeshFileType::StlBin => {
             let mut output_file = File::create(&target_path)?;
             write_stlb(&source_mesh, &mut output_file)?;
-        },
+        }
         _ => todo!("Not implemented yet!"),
     }
 
