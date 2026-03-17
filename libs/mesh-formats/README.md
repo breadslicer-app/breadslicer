@@ -7,7 +7,7 @@ manipulate 3D mesh data. Part of the [Slicer](../../README.md) project.
 
 | Format               | Read    | Write | Notes |
 |----------------------|:-------:|:-----:|-------|
-| STL (`.stl`)         | ✓       | —     | Probes the file to pick ASCII or binary |
+| STL (`.stl`)         | ✓       | ✓     | Probes the file to pick ASCII or binary. Writes as binary by default. |
 | STL ASCII (`.stla`)  | ✓       | ✓     | |
 | STL Binary (`.stlb`) | ✓       | ✓     | |
 | OBJ                  | planned | —     | |

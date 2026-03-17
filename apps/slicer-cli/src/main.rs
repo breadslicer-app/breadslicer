@@ -11,8 +11,9 @@ mod filesystem;
 
 use anyhow::Result;
 
-use commands::convert::convert;
-use config::cmd_options::{CmdOptions, get_cmd_options};
+use crate::commands::convert::convert;
+use crate::commands::diagnose::diagnose;
+use crate::config::cmd_options::{CmdOptions, get_cmd_options};
 
 fn main() -> Result<()> {
     let cmd_options = get_cmd_options().run();
@@ -24,9 +25,10 @@ fn main() -> Result<()> {
             target,
             target_format,
         } => convert(source, source_format, target, target_format),
-        CmdOptions::Diagnose {} => {
-            todo!("Not yet implemented :(");
-        }
+        CmdOptions::Diagnose {
+            source,
+            source_format,
+        } => diagnose(source, source_format),
         CmdOptions::Fix {} => {
             todo!("Not yet implemented :(");
         }

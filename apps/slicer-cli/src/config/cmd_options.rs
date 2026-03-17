@@ -16,7 +16,10 @@ pub enum CmdOptions {
         target: OsString,
         target_format: Option<SourceMeshFileType>,
     },
-    Diagnose {},
+    Diagnose {
+        source: OsString,
+        source_format: Option<SourceMeshFileType>,
+    },
     Fix {},
     Help,
     Inspect {},
@@ -54,7 +57,20 @@ fn get_convert_options() -> impl Parser<CmdOptions> {
 }
 
 fn get_diagnose_options() -> impl Parser<CmdOptions> {
-    construct!(CmdOptions::Diagnose {})
+    let source = short('s')
+        .long("source")
+        .help("Specify the path of the file to be diagnosed")
+        .argument::<OsString>("SOURCE_FILEPATH");
+
+    let source_format = long("source-format")
+        .help("Specify the file format of the source file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
+        .argument::<SourceMeshFileType>("SOURCE_FORMAT")
+        .optional();
+
+    construct!(CmdOptions::Diagnose {
+        source,
+        source_format,
+    })
 }
 
 fn get_fix_options() -> impl Parser<CmdOptions> {

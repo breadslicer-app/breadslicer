@@ -5,4 +5,5 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-pub mod convert;
+pub(crate) mod convert;
+pub(crate) mod diagnose;
