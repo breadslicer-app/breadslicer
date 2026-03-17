@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.dependencies]
-sc-mesh-core = { path = "libs/mesh-core" }
-sc-mesh-formats = { path = "libs/mesh-formats" }
+sc-mesh-core = { path = "libs/mesh-core", version = "0.0.3" }
+sc-mesh-formats = { path = "libs/mesh-formats", version = "0.0.3" }
 
 anyhow = "1.0.102"
