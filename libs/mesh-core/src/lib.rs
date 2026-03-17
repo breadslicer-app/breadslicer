@@ -57,6 +57,16 @@ pub struct IndexedMesh {
     pub faces: Vec<IndexedTriangle>,
 }
 
+impl IndexedMesh {
+    pub fn are_normal_vectors_consistent(&self) -> bool {
+        todo!("Not implemented yet")
+    }
+
+    pub fn is_manifold(&self) -> bool {
+        todo!("Not implemented yet")
+    }
+}
+
 pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
     fn as_indexed_mesh(&mut self, meta: Option<MeshMetadata>) -> Result<IndexedMesh> {
         let mut vertices = Vec::new();
