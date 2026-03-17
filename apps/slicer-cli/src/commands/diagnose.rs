@@ -11,5 +11,8 @@ use anyhow::Result;
 use sc_mesh_formats::filetypes::SourceMeshFileType;
 
 pub fn diagnose(_source: OsString, _source_format: Option<SourceMeshFileType>) -> Result<()> {
+    // TODO: Check normals
+    // TODO: Check manifold
+
     Ok(())
 }

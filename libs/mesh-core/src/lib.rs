@@ -32,8 +32,8 @@ pub type Vertex = Vector3D<f32>;
 pub type Normal = Vector3D<f32>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MeshMetadata {
-    StlMetadata { name: Option<String> },
+pub struct MeshMetadata {
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

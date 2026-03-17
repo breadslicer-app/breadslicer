@@ -3,13 +3,16 @@ resolver = "3"
 members = [
     "apps/slicer-cli",
     "apps/slicer-gui",
+    "libs/mesh-core",
     "libs/mesh-formats",
     "libs/remote-printers",
     "libs/sla-formats",
-    "libs/sl1cer"
-, "libs/supports"]
+    "libs/sl1cer",
+    "libs/supports"
+]
 
 [workspace.dependencies]
+sc-mesh-core = { path = "libs/mesh-core" }
 sc-mesh-formats = { path = "libs/mesh-formats" }
 
 anyhow = "1.0.102"

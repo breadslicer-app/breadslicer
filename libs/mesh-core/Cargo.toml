@@ -1,0 +1,13 @@
+[package]
+name = "sc-mesh-core"
+version = "0.0.3"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "A simple library with basic types to handle 3d mesh data"
+categories = ["rendering::data-formats"]
+keywords = ["3d", "mesh"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+anyhow.workspace = true

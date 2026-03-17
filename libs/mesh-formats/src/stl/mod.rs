@@ -8,11 +8,10 @@ mod stlb;
 mod writers;
 
 use anyhow::Result;
+use sc_mesh_core::{IndexedMesh, TriangleIterator};
 
 use stla::AsciiStlReader;
 use stlb::BinaryStlReader;
-
-use crate::core::{IndexedMesh, TriangleIterator};
 
 pub use writers::{write_stla, write_stlb};
 

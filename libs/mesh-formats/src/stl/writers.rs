@@ -4,17 +4,14 @@
  */
 
 use anyhow::Result;
-
-use crate::core::{IndexedMesh, MeshMetadata};
+use sc_mesh_core::{IndexedMesh, MeshMetadata};
 
 pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<()>
 where
     W: std::io::Write,
 {
     let mesh_name = if let Some(metadata) = &mesh.meta {
-        match metadata {
-            MeshMetadata::StlMetadata { name } => name,
-        }
+        &metadata.name
     } else {
         &None
     };
@@ -69,7 +66,7 @@ where
 {
     // 80-byte header: mesh name (zero-padded)
     let mut header = [0u8; 80];
-    if let Some(MeshMetadata::StlMetadata { name: Some(name) }) = &mesh.meta {
+    if let Some(MeshMetadata { name: Some(name) }) = &mesh.meta {
         let bytes = name.as_bytes();
         let len = bytes.len().min(80);
         header[..len].copy_from_slice(&bytes[..len]);
@@ -102,7 +99,7 @@ where
 
 #[cfg(test)]
 mod test_write_stla {
-    use crate::core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
     use crate::stl::write_stla;
 
     #[test]
@@ -148,7 +145,7 @@ endsolid",
     #[test]
     fn test_with_name() {
         let mesh = IndexedMesh {
-            meta: Some(MeshMetadata::StlMetadata {
+            meta: Some(MeshMetadata {
                 name: Some(String::from("my_mesh")),
             }),
             vertices: vec![
@@ -190,7 +187,7 @@ endsolid my_mesh",
 
 #[cfg(test)]
 mod test_write_stlb {
-    use crate::core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
     use crate::stl::write_stlb;
 
     fn make_mesh(meta: Option<MeshMetadata>) -> IndexedMesh {
@@ -244,7 +241,7 @@ mod test_write_stlb {
 
     #[test]
     fn test_with_name() {
-        let mesh = make_mesh(Some(MeshMetadata::StlMetadata {
+        let mesh = make_mesh(Some(MeshMetadata {
             name: Some("my_mesh".into()),
         }));
         let mut out: Vec<u8> = vec![];

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_formats::core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 
 fn get_mesh_without_meta() -> IndexedMesh {
@@ -23,7 +23,7 @@ fn get_mesh_without_meta() -> IndexedMesh {
 
 fn get_unnamed_mesh() -> IndexedMesh {
     IndexedMesh {
-        meta: Some(MeshMetadata::StlMetadata { name: None }),
+        meta: Some(MeshMetadata { name: None }),
         vertices: vec![
             Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
             Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
@@ -38,7 +38,7 @@ fn get_unnamed_mesh() -> IndexedMesh {
 
 fn get_named_mesh() -> IndexedMesh {
     IndexedMesh {
-        meta: Some(MeshMetadata::StlMetadata {
+        meta: Some(MeshMetadata {
             name: Some(String::from("my_mesh")),
         }),
         vertices: vec![

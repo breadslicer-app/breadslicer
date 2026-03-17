@@ -1,6 +1,6 @@
 [package]
 name = "sc-mesh-formats"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
@@ -11,6 +11,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
 anyhow.workspace = true
-regex = { version = "1.12.3", default-features = false }
+sc-mesh-core.workspace = true
 
+regex = { version = "1.12.3", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }

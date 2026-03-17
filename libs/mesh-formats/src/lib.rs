@@ -6,6 +6,5 @@
  * A "SoulCrafted" library to read, write and manipulate 3d mesh data
  */
 
-pub mod core;
 pub mod filetypes;
 pub mod stl;

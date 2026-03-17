@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 
 use anyhow::Result;
 use regex::Regex;
+use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
 
-use crate::core::{MeshMetadata, Normal, Triangle, Vertex};
 use crate::stl::TriangleIterator;
 
 static ASTL_HEADER_RE: LazyLock<Regex> =
@@ -56,7 +56,7 @@ impl<'a> AsciiStlReader<'a> {
         maybe_read_error?; // Unwraps any potential error
 
         match ASTL_HEADER_RE_LN.captures(&header) {
-            Some(c) => Ok(MeshMetadata::StlMetadata {
+            Some(c) => Ok(MeshMetadata {
                 name: match c.name("name") {
                     Some(n) => {
                         if !n.is_empty() {
@@ -68,7 +68,7 @@ impl<'a> AsciiStlReader<'a> {
                     None => None,
                 },
             }),
-            None => Ok(MeshMetadata::StlMetadata { name: None }),
+            None => Ok(MeshMetadata { name: None }),
         }
     }
 
@@ -223,7 +223,7 @@ impl<'a> TriangleIterator for AsciiStlReader<'a> {}
 
 #[cfg(test)]
 mod test_ascii_stl_reader {
-    use crate::core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
     use super::AsciiStlReader;
 
@@ -267,7 +267,7 @@ endsolid";
         let mut reader_1 = std::io::Cursor::new(STL_1.clone());
         let metadata_1 = AsciiStlReader::extract_metadata(&mut reader_1).unwrap();
         assert_eq!(
-            MeshMetadata::StlMetadata {
+            MeshMetadata {
                 name: Some("foobar".into())
             },
             metadata_1
@@ -275,7 +275,7 @@ endsolid";
 
         let mut reader_2 = std::io::Cursor::new(STL_2.clone());
         let metadata_2 = AsciiStlReader::extract_metadata(&mut reader_2).unwrap();
-        assert_eq!(MeshMetadata::StlMetadata { name: None }, metadata_2);
+        assert_eq!(MeshMetadata { name: None }, metadata_2);
     }
 
     #[test]

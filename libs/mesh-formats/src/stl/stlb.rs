@@ -7,8 +7,7 @@ use std::ffi::CStr;
 use std::io::{BufReader, Read, Seek};
 
 use anyhow::{Result, anyhow};
-
-use crate::core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
+use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
 pub struct BinaryStlReader<'a> {
     reader: Box<dyn Read + 'a>,
@@ -46,10 +45,10 @@ impl<'a> BinaryStlReader<'a> {
             return Err(anyhow!("Mesh name is not ASCII"));
         }
         if mesh_name.is_empty() {
-            return Ok(MeshMetadata::StlMetadata { name: None });
+            return Ok(MeshMetadata { name: None });
         }
 
-        Ok(MeshMetadata::StlMetadata {
+        Ok(MeshMetadata {
             name: Some(mesh_name.into()),
         })
     }
