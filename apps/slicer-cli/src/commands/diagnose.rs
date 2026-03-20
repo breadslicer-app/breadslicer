@@ -5,8 +5,8 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
+use std::ffi::OsString;
 use std::fs::File;
-use std::{ffi::OsString};
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
@@ -33,17 +33,38 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
     drop(source_file);
 
     let mut detected_problems = false;
-    
-    // TODO: List specific faces with problematic normal vectors
-    if !mesh.are_normal_vectors_consistent() {
+    let mut critical_problems = false;
+
+    // TODO: List problematic vertices?
+    // TODO: warn on "subnormal" vertex coordinates?
+    if mesh.has_invalid_vertices() {
         detected_problems = true;
-        eprintln!("Error: diagnosed mesh has faces with inconsistent normal vectors.");
+        critical_problems = true;
+        eprintln!("Error: some vertices contain non-real coordinates.");
     }
 
-    // TODO: Show specific problems that make the mesh non-manifold
-    if !mesh.is_manifold() {
+    // TODO: list problematic faces?
+    if mesh.has_invalid_faces() {
         detected_problems = true;
-        eprintln!("Error: diagnosed mesh is not a 'manifold' (it might have 'holes', or be an 'open' shape).");
+        critical_problems = true;
+        eprintln!("Error: Some faces are not valid triangles.");
+    }
+
+    // If vertices or triangles are broken, it makes no sense to keep checking.
+    if !critical_problems {
+        // TODO: List specific faces with problematic normal vectors
+        if !mesh.are_normal_vectors_consistent() {
+            detected_problems = true;
+            eprintln!("Error: diagnosed mesh has faces with inconsistent normal vectors.");
+        }
+
+        // TODO: Show specific problems that make the mesh non-manifold
+        if !mesh.is_manifold() {
+            detected_problems = true;
+            eprintln!(
+                "Error: diagnosed mesh is not a 'manifold' (it might have 'holes', or be an 'open' shape)."
+            );
+        }
     }
 
     if detected_problems {

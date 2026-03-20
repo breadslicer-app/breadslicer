@@ -99,8 +99,8 @@ where
 
 #[cfg(test)]
 mod test_write_stla {
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
     use crate::stl::write_stla;
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
     #[test]
     fn test_without_name() {
@@ -187,8 +187,8 @@ endsolid my_mesh",
 
 #[cfg(test)]
 mod test_write_stlb {
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
     use crate::stl::write_stlb;
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
     fn make_mesh(meta: Option<MeshMetadata>) -> IndexedMesh {
         IndexedMesh {

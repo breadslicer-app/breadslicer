@@ -16,3 +16,4 @@ sc-mesh-core = { path = "libs/mesh-core", version = "*" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "*" }
 
 anyhow = "1.0.102"
+float-cmp = "0.10.0"
