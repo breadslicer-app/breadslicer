@@ -10,7 +10,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::{MeshFaceError, MeshNormalVectorError, MeshVertexError};
+use sc_mesh_core::{MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb};
 
@@ -119,11 +119,34 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
             }
         }
 
-        if let Err(_manifold_errors) = mesh.check_manifold() {
+        if let Err(manifold_errors) = mesh.check_manifold() {
             detected_problems = true;
-            eprintln!(
-                "Error: diagnosed mesh is not a 'manifold' (it might have 'holes', or be an 'open' shape)."
-            );
+
+            eprintln!("Manifold errors:");
+            for manifold_error in manifold_errors {
+                match manifold_error {
+                    MeshManifoldError::BoundaryEdge { edge, face_idx } => {
+                        eprintln!(
+                            "\t- Face with ID {} has a 'boundary edge' ({}, {}), so the mesh does not form a manifold",
+                            face_idx, edge.0, edge.1
+                        );
+                    }
+                    MeshManifoldError::NonManifoldEdge { edge, face_indices } => {
+                        eprintln!(
+                            "\t- The edge ({}, {}) is shared by more than {} faces (it should be 2)",
+                            edge.0,
+                            edge.1,
+                            face_indices.len()
+                        )
+                    }
+                    MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
+                        eprintln!(
+                            "\t- The edge ({}, {}) belongs to 2 faces ({} and {}) with inconsistent normal vectors",
+                            edge.0, edge.1, face_indices[0], face_indices[1]
+                        );
+                    }
+                }
+            }
         }
     }
 

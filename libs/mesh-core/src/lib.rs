@@ -90,6 +90,22 @@ pub enum MeshFaceError {
     },
 }
 
+pub enum MeshManifoldError {
+    /// An edge that belongs to only one face (the mesh has a boundary).
+    BoundaryEdge { edge: (u32, u32), face_idx: usize },
+    /// An edge shared by more than two faces.
+    NonManifoldEdge {
+        edge: (u32, u32),
+        face_indices: Vec<usize>,
+    },
+    /// Two faces share an edge but traverse it in the same direction,
+    /// meaning their normals are inconsistently oriented.
+    InconsistentWindingOrder {
+        edge: (u32, u32),
+        face_indices: [usize; 2],
+    },
+}
+
 impl IndexedMesh {
     pub fn validate_vertices(&self) -> Result<(), Vec<MeshVertexError>> {
         let mut errors: Vec<MeshVertexError> = vec![];
@@ -264,8 +280,76 @@ impl IndexedMesh {
         }
     }
 
-    pub fn check_manifold(&self) -> Result<(), String> {
-        Ok(())
+    pub fn check_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
+        use std::collections::{HashMap, HashSet};
+
+        let mut errors: Vec<MeshManifoldError> = vec![];
+
+        // Map each directed half-edge (a, b) to the list of face indices that contain it.
+        let mut half_edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+
+        for (face_idx, face) in self.faces.iter().enumerate() {
+            let [v0, v1, v2] = face.vertices;
+            for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
+                half_edges.entry((a, b)).or_default().push(face_idx);
+            }
+        }
+
+        // Track undirected edges we've already checked to avoid double-reporting.
+        let mut checked: HashSet<(u32, u32)> = HashSet::new();
+
+        for &(a, b) in half_edges.keys() {
+            // Canonical form for the undirected edge
+            let canonical = if a <= b { (a, b) } else { (b, a) };
+            if !checked.insert(canonical) {
+                continue;
+            }
+
+            let forward = half_edges.get(&(a, b)).cloned().unwrap_or_default();
+            let reverse = half_edges.get(&(b, a)).cloned().unwrap_or_default();
+
+            let total = forward.len() + reverse.len();
+
+            if total < 2 {
+                // Boundary edge: only one face uses this edge
+                let face_idx = forward.first().or(reverse.first()).copied().unwrap();
+                errors.push(MeshManifoldError::BoundaryEdge {
+                    edge: canonical,
+                    face_idx,
+                });
+            } else if total > 2 {
+                // Non-manifold edge: more than two faces share this edge
+                let mut face_indices = forward.clone();
+                face_indices.extend(&reverse);
+                errors.push(MeshManifoldError::NonManifoldEdge {
+                    edge: canonical,
+                    face_indices,
+                });
+            } else {
+                // Exactly two faces share this edge.
+                // For consistent orientation, one should have (a,b) and the other (b,a).
+                if forward.len() == 2 {
+                    // Both faces traverse the edge in the same direction
+                    errors.push(MeshManifoldError::InconsistentWindingOrder {
+                        edge: canonical,
+                        face_indices: [forward[0], forward[1]],
+                    });
+                } else if reverse.len() == 2 {
+                    // Both faces traverse the edge in the same direction
+                    errors.push(MeshManifoldError::InconsistentWindingOrder {
+                        edge: canonical,
+                        face_indices: [reverse[0], reverse[1]],
+                    });
+                }
+                // else: forward.len() == 1 && reverse.len() == 1 → consistent, no error
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 
