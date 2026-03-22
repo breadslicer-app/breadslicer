@@ -285,7 +285,7 @@ impl IndexedMesh {
         }
     }
 
-    pub fn check_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
+    pub fn validate_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
         use std::collections::{HashMap, HashSet};
 
         let mut errors: Vec<MeshManifoldError> = vec![];
@@ -399,5 +399,174 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
             vertices,
             faces: triangles,
         })
+    }
+}
+
+#[cfg(test)]
+mod test_indexed_mesh {
+    use super::*;
+
+    fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces: vec![],
+        }
+    }
+
+    #[test]
+    fn validate_vertices_ok_for_valid_vertices() {
+        let mesh = make_mesh(vec![
+            Vertex::new([0.0, 1.0, 2.0]),
+            Vertex::new([-1.5, 3.0, 0.0]),
+        ]);
+        assert!(mesh.validate_vertices().is_ok());
+    }
+
+    #[test]
+    fn validate_vertices_ok_for_empty_mesh() {
+        let mesh = make_mesh(vec![]);
+        assert!(mesh.validate_vertices().is_ok());
+    }
+
+    #[test]
+    fn validate_vertices_detects_infinite_x() {
+        let mesh = make_mesh(vec![Vertex::new([f32::INFINITY, 0.0, 0.0])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 0,
+                coord: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_detects_infinite_y() {
+        let mesh = make_mesh(vec![Vertex::new([0.0, f32::NEG_INFINITY, 0.0])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 0,
+                coord: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_detects_infinite_z() {
+        let mesh = make_mesh(vec![Vertex::new([0.0, 0.0, f32::INFINITY])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 0,
+                coord: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_detects_nan_x() {
+        let mesh = make_mesh(vec![Vertex::new([f32::NAN, 0.0, 0.0])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::NaNCoordinate {
+                vertex_idx: 0,
+                coord: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_detects_nan_y() {
+        let mesh = make_mesh(vec![Vertex::new([0.0, f32::NAN, 0.0])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::NaNCoordinate {
+                vertex_idx: 0,
+                coord: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_detects_nan_z() {
+        let mesh = make_mesh(vec![Vertex::new([0.0, 0.0, f32::NAN])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::NaNCoordinate {
+                vertex_idx: 0,
+                coord: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_reports_multiple_errors_per_vertex() {
+        let mesh = make_mesh(vec![Vertex::new([
+            f32::INFINITY,
+            f32::NAN,
+            f32::NEG_INFINITY,
+        ])]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 3);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 0,
+                coord: 0
+            }
+        ));
+        assert!(matches!(
+            errors[1],
+            MeshVertexError::NaNCoordinate {
+                vertex_idx: 0,
+                coord: 1
+            }
+        ));
+        assert!(matches!(
+            errors[2],
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 0,
+                coord: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_vertices_reports_errors_across_multiple_vertices() {
+        let mesh = make_mesh(vec![
+            Vertex::new([f32::NAN, 0.0, 0.0]),
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([0.0, f32::INFINITY, 0.0]),
+        ]);
+        let errors = mesh.validate_vertices().unwrap_err();
+        assert_eq!(errors.len(), 2);
+        assert!(matches!(
+            errors[0],
+            MeshVertexError::NaNCoordinate {
+                vertex_idx: 0,
+                coord: 0
+            }
+        ));
+        assert!(matches!(
+            errors[1],
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 2,
+                coord: 1
+            }
+        ));
     }
 }

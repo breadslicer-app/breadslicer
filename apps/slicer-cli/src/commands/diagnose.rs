@@ -119,7 +119,7 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
             }
         }
 
-        if let Err(manifold_errors) = mesh.check_manifold() {
+        if let Err(manifold_errors) = mesh.validate_manifold() {
             detected_problems = true;
 
             eprintln!("Manifold errors:");
