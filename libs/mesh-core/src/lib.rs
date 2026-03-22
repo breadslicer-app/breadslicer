@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::cmp::Ordering;
+
 use anyhow::Result;
 use float_cmp::approx_eq;
 
@@ -146,7 +148,7 @@ impl IndexedMesh {
             }
         }
 
-        if errors.len() > 0 {
+        if !errors.is_empty() {
             Err(errors)
         } else {
             Ok(())
@@ -208,7 +210,7 @@ impl IndexedMesh {
             }
         }
 
-        if errors.len() > 0 {
+        if !errors.is_empty() {
             Err(errors)
         } else {
             Ok(())
@@ -239,7 +241,10 @@ impl IndexedMesh {
             let cross_mag_sq = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
-            if !(cross_mag_sq > 0.0) {
+            if match cross_mag_sq.partial_cmp(&0.0_f32) {
+                Some(Ordering::Greater) => false, // We don't enter into the block
+                _ => true,
+            } {
                 errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx: idx });
                 continue; // We don't continue processing this face
             }
@@ -273,7 +278,7 @@ impl IndexedMesh {
             }
         }
 
-        if errors.len() > 0 {
+        if !errors.is_empty() {
             Err(errors)
         } else {
             Ok(())
