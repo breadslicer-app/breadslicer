@@ -93,9 +93,14 @@ pub enum MeshFaceError {
     },
 }
 
+#[derive(Debug)]
 pub enum MeshManifoldError {
+    EmptyMesh,
     /// An edge that belongs to only one face (the mesh has a boundary).
-    BoundaryEdge { edge: (u32, u32), face_idx: usize },
+    BoundaryEdge {
+        edge: (u32, u32),
+        face_idx: usize,
+    },
     /// An edge shared by more than two faces.
     NonManifoldEdge {
         edge: (u32, u32),
@@ -293,6 +298,11 @@ impl IndexedMesh {
 
         // Map each directed half-edge (a, b) to the list of face indices that contain it.
         let mut half_edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+
+        if self.faces.is_empty() {
+            errors.push(MeshManifoldError::EmptyMesh);
+            return Err(errors);
+        }
 
         for (face_idx, face) in self.faces.iter().enumerate() {
             let [v0, v1, v2] = face.vertices;
@@ -990,5 +1000,175 @@ mod indexed_mesh_validate_normal_vectors_tests {
         // unit normal = (0,-1,0)
         let mesh = make_mesh(vertices, vec![face([0.0, -1.0, 0.0], [0, 1, 2])]);
         assert!(mesh.validate_normal_vectors().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod indexed_mesh_validate_manifold_tests {
+    use super::*;
+
+    fn face(v: [u32; 3]) -> IndexedTriangle {
+        IndexedTriangle {
+            normal: Normal::new([0.0, 0.0, 1.0]),
+            vertices: v,
+        }
+    }
+
+    fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
+            faces,
+        }
+    }
+
+    /// Builds a tetrahedron with consistent winding (all normals outward).
+    ///
+    /// Vertices:
+    ///   0: (1, 1, 1)
+    ///   1: (1, -1, -1)
+    ///   2: (-1, 1, -1)
+    ///   3: (-1, -1, 1)
+    ///
+    /// Each shared edge is traversed in opposite directions by its two faces.
+    fn tetrahedron() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([1.0, 1.0, 1.0]),
+                Vertex::new([1.0, -1.0, -1.0]),
+                Vertex::new([-1.0, 1.0, -1.0]),
+                Vertex::new([-1.0, -1.0, 1.0]),
+            ],
+            faces: vec![
+                face([0, 1, 2]), // edges: 0→1, 1→2, 2→0
+                face([0, 3, 1]), // edges: 0→3, 3→1, 1→0
+                face([0, 2, 3]), // edges: 0→2, 2→3, 3→0
+                face([1, 3, 2]), // edges: 1→3, 3→2, 2→1
+            ],
+        }
+    }
+
+    #[test]
+    fn ok_for_closed_manifold_tetrahedron() {
+        assert!(tetrahedron().validate_manifold().is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_mesh() {
+        let mesh = make_mesh(0, vec![]);
+        let errors = mesh.validate_manifold().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0], MeshManifoldError::EmptyMesh));
+    }
+
+    #[test]
+    fn detects_boundary_edge_single_triangle() {
+        // A single triangle has 3 boundary edges (each edge belongs to only one face)
+        let mesh = make_mesh(3, vec![face([0, 1, 2])]);
+        let errors = mesh.validate_manifold().unwrap_err();
+        assert_eq!(errors.len(), 3);
+        assert!(
+            errors
+                .iter()
+                .all(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+        );
+    }
+
+    #[test]
+    fn detects_boundary_edge_open_surface() {
+        // Two triangles sharing one edge, leaving 4 boundary edges
+        // Face 0: 0→1, 1→2, 2→0
+        // Face 1: 1→0, 0→3, 3→1
+        // Edge (0,1) is shared with consistent winding (0→1 and 1→0) — OK
+        // Edges 1→2, 2→0, 0→3, 3→1 are boundary
+        let mesh = make_mesh(4, vec![face([0, 1, 2]), face([1, 0, 3])]);
+        let errors = mesh.validate_manifold().unwrap_err();
+        let boundary_count = errors
+            .iter()
+            .filter(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+            .count();
+        assert_eq!(boundary_count, 4);
+    }
+
+    #[test]
+    fn detects_inconsistent_winding_order() {
+        // Two triangles sharing edge (0,1) but both traverse it as 0→1
+        // Face 0: 0→1, 1→2, 2→0
+        // Face 1: 0→1, 1→3, 3→0
+        // Edge (0,1) appears twice in the same direction → inconsistent winding
+        let mesh = make_mesh(4, vec![face([0, 1, 2]), face([0, 1, 3])]);
+        let errors = mesh.validate_manifold().unwrap_err();
+        let winding_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| matches!(e, MeshManifoldError::InconsistentWindingOrder { .. }))
+            .collect();
+        assert_eq!(winding_errors.len(), 1);
+        match &winding_errors[0] {
+            MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
+                assert_eq!(*edge, (0, 1));
+                assert!(face_indices.contains(&0) && face_indices.contains(&1));
+            }
+            other => panic!("expected InconsistentWindingOrder, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_non_manifold_edge() {
+        // Three faces all sharing edge (0,1)
+        // Face 0: 0→1, 1→2, 2→0
+        // Face 1: 1→0, 0→3, 3→1
+        // Face 2: 0→1, 1→4, 4→0
+        // Edge (0,1): forward [0, 2], reverse [1] → total 3 faces
+        let mesh = make_mesh(5, vec![face([0, 1, 2]), face([1, 0, 3]), face([0, 1, 4])]);
+        let errors = mesh.validate_manifold().unwrap_err();
+        let non_manifold_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| matches!(e, MeshManifoldError::NonManifoldEdge { .. }))
+            .collect();
+        assert!(
+            !non_manifold_errors.is_empty(),
+            "expected at least one NonManifoldEdge error"
+        );
+        let has_edge_01 = non_manifold_errors.iter().any(|e| match e {
+            MeshManifoldError::NonManifoldEdge { edge, face_indices } => {
+                *edge == (0, 1) && face_indices.len() == 3
+            }
+            _ => false,
+        });
+        assert!(has_edge_01, "expected NonManifoldEdge for edge (0, 1)");
+    }
+
+    #[test]
+    fn tetrahedron_with_one_flipped_face_detects_inconsistent_winding() {
+        // Take a valid tetrahedron and flip one face's winding
+        let mut mesh = tetrahedron();
+        // Flip face 0: [0, 1, 2] → [0, 2, 1]
+        // This reverses edges 0→1 to 0→2, 1→2 to 2→1, 2→0 to 1→0
+        mesh.faces[0].vertices = [0, 2, 1];
+
+        let errors = mesh.validate_manifold().unwrap_err();
+        let winding_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| matches!(e, MeshManifoldError::InconsistentWindingOrder { .. }))
+            .collect();
+        // Flipping one face of a tetrahedron causes inconsistent winding on all 3 of its edges
+        assert_eq!(winding_errors.len(), 3);
+    }
+
+    #[test]
+    fn reports_multiple_error_types() {
+        // Face 0 and Face 1 share edge (0,1) with inconsistent winding (both 0→1),
+        // plus all other edges are boundary.
+        let mesh = make_mesh(4, vec![face([0, 1, 2]), face([0, 1, 3])]);
+        let errors = mesh.validate_manifold().unwrap_err();
+        let has_winding = errors
+            .iter()
+            .any(|e| matches!(e, MeshManifoldError::InconsistentWindingOrder { .. }));
+        let has_boundary = errors
+            .iter()
+            .any(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }));
+        assert!(has_winding, "expected InconsistentWindingOrder errors");
+        assert!(has_boundary, "expected BoundaryEdge errors");
     }
 }

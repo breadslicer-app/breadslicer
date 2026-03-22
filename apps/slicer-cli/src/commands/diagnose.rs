@@ -125,6 +125,9 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
             eprintln!("Manifold errors:");
             for manifold_error in manifold_errors {
                 match manifold_error {
+                    MeshManifoldError::EmptyMesh => {
+                        eprintln!("\t- Loaded mesh is empty, it has no faces")
+                    }
                     MeshManifoldError::BoundaryEdge { edge, face_idx } => {
                         eprintln!(
                             "\t- Face with ID {} has a 'boundary edge' ({}, {}), so the mesh does not form a manifold",
