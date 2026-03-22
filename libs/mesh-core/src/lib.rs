@@ -65,6 +65,7 @@ pub enum MeshVertexError {
     NaNCoordinate { vertex_idx: usize, coord: u8 },
 }
 
+#[derive(Debug)]
 pub enum MeshNormalVectorError {
     ZeroAreaTriangle { face_idx: usize },
     NonUnitNorm { face_idx: usize, norm: f32 },
@@ -764,5 +765,230 @@ mod indexed_mesh_validate_faces_tests {
                 vertex_idx: 0
             }
         ));
+    }
+}
+
+#[cfg(test)]
+mod indexed_mesh_validate_normal_vectors_tests {
+    use super::*;
+
+    fn make_mesh(vertices: Vec<Vertex>, faces: Vec<IndexedTriangle>) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    fn face(normal: [f32; 3], v: [u32; 3]) -> IndexedTriangle {
+        IndexedTriangle {
+            normal: Normal::new(normal),
+            vertices: v,
+        }
+    }
+
+    // A right triangle in the XY plane: (0,0,0), (1,0,0), (0,1,0).
+    // Cross product = (0,0,1), so the correct unit normal is [0, 0, 1].
+    fn xy_triangle_vertices() -> Vec<Vertex> {
+        vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ]
+    }
+
+    #[test]
+    fn ok_for_correct_normal() {
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 1.0], [0, 1, 2])],
+        );
+        assert!(mesh.validate_normal_vectors().is_ok());
+    }
+
+    #[test]
+    fn ok_for_empty_faces() {
+        let mesh = make_mesh(xy_triangle_vertices(), vec![]);
+        assert!(mesh.validate_normal_vectors().is_ok());
+    }
+
+    #[test]
+    fn detects_zero_area_triangle_collinear_vertices() {
+        let vertices = vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([2.0, 0.0, 0.0]), // collinear
+        ];
+        let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn detects_zero_area_triangle_coincident_vertices() {
+        let vertices = vec![
+            Vertex::new([1.0, 2.0, 3.0]),
+            Vertex::new([1.0, 2.0, 3.0]),
+            Vertex::new([1.0, 2.0, 3.0]),
+        ];
+        let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn detects_non_unit_norm_too_large() {
+        // Normal with magnitude 2
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 2.0], [0, 1, 2])],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
+                assert_eq!(*face_idx, 0);
+                assert!((*norm - 2.0).abs() < 1e-6);
+            }
+            other => panic!("expected NonUnitNorm, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_non_unit_norm_too_small() {
+        // Normal with magnitude 0.5
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 0.5], [0, 1, 2])],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
+                assert_eq!(*face_idx, 0);
+                assert!((*norm - 0.5).abs() < 1e-6);
+            }
+            other => panic!("expected NonUnitNorm, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_non_unit_norm_zero_vector() {
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 0.0], [0, 1, 2])],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::NonUnitNorm { face_idx: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn detects_expectation_mismatch_opposite_direction() {
+        // Correct normal is [0,0,1], but we provide [0,0,-1] (unit, but wrong direction)
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, -1.0], [0, 1, 2])],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::ExpectationMismatch { face_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn detects_expectation_mismatch_perpendicular() {
+        // Correct normal is [0,0,1], but we provide [1,0,0] (unit, but wrong axis)
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([1.0, 0.0, 0.0], [0, 1, 2])],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::ExpectationMismatch { face_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn reports_correct_face_idx_across_faces() {
+        let vertices = vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+            Vertex::new([0.0, 0.0, 1.0]),
+        ];
+        // Face 0: XY plane, correct normal [0,0,1]
+        // Face 1: XZ plane, vertices (0,0,0),(0,0,1),(1,0,0)
+        //   cross = (0,0,1)-(0,0,0) × (1,0,0)-(0,0,0) = (0,0,1)×(1,0,0) = (0·0-1·0, 1·1-0·0, 0·0-0·1) = (0,1,0)
+        //   correct normal is [0,1,0], but we give [0,-1,0]
+        let mesh = make_mesh(
+            vertices,
+            vec![
+                face([0.0, 0.0, 1.0], [0, 1, 2]),
+                face([0.0, -1.0, 0.0], [0, 3, 1]),
+            ],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::ExpectationMismatch { face_idx: 1 }
+        ));
+    }
+
+    #[test]
+    fn reports_multiple_errors_across_faces() {
+        let vertices = vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+            Vertex::new([2.0, 0.0, 0.0]), // collinear with v0 and v1
+        ];
+        let mesh = make_mesh(
+            vertices,
+            vec![
+                face([0.0, 0.0, -1.0], [0, 1, 2]), // ExpectationMismatch
+                face([0.0, 0.0, 1.0], [0, 1, 3]),  // ZeroAreaTriangle (collinear)
+            ],
+        );
+        let errors = mesh.validate_normal_vectors().unwrap_err();
+        assert_eq!(errors.len(), 2);
+        assert!(matches!(
+            errors[0],
+            MeshNormalVectorError::ExpectationMismatch { face_idx: 0 }
+        ));
+        assert!(matches!(
+            errors[1],
+            MeshNormalVectorError::ZeroAreaTriangle { face_idx: 1 }
+        ));
+    }
+
+    #[test]
+    fn ok_for_non_axis_aligned_triangle() {
+        // Triangle in a tilted plane
+        let vertices = vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 0.0, 1.0]),
+        ];
+        // cross = (1,0,0)×(0,0,1) = (0·1-0·0, 0·0-1·1, 1·0-0·0) = (0,-1,0)
+        // unit normal = (0,-1,0)
+        let mesh = make_mesh(vertices, vec![face([0.0, -1.0, 0.0], [0, 1, 2])]);
+        assert!(mesh.validate_normal_vectors().is_ok());
     }
 }
