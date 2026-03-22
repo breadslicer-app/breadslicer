@@ -403,7 +403,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
 }
 
 #[cfg(test)]
-mod test_indexed_mesh {
+mod indexed_mesh_validate_vertices_tests {
     use super::*;
 
     fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
@@ -415,7 +415,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_ok_for_valid_vertices() {
+    fn ok_for_valid_vertices() {
         let mesh = make_mesh(vec![
             Vertex::new([0.0, 1.0, 2.0]),
             Vertex::new([-1.5, 3.0, 0.0]),
@@ -424,13 +424,13 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_ok_for_empty_mesh() {
+    fn ok_for_empty_mesh() {
         let mesh = make_mesh(vec![]);
         assert!(mesh.validate_vertices().is_ok());
     }
 
     #[test]
-    fn validate_vertices_detects_infinite_x() {
+    fn detects_infinite_x() {
         let mesh = make_mesh(vec![Vertex::new([f32::INFINITY, 0.0, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
         assert_eq!(errors.len(), 1);
@@ -444,7 +444,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_detects_infinite_y() {
+    fn detects_infinite_y() {
         let mesh = make_mesh(vec![Vertex::new([0.0, f32::NEG_INFINITY, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
         assert_eq!(errors.len(), 1);
@@ -458,7 +458,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_detects_infinite_z() {
+    fn detects_infinite_z() {
         let mesh = make_mesh(vec![Vertex::new([0.0, 0.0, f32::INFINITY])]);
         let errors = mesh.validate_vertices().unwrap_err();
         assert_eq!(errors.len(), 1);
@@ -472,7 +472,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_detects_nan_x() {
+    fn detects_nan_x() {
         let mesh = make_mesh(vec![Vertex::new([f32::NAN, 0.0, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
         assert_eq!(errors.len(), 1);
@@ -486,7 +486,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_detects_nan_y() {
+    fn detects_nan_y() {
         let mesh = make_mesh(vec![Vertex::new([0.0, f32::NAN, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
         assert_eq!(errors.len(), 1);
@@ -500,7 +500,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_detects_nan_z() {
+    fn detects_nan_z() {
         let mesh = make_mesh(vec![Vertex::new([0.0, 0.0, f32::NAN])]);
         let errors = mesh.validate_vertices().unwrap_err();
         assert_eq!(errors.len(), 1);
@@ -514,7 +514,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_reports_multiple_errors_per_vertex() {
+    fn reports_multiple_errors_per_vertex() {
         let mesh = make_mesh(vec![Vertex::new([
             f32::INFINITY,
             f32::NAN,
@@ -546,7 +546,7 @@ mod test_indexed_mesh {
     }
 
     #[test]
-    fn validate_vertices_reports_errors_across_multiple_vertices() {
+    fn reports_errors_across_multiple_vertices() {
         let mesh = make_mesh(vec![
             Vertex::new([f32::NAN, 0.0, 0.0]),
             Vertex::new([0.0, 0.0, 0.0]),
@@ -566,6 +566,202 @@ mod test_indexed_mesh {
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 2,
                 coord: 1
+            }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod indexed_mesh_validate_faces_tests {
+    use super::*;
+
+    fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
+        IndexedTriangle {
+            normal: Normal::new([0.0, 0.0, 1.0]),
+            vertices: [v0, v1, v2],
+        }
+    }
+
+    fn make_mesh_with_faces(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
+            faces,
+        }
+    }
+
+    #[test]
+    fn ok_for_valid_faces() {
+        let mesh = make_mesh_with_faces(4, vec![make_face(0, 1, 2), make_face(1, 2, 3)]);
+        assert!(mesh.validate_faces().is_ok());
+    }
+
+    #[test]
+    fn ok_for_empty_faces() {
+        let mesh = make_mesh_with_faces(3, vec![]);
+        assert!(mesh.validate_faces().is_ok());
+    }
+
+    #[test]
+    fn detects_out_of_range_vertex_pos_0() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(5, 0, 1)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0,
+                vertex_pos: 0,
+                vertex_idx: 5
+            }
+        ));
+    }
+
+    #[test]
+    fn detects_out_of_range_vertex_pos_1() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(0, 10, 1)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0,
+                vertex_pos: 1,
+                vertex_idx: 10
+            }
+        ));
+    }
+
+    #[test]
+    fn detects_out_of_range_vertex_pos_2() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(0, 1, 99)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0,
+                vertex_pos: 2,
+                vertex_idx: 99
+            }
+        ));
+    }
+
+    #[test]
+    fn detects_collapsed_edge_01() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(1, 1, 2)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::CollapsedEdge {
+                face_idx: 0,
+                vertex_pos_a: 0,
+                vertex_pos_b: 1,
+                vertex_idx: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn detects_collapsed_edge_12() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(0, 2, 2)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::CollapsedEdge {
+                face_idx: 0,
+                vertex_pos_a: 1,
+                vertex_pos_b: 2,
+                vertex_idx: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn detects_collapsed_edge_20() {
+        let mesh = make_mesh_with_faces(3, vec![make_face(0, 1, 0)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::CollapsedEdge {
+                face_idx: 0,
+                vertex_pos_a: 2,
+                vertex_pos_b: 0,
+                vertex_idx: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn degenerate_triangle_reports_all_collapsed_edges() {
+        // All three vertices are the same → all three edges are collapsed
+        let mesh = make_mesh_with_faces(3, vec![make_face(1, 1, 1)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 3);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::CollapsedEdge {
+                vertex_pos_a: 0,
+                vertex_pos_b: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            errors[1],
+            MeshFaceError::CollapsedEdge {
+                vertex_pos_a: 1,
+                vertex_pos_b: 2,
+                ..
+            }
+        ));
+        assert!(matches!(
+            errors[2],
+            MeshFaceError::CollapsedEdge {
+                vertex_pos_a: 2,
+                vertex_pos_b: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reports_both_out_of_range_and_collapsed() {
+        // vertex 5 is out of range, and vertices 0 and 0 form a collapsed edge
+        let mesh = make_mesh_with_faces(3, vec![make_face(5, 0, 0)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        let out_of_range_count = errors
+            .iter()
+            .filter(|e| matches!(e, MeshFaceError::OutOfRangeVertexIndex { .. }))
+            .count();
+        let collapsed_count = errors
+            .iter()
+            .filter(|e| matches!(e, MeshFaceError::CollapsedEdge { .. }))
+            .count();
+        assert_eq!(out_of_range_count, 1);
+        assert_eq!(collapsed_count, 1);
+    }
+
+    #[test]
+    fn reports_correct_face_idx_across_faces() {
+        let mesh = make_mesh_with_faces(
+            3,
+            vec![
+                make_face(0, 1, 2), // valid
+                make_face(0, 0, 2), // collapsed edge at face_idx 1
+            ],
+        );
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            MeshFaceError::CollapsedEdge {
+                face_idx: 1,
+                vertex_pos_a: 0,
+                vertex_pos_b: 1,
+                vertex_idx: 0
             }
         ));
     }
