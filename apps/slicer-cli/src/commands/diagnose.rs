@@ -10,6 +10,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::{MeshFaceError, MeshNormalVectorError, MeshVertexError};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb};
 
@@ -35,31 +36,90 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
     let mut detected_problems = false;
     let mut critical_problems = false;
 
-    // TODO: List problematic vertices?
     // TODO: warn on "subnormal" vertex coordinates?
-    if mesh.has_invalid_vertices() {
+    if let Err(vertex_errors) = mesh.validate_vertices() {
         detected_problems = true;
         critical_problems = true;
-        eprintln!("Error: some vertices contain non-real coordinates.");
+
+        eprintln!("Vertex errors:");
+        for vertex_error in vertex_errors {
+            match vertex_error {
+                MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
+                    eprintln!(
+                        "\t- Vertex with ID {} has an infinite value for its coordinate '{}'",
+                        vertex_idx, coord
+                    );
+                }
+                MeshVertexError::NaNCoordinate { vertex_idx, coord } => {
+                    eprintln!(
+                        "\t- Vertex with ID {} has an NaN value for its coordinate '{}'",
+                        vertex_idx, coord
+                    );
+                }
+            }
+        }
     }
 
-    // TODO: list problematic faces?
-    if mesh.has_invalid_faces() {
+    if let Err(face_errors) = mesh.validate_faces() {
         detected_problems = true;
         critical_problems = true;
-        eprintln!("Error: Some faces are not valid triangles.");
+
+        eprintln!("Face errors:");
+        for face_error in face_errors {
+            match face_error {
+                MeshFaceError::CollapsedEdge {
+                    face_idx,
+                    vertex_pos_a,
+                    vertex_pos_b,
+                    vertex_idx,
+                } => {
+                    eprintln!(
+                        "\t- Face with ID {} has 2 vertices ({}, {}) with same value (vertex id = {})",
+                        face_idx, vertex_pos_a, vertex_pos_b, vertex_idx
+                    );
+                }
+                MeshFaceError::OutOfRangeVertexIndex {
+                    face_idx,
+                    vertex_pos,
+                    vertex_idx,
+                } => {
+                    eprintln!(
+                        "\t- Face with ID {} contains a vertex ({}) with an out of range index {}",
+                        face_idx, vertex_pos, vertex_idx
+                    );
+                }
+            }
+        }
     }
 
     // If vertices or triangles are broken, it makes no sense to keep checking.
     if !critical_problems {
-        // TODO: List specific faces with problematic normal vectors
-        if !mesh.are_normal_vectors_consistent() {
+        if let Err(vector_errors) = mesh.validate_normal_vectors() {
             detected_problems = true;
-            eprintln!("Error: diagnosed mesh has faces with inconsistent normal vectors.");
+
+            eprintln!("Normal vectors' errors:");
+            for vector_error in vector_errors {
+                match vector_error {
+                    MeshNormalVectorError::ZeroAreaTriangle { face_idx } => {
+                        eprintln!("\t- Face with ID {} has area equal to 0", face_idx);
+                    }
+                    MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
+                        eprintln!(
+                            "\t- Face with ID {} has normal vector with non-unit norm: {}",
+                            face_idx, norm
+                        );
+                    }
+                    MeshNormalVectorError::ExpectationMismatch { face_idx } => {
+                        eprintln!(
+                            "\t- Face with ID {} has a normal vector that does not match our calculations",
+                            face_idx
+                        );
+                    }
+                }
+            }
         }
 
-        // TODO: Show specific problems that make the mesh non-manifold
-        if !mesh.is_manifold() {
+        if let Err(_manifold_errors) = mesh.check_manifold() {
             detected_problems = true;
             eprintln!(
                 "Error: diagnosed mesh is not a 'manifold' (it might have 'holes', or be an 'open' shape)."
