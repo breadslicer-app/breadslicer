@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 
 use anyhow::Result;
 use regex::Regex;
+use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
 
 use crate::stl::TriangleIterator;
@@ -159,7 +160,7 @@ impl<'a> AsciiStlReader<'a> {
             if line.len() != 4 || line[0] != "vertex" {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("vertex f32 f32 f32, got {line:?}"),
+                    format!("Expected vertex f32 f32 f32, got {line:?}"),
                 )
                 .into());
             }
@@ -168,6 +169,11 @@ impl<'a> AsciiStlReader<'a> {
 
         self.expect_static(&["endloop"])?;
         self.expect_static(&["endfacet"])?;
+
+        // We interpret a zero-length normal vector as a hint to compute it at load time
+        if result_normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32]) {
+            result_normal = compute_normal_from_triangle_vertices(&result_vertices)?;
+        }
 
         Ok(Some(Triangle {
             normal: result_normal,

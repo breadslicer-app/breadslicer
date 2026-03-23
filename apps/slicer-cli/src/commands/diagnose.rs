@@ -10,7 +10,9 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::{MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
+use sc_mesh_core::errors::{
+    MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
+};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb};
 

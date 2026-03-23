@@ -7,6 +7,7 @@ use std::ffi::CStr;
 use std::io::{BufReader, Read, Seek};
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
 pub struct BinaryStlReader<'a> {
@@ -84,13 +85,18 @@ impl<'a> BinaryStlReader<'a> {
             ])
         };
 
-        let normal = Normal::new([f(0), f(4), f(8)]);
+        let mut normal = Normal::new([f(0), f(4), f(8)]);
         let vertices = [
             Vertex::new([f(12), f(16), f(20)]),
             Vertex::new([f(24), f(28), f(32)]),
             Vertex::new([f(36), f(40), f(44)]),
         ];
         // buf[48..50] is the attribute byte count, ignored. TODO: check
+
+        // We interpret a zero-length normal vector as a hint to compute it at load time
+        if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32]) {
+            normal = compute_normal_from_triangle_vertices(&vertices)?;
+        }
 
         Ok(Triangle { normal, vertices })
     }

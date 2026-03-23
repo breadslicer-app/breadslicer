@@ -3,36 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+pub mod errors;
+pub mod geometry;
+mod primitives;
+
+use core::f32;
 use std::cmp::Ordering;
 
 use anyhow::Result;
 use float_cmp::approx_eq;
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub [F; 3]);
-
-impl<F: Copy + PartialEq + PartialOrd> Vector3D<F> {
-    pub const fn new(v: [F; 3]) -> Self {
-        Self(v)
-    }
-}
-
-impl<F: Copy + PartialEq + PartialOrd> From<Vector3D<F>> for [F; 3] {
-    fn from(v: Vector3D<F>) -> Self {
-        v.0
-    }
-}
-
-impl<F: Copy + PartialEq + PartialOrd> std::ops::Index<usize> for Vector3D<F> {
-    type Output = F;
-    fn index(&self, i: usize) -> &Self::Output {
-        assert!(i < 3); // TODO: Replace with debug_assert once we have proper tests in place
-        &self.0[i]
-    }
-}
-
-pub type Vertex = Vector3D<f32>;
-pub type Normal = Vector3D<f32>;
+use crate::errors::{MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
+pub use crate::primitives::{Normal, Vector3D, Vertex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MeshMetadata {
@@ -58,60 +40,6 @@ pub struct IndexedMesh {
     pub meta: Option<MeshMetadata>,
     pub vertices: Vec<Vertex>, // TODO: Make it generic (don't rush it)
     pub faces: Vec<IndexedTriangle>,
-}
-
-pub enum MeshVertexError {
-    InfiniteCoordinate { vertex_idx: usize, coord: u8 },
-    NaNCoordinate { vertex_idx: usize, coord: u8 },
-}
-
-#[derive(Debug)]
-pub enum MeshNormalVectorError {
-    ZeroAreaTriangle { face_idx: usize },
-    NonUnitNorm { face_idx: usize, norm: f32 },
-    ExpectationMismatch { face_idx: usize },
-}
-
-pub enum MeshFaceError {
-    OutOfRangeVertexIndex {
-        /// Index for the problematic face
-        face_idx: usize,
-        /// 0, 1, or 2. Indicates which vertex index of the triangle is wrong
-        vertex_pos: u8,
-        /// Value of the problematic vertex index
-        vertex_idx: usize,
-    },
-    CollapsedEdge {
-        /// Index for the problematic face
-        face_idx: usize,
-        /// Position of one of the "first" vertex of the collapsed edge
-        vertex_pos_a: u8,
-        /// Position of one of the "second" vertex of the collapsed edge
-        vertex_pos_b: u8,
-        /// Value of the problematic vertex index
-        vertex_idx: usize,
-    },
-}
-
-#[derive(Debug)]
-pub enum MeshManifoldError {
-    EmptyMesh,
-    /// An edge that belongs to only one face (the mesh has a boundary).
-    BoundaryEdge {
-        edge: (u32, u32),
-        face_idx: usize,
-    },
-    /// An edge shared by more than two faces.
-    NonManifoldEdge {
-        edge: (u32, u32),
-        face_indices: Vec<usize>,
-    },
-    /// Two faces share an edge but traverse it in the same direction,
-    /// meaning their normals are inconsistently oriented.
-    InconsistentWindingOrder {
-        edge: (u32, u32),
-        face_indices: [usize; 2],
-    },
 }
 
 impl IndexedMesh {
@@ -247,7 +175,7 @@ impl IndexedMesh {
             let cross_mag_sq = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
-            if match cross_mag_sq.partial_cmp(&0.0_f32) {
+            if match cross_mag_sq.partial_cmp(&f32::EPSILON) {
                 Some(Ordering::Greater) => false, // We don't enter into the block
                 _ => true,
             } {

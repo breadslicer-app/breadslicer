@@ -34,7 +34,7 @@ fn main() -> Result<()> {
             source,
             source_format,
             target,
-            target_format
+            target_format,
         } => fix(source, source_format, target, target_format),
         CmdOptions::Help => {
             let help_text = get_cmd_options()
