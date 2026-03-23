@@ -77,12 +77,19 @@ Some recommendations to make your feature proposals as useful as possible:
 **NOTE:** This section is still work in progress, as we still have to make some
 decisions regarding our internal processes.
 
-1. All code contributions must be proposed as
+1. It is recommended to enable the local git hooks before commiting anything.
+   Run the following command inside the repository root to enable them:
+   ```bash
+   git config core.hooksPath .hooks;
+   ```
+2. All code contributions must be proposed as
   ["Pull Requests"](https://en.wikipedia.org/wiki/Distributed_version_control#Pull_requests),
   you can find them
   [here](https://codeberg.org/SoulCrafted/Slicer/pulls).
-2. Once the change is proposed, it will be reviewed by the project maintainers
+3. Once the change is proposed, it will be reviewed by the project maintainers
    and other contributors. They might require some changes or fixes before
    approving the contribution.
-3. Once the contribution is approved, a maintainer will merge it into the `main`
+4. No PRs will be reviewed until they pass the automatic checks from the CI
+   pipelines.
+5. Once the contribution is approved, a maintainer will merge it into the `main`
    branch.
