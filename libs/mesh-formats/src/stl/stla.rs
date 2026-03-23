@@ -140,13 +140,14 @@ impl<'a> AsciiStlReader<'a> {
             .into());
         }
 
-        let mut result_normal = Normal::default();
+        let mut normal = Normal::default();
 
-        AsciiStlReader::tokens_to_f32(&face_header[2..5], &mut result_normal.0[0..3])?;
+        AsciiStlReader::tokens_to_f32(&face_header[2..5], &mut normal.0[0..3])?;
 
         self.expect_static(&["outer", "loop"])?;
-        let mut result_vertices = [Vertex::default(); 3];
-        for vertex_result in &mut result_vertices {
+
+        let mut vertices = [Vertex::default(); 3];
+        for vertex_result in &mut vertices {
             let Some(line) = self.lines.next() else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
@@ -171,14 +172,12 @@ impl<'a> AsciiStlReader<'a> {
         self.expect_static(&["endfacet"])?;
 
         // We interpret a zero-length normal vector as a hint to compute it at load time
-        if result_normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32]) {
-            result_normal = compute_normal_from_triangle_vertices(&result_vertices)?;
+        if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32]) {
+            // TODO: Perhaps we should log a warning instead (and raise the error only during validation)?
+            normal = compute_normal_from_triangle_vertices(&vertices)?;
         }
 
-        Ok(Some(Triangle {
-            normal: result_normal,
-            vertices: result_vertices,
-        }))
+        Ok(Some(Triangle { normal, vertices }))
     }
 
     fn tokens_to_f32(tokens: &[String], output: &mut [f32]) -> Result<()> {

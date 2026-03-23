@@ -1,0 +1,6 @@
+#!/bin/sh
+
+set -eu;
+
+cargo check;
+cargo clippy;
