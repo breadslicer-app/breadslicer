@@ -13,6 +13,7 @@ use anyhow::Result;
 
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
+use crate::commands::fix::fix;
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
 
 fn main() -> Result<()> {
@@ -29,9 +30,12 @@ fn main() -> Result<()> {
             source,
             source_format,
         } => diagnose(source, source_format),
-        CmdOptions::Fix {} => {
-            todo!("Not yet implemented :(");
-        }
+        CmdOptions::Fix {
+            source,
+            source_format,
+            target,
+            target_format
+        } => fix(source, source_format, target, target_format),
         CmdOptions::Help => {
             let help_text = get_cmd_options()
                 .run_inner(&["-h"])

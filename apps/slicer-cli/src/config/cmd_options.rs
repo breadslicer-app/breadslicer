@@ -20,7 +20,12 @@ pub enum CmdOptions {
         source: OsString,
         source_format: Option<SourceMeshFileType>,
     },
-    Fix {},
+    Fix {
+        source: OsString,
+        source_format: Option<SourceMeshFileType>,
+        target: OsString,
+        target_format: Option<SourceMeshFileType>,
+    },
     Help,
     Inspect {},
     Slice {},
@@ -74,7 +79,32 @@ fn get_diagnose_options() -> impl Parser<CmdOptions> {
 }
 
 fn get_fix_options() -> impl Parser<CmdOptions> {
-    construct!(CmdOptions::Fix {})
+    let source = short('s')
+        .long("source")
+        .help("Specify the path of the file to be fixed")
+        .argument::<OsString>("SOURCE_FILEPATH");
+
+    let source_format = long("source-format")
+        .help("Specify the file format of the source file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
+        .argument::<SourceMeshFileType>("SOURCE_FORMAT")
+        .optional();
+
+    let target = short('t')
+        .long("target")
+        .help("Specify the path for the fixed file")
+        .argument::<OsString>("TARGET_FILEPATH");
+
+    let target_format = long("target-format")
+        .help("Specify the file format of the target file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
+        .argument::<SourceMeshFileType>("TARGET_FORMAT")
+        .optional();
+
+    construct!(CmdOptions::Fix {
+        source,
+        source_format,
+        target,
+        target_format,
+    })
 }
 
 fn get_inspect_options() -> impl Parser<CmdOptions> {
