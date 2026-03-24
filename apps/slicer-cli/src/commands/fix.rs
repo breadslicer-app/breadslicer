@@ -10,6 +10,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::errors::{MeshFaceError, MeshVertexError};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb, write_stla, write_stlb};
 
@@ -49,19 +50,78 @@ pub fn fix(
     };
     drop(source_file);
 
-    // TODO: Check & fix "face" problems too!
+    if let Err(errors) = mesh.validate_vertices() {
+        // TODO: Extract loop into its own function, this snipped is shared with
+        //       the `diagnose` command
+        eprintln!("Vertex errors:");
+        for vertex_error in errors {
+            match vertex_error {
+                MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
+                    eprintln!(
+                        "\t- Vertex with ID {} has an infinite value for its coordinate '{}'",
+                        vertex_idx, coord
+                    );
+                }
+                MeshVertexError::NaNCoordinate { vertex_idx, coord } => {
+                    eprintln!(
+                        "\t- Vertex with ID {} has an NaN value for its coordinate '{}'",
+                        vertex_idx, coord
+                    );
+                }
+            }
+        }
+
+        return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
+    }
+
+    if let Err(errors) = mesh.validate_faces() {
+        // TODO: Fix faces
+
+        // TODO: Extract loop into its own function, this snipped is shared with
+        //       the `diagnose` command
+        eprintln!("Face errors:");
+        for face_error in errors {
+            match face_error {
+                MeshFaceError::CollapsedEdge {
+                    face_idx,
+                    vertex_pos_a,
+                    vertex_pos_b,
+                    vertex_idx,
+                } => {
+                    eprintln!(
+                        "\t- Face with ID {} has 2 vertices ({}, {}) with same value (vertex id = {})",
+                        face_idx, vertex_pos_a, vertex_pos_b, vertex_idx
+                    );
+                }
+                MeshFaceError::OutOfRangeVertexIndex {
+                    face_idx,
+                    vertex_pos,
+                    vertex_idx,
+                } => {
+                    eprintln!(
+                        "\t- Face with ID {} contains a vertex ({}) with an out of range index {}",
+                        face_idx, vertex_pos, vertex_idx
+                    );
+                }
+            }
+        }
+
+        return Err(anyhow!("Unable to fix mesh. Face errors correction is not implemented (yet)."));
+    }
 
     let normal_vector_errors = match mesh.validate_normal_vectors() {
         Err(v) => v,
-        _ => vec![]
+        _ => vec![],
     };
     let manifold_errors = match mesh.validate_manifold() {
         Err(v) => v,
-        _ => vec![]
+        _ => vec![],
     };
 
     // TODO: List applied changes
-    mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors)?;
+    if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
+        mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors)?;
+    }
 
     match target_format {
         SourceMeshFileType::Stl => {
