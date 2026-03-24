@@ -10,10 +10,10 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::errors::{MeshFaceError, MeshVertexError};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb, write_stla, write_stlb};
 
+use crate::commands::diagnose::{show_face_errors, show_vertex_errors};
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub fn fix(
@@ -51,61 +51,13 @@ pub fn fix(
     drop(source_file);
 
     if let Err(errors) = mesh.validate_vertices() {
-        // TODO: Extract loop into its own function, this snipped is shared with
-        //       the `diagnose` command
-        eprintln!("Vertex errors:");
-        for vertex_error in errors {
-            match vertex_error {
-                MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
-                    eprintln!(
-                        "\t- Vertex with ID {} has an infinite value for its coordinate '{}'",
-                        vertex_idx, coord
-                    );
-                }
-                MeshVertexError::NaNCoordinate { vertex_idx, coord } => {
-                    eprintln!(
-                        "\t- Vertex with ID {} has an NaN value for its coordinate '{}'",
-                        vertex_idx, coord
-                    );
-                }
-            }
-        }
-
+        show_vertex_errors(&errors);
         return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
     }
 
     if let Err(errors) = mesh.validate_faces() {
         // TODO: Fix faces
-
-        // TODO: Extract loop into its own function, this snipped is shared with
-        //       the `diagnose` command
-        eprintln!("Face errors:");
-        for face_error in errors {
-            match face_error {
-                MeshFaceError::CollapsedEdge {
-                    face_idx,
-                    vertex_pos_a,
-                    vertex_pos_b,
-                    vertex_idx,
-                } => {
-                    eprintln!(
-                        "\t- Face with ID {} has 2 vertices ({}, {}) with same value (vertex id = {})",
-                        face_idx, vertex_pos_a, vertex_pos_b, vertex_idx
-                    );
-                }
-                MeshFaceError::OutOfRangeVertexIndex {
-                    face_idx,
-                    vertex_pos,
-                    vertex_idx,
-                } => {
-                    eprintln!(
-                        "\t- Face with ID {} contains a vertex ({}) with an out of range index {}",
-                        face_idx, vertex_pos, vertex_idx
-                    );
-                }
-            }
-        }
-
+        show_face_errors(&errors);
         return Err(anyhow!("Unable to fix mesh. Face errors correction is not implemented (yet)."));
     }
 

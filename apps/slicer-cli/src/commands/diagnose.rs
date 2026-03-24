@@ -43,55 +43,14 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
         detected_problems = true;
         critical_problems = true;
 
-        eprintln!("Vertex errors:");
-        for vertex_error in vertex_errors {
-            match vertex_error {
-                MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
-                    eprintln!(
-                        "\t- Vertex with ID {} has an infinite value for its coordinate '{}'",
-                        vertex_idx, coord
-                    );
-                }
-                MeshVertexError::NaNCoordinate { vertex_idx, coord } => {
-                    eprintln!(
-                        "\t- Vertex with ID {} has an NaN value for its coordinate '{}'",
-                        vertex_idx, coord
-                    );
-                }
-            }
-        }
+        show_vertex_errors(&vertex_errors);
     }
 
     if let Err(face_errors) = mesh.validate_faces() {
         detected_problems = true;
         critical_problems = true;
 
-        eprintln!("Face errors:");
-        for face_error in face_errors {
-            match face_error {
-                MeshFaceError::CollapsedEdge {
-                    face_idx,
-                    vertex_pos_a,
-                    vertex_pos_b,
-                    vertex_idx,
-                } => {
-                    eprintln!(
-                        "\t- Face with ID {} has 2 vertices ({}, {}) with same value (vertex id = {})",
-                        face_idx, vertex_pos_a, vertex_pos_b, vertex_idx
-                    );
-                }
-                MeshFaceError::OutOfRangeVertexIndex {
-                    face_idx,
-                    vertex_pos,
-                    vertex_idx,
-                } => {
-                    eprintln!(
-                        "\t- Face with ID {} contains a vertex ({}) with an out of range index {}",
-                        face_idx, vertex_pos, vertex_idx
-                    );
-                }
-            }
-        }
+        show_face_errors(&face_errors);
     }
 
     // If vertices or triangles are broken, it makes no sense to keep checking.
@@ -160,4 +119,53 @@ pub fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> 
     }
 
     Ok(())
+}
+
+pub fn show_vertex_errors(vertex_errors: &[MeshVertexError]) {
+    eprintln!("Vertex errors:");
+    for vertex_error in vertex_errors {
+        match vertex_error {
+            MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
+                eprintln!(
+                    "\t- Vertex with ID {} has an infinite value for its coordinate '{}'",
+                    vertex_idx, coord
+                );
+            }
+            MeshVertexError::NaNCoordinate { vertex_idx, coord } => {
+                eprintln!(
+                    "\t- Vertex with ID {} has an NaN value for its coordinate '{}'",
+                    vertex_idx, coord
+                );
+            }
+        }
+    }
+}
+
+pub fn show_face_errors(face_errors: &[MeshFaceError]) {
+    eprintln!("Face errors:");
+    for face_error in face_errors {
+        match face_error {
+            MeshFaceError::CollapsedEdge {
+                face_idx,
+                vertex_pos_a,
+                vertex_pos_b,
+                vertex_idx,
+            } => {
+                eprintln!(
+                    "\t- Face with ID {} has 2 vertices ({}, {}) with same value (vertex id = {})",
+                    face_idx, vertex_pos_a, vertex_pos_b, vertex_idx
+                );
+            }
+            MeshFaceError::OutOfRangeVertexIndex {
+                face_idx,
+                vertex_pos,
+                vertex_idx,
+            } => {
+                eprintln!(
+                    "\t- Face with ID {} contains a vertex ({}) with an out of range index {}",
+                    face_idx, vertex_pos, vertex_idx
+                );
+            }
+        }
+    }
 }
