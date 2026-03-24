@@ -1184,3 +1184,347 @@ mod indexed_mesh_validate_manifold_tests {
         assert!(has_boundary, "expected BoundaryEdge errors");
     }
 }
+
+#[cfg(test)]
+mod indexed_mesh_fix_faces_orientation_tests {
+    use super::*;
+
+    /// Builds a tetrahedron with consistent winding and correct normals.
+    ///
+    /// Vertices:
+    ///   0: (1, 1, 1)
+    ///   1: (1, -1, -1)
+    ///   2: (-1, 1, -1)
+    ///   3: (-1, -1, 1)
+    fn tetrahedron() -> IndexedMesh {
+        let vertices = vec![
+            Vertex::new([1.0, 1.0, 1.0]),
+            Vertex::new([1.0, -1.0, -1.0]),
+            Vertex::new([-1.0, 1.0, -1.0]),
+            Vertex::new([-1.0, -1.0, 1.0]),
+        ];
+        let v = &vertices;
+        let faces_data: [[u32; 3]; 4] = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
+
+        let faces = faces_data
+            .iter()
+            .map(|indices| {
+                let tri_verts = [
+                    v[indices[0] as usize],
+                    v[indices[1] as usize],
+                    v[indices[2] as usize],
+                ];
+                let normal =
+                    compute_normal_from_triangle_vertices(&tri_verts).expect("valid triangle");
+                IndexedTriangle {
+                    normal,
+                    vertices: *indices,
+                }
+            })
+            .collect();
+
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    #[test]
+    fn no_op_when_no_errors() {
+        let mut mesh = tetrahedron();
+        let original = mesh.clone();
+        mesh.fix_faces_orientation(&[], &[]).unwrap();
+        assert_eq!(mesh, original);
+    }
+
+    #[test]
+    fn fixes_single_flipped_face_vertices_and_normal() {
+        let mut mesh = tetrahedron();
+
+        // Flip face 0's winding but keep the original normal (now mismatched)
+        mesh.faces[0].vertices.reverse();
+
+        // Gather errors as the real workflow would
+        let manifold_errors = mesh.validate_manifold().unwrap_err();
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+
+        let expected = tetrahedron();
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors)
+            .unwrap();
+
+        // Face 0 vertices should be restored (reversed back)
+        assert_eq!(mesh.faces[0].vertices, expected.faces[0].vertices);
+
+        // Normal should match the correct normal
+        let n = mesh.faces[0].normal.0;
+        let en = expected.faces[0].normal.0;
+        for i in 0..3 {
+            assert!(
+                (n[i] - en[i]).abs() < 1e-5,
+                "normal component {i}: got {}, expected {}",
+                n[i],
+                en[i],
+            );
+        }
+    }
+
+    #[test]
+    fn fixes_flipped_face_with_wrong_normal_by_recomputing() {
+        let mut mesh = tetrahedron();
+
+        // Flip face 0's winding and give it a completely wrong normal
+        mesh.faces[0].vertices.reverse();
+        mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
+
+        let manifold_errors = mesh.validate_manifold().unwrap_err();
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+
+        let expected = tetrahedron();
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors)
+            .unwrap();
+
+        let n = mesh.faces[0].normal.0;
+        let en = expected.faces[0].normal.0;
+        for i in 0..3 {
+            assert!(
+                (n[i] - en[i]).abs() < 1e-5,
+                "normal component {i}: got {}, expected {}",
+                n[i],
+                en[i],
+            );
+        }
+    }
+
+    #[test]
+    fn fixes_wrong_normal_without_winding_error() {
+        let mut mesh = tetrahedron();
+
+        // Give face 0 a wrong normal but keep correct winding
+        mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
+
+        let manifold_errors: Vec<MeshManifoldError> = vec![];
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+
+        let expected = tetrahedron();
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors)
+            .unwrap();
+
+        let n = mesh.faces[0].normal.0;
+        let en = expected.faces[0].normal.0;
+        for i in 0..3 {
+            assert!(
+                (n[i] - en[i]).abs() < 1e-5,
+                "normal component {i}: got {}, expected {}",
+                n[i],
+                en[i],
+            );
+        }
+    }
+
+    #[test]
+    fn fixes_non_unit_norm_without_winding_error() {
+        let mut mesh = tetrahedron();
+
+        // Scale the normal to non-unit length
+        let correct = mesh.faces[1].normal.0;
+        mesh.faces[1].normal = Normal::new([correct[0] * 2.0, correct[1] * 2.0, correct[2] * 2.0]);
+
+        let manifold_errors: Vec<MeshManifoldError> = vec![];
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+
+        let expected = tetrahedron();
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors)
+            .unwrap();
+
+        let n = mesh.faces[1].normal.0;
+        let en = expected.faces[1].normal.0;
+        for i in 0..3 {
+            assert!(
+                (n[i] - en[i]).abs() < 1e-5,
+                "normal component {i}: got {}, expected {}",
+                n[i],
+                en[i],
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_modify_correct_faces() {
+        let mut mesh = tetrahedron();
+
+        // Flip only face 0's winding (keep original normal → mismatched)
+        mesh.faces[0].vertices.reverse();
+
+        let expected = tetrahedron();
+
+        let manifold_errors = mesh.validate_manifold().unwrap_err();
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors)
+            .unwrap();
+
+        // Faces 1, 2, 3 should be unchanged
+        for i in 1..4 {
+            assert_eq!(
+                mesh.faces[i].vertices, expected.faces[i].vertices,
+                "face {} vertices changed unexpectedly",
+                i
+            );
+            let n = mesh.faces[i].normal.0;
+            let en = expected.faces[i].normal.0;
+            for j in 0..3 {
+                assert!(
+                    (n[j] - en[j]).abs() < 1e-5,
+                    "face {} normal component {}: got {}, expected {}",
+                    i,
+                    j,
+                    n[j],
+                    en[j],
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn errors_when_face_has_more_than_3_winding_errors() {
+        let mut mesh = tetrahedron();
+
+        // Craft manifold errors where face 0 appears in 4 InconsistentWindingOrder entries
+        let manifold_errors = vec![
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 1),
+                face_indices: [0, 1],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (1, 2),
+                face_indices: [0, 2],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (2, 0),
+                face_indices: [0, 3],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 3),
+                face_indices: [0, 1],
+            },
+        ];
+
+        let result = mesh.fix_faces_orientation(&manifold_errors, &[]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("more than 3 winding order errors")
+        );
+    }
+
+    #[test]
+    fn errors_when_too_many_faces_need_flipping() {
+        // Build a mesh with 4 faces where 3 have winding issues (>= 4/2 = 2 threshold)
+        let mut mesh = tetrahedron();
+
+        // Create errors that mark faces 0, 1, 2 as needing flipping (each with 3 errors)
+        let manifold_errors = vec![
+            // Face 0: 3 errors
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 1),
+                face_indices: [0, 1],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (1, 2),
+                face_indices: [0, 2],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (2, 0),
+                face_indices: [0, 3],
+            },
+            // Face 1: 2 more errors (already has 1 from above)
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 3),
+                face_indices: [1, 2],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (3, 1),
+                face_indices: [1, 3],
+            },
+            // Face 2: 1 more error (already has 2 from above)
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (2, 3),
+                face_indices: [2, 3],
+            },
+        ];
+
+        let result = mesh.fix_faces_orientation(&manifold_errors, &[]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Too many flipped faces")
+        );
+    }
+
+    #[test]
+    fn ignores_non_winding_manifold_errors() {
+        let mut mesh = tetrahedron();
+        let original = mesh.clone();
+
+        let manifold_errors = vec![
+            MeshManifoldError::BoundaryEdge {
+                edge: (0, 1),
+                face_idx: 0,
+            },
+            MeshManifoldError::NonManifoldEdge {
+                edge: (1, 2),
+                face_indices: vec![0, 1, 2],
+            },
+        ];
+
+        mesh.fix_faces_orientation(&manifold_errors, &[]).unwrap();
+        assert_eq!(mesh, original);
+    }
+
+    #[test]
+    fn ignores_zero_area_triangle_normal_errors() {
+        let mut mesh = tetrahedron();
+        let original = mesh.clone();
+
+        let normal_errors = vec![MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }];
+
+        mesh.fix_faces_orientation(&[], &normal_errors).unwrap();
+        assert_eq!(mesh, original);
+    }
+
+    #[test]
+    fn face_with_one_winding_error_is_not_flipped() {
+        let mut mesh = tetrahedron();
+        let original = mesh.clone();
+
+        // Only 1 winding error for face 0 — below threshold of 2
+        let manifold_errors = vec![MeshManifoldError::InconsistentWindingOrder {
+            edge: (0, 1),
+            face_indices: [0, 1],
+        }];
+
+        mesh.fix_faces_orientation(&manifold_errors, &[]).unwrap();
+        assert_eq!(mesh.faces[0].vertices, original.faces[0].vertices);
+    }
+
+    #[test]
+    fn mesh_is_valid_after_fixing_flipped_face() {
+        let mut mesh = tetrahedron();
+
+        // Flip face 0's winding (keep original normal → mismatched)
+        mesh.faces[0].vertices.reverse();
+
+        let manifold_errors = mesh.validate_manifold().unwrap_err();
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors)
+            .unwrap();
+
+        // After fix, the mesh should pass all validations
+        assert!(mesh.validate_manifold().is_ok());
+        assert!(mesh.validate_normal_vectors().is_ok());
+    }
+}
