@@ -10,6 +10,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::errors::MeshFix;
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
@@ -38,6 +39,7 @@ pub(crate) fn fix(
     };
 
     let mut mesh = load_mesh(&source_path, source_format)?;
+    let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     if let Err(errors) = mesh.validate_vertices() {
         show_vertex_errors(&errors);
@@ -45,14 +47,15 @@ pub(crate) fn fix(
     }
 
     if let Err(errors) = mesh.validate_faces() {
-        let num_fixed_errors = mesh.fix_zero_length_edges(&errors);
+        let fixes = mesh.fix_zero_length_edges(&errors);
         // TODO: Fix other cases
 
-        if num_fixed_errors < errors.len() {
+        if fixes.len() < errors.len() {
             return Err(anyhow!(
                 "Unable to fix mesh. Face errors correction is not implemented (yet)."
             ));
         }
+        all_fixes.extend(fixes);
     }
 
     let normal_vector_errors = match mesh.validate_normal_vectors() {
@@ -64,9 +67,15 @@ pub(crate) fn fix(
         _ => vec![],
     };
 
-    // TODO: List applied changes
     if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
-        mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors)?;
+        let fixes = mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors)?;
+        all_fixes.extend(fixes);
+    }
+
+    if all_fixes.is_empty() {
+        println!("No fixes needed.");
+    } else {
+        show_applied_fixes(&all_fixes);
     }
 
     match target_format {
@@ -86,4 +95,21 @@ pub(crate) fn fix(
     }
 
     Ok(())
+}
+
+fn show_applied_fixes(fixes: &[MeshFix]) {
+    eprintln!("Applied fixes:");
+    for fix in fixes {
+        match fix {
+            MeshFix::RemovedZeroLengthEdgeFace { face_idx } => {
+                println!("\t- Removed face with ID '{}' (had zero-length edge)", face_idx);
+            }
+            MeshFix::FlippedFaceOrientation { face_idx } => {
+                println!("\t- Flipped orientation of face with ID '{}'", face_idx);
+            }
+            MeshFix::RecomputedNormal { face_idx } => {
+                println!("\t- Recomputed normal vector for face with ID '{}'", face_idx);
+            }
+        }
+    }
 }

@@ -16,7 +16,9 @@ use std::{
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 
-use crate::errors::{MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
+use crate::errors::{
+    MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
+};
 use crate::geometry::compute_normal_from_triangle_vertices;
 pub use crate::primitives::{Normal, Vector3D, Vertex};
 
@@ -304,7 +306,9 @@ impl IndexedMesh {
         &mut self,
         manifold_errors: &[MeshManifoldError],
         normal_vector_errors: &[MeshNormalVectorError],
-    ) -> Result<()> {
+    ) -> Result<Vec<MeshFix>> {
+        let mut fixes: Vec<MeshFix> = Vec::new();
+
         let mut possibly_flipped_faces: HashMap<usize, u8> = std::collections::HashMap::new();
         for error in manifold_errors {
             if let MeshManifoldError::InconsistentWindingOrder {
@@ -351,6 +355,9 @@ impl IndexedMesh {
             if *n_errors == 3 || *n_errors == 2 {
                 let face = &mut self.faces[*face_idx];
                 face.vertices.reverse();
+                fixes.push(MeshFix::FlippedFaceOrientation {
+                    face_idx: *face_idx,
+                });
 
                 if faces_with_wrong_normals.contains(face_idx) {
                     // We apply a more aggressive fix
@@ -360,6 +367,9 @@ impl IndexedMesh {
                         self.vertices[face.vertices[2] as usize],
                     ])?;
                     faces_with_wrong_normals.remove(face_idx);
+                    fixes.push(MeshFix::RecomputedNormal {
+                        face_idx: *face_idx,
+                    });
                 } else {
                     // Simple fix
                     face.normal.0 = face.normal.0.map(|c| -c);
@@ -368,19 +378,22 @@ impl IndexedMesh {
         }
 
         // We fix remaining normal vectors after having flipped faces
-        for face_idx in faces_with_wrong_normals {
-            let face = &mut self.faces[face_idx];
+        for face_idx in &faces_with_wrong_normals {
+            let face = &mut self.faces[*face_idx];
             face.normal = compute_normal_from_triangle_vertices(&[
                 self.vertices[face.vertices[0] as usize],
                 self.vertices[face.vertices[1] as usize],
                 self.vertices[face.vertices[2] as usize],
             ])?;
+            fixes.push(MeshFix::RecomputedNormal {
+                face_idx: *face_idx,
+            });
         }
 
-        Ok(())
+        Ok(fixes)
     }
 
-    pub fn fix_zero_length_edges(&mut self, face_errors: &[MeshFaceError]) -> usize {
+    pub fn fix_zero_length_edges(&mut self, face_errors: &[MeshFaceError]) -> Vec<MeshFix> {
         let mut faces_to_remove: Vec<usize> = face_errors
             .iter()
             .filter_map(|e| {
@@ -398,7 +411,11 @@ impl IndexedMesh {
             })
             .collect();
 
-        let num_fixed_errors = faces_to_remove.len();
+        let fixes: Vec<MeshFix> = faces_to_remove
+            .iter()
+            .map(|&face_idx| MeshFix::RemovedZeroLengthEdgeFace { face_idx })
+            .collect();
+
         faces_to_remove.sort();
         faces_to_remove.dedup();
 
@@ -408,7 +425,7 @@ impl IndexedMesh {
             self.faces.remove(*face_idx);
         }
 
-        num_fixed_errors
+        fixes
     }
 }
 

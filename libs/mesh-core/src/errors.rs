@@ -39,6 +39,16 @@ pub enum MeshFaceError {
 }
 
 #[derive(Debug)]
+pub enum MeshFix {
+    /// A face was removed because it had a zero-length edge
+    RemovedZeroLengthEdgeFace { face_idx: usize },
+    /// A face's winding order was flipped (vertices reversed)
+    FlippedFaceOrientation { face_idx: usize },
+    /// A face's normal vector was recomputed from its vertices
+    RecomputedNormal { face_idx: usize },
+}
+
+#[derive(Debug)]
 pub enum MeshManifoldError {
     EmptyMesh,
     /// An edge that belongs to only one face (the mesh has a boundary).
