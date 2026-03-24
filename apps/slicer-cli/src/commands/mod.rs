@@ -8,3 +8,4 @@
 pub(crate) mod convert;
 pub(crate) mod diagnose;
 pub(crate) mod fix;
+mod mesh_loader;

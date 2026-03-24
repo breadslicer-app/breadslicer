@@ -11,9 +11,10 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
-use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb, write_stla, write_stlb};
+use sc_mesh_formats::stl::{write_stla, write_stlb};
 
 use crate::commands::diagnose::{show_face_errors, show_vertex_errors};
+use crate::commands::mesh_loader::load_mesh;
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn fix(
@@ -31,24 +32,12 @@ pub(crate) fn fix(
         ));
     }
 
-    let source_format = match source_format {
-        Some(f) => f,
-        None => infer_mesh_file_format_from_extension(&source_path)?,
-    };
     let target_format = match target_format {
         Some(f) => f,
         None => infer_mesh_file_format_from_extension(&target_path)?,
     };
 
-    let mut source_file = File::open(&source_path)?;
-
-    let mut mesh = match source_format {
-        SourceMeshFileType::Stl => read_stl(&mut source_file)?,
-        SourceMeshFileType::StlAscii => read_stla(&mut source_file)?,
-        SourceMeshFileType::StlBin => read_stlb(&mut source_file)?,
-        _ => todo!("Not implemented yet!"),
-    };
-    drop(source_file);
+    let mut mesh = load_mesh(&source_path, source_format)?;
 
     if let Err(errors) = mesh.validate_vertices() {
         show_vertex_errors(&errors);
@@ -58,7 +47,9 @@ pub(crate) fn fix(
     if let Err(errors) = mesh.validate_faces() {
         // TODO: Fix faces
         show_face_errors(&errors);
-        return Err(anyhow!("Unable to fix mesh. Face errors correction is not implemented (yet)."));
+        return Err(anyhow!(
+            "Unable to fix mesh. Face errors correction is not implemented (yet)."
+        ));
     }
 
     let normal_vector_errors = match mesh.validate_normal_vectors() {

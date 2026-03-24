@@ -5,35 +5,19 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-use std::ffi::OsString;
-use std::fs::File;
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
-use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
-use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb};
+use sc_mesh_formats::filetypes::SourceMeshFileType;
 
-use crate::filesystem::validate_sourcefile_path;
+use crate::{commands::mesh_loader::load_mesh, filesystem::validate_sourcefile_path};
 
 pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
-    let source_format = match source_format {
-        Some(f) => f,
-        None => infer_mesh_file_format_from_extension(&source_path)?,
-    };
-
-    let mut source_file = File::open(&source_path)?;
-
-    let mesh = match source_format {
-        SourceMeshFileType::Stl => read_stl(&mut source_file)?,
-        SourceMeshFileType::StlAscii => read_stla(&mut source_file)?,
-        SourceMeshFileType::StlBin => read_stlb(&mut source_file)?,
-        _ => todo!("Not implemented yet!"),
-    };
-    drop(source_file);
+    let mesh = load_mesh(&source_path, source_format)?;
 
     let mut detected_problems = false;
     let mut critical_problems = false;
