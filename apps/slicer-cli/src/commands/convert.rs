@@ -15,7 +15,7 @@ use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb, write_stla, write_stl
 
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
-pub fn convert(
+pub(crate) fn convert(
     source: OsString,
     source_format: Option<SourceMeshFileType>,
     target: OsString,

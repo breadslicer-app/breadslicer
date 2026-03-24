@@ -16,7 +16,7 @@ use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb, write_stla, write_stl
 use crate::commands::diagnose::{show_face_errors, show_vertex_errors};
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
-pub fn fix(
+pub(crate) fn fix(
     source: OsString,
     source_format: Option<SourceMeshFileType>,
     target: OsString,
