@@ -45,3 +45,104 @@ pub fn compute_normal_from_triangle_vertices(vertices: &[Vertex; 3]) -> Result<N
 
     Ok(Normal::new(cross))
 }
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+    use crate::primitives::Vertex;
+
+    fn v(x: f32, y: f32, z: f32) -> Vertex {
+        Vertex::new([x, y, z])
+    }
+
+    fn assert_normal_approx(result: &Normal, expected: [f32; 3]) {
+        let n = result.0;
+        for i in 0..3 {
+            assert!(
+                (n[i] - expected[i]).abs() < 1e-5,
+                "component {i}: got {}, expected {}",
+                n[i],
+                expected[i],
+            );
+        }
+    }
+
+    #[test]
+    fn xy_plane_triangle_gives_z_normal() {
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn xz_plane_triangle_gives_negative_y_normal() {
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 0.0, 1.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, -1.0, 0.0]);
+    }
+
+    #[test]
+    fn yz_plane_triangle_gives_x_normal() {
+        let verts = [v(0.0, 0.0, 0.0), v(0.0, 1.0, 0.0), v(0.0, 0.0, 1.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn reversed_winding_flips_normal() {
+        let verts = [v(0.0, 0.0, 0.0), v(0.0, 1.0, 0.0), v(1.0, 0.0, 0.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, 0.0, -1.0]);
+    }
+
+    #[test]
+    fn translated_triangle_same_normal() {
+        let verts = [v(5.0, 5.0, 5.0), v(6.0, 5.0, 5.0), v(5.0, 6.0, 5.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn result_is_unit_length() {
+        let verts = [v(0.0, 0.0, 0.0), v(3.0, 0.0, 0.0), v(0.0, 4.0, 0.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        let n = normal.0;
+        let mag = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        assert!((mag - 1.0).abs() < 1e-5, "magnitude was {mag}");
+    }
+
+    #[test]
+    fn degenerate_collinear_points_returns_error() {
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(2.0, 0.0, 0.0)];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
+    fn degenerate_duplicate_vertices_returns_error() {
+        let verts = [v(1.0, 2.0, 3.0), v(1.0, 2.0, 3.0), v(1.0, 2.0, 3.0)];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
+    fn degenerate_two_identical_vertices_returns_error() {
+        let verts = [v(0.0, 0.0, 0.0), v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
+    fn nan_coordinate_returns_error() {
+        let verts = [v(f32::NAN, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0)];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
+    fn diagonal_triangle_normal_is_normalized() {
+        let verts = [v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0), v(0.0, 0.0, 1.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        let n = normal.0;
+        let expected = 1.0 / 3.0_f32.sqrt();
+        assert_normal_approx(&normal, [expected, expected, expected]);
+        let mag = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        assert!((mag - 1.0).abs() < 1e-5);
+    }
+}
