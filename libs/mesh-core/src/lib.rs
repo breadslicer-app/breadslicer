@@ -8,12 +8,16 @@ pub mod geometry;
 mod primitives;
 
 use core::f32;
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 
 use crate::errors::{MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
+use crate::geometry::compute_normal_from_triangle_vertices;
 pub use crate::primitives::{Normal, Vector3D, Vertex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -295,13 +299,93 @@ impl IndexedMesh {
             Err(errors)
         }
     }
+
+    pub fn fix_faces_orientation(
+        &mut self,
+        manifold_errors: &[MeshManifoldError],
+        normal_vector_errors: &[MeshNormalVectorError],
+    ) -> Result<()> {
+        let mut possibly_flipped_faces: HashMap<usize, u8> = std::collections::HashMap::new();
+        for error in manifold_errors {
+            if let MeshManifoldError::InconsistentWindingOrder {
+                edge: _,
+                face_indices,
+            } = error
+            {
+                *possibly_flipped_faces.entry(face_indices[0]).or_insert(0) += 1;
+                *possibly_flipped_faces.entry(face_indices[1]).or_insert(0) += 1;
+            }
+        }
+
+        let mut faces_with_wrong_normals: HashSet<usize> = std::collections::HashSet::new();
+        for error in normal_vector_errors {
+            match error {
+                MeshNormalVectorError::ExpectationMismatch { face_idx }
+                | MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
+                    faces_with_wrong_normals.insert(*face_idx);
+                }
+                _ => {}
+            }
+        }
+
+        let mut num_flipped_faces: u32 = 0;
+
+        // We do a first counting round
+        for (face_idx, n_errors) in &possibly_flipped_faces {
+            if *n_errors > 3 {
+                return Err(anyhow!(
+                    "Face with ID {} has more than 3 winding order errors",
+                    face_idx
+                ));
+            } else if *n_errors == 3 || *n_errors == 2 {
+                num_flipped_faces += 1;
+            }
+        }
+
+        let flipped_threshold = (self.faces.len() / 2) as u32;
+        if num_flipped_faces >= flipped_threshold {
+            return Err(anyhow!("Too many flipped faces"));
+        }
+
+        for (face_idx, n_errors) in &possibly_flipped_faces {
+            if *n_errors == 3 || *n_errors == 2 {
+                let face = &mut self.faces[*face_idx];
+                face.vertices.reverse();
+
+                if faces_with_wrong_normals.contains(face_idx) {
+                    // We apply a more aggressive fix
+                    face.normal = compute_normal_from_triangle_vertices(&[
+                        self.vertices[face.vertices[0] as usize],
+                        self.vertices[face.vertices[1] as usize],
+                        self.vertices[face.vertices[2] as usize],
+                    ])?;
+                    faces_with_wrong_normals.remove(face_idx);
+                } else {
+                    // Simple fix
+                    face.normal.0 = face.normal.0.map(|c| -c);
+                }
+            }
+        }
+
+        // We fix remaining normal vectors after having flipped faces
+        for face_idx in faces_with_wrong_normals {
+            let face = &mut self.faces[face_idx];
+            face.normal = compute_normal_from_triangle_vertices(&[
+                self.vertices[face.vertices[0] as usize],
+                self.vertices[face.vertices[1] as usize],
+                self.vertices[face.vertices[2] as usize],
+            ])?;
+        }
+
+        Ok(())
+    }
 }
 
 pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
     fn as_indexed_mesh(&mut self, meta: Option<MeshMetadata>) -> Result<IndexedMesh> {
-        let mut vertices = Vec::new();
-        let mut triangles = Vec::new();
-        let mut vertex_to_index = std::collections::HashMap::new();
+        let mut vertices: Vec<Vertex> = Vec::new();
+        let mut triangles: Vec<IndexedTriangle> = Vec::new();
+        let mut vertex_to_index: HashMap<[u32; 3], usize> = std::collections::HashMap::new();
 
         // Do not reserve memory in those structures based on size_hint, because we might have just
         // read bogus data.
