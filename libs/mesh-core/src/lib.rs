@@ -123,7 +123,7 @@ impl IndexedMesh {
 
             // Checking for collapsed edges
             if f.vertices[0] == f.vertices[1] {
-                errors.push(MeshFaceError::CollapsedEdge {
+                errors.push(MeshFaceError::ZeroLengthEdge {
                     face_idx: idx,
                     vertex_pos_a: 0,
                     vertex_pos_b: 1,
@@ -131,7 +131,7 @@ impl IndexedMesh {
                 });
             }
             if f.vertices[1] == f.vertices[2] {
-                errors.push(MeshFaceError::CollapsedEdge {
+                errors.push(MeshFaceError::ZeroLengthEdge {
                     face_idx: idx,
                     vertex_pos_a: 1,
                     vertex_pos_b: 2,
@@ -139,7 +139,7 @@ impl IndexedMesh {
                 });
             }
             if f.vertices[2] == f.vertices[0] {
-                errors.push(MeshFaceError::CollapsedEdge {
+                errors.push(MeshFaceError::ZeroLengthEdge {
                     face_idx: idx,
                     vertex_pos_a: 2,
                     vertex_pos_b: 0,
@@ -378,6 +378,37 @@ impl IndexedMesh {
         }
 
         Ok(())
+    }
+
+    pub fn fix_zero_length_edges(&mut self, face_errors: &[MeshFaceError]) -> usize {
+        let mut faces_to_remove: Vec<usize> = face_errors
+            .iter()
+            .filter_map(|e| {
+                if let MeshFaceError::ZeroLengthEdge {
+                    face_idx,
+                    vertex_pos_a: _,
+                    vertex_pos_b: _,
+                    vertex_idx: _,
+                } = e
+                {
+                    Some(*face_idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let num_fixed_errors = faces_to_remove.len();
+        faces_to_remove.sort();
+        faces_to_remove.dedup();
+
+        for face_idx in faces_to_remove.iter().rev() {
+            // Note: `remove` is O(n), we could use `remove_swap` (O(1)), but
+            //       it can mess up the ordering of our faces.
+            self.faces.remove(*face_idx);
+        }
+
+        num_fixed_errors
     }
 }
 
@@ -677,7 +708,7 @@ mod indexed_mesh_validate_faces_tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             errors[0],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 face_idx: 0,
                 vertex_pos_a: 0,
                 vertex_pos_b: 1,
@@ -693,7 +724,7 @@ mod indexed_mesh_validate_faces_tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             errors[0],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 face_idx: 0,
                 vertex_pos_a: 1,
                 vertex_pos_b: 2,
@@ -709,7 +740,7 @@ mod indexed_mesh_validate_faces_tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             errors[0],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 face_idx: 0,
                 vertex_pos_a: 2,
                 vertex_pos_b: 0,
@@ -726,7 +757,7 @@ mod indexed_mesh_validate_faces_tests {
         assert_eq!(errors.len(), 3);
         assert!(matches!(
             errors[0],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 vertex_pos_a: 0,
                 vertex_pos_b: 1,
                 ..
@@ -734,7 +765,7 @@ mod indexed_mesh_validate_faces_tests {
         ));
         assert!(matches!(
             errors[1],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 vertex_pos_a: 1,
                 vertex_pos_b: 2,
                 ..
@@ -742,7 +773,7 @@ mod indexed_mesh_validate_faces_tests {
         ));
         assert!(matches!(
             errors[2],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 vertex_pos_a: 2,
                 vertex_pos_b: 0,
                 ..
@@ -761,7 +792,7 @@ mod indexed_mesh_validate_faces_tests {
             .count();
         let collapsed_count = errors
             .iter()
-            .filter(|e| matches!(e, MeshFaceError::CollapsedEdge { .. }))
+            .filter(|e| matches!(e, MeshFaceError::ZeroLengthEdge { .. }))
             .count();
         assert_eq!(out_of_range_count, 1);
         assert_eq!(collapsed_count, 1);
@@ -780,7 +811,7 @@ mod indexed_mesh_validate_faces_tests {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             errors[0],
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 face_idx: 1,
                 vertex_pos_a: 0,
                 vertex_pos_b: 1,

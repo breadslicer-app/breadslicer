@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
-use crate::commands::diagnose::{show_face_errors, show_vertex_errors};
+use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::load_mesh;
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -45,11 +45,14 @@ pub(crate) fn fix(
     }
 
     if let Err(errors) = mesh.validate_faces() {
-        // TODO: Fix faces
-        show_face_errors(&errors);
-        return Err(anyhow!(
-            "Unable to fix mesh. Face errors correction is not implemented (yet)."
-        ));
+        let num_fixed_errors = mesh.fix_zero_length_edges(&errors);
+        // TODO: Fix other cases
+
+        if num_fixed_errors < errors.len() {
+            return Err(anyhow!(
+                "Unable to fix mesh. Face errors correction is not implemented (yet)."
+            ));
+        }
     }
 
     let normal_vector_errors = match mesh.validate_normal_vectors() {

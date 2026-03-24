@@ -26,7 +26,7 @@ pub enum MeshFaceError {
         /// Value of the problematic vertex index
         vertex_idx: usize,
     },
-    CollapsedEdge {
+    ZeroLengthEdge {
         /// Index for the problematic face
         face_idx: usize,
         /// Position of one of the "first" vertex of the collapsed edge

@@ -79,7 +79,7 @@ pub(crate) fn show_face_errors(face_errors: &[MeshFaceError]) {
     eprintln!("Face errors:");
     for face_error in face_errors {
         match face_error {
-            MeshFaceError::CollapsedEdge {
+            MeshFaceError::ZeroLengthEdge {
                 face_idx,
                 vertex_pos_a,
                 vertex_pos_b,
