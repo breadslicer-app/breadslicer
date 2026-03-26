@@ -7,5 +7,6 @@
  */
 
 pub mod filetypes;
+pub mod messages;
 pub mod obj;
 pub mod stl;

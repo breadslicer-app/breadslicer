@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
-use crate::commands::mesh_loader::load_mesh;
+use crate::commands::mesh_loader::{display_warnings, load_mesh};
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn convert(
@@ -49,7 +49,10 @@ pub(crate) fn convert(
         };
     }
 
-    let source_mesh = load_mesh(&source_path, Some(source_format))?;
+    let mut warnings = vec![];
+    let source_mesh = load_mesh(&source_path, Some(source_format), &mut warnings)?;
+
+    display_warnings(&warnings);
 
     match target_format {
         SourceMeshFileType::Stl => {

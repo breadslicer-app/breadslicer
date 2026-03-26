@@ -13,11 +13,15 @@ use sc_mesh_core::errors::{
 };
 use sc_mesh_formats::filetypes::SourceMeshFileType;
 
-use crate::{commands::mesh_loader::load_mesh, filesystem::validate_sourcefile_path};
+use crate::commands::mesh_loader::{display_warnings, load_mesh};
+use crate::filesystem::validate_sourcefile_path;
 
 pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
-    let mesh = load_mesh(&source_path, source_format)?;
+    let mut warnings = vec![];
+    let mesh = load_mesh(&source_path, source_format, &mut warnings)?;
+
+    display_warnings(&warnings);
 
     let mut detected_problems = false;
     let mut critical_problems = false;

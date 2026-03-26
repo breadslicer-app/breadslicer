@@ -3,21 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::io::BufRead;
+use std::io::{BufRead, BufReader};
 
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
-pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
+use crate::messages::{LoadMeshWarning, LoadObjWarning};
+
+pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<IndexedMesh>
+where
+    R: std::io::Read + std::io::Seek,
+{
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut faces: Vec<IndexedTriangle> = Vec::new();
     let mut name: Option<String> = None;
     let mut header_comment: Option<String> = None;
     let mut header_ended = false;
 
-    for (line_num, line_result) in read.lines().enumerate() {
+    let buffer = BufReader::new(&mut *read);
+
+    for (line_num, line_result) in buffer.lines().enumerate() {
         let line = line_result?;
         let line = line.trim();
 
@@ -33,6 +40,9 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
         match first_token {
             "#" => {
                 if header_ended {
+                    warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedComment {
+                        line: line_num + 1,
+                    }));
                     continue;
                 }
 
@@ -113,8 +123,46 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
                     });
                 }
             }
-            // Silently ignore unsupported directives
-            "vt" | "vn" | "g" | "s" | "usemtl" | "mtllib" => {}
+            "vt" => {
+                warnings.push(LoadMeshWarning::Obj(
+                    LoadObjWarning::SkippedTextureCoordinates { line: line_num + 1 },
+                ));
+            }
+            "vn" => {
+                warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal {
+                    line: line_num + 1,
+                }));
+            }
+            "g" => {
+                let name = line.strip_prefix("g").unwrap_or("").trim().to_string();
+                warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedGroup {
+                    line: line_num + 1,
+                    name,
+                }));
+            }
+            "s" => {
+                warnings.push(LoadMeshWarning::Obj(
+                    LoadObjWarning::SkippedSmoothingGroup { line: line_num + 1 },
+                ));
+            }
+            "usemtl" => {
+                let material = line.strip_prefix("usemtl").unwrap_or("").trim().to_string();
+                warnings.push(LoadMeshWarning::Obj(
+                    LoadObjWarning::SkippedMaterialReference {
+                        line: line_num + 1,
+                        material,
+                    },
+                ));
+            }
+            "mtllib" => {
+                let path = line.strip_prefix("mtllib").unwrap_or("").trim().to_string();
+                warnings.push(LoadMeshWarning::Obj(
+                    LoadObjWarning::SkippedMaterialLibrary {
+                        line: line_num + 1,
+                        path,
+                    },
+                ));
+            }
             _ => {
                 return Err(anyhow!(
                     "line {}: unrecognized directive '{}'",
@@ -123,6 +171,13 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
                 ));
             }
         }
+    }
+
+    if vertices.is_empty() {
+        warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoVertices));
+    }
+    if faces.is_empty() {
+        warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoFaces));
     }
 
     let meta = if name.is_some() || header_comment.is_some() {
@@ -206,15 +261,17 @@ fn parse_face_vertex_index(token: &str, vertex_count: usize, line_num: usize) ->
 
 #[cfg(test)]
 mod tests {
-    use std::io::BufReader;
+    use std::io::Cursor;
 
     use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};
 
-    use super::read_obj;
+    use super::{LoadMeshWarning, LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(s: &str) -> anyhow::Result<IndexedMesh> {
-        let mut reader = BufReader::new(s.as_bytes());
-        read_obj(&mut reader)
+    fn read_obj_from_str(s: &str) -> anyhow::Result<(IndexedMesh, Vec<LoadMeshWarning>)> {
+        let mut reader = Cursor::new(s.as_bytes());
+        let mut warnings = Vec::new();
+        let mesh = read_obj(&mut reader, &mut warnings)?;
+        Ok((mesh, warnings))
     }
 
     #[test]
@@ -225,8 +282,9 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert!(warnings.is_empty());
         assert_eq!(mesh.meta, None);
         assert_eq!(mesh.vertices.len(), 3);
         assert_eq!(mesh.faces.len(), 1);
@@ -248,8 +306,9 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert!(warnings.is_empty());
         assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
@@ -269,8 +328,9 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert!(warnings.is_empty());
         assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
@@ -290,8 +350,14 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert_eq!(
+            warnings,
+            vec![LoadMeshWarning::Obj(LoadObjWarning::SkippedComment {
+                line: 3
+            })]
+        );
         assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
@@ -311,8 +377,9 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert!(warnings.is_empty());
         assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
@@ -333,7 +400,15 @@ vt 1.0 0.0
 vt 0.0 1.0
 f 1/1 2/2 3/3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        assert_eq!(
+            warnings,
+            vec![
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 4 }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 5 }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 6 }),
+            ]
+        );
         assert_eq!(mesh.faces.len(), 1);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
     }
@@ -348,7 +423,14 @@ vt 0.0 0.0
 vn 0.0 0.0 1.0
 f 1/1/1 2/1/1 3/1/1
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        assert_eq!(
+            warnings,
+            vec![
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 4 }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal { line: 5 }),
+            ]
+        );
         assert_eq!(mesh.faces.len(), 1);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
     }
@@ -362,7 +444,13 @@ v 0.0 1.0 0.0
 vn 0.0 0.0 1.0
 f 1//1 2//1 3//1
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        assert_eq!(
+            warnings,
+            vec![LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal {
+                line: 4
+            })]
+        );
         assert_eq!(mesh.faces.len(), 1);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
     }
@@ -376,8 +464,9 @@ v 1.0 1.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3 4
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert!(warnings.is_empty());
         assert_eq!(mesh.vertices.len(), 4);
         assert_eq!(mesh.faces.len(), 2);
 
@@ -395,13 +484,14 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f -3 -2 -1
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        assert!(warnings.is_empty());
         assert_eq!(mesh.faces.len(), 1);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
     }
 
     #[test]
-    fn unsupported_directives_ignored() {
+    fn unsupported_directives_warned() {
         let obj = "\
 mtllib material.mtl
 o Cube
@@ -415,14 +505,41 @@ s off
 g group1
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        assert_eq!(
+            warnings,
+            vec![
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedMaterialLibrary {
+                    line: 1,
+                    path: "material.mtl".into()
+                }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 6 }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal { line: 7 }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedMaterialReference {
+                    line: 8,
+                    material: "DefaultMaterial".into()
+                }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedSmoothingGroup { line: 9 }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedGroup {
+                    line: 10,
+                    name: "group1".into()
+                }),
+            ]
+        );
         assert_eq!(mesh.vertices.len(), 3);
         assert_eq!(mesh.faces.len(), 1);
     }
 
     #[test]
     fn empty_file() {
-        let mesh = read_obj_from_str("").unwrap();
+        let (mesh, warnings) = read_obj_from_str("").unwrap();
+        assert_eq!(
+            warnings,
+            vec![
+                LoadMeshWarning::Obj(LoadObjWarning::NoVertices),
+                LoadMeshWarning::Obj(LoadObjWarning::NoFaces)
+            ]
+        );
         assert_eq!(mesh.meta, None);
         assert_eq!(mesh.vertices.len(), 0);
         assert_eq!(mesh.faces.len(), 0);
@@ -448,7 +565,7 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, _) = read_obj_from_str(obj).unwrap();
         assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
@@ -460,7 +577,7 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, _) = read_obj_from_str(obj).unwrap();
         assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
@@ -512,8 +629,9 @@ v 1.0 1.0 0.0
 f 1 2 3
 f 2 4 3
 ";
-        let mesh = read_obj_from_str(obj).unwrap();
+        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
 
+        assert!(warnings.is_empty());
         assert_eq!(mesh.vertices.len(), 4);
         assert_eq!(mesh.faces.len(), 2);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);

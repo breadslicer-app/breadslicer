@@ -15,7 +15,7 @@ use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
 use crate::commands::diagnose::show_vertex_errors;
-use crate::commands::mesh_loader::load_mesh;
+use crate::commands::mesh_loader::{display_warnings, load_mesh};
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn fix(
@@ -38,13 +38,17 @@ pub(crate) fn fix(
         None => infer_mesh_file_format_from_extension(&target_path)?,
     };
 
-    let mut mesh = load_mesh(&source_path, source_format)?;
-    let mut all_fixes: Vec<MeshFix> = Vec::new();
+    let mut warnings = vec![];
+    let mut mesh = load_mesh(&source_path, source_format, &mut warnings)?;
 
+    display_warnings(&warnings);
+    
     if let Err(errors) = mesh.validate_vertices() {
         show_vertex_errors(&errors);
         return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
     }
+
+    let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     if let Err(errors) = mesh.validate_faces() {
         let fixes = mesh.fix_zero_length_edges(&errors);
