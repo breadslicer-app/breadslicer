@@ -16,30 +16,14 @@ use std::{
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 
-use crate::errors::{
-    MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
-};
+use crate::errors::{ MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
 use crate::geometry::compute_normal_from_triangle_vertices;
-pub use crate::primitives::{Normal, Vector3D, Vertex};
+pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshMetadata {
     pub name: Option<String>,
     pub header_comment: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Triangle {
-    pub normal: Normal,
-    pub vertices: [Vertex; 3],
-}
-
-/// Struct that represents a triangle in the context of a mesh, in which its
-/// vertices are indexed.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct IndexedTriangle {
-    pub normal: Normal,
-    pub vertices: [u32; 3],
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -28,3 +28,17 @@ impl<F: Copy + PartialEq + PartialOrd> std::ops::Index<usize> for Vector3D<F> {
 
 pub type Vertex = Vector3D<f32>;
 pub type Normal = Vector3D<f32>;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Triangle {
+    pub normal: Normal,
+    pub vertices: [Vertex; 3],
+}
+
+/// Struct that represents a triangle in the context of a mesh, in which its
+/// vertices are indexed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IndexedTriangle {
+    pub normal: Normal,
+    pub vertices: [u32; 3],
+}
