@@ -58,7 +58,7 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
                 header_ended = true;
                 let coords: Vec<&str> = line.split_whitespace().skip(1).collect();
                 let num_coords = coords.len();
-                if num_coords < 3 || num_coords > 4 {
+                if !(3..=4).contains(&num_coords) {
                     return Err(anyhow!(
                         "line {}: vertex requires 3 or 4 coordinates, got {}",
                         line_num + 1,
