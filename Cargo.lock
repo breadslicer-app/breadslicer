@@ -94,6 +94,7 @@ name = "sc-mesh-formats"
 version = "0.0.6"
 dependencies = [
  "anyhow",
+ "float-cmp",
  "regex",
  "sc-mesh-core",
  "serde",

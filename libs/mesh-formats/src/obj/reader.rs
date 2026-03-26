@@ -6,6 +6,7 @@
 use std::io::BufRead;
 
 use anyhow::{Result, anyhow};
+use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
@@ -56,9 +57,10 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
             "v" => {
                 header_ended = true;
                 let coords: Vec<&str> = line.split_whitespace().skip(1).collect();
-                if coords.len() < 3 {
+                let num_coords = coords.len();
+                if num_coords < 3 || num_coords > 4 {
                     return Err(anyhow!(
-                        "line {}: vertex requires at least 3 coordinates, got {}",
+                        "line {}: vertex requires 3 or 4 coordinates, got {}",
                         line_num + 1,
                         coords.len()
                     ));
@@ -66,7 +68,18 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
                 let x = parse_f32(coords[0], line_num)?;
                 let y = parse_f32(coords[1], line_num)?;
                 let z = parse_f32(coords[2], line_num)?;
-                vertices.push(Vertex::new([x, y, z]));
+                if num_coords == 4 {
+                    let w = parse_f32(coords[3], line_num)?;
+                    if approx_eq!(f32, w, 0.0, ulps = 2) {
+                        return Err(anyhow!(
+                            "line {}: vertex w coordinate must not be zero",
+                            line_num + 1
+                        ));
+                    }
+                    vertices.push(Vertex::new([x / w, y / w, z / w]));
+                } else {
+                    vertices.push(Vertex::new([x, y, z]));
+                }
             }
             "f" => {
                 header_ended = true;
@@ -412,6 +425,42 @@ f 1 2 3
     #[test]
     fn too_few_vertex_coords_is_error() {
         let obj = "v 1.0 2.0\n";
+        assert!(read_obj_from_str(obj).is_err());
+    }
+
+    #[test]
+    fn too_many_vertex_coords_is_error() {
+        let obj = "v 1.0 2.0 3.0 1.0 5.0\n";
+        assert!(read_obj_from_str(obj).is_err());
+    }
+
+    #[test]
+    fn vertex_with_w_coordinate() {
+        let obj = "\
+v 2.0 4.0 6.0 2.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+";
+        let mesh = read_obj_from_str(obj).unwrap();
+        assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn vertex_with_w_one_is_identity() {
+        let obj = "\
+v 1.0 2.0 3.0 1.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+";
+        let mesh = read_obj_from_str(obj).unwrap();
+        assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn vertex_with_w_zero_is_error() {
+        let obj = "v 1.0 2.0 3.0 0.0\n";
         assert!(read_obj_from_str(obj).is_err());
     }
 

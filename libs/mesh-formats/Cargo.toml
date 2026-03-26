@@ -11,6 +11,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
 anyhow.workspace = true
+float-cmp.workspace = true
 sc-mesh-core.workspace = true
 
 regex = { version = "1.12.3", default-features = false }
