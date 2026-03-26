@@ -23,8 +23,12 @@ to represent and exchange mesh data.
 
 **Validation methods:**
 
-All validators return `Ok(())` on success, or a `Vec` of specific error enums
-describing every issue found:
+We have validation methods to ensure that a given mesh is "correct" in the
+context of 3D printing (which has stronger constraints than general 3D
+applications).
+
+All validators return `Ok(())` on success, or a `Err(Vec)` of specific error
+enums describing every issue found:
 
 - `validate_vertices()`: detects `NaN` and `Infinity` coordinates.
 - `validate_faces()`: detects out-of-range vertex indices and zero-length edges.
@@ -37,10 +41,11 @@ describing every issue found:
 
 - `fix_faces_orientation(&mut self, manifold_errors, normal_vector_errors)`:
   flips winding order for incorrectly oriented faces and recomputes their
-  normals. Accepts error slices from `validate_manifold` and
+  normals.
+  Accepts error slices returned by `validate_manifold` and
   `validate_normal_vectors`.
 - `fix_zero_length_edges(&mut self, face_errors)`: removes faces that have
-  collapsed (zero-length) edges. Accepts the error slice from `validate_faces`.
+  zero-length edges. Accepts the error slice returned by `validate_faces`.
 
 Both return a `Vec<MeshFix>` listing every repair applied.
 
