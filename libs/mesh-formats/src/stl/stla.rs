@@ -68,8 +68,9 @@ impl<'a> AsciiStlReader<'a> {
                     }
                     None => None,
                 },
+                ..Default::default()
             }),
-            None => Ok(MeshMetadata { name: None }),
+            None => Ok(MeshMetadata::default()),
         }
     }
 
@@ -273,14 +274,15 @@ endsolid";
         let metadata_1 = AsciiStlReader::extract_metadata(&mut reader_1).unwrap();
         assert_eq!(
             MeshMetadata {
-                name: Some("foobar".into())
+                name: Some("foobar".into()),
+                ..Default::default()
             },
             metadata_1
         );
 
         let mut reader_2 = std::io::Cursor::new(STL_2.clone());
         let metadata_2 = AsciiStlReader::extract_metadata(&mut reader_2).unwrap();
-        assert_eq!(MeshMetadata { name: None }, metadata_2);
+        assert_eq!(MeshMetadata::default(), metadata_2);
     }
 
     #[test]

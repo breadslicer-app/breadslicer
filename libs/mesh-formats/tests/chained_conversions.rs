@@ -23,7 +23,7 @@ fn get_mesh_without_meta() -> IndexedMesh {
 
 fn get_unnamed_mesh() -> IndexedMesh {
     IndexedMesh {
-        meta: Some(MeshMetadata { name: None }),
+        meta: Some(MeshMetadata::default()),
         vertices: vec![
             Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
             Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
@@ -40,6 +40,7 @@ fn get_named_mesh() -> IndexedMesh {
     IndexedMesh {
         meta: Some(MeshMetadata {
             name: Some(String::from("my_mesh")),
+            ..Default::default()
         }),
         vertices: vec![
             Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),

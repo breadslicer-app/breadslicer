@@ -46,11 +46,12 @@ impl<'a> BinaryStlReader<'a> {
             return Err(anyhow!("Mesh name is not ASCII"));
         }
         if mesh_name.is_empty() {
-            return Ok(MeshMetadata { name: None });
+            return Ok(MeshMetadata::default());
         }
 
         Ok(MeshMetadata {
             name: Some(mesh_name.into()),
+            ..Default::default()
         })
     }
 

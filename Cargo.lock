@@ -83,7 +83,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "sc-mesh-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "float-cmp",
@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "sc-mesh-formats"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "regex",
@@ -113,7 +113,7 @@ version = "0.0.1"
 
 [[package]]
 name = "sc-slicer-cli"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "bpaf",

@@ -7,4 +7,5 @@
  */
 
 pub mod filetypes;
+pub mod obj;
 pub mod stl;

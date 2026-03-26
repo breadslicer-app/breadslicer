@@ -102,13 +102,19 @@ fn show_applied_fixes(fixes: &[MeshFix]) {
     for fix in fixes {
         match fix {
             MeshFix::RemovedZeroLengthEdgeFace { face_idx } => {
-                println!("\t- Removed face with ID '{}' (had zero-length edge)", face_idx);
+                println!(
+                    "\t- Removed face with ID '{}' (had zero-length edge)",
+                    face_idx
+                );
             }
             MeshFix::FlippedFaceOrientation { face_idx } => {
                 println!("\t- Flipped orientation of face with ID '{}'", face_idx);
             }
             MeshFix::RecomputedNormal { face_idx } => {
-                println!("\t- Recomputed normal vector for face with ID '{}'", face_idx);
+                println!(
+                    "\t- Recomputed normal vector for face with ID '{}'",
+                    face_idx
+                );
             }
         }
     }

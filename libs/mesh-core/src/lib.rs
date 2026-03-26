@@ -22,9 +22,10 @@ use crate::errors::{
 use crate::geometry::compute_normal_from_triangle_vertices;
 pub use crate::primitives::{Normal, Vector3D, Vertex};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshMetadata {
     pub name: Option<String>,
+    pub header_comment: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

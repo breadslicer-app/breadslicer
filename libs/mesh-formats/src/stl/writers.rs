@@ -66,7 +66,10 @@ where
 {
     // 80-byte header: mesh name (zero-padded)
     let mut header = [0u8; 80];
-    if let Some(MeshMetadata { name: Some(name) }) = &mesh.meta {
+    if let Some(MeshMetadata {
+        name: Some(name), ..
+    }) = &mesh.meta
+    {
         let bytes = name.as_bytes();
         let len = bytes.len().min(80);
         header[..len].copy_from_slice(&bytes[..len]);
@@ -147,6 +150,7 @@ endsolid",
         let mesh = IndexedMesh {
             meta: Some(MeshMetadata {
                 name: Some(String::from("my_mesh")),
+                ..Default::default()
             }),
             vertices: vec![
                 Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
@@ -243,6 +247,7 @@ mod test_write_stlb {
     fn test_with_name() {
         let mesh = make_mesh(Some(MeshMetadata {
             name: Some("my_mesh".into()),
+            ..Default::default()
         }));
         let mut out: Vec<u8> = vec![];
         write_stlb(&mesh, &mut out).unwrap();
