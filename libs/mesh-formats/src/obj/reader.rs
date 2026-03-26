@@ -260,7 +260,177 @@ fn parse_face_vertex_index(token: &str, vertex_count: usize, line_num: usize) ->
 }
 
 #[cfg(test)]
-mod tests {
+mod parse_f32_tests {
+    use super::parse_f32;
+
+    #[test]
+    fn parses_positive_integer() {
+        assert_eq!(parse_f32("42", 0).unwrap(), 42.0);
+    }
+
+    #[test]
+    fn parses_negative_integer() {
+        assert_eq!(parse_f32("-7", 0).unwrap(), -7.0);
+    }
+
+    #[test]
+    fn parses_positive_decimal() {
+        assert_eq!(parse_f32("3.14", 0).unwrap(), 3.14);
+    }
+
+    #[test]
+    fn parses_negative_decimal() {
+        assert_eq!(parse_f32("-0.5", 0).unwrap(), -0.5);
+    }
+
+    #[test]
+    fn parses_zero() {
+        assert_eq!(parse_f32("0.0", 0).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn parses_scientific_notation() {
+        assert_eq!(parse_f32("1.5e2", 0).unwrap(), 150.0);
+    }
+
+    #[test]
+    fn parses_negative_exponent() {
+        assert_eq!(parse_f32("1.5e-2", 0).unwrap(), 0.015);
+    }
+
+    #[test]
+    fn rejects_infinity() {
+        assert!(parse_f32("inf", 0).is_err());
+    }
+
+    #[test]
+    fn rejects_negative_infinity() {
+        assert!(parse_f32("-inf", 0).is_err());
+    }
+
+    #[test]
+    fn rejects_nan() {
+        assert!(parse_f32("NaN", 0).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_string() {
+        assert!(parse_f32("", 0).is_err());
+    }
+
+    #[test]
+    fn rejects_non_numeric() {
+        assert!(parse_f32("abc", 0).is_err());
+    }
+
+    #[test]
+    fn error_message_contains_line_number() {
+        let err = parse_f32("abc", 4).unwrap_err();
+        assert!(err.to_string().contains("line 5"));
+    }
+
+    #[test]
+    fn error_message_contains_invalid_token() {
+        let err = parse_f32("xyz", 0).unwrap_err();
+        assert!(err.to_string().contains("xyz"));
+    }
+}
+
+#[cfg(test)]
+mod parse_face_vertex_index_tests {
+    use super::parse_face_vertex_index;
+
+    // --- Positive (1-based) indices ---
+
+    #[test]
+    fn first_vertex() {
+        assert_eq!(parse_face_vertex_index("1", 5, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn last_vertex() {
+        assert_eq!(parse_face_vertex_index("5", 5, 0).unwrap(), 4);
+    }
+
+    // --- Negative (relative) indices ---
+
+    #[test]
+    fn negative_one_is_last_vertex() {
+        assert_eq!(parse_face_vertex_index("-1", 5, 0).unwrap(), 4);
+    }
+
+    #[test]
+    fn negative_equals_vertex_count_is_first() {
+        assert_eq!(parse_face_vertex_index("-5", 5, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn negative_middle() {
+        assert_eq!(parse_face_vertex_index("-3", 5, 0).unwrap(), 2);
+    }
+
+    // --- Composite tokens (v/vt, v/vt/vn, v//vn) ---
+
+    #[test]
+    fn with_texture_index() {
+        assert_eq!(parse_face_vertex_index("3/2", 5, 0).unwrap(), 2);
+    }
+
+    #[test]
+    fn with_texture_and_normal() {
+        assert_eq!(parse_face_vertex_index("2/1/1", 5, 0).unwrap(), 1);
+    }
+
+    #[test]
+    fn with_double_slash_normal() {
+        assert_eq!(parse_face_vertex_index("4//1", 5, 0).unwrap(), 3);
+    }
+
+    // --- Error: zero index ---
+
+    #[test]
+    fn zero_index_is_error() {
+        let err = parse_face_vertex_index("0", 5, 0).unwrap_err();
+        assert!(err.to_string().contains("must not be zero"));
+    }
+
+    // --- Error: out of range ---
+
+    #[test]
+    fn positive_out_of_range() {
+        let err = parse_face_vertex_index("6", 5, 0).unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn negative_out_of_range() {
+        let err = parse_face_vertex_index("-6", 5, 0).unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    // --- Error: non-numeric ---
+
+    #[test]
+    fn non_numeric_is_error() {
+        assert!(parse_face_vertex_index("abc", 5, 0).is_err());
+    }
+
+    #[test]
+    fn empty_string_is_error() {
+        assert!(parse_face_vertex_index("", 5, 0).is_err());
+    }
+
+    // --- Error message contains line number (1-based) ---
+
+    #[test]
+    fn error_contains_line_number() {
+        let err = parse_face_vertex_index("0", 5, 9).unwrap_err();
+        assert!(err.to_string().contains("line 10"));
+    }
+}
+
+#[cfg(test)]
+mod read_obj_tests {
     use std::io::Cursor;
 
     use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};

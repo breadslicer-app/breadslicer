@@ -42,31 +42,43 @@ pub(crate) fn display_warnings(warnings: &Vec<LoadMeshWarning>) {
             LoadMeshWarning::Obj(obj_warning) => match obj_warning {
                 sc_mesh_formats::messages::LoadObjWarning::NoVertices => {
                     eprintln!("WARNING: Loaded OBJ file has no vertices");
-                },
+                }
                 sc_mesh_formats::messages::LoadObjWarning::NoFaces => {
                     eprintln!("WARNING: Loaded OBJ file has no faces");
-                },
+                }
                 sc_mesh_formats::messages::LoadObjWarning::SkippedTextureCoordinates { line } => {
                     eprintln!("WARNING (line {}): skipped texture coordinates", line);
-                },
+                }
                 sc_mesh_formats::messages::LoadObjWarning::SkippedVertexNormal { line } => {
                     eprintln!("WARNING (line {}): skipped vertex normal", line);
-                },
+                }
                 sc_mesh_formats::messages::LoadObjWarning::SkippedGroup { line, name } => {
                     eprintln!("WARNING (line {}): Skipped group '{}'", line, name);
-                },
+                }
                 sc_mesh_formats::messages::LoadObjWarning::SkippedSmoothingGroup { line } => {
                     eprintln!("WARNING (line {}): Skipped smoothing group", line);
-                },
-                sc_mesh_formats::messages::LoadObjWarning::SkippedMaterialReference { line, material } => {
-                    eprintln!("WARNING (line {}): Skipped material reference '{}'", line, material);
-                },
-                sc_mesh_formats::messages::LoadObjWarning::SkippedMaterialLibrary { line, path } => {
-                    eprintln!("WARNING (line {}): Skipped material library '{}'", line, path);
-                },
+                }
+                sc_mesh_formats::messages::LoadObjWarning::SkippedMaterialReference {
+                    line,
+                    material,
+                } => {
+                    eprintln!(
+                        "WARNING (line {}): Skipped material reference '{}'",
+                        line, material
+                    );
+                }
+                sc_mesh_formats::messages::LoadObjWarning::SkippedMaterialLibrary {
+                    line,
+                    path,
+                } => {
+                    eprintln!(
+                        "WARNING (line {}): Skipped material library '{}'",
+                        line, path
+                    );
+                }
                 sc_mesh_formats::messages::LoadObjWarning::SkippedComment { line } => {
                     eprintln!("WARNING (line {}): Skipped comment", line);
-                },
+                }
             },
         }
     }

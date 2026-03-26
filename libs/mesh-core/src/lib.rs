@@ -16,7 +16,9 @@ use std::{
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 
-use crate::errors::{ MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError};
+use crate::errors::{
+    MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
+};
 use crate::geometry::compute_normal_from_triangle_vertices;
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 

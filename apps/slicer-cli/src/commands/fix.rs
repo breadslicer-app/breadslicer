@@ -42,7 +42,7 @@ pub(crate) fn fix(
     let mut mesh = load_mesh(&source_path, source_format, &mut warnings)?;
 
     display_warnings(&warnings);
-    
+
     if let Err(errors) = mesh.validate_vertices() {
         show_vertex_errors(&errors);
         return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
