@@ -115,7 +115,13 @@ pub fn read_obj<R: BufRead>(read: &mut R) -> Result<IndexedMesh> {
             }
             // Silently ignore unsupported directives
             "vt" | "vn" | "g" | "s" | "usemtl" | "mtllib" => {}
-            _ => {}
+            _ => {
+                return Err(anyhow!(
+                    "line {}: unrecognized directive '{}'",
+                    line_num + 1,
+                    first_token
+                ));
+            }
         }
     }
 
@@ -512,5 +518,17 @@ f 2 4 3
         assert_eq!(mesh.faces.len(), 2);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
         assert_eq!(mesh.faces[1].vertices, [1, 3, 2]);
+    }
+
+    #[test]
+    fn unknown_directive_is_error() {
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+foo bar
+f 1 2 3
+";
+        assert!(read_obj_from_str(obj).is_err());
     }
 }
