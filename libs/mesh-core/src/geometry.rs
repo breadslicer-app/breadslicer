@@ -35,7 +35,7 @@ pub fn compute_normal_from_triangle_vertices(vertices: &[Vertex; 3]) -> Result<N
         return Err(anyhow!("Degenerate (near-zero area) triangle found"));
     }
 
-    // Normalize computed normal vecctor
+    // Normalize computed normal vector
     let cross_mag = cross_mag_sq.sqrt();
     let cross = [
         cross[0] / cross_mag,

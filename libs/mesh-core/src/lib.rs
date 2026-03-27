@@ -8,10 +8,8 @@ pub mod geometry;
 mod primitives;
 
 use core::f32;
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
@@ -188,7 +186,7 @@ impl IndexedMesh {
                 continue; // We don't continue processing this face
             }
 
-            // Normalize computed normal vecctor
+            // Normalize computed normal vector
             let cross_mag = cross_mag_sq.sqrt();
             let cross = [
                 cross[0] / cross_mag,
@@ -431,7 +429,13 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
                 // f32 has no Eq and no Hash, but comparing the bits will do.
                 // This has the effect that if any coordinate is NaN (which does not make sense
                 // anyway), its NaN payload bits will be used as the identity of the vertex.
-                let bitpattern = vertex.0.map(f32::to_bits);
+                let bitpattern = vertex.0.map(|f| {
+                    if f == -0.0 {
+                        0.0_f32.to_bits()
+                    } else {
+                        f.to_bits()
+                    }
+                });
                 let index = *vertex_to_index
                     .entry(bitpattern)
                     .or_insert_with(|| vertices.len());
