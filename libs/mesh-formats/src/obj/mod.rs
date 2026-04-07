@@ -4,5 +4,7 @@
  */
 
 mod reader;
+mod writer;
 
 pub use reader::read_obj;
+pub use writer::write_obj;
