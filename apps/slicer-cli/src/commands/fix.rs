@@ -13,6 +13,7 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::MeshFix;
 use sc_mesh_core::scene::SceneObjectContent;
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::obj::write_obj;
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
 use crate::commands::diagnose::show_vertex_errors;
@@ -98,43 +99,50 @@ pub(crate) fn fix(
         show_applied_fixes(&all_fixes);
     }
 
-    // STL is a single-mesh format: count distinct pieces of geometry.
-    let inline_mesh_count = scene
-        .objects
-        .iter()
-        .filter(|obj| matches!(obj.content, SceneObjectContent::Mesh(_)))
-        .count();
-    let total_mesh_count = scene.resources.len() + inline_mesh_count;
-
-    if total_mesh_count > 1 {
-        return Err(anyhow!(
-            "Cannot write multi-mesh scene to a single STL file"
-        ));
-    }
-
-    let mesh = scene.resources.first().or_else(|| {
-        scene.objects.iter().find_map(|obj| match &obj.content {
-            SceneObjectContent::Mesh(m) => Some(m),
-            SceneObjectContent::Resource(_) => None,
-        })
-    });
-
-    if let Some(mesh) = mesh {
-        match target_format {
-            SourceMeshFileType::Stl => {
-                let mut output_file = File::create(&target_path)?;
-                write_stlb(mesh, &mut output_file)?;
-            }
-            SourceMeshFileType::StlAscii => {
-                let mut output_file = File::create(&target_path)?;
-                write_stla(mesh, &mut output_file)?;
-            }
-            SourceMeshFileType::StlBin => {
-                let mut output_file = File::create(&target_path)?;
-                write_stlb(mesh, &mut output_file)?;
-            }
-            _ => todo!("Not implemented yet!"),
+    let mut output_file = File::create(&target_path)?;
+    match target_format {
+        SourceMeshFileType::Obj => {
+            write_obj(&scene, &mut output_file)?;
         }
+        SourceMeshFileType::Stl | SourceMeshFileType::StlAscii | SourceMeshFileType::StlBin => {
+            // STL is a single-mesh format: count distinct pieces of geometry.
+            let inline_mesh_count = scene
+                .objects
+                .iter()
+                .filter(|obj| matches!(obj.content, SceneObjectContent::Mesh(_)))
+                .count();
+            let total_mesh_count = scene.resources.len() + inline_mesh_count;
+
+            if total_mesh_count == 0 {
+                return Err(anyhow!(
+                    "Cannot write an empty scene to an STL file"
+                ));
+            } else if total_mesh_count > 1 {
+                return Err(anyhow!(
+                    "Cannot write multi-mesh scene to a single STL file"
+                ));
+            }
+
+            let mesh = scene.resources.first().or_else(|| {
+                scene.objects.iter().find_map(|obj| match &obj.content {
+                    SceneObjectContent::Mesh(m) => Some(m),
+                    SceneObjectContent::Resource(_) => None,
+                })
+            });
+
+            if let Some(mesh) = mesh {
+                match target_format {
+                    SourceMeshFileType::Stl | SourceMeshFileType::StlBin => {
+                        write_stlb(mesh, &mut output_file)?;
+                    }
+                    SourceMeshFileType::StlAscii => {
+                        write_stla(mesh, &mut output_file)?;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        _ => todo!("Not implemented yet!"),
     }
 
     Ok(())
