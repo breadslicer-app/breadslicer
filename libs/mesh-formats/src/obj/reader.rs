@@ -3,23 +3,90 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
 use crate::messages::{LoadMeshWarning, LoadObjWarning};
+
+/// Finalises a pending object by extracting only the vertices it references,
+/// re-indexing the faces to use local (per-object) indices, and returning a
+/// `SceneObject`.  Returns `None` and leaves `current_faces` empty if there
+/// are no faces to flush.
+fn flush_pending_object(
+    global_vertices: &[Vertex],
+    current_faces: &mut Vec<IndexedTriangle>,
+    current_name: Option<String>,
+) -> Option<SceneObject> {
+    if current_faces.is_empty() {
+        return None;
+    }
+
+    // Build a local vertex list in first-appearance order.
+    let mut global_to_local: HashMap<u32, u32> = HashMap::new();
+    let mut local_vertices: Vec<Vertex> = Vec::new();
+
+    for face in current_faces.iter() {
+        for &global_idx in &face.vertices {
+            if let std::collections::hash_map::Entry::Vacant(e) = global_to_local.entry(global_idx)
+            {
+                let local_idx = local_vertices.len() as u32;
+                e.insert(local_idx);
+                local_vertices.push(global_vertices[global_idx as usize]);
+            }
+        }
+    }
+
+    let remapped_faces: Vec<IndexedTriangle> = current_faces
+        .drain(..)
+        .map(|f| IndexedTriangle {
+            normal: f.normal,
+            vertices: [
+                global_to_local[&f.vertices[0]],
+                global_to_local[&f.vertices[1]],
+                global_to_local[&f.vertices[2]],
+            ],
+        })
+        .collect();
+
+    let meta = current_name.map(|name| MeshMetadata {
+        name: Some(name),
+        ..Default::default()
+    });
+
+    Some(SceneObject {
+        meta: None,
+        transform: Transform3D::Identity,
+        content: SceneObjectContent::Mesh(IndexedMesh {
+            meta,
+            vertices: local_vertices,
+            faces: remapped_faces,
+        }),
+    })
+}
 
 pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
 {
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut faces: Vec<IndexedTriangle> = Vec::new();
-    let mut name: Option<String> = None;
+    // OBJ vertices are global: any face in any object can reference any vertex
+    // defined earlier in the file.
+    let mut global_vertices: Vec<Vertex> = Vec::new();
+
+    // Faces accumulated for the current pending object (using global indices).
+    let mut current_faces: Vec<IndexedTriangle> = Vec::new();
+
+    // Name from the most recent `o` directive.
+    let mut current_name: Option<String> = None;
+
+    let mut objects: Vec<SceneObject> = Vec::new();
+
+    // File-level header: leading `#` comments before the first non-comment line.
     let mut header_comment: Option<String> = None;
     let mut header_ended = false;
 
@@ -60,10 +127,21 @@ where
             }
             "o" => {
                 header_ended = true;
-                let obj_name = line.strip_prefix("o").unwrap_or("").trim();
-                if !obj_name.is_empty() {
-                    name = Some(obj_name.to_string());
+
+                // Finalise the previous pending object (if it has faces).
+                if let Some(obj) =
+                    flush_pending_object(&global_vertices, &mut current_faces, current_name.take())
+                {
+                    objects.push(obj);
                 }
+
+                // Begin accumulating for the new object.
+                let obj_name = line.strip_prefix("o").unwrap_or("").trim();
+                current_name = if obj_name.is_empty() {
+                    None
+                } else {
+                    Some(obj_name.to_string())
+                };
             }
             "v" => {
                 header_ended = true;
@@ -87,9 +165,9 @@ where
                             line_num + 1
                         ));
                     }
-                    vertices.push(Vertex::new([x / w, y / w, z / w]));
+                    global_vertices.push(Vertex::new([x / w, y / w, z / w]));
                 } else {
-                    vertices.push(Vertex::new([x, y, z]));
+                    global_vertices.push(Vertex::new([x, y, z]));
                 }
             }
             "f" => {
@@ -103,22 +181,22 @@ where
                     ));
                 }
 
-                let vertex_count = vertices.len();
+                let vertex_count = global_vertices.len();
                 let indices: Vec<u32> = tokens
                     .iter()
                     .map(|token| parse_face_vertex_index(token, vertex_count, line_num))
                     .collect::<Result<Vec<u32>>>()?;
 
-                // Fan triangulation for polygons with more than 3 vertices
+                // Fan triangulation for polygons with more than 3 vertices.
                 for i in 1..indices.len() - 1 {
                     let tri_vertices = [indices[0], indices[i], indices[i + 1]];
-                    let v0 = vertices[tri_vertices[0] as usize];
-                    let v1 = vertices[tri_vertices[1] as usize];
-                    let v2 = vertices[tri_vertices[2] as usize];
+                    let v0 = global_vertices[tri_vertices[0] as usize];
+                    let v1 = global_vertices[tri_vertices[1] as usize];
+                    let v2 = global_vertices[tri_vertices[2] as usize];
 
                     let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])?;
 
-                    faces.push(IndexedTriangle {
+                    current_faces.push(IndexedTriangle {
                         normal,
                         vertices: tri_vertices,
                     });
@@ -174,27 +252,28 @@ where
         }
     }
 
-    if vertices.is_empty() {
-        warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoVertices));
+    // Finalise the last pending object.
+    if let Some(obj) = flush_pending_object(&global_vertices, &mut current_faces, current_name) {
+        objects.push(obj);
     }
-    if faces.is_empty() {
+
+    if objects.is_empty() {
+        if global_vertices.is_empty() {
+            warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoVertices));
+        }
         warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoFaces));
     }
 
-    let meta = if name.is_some() || header_comment.is_some() {
-        Some(MeshMetadata {
-            name,
-            header_comment,
-        })
-    } else {
-        None
-    };
+    let scene_meta = header_comment.map(|comment| SceneMetadata {
+        name: None,
+        comment: Some(comment),
+    });
 
-    Ok(Scene::from(IndexedMesh {
-        meta,
-        vertices,
-        faces,
-    }))
+    Ok(Scene {
+        meta: scene_meta,
+        resources: vec![],
+        objects,
+    })
 }
 
 fn parse_f32(token: &str, line_num: usize) -> Result<f32> {
@@ -434,7 +513,7 @@ mod parse_face_vertex_index_tests {
 mod read_obj_tests {
     use std::io::Cursor;
 
-    use sc_mesh_core::scene::{Scene, SceneObjectContent};
+    use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObjectContent};
     use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};
 
     use super::{LoadMeshWarning, LoadObjWarning, read_obj};
@@ -466,6 +545,7 @@ f 1 2 3
         let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
+        assert_eq!(scene.meta, None);
         assert_eq!(mesh.meta, None);
         assert_eq!(mesh.vertices.len(), 3);
         assert_eq!(mesh.faces.len(), 1);
@@ -491,6 +571,7 @@ f 1 2 3
         let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
+        assert_eq!(scene.meta, None);
         assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
@@ -515,12 +596,13 @@ f 1 2 3
 
         assert!(warnings.is_empty());
         assert_eq!(
-            mesh.meta,
-            Some(MeshMetadata {
+            scene.meta,
+            Some(SceneMetadata {
                 name: None,
-                header_comment: Some("Exported from Blender\nCreated 2026-03-25".into()),
+                comment: Some("Exported from Blender\nCreated 2026-03-25".into()),
             })
         );
+        assert_eq!(mesh.meta, None);
     }
 
     #[test]
@@ -543,12 +625,13 @@ f 1 2 3
             })]
         );
         assert_eq!(
-            mesh.meta,
-            Some(MeshMetadata {
+            scene.meta,
+            Some(SceneMetadata {
                 name: None,
-                header_comment: Some("Header".into()),
+                comment: Some("Header".into()),
             })
         );
+        assert_eq!(mesh.meta, None);
     }
 
     #[test]
@@ -566,10 +649,17 @@ f 1 2 3
 
         assert!(warnings.is_empty());
         assert_eq!(
+            scene.meta,
+            Some(SceneMetadata {
+                name: None,
+                comment: Some("File header".into()),
+            })
+        );
+        assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
                 name: Some("MyObject".into()),
-                header_comment: Some("File header".into()),
+                ..Default::default()
             })
         );
     }
@@ -724,7 +814,6 @@ f 1 2 3
     #[test]
     fn empty_file() {
         let (scene, warnings) = read_obj_from_str("").unwrap();
-        let mesh = single_mesh(&scene);
         assert_eq!(
             warnings,
             vec![
@@ -732,9 +821,8 @@ f 1 2 3
                 LoadMeshWarning::Obj(LoadObjWarning::NoFaces)
             ]
         );
-        assert_eq!(mesh.meta, None);
-        assert_eq!(mesh.vertices.len(), 0);
-        assert_eq!(mesh.faces.len(), 0);
+        assert_eq!(scene.meta, None);
+        assert!(scene.objects.is_empty());
     }
 
     #[test]
@@ -843,5 +931,111 @@ foo bar
 f 1 2 3
 ";
         assert!(read_obj_from_str(obj).is_err());
+    }
+
+    // --- Multi-object tests ---
+
+    #[test]
+    fn two_named_objects() {
+        // Two triangles in separate objects sharing no vertices.
+        let obj = "\
+o TriA
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o TriB
+v 0.0 0.0 1.0
+v 1.0 0.0 1.0
+v 0.0 1.0 1.0
+f 4 5 6
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(scene.objects.len(), 2);
+
+        let mesh_a = match &scene.objects[0].content {
+            SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected mesh"),
+        };
+        assert_eq!(mesh_a.meta.as_ref().unwrap().name, Some("TriA".into()));
+        assert_eq!(mesh_a.vertices.len(), 3);
+        assert_eq!(mesh_a.faces.len(), 1);
+        assert_eq!(mesh_a.faces[0].vertices, [0, 1, 2]);
+
+        let mesh_b = match &scene.objects[1].content {
+            SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected mesh"),
+        };
+        assert_eq!(mesh_b.meta.as_ref().unwrap().name, Some("TriB".into()));
+        assert_eq!(mesh_b.vertices.len(), 3);
+        assert_eq!(mesh_b.faces.len(), 1);
+        assert_eq!(mesh_b.faces[0].vertices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn two_objects_sharing_global_vertices() {
+        // ObjectB's face references vertices defined before ObjectA's `o` line.
+        // Vertex re-indexing must produce correct local indices for both objects.
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+o ObjectA
+f 1 2 3
+v 1.0 1.0 0.0
+o ObjectB
+f 1 3 4
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(scene.objects.len(), 2);
+
+        let mesh_a = match &scene.objects[0].content {
+            SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected mesh"),
+        };
+        // ObjectA uses global vertices 0, 1, 2 → local 0, 1, 2
+        assert_eq!(mesh_a.vertices.len(), 3);
+        assert_eq!(mesh_a.vertices[0], Vertex::new([0.0, 0.0, 0.0]));
+        assert_eq!(mesh_a.vertices[1], Vertex::new([1.0, 0.0, 0.0]));
+        assert_eq!(mesh_a.vertices[2], Vertex::new([0.0, 1.0, 0.0]));
+        assert_eq!(mesh_a.faces[0].vertices, [0, 1, 2]);
+
+        let mesh_b = match &scene.objects[1].content {
+            SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected mesh"),
+        };
+        // ObjectB's face `f 1 3 4` uses global vertices 0, 2, 3 → local 0, 1, 2
+        assert_eq!(mesh_b.vertices.len(), 3);
+        assert_eq!(mesh_b.vertices[0], Vertex::new([0.0, 0.0, 0.0]));
+        assert_eq!(mesh_b.vertices[1], Vertex::new([0.0, 1.0, 0.0]));
+        assert_eq!(mesh_b.vertices[2], Vertex::new([1.0, 1.0, 0.0]));
+        assert_eq!(mesh_b.faces[0].vertices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn object_with_no_faces_is_skipped() {
+        // `o Empty` has no faces and must not produce a SceneObject.
+        let obj = "\
+o Empty
+v 0.0 0.0 0.0
+o Real
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 2 3 1
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(scene.objects.len(), 1);
+
+        let mesh = match &scene.objects[0].content {
+            SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected mesh"),
+        };
+        assert_eq!(mesh.meta.as_ref().unwrap().name, Some("Real".into()));
+        // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
+        assert_eq!(mesh.vertices.len(), 3);
+        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
     }
 }
