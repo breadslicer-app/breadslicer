@@ -10,7 +10,7 @@ manipulate 3D mesh data. Part of the [Slicer](../../README.md) project.
 | STL (`.stl`)         | ✓       | ✓       | Probes the file to pick ASCII or binary. Writes as binary by default. |
 | STL ASCII (`.stla`)  | ✓       | ✓       | |
 | STL Binary (`.stlb`) | ✓       | ✓       | |
-| OBJ                  | ✓       | planned | |
+| OBJ                  | ✓       | ✓       | |
 | PLY                  | planned | —       | |
 | AMF                  | planned | —       | |
 | 3MF                  | planned | —       | |
@@ -20,7 +20,8 @@ manipulate 3D mesh data. Part of the [Slicer](../../README.md) project.
 ### `stl` module
 
 ```rust
-use sc_mesh_formats::core::IndexedMesh; // Just for type annotation
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_formats::stl::{
     read_stl,
     read_stla,
@@ -34,21 +35,27 @@ use sc_mesh_formats::stl::{
 
 ```rust
 // Auto-detect ASCII vs. binary from the stream
-let mesh: IndexedMesh = read_stl(&mut reader)?;
+let scene: Scene = read_stl(&mut reader)?;
 
 // Explicit ASCII
-let mesh: IndexedMesh = read_stla(&mut reader)?;
+let scene: Scene = read_stla(&mut reader)?;
 
 // Explicit binary
-let mesh: IndexedMesh = read_stlb(&mut reader)?;
+let scene: Scene = read_stlb(&mut reader)?;
 ```
 
-All three functions accept any value implementing `Read + Seek` and return an
-`IndexedMesh` wrapped in `anyhow::Result`.
+All three functions accept any value implementing `Read + Seek` and return a
+`Scene` wrapped in `anyhow::Result`.
 
 **Writing**
 
+STL is a single-mesh format. Use `Scene::merge_meshes` to obtain an
+`IndexedMesh` instance:
+
 ```rust
+let scene: Scene = read_stl(&mut reader)?;
+let mesh: IndexedMesh = scene.merge_meshes()?.unwrap();
+
 // Write ASCII STL
 write_stla(&mesh, &mut writer)?;
 
