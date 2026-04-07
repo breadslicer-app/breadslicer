@@ -67,6 +67,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
 
 #[cfg(test)]
 mod indexed_mesh_validate_vertices_tests {
+    use crate::errors::MeshVertexError;
     use super::*;
 
     fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
@@ -236,6 +237,7 @@ mod indexed_mesh_validate_vertices_tests {
 
 #[cfg(test)]
 mod indexed_mesh_validate_faces_tests {
+    use crate::errors::MeshFaceError;
     use super::*;
 
     fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
@@ -432,6 +434,7 @@ mod indexed_mesh_validate_faces_tests {
 
 #[cfg(test)]
 mod indexed_mesh_validate_normal_vectors_tests {
+    use crate::errors::MeshNormalVectorError;
     use super::*;
 
     fn make_mesh(vertices: Vec<Vertex>, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -657,6 +660,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
 
 #[cfg(test)]
 mod indexed_mesh_validate_manifold_tests {
+    use crate::errors::MeshManifoldError;
     use super::*;
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
@@ -827,6 +831,8 @@ mod indexed_mesh_validate_manifold_tests {
 
 #[cfg(test)]
 mod indexed_mesh_fix_faces_orientation_tests {
+    use crate::errors::{MeshManifoldError, MeshNormalVectorError};
+    use crate::geometry::compute_normal_from_triangle_vertices;
     use super::*;
 
     /// Builds a tetrahedron with consistent winding and correct normals.
