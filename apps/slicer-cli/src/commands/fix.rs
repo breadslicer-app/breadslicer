@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::MeshFix;
+use sc_mesh_core::scene::SceneObjectContent;
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
@@ -18,37 +19,11 @@ use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
-pub(crate) fn fix(
-    source: OsString,
-    source_format: Option<SourceMeshFileType>,
-    target: OsString,
-    target_format: Option<SourceMeshFileType>,
-) -> Result<()> {
-    let source_path = validate_sourcefile_path(PathBuf::from(source))?;
-    let target_path = validate_targetfile_path(PathBuf::from(target))?;
-
-    if source_path == target_path {
-        return Err(anyhow!(
-            "Source file path and target file path are the same"
-        ));
-    }
-
-    let target_format = match target_format {
-        Some(f) => f,
-        None => infer_mesh_file_format_from_extension(&target_path)?,
-    };
-
-    let mut warnings = vec![];
-    let mut mesh = load_mesh(&source_path, source_format, &mut warnings)?;
-
-    display_warnings(&warnings);
-
+fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, all_fixes: &mut Vec<MeshFix>) -> Result<()> {
     if let Err(errors) = mesh.validate_vertices() {
         show_vertex_errors(&errors);
         return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
     }
-
-    let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     if let Err(errors) = mesh.validate_faces() {
         let fixes = mesh.fix_zero_length_edges(&errors);
@@ -76,26 +51,90 @@ pub(crate) fn fix(
         all_fixes.extend(fixes);
     }
 
+    Ok(())
+}
+
+pub(crate) fn fix(
+    source: OsString,
+    source_format: Option<SourceMeshFileType>,
+    target: OsString,
+    target_format: Option<SourceMeshFileType>,
+) -> Result<()> {
+    let source_path = validate_sourcefile_path(PathBuf::from(source))?;
+    let target_path = validate_targetfile_path(PathBuf::from(target))?;
+
+    if source_path == target_path {
+        return Err(anyhow!(
+            "Source file path and target file path are the same"
+        ));
+    }
+
+    let target_format = match target_format {
+        Some(f) => f,
+        None => infer_mesh_file_format_from_extension(&target_path)?,
+    };
+
+    let mut warnings = vec![];
+    let mut scene = load_mesh(&source_path, source_format, &mut warnings)?;
+
+    display_warnings(&warnings);
+
+    let mut all_fixes: Vec<MeshFix> = Vec::new();
+
+    for mesh in &mut scene.resources {
+        fix_mesh(mesh, &mut all_fixes)?;
+    }
+
+    for obj in &mut scene.objects {
+        let SceneObjectContent::Mesh(ref mut mesh) = obj.content else {
+            continue;
+        };
+        fix_mesh(mesh, &mut all_fixes)?;
+    }
+
     if all_fixes.is_empty() {
         println!("No fixes needed.");
     } else {
         show_applied_fixes(&all_fixes);
     }
 
-    match target_format {
-        SourceMeshFileType::Stl => {
-            let mut output_file = File::create(&target_path)?;
-            write_stlb(&mesh, &mut output_file)?;
+    // STL is a single-mesh format: count distinct pieces of geometry.
+    let inline_mesh_count = scene
+        .objects
+        .iter()
+        .filter(|obj| matches!(obj.content, SceneObjectContent::Mesh(_)))
+        .count();
+    let total_mesh_count = scene.resources.len() + inline_mesh_count;
+
+    if total_mesh_count > 1 {
+        return Err(anyhow!(
+            "Cannot write multi-mesh scene to a single STL file"
+        ));
+    }
+
+    let mesh = scene.resources.first().or_else(|| {
+        scene.objects.iter().find_map(|obj| match &obj.content {
+            SceneObjectContent::Mesh(m) => Some(m),
+            SceneObjectContent::Resource(_) => None,
+        })
+    });
+
+    if let Some(mesh) = mesh {
+        match target_format {
+            SourceMeshFileType::Stl => {
+                let mut output_file = File::create(&target_path)?;
+                write_stlb(mesh, &mut output_file)?;
+            }
+            SourceMeshFileType::StlAscii => {
+                let mut output_file = File::create(&target_path)?;
+                write_stla(mesh, &mut output_file)?;
+            }
+            SourceMeshFileType::StlBin => {
+                let mut output_file = File::create(&target_path)?;
+                write_stlb(mesh, &mut output_file)?;
+            }
+            _ => todo!("Not implemented yet!"),
         }
-        SourceMeshFileType::StlAscii => {
-            let mut output_file = File::create(&target_path)?;
-            write_stla(&mesh, &mut output_file)?;
-        }
-        SourceMeshFileType::StlBin => {
-            let mut output_file = File::create(&target_path)?;
-            write_stlb(&mesh, &mut output_file)?;
-        }
-        _ => todo!("Not implemented yet!"),
     }
 
     Ok(())

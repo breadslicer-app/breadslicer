@@ -8,11 +8,12 @@ use std::io::{BufRead, BufReader};
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
+use sc_mesh_core::scene::Scene;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 
 use crate::messages::{LoadMeshWarning, LoadObjWarning};
 
-pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<IndexedMesh>
+pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
 {
@@ -189,11 +190,11 @@ where
         None
     };
 
-    Ok(IndexedMesh {
+    Ok(Scene::from(IndexedMesh {
         meta,
         vertices,
         faces,
-    })
+    }))
 }
 
 fn parse_f32(token: &str, line_num: usize) -> Result<f32> {
@@ -433,15 +434,24 @@ mod parse_face_vertex_index_tests {
 mod read_obj_tests {
     use std::io::Cursor;
 
+    use sc_mesh_core::scene::{Scene, SceneObjectContent};
     use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};
 
     use super::{LoadMeshWarning, LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(s: &str) -> anyhow::Result<(IndexedMesh, Vec<LoadMeshWarning>)> {
+    fn read_obj_from_str(s: &str) -> anyhow::Result<(Scene, Vec<LoadMeshWarning>)> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings = Vec::new();
-        let mesh = read_obj(&mut reader, &mut warnings)?;
-        Ok((mesh, warnings))
+        let scene = read_obj(&mut reader, &mut warnings)?;
+        Ok((scene, warnings))
+    }
+
+    fn single_mesh(scene: &Scene) -> &IndexedMesh {
+        assert_eq!(scene.objects.len(), 1);
+        match &scene.objects[0].content {
+            SceneObjectContent::Mesh(m) => m,
+            SceneObjectContent::Resource(_) => panic!("expected inline mesh, got resource ref"),
+        }
     }
 
     #[test]
@@ -452,7 +462,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
         assert_eq!(mesh.meta, None);
@@ -476,7 +487,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
         assert_eq!(
@@ -498,7 +510,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
         assert_eq!(
@@ -520,7 +533,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert_eq!(
             warnings,
@@ -547,7 +561,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
         assert_eq!(
@@ -570,7 +585,8 @@ vt 1.0 0.0
 vt 0.0 1.0
 f 1/1 2/2 3/3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(
             warnings,
             vec![
@@ -593,7 +609,8 @@ vt 0.0 0.0
 vn 0.0 0.0 1.0
 f 1/1/1 2/1/1 3/1/1
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(
             warnings,
             vec![
@@ -614,7 +631,8 @@ v 0.0 1.0 0.0
 vn 0.0 0.0 1.0
 f 1//1 2//1 3//1
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(
             warnings,
             vec![LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal {
@@ -634,7 +652,8 @@ v 1.0 1.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3 4
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
         assert_eq!(mesh.vertices.len(), 4);
@@ -654,7 +673,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f -3 -2 -1
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert!(warnings.is_empty());
         assert_eq!(mesh.faces.len(), 1);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
@@ -675,7 +695,8 @@ s off
 g group1
 f 1 2 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(
             warnings,
             vec![
@@ -702,7 +723,8 @@ f 1 2 3
 
     #[test]
     fn empty_file() {
-        let (mesh, warnings) = read_obj_from_str("").unwrap();
+        let (scene, warnings) = read_obj_from_str("").unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(
             warnings,
             vec![
@@ -735,7 +757,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, _) = read_obj_from_str(obj).unwrap();
+        let (scene, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
@@ -747,7 +770,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (mesh, _) = read_obj_from_str(obj).unwrap();
+        let (scene, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
         assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
@@ -799,7 +823,8 @@ v 1.0 1.0 0.0
 f 1 2 3
 f 2 4 3
 ";
-        let (mesh, warnings) = read_obj_from_str(obj).unwrap();
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
         assert_eq!(mesh.vertices.len(), 4);

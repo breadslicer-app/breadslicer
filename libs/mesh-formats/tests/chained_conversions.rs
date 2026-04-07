@@ -76,7 +76,7 @@ mod stla_tests {
 
         // Even if there is no metadata loaded, we still create the Metadata object.
         let mesh_unnamed = get_unnamed_mesh();
-        assert_eq!(recovered_mesh, mesh_unnamed);
+        assert_eq!(recovered_mesh, mesh_unnamed.into());
     }
 
     #[test]
@@ -96,7 +96,7 @@ mod stla_tests {
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
-        assert_eq!(recovered_mesh, mesh_unnamed);
+        assert_eq!(recovered_mesh, mesh_unnamed.into());
     }
 
     #[test]
@@ -116,7 +116,7 @@ mod stla_tests {
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
-        assert_eq!(recovered_mesh, mesh_named);
+        assert_eq!(recovered_mesh, mesh_named.into());
     }
 }
 
@@ -142,7 +142,7 @@ mod stlb_tests {
 
         // Even if there is no metadata loaded, we still create the Metadata object.
         let mesh_unnamed = get_unnamed_mesh();
-        assert_eq!(recovered_mesh, mesh_unnamed);
+        assert_eq!(recovered_mesh, mesh_unnamed.into());
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod stlb_tests {
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
-        assert_eq!(recovered_mesh, mesh_unnamed);
+        assert_eq!(recovered_mesh, mesh_unnamed.into());
     }
 
     #[test]
@@ -182,6 +182,6 @@ mod stlb_tests {
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
-        assert_eq!(recovered_mesh, mesh_named);
+        assert_eq!(recovered_mesh, mesh_named.into());
     }
 }

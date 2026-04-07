@@ -11,6 +11,7 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
+use sc_mesh_core::scene::SceneObjectContent;
 use sc_mesh_formats::filetypes::SourceMeshFileType;
 
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
@@ -19,36 +20,43 @@ use crate::filesystem::validate_sourcefile_path;
 pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let mut warnings = vec![];
-    let mesh = load_mesh(&source_path, source_format, &mut warnings)?;
+    let scene = load_mesh(&source_path, source_format, &mut warnings)?;
 
     display_warnings(&warnings);
 
     let mut detected_problems = false;
-    let mut critical_problems = false;
 
-    // TODO: warn on "subnormal" vertex coordinates?
-    if let Err(vertex_errors) = mesh.validate_vertices() {
-        detected_problems = true;
-        critical_problems = true;
-        show_vertex_errors(&vertex_errors);
-    }
+    for obj in &scene.objects {
+        let SceneObjectContent::Mesh(mesh) = &obj.content else {
+            continue;
+        };
 
-    if let Err(face_errors) = mesh.validate_faces() {
-        detected_problems = true;
-        critical_problems = true;
-        show_face_errors(&face_errors);
-    }
+        let mut mesh_critical = false;
 
-    // If vertices or triangles are broken, it makes no sense to keep checking.
-    if !critical_problems {
-        if let Err(vector_errors) = mesh.validate_normal_vectors() {
+        // TODO: warn on "subnormal" vertex coordinates?
+        if let Err(vertex_errors) = mesh.validate_vertices() {
             detected_problems = true;
-            show_normal_vector_errors(&vector_errors);
+            mesh_critical = true;
+            show_vertex_errors(&vertex_errors);
         }
 
-        if let Err(manifold_errors) = mesh.validate_manifold() {
+        if let Err(face_errors) = mesh.validate_faces() {
             detected_problems = true;
-            show_manifold_errors(&manifold_errors);
+            mesh_critical = true;
+            show_face_errors(&face_errors);
+        }
+
+        // If vertices or triangles are broken, it makes no sense to keep checking.
+        if !mesh_critical {
+            if let Err(vector_errors) = mesh.validate_normal_vectors() {
+                detected_problems = true;
+                show_normal_vector_errors(&vector_errors);
+            }
+
+            if let Err(manifold_errors) = mesh.validate_manifold() {
+                detected_problems = true;
+                show_manifold_errors(&manifold_errors);
+            }
         }
     }
 

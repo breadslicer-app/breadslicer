@@ -9,7 +9,7 @@ use std::fs::File;
 use std::path::Path;
 
 use anyhow::Result;
-use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_formats::obj::read_obj;
@@ -19,7 +19,7 @@ pub(crate) fn load_mesh(
     source_path: &Path,
     source_format: Option<SourceMeshFileType>,
     warnings: &mut Vec<LoadMeshWarning>,
-) -> Result<IndexedMesh> {
+) -> Result<Scene> {
     let source_format = match source_format {
         Some(f) => f,
         None => infer_mesh_file_format_from_extension(source_path)?,
