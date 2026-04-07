@@ -6,12 +6,14 @@
 pub mod errors;
 pub mod geometry;
 pub mod indexed_mesh;
-mod primitives;
+pub mod primitives;
+pub mod scene;
 
 use std::collections::HashMap;
 
 use anyhow::Result;
 
+// Re-exporting "core" symbols for ease of use
 pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 
@@ -67,8 +69,8 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
 
 #[cfg(test)]
 mod indexed_mesh_validate_vertices_tests {
-    use crate::errors::MeshVertexError;
     use super::*;
+    use crate::errors::MeshVertexError;
 
     fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
         IndexedMesh {
@@ -237,8 +239,8 @@ mod indexed_mesh_validate_vertices_tests {
 
 #[cfg(test)]
 mod indexed_mesh_validate_faces_tests {
-    use crate::errors::MeshFaceError;
     use super::*;
+    use crate::errors::MeshFaceError;
 
     fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
         IndexedTriangle {
@@ -434,8 +436,8 @@ mod indexed_mesh_validate_faces_tests {
 
 #[cfg(test)]
 mod indexed_mesh_validate_normal_vectors_tests {
-    use crate::errors::MeshNormalVectorError;
     use super::*;
+    use crate::errors::MeshNormalVectorError;
 
     fn make_mesh(vertices: Vec<Vertex>, faces: Vec<IndexedTriangle>) -> IndexedMesh {
         IndexedMesh {
@@ -660,8 +662,8 @@ mod indexed_mesh_validate_normal_vectors_tests {
 
 #[cfg(test)]
 mod indexed_mesh_validate_manifold_tests {
-    use crate::errors::MeshManifoldError;
     use super::*;
+    use crate::errors::MeshManifoldError;
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
         IndexedTriangle {
@@ -831,9 +833,9 @@ mod indexed_mesh_validate_manifold_tests {
 
 #[cfg(test)]
 mod indexed_mesh_fix_faces_orientation_tests {
+    use super::*;
     use crate::errors::{MeshManifoldError, MeshNormalVectorError};
     use crate::geometry::compute_normal_from_triangle_vertices;
-    use super::*;
 
     /// Builds a tetrahedron with consistent winding and correct normals.
     ///
