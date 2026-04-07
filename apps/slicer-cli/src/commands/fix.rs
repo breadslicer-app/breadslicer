@@ -105,41 +105,38 @@ pub(crate) fn fix(
             write_obj(&scene, &mut output_file)?;
         }
         SourceMeshFileType::Stl | SourceMeshFileType::StlAscii | SourceMeshFileType::StlBin => {
-            // STL is a single-mesh format: count distinct pieces of geometry.
-            let inline_mesh_count = scene
-                .objects
-                .iter()
-                .filter(|obj| matches!(obj.content, SceneObjectContent::Mesh(_)))
-                .count();
-            let total_mesh_count = scene.resources.len() + inline_mesh_count;
-
-            if total_mesh_count == 0 {
-                return Err(anyhow!(
-                    "Cannot write an empty scene to an STL file"
-                ));
-            } else if total_mesh_count > 1 {
-                return Err(anyhow!(
-                    "Cannot write multi-mesh scene to a single STL file"
-                ));
-            }
-
-            let mesh = scene.resources.first().or_else(|| {
-                scene.objects.iter().find_map(|obj| match &obj.content {
-                    SceneObjectContent::Mesh(m) => Some(m),
-                    SceneObjectContent::Resource(_) => None,
-                })
-            });
-
-            if let Some(mesh) = mesh {
-                match target_format {
-                    SourceMeshFileType::Stl | SourceMeshFileType::StlBin => {
-                        write_stlb(mesh, &mut output_file)?;
-                    }
-                    SourceMeshFileType::StlAscii => {
-                        write_stla(mesh, &mut output_file)?;
-                    }
-                    _ => unreachable!(),
+            let mesh_count = scene.objects.len();
+            let merged;
+            let mesh = match mesh_count {
+                0 => return Err(anyhow!("Cannot write an empty scene to an STL file")),
+                1 => match &scene.objects[0].content {
+                    SceneObjectContent::Mesh(m) => m,
+                    SceneObjectContent::Resource(idx) => scene
+                        .resources
+                        .get(*idx)
+                        .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
+                },
+                _ => {
+                    eprintln!(
+                        "WARNING: Merging {} objects into a single mesh for STL output; \
+                         object boundaries and names will be lost.",
+                        mesh_count
+                    );
+                    merged = scene
+                        .merge_meshes()?
+                        .ok_or_else(|| anyhow!("Cannot write an empty scene to an STL file"))?;
+                    &merged
                 }
+            };
+
+            match target_format {
+                SourceMeshFileType::Stl | SourceMeshFileType::StlBin => {
+                    write_stlb(mesh, &mut output_file)?;
+                }
+                SourceMeshFileType::StlAscii => {
+                    write_stla(mesh, &mut output_file)?;
+                }
+                _ => unreachable!(),
             }
         }
         _ => todo!("Not implemented yet!"),
