@@ -11,6 +11,12 @@ members = [
     "libs/supports"
 ]
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+debug = false
+strip = true
+
 [workspace.dependencies]
 sc-mesh-core = { path = "libs/mesh-core", version = "0.0.7" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "*" }

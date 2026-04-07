@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 
 use anyhow::{Result, anyhow};
@@ -70,6 +70,45 @@ fn flush_pending_object(
     })
 }
 
+/// Checks for shared global vertex indices between the pending object and
+/// already-flushed objects, emits a warning if any are found, then flushes
+/// the pending object and records its indices as used.
+fn check_sharing_and_flush(
+    global_vertices: &[Vertex],
+    current_faces: &mut Vec<IndexedTriangle>,
+    current_name: Option<String>,
+    used_global_indices: &mut HashSet<u32>,
+    objects: &mut Vec<SceneObject>,
+    warnings: &mut Vec<LoadMeshWarning>,
+) {
+    if current_faces.is_empty() {
+        return;
+    }
+
+    let face_global_indices: HashSet<u32> = current_faces
+        .iter()
+        .flat_map(|f| f.vertices.iter().copied())
+        .collect();
+
+    let mut shared: Vec<u32> = face_global_indices
+        .intersection(used_global_indices)
+        .copied()
+        .collect();
+
+    if !shared.is_empty() {
+        shared.sort_unstable();
+        warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
+            object_name: current_name.clone(),
+            shared_indices: shared,
+        }));
+    }
+
+    if let Some(obj) = flush_pending_object(global_vertices, current_faces, current_name) {
+        objects.push(obj);
+        used_global_indices.extend(face_global_indices);
+    }
+}
+
 pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
@@ -85,6 +124,10 @@ where
     let mut current_name: Option<String> = None;
 
     let mut objects: Vec<SceneObject> = Vec::new();
+
+    // Global vertex indices consumed by already-flushed objects, used to detect
+    // cross-object vertex sharing.
+    let mut used_global_indices: HashSet<u32> = HashSet::new();
 
     // File-level header: leading `#` comments before the first non-comment line.
     let mut header_comment: Option<String> = None;
@@ -129,11 +172,14 @@ where
                 header_ended = true;
 
                 // Finalise the previous pending object (if it has faces).
-                if let Some(obj) =
-                    flush_pending_object(&global_vertices, &mut current_faces, current_name.take())
-                {
-                    objects.push(obj);
-                }
+                check_sharing_and_flush(
+                    &global_vertices,
+                    &mut current_faces,
+                    current_name.take(),
+                    &mut used_global_indices,
+                    &mut objects,
+                    warnings,
+                );
 
                 // Begin accumulating for the new object.
                 let obj_name = line.strip_prefix("o").unwrap_or("").trim();
@@ -253,9 +299,14 @@ where
     }
 
     // Finalise the last pending object.
-    if let Some(obj) = flush_pending_object(&global_vertices, &mut current_faces, current_name) {
-        objects.push(obj);
-    }
+    check_sharing_and_flush(
+        &global_vertices,
+        &mut current_faces,
+        current_name,
+        &mut used_global_indices,
+        &mut objects,
+        warnings,
+    );
 
     if objects.is_empty() {
         if global_vertices.is_empty() {
@@ -988,7 +1039,14 @@ o ObjectB
 f 1 3 4
 ";
         let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        assert!(warnings.is_empty());
+        // ObjectA uses global {0,1,2}; ObjectB uses global {0,2,3} → shared {0,2}.
+        assert_eq!(
+            warnings,
+            vec![LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
+                object_name: Some("ObjectB".into()),
+                shared_indices: vec![0, 2],
+            })]
+        );
         assert_eq!(scene.objects.len(), 2);
 
         let mesh_a = match &scene.objects[0].content {
@@ -1037,5 +1095,32 @@ f 2 3 1
         // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
         assert_eq!(mesh.vertices.len(), 3);
         assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn shared_vertices_between_objects_emits_warning() {
+        // Vertex 0 (global index 0) is used by both ObjectA and ObjectB.
+        let obj = "\
+o ObjectA
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o ObjectB
+v 1.0 1.0 0.0
+f 1 3 4
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        assert_eq!(scene.objects.len(), 2);
+
+        // Global vertex 0 (first `v`) is shared: ObjectA uses {0,1,2},
+        // ObjectB uses {0,2,3}.  Shared = {0, 2}.
+        assert_eq!(
+            warnings,
+            vec![LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
+                object_name: Some("ObjectB".into()),
+                shared_indices: vec![0, 2],
+            })]
+        );
     }
 }

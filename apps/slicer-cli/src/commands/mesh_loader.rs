@@ -79,6 +79,21 @@ pub(crate) fn display_warnings(warnings: &Vec<LoadMeshWarning>) {
                 sc_mesh_formats::messages::LoadObjWarning::SkippedComment { line } => {
                     eprintln!("WARNING (line {}): Skipped comment", line);
                 }
+                sc_mesh_formats::messages::LoadObjWarning::SharedVertices {
+                    object_name,
+                    shared_indices,
+                } => match object_name {
+                    Some(name) => eprintln!(
+                        "WARNING: Object '{}' shares global vertex indices with previously \
+                         loaded objects: {:?}",
+                        name, shared_indices
+                    ),
+                    None => eprintln!(
+                        "WARNING: An unnamed object shares global vertex indices with \
+                         previously loaded objects: {:?}",
+                        shared_indices
+                    ),
+                },
             },
         }
     }
