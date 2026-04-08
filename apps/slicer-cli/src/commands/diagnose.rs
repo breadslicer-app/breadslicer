@@ -68,7 +68,7 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileTyp
 }
 
 pub(crate) fn show_vertex_errors(vertex_errors: &[MeshVertexError]) {
-    eprintln!("Vertex errors:");
+    eprintln!("Vertex errors ({}):", vertex_errors.len());
     for vertex_error in vertex_errors {
         match vertex_error {
             MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
@@ -88,7 +88,7 @@ pub(crate) fn show_vertex_errors(vertex_errors: &[MeshVertexError]) {
 }
 
 pub(crate) fn show_face_errors(face_errors: &[MeshFaceError]) {
-    eprintln!("Face errors:");
+    eprintln!("Face errors ({}):", face_errors.len());
     for face_error in face_errors {
         match face_error {
             MeshFaceError::ZeroLengthEdge {
@@ -117,7 +117,7 @@ pub(crate) fn show_face_errors(face_errors: &[MeshFaceError]) {
 }
 
 fn show_normal_vector_errors(vector_errors: &[MeshNormalVectorError]) {
-    eprintln!("Normal vectors' errors:");
+    eprintln!("Normal vectors' errors ({}):", vector_errors.len());
     for vector_error in vector_errors {
         match vector_error {
             MeshNormalVectorError::ZeroAreaTriangle { face_idx } => {
