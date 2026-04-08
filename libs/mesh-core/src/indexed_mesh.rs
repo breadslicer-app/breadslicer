@@ -145,21 +145,15 @@ impl IndexedMesh {
             // Indices are guaranteed to be correct (we check them in `has_invalid_faces`)
             let [i0, i1, i2] = face.vertices.map(|i| i as usize);
 
-            let v0 = self.vertices[i0].0;
-            let v1 = self.vertices[i1].0;
-            let v2 = self.vertices[i2].0;
+            let v0 = self.vertices[i0];
+            let v1 = self.vertices[i1];
+            let v2 = self.vertices[i2];
 
-            let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
-            let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+            let e1 = v1.diff(&v0);
+            let e2 = v2.diff(&v0);
 
-            // Right-hand rule: (v1 - v0) × (v2 - v0)
-            let cross = [
-                e1[1] * e2[2] - e1[2] * e2[1],
-                e1[2] * e2[0] - e1[0] * e2[2],
-                e1[0] * e2[1] - e1[1] * e2[0],
-            ];
-
-            let cross_mag_sq = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+            let cross = e1.cross_product(&e2);
+            let cross_mag_sq = cross.squared_norm();
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
             if match cross_mag_sq.partial_cmp(&f32::EPSILON) {
@@ -170,9 +164,7 @@ impl IndexedMesh {
                 continue; // We don't continue processing this face
             }
 
-            let n = face.normal.0;
-
-            let n_mag_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+            let n_mag_sq = face.normal.squared_norm();
 
             if !approx_eq!(f32, n_mag_sq, 1.0, ulps = 2) {
                 errors.push(MeshNormalVectorError::NonUnitNorm {
@@ -190,6 +182,7 @@ impl IndexedMesh {
                 cross[2] / cross_mag,
             ];
 
+            let n = face.normal;
             if !approx_eq!(f32, cross[0], n[0], ulps = 2)
                 || !approx_eq!(f32, cross[1], n[1], ulps = 2)
                 || !approx_eq!(f32, cross[2], n[2], ulps = 2)
@@ -342,6 +335,8 @@ impl IndexedMesh {
 
                 if faces_with_wrong_normals.contains(face_idx) {
                     // We apply a more aggressive fix
+                    let old_normal = face.normal;
+
                     face.normal = compute_normal_from_triangle_vertices(&[
                         self.vertices[face.vertices[0] as usize],
                         self.vertices[face.vertices[1] as usize],
@@ -350,6 +345,8 @@ impl IndexedMesh {
                     faces_with_wrong_normals.remove(face_idx);
                     fixes.push(MeshFix::RecomputedNormal {
                         face_idx: *face_idx,
+                        old_normal,
+                        new_normal: face.normal,
                     });
                 } else {
                     // Simple fix
@@ -361,6 +358,7 @@ impl IndexedMesh {
         // We fix remaining normal vectors after having flipped faces
         for face_idx in &faces_with_wrong_normals {
             let face = &mut self.faces[*face_idx];
+            let old_normal = face.normal;
             face.normal = compute_normal_from_triangle_vertices(&[
                 self.vertices[face.vertices[0] as usize],
                 self.vertices[face.vertices[1] as usize],
@@ -368,6 +366,8 @@ impl IndexedMesh {
             ])?;
             fixes.push(MeshFix::RecomputedNormal {
                 face_idx: *face_idx,
+                old_normal,
+                new_normal: face.normal,
             });
         }
 

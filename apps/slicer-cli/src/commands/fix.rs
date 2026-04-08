@@ -146,7 +146,7 @@ pub(crate) fn fix(
 }
 
 fn show_applied_fixes(fixes: &[MeshFix]) {
-    eprintln!("Applied fixes:");
+    eprintln!("Applied fixes ({}):", fixes.len());
     for fix in fixes {
         match fix {
             MeshFix::RemovedZeroLengthEdgeFace { face_idx } => {
@@ -158,10 +158,18 @@ fn show_applied_fixes(fixes: &[MeshFix]) {
             MeshFix::FlippedFaceOrientation { face_idx } => {
                 println!("\t- Flipped orientation of face with ID '{}'", face_idx);
             }
-            MeshFix::RecomputedNormal { face_idx } => {
+            MeshFix::RecomputedNormal {
+                face_idx,
+                old_normal,
+                new_normal,
+            } => {
                 println!(
-                    "\t- Recomputed normal vector for face with ID '{}'",
-                    face_idx
+                    "\t- Recomputed normal vector for face with ID '{}', from {:?} (with norm {}) to {:?} (with norm {})",
+                    face_idx,
+                    old_normal.0,
+                    old_normal.norm(),
+                    new_normal.0,
+                    new_normal.norm()
                 );
             }
         }

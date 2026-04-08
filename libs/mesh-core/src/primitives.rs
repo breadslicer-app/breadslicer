@@ -3,12 +3,60 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+trait With3dVectorProps {
+    fn squared_norm(&self) -> f32;
+    fn norm(&self) -> f32;
+    fn diff(&self, other: &[f32; 3]) -> [f32; 3];
+    fn cross_product(&self, other: &[f32; 3]) -> [f32; 3];
+}
+
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub [F; 3]);
 
 impl<F: Copy + PartialEq + PartialOrd> Vector3D<F> {
     pub const fn new(v: [F; 3]) -> Self {
         Self(v)
+    }
+}
+
+impl With3dVectorProps for [f32; 3] {
+    fn squared_norm(&self) -> f32 {
+        self[0] * self[0] + self[1] * self[1] + self[2] * self[2]
+    }
+
+    fn norm(&self) -> f32 {
+        (self[0] * self[0] + self[1] * self[1] + self[2] * self[2]).sqrt()
+    }
+
+    fn diff(&self, other: &[f32; 3]) -> [f32; 3] {
+        [self[0] - other[0], self[1] - other[1], self[2] - other[2]]
+    }
+
+    fn cross_product(&self, e2: &[f32; 3]) -> [f32; 3] {
+        let e1 = self;
+        [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ]
+    }
+}
+
+impl Vector3D<f32> {
+    pub fn squared_norm(&self) -> f32 {
+        self.0.squared_norm()
+    }
+
+    pub fn norm(&self) -> f32 {
+        self.0.norm()
+    }
+
+    pub fn diff(&self, other: &Vector3D<f32>) -> Vector3D<f32> {
+        Vector3D(self.0.diff(&other.0))
+    }
+
+    pub fn cross_product(&self, other: &Vector3D<f32>) -> Vector3D<f32> {
+        Vector3D(self.0.cross_product(&other.0))
     }
 }
 

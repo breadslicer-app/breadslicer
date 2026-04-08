@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use crate::primitives::Normal;
+
 #[derive(Debug)]
 pub enum MeshVertexError {
     InfiniteCoordinate { vertex_idx: usize, coord: u8 },
@@ -45,7 +47,11 @@ pub enum MeshFix {
     /// A face's winding order was flipped (vertices reversed)
     FlippedFaceOrientation { face_idx: usize },
     /// A face's normal vector was recomputed from its vertices
-    RecomputedNormal { face_idx: usize },
+    RecomputedNormal {
+        face_idx: usize,
+        old_normal: Normal,
+        new_normal: Normal,
+    },
 }
 
 #[derive(Debug)]
