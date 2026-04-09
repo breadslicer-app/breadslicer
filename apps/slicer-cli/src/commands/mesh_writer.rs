@@ -18,10 +18,9 @@ pub(crate) fn write_scene(
     target_path: &Path,
     target_format: MeshFileType,
 ) -> Result<()> {
-    let mut output_file = std::fs::File::create(target_path)?;
-
     match target_format {
         MeshFileType::Obj => {
+            let mut output_file = std::fs::File::create(target_path)?;
             write_obj(scene, &mut output_file)?;
         }
         MeshFileType::Stl | MeshFileType::StlAscii | MeshFileType::StlBin => {
@@ -51,9 +50,11 @@ pub(crate) fn write_scene(
 
             match target_format {
                 MeshFileType::Stl | MeshFileType::StlBin => {
+                    let mut output_file = std::fs::File::create(target_path)?;
                     write_stlb(mesh, &mut output_file)?;
                 }
                 MeshFileType::StlAscii => {
+                    let mut output_file = std::fs::File::create(target_path)?;
                     write_stla(mesh, &mut output_file)?;
                 }
                 _ => unreachable!(),
