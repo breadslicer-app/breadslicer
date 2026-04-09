@@ -34,38 +34,18 @@ impl IndexedMesh {
         let mut errors: Vec<MeshVertexError> = vec![];
 
         for (idx, v) in self.vertices.iter().enumerate() {
-            if v.0[0].is_infinite() {
-                errors.push(MeshVertexError::InfiniteCoordinate {
-                    vertex_idx: idx,
-                    coord: 0,
-                });
-            } else if v.0[0].is_nan() {
-                errors.push(MeshVertexError::NaNCoordinate {
-                    vertex_idx: idx,
-                    coord: 0,
-                });
-            }
-            if v.0[1].is_infinite() {
-                errors.push(MeshVertexError::InfiniteCoordinate {
-                    vertex_idx: idx,
-                    coord: 1,
-                });
-            } else if v.0[1].is_nan() {
-                errors.push(MeshVertexError::NaNCoordinate {
-                    vertex_idx: idx,
-                    coord: 1,
-                });
-            }
-            if v.0[2].is_infinite() {
-                errors.push(MeshVertexError::InfiniteCoordinate {
-                    vertex_idx: idx,
-                    coord: 2,
-                });
-            } else if v.0[2].is_nan() {
-                errors.push(MeshVertexError::NaNCoordinate {
-                    vertex_idx: idx,
-                    coord: 2,
-                });
+            for coord in 0..3u8 {
+                if v.0[coord as usize].is_infinite() {
+                    errors.push(MeshVertexError::InfiniteCoordinate {
+                        vertex_idx: idx,
+                        coord,
+                    });
+                } else if v.0[coord as usize].is_nan() {
+                    errors.push(MeshVertexError::NaNCoordinate {
+                        vertex_idx: idx,
+                        coord,
+                    });
+                }
             }
         }
 
@@ -81,53 +61,27 @@ impl IndexedMesh {
         let mut errors: Vec<MeshFaceError> = vec![];
 
         for (idx, f) in self.faces.iter().enumerate() {
-            // Checking out of reange indices
-            if f.vertices[0] as usize >= num_vertices {
-                errors.push(MeshFaceError::OutOfRangeVertexIndex {
-                    face_idx: idx,
-                    vertex_pos: 0,
-                    vertex_idx: f.vertices[0] as usize,
-                });
-            }
-            if f.vertices[1] as usize >= num_vertices {
-                errors.push(MeshFaceError::OutOfRangeVertexIndex {
-                    face_idx: idx,
-                    vertex_pos: 1,
-                    vertex_idx: f.vertices[1] as usize,
-                });
-            }
-            if f.vertices[2] as usize >= num_vertices {
-                errors.push(MeshFaceError::OutOfRangeVertexIndex {
-                    face_idx: idx,
-                    vertex_pos: 2,
-                    vertex_idx: f.vertices[2] as usize,
-                });
+            // Checking out of range indices
+            for pos in 0..3u8 {
+                if f.vertices[pos as usize] as usize >= num_vertices {
+                    errors.push(MeshFaceError::OutOfRangeVertexIndex {
+                        face_idx: idx,
+                        vertex_pos: pos,
+                        vertex_idx: f.vertices[pos as usize] as usize,
+                    });
+                }
             }
 
             // Checking for collapsed edges
-            if f.vertices[0] == f.vertices[1] {
-                errors.push(MeshFaceError::ZeroLengthEdge {
-                    face_idx: idx,
-                    vertex_pos_a: 0,
-                    vertex_pos_b: 1,
-                    vertex_idx: f.vertices[0] as usize,
-                });
-            }
-            if f.vertices[1] == f.vertices[2] {
-                errors.push(MeshFaceError::ZeroLengthEdge {
-                    face_idx: idx,
-                    vertex_pos_a: 1,
-                    vertex_pos_b: 2,
-                    vertex_idx: f.vertices[1] as usize,
-                });
-            }
-            if f.vertices[2] == f.vertices[0] {
-                errors.push(MeshFaceError::ZeroLengthEdge {
-                    face_idx: idx,
-                    vertex_pos_a: 2,
-                    vertex_pos_b: 0,
-                    vertex_idx: f.vertices[2] as usize,
-                });
+            for (pos_a, pos_b) in [(0u8, 1u8), (1, 2), (2, 0)] {
+                if f.vertices[pos_a as usize] == f.vertices[pos_b as usize] {
+                    errors.push(MeshFaceError::ZeroLengthEdge {
+                        face_idx: idx,
+                        vertex_pos_a: pos_a,
+                        vertex_pos_b: pos_b,
+                        vertex_idx: f.vertices[pos_a as usize] as usize,
+                    });
+                }
             }
         }
 
