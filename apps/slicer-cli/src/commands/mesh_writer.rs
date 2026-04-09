@@ -9,22 +9,22 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::scene::{Scene, SceneObjectContent};
-use sc_mesh_formats::filetypes::SourceMeshFileType;
+use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::obj::write_obj;
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 
 pub(crate) fn write_scene(
     scene: &Scene,
     target_path: &Path,
-    target_format: SourceMeshFileType,
+    target_format: MeshFileType,
 ) -> Result<()> {
     let mut output_file = std::fs::File::create(target_path)?;
 
     match target_format {
-        SourceMeshFileType::Obj => {
+        MeshFileType::Obj => {
             write_obj(scene, &mut output_file)?;
         }
-        SourceMeshFileType::Stl | SourceMeshFileType::StlAscii | SourceMeshFileType::StlBin => {
+        MeshFileType::Stl | MeshFileType::StlAscii | MeshFileType::StlBin => {
             let mesh_count = scene.objects.len();
             let merged;
             let mesh = match mesh_count {
@@ -50,10 +50,10 @@ pub(crate) fn write_scene(
             };
 
             match target_format {
-                SourceMeshFileType::Stl | SourceMeshFileType::StlBin => {
+                MeshFileType::Stl | MeshFileType::StlBin => {
                     write_stlb(mesh, &mut output_file)?;
                 }
-                SourceMeshFileType::StlAscii => {
+                MeshFileType::StlAscii => {
                     write_stla(mesh, &mut output_file)?;
                 }
                 _ => unreachable!(),

@@ -13,12 +13,12 @@ use sc_mesh_core::errors::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
 use sc_mesh_core::scene::SceneObjectContent;
-use sc_mesh_formats::filetypes::SourceMeshFileType;
+use sc_mesh_formats::filetypes::MeshFileType;
 
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
 use crate::filesystem::validate_sourcefile_path;
 
-pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileType>) -> Result<()> {
+pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let mut warnings = vec![];
     let scene = load_mesh(&source_path, source_format, &mut warnings)?;

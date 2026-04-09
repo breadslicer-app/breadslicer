@@ -6,25 +6,25 @@
 use std::ffi::OsString;
 
 use bpaf::{OptionParser, Parser, construct, long, short};
-use sc_mesh_formats::filetypes::SourceMeshFileType;
+use sc_mesh_formats::filetypes::MeshFileType;
 
 #[derive(Clone, Debug)]
 pub enum CmdOptions {
     Convert {
         source: OsString,
-        source_format: Option<SourceMeshFileType>,
+        source_format: Option<MeshFileType>,
         target: OsString,
-        target_format: Option<SourceMeshFileType>,
+        target_format: Option<MeshFileType>,
     },
     Diagnose {
         source: OsString,
-        source_format: Option<SourceMeshFileType>,
+        source_format: Option<MeshFileType>,
     },
     Fix {
         source: OsString,
-        source_format: Option<SourceMeshFileType>,
+        source_format: Option<MeshFileType>,
         target: OsString,
-        target_format: Option<SourceMeshFileType>,
+        target_format: Option<MeshFileType>,
         fix_zero_length_edges: bool,
         fix_flipped_faces: bool,
         fix_face_normals: bool,
@@ -43,7 +43,7 @@ fn get_convert_options() -> impl Parser<CmdOptions> {
 
     let source_format = long("source-format")
         .help("Specify the file format of the source file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
-        .argument::<SourceMeshFileType>("SOURCE_FORMAT")
+        .argument::<MeshFileType>("SOURCE_FORMAT")
         .optional();
 
     let target = short('t')
@@ -53,7 +53,7 @@ fn get_convert_options() -> impl Parser<CmdOptions> {
 
     let target_format = long("target-format")
         .help("Specify the file format of the target file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
-        .argument::<SourceMeshFileType>("TARGET_FORMAT")
+        .argument::<MeshFileType>("TARGET_FORMAT")
         .optional();
 
     construct!(CmdOptions::Convert {
@@ -72,7 +72,7 @@ fn get_diagnose_options() -> impl Parser<CmdOptions> {
 
     let source_format = long("source-format")
         .help("Specify the file format of the source file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
-        .argument::<SourceMeshFileType>("SOURCE_FORMAT")
+        .argument::<MeshFileType>("SOURCE_FORMAT")
         .optional();
 
     construct!(CmdOptions::Diagnose {
@@ -89,7 +89,7 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
 
     let source_format = long("source-format")
         .help("Specify the file format of the source file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
-        .argument::<SourceMeshFileType>("SOURCE_FORMAT")
+        .argument::<MeshFileType>("SOURCE_FORMAT")
         .optional();
 
     let target = short('t')
@@ -99,7 +99,7 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
 
     let target_format = long("target-format")
         .help("Specify the file format of the target file. Supported file formats: stl, stla, stlb, obj, ply, amf, 3mf.")
-        .argument::<SourceMeshFileType>("TARGET_FORMAT")
+        .argument::<MeshFileType>("TARGET_FORMAT")
         .optional();
 
     let fix_zero_length_edges = long("fix-zero-length-edges")

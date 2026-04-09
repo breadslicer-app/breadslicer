@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::MeshFix;
 use sc_mesh_core::scene::SceneObjectContent;
-use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 
 use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
@@ -20,9 +20,9 @@ use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn fix(
     source: OsString,
-    source_format: Option<SourceMeshFileType>,
+    source_format: Option<MeshFileType>,
     target: OsString,
-    target_format: Option<SourceMeshFileType>,
+    target_format: Option<MeshFileType>,
     fix_zero_length_edges: bool,
     fix_flipped_faces: bool,
     fix_face_normals: bool,

@@ -11,16 +11,16 @@ use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 #[derive(PartialEq, Eq)]
-pub struct InvalidSourceMeshFileType;
+pub struct InvalidMeshFileType;
 
-impl Display for InvalidSourceMeshFileType {
+impl Display for InvalidMeshFileType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Invalid mesh file format type")
     }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-pub enum SourceMeshFileType {
+pub enum MeshFileType {
     Stl,
     StlAscii,
     StlBin,
@@ -30,26 +30,26 @@ pub enum SourceMeshFileType {
     _3mf,
 }
 
-impl FromStr for SourceMeshFileType {
-    type Err = InvalidSourceMeshFileType;
+impl FromStr for MeshFileType {
+    type Err = InvalidMeshFileType;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_uppercase().as_str() {
-            "STL" => Ok(SourceMeshFileType::Stl),
-            "STLA" => Ok(SourceMeshFileType::StlAscii),
-            "STLB" => Ok(SourceMeshFileType::StlBin),
-            "STL_ASCII" => Ok(SourceMeshFileType::StlAscii),
-            "STL_BIN" => Ok(SourceMeshFileType::StlBin),
-            "OBJ" => Ok(SourceMeshFileType::Obj),
-            "PLY" => Ok(SourceMeshFileType::Ply),
-            "AMF" => Ok(SourceMeshFileType::Amf),
-            "3MF" => Ok(SourceMeshFileType::_3mf),
-            _ => Err(InvalidSourceMeshFileType),
+            "STL" => Ok(MeshFileType::Stl),
+            "STLA" => Ok(MeshFileType::StlAscii),
+            "STLB" => Ok(MeshFileType::StlBin),
+            "STL_ASCII" => Ok(MeshFileType::StlAscii),
+            "STL_BIN" => Ok(MeshFileType::StlBin),
+            "OBJ" => Ok(MeshFileType::Obj),
+            "PLY" => Ok(MeshFileType::Ply),
+            "AMF" => Ok(MeshFileType::Amf),
+            "3MF" => Ok(MeshFileType::_3mf),
+            _ => Err(InvalidMeshFileType),
         }
     }
 }
 
-pub fn infer_mesh_file_format_from_extension(path: &Path) -> Result<SourceMeshFileType> {
+pub fn infer_mesh_file_format_from_extension(path: &Path) -> Result<MeshFileType> {
     let extension = match path.extension() {
         Some(ext) => ext.to_str().unwrap_or(""),
         None => "",
@@ -57,13 +57,13 @@ pub fn infer_mesh_file_format_from_extension(path: &Path) -> Result<SourceMeshFi
     .to_lowercase();
 
     match extension.as_str() {
-        "stl" => Ok(SourceMeshFileType::Stl),
-        "stla" => Ok(SourceMeshFileType::StlAscii),
-        "stlb" => Ok(SourceMeshFileType::StlBin),
-        "obj" => Ok(SourceMeshFileType::Obj),
-        "ply" => Ok(SourceMeshFileType::Ply),
-        "amf" => Ok(SourceMeshFileType::Amf),
-        "3mf" => Ok(SourceMeshFileType::_3mf),
+        "stl" => Ok(MeshFileType::Stl),
+        "stla" => Ok(MeshFileType::StlAscii),
+        "stlb" => Ok(MeshFileType::StlBin),
+        "obj" => Ok(MeshFileType::Obj),
+        "ply" => Ok(MeshFileType::Ply),
+        "amf" => Ok(MeshFileType::Amf),
+        "3mf" => Ok(MeshFileType::_3mf),
         _ => Err(anyhow!(
             "Unable to infer file format from filename extension for \"{:?}\"",
             path

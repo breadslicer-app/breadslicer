@@ -10,7 +10,7 @@ use std::fs::copy;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
 use crate::commands::mesh_writer::write_scene;
@@ -18,9 +18,9 @@ use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn convert(
     source: OsString,
-    source_format: Option<SourceMeshFileType>,
+    source_format: Option<MeshFileType>,
     target: OsString,
-    target_format: Option<SourceMeshFileType>,
+    target_format: Option<MeshFileType>,
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let target_path = validate_targetfile_path(PathBuf::from(target))?;

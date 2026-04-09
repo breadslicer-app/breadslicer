@@ -10,14 +10,14 @@ use std::path::Path;
 
 use anyhow::Result;
 use sc_mesh_core::scene::Scene;
-use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_formats::obj::read_obj;
 use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb};
 
 pub(crate) fn load_mesh(
     source_path: &Path,
-    source_format: Option<SourceMeshFileType>,
+    source_format: Option<MeshFileType>,
     warnings: &mut Vec<LoadMeshWarning>,
 ) -> Result<Scene> {
     let source_format = match source_format {
@@ -28,10 +28,10 @@ pub(crate) fn load_mesh(
     let mut source_file = File::open(source_path)?;
 
     match source_format {
-        SourceMeshFileType::Stl => read_stl(&mut source_file),
-        SourceMeshFileType::StlAscii => read_stla(&mut source_file),
-        SourceMeshFileType::StlBin => read_stlb(&mut source_file),
-        SourceMeshFileType::Obj => read_obj(&mut source_file, warnings),
+        MeshFileType::Stl => read_stl(&mut source_file),
+        MeshFileType::StlAscii => read_stla(&mut source_file),
+        MeshFileType::StlBin => read_stlb(&mut source_file),
+        MeshFileType::Obj => read_obj(&mut source_file, warnings),
         _ => todo!("Not implemented yet!"),
     }
 }
