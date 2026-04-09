@@ -31,8 +31,8 @@ pub(crate) fn validate_sourcefile_path(path: PathBuf) -> Result<PathBuf> {
 pub(crate) fn validate_targetfile_path(path: PathBuf) -> Result<PathBuf> {
     if path.is_dir() || path.is_symlink() {
         return Err(anyhow!(
-            "Specified path for target file \"{:?}\" already points to a directory",
-            path
+            "Specified path for target file \"{}\" already points to a directory or symlink",
+            path.display()
         ));
     }
 

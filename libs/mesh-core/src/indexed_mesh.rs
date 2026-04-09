@@ -96,7 +96,7 @@ impl IndexedMesh {
         let mut errors: Vec<MeshNormalVectorError> = vec![];
 
         for (idx, face) in self.faces.iter().enumerate() {
-            // Indices are guaranteed to be correct (we check them in `has_invalid_faces`)
+            // Indices are guaranteed to be correct (we check them in `validate_faces`)
             let [i0, i1, i2] = face.vertices.map(|i| i as usize);
 
             let v0 = Vector3D::<f64>::from(self.vertices[i0]);

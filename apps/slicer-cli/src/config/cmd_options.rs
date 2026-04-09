@@ -171,7 +171,7 @@ pub fn get_cmd_options() -> OptionParser<CmdOptions> {
 
     construct!([convert, diagnose, fix, help, inspect, slice, version])
         .to_options()
-        .descr("sc-slicer-cli (SoulCrafter Slicer, CLI) is an FLOSS command line slicer for resin 3d printers")
+        .descr("sc-slicer-cli (SoulCrafted Slicer, CLI) is an FLOSS command line slicer for resin 3d printers")
         // .header(header) // TODO: Implement these lines for the embedded help
         .footer("Add `--help` after any of the subcommands to learn more about them.")
         .fallback_to_usage()

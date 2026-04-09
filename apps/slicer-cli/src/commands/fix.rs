@@ -127,7 +127,7 @@ fn fix_mesh(
 }
 
 fn show_applied_fixes(fixes: &[MeshFix]) {
-    eprintln!("Applied fixes ({}):", fixes.len());
+    println!("Applied fixes ({}):", fixes.len());
     for fix in fixes {
         match fix {
             MeshFix::RemovedZeroLengthEdgeFace { face_idx } => {

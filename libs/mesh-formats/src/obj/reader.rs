@@ -149,7 +149,7 @@ where
         };
 
         match first_token {
-            "#" => {
+            t if t.starts_with('#') => {
                 if header_ended {
                     warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedComment {
                         line: line_num + 1,
