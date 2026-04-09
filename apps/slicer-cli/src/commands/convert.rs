@@ -6,15 +6,14 @@
  */
 
 use std::ffi::OsString;
-use std::fs::{File, copy};
+use std::fs::copy;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_formats::filetypes::{SourceMeshFileType, infer_mesh_file_format_from_extension};
-use sc_mesh_formats::obj::write_obj;
-use sc_mesh_formats::stl::{write_stla, write_stlb};
 
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
+use crate::commands::mesh_writer::write_scene;
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn convert(
@@ -55,48 +54,5 @@ pub(crate) fn convert(
 
     display_warnings(&warnings);
 
-    let mut output_file = File::create(&target_path)?;
-    match target_format {
-        SourceMeshFileType::Obj => {
-            write_obj(&scene, &mut output_file)?;
-        }
-        SourceMeshFileType::Stl | SourceMeshFileType::StlAscii | SourceMeshFileType::StlBin => {
-            let mesh_count = scene.objects.len();
-            let merged;
-            let mesh = match mesh_count {
-                0 => return Err(anyhow!("Cannot write an empty scene to an STL file")),
-                1 => match &scene.objects[0].content {
-                    sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-                    sc_mesh_core::scene::SceneObjectContent::Resource(idx) => scene
-                        .resources
-                        .get(*idx)
-                        .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
-                },
-                _ => {
-                    eprintln!(
-                        "WARNING: Merging {} objects into a single mesh for STL output; \
-                         object boundaries and names will be lost.",
-                        mesh_count
-                    );
-                    merged = scene
-                        .merge_meshes()?
-                        .ok_or_else(|| anyhow!("Cannot write an empty scene to an STL file"))?;
-                    &merged
-                }
-            };
-
-            match target_format {
-                SourceMeshFileType::Stl | SourceMeshFileType::StlBin => {
-                    write_stlb(mesh, &mut output_file)?;
-                }
-                SourceMeshFileType::StlAscii => {
-                    write_stla(mesh, &mut output_file)?;
-                }
-                _ => unreachable!(),
-            }
-        }
-        _ => todo!("Not implemented yet!"),
-    }
-
-    Ok(())
+    write_scene(&scene, &target_path, target_format)
 }
