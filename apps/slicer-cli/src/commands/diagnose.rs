@@ -27,16 +27,22 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) ->
 
     let mut detected_problems = false;
 
-    for obj in &scene.objects {
-        let mesh = match &obj.content {
-            SceneObjectContent::Mesh(m) => m,
-            SceneObjectContent::Resource(idx) => scene
-                .resources
-                .get(*idx)
-                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
-        };
-
+    for mesh in &scene.resources {
         detected_problems |= diagnose_mesh(mesh);
+    }
+
+    for obj in &scene.objects {
+        match &obj.content {
+            SceneObjectContent::Mesh(m) => {
+                detected_problems |= diagnose_mesh(m);
+            }
+            SceneObjectContent::Resource(idx) => {
+                if scene.resources.get(*idx).is_none() {
+                    eprintln!("\t-Resource index {} out of bounds", *idx);
+                    detected_problems = true;
+                }
+            }
+        };
     }
 
     if detected_problems {
