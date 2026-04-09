@@ -36,7 +36,7 @@ pub(crate) fn load_mesh(
     }
 }
 
-pub(crate) fn display_warnings(warnings: &Vec<LoadMeshWarning>) {
+pub(crate) fn display_warnings(warnings: &[LoadMeshWarning]) {
     for warning in warnings {
         match warning {
             LoadMeshWarning::Obj(obj_warning) => match obj_warning {
