@@ -104,14 +104,8 @@ fn fix_mesh(
         all_fixes.extend(fixes);
     }
 
-    let normal_vector_errors = match mesh.validate_normal_vectors() {
-        Err(v) => v,
-        _ => vec![],
-    };
-    let manifold_errors = match mesh.validate_manifold() {
-        Err(v) => v,
-        _ => vec![],
-    };
+    let normal_vector_errors = mesh.validate_normal_vectors().err().unwrap_or_default();
+    let manifold_errors = mesh.validate_manifold().err().unwrap_or_default();
 
     if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
         let fixes = mesh.fix_faces_orientation(
