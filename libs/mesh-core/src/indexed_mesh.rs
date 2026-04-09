@@ -281,6 +281,7 @@ impl IndexedMesh {
         manifold_errors: &[MeshManifoldError],
         normal_vector_errors: &[MeshNormalVectorError],
         fix_flipped_faces: bool,
+        fix_face_normals: bool,
     ) -> Result<Vec<MeshFix>> {
         let mut fixes: Vec<MeshFix> = Vec::new();
 
@@ -338,7 +339,7 @@ impl IndexedMesh {
                         face_idx: *face_idx,
                     });
 
-                    if faces_with_wrong_normals.contains(face_idx) {
+                    if faces_with_wrong_normals.contains(face_idx) && fix_face_normals {
                         // We apply a more aggressive fix
                         let old_normal = face.normal;
 
@@ -361,20 +362,22 @@ impl IndexedMesh {
             }
         }
 
-        // We fix remaining normal vectors after having flipped faces
-        for face_idx in &faces_with_wrong_normals {
-            let face = &mut self.faces[*face_idx];
-            let old_normal = face.normal;
-            face.normal = compute_normal_from_triangle_vertices(&[
-                self.vertices[face.vertices[0] as usize],
-                self.vertices[face.vertices[1] as usize],
-                self.vertices[face.vertices[2] as usize],
-            ])?;
-            fixes.push(MeshFix::RecomputedNormal {
-                face_idx: *face_idx,
-                old_normal,
-                new_normal: face.normal,
-            });
+        if fix_face_normals {
+            // We fix remaining normal vectors after having flipped faces
+            for face_idx in &faces_with_wrong_normals {
+                let face = &mut self.faces[*face_idx];
+                let old_normal = face.normal;
+                face.normal = compute_normal_from_triangle_vertices(&[
+                    self.vertices[face.vertices[0] as usize],
+                    self.vertices[face.vertices[1] as usize],
+                    self.vertices[face.vertices[2] as usize],
+                ])?;
+                fixes.push(MeshFix::RecomputedNormal {
+                    face_idx: *face_idx,
+                    old_normal,
+                    new_normal: face.normal,
+                });
+            }
         }
 
         Ok(fixes)
@@ -1235,7 +1238,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     fn no_op_when_no_errors() {
         let mut mesh = tetrahedron();
         let original = mesh.clone();
-        mesh.fix_faces_orientation(&[], &[], true).unwrap();
+        mesh.fix_faces_orientation(&[], &[], true, true).unwrap();
         assert_eq!(mesh, original);
     }
 
@@ -1251,7 +1254,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
 
         let expected = tetrahedron();
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true)
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, true)
             .unwrap();
 
         // Face 0 vertices should be restored (reversed back)
@@ -1282,7 +1285,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
 
         let expected = tetrahedron();
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true)
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, true)
             .unwrap();
 
         let n = mesh.faces[0].normal.0;
@@ -1308,7 +1311,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
 
         let expected = tetrahedron();
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false)
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
         let n = mesh.faces[0].normal.0;
@@ -1335,7 +1338,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
 
         let expected = tetrahedron();
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false)
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
         let n = mesh.faces[1].normal.0;
@@ -1361,7 +1364,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let manifold_errors = mesh.validate_manifold().unwrap_err();
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true)
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, true)
             .unwrap();
 
         // Faces 1, 2, 3 should be unchanged
@@ -1410,7 +1413,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
             },
         ];
 
-        let result = mesh.fix_faces_orientation(&manifold_errors, &[], true);
+        let result = mesh.fix_faces_orientation(&manifold_errors, &[], true, true);
         assert!(result.is_err());
         assert!(
             result
@@ -1456,7 +1459,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
             },
         ];
 
-        let result = mesh.fix_faces_orientation(&manifold_errors, &[], true);
+        let result = mesh.fix_faces_orientation(&manifold_errors, &[], true, true);
         assert!(result.is_err());
         assert!(
             result
@@ -1482,7 +1485,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
             },
         ];
 
-        mesh.fix_faces_orientation(&manifold_errors, &[], true)
+        mesh.fix_faces_orientation(&manifold_errors, &[], true, true)
             .unwrap();
         assert_eq!(mesh, original);
     }
@@ -1494,7 +1497,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let normal_errors = vec![MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }];
 
-        mesh.fix_faces_orientation(&[], &normal_errors, false)
+        mesh.fix_faces_orientation(&[], &normal_errors, false, false)
             .unwrap();
         assert_eq!(mesh, original);
     }
@@ -1510,7 +1513,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
             face_indices: [0, 1],
         }];
 
-        mesh.fix_faces_orientation(&manifold_errors, &[], true)
+        mesh.fix_faces_orientation(&manifold_errors, &[], true, true)
             .unwrap();
         assert_eq!(mesh.faces[0].vertices, original.faces[0].vertices);
     }
@@ -1526,13 +1529,58 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh.validate_manifold().unwrap_err();
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
 
-        // With fix_flipped_faces=false, winding must not be touched even though errors exist
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false)
+        // With fix_flipped_faces=false, winding must not be touched even though errors exist.
+        // Normals are still recomputed (fix_face_normals=true) but since the face is still
+        // wrongly wound, the recomputed normal will point inward (opposite to the correct one).
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
         assert_eq!(
             mesh.faces[0].vertices, flipped_vertices,
             "vertices should be unchanged when fix_flipped_faces is false"
+        );
+    }
+
+    #[test]
+    fn skips_normal_fix_when_fix_face_normals_is_false() {
+        let mut mesh = tetrahedron();
+
+        // Give face 0 a wrong normal but keep correct winding
+        mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
+        let wrong_normal = mesh.faces[0].normal;
+
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+
+        // With fix_face_normals=false, normals must not be touched even though errors exist
+        mesh.fix_faces_orientation(&[], &normal_errors, false, false)
+            .unwrap();
+
+        assert_eq!(
+            mesh.faces[0].normal, wrong_normal,
+            "normal should be unchanged when fix_face_normals is false"
+        );
+    }
+
+    #[test]
+    fn flips_face_but_negates_normal_when_fix_face_normals_is_false() {
+        let mut mesh = tetrahedron();
+
+        // Flip face 0's winding and give it a completely wrong normal
+        mesh.faces[0].vertices.reverse();
+        mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
+
+        let manifold_errors = mesh.validate_manifold().unwrap_err();
+        let normal_errors = mesh.validate_normal_vectors().unwrap_err();
+
+        // With fix_face_normals=false, the face is flipped back but the normal is only
+        // negated (simple fix), not recomputed from vertices
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, false)
+            .unwrap();
+
+        let expected_normal = Normal::new([-1.0, 0.0, 0.0]);
+        assert_eq!(
+            mesh.faces[0].normal, expected_normal,
+            "normal should be negated, not recomputed, when fix_face_normals is false"
         );
     }
 
@@ -1545,7 +1593,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let manifold_errors = mesh.validate_manifold().unwrap_err();
         let normal_errors = mesh.validate_normal_vectors().unwrap_err();
-        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true)
+        mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, true)
             .unwrap();
 
         // After fix, the mesh should pass all validations

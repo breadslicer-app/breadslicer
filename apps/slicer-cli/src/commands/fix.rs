@@ -27,6 +27,7 @@ pub(crate) fn fix(
     target_format: Option<SourceMeshFileType>,
     fix_zero_length_edges: bool,
     fix_flipped_faces: bool,
+    fix_face_normals: bool,
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let target_path = validate_targetfile_path(PathBuf::from(target))?;
@@ -55,6 +56,7 @@ pub(crate) fn fix(
             &mut all_fixes,
             fix_zero_length_edges,
             fix_flipped_faces,
+            fix_face_normals,
         )?;
     }
 
@@ -67,6 +69,7 @@ pub(crate) fn fix(
             &mut all_fixes,
             fix_zero_length_edges,
             fix_flipped_faces,
+            fix_face_normals,
         )?;
     }
 
@@ -127,6 +130,7 @@ fn fix_mesh(
     all_fixes: &mut Vec<MeshFix>,
     fix_zero_length_edges: bool,
     fix_flipped_faces: bool,
+    fix_face_normals: bool,
 ) -> Result<()> {
     if let Err(errors) = mesh.validate_vertices() {
         show_vertex_errors(&errors);
@@ -155,8 +159,12 @@ fn fix_mesh(
     };
 
     if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
-        let fixes =
-            mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors, fix_flipped_faces)?;
+        let fixes = mesh.fix_faces_orientation(
+            &manifold_errors,
+            &normal_vector_errors,
+            fix_flipped_faces,
+            fix_face_normals,
+        )?;
         all_fixes.extend(fixes);
     }
 

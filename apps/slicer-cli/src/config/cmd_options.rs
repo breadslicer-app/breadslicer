@@ -27,7 +27,7 @@ pub enum CmdOptions {
         target_format: Option<SourceMeshFileType>,
         fix_zero_length_edges: bool,
         fix_flipped_faces: bool,
-        // fix_face_normals: bool
+        fix_face_normals: bool,
     },
     Help,
     Inspect {},
@@ -114,6 +114,12 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .adjacent()
         .fallback(true);
 
+    let fix_face_normals = long("fix-face-normals")
+        .help("Flips faces pointing to the wrong direction")
+        .argument::<bool>("FIX_FLIPPED_FACES")
+        .adjacent()
+        .fallback(false);
+
     construct!(CmdOptions::Fix {
         source,
         source_format,
@@ -121,6 +127,7 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         target_format,
         fix_zero_length_edges,
         fix_flipped_faces,
+        fix_face_normals,
     })
 }
 

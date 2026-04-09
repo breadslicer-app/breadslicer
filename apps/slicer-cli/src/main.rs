@@ -37,6 +37,7 @@ fn main() -> Result<()> {
             target_format,
             fix_zero_length_edges,
             fix_flipped_faces,
+            fix_face_normals,
         } => fix(
             source,
             source_format,
@@ -44,6 +45,7 @@ fn main() -> Result<()> {
             target_format,
             fix_zero_length_edges,
             fix_flipped_faces,
+            fix_face_normals,
         ),
         CmdOptions::Help => {
             let help_text = get_cmd_options()
