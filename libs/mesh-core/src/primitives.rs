@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-trait With3dVectorProps {
-    fn squared_norm(&self) -> f32;
-    fn norm(&self) -> f32;
-    fn diff(&self, other: &[f32; 3]) -> [f32; 3];
-    fn cross_product(&self, other: &[f32; 3]) -> [f32; 3];
+trait With3dVectorProps<F> {
+    fn squared_norm(&self) -> F;
+    fn norm(&self) -> F;
+    fn diff(&self, other: &[F; 3]) -> [F; 3];
+    fn dot_product(&self, other: &[F; 3]) -> F;
+    fn cross_product(&self, other: &[F; 3]) -> [F; 3];
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -19,25 +20,60 @@ impl<F: Copy + PartialEq + PartialOrd> Vector3D<F> {
     }
 }
 
-impl With3dVectorProps for [f32; 3] {
+impl With3dVectorProps<f32> for [f32; 3] {
     fn squared_norm(&self) -> f32 {
-        self[0] * self[0] + self[1] * self[1] + self[2] * self[2]
+        self[0].mul_add(self[0], self[1].mul_add(self[1], self[2] * self[2]))
     }
 
     fn norm(&self) -> f32 {
-        (self[0] * self[0] + self[1] * self[1] + self[2] * self[2]).sqrt()
+        self[0]
+            .mul_add(self[0], self[1].mul_add(self[1], self[2] * self[2]))
+            .sqrt()
     }
 
     fn diff(&self, other: &[f32; 3]) -> [f32; 3] {
         [self[0] - other[0], self[1] - other[1], self[2] - other[2]]
     }
 
+    fn dot_product(&self, e2: &[f32; 3]) -> f32 {
+        self[0].mul_add(e2[0], self[1].mul_add(e2[1], self[2] * e2[2]))
+    }
+
     fn cross_product(&self, e2: &[f32; 3]) -> [f32; 3] {
         let e1 = self;
         [
-            e1[1] * e2[2] - e1[2] * e2[1],
-            e1[2] * e2[0] - e1[0] * e2[2],
-            e1[0] * e2[1] - e1[1] * e2[0],
+            e1[1].mul_add(e2[2], -e1[2] * e2[1]),
+            e1[2].mul_add(e2[0], -e1[0] * e2[2]),
+            e1[0].mul_add(e2[1], -e1[1] * e2[0]),
+        ]
+    }
+}
+
+impl With3dVectorProps<f64> for [f64; 3] {
+    fn squared_norm(&self) -> f64 {
+        self[0].mul_add(self[0], self[1].mul_add(self[1], self[2] * self[2]))
+    }
+
+    fn norm(&self) -> f64 {
+        self[0]
+            .mul_add(self[0], self[1].mul_add(self[1], self[2] * self[2]))
+            .sqrt()
+    }
+
+    fn diff(&self, other: &[f64; 3]) -> [f64; 3] {
+        [self[0] - other[0], self[1] - other[1], self[2] - other[2]]
+    }
+
+    fn dot_product(&self, e2: &[f64; 3]) -> f64 {
+        self[0].mul_add(e2[0], self[1].mul_add(e2[1], self[2] * e2[2]))
+    }
+
+    fn cross_product(&self, e2: &[f64; 3]) -> [f64; 3] {
+        let e1 = self;
+        [
+            e1[1].mul_add(e2[2], -e1[2] * e2[1]),
+            e1[2].mul_add(e2[0], -e1[0] * e2[2]),
+            e1[0].mul_add(e2[1], -e1[1] * e2[0]),
         ]
     }
 }
@@ -55,8 +91,46 @@ impl Vector3D<f32> {
         Vector3D(self.0.diff(&other.0))
     }
 
+    pub fn dot_product(&self, other: &Vector3D<f32>) -> f32 {
+        self.0.dot_product(&other.0)
+    }
+
     pub fn cross_product(&self, other: &Vector3D<f32>) -> Vector3D<f32> {
         Vector3D(self.0.cross_product(&other.0))
+    }
+}
+
+impl Vector3D<f64> {
+    pub fn squared_norm(&self) -> f64 {
+        self.0.squared_norm()
+    }
+
+    pub fn norm(&self) -> f64 {
+        self.0.norm()
+    }
+
+    pub fn diff(&self, other: &Vector3D<f64>) -> Vector3D<f64> {
+        Vector3D(self.0.diff(&other.0))
+    }
+
+    pub fn dot_product(&self, other: &Vector3D<f64>) -> f64 {
+        self.0.dot_product(&other.0)
+    }
+
+    pub fn cross_product(&self, other: &Vector3D<f64>) -> Vector3D<f64> {
+        Vector3D(self.0.cross_product(&other.0))
+    }
+}
+
+impl From<Vector3D<f32>> for Vector3D<f64> {
+    fn from(v: Vector3D<f32>) -> Self {
+        Vector3D([v[0] as f64, v[1] as f64, v[2] as f64])
+    }
+}
+
+impl From<Vector3D<f64>> for Vector3D<f32> {
+    fn from(v: Vector3D<f64>) -> Self {
+        Vector3D([v[0] as f32, v[1] as f32, v[2] as f32])
     }
 }
 

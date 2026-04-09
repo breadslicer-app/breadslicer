@@ -8,42 +8,54 @@ use std::cmp::Ordering;
 
 use anyhow::{Result, anyhow};
 
-use crate::primitives::{Normal, Vertex};
+use crate::primitives::{Normal, Vector3D, Vertex};
 
-pub fn compute_normal_from_triangle_vertices(vertices: &[Vertex; 3]) -> Result<Normal> {
-    let v0 = vertices[0].0;
-    let v1 = vertices[1].0;
-    let v2 = vertices[2].0;
+/// Computes a unit normal for a triangle using f64 precision internally.
+///
+/// The f32 vertex coordinates are promoted to f64 before subtracting, taking
+/// the cross product, and normalizing. This mitigates the catastrophic
+/// cancellation that happens when vertices are far from the origin but the
+/// triangle edges are relatively short: in f32, the difference `v_i - v_0`
+/// can lose several bits of precision, and the resulting normal can differ
+/// from the "true" one by as much as 1e-3 or so.
+///
+/// The result is returned as an f64 array so callers that want to compare it
+/// against a stored f32 normal can do so at f64 precision.
+pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f64; 3]> {
+    let v0 = Vector3D::<f64>::from(vertices[0]);
+    let v1 = Vector3D::<f64>::from(vertices[1]);
+    let v2 = Vector3D::<f64>::from(vertices[2]);
 
-    let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
-    let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+    let e1 = v1.diff(&v0);
+    let e2 = v2.diff(&v0);
 
-    // Right-hand rule: (v1 - v0) × (v2 - v0)
-    let cross = [
-        e1[1] * e2[2] - e1[2] * e2[1],
-        e1[2] * e2[0] - e1[0] * e2[2],
-        e1[0] * e2[1] - e1[1] * e2[0],
-    ];
+    let cross = e1.cross_product(&e2);
 
-    let cross_mag_sq = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+    let cross_mag_sq = cross.squared_norm();
 
     // degenerate (zero-area) triangles; also handles NaN coordinates.
-    if match cross_mag_sq.partial_cmp(&f32::EPSILON) {
+    if match cross_mag_sq.partial_cmp(&(f32::EPSILON as f64)) {
         Some(Ordering::Greater) => false, // We don't enter into the block
         _ => true,
     } {
         return Err(anyhow!("Degenerate (near-zero area) triangle found"));
     }
 
-    // Normalize computed normal vector
     let cross_mag = cross_mag_sq.sqrt();
-    let cross = [
+    Ok([
         cross[0] / cross_mag,
         cross[1] / cross_mag,
         cross[2] / cross_mag,
-    ];
+    ])
+}
 
-    Ok(Normal::new(cross))
+pub fn compute_normal_from_triangle_vertices(vertices: &[Vertex; 3]) -> Result<Normal> {
+    let unit = compute_reference_normal_f64(vertices)?;
+    Ok(Normal::new([
+        unit[0] as f32,
+        unit[1] as f32,
+        unit[2] as f32,
+    ]))
 }
 
 #[cfg(test)]

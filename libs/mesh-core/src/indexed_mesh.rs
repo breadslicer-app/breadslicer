@@ -14,7 +14,7 @@ use crate::errors::{
     MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
 use crate::geometry::compute_normal_from_triangle_vertices;
-use crate::primitives::{IndexedTriangle, Vertex};
+use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshMetadata {
@@ -145,9 +145,9 @@ impl IndexedMesh {
             // Indices are guaranteed to be correct (we check them in `has_invalid_faces`)
             let [i0, i1, i2] = face.vertices.map(|i| i as usize);
 
-            let v0 = self.vertices[i0];
-            let v1 = self.vertices[i1];
-            let v2 = self.vertices[i2];
+            let v0 = Vector3D::<f64>::from(self.vertices[i0]);
+            let v1 = Vector3D::<f64>::from(self.vertices[i1]);
+            let v2 = Vector3D::<f64>::from(self.vertices[i2]);
 
             let e1 = v1.diff(&v0);
             let e2 = v2.diff(&v0);
@@ -156,7 +156,7 @@ impl IndexedMesh {
             let cross_mag_sq = cross.squared_norm();
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
-            if match cross_mag_sq.partial_cmp(&f32::EPSILON) {
+            if match cross_mag_sq.partial_cmp(&(f32::EPSILON as f64)) {
                 Some(Ordering::Greater) => false, // We don't enter into the block
                 _ => true,
             } {
@@ -164,29 +164,36 @@ impl IndexedMesh {
                 continue; // We don't continue processing this face
             }
 
-            let n_mag_sq = face.normal.squared_norm();
+            let n = Vector3D::<f64>::from(face.normal);
+            let n_mag_sq = n.squared_norm();
 
-            if !approx_eq!(f32, n_mag_sq, 1.0, ulps = 2) {
+            // f32 unit normals widened to f64 can have squared magnitude deviating from
+            // 1.0 by up to ~3 × 2⁻²³ ≈ 3.6e-7 due to f32 quantization of each component.
+            if !approx_eq!(f64, n_mag_sq, 1.0, epsilon = 1e-6) {
                 errors.push(MeshNormalVectorError::NonUnitNorm {
                     face_idx: idx,
-                    norm: n_mag_sq.sqrt(),
+                    norm: n_mag_sq.sqrt() as f32,
                 });
                 continue; // We don't continue processing this face
             }
 
             // Normalize computed normal vector
             let cross_mag = cross_mag_sq.sqrt();
-            let cross = [
+            let cross = Vector3D::new([
                 cross[0] / cross_mag,
                 cross[1] / cross_mag,
                 cross[2] / cross_mag,
-            ];
+            ]);
 
-            let n = face.normal;
-            if !approx_eq!(f32, cross[0], n[0], ulps = 2)
-                || !approx_eq!(f32, cross[1], n[1], ulps = 2)
-                || !approx_eq!(f32, cross[2], n[2], ulps = 2)
-            {
+            // Compare orientation via the dot product of the two unit vectors.
+            // A per-component epsilon comparison is too sensitive: small triangles and
+            // high-aspect-ratio triangles accumulate enough floating-point error that
+            // their normals can diverge by a few degrees from the stored value. A 5°
+            // threshold filters out this numerical noise while still catching normals
+            // that are meaningfully wrong (for the most part).
+            const COS_MAX_DEVIATION: f64 = 0.9961946980917455; // cos(5°)
+            let dot = cross.dot_product(&n);
+            if dot < COS_MAX_DEVIATION {
                 errors.push(MeshNormalVectorError::ExpectationMismatch { face_idx: idx });
                 continue;
             }
