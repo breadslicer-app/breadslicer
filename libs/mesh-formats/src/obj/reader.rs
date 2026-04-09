@@ -111,7 +111,7 @@ fn check_sharing_and_flush(
 
 pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene>
 where
-    R: std::io::Read + std::io::Seek,
+    R: std::io::Read,
 {
     // OBJ vertices are global: any face in any object can reference any vertex
     // defined earlier in the file.
