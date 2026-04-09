@@ -115,8 +115,8 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .fallback(true);
 
     let fix_face_normals = long("fix-face-normals")
-        .help("Flips faces pointing to the wrong direction")
-        .argument::<bool>("FIX_FLIPPED_FACES")
+        .help("Fixes face normal vectors")
+        .argument::<bool>("FIX_FACE_NORMALS")
         .adjacent()
         .fallback(false);
 
