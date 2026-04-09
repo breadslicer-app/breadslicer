@@ -20,46 +20,13 @@ use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::{display_warnings, load_mesh};
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
-fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, all_fixes: &mut Vec<MeshFix>) -> Result<()> {
-    if let Err(errors) = mesh.validate_vertices() {
-        show_vertex_errors(&errors);
-        return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
-    }
-
-    if let Err(errors) = mesh.validate_faces() {
-        let fixes = mesh.fix_zero_length_edges(&errors);
-        // TODO: Fix other cases
-
-        if fixes.len() < errors.len() {
-            return Err(anyhow!(
-                "Unable to fix mesh. Face errors correction is not implemented (yet)."
-            ));
-        }
-        all_fixes.extend(fixes);
-    }
-
-    let normal_vector_errors = match mesh.validate_normal_vectors() {
-        Err(v) => v,
-        _ => vec![],
-    };
-    let manifold_errors = match mesh.validate_manifold() {
-        Err(v) => v,
-        _ => vec![],
-    };
-
-    if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
-        let fixes = mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors)?;
-        all_fixes.extend(fixes);
-    }
-
-    Ok(())
-}
-
 pub(crate) fn fix(
     source: OsString,
     source_format: Option<SourceMeshFileType>,
     target: OsString,
     target_format: Option<SourceMeshFileType>,
+    fix_zero_length_edges: bool,
+    fix_flipped_faces: bool,
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let target_path = validate_targetfile_path(PathBuf::from(target))?;
@@ -83,14 +50,24 @@ pub(crate) fn fix(
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     for mesh in &mut scene.resources {
-        fix_mesh(mesh, &mut all_fixes)?;
+        fix_mesh(
+            mesh,
+            &mut all_fixes,
+            fix_zero_length_edges,
+            fix_flipped_faces,
+        )?;
     }
 
     for obj in &mut scene.objects {
         let SceneObjectContent::Mesh(ref mut mesh) = obj.content else {
             continue;
         };
-        fix_mesh(mesh, &mut all_fixes)?;
+        fix_mesh(
+            mesh,
+            &mut all_fixes,
+            fix_zero_length_edges,
+            fix_flipped_faces,
+        )?;
     }
 
     if all_fixes.is_empty() {
@@ -140,6 +117,47 @@ pub(crate) fn fix(
             }
         }
         _ => todo!("Not implemented yet!"),
+    }
+
+    Ok(())
+}
+
+fn fix_mesh(
+    mesh: &mut sc_mesh_core::IndexedMesh,
+    all_fixes: &mut Vec<MeshFix>,
+    fix_zero_length_edges: bool,
+    fix_flipped_faces: bool,
+) -> Result<()> {
+    if let Err(errors) = mesh.validate_vertices() {
+        show_vertex_errors(&errors);
+        return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
+    }
+
+    if fix_zero_length_edges && let Err(errors) = mesh.validate_faces() {
+        let fixes = mesh.fix_zero_length_edges(&errors);
+        // TODO: Fix other cases
+
+        if fixes.len() < errors.len() {
+            return Err(anyhow!(
+                "Unable to fix mesh. Face errors correction is not implemented (yet)."
+            ));
+        }
+        all_fixes.extend(fixes);
+    }
+
+    let normal_vector_errors = match mesh.validate_normal_vectors() {
+        Err(v) => v,
+        _ => vec![],
+    };
+    let manifold_errors = match mesh.validate_manifold() {
+        Err(v) => v,
+        _ => vec![],
+    };
+
+    if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
+        let fixes =
+            mesh.fix_faces_orientation(&manifold_errors, &normal_vector_errors, fix_flipped_faces)?;
+        all_fixes.extend(fixes);
     }
 
     Ok(())
