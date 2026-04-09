@@ -8,6 +8,7 @@
 use std::{ffi::OsString, path::PathBuf};
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::errors::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
@@ -27,37 +28,15 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileTyp
     let mut detected_problems = false;
 
     for obj in &scene.objects {
-        let SceneObjectContent::Mesh(mesh) = &obj.content else {
-            continue;
+        let mesh = match &obj.content {
+            SceneObjectContent::Mesh(m) => m,
+            SceneObjectContent::Resource(idx) => scene
+                .resources
+                .get(*idx)
+                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
         };
 
-        let mut mesh_critical = false;
-
-        // TODO: warn on "subnormal" vertex coordinates?
-        if let Err(vertex_errors) = mesh.validate_vertices() {
-            detected_problems = true;
-            mesh_critical = true;
-            show_vertex_errors(&vertex_errors);
-        }
-
-        if let Err(face_errors) = mesh.validate_faces() {
-            detected_problems = true;
-            mesh_critical = true;
-            show_face_errors(&face_errors);
-        }
-
-        // If vertices or triangles are broken, it makes no sense to keep checking.
-        if !mesh_critical {
-            if let Err(vector_errors) = mesh.validate_normal_vectors() {
-                detected_problems = true;
-                show_normal_vector_errors(&vector_errors);
-            }
-
-            if let Err(manifold_errors) = mesh.validate_manifold() {
-                detected_problems = true;
-                show_manifold_errors(&manifold_errors);
-            }
-        }
+        detected_problems |= diagnose_mesh(mesh);
     }
 
     if detected_problems {
@@ -65,6 +44,40 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<SourceMeshFileTyp
     }
 
     Ok(())
+}
+
+/// Returns `true` if any problems were detected.
+fn diagnose_mesh(mesh: &IndexedMesh) -> bool {
+    let mut detected_problems = false;
+    let mut mesh_critical = false;
+
+    // TODO: warn on "subnormal" vertex coordinates?
+    if let Err(vertex_errors) = mesh.validate_vertices() {
+        detected_problems = true;
+        mesh_critical = true;
+        show_vertex_errors(&vertex_errors);
+    }
+
+    if let Err(face_errors) = mesh.validate_faces() {
+        detected_problems = true;
+        mesh_critical = true;
+        show_face_errors(&face_errors);
+    }
+
+    // If vertices or triangles are broken, it makes no sense to keep checking.
+    if !mesh_critical {
+        if let Err(vector_errors) = mesh.validate_normal_vectors() {
+            detected_problems = true;
+            show_normal_vector_errors(&vector_errors);
+        }
+
+        if let Err(manifold_errors) = mesh.validate_manifold() {
+            detected_problems = true;
+            show_manifold_errors(&manifold_errors);
+        }
+    }
+
+    detected_problems
 }
 
 pub(crate) fn show_vertex_errors(vertex_errors: &[MeshVertexError]) {
