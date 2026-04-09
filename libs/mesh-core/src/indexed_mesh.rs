@@ -161,8 +161,6 @@ impl IndexedMesh {
     }
 
     pub fn validate_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
-        use std::collections::{HashMap, HashSet};
-
         let mut errors: Vec<MeshManifoldError> = vec![];
 
         // Map each directed half-edge (a, b) to the list of face indices that contain it.

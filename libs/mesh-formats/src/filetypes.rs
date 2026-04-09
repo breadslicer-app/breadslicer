@@ -8,7 +8,6 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Result, anyhow};
-use serde::Deserialize;
 
 #[derive(PartialEq, Eq)]
 pub struct InvalidMeshFileType;
@@ -19,7 +18,7 @@ impl Display for InvalidMeshFileType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeshFileType {
     Stl,
     StlAscii,
