@@ -7,3 +7,8 @@ edition = "2024"
 name = "sc-slicer-gui"
 
 [dependencies]
+slint = "1.15.1"
+
+
+[build-dependencies]
+slint-build = "1.14.1"
