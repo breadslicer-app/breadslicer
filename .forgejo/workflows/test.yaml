@@ -27,7 +27,10 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}
+          restore-keys: |
+            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
+            crates-${{ runner.os }}-
 
       - name: "Get pre-compiled code from cache"
         uses: "actions/cache@v5"
@@ -35,7 +38,13 @@ jobs:
         with:
           path: |
             target/
-          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}
+          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-${{ forgejo.job }}
+          restore-keys: |
+            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-
+            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-
+            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-
+            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
+            crates-${{ runner.os }}-
 
       - name: "Install Rust"
         if: "steps.rustup-cache.outputs.cache-hit != 'true'"
