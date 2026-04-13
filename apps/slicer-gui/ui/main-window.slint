@@ -1,4 +1,12 @@
 export component MainWindow inherits Window {
+    title: @tr("SoulCrafted Slicer");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+
+    min-height: 400px;
+    min-width: 600px;
+    preferred-width: 600px;
+    preferred-height: 400px;
+
     MenuBar {
         Menu {
             title: @tr("MenuBar" => "File");
