@@ -1,3 +1,44 @@
 export component MainWindow inherits Window {
+    MenuBar {
+        Menu {
+            title: @tr("MenuBar" => "File");
+            MenuItem {
+                title: @tr("MenuBar" => "Open");
+                // shortcut: @keys(Control + O);
+            }
+            // TODO: "Open Recent"
+            MenuSeparator {}
+            MenuItem { title: @tr("MenuBar" => "Save"); }
+            Menu { title: @tr("MenuBar" => "Save As"); }
+        }
+        Menu {
+            title: @tr("MenuBar" => "Help");
+            MenuItem {
+                title: @tr("MenuBar" => "Documentation");
+            }
+            MenuItem {
+                title: @tr("MenuBar" => "Show Release Notes");
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: @tr("MenuBar" => "Report Issue");
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: @tr("MenuBar" => "Check for Updates…");
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: @tr("MenuBar" => "About");
+            }
+            MenuItem {
+                title: @tr("MenuBar" => "View License");
+            }
+        }
+    }
     
+    Text {
+        text: "SoulCrafted Slicer";
+        color: green;
+    }
 }

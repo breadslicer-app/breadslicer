@@ -19,7 +19,7 @@ strip = true
 
 [workspace.dependencies]
 sc-mesh-core = { path = "libs/mesh-core", version = "0.0.8" }
-sc-mesh-formats = { path = "libs/mesh-formats", version = "*" }
+sc-mesh-formats = { path = "libs/mesh-formats", version = "0.0.8" }
 
 anyhow = "1.0.102"
 float-cmp = "0.10.0"
