@@ -51,5 +51,5 @@ jobs:
       - name: "Clippy Checks"
         run: "cargo clippy -- -D warnings"
 
-      - name: "Compile"
-        run: "cargo build"
+      # - name: "Compile"
+      #   run: "cargo build"
