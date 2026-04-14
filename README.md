@@ -7,6 +7,18 @@ printers, backed by
 [crowdfunding](https://www.myminifactory.com/frontier/soulcrafted-slicer-5006)
 and brought to life by [MyMiniFactory](https://www.myminifactory.com/).
 
+## The Software
+
+Our applications:
+- [SoulCrafted Slicer (GUI version)](./apps/slicer-gui/README.md) - The main
+  version of our slicer (with graphical user interface).
+- [SoulCrafted Slicer (CLI version)](./apps/slicer-cli/README.md) - The command
+  line version of our slicer.
+
+The software libraries behind our applications:
+- [`sc-mesh-core`](./libs/mesh-core/README.md)
+- [`sc-mesh-formats`](./libs/mesh-formats/README.md)
+
 ## Community
 
 The SoulCrafted initiative seeks to protect and empower creators by introducing

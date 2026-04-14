@@ -72,7 +72,14 @@ Some recommendations to make your feature proposals as useful as possible:
 
 The translations are available in the `apps/slicer-gui/i18n/` directory.
 
-### Working with translation files
+### Translating via Web Interface (recommended)
+
+Translations management is centralized at
+https://translate.codeberg.org/projects/soulcrafted-slicer/
+
+### Working with translation files (for developers)
+
+> ⚠️ : Not recommended if it's not strictly necessary for technical reasons
 
 Each language has its translations in its own directory:
 ```
@@ -83,6 +90,8 @@ We can edit them with tools such as [`Poedit`](https://poedit.net/), although
 one could choose a simple text editor to work on these files.
 
 ### Preparing translation files (for developers)
+
+> ⚠️ : Not recommended if it's not strictly necessary for technical reasons
 
 We use `slint-tr-extractor` to generate the `apps/slicer-gui/i18n/sc-slicer-gui.pot`
 file by extracting translatable strings from our UI declarative files. In
@@ -100,7 +109,7 @@ cargo install slint-tr-extractor
 
 ## Contributing Code
 
-## Basic Workflow
+### Basic Workflow
 
 1. It is recommended to enable the local git hooks before commiting anything.
    Run the following command inside the repository root to enable them:
@@ -119,7 +128,7 @@ cargo install slint-tr-extractor
 5. Once the contribution is approved, a maintainer will merge it into the `main`
    branch.
 
-## Editing the GUI
+### Editing the GUI
 
 It is recommendable to install the tools `slint-lsp` and `slint-viewer`:
 ```bash
