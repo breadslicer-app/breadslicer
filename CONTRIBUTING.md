@@ -70,12 +70,37 @@ Some recommendations to make your feature proposals as useful as possible:
 
 ## Contributing Translations
 
-⚠️ **Work in Progress** ⚠️
+The translations are available in the `apps/slicer-gui/i18n/` directory.
+
+### Working with translation files
+
+Each language has its translations in its own directory:
+```
+apps/slicer-gui/i18n/[lang_code]/LC_MESSAGES/sc-slicer-gui.po
+```
+
+We can edit them with tools such as [`Poedit`](https://poedit.net/), although
+one could choose a simple text editor to work on these files.
+
+### Preparing translation files (for developers)
+
+We use `slint-tr-extractor` to generate the `apps/slicer-gui/i18n/sc-slicer-gui.pot`
+file by extracting translatable strings from our UI declarative files. In
+general terms, translators shouldn't worry about this step, as it will be
+performed by developers:
+```bash
+cd apps/slicer-gui/ui ;
+find -name \*.slint | xargs slint-tr-extractor -o ../assets/translations/slicer-gui.pot ;
+```
+
+We can install `slint-tr-extractor` with the command:
+```bash
+cargo install slint-tr-extractor
+```
 
 ## Contributing Code
 
-**NOTE:** This section is still work in progress, as we still have to make some
-decisions regarding our internal processes.
+## Basic Workflow
 
 1. It is recommended to enable the local git hooks before commiting anything.
    Run the following command inside the repository root to enable them:
@@ -93,3 +118,15 @@ decisions regarding our internal processes.
    pipelines.
 5. Once the contribution is approved, a maintainer will merge it into the `main`
    branch.
+
+## Editing the GUI
+
+It is recommendable to install the tools `slint-lsp` and `slint-viewer`:
+```bash
+cargo install slint-lsp slint-viewer
+```
+
+We can visualize interfaces by loading the `.slint` files with `slint-viewer`:
+```bash
+slint-viewer ./path/to/gui-file.slint
+```

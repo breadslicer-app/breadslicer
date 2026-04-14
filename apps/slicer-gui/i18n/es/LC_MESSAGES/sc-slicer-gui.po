@@ -1,0 +1,75 @@
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"POT-Creation-Date: 2026-04-14 07:18+0200\n"
+"PO-Revision-Date: 2026-04-14 08:10+0200\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Poedit 3.7\n"
+
+#: main-window.slint:2
+msgctxt "MainWindow"
+msgid "SoulCrafted Slicer"
+msgstr "SoulCrafted Slicer"
+
+#: main-window.slint:12
+msgctxt "MenuBar"
+msgid "File"
+msgstr "Archivo"
+
+#: main-window.slint:14
+msgctxt "MenuBar"
+msgid "Open"
+msgstr "Abre"
+
+#: main-window.slint:19
+msgctxt "MenuBar"
+msgid "Save"
+msgstr "Guarda"
+
+#: main-window.slint:20
+msgctxt "MenuBar"
+msgid "Save As"
+msgstr "Guarda como"
+
+#: main-window.slint:23
+msgctxt "MenuBar"
+msgid "Help"
+msgstr "Ayuda"
+
+#: main-window.slint:25
+msgctxt "MenuBar"
+msgid "Documentation"
+msgstr "Documentación"
+
+#: main-window.slint:28
+msgctxt "MenuBar"
+msgid "Show Release Notes"
+msgstr "Muestra notas de lanzamiento"
+
+#: main-window.slint:32
+msgctxt "MenuBar"
+msgid "Report Issue"
+msgstr "Reporta problema"
+
+#: main-window.slint:36
+msgctxt "MenuBar"
+msgid "Check for Updates…"
+msgstr "Comprueba actualizaciones…"
+
+#: main-window.slint:40
+msgctxt "MenuBar"
+msgid "About"
+msgstr "Sobre"
+
+#: main-window.slint:43
+msgctxt "MenuBar"
+msgid "View License"
+msgstr "Ver licencia"

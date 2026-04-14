@@ -1,2 +1,6 @@
+# Build artifacts
 /target
+/apps/*/i18n/*/LC_MESSAGES/*.mo
+
+# Development samples
 /examples
