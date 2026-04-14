@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-14 07:18+0200\n"
-"PO-Revision-Date: 2026-04-14 09:48+0000\n"
-"Last-Translator: andreuz <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-04-15 06:00+0000\n"
+"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Portuguese <https://translate.codeberg.org/projects/"
 "soulcrafted-slicer/slicer-gui/pt/>\n"
 "Language: pt\n"
@@ -52,7 +52,7 @@ msgstr "Documentação"
 #: main-window.slint:28
 msgctxt "MenuBar"
 msgid "Show Release Notes"
-msgstr "Notas De Versão"
+msgstr "Notas da Versão"
 
 #: main-window.slint:32
 msgctxt "MenuBar"
@@ -62,7 +62,7 @@ msgstr "Reportar Problema"
 #: main-window.slint:36
 msgctxt "MenuBar"
 msgid "Check for Updates…"
-msgstr "Verificar Atualizações"
+msgstr "Verificar Atualizações…"
 
 #: main-window.slint:40
 msgctxt "MenuBar"
