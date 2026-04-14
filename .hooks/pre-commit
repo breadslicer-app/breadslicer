@@ -2,5 +2,22 @@
 
 set -eu;
 
+STAGED_RS_FILES=$( (git diff --staged --relative --name-only --diff-filter=ACMR \
+  | grep -E "\.rs$" \
+  | tr '\n' ' ' \
+) || echo "");
+
+STAGED_UI_FILES=$( (git diff --staged --relative --name-only --diff-filter=ACMR \
+  | grep -E "\.slint$" \
+  | tr '\n' ' ' \
+) || echo "");
+
+if [ ! -z "${STAGED_RS_FILES}" ]; then
+    cargo fmt;
+    git add $STAGED_RS_FILES;
+fi
+
+# TODO: Format Slint files (`slint-lsp format` is not as "nice" as `cargo fmt`)
+
 cargo check;
 cargo clippy;
