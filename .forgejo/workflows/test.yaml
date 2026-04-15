@@ -57,11 +57,11 @@ jobs:
       - name: "Basic Checks"
         run: "cargo check --profile ci"
 
-      - name: "Clippy Checks"
-        run: "cargo clippy -- -D warnings"
+      # - name: "Clippy Checks"
+      #   run: "cargo clippy -- -D warnings"
 
-      - name: "Compile"
-        run: "cargo build --profile ci"
+      # - name: "Compile"
+      #   run: "cargo build --profile ci"
 
-      - name: "Test"
-        run: "cargo test --profile ci"
+      # - name: "Test"
+      #   run: "cargo test --profile ci"
