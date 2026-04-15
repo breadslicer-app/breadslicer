@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-14 07:18+0200\n"
+"POT-Creation-Date: 2026-04-15 10:35+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -13,62 +13,92 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
 "X-Generator: Poedit 3.7\n"
 
-#: main-window.slint:2
+#: about-window.slint:2
+msgctxt "AboutWindow"
+msgid "About SoulCrafted Slicer"
+msgstr ""
+
+#: about-window.slint:31
+msgctxt "AboutWindow"
+msgid "SoulCrafted Slicer"
+msgstr ""
+
+#: about-window.slint:38
+msgctxt "About"
+msgid "Version {0}"
+msgstr ""
+
+#: about-window.slint:44
+msgctxt "About"
+msgid "An open source slicer for resin 3D printers."
+msgstr ""
+
+#: about-window.slint:50
+msgctxt "About"
+msgid "Licensed under AGPL-3.0-only"
+msgstr ""
+
+#: about-window.slint:66
+msgctxt "About"
+msgid "Close"
+msgstr ""
+
+#: main-window.slint:6
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: main-window.slint:12
+#: main-window.slint:19
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: main-window.slint:14
+#: main-window.slint:21
 msgctxt "MenuBar"
 msgid "Open"
 msgstr ""
 
-#: main-window.slint:19
+#: main-window.slint:31
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: main-window.slint:20
+#: main-window.slint:35
 msgctxt "MenuBar"
 msgid "Save As"
 msgstr ""
 
-#: main-window.slint:23
+#: main-window.slint:40
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: main-window.slint:25
+#: main-window.slint:42
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: main-window.slint:28
+#: main-window.slint:46
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: main-window.slint:32
+#: main-window.slint:52
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: main-window.slint:36
+#: main-window.slint:58
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: main-window.slint:40
+#: main-window.slint:64
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: main-window.slint:43
+#: main-window.slint:71
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
