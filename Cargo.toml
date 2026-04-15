@@ -11,8 +11,7 @@ members = [
     "libs/supports"
 ]
 
-[profile.ci]
-inherits = "dev"
+[profile.dev]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 

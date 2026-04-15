@@ -38,13 +38,13 @@ jobs:
         with:
           path: |
             target/
-          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-${{ forgejo.run_number }}
+          key: target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-${{ forgejo.run_number }}
           restore-keys: |
-            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-
-            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-
-            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-
-            crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
-            crates-${{ runner.os }}-
+            target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-
+            target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-
+            target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-
+            target-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-
+            target-${{ runner.os }}-
 
       - name: "Install Rust"
         if: "steps.rustup-cache.outputs.cache-hit != 'true'"
@@ -55,13 +55,13 @@ jobs:
         run: "echo \"$HOME/.cargo/bin\" >> $GITHUB_PATH"
 
       - name: "Basic Checks"
-        run: "cargo check --profile ci"
+        run: "cargo check"
 
       - name: "Clippy Checks"
-        run: "cargo clippy --profile ci -- -D warnings"
+        run: "cargo clippy -- -D warnings"
 
       # - name: "Compile"
-      #   run: "cargo build --profile ci"
+      #   run: "cargo build"
 
       # - name: "Test"
-      #   run: "cargo test --profile ci"
+      #   run: "cargo test"
