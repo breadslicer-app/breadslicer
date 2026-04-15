@@ -57,8 +57,8 @@ jobs:
       - name: "Basic Checks"
         run: "cargo check --profile ci"
 
-      # - name: "Clippy Checks"
-      #   run: "cargo clippy -- -D warnings"
+      - name: "Clippy Checks"
+        run: "cargo clippy --profile ci -- -D warnings"
 
       # - name: "Compile"
       #   run: "cargo build --profile ci"
