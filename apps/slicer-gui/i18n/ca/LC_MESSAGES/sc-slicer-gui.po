@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-15 10:35+0000\n"
-"PO-Revision-Date: 2026-04-15 12:30+0000\n"
+"PO-Revision-Date: 2026-04-15 19:01+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Catalan <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/ca/>\n"
@@ -15,17 +15,11 @@ msgstr ""
 "X-Generator: Weblate 5.17\n"
 
 #: about-window.slint:2
-#, fuzzy
-#| msgctxt "MainWindow"
-#| msgid "SoulCrafted Slicer"
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
-msgstr "SoulCrafted Slicer"
+msgstr "Sobre SoulCrafted Slicer"
 
 #: about-window.slint:31
-#, fuzzy
-#| msgctxt "MainWindow"
-#| msgid "SoulCrafted Slicer"
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
@@ -33,22 +27,22 @@ msgstr "SoulCrafted Slicer"
 #: about-window.slint:38
 msgctxt "About"
 msgid "Version {0}"
-msgstr ""
+msgstr "Versió {0}"
 
 #: about-window.slint:44
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
-msgstr ""
+msgstr "Un \"slicer\" de codi lliure per a impressores 3D de resina."
 
 #: about-window.slint:50
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
-msgstr ""
+msgstr "Llicenciat sota AGPL-3.0-only"
 
 #: about-window.slint:66
 msgctxt "About"
 msgid "Close"
-msgstr ""
+msgstr "Tanca"
 
 #: main-window.slint:6
 msgctxt "MainWindow"
