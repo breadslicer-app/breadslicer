@@ -21,14 +21,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ui = MainWindow::new()?;
 
     ui.on_open_file_requested(|| {
-        let picked = rfd::FileDialog::new()
+        let dialog = rfd::AsyncFileDialog::new()
+            .add_filter("All files", &["obj", "stl", "stla", "stlb"])
             .add_filter("OBJ files", &["obj"])
-            .add_filter("STL files", &["stl", "stla", "stlb"])
-            .add_filter("All files", &["*"])
-            .pick_file();
+            .add_filter("STL files", &["stl", "stla", "stlb"]);
 
-        if let Some(path) = picked {
-            println!("Selected file: {}", path.display());
+        if let Err(err) = slint::spawn_local(async move {
+            if let Some(handle) = dialog.pick_file().await {
+                println!("Selected file: {}", handle.path().display());
+            }
+        }) {
+            eprintln!("Failed to spawn file dialog task: {err}");
         }
     });
 
