@@ -99,7 +99,7 @@ general terms, translators shouldn't worry about this step, as it will be
 performed by developers:
 ```bash
 cd apps/slicer-gui/ui ;
-find -name \*.slint | xargs slint-tr-extractor -o ../assets/translations/slicer-gui.pot ;
+find -name \*.slint | xargs slint-tr-extractor -o ../i18n/sc-slicer-gui.pot ;
 ```
 
 We can install `slint-tr-extractor` with the command:
