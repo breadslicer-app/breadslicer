@@ -1,3 +1,7 @@
+import { AboutWindow } from "about-window.slint";
+
+export { AboutWindow }
+
 export component MainWindow inherits Window {
     title: @tr("SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
@@ -8,6 +12,7 @@ export component MainWindow inherits Window {
     preferred-height: 400px;
 
     callback open-file-requested();
+    callback show-about-requested();
 
     MenuBar {
         Menu {
@@ -57,6 +62,9 @@ export component MainWindow inherits Window {
 
             MenuItem {
                 title: @tr("MenuBar" => "About");
+                activated => {
+                    root.show-about-requested();
+                }
             }
 
             MenuItem {

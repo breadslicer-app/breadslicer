@@ -1,0 +1,69 @@
+import { Button } from "std-widgets.slint";
+
+export component AboutWindow inherits Window {
+    title: @tr("About SoulCrafted Slicer");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+
+    in property <string> app-version: "";
+
+    min-width: 420px;
+    min-height: 400px;
+    max-width: 420px;
+    max-height: 400px;
+    preferred-width: 420px;
+    preferred-height: 400px;
+
+    callback close-requested();
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        alignment: center;
+
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../assets/images/soulcrafted.svg");
+                width: 144px;
+                height: 144px;
+            }
+        }
+
+        Text {
+            text: @tr("SoulCrafted Slicer");
+            font-size: 20px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: @tr("About" => "Version {0}", root.app-version);
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: @tr("About" => "An open source slicer for resin 3D printers.");
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: @tr("About" => "Licensed under AGPL-3.0-only");
+            font-size: 12px;
+            horizontal-alignment: center;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            padding-top: 8px;
+
+            Button {
+                text: @tr("About" => "Close");
+                clicked => {
+                    root.close-requested();
+                }
+            }
+        }
+    }
+}
