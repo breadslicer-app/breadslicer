@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-15 10:35+0000\n"
+"POT-Creation-Date: 2026-04-15 15:08+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -14,92 +14,122 @@ msgstr ""
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\n"
 "X-Generator: Poedit 3.7\n"
 
-#: about-window.slint:2
+#: about-window.slint:4
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr ""
 
-#: about-window.slint:31
+#: about-window.slint:33
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: about-window.slint:38
+#: about-window.slint:40
 msgctxt "About"
 msgid "Version {0}"
 msgstr ""
 
-#: about-window.slint:44
+#: about-window.slint:46
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr ""
 
-#: about-window.slint:50
+#: about-window.slint:52
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr ""
 
-#: about-window.slint:66
+#: about-window.slint:62
 msgctxt "About"
 msgid "Close"
 msgstr ""
 
-#: main-window.slint:6
+#: error-dialog.slint:4
+msgctxt "ErrorDialog"
+msgid "Error"
+msgstr ""
+
+#: error-dialog.slint:7
+msgctxt "ErrorDialog"
+msgid "An error occurred"
+msgstr ""
+
+#: error-dialog.slint:71
+msgctxt "ErrorDialog"
+msgid "▾ Hide technical details"
+msgstr ""
+
+#: error-dialog.slint:72
+msgctxt "ErrorDialog"
+msgid "▸ Show technical details"
+msgstr ""
+
+#: error-dialog.slint:98
+msgctxt "ErrorDialog"
+msgid "Close"
+msgstr ""
+
+#: main-window.slint:8
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: main-window.slint:19
+#: main-window.slint:23
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: main-window.slint:21
+#: main-window.slint:25
 msgctxt "MenuBar"
 msgid "Open"
 msgstr ""
 
-#: main-window.slint:31
+#: main-window.slint:35
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: main-window.slint:35
+#: main-window.slint:39
 msgctxt "MenuBar"
 msgid "Save As"
 msgstr ""
 
-#: main-window.slint:40
+#: main-window.slint:44
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: main-window.slint:42
+#: main-window.slint:46
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: main-window.slint:46
+#: main-window.slint:50
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: main-window.slint:52
+#: main-window.slint:56
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: main-window.slint:58
+#: main-window.slint:62
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: main-window.slint:64
+#: main-window.slint:68
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: main-window.slint:71
+#: main-window.slint:75
 msgctxt "MenuBar"
 msgid "View License"
+msgstr ""
+
+#: main-window.slint:82
+msgctxt "MainWindow"
+msgid "Open a 3D model to visualize it here"
 msgstr ""
