@@ -38,7 +38,7 @@ jobs:
         with:
           path: |
             target/
-          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-${{ forgejo.job }}
+          key: crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-${{ forgejo.run_number }}
           restore-keys: |
             crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-${{ hashFiles('apps/**/*') }}-
             crates-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-${{ forgejo.ref }}-${{ hashFiles('libs/**/*') }}-
