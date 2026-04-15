@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 use slint_build::{CompilerConfiguration, compile_with_config};
 
 fn main() {

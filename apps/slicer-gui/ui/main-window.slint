@@ -7,12 +7,17 @@ export component MainWindow inherits Window {
     preferred-width: 600px;
     preferred-height: 400px;
 
+    callback open-file-requested();
+
     MenuBar {
         Menu {
             title: @tr("MenuBar" => "File");
             MenuItem {
                 title: @tr("MenuBar" => "Open");
                 // shortcut: @keys(Control + O);
+                activated => {
+                    root.open-file-requested();
+                }
             }
             // TODO: "Open Recent"
             MenuSeparator { }

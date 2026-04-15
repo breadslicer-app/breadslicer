@@ -1,6 +1,8 @@
 /*
- * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
  * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
 // Prevent console window in addition to Slint window in Windows release builds
@@ -17,6 +19,18 @@ slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn Error>> {
     let ui = MainWindow::new()?;
+
+    ui.on_open_file_requested(|| {
+        let picked = rfd::FileDialog::new()
+            .add_filter("OBJ files", &["obj"])
+            .add_filter("STL files", &["stl", "stla", "stlb"])
+            .add_filter("All files", &["*"])
+            .pick_file();
+
+        if let Some(path) = picked {
+            println!("Selected file: {}", path.display());
+        }
+    });
 
     ui.run()?;
 
