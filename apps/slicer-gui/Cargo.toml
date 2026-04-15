@@ -7,8 +7,14 @@ edition = "2024"
 name = "sc-slicer-gui"
 
 [dependencies]
+sc-mesh-core = { workspace = true }
+sc-mesh-formats = { workspace = true }
+
+anyhow = { workspace = true }
+bytemuck = { version = "1.18", features = ["derive"] }
+glam = "0.32.1"
 rfd = "0.17.2"
-slint = "1.15.1"
+slint = { version = "1.15.1", features = ["renderer-skia", "unstable-wgpu-28"] }
 
 
 [build-dependencies]

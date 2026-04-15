@@ -1,0 +1,22 @@
+export component MeshViewer inherits Rectangle {
+    in property <image> rendering;
+    in property <string> placeholder-text: "";
+
+    background: #1e1e1e;
+    border-color: #2d2d2d;
+    border-width: 1px;
+
+    Image {
+        source: root.rendering;
+        image-fit: contain;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    if (root.rendering.width == 0 || root.rendering.height == 0): Text {
+        text: root.placeholder-text;
+        color: #888;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
