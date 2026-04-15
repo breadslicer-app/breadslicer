@@ -55,10 +55,13 @@ jobs:
         run: "echo \"$HOME/.cargo/bin\" >> $GITHUB_PATH"
 
       - name: "Basic Checks"
-        run: "cargo check"
+        run: "cargo check --profile ci"
 
       - name: "Clippy Checks"
         run: "cargo clippy -- -D warnings"
 
       - name: "Compile"
-        run: "cargo build"
+        run: "cargo build --profile ci"
+
+      - name: "Test"
+        run: "cargo test --profile ci"
