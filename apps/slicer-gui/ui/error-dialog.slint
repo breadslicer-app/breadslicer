@@ -1,0 +1,105 @@
+import { Button, ScrollView } from "std-widgets.slint";
+
+export component ErrorDialog inherits Window {
+    title: @tr("Error");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+
+    in property <string> heading: @tr("An error occurred");
+    in property <string> context: "";
+    in property <string> message: "";
+    in property <string> details: "";
+
+    property <bool> details-visible: false;
+
+    min-width: 520px;
+    max-width: 520px;
+    preferred-width: 520px;
+    min-height: body.preferred-height;
+    max-height: body.preferred-height;
+    preferred-height: body.preferred-height;
+
+    callback close-requested();
+
+    body := VerticalLayout {
+        padding: 16px;
+        spacing: 16px;
+
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: start;
+
+            Text {
+                text: "⚠";
+                font-size: 36px;
+                color: #e5a500;
+                vertical-alignment: top;
+                horizontal-alignment: center;
+                width: 48px;
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: root.heading;
+                    font-size: 14px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+
+                if root.context != "": Text {
+                    text: root.context;
+                    font-size: 12px;
+                    color: #888;
+                    wrap: word-wrap;
+                }
+
+                if root.message != "": Text {
+                    text: root.message;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                if root.details != "": HorizontalLayout {
+                    alignment: start;
+                    TouchArea {
+                        width: toggle-text.preferred-width;
+                        height: toggle-text.preferred-height;
+                        toggle-text := Text {
+                            text: root.details-visible
+                                ? @tr("▾ Hide technical details")
+                                : @tr("▸ Show technical details");
+                            font-size: 11px;
+                            color: #6aa1d4;
+                        }
+                        clicked => {
+                            root.details-visible = !root.details-visible;
+                        }
+                    }
+                }
+
+                if root.details != "" && root.details-visible: ScrollView {
+                    max-height: 160px;
+                    Text {
+                        text: root.details;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                        horizontal-alignment: left;
+                        color: #aaa;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            Button {
+                text: @tr("Close");
+                clicked => {
+                    root.close-requested();
+                }
+            }
+        }
+    }
+}

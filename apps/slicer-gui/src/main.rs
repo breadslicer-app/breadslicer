@@ -85,7 +85,12 @@ fn render_pending_scene(
         return;
     };
     if let Err(err) = renderer.upload_scene(&scene) {
-        eprintln!("Failed to upload mesh to GPU: {err}");
+        show_error_dialog(
+            "Failed to load the 3D model",
+            Some("The mesh could not be prepared for rendering.".to_string()),
+            err.to_string(),
+            format_anyhow_chain(&err),
+        );
         return;
     }
     let Some(texture) = renderer.render(RENDER_WIDTH, RENDER_HEIGHT) else {
@@ -97,7 +102,12 @@ fn render_pending_scene(
                 ui.set_mesh_rendering(image);
             }
         }
-        Err(err) => eprintln!("Failed to import wgpu texture into Slint: {err:?}"),
+        Err(err) => show_error_dialog(
+            "Failed to display the 3D model",
+            Some("The rendered texture could not be handed to the UI.".to_string()),
+            err.to_string(),
+            format!("{err:?}"),
+        ),
     }
 }
 
@@ -115,14 +125,20 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell) {
             let Some(handle) = dialog.pick_file().await else {
                 return;
             };
-            match mesh_loader::load_scene(handle.path()) {
+            let path = handle.path().to_path_buf();
+            match mesh_loader::load_scene(&path) {
                 Ok(scene) => {
                     *pending.borrow_mut() = Some(scene);
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.window().request_redraw();
                     }
                 }
-                Err(err) => eprintln!("Failed to load mesh '{}': {err}", handle.path().display()),
+                Err(err) => show_error_dialog(
+                    "Failed to open 3D model",
+                    Some(format!("File: {}", path.display())),
+                    err.to_string(),
+                    format_anyhow_chain(&err),
+                ),
             }
         }) {
             eprintln!("Failed to spawn file dialog task: {err}");
@@ -163,4 +179,65 @@ fn build_about_window() -> Result<AboutWindow, slint::PlatformError> {
     });
 
     Ok(about)
+}
+
+thread_local! {
+    static OPEN_ERROR_DIALOGS: RefCell<std::collections::HashMap<u64, ErrorDialog>> =
+        RefCell::new(std::collections::HashMap::new());
+    static NEXT_DIALOG_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn show_error_dialog(heading: &str, context: Option<String>, message: String, details: String) {
+    eprintln!("[error] {heading}: {message}\n{details}");
+    let dialog = match ErrorDialog::new() {
+        Ok(d) => d,
+        Err(err) => {
+            eprintln!("Failed to create error dialog: {err}");
+            return;
+        }
+    };
+    dialog.set_heading(heading.into());
+    if let Some(ctx) = context {
+        dialog.set_context(ctx.into());
+    }
+    dialog.set_message(message.into());
+    dialog.set_details(details.into());
+
+    let id = NEXT_DIALOG_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    });
+    let dialog_weak = dialog.as_weak();
+    dialog.on_close_requested(move || {
+        if let Some(d) = dialog_weak.upgrade() {
+            let _ = d.hide();
+        }
+        OPEN_ERROR_DIALOGS.with(|list| {
+            list.borrow_mut().remove(&id);
+        });
+    });
+
+    if let Err(err) = dialog.show() {
+        eprintln!("Failed to show error dialog: {err}");
+        return;
+    }
+    OPEN_ERROR_DIALOGS.with(|list| {
+        list.borrow_mut().insert(id, dialog);
+    });
+}
+
+fn format_anyhow_chain(err: &anyhow::Error) -> String {
+    let mut chain = err.chain();
+    let Some(first) = chain.next() else {
+        return String::new();
+    };
+    let Some(second) = chain.next() else {
+        return String::new();
+    };
+    let mut out = format!("{first}\n  caused by: {second}");
+    for cause in chain {
+        out.push_str(&format!("\n  caused by: {cause}"));
+    }
+    out
 }
