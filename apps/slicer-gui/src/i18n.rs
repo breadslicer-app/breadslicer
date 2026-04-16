@@ -25,6 +25,7 @@
 /// ```sh
 /// xgettext -L Rust --keyword='tr!:1' --keyword='tr!:1,2' ...
 /// ```
+#[allow(unused_macros)]
 macro_rules! tr {
     // Plural with format args
     ($singular:literal, $plural:literal, $n:expr, $($arg:expr),+ $(,)?) => {{

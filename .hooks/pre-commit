@@ -17,6 +17,11 @@ if [ ! -z "${STAGED_RS_FILES}" ]; then
     git add $STAGED_RS_FILES;
 fi
 
+if echo "${STAGED_RS_FILES} ${STAGED_UI_FILES}" | grep -q "apps/slicer-gui/"; then
+    sh apps/slicer-gui/scripts/extract-translatable-strings.sh;
+    git add apps/slicer-gui/i18n/*.pot
+fi
+
 # TODO: Format Slint files (`slint-lsp format` is not as "nice" as `cargo fmt`)
 
 cargo check;
