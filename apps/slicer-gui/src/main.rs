@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::rc::Rc;
 
+use i18n::ctr;
 use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 
@@ -87,8 +88,14 @@ fn render_pending_scene(
     };
     if let Err(err) = renderer.upload_scene(&scene) {
         show_error_dialog(
-            "Failed to load the 3D model",
-            Some("The mesh could not be prepared for rendering.".to_string()),
+            ctr!("ErrorDialog", "Failed to load the 3D model").as_str(),
+            Some(
+                ctr!(
+                    "ErrorDialog",
+                    "The mesh could not be prepared for rendering."
+                )
+                .to_string(),
+            ),
             err.to_string(),
             format_anyhow_chain(&err),
         );
@@ -104,8 +111,14 @@ fn render_pending_scene(
             }
         }
         Err(err) => show_error_dialog(
-            "Failed to display the 3D model",
-            Some("The rendered texture could not be handed to the UI.".to_string()),
+            ctr!("ErrorDialog", "Failed to display the 3D model").as_str(),
+            Some(
+                ctr!(
+                    "ErrorDialog",
+                    "The rendered texture could not be handed to the UI."
+                )
+                .to_string(),
+            ),
             err.to_string(),
             format!("{err:?}"),
         ),
@@ -116,9 +129,15 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell) {
     let ui_weak = ui.as_weak();
     ui.on_open_file_requested(move || {
         let dialog = rfd::AsyncFileDialog::new()
-            .add_filter("All files", &["obj", "stl", "stla", "stlb"])
-            .add_filter("OBJ files", &["obj"])
-            .add_filter("STL files", &["stl", "stla", "stlb"]);
+            .add_filter(
+                ctr!("FileDialog", "All files").to_string(),
+                &["obj", "stl", "stla", "stlb"],
+            )
+            .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
+            .add_filter(
+                ctr!("FileDialog", "STL files").to_string(),
+                &["stl", "stla", "stlb"],
+            );
 
         let pending = pending.clone();
         let ui_weak = ui_weak.clone();
@@ -135,8 +154,8 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell) {
                     }
                 }
                 Err(err) => show_error_dialog(
-                    "Failed to open 3D model",
-                    Some(format!("File: {}", path.display())),
+                    ctr!("ErrorDialog", "Failed to open 3D model").as_str(),
+                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
                     err.to_string(),
                     format_anyhow_chain(&err),
                 ),
