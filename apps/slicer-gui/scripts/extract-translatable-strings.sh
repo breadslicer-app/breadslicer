@@ -10,8 +10,8 @@ maybe_update_pot() {
     [ -f "$tmp" ] || return 0
 
     if [ -f "$target" ]; then
-        old=$(grep -v '^"POT-Creation-Date:' "$target")
-        new=$(grep -v '^"POT-Creation-Date:' "$tmp")
+        old=$(grep -v '^"POT-Creation-Date:' "$target" | grep -v "^#: ")
+        new=$(grep -v '^"POT-Creation-Date:' "$tmp" | grep -v "^#: ")
         if [ "$old" = "$new" ]; then
             rm -f "$tmp"
             return 0

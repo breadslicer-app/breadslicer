@@ -194,6 +194,10 @@ impl Renderer {
         }
     }
 
+    pub fn clear_scene(&mut self) {
+        self.mesh = None;
+    }
+
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
         let mut vertices: Vec<GpuVertex> = Vec::new();
         let mut min = Vec3::splat(f32::INFINITY);

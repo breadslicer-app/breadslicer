@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let pending_scene: PendingSceneCell = Rc::new(RefCell::new(None));
 
     install_rendering_notifier(&ui, renderer.clone(), pending_scene.clone())?;
+    wire_close_scene(&ui, renderer, pending_scene.clone());
     wire_open_file(&ui, pending_scene);
     wire_about_window(&ui);
 
@@ -162,6 +163,19 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell) {
             }
         }) {
             eprintln!("Failed to spawn file dialog task: {err}");
+        }
+    });
+}
+
+fn wire_close_scene(ui: &MainWindow, renderer: RendererCell, pending: PendingSceneCell) {
+    let ui_weak = ui.as_weak();
+    ui.on_close_current_scene(move || {
+        *pending.borrow_mut() = None;
+        if let Some(r) = renderer.borrow_mut().as_mut() {
+            r.clear_scene();
+        }
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_mesh_rendering(slint::Image::default());
         }
     });
 }

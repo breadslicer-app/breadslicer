@@ -16,6 +16,7 @@ export component MainWindow inherits Window {
     in property <image> mesh-rendering;
 
     callback open-file-requested();
+    callback close-current-scene();
     callback show-about-requested();
 
     MenuBar {
@@ -23,20 +24,29 @@ export component MainWindow inherits Window {
             title: @tr("MenuBar" => "File");
             MenuItem {
                 title: @tr("MenuBar" => "Open");
-                // shortcut: @keys(Control + O);
+                shortcut: @keys(Control + O);
                 activated => {
                     root.open-file-requested();
                 }
             }
             // TODO: "Open Recent"
+            MenuItem {
+                title: @tr("MenuBar" => "Close");
+                shortcut: @keys(Control + W);
+                activated => {
+                    root.close-current-scene();
+                }
+            }
             MenuSeparator { }
 
             MenuItem {
                 title: @tr("MenuBar" => "Save");
+                shortcut: @keys(Control + S);
             }
 
-            Menu {
+            MenuItem {
                 title: @tr("MenuBar" => "Save As");
+                shortcut: @keys(Control + Shift + S);
             }
         }
 
