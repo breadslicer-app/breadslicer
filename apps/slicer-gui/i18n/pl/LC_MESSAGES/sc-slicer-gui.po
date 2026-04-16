@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-15 15:08+0000\n"
+"POT-Creation-Date: 2026-04-16 14:04+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -14,122 +14,167 @@ msgstr ""
 "|| n%100>=20) ? 1 : 2;\n"
 "X-Generator: Poedit 3.7\n"
 
-#: about-window.slint:4
+#: ui/about-window.slint:4
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr ""
 
-#: about-window.slint:33
+#: ui/about-window.slint:33
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: about-window.slint:40
+#: ui/about-window.slint:40
 msgctxt "About"
 msgid "Version {0}"
 msgstr ""
 
-#: about-window.slint:46
+#: ui/about-window.slint:46
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr ""
 
-#: about-window.slint:52
+#: ui/about-window.slint:52
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr ""
 
-#: about-window.slint:62
+#: ui/about-window.slint:62
 msgctxt "About"
 msgid "Close"
 msgstr ""
 
-#: error-dialog.slint:4
+#: ui/error-dialog.slint:4
 msgctxt "ErrorDialog"
 msgid "Error"
 msgstr ""
 
-#: error-dialog.slint:7
+#: ui/error-dialog.slint:7
 msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr ""
 
-#: error-dialog.slint:71
+#: ui/error-dialog.slint:71
 msgctxt "ErrorDialog"
 msgid "▾ Hide technical details"
 msgstr ""
 
-#: error-dialog.slint:72
+#: ui/error-dialog.slint:72
 msgctxt "ErrorDialog"
 msgid "▸ Show technical details"
 msgstr ""
 
-#: error-dialog.slint:98
+#: ui/error-dialog.slint:98
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
 
-#: main-window.slint:8
+#: ui/main-window.slint:8
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: main-window.slint:23
+#: ui/main-window.slint:23
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: main-window.slint:25
+#: ui/main-window.slint:25
 msgctxt "MenuBar"
 msgid "Open"
 msgstr ""
 
-#: main-window.slint:35
+#: ui/main-window.slint:35
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: main-window.slint:39
+#: ui/main-window.slint:39
 msgctxt "MenuBar"
 msgid "Save As"
 msgstr ""
 
-#: main-window.slint:44
+#: ui/main-window.slint:44
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: main-window.slint:46
+#: ui/main-window.slint:46
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: main-window.slint:50
+#: ui/main-window.slint:50
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: main-window.slint:56
+#: ui/main-window.slint:56
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: main-window.slint:62
+#: ui/main-window.slint:62
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: main-window.slint:68
+#: ui/main-window.slint:68
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: main-window.slint:75
+#: ui/main-window.slint:75
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: main-window.slint:82
+#: ui/main-window.slint:82
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
+msgstr ""
+
+#: src/main.rs:91
+msgctxt "ErrorDialog"
+msgid "Failed to load the 3D model"
+msgstr ""
+
+#: src/main.rs:95
+msgctxt "ErrorDialog"
+msgid "The mesh could not be prepared for rendering."
+msgstr ""
+
+#: src/main.rs:114
+msgctxt "ErrorDialog"
+msgid "Failed to display the 3D model"
+msgstr ""
+
+#: src/main.rs:118
+msgctxt "ErrorDialog"
+msgid "The rendered texture could not be handed to the UI."
+msgstr ""
+
+#: src/main.rs:133
+msgctxt "FileDialog"
+msgid "All files"
+msgstr ""
+
+#: src/main.rs:136
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr ""
+
+#: src/main.rs:138
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr ""
+
+#: src/main.rs:157
+msgctxt "ErrorDialog"
+msgid "Failed to open 3D model"
+msgstr ""
+
+#: src/main.rs:158
+msgctxt "ErrorDialog"
+msgid "File: {}"
 msgstr ""
