@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-16 14:04+0000\n"
-"PO-Revision-Date: 2026-04-15 06:00+0000\n"
+"PO-Revision-Date: 2026-04-17 09:57+0000\n"
 "Last-Translator: bittin <bittin@noreply.codeberg.org>\n"
 "Language-Team: Swedish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/sv/>\n"
@@ -12,15 +12,12 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.16.2\n"
+"X-Generator: Weblate 5.17\n"
 
 #: ui/about-window.slint:4
-#, fuzzy
-#| msgctxt "MainWindow"
-#| msgid "SoulCrafted Slicer"
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
-msgstr "SoulCrafted Slicer"
+msgstr "Om SoulCrafted Slicer"
 
 #: ui/about-window.slint:33
 #, fuzzy
