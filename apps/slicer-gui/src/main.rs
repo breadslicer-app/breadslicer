@@ -9,6 +9,7 @@
 // when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod i18n;
 mod mesh_loader;
 mod mesh_render;
 
