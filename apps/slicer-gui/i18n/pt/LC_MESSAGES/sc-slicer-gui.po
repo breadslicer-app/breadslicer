@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-16 14:04+0000\n"
-"PO-Revision-Date: 2026-04-15 06:00+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-04-17 09:56+0000\n"
+"Last-Translator: Viriato <viriato@noreply.codeberg.org>\n"
 "Language-Team: Portuguese <https://translate.codeberg.org/projects/"
 "soulcrafted-slicer/slicer-gui/pt/>\n"
 "Language: pt\n"
@@ -12,20 +12,14 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
-"X-Generator: Weblate 5.16.2\n"
+"X-Generator: Weblate 5.17\n"
 
 #: ui/about-window.slint:4
-#, fuzzy
-#| msgctxt "MainWindow"
-#| msgid "SoulCrafted Slicer"
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
-msgstr "SoulCrafted Slicer"
+msgstr "Acerca de SoulCrafted Slicer"
 
 #: ui/about-window.slint:33
-#, fuzzy
-#| msgctxt "MainWindow"
-#| msgid "SoulCrafted Slicer"
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
@@ -33,47 +27,47 @@ msgstr "SoulCrafted Slicer"
 #: ui/about-window.slint:40
 msgctxt "About"
 msgid "Version {0}"
-msgstr ""
+msgstr "Versão {0}"
 
 #: ui/about-window.slint:46
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
-msgstr ""
+msgstr "Um slicer de código aberto para impressoras 3D de resina."
 
 #: ui/about-window.slint:52
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
-msgstr ""
+msgstr "Licenciado ao abrigo da AGPL-3.0-only"
 
 #: ui/about-window.slint:62
 msgctxt "About"
 msgid "Close"
-msgstr ""
+msgstr "Fechar"
 
 #: ui/error-dialog.slint:4
 msgctxt "ErrorDialog"
 msgid "Error"
-msgstr ""
+msgstr "Erro"
 
 #: ui/error-dialog.slint:7
 msgctxt "ErrorDialog"
 msgid "An error occurred"
-msgstr ""
+msgstr "Ocorreu um erro"
 
 #: ui/error-dialog.slint:71
 msgctxt "ErrorDialog"
 msgid "▾ Hide technical details"
-msgstr ""
+msgstr "▾ Esconder detalhes técnicos"
 
 #: ui/error-dialog.slint:72
 msgctxt "ErrorDialog"
 msgid "▸ Show technical details"
-msgstr ""
+msgstr "▸ Mostrar detalhes técnicos"
 
 #: ui/error-dialog.slint:98
 msgctxt "ErrorDialog"
 msgid "Close"
-msgstr ""
+msgstr "Fechar"
 
 #: ui/main-window.slint:8
 msgctxt "MainWindow"
@@ -138,52 +132,49 @@ msgstr "Ver Licença"
 #: ui/main-window.slint:82
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
-msgstr ""
+msgstr "Abrir um modelo 3D para visualizar aqui"
 
 #: src/main.rs:91
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
-msgstr ""
+msgstr "Falha a carregar modelo 3D"
 
 #: src/main.rs:95
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
-msgstr ""
+msgstr "A malha 3D não pôde ser preparada para renderização."
 
 #: src/main.rs:114
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
-msgstr ""
+msgstr "Falha a exibir o modelo 3D"
 
 #: src/main.rs:118
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
-msgstr ""
+msgstr "A textura renderizada não pôde ser entregue à interface gráfica."
 
 #: src/main.rs:133
 msgctxt "FileDialog"
 msgid "All files"
-msgstr ""
+msgstr "Todos os ficheiros"
 
 #: src/main.rs:136
 msgctxt "FileDialog"
 msgid "OBJ files"
-msgstr ""
+msgstr "Ficheiros OBJ"
 
 #: src/main.rs:138
 msgctxt "FileDialog"
 msgid "STL files"
-msgstr ""
+msgstr "Ficheiros STL"
 
 #: src/main.rs:157
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
-msgstr ""
+msgstr "Falha ao abrir o modelo 3D"
 
 #: src/main.rs:158
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "File"
 msgctxt "ErrorDialog"
 msgid "File: {}"
-msgstr "Ficheiro"
+msgstr "Ficheiro: {}"
