@@ -4,7 +4,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-16 14:04+0000\n"
 "PO-Revision-Date: 2026-04-17 09:56+0000\n"
-"Last-Translator: aspimaker <aspimaker@noreply.codeberg.org>\n"
+"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/es/>\n"
 "Language: es\n"
@@ -17,7 +17,7 @@ msgstr ""
 #: ui/about-window.slint:4
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
-msgstr "Sobre SoulCrafted Slicer"
+msgstr "Acerca de SoulCrafted Slicer"
 
 #: ui/about-window.slint:33
 msgctxt "AboutWindow"
@@ -42,7 +42,7 @@ msgstr "Licenciado bajo AGPL-3.0-only"
 #: ui/about-window.slint:62
 msgctxt "About"
 msgid "Close"
-msgstr "Cierra"
+msgstr "Cerrar"
 
 #: ui/error-dialog.slint:4
 msgctxt "ErrorDialog"
@@ -107,7 +107,7 @@ msgstr "Documentación"
 #: ui/main-window.slint:50
 msgctxt "MenuBar"
 msgid "Show Release Notes"
-msgstr "Muestra notas de lanzamiento"
+msgstr "Mostrar notas de lanzamiento"
 
 #: ui/main-window.slint:56
 msgctxt "MenuBar"
@@ -122,7 +122,7 @@ msgstr "Comprobar actualizaciones…"
 #: ui/main-window.slint:68
 msgctxt "MenuBar"
 msgid "About"
-msgstr "Sobre"
+msgstr "Acerca de"
 
 #: ui/main-window.slint:75
 msgctxt "MenuBar"
@@ -137,47 +137,44 @@ msgstr "Abrir modelo 3D para visualizarlo aquí"
 #: src/main.rs:91
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
-msgstr ""
+msgstr "No se pudo cargar el modelo 3D"
 
 #: src/main.rs:95
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
-msgstr ""
+msgstr "La malla presenta algún problema que impide su representación."
 
 #: src/main.rs:114
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
-msgstr ""
+msgstr "No se pudo mostrar el modelo 3D"
 
 #: src/main.rs:118
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
-msgstr ""
+msgstr "No se ha podido pasar la textura renderizada a la interfaz gráfica."
 
 #: src/main.rs:133
 msgctxt "FileDialog"
 msgid "All files"
-msgstr ""
+msgstr "Todos los archivos"
 
 #: src/main.rs:136
 msgctxt "FileDialog"
 msgid "OBJ files"
-msgstr ""
+msgstr "Archivos OBJ"
 
 #: src/main.rs:138
 msgctxt "FileDialog"
 msgid "STL files"
-msgstr ""
+msgstr "Archivos STL"
 
 #: src/main.rs:157
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
-msgstr ""
+msgstr "No se pudo abrir el modelo 3D"
 
 #: src/main.rs:158
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "File"
 msgctxt "ErrorDialog"
 msgid "File: {}"
-msgstr "Archivo"
+msgstr "Archivo: {}"
