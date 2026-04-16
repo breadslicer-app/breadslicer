@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-16 14:04+0000\n"
-"PO-Revision-Date: 2026-04-15 19:01+0000\n"
+"PO-Revision-Date: 2026-04-17 09:56+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Catalan <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/ca/>\n"
@@ -47,30 +47,27 @@ msgstr "Tanca"
 #: ui/error-dialog.slint:4
 msgctxt "ErrorDialog"
 msgid "Error"
-msgstr ""
+msgstr "Error"
 
 #: ui/error-dialog.slint:7
 msgctxt "ErrorDialog"
 msgid "An error occurred"
-msgstr ""
+msgstr "Ha succeït un error"
 
 #: ui/error-dialog.slint:71
 msgctxt "ErrorDialog"
 msgid "▾ Hide technical details"
-msgstr ""
+msgstr "▾ Amaga detalls tècnics"
 
 #: ui/error-dialog.slint:72
 msgctxt "ErrorDialog"
 msgid "▸ Show technical details"
-msgstr ""
+msgstr "▾ Mostra detalls tècnics"
 
 #: ui/error-dialog.slint:98
-#, fuzzy
-#| msgctxt "About"
-#| msgid "Close"
 msgctxt "ErrorDialog"
 msgid "Close"
-msgstr "Tanca"
+msgstr "Tancar"
 
 #: ui/main-window.slint:8
 msgctxt "MainWindow"
@@ -135,52 +132,49 @@ msgstr "Veure llicència"
 #: ui/main-window.slint:82
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
-msgstr ""
+msgstr "Obre un model 3D per a visualitzar-lo aquí"
 
 #: src/main.rs:91
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
-msgstr ""
+msgstr "No s'ha pogut carregar el model 3D"
 
 #: src/main.rs:95
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
-msgstr ""
+msgstr "La malla no s'ha pogut preparar per a ser renderitzada."
 
 #: src/main.rs:114
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
-msgstr ""
+msgstr "No s'ha pogut mostrar el model 3D"
 
 #: src/main.rs:118
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
-msgstr ""
+msgstr "La textura renderitzada no s'ha pogut passar a la interfície gràfica."
 
 #: src/main.rs:133
 msgctxt "FileDialog"
 msgid "All files"
-msgstr ""
+msgstr "Tots els fitxers"
 
 #: src/main.rs:136
 msgctxt "FileDialog"
 msgid "OBJ files"
-msgstr ""
+msgstr "Fitxers OBJ"
 
 #: src/main.rs:138
 msgctxt "FileDialog"
 msgid "STL files"
-msgstr ""
+msgstr "Fitxers STL"
 
 #: src/main.rs:157
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
-msgstr ""
+msgstr "No s'ha pogut obrir el model 3D"
 
 #: src/main.rs:158
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "File"
 msgctxt "ErrorDialog"
 msgid "File: {}"
-msgstr "Arxiu"
+msgstr "Arxiu: {}"
