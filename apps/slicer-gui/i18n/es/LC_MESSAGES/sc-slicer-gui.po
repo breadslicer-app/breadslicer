@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-16 14:04+0000\n"
-"PO-Revision-Date: 2026-04-15 19:01+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-04-17 09:56+0000\n"
+"Last-Translator: aspimaker <aspimaker@noreply.codeberg.org>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/es/>\n"
 "Language: es\n"
@@ -47,30 +47,27 @@ msgstr "Cierra"
 #: ui/error-dialog.slint:4
 msgctxt "ErrorDialog"
 msgid "Error"
-msgstr ""
+msgstr "Error"
 
 #: ui/error-dialog.slint:7
 msgctxt "ErrorDialog"
 msgid "An error occurred"
-msgstr ""
+msgstr "Ha ocurrido un error"
 
 #: ui/error-dialog.slint:71
 msgctxt "ErrorDialog"
 msgid "▾ Hide technical details"
-msgstr ""
+msgstr "▾ Ocultar detalles técnicos"
 
 #: ui/error-dialog.slint:72
 msgctxt "ErrorDialog"
 msgid "▸ Show technical details"
-msgstr ""
+msgstr "▸ Mostrar detalles técnicos"
 
 #: ui/error-dialog.slint:98
-#, fuzzy
-#| msgctxt "About"
-#| msgid "Close"
 msgctxt "ErrorDialog"
 msgid "Close"
-msgstr "Cierra"
+msgstr "Cerrar"
 
 #: ui/main-window.slint:8
 msgctxt "MainWindow"
@@ -85,17 +82,17 @@ msgstr "Archivo"
 #: ui/main-window.slint:25
 msgctxt "MenuBar"
 msgid "Open"
-msgstr "Abre"
+msgstr "Abrir"
 
 #: ui/main-window.slint:35
 msgctxt "MenuBar"
 msgid "Save"
-msgstr "Guarda"
+msgstr "Guardar"
 
 #: ui/main-window.slint:39
 msgctxt "MenuBar"
 msgid "Save As"
-msgstr "Guarda como"
+msgstr "Guardar como"
 
 #: ui/main-window.slint:44
 msgctxt "MenuBar"
@@ -115,12 +112,12 @@ msgstr "Muestra notas de lanzamiento"
 #: ui/main-window.slint:56
 msgctxt "MenuBar"
 msgid "Report Issue"
-msgstr "Reporta problema"
+msgstr "Informar de un problema"
 
 #: ui/main-window.slint:62
 msgctxt "MenuBar"
 msgid "Check for Updates…"
-msgstr "Comprueba actualizaciones…"
+msgstr "Comprobar actualizaciones…"
 
 #: ui/main-window.slint:68
 msgctxt "MenuBar"
@@ -135,7 +132,7 @@ msgstr "Ver licencia"
 #: ui/main-window.slint:82
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
-msgstr ""
+msgstr "Abrir modelo 3D para visualizarlo aquí"
 
 #: src/main.rs:91
 msgctxt "ErrorDialog"
