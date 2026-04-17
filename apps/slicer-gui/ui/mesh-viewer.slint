@@ -1,5 +1,14 @@
 import { Palette } from "std-widgets.slint";
 
+export enum AxisView {
+    Front,
+    Back,
+    Right,
+    Left,
+    Top,
+    Bottom,
+}
+
 export component MeshViewer inherits Rectangle {
     in property <image> rendering;
     in property <string> placeholder-text: "";
@@ -14,7 +23,7 @@ export component MeshViewer inherits Rectangle {
     callback pan-drag(length, length);
     callback zoom-at(length, length, length);
     callback frame-view-requested();
-    callback axis-view-requested(int);
+    callback axis-view-requested(AxisView);
 
     accessible-role: image;
     accessible-label: root.rendering.width == 0
@@ -66,20 +75,18 @@ export component MeshViewer inherits Rectangle {
                 root.frame-view-requested();
                 return accept;
             }
-            // Axis codes match `axis_from_code` on the Rust side:
-            //   0 Front, 1 Back, 2 Right, 3 Left, 4 Top, 5 Bottom.
             // Ctrl flips each axis to its opposite, matching the
             // Blender/CAD convention for numpad-based view switching.
             if (event.text == "1") {
-                root.axis-view-requested(event.modifiers.control ? 1 : 0);
+                root.axis-view-requested(event.modifiers.control ? AxisView.Back : AxisView.Front);
                 return accept;
             }
             if (event.text == "3") {
-                root.axis-view-requested(event.modifiers.control ? 3 : 2);
+                root.axis-view-requested(event.modifiers.control ? AxisView.Left : AxisView.Right);
                 return accept;
             }
             if (event.text == "7") {
-                root.axis-view-requested(event.modifiers.control ? 5 : 4);
+                root.axis-view-requested(event.modifiers.control ? AxisView.Bottom : AxisView.Top);
                 return accept;
             }
             // Arrow keys drive rotate / pan with the same (dx, dy) sign

@@ -1,8 +1,8 @@
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
-import { MeshViewer } from "mesh-viewer.slint";
+import { AxisView, MeshViewer } from "mesh-viewer.slint";
 
-export { AboutWindow, ErrorDialog }
+export { AboutWindow, AxisView, ErrorDialog }
 
 export component MainWindow inherits Window {
     title: @tr("SoulCrafted Slicer");
@@ -25,7 +25,7 @@ export component MainWindow inherits Window {
     callback pan-drag(length, length);
     callback zoom-at(length, length, length);
     callback frame-view-requested();
-    callback axis-view-requested(int);
+    callback axis-view-requested(AxisView);
 
     MenuBar {
         Menu {

@@ -113,10 +113,8 @@ impl ViewportController {
         }
     }
 
-    pub fn on_axis_view(&self, code: i32) {
-        let Some(axis) = axis_from_code(code) else {
-            return;
-        };
+    pub fn on_axis_view(&self, view: crate::AxisView) {
+        let axis = axis_from_ui(view);
         if let Some(r) = self.renderer.borrow_mut().as_mut()
             && r.set_axis_view(axis)
         {
@@ -259,14 +257,13 @@ impl ViewportController {
     }
 }
 
-fn axis_from_code(code: i32) -> Option<AxisView> {
-    match code {
-        0 => Some(AxisView::Front),
-        1 => Some(AxisView::Back),
-        2 => Some(AxisView::Right),
-        3 => Some(AxisView::Left),
-        4 => Some(AxisView::Top),
-        5 => Some(AxisView::Bottom),
-        _ => None,
+fn axis_from_ui(view: crate::AxisView) -> AxisView {
+    match view {
+        crate::AxisView::Front => AxisView::Front,
+        crate::AxisView::Back => AxisView::Back,
+        crate::AxisView::Right => AxisView::Right,
+        crate::AxisView::Left => AxisView::Left,
+        crate::AxisView::Top => AxisView::Top,
+        crate::AxisView::Bottom => AxisView::Bottom,
     }
 }
