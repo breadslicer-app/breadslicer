@@ -1,3 +1,5 @@
+import { Palette } from "std-widgets.slint";
+
 export component MeshViewer inherits Rectangle {
     in property <image> rendering;
     in property <string> placeholder-text: "";
@@ -20,8 +22,12 @@ export component MeshViewer inherits Rectangle {
         : @tr("MeshViewer" => "3D model viewer");
     accessible-description: @tr("MeshViewer" => "Right-click drag to rotate. Shift with right-click drag, or middle-click drag, to pan. Scroll to zoom. Press F or Home to frame the model. Press 1, 3, or 7 for front, right, or top views; hold Control for back, left, or bottom.");
 
+    // Viewport background stays dark regardless of OS theme — the CAD/DCC
+    // convention, keeps the light-grey mesh legible under both light and
+    // dark app chrome. The border follows the Palette so it blends with the
+    // surrounding chrome.
     background: #1e1e1e;
-    border-color: #2d2d2d;
+    border-color: Palette.border;
     border-width: 1px;
 
     changed width => {
