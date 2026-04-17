@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-16 15:23+0000\n"
+"POT-Creation-Date: 2026-04-17 19:34+0000\n"
 "PO-Revision-Date: 2026-04-17 09:56+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
@@ -19,27 +19,27 @@ msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr "Acerca de SoulCrafted Slicer"
 
-#: ui/about-window.slint:33
+#: ui/about-window.slint:40
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/about-window.slint:40
+#: ui/about-window.slint:47
 msgctxt "About"
 msgid "Version {0}"
 msgstr "Versión {0}"
 
-#: ui/about-window.slint:46
+#: ui/about-window.slint:53
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr "Un \"slicer\" de código libre para impresoras 3D de resina."
 
-#: ui/about-window.slint:52
+#: ui/about-window.slint:59
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr "Licenciado bajo AGPL-3.0-only"
 
-#: ui/about-window.slint:62
+#: ui/about-window.slint:69
 msgctxt "About"
 msgid "Close"
 msgstr "Cerrar"
@@ -54,17 +54,30 @@ msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr "Ha ocurrido un error"
 
-#: ui/error-dialog.slint:71
+#: ui/error-dialog.slint:68
 msgctxt "ErrorDialog"
-msgid "▾ Hide technical details"
+msgid "Warning"
+msgstr ""
+
+#. runs automatically.
+#: ui/error-dialog.slint:110
+#, fuzzy
+#| msgctxt "ErrorDialog"
+#| msgid "▾ Hide technical details"
+msgctxt "ErrorDialog"
+msgid "Hide technical details"
 msgstr "▾ Ocultar detalles técnicos"
 
-#: ui/error-dialog.slint:72
+#. runs automatically.
+#: ui/error-dialog.slint:110
+#, fuzzy
+#| msgctxt "ErrorDialog"
+#| msgid "▸ Show technical details"
 msgctxt "ErrorDialog"
-msgid "▸ Show technical details"
+msgid "Show technical details"
 msgstr "▸ Mostrar detalles técnicos"
 
-#: ui/error-dialog.slint:98
+#: ui/error-dialog.slint:137
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr "Cerrar"
@@ -74,17 +87,20 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:24
+#: ui/main-window.slint:32
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Archivo"
 
-#: ui/main-window.slint:26
+#: ui/main-window.slint:34
+#, fuzzy
+#| msgctxt "MenuBar"
+#| msgid "Open"
 msgctxt "MenuBar"
-msgid "Open"
+msgid "Open…"
 msgstr "Abrir"
 
-#: ui/main-window.slint:34
+#: ui/main-window.slint:43
 #, fuzzy
 #| msgctxt "About"
 #| msgid "Close"
@@ -92,55 +108,77 @@ msgctxt "MenuBar"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/main-window.slint:43
+#: ui/main-window.slint:52
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/main-window.slint:48
+#: ui/main-window.slint:58
+#, fuzzy
+#| msgctxt "MenuBar"
+#| msgid "Save As"
 msgctxt "MenuBar"
-msgid "Save As"
+msgid "Save As…"
 msgstr "Guardar como"
 
-#: ui/main-window.slint:54
+#: ui/main-window.slint:65
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Ayuda"
 
-#: ui/main-window.slint:56
+#: ui/main-window.slint:67
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentación"
 
-#: ui/main-window.slint:60
+#: ui/main-window.slint:72
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Mostrar notas de lanzamiento"
 
-#: ui/main-window.slint:66
+#: ui/main-window.slint:79
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Informar de un problema"
 
-#: ui/main-window.slint:72
+#: ui/main-window.slint:86
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Comprobar actualizaciones…"
 
-#: ui/main-window.slint:78
+#: ui/main-window.slint:93
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Acerca de"
 
-#: ui/main-window.slint:85
+#: ui/main-window.slint:100
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Ver licencia"
 
-#: ui/main-window.slint:92
+#: ui/main-window.slint:108
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Abrir modelo 3D para visualizarlo aquí"
+
+#: ui/mesh-viewer.slint:21
+msgctxt "MeshViewer"
+msgid "3D model viewer, empty"
+msgstr ""
+
+#: ui/mesh-viewer.slint:22
+msgctxt "MeshViewer"
+msgid "3D model viewer"
+msgstr ""
+
+#: ui/mesh-viewer.slint:23
+msgctxt "MeshViewer"
+msgid ""
+"Right-click drag or arrow keys to rotate. Shift with right-click drag, "
+"middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or "
+"Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
+"for front, right, or top views; hold Control for back, left, or bottom."
+msgstr ""
 
 #: src/main.rs:276
 msgctxt "ErrorDialog"
@@ -173,8 +211,11 @@ msgid "File: {}"
 msgstr "Archivo: {}"
 
 #: src/main.rs:399
+#, fuzzy
+#| msgctxt "FileDialog"
+#| msgid "All files"
 msgctxt "FileDialog"
-msgid "All files"
+msgid "All supported files"
 msgstr "Todos los archivos"
 
 #: src/main.rs:402
@@ -186,3 +227,8 @@ msgstr "Archivos OBJ"
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr "Archivos STL"
+
+#: src/main.rs:407
+msgctxt "FileDialog"
+msgid "All files"
+msgstr "Todos los archivos"
