@@ -97,7 +97,17 @@ export component ErrorDialog inherits Window {
                             width: toggle-text.preferred-width;
                             height: toggle-text.preferred-height;
                             toggle-text := Text {
-                                text: root.details-visible ? @tr("▾ Hide technical details") : @tr("▸ Show technical details");
+                                // The glyph is kept out of the translatable
+                                // strings so translators can't accidentally
+                                // drop or replace it. RTL placement is
+                                // deferred: Slint 1.16 has no paragraph
+                                // direction or layout mirroring (see the
+                                // `bidi level` TODO in i-slint-core's text
+                                // shaping). Once upstream lands RTL, BiDi
+                                // will place the neutral-direction arrow on
+                                // the visual right side of the label in RTL
+                                // runs automatically.
+                                text: (root.details-visible ? "▾ " : "▸ ") + (root.details-visible ? @tr("Hide technical details") : @tr("Show technical details"));
                                 font-size: root.font-footnote;
                                 color: Palette.accent-background;
                             }

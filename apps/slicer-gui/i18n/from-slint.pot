@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-04-17 19:24+0000\n"
+"POT-Creation-Date: 2026-04-17 19:34+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -57,17 +57,19 @@ msgctxt "ErrorDialog"
 msgid "Warning"
 msgstr ""
 
-#: ui/error-dialog.slint:100
+#. runs automatically.
+#: ui/error-dialog.slint:110
 msgctxt "ErrorDialog"
-msgid "▾ Hide technical details"
+msgid "Hide technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:100
+#. runs automatically.
+#: ui/error-dialog.slint:110
 msgctxt "ErrorDialog"
-msgid "▸ Show technical details"
+msgid "Show technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:127
+#: ui/error-dialog.slint:137
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
