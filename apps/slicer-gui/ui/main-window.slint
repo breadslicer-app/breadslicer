@@ -31,7 +31,7 @@ export component MainWindow inherits Window {
         Menu {
             title: @tr("MenuBar" => "File");
             MenuItem {
-                title: @tr("MenuBar" => "Open");
+                title: @tr("MenuBar" => "Open…");
                 shortcut: @keys(Control + O);
                 enabled: !root.loading;
                 activated => {
@@ -55,7 +55,7 @@ export component MainWindow inherits Window {
             }
 
             MenuItem {
-                title: @tr("MenuBar" => "Save As");
+                title: @tr("MenuBar" => "Save As…");
                 shortcut: @keys(Control + Shift + S);
                 enabled: false;
             }
