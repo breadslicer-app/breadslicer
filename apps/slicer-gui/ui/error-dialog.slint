@@ -11,6 +11,15 @@ export component ErrorDialog inherits Window {
 
     property <bool> details-visible: false;
 
+    // Font sizes in `rem`: 1rem = Window.default-font-size at render time,
+    // so these track OS text-size preferences automatically. Centralised
+    // here and shared across the dialog's text elements.
+    // The warning glyph is deliberately a fixed absolute size: it's a
+    // decorative alert, not reading text, and should not shrink on
+    // small-default systems.
+    property <length> font-secondary: 0.85rem;
+    property <length> font-footnote: 0.8rem;
+
     min-width: 520px;
     max-width: 520px;
     preferred-width: 520px;
@@ -43,21 +52,20 @@ export component ErrorDialog inherits Window {
 
                 Text {
                     text: root.heading;
-                    font-size: 14px;
                     font-weight: 700;
                     wrap: word-wrap;
                 }
 
                 if root.context != "": Text {
                     text: root.context;
-                    font-size: 12px;
+                    font-size: root.font-secondary;
                     color: Palette.foreground.transparentize(0.5);
                     wrap: word-wrap;
                 }
 
                 if root.message != "": Text {
                     text: root.message;
-                    font-size: 12px;
+                    font-size: root.font-secondary;
                     wrap: word-wrap;
                 }
 
@@ -70,7 +78,7 @@ export component ErrorDialog inherits Window {
                             text: root.details-visible
                                 ? @tr("▾ Hide technical details")
                                 : @tr("▸ Show technical details");
-                            font-size: 11px;
+                            font-size: root.font-footnote;
                             color: Palette.accent-background;
                         }
                         clicked => {
@@ -83,7 +91,7 @@ export component ErrorDialog inherits Window {
                     max-height: 160px;
                     Text {
                         text: root.details;
-                        font-size: 11px;
+                        font-size: root.font-footnote;
                         wrap: word-wrap;
                         horizontal-alignment: left;
                         color: Palette.foreground.transparentize(0.35);

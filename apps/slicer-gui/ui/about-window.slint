@@ -6,6 +6,13 @@ export component AboutWindow inherits Window {
 
     in property <string> app-version: "";
 
+    // Font sizes in `rem`: 1rem = Window.default-font-size at render time,
+    // so these track OS text-size preferences automatically. Centralised
+    // here to preserve the visual hierarchy and make it easy to tweak.
+    property <length> font-title: 1.8rem;
+    property <length> font-secondary: 0.9rem;
+    property <length> font-footnote: 0.85rem;
+
     min-width: 420px;
     min-height: 400px;
     max-width: 420px;
@@ -31,14 +38,14 @@ export component AboutWindow inherits Window {
 
         Text {
             text: @tr("SoulCrafted Slicer");
-            font-size: 20px;
+            font-size: root.font-title;
             font-weight: 700;
             horizontal-alignment: center;
         }
 
         Text {
             text: @tr("About" => "Version {0}", root.app-version);
-            font-size: 13px;
+            font-size: root.font-secondary;
             horizontal-alignment: center;
         }
 
@@ -50,7 +57,7 @@ export component AboutWindow inherits Window {
 
         Text {
             text: @tr("About" => "Licensed under AGPL-3.0-only");
-            font-size: 12px;
+            font-size: root.font-footnote;
             horizontal-alignment: center;
         }
 
