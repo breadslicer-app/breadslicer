@@ -14,6 +14,12 @@ export component MeshViewer inherits Rectangle {
     callback frame-view-requested();
     callback axis-view-requested(int);
 
+    accessible-role: image;
+    accessible-label: root.rendering.width == 0
+        ? (root.placeholder-text != "" ? root.placeholder-text : @tr("MeshViewer" => "3D model viewer, empty"))
+        : @tr("MeshViewer" => "3D model viewer");
+    accessible-description: @tr("MeshViewer" => "Right-click drag to rotate. Shift with right-click drag, or middle-click drag, to pan. Scroll to zoom. Press F or Home to frame the model. Press 1, 3, or 7 for front, right, or top views; hold Control for back, left, or bottom.");
+
     background: #1e1e1e;
     border-color: #2d2d2d;
     border-width: 1px;
@@ -30,6 +36,8 @@ export component MeshViewer inherits Rectangle {
         image-fit: fill;
         width: parent.width;
         height: parent.height;
+        // Accessibility metadata lives on the enclosing MeshViewer.
+        accessible-role: none;
     }
 
     if (root.rendering.width == 0 || root.rendering.height == 0): Text {
@@ -37,11 +45,15 @@ export component MeshViewer inherits Rectangle {
         color: #888;
         horizontal-alignment: center;
         vertical-alignment: center;
+        accessible-role: text;
+        accessible-label: self.text;
     }
 
     fs := FocusScope {
         width: parent.width;
         height: parent.height;
+        // Accessibility metadata lives on the enclosing MeshViewer.
+        accessible-role: none;
 
         key-pressed(event) => {
             if (event.text == Key.Home || event.text == "f" || event.text == "F") {
