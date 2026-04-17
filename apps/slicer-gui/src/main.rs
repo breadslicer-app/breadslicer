@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod about_window;
+mod camera;
 mod error_dialog;
 mod i18n;
 mod mesh_loader;
@@ -24,6 +25,7 @@ use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 
 use crate::about_window::wire_about_window;
+use crate::camera::AxisView;
 use crate::error_dialog::{format_anyhow_chain, show_error_dialog};
 use crate::mesh_render::Renderer;
 
@@ -52,9 +54,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         viewport.clone(),
         dirty.clone(),
     )?;
-    wire_close_scene(&ui, renderer, pending_scene.clone(), dirty.clone());
+    wire_close_scene(&ui, renderer.clone(), pending_scene.clone(), dirty.clone());
     wire_open_file(&ui, pending_scene, dirty.clone());
-    wire_viewport_resized(&ui, viewport, dirty);
+    wire_viewport_resized(&ui, viewport.clone(), dirty.clone());
+    wire_viewport_input(&ui, renderer, viewport, dirty);
     wire_about_window(&ui);
 
     ui.run()?;
@@ -70,6 +73,106 @@ fn wire_viewport_resized(ui: &MainWindow, viewport: ViewportCell, dirty: DirtyCe
             ui.window().request_redraw();
         }
     });
+}
+
+fn wire_viewport_input(
+    ui: &MainWindow,
+    renderer: RendererCell,
+    viewport: ViewportCell,
+    dirty: DirtyCell,
+) {
+    let ui_weak = ui.as_weak();
+    let r = renderer.clone();
+    let v = viewport.clone();
+    let d = dirty.clone();
+    let uw = ui_weak.clone();
+    ui.on_rotate_drag(move |dx, dy| {
+        let (_, h) = v.get();
+        if let Some(r) = r.borrow_mut().as_mut()
+            && r.rotate(dx, dy, h)
+        {
+            d.set(true);
+            if let Some(ui) = uw.upgrade() {
+                ui.window().request_redraw();
+            }
+        }
+    });
+
+    let r = renderer.clone();
+    let v = viewport.clone();
+    let d = dirty.clone();
+    let uw = ui_weak.clone();
+    ui.on_pan_drag(move |dx, dy| {
+        let (_, h) = v.get();
+        if let Some(r) = r.borrow_mut().as_mut()
+            && r.pan(dx, dy, h)
+        {
+            d.set(true);
+            if let Some(ui) = uw.upgrade() {
+                ui.window().request_redraw();
+            }
+        }
+    });
+
+    let r = renderer.clone();
+    let v = viewport.clone();
+    let d = dirty.clone();
+    let uw = ui_weak.clone();
+    ui.on_zoom_at(move |delta, cursor_x, cursor_y| {
+        let (w, h) = v.get();
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let factor = (-delta * 0.005).exp().clamp(0.1, 10.0);
+        if let Some(r) = r.borrow_mut().as_mut()
+            && r.zoom_at(factor, cursor_x, cursor_y, w, h)
+        {
+            d.set(true);
+            if let Some(ui) = uw.upgrade() {
+                ui.window().request_redraw();
+            }
+        }
+    });
+
+    let r = renderer.clone();
+    let d = dirty.clone();
+    let uw = ui_weak.clone();
+    ui.on_frame_view_requested(move || {
+        if let Some(r) = r.borrow_mut().as_mut()
+            && r.frame_view()
+        {
+            d.set(true);
+            if let Some(ui) = uw.upgrade() {
+                ui.window().request_redraw();
+            }
+        }
+    });
+
+    ui.on_axis_view_requested(move |view| {
+        let Some(axis) = axis_from_code(view) else {
+            return;
+        };
+        if let Some(r) = renderer.borrow_mut().as_mut()
+            && r.set_axis_view(axis)
+        {
+            dirty.set(true);
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.window().request_redraw();
+            }
+        }
+    });
+}
+
+fn axis_from_code(code: i32) -> Option<AxisView> {
+    match code {
+        0 => Some(AxisView::Front),
+        1 => Some(AxisView::Back),
+        2 => Some(AxisView::Right),
+        3 => Some(AxisView::Left),
+        4 => Some(AxisView::Top),
+        5 => Some(AxisView::Bottom),
+        _ => None,
+    }
 }
 
 fn install_rendering_notifier(

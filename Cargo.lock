@@ -4360,6 +4360,7 @@ version = "0.0.8"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "float-cmp 0.10.0",
  "glam",
  "rfd",
  "sc-mesh-core",
