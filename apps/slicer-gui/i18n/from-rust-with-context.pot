@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-17 18:29+0200\n"
+"POT-Creation-Date: 2026-04-17 19:50+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -50,7 +50,7 @@ msgstr ""
 
 #: src/main.rs:399
 msgctxt "FileDialog"
-msgid "All files"
+msgid "All supported files"
 msgstr ""
 
 #: src/main.rs:402
@@ -61,4 +61,9 @@ msgstr ""
 #: src/main.rs:404
 msgctxt "FileDialog"
 msgid "STL files"
+msgstr ""
+
+#: src/main.rs:407
+msgctxt "FileDialog"
+msgid "All files"
 msgstr ""

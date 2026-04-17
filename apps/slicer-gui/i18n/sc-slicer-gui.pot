@@ -170,7 +170,7 @@ msgstr ""
 
 #: src/main.rs:399
 msgctxt "FileDialog"
-msgid "All files"
+msgid "All supported files"
 msgstr ""
 
 #: src/main.rs:402
@@ -181,4 +181,9 @@ msgstr ""
 #: src/main.rs:404
 msgctxt "FileDialog"
 msgid "STL files"
+msgstr ""
+
+#: src/main.rs:407
+msgctxt "FileDialog"
+msgid "All files"
 msgstr ""

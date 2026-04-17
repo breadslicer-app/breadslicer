@@ -396,14 +396,15 @@ fn wire_open_file(
 
         let dialog = rfd::AsyncFileDialog::new()
             .add_filter(
-                ctr!("FileDialog", "All files").to_string(),
+                ctr!("FileDialog", "All supported files").to_string(),
                 &["obj", "stl", "stla", "stlb"],
             )
             .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
             .add_filter(
                 ctr!("FileDialog", "STL files").to_string(),
                 &["stl", "stla", "stlb"],
-            );
+            )
+            .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
 
         let slot = slot.clone();
         let load_gen = load_gen.clone();

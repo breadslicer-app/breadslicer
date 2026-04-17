@@ -48,16 +48,20 @@ export component MeshViewer inherits Rectangle {
                 root.frame-view-requested();
                 return accept;
             }
+            // Axis codes match `axis_from_code` on the Rust side:
+            //   0 Front, 1 Back, 2 Right, 3 Left, 4 Top, 5 Bottom.
+            // Ctrl flips each axis to its opposite, matching the
+            // Blender/CAD convention for numpad-based view switching.
             if (event.text == "1") {
-                root.axis-view-requested(0);
+                root.axis-view-requested(event.modifiers.control ? 1 : 0);
                 return accept;
             }
             if (event.text == "3") {
-                root.axis-view-requested(2);
+                root.axis-view-requested(event.modifiers.control ? 3 : 2);
                 return accept;
             }
             if (event.text == "7") {
-                root.axis-view-requested(4);
+                root.axis-view-requested(event.modifiers.control ? 5 : 4);
                 return accept;
             }
             return reject;
