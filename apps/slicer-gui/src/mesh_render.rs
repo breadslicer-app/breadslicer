@@ -54,6 +54,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const SAMPLE_COUNT: u32 = 4;
+const FIT_FRACTION: f32 = 0.75;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -77,10 +79,11 @@ struct MeshGpu {
     aabb_max: Vec3,
 }
 
-struct DepthTex {
+struct MsaaTargets {
     width: u32,
     height: u32,
-    view: wgpu::TextureView,
+    color_view: wgpu::TextureView,
+    depth_view: wgpu::TextureView,
 }
 
 pub struct Renderer {
@@ -90,7 +93,8 @@ pub struct Renderer {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     mesh: Option<MeshGpu>,
-    depth: Option<DepthTex>,
+    msaa: Option<MsaaTargets>,
+    focal_px: Option<f32>,
 }
 
 impl Renderer {
@@ -152,7 +156,11 @@ impl Renderer {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
@@ -190,12 +198,14 @@ impl Renderer {
             uniform_buffer,
             bind_group,
             mesh: None,
-            depth: None,
+            msaa: None,
+            focal_px: None,
         }
     }
 
     pub fn clear_scene(&mut self) {
         self.mesh = None;
+        self.focal_px = None;
     }
 
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
@@ -245,38 +255,57 @@ impl Renderer {
             aabb_min: min,
             aabb_max: max,
         });
+        self.focal_px = None;
 
         Ok(())
     }
 
-    fn ensure_depth(&mut self, width: u32, height: u32) {
+    fn ensure_msaa(&mut self, width: u32, height: u32) {
         let same = self
-            .depth
+            .msaa
             .as_ref()
-            .is_some_and(|d| d.width == width && d.height == height);
+            .is_some_and(|m| m.width == width && m.height == height);
         if same {
             return;
         }
 
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer depth"),
+        let color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mesh-viewer msaa color"),
             size: wgpu::Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format: TEXTURE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mesh-viewer msaa depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: SAMPLE_COUNT,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.depth = Some(DepthTex {
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.msaa = Some(MsaaTargets {
             width,
             height,
-            view,
+            color_view,
+            depth_view,
         });
     }
 
@@ -285,17 +314,24 @@ impl Renderer {
             return None;
         }
 
-        self.ensure_depth(width, height);
-        let depth_view = &self.depth.as_ref().unwrap().view;
+        self.ensure_msaa(width, height);
+        let msaa = self.msaa.as_ref().unwrap();
         let mesh = self.mesh.as_ref().unwrap();
 
         let center = (mesh.aabb_min + mesh.aabb_max) * 0.5;
-        let extent = (mesh.aabb_max - mesh.aabb_min).length().max(1e-3);
+        let diagonal = (mesh.aabb_max - mesh.aabb_min).length().max(1e-3);
+        let radius = diagonal * 0.5;
+        let camera_distance = radius * 3.0;
+        let focal_px = *self
+            .focal_px
+            .get_or_insert_with(|| FIT_FRACTION * height as f32 * camera_distance / (2.0 * radius));
+
         let dir = Vec3::new(1.0, 0.8, 1.0).normalize();
-        let eye = center + dir * extent * 1.5;
+        let eye = center + dir * camera_distance;
         let aspect = width as f32 / height as f32;
+        let fov_y = 2.0 * (height as f32 / (2.0 * focal_px)).atan();
         let view_mat = Mat4::look_at_rh(eye, center, Vec3::Z);
-        let proj = Mat4::perspective_rh(45f32.to_radians(), aspect, 0.01 * extent, 100.0 * extent);
+        let proj = Mat4::perspective_rh(fov_y, aspect, 0.01 * diagonal, 100.0 * diagonal);
         let mvp = proj * view_mat;
 
         let uniforms = Uniforms {
@@ -331,8 +367,8 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh-viewer pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target_view,
-                    resolve_target: None,
+                    view: &msaa.color_view,
+                    resolve_target: Some(&target_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.12,
@@ -345,7 +381,7 @@ impl Renderer {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
+                    view: &msaa.depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
