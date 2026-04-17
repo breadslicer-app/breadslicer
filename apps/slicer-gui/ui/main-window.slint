@@ -18,6 +18,7 @@ export component MainWindow inherits Window {
     callback open-file-requested();
     callback close-current-scene();
     callback show-about-requested();
+    callback viewport-resized(length, length);
 
     MenuBar {
         Menu {
@@ -90,5 +91,8 @@ export component MainWindow inherits Window {
     MeshViewer {
         rendering: root.mesh-rendering;
         placeholder-text: @tr("Open a 3D model to visualize it here");
+        viewport-resized(w, h) => {
+            root.viewport-resized(w, h);
+        }
     }
 }

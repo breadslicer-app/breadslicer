@@ -2,13 +2,22 @@ export component MeshViewer inherits Rectangle {
     in property <image> rendering;
     in property <string> placeholder-text: "";
 
+    callback viewport-resized(length, length);
+
     background: #1e1e1e;
     border-color: #2d2d2d;
     border-width: 1px;
 
+    changed width => {
+        root.viewport-resized(self.width, self.height);
+    }
+    changed height => {
+        root.viewport-resized(self.width, self.height);
+    }
+
     Image {
         source: root.rendering;
-        image-fit: contain;
+        image-fit: fill;
         width: parent.width;
         height: parent.height;
     }
