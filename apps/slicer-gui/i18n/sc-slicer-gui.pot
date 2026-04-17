@@ -163,53 +163,53 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/main.rs:276
-msgctxt "ErrorDialog"
-msgid "Failed to load the 3D model"
+#: src/main.rs:122
+msgctxt "FileDialog"
+msgid "All supported files"
 msgstr ""
 
-#: src/main.rs:280
-msgctxt "ErrorDialog"
-msgid "The mesh could not be prepared for rendering."
+#: src/main.rs:125
+msgctxt "FileDialog"
+msgid "OBJ files"
 msgstr ""
 
-#: src/main.rs:318
-msgctxt "ErrorDialog"
-msgid "Failed to display the 3D model"
+#: src/main.rs:127
+msgctxt "FileDialog"
+msgid "STL files"
 msgstr ""
 
-#: src/main.rs:322
-msgctxt "ErrorDialog"
-msgid "The rendered texture could not be handed to the UI."
+#: src/main.rs:130
+msgctxt "FileDialog"
+msgid "All files"
 msgstr ""
 
-#: src/main.rs:374
+#: src/viewport_controller.rs:163
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/main.rs:375
+#: src/viewport_controller.rs:164
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/main.rs:399
-msgctxt "FileDialog"
-msgid "All supported files"
+#: src/viewport_controller.rs:205
+msgctxt "ErrorDialog"
+msgid "Failed to load the 3D model"
 msgstr ""
 
-#: src/main.rs:402
-msgctxt "FileDialog"
-msgid "OBJ files"
+#: src/viewport_controller.rs:209
+msgctxt "ErrorDialog"
+msgid "The mesh could not be prepared for rendering."
 msgstr ""
 
-#: src/main.rs:404
-msgctxt "FileDialog"
-msgid "STL files"
+#: src/viewport_controller.rs:247
+msgctxt "ErrorDialog"
+msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/main.rs:407
-msgctxt "FileDialog"
-msgid "All files"
+#: src/viewport_controller.rs:251
+msgctxt "ErrorDialog"
+msgid "The rendered texture could not be handed to the UI."
 msgstr ""
