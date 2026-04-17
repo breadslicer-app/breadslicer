@@ -18,7 +18,6 @@ use crate::camera::{AxisView, DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 const SHADER_SOURCE: &str = r#"
 struct Uniforms {
     mvp: mat4x4<f32>,
-    model: mat4x4<f32>,
     light_dir: vec4<f32>,
 };
 
@@ -26,27 +25,29 @@ struct Uniforms {
 
 struct VsIn {
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
 };
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
-    @location(0) world_normal: vec3<f32>,
+    @location(0) world_pos: vec3<f32>,
 };
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip_pos = u.mvp * vec4<f32>(in.position, 1.0);
-    out.world_normal = (u.model * vec4<f32>(in.normal, 0.0)).xyz;
+    // Model transform is identity for now; pass position through as world.
+    out.world_pos = in.position;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let n = normalize(in.world_normal);
+    // Face normal from screen-space derivatives: no per-vertex normals needed.
+    let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let l = normalize(u.light_dir.xyz);
-    let lambert = max(dot(n, l), 0.0);
+    // abs() makes lighting orientation-agnostic — safe for any winding.
+    let lambert = abs(dot(n, l));
     let ambient = 0.25;
     let intensity = ambient + (1.0 - ambient) * lambert;
     let base_color = vec3<f32>(0.75, 0.78, 0.85);
@@ -63,20 +64,19 @@ const FIT_FRACTION: f32 = 0.75;
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct GpuVertex {
     position: [f32; 3],
-    normal: [f32; 3],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Uniforms {
     mvp: [[f32; 4]; 4],
-    model: [[f32; 4]; 4],
     light_dir: [f32; 4],
 }
 
 struct MeshGpu {
     vertex_buffer: wgpu::Buffer,
-    vertex_count: u32,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
     aabb_min: Vec3,
     aabb_max: Vec3,
     camera: OrbitCamera,
@@ -147,10 +147,7 @@ impl Renderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<GpuVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x3,
-                    ],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
                 }],
             },
             primitive: wgpu::PrimitiveState {
@@ -221,6 +218,7 @@ impl Renderer {
 
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
         let mut vertices: Vec<GpuVertex> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
 
@@ -233,22 +231,27 @@ impl Renderer {
                     .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
             };
 
+            let base = u32::try_from(vertices.len())
+                .map_err(|_| anyhow!("Scene has more than {} vertices", u32::MAX))?;
+
+            vertices.reserve(mesh.vertices.len());
+            for vertex in &mesh.vertices {
+                let pos = vertex.0;
+                vertices.push(GpuVertex { position: pos });
+                let p = Vec3::from(pos);
+                min = min.min(p);
+                max = max.max(p);
+            }
+
+            indices.reserve(mesh.faces.len() * 3);
             for face in &mesh.faces {
-                let normal = face.normal.0;
                 for &vidx in &face.vertices {
-                    let pos = mesh.vertices[vidx as usize].0;
-                    vertices.push(GpuVertex {
-                        position: pos,
-                        normal,
-                    });
-                    let p = Vec3::from(pos);
-                    min = min.min(p);
-                    max = max.max(p);
+                    indices.push(base + vidx);
                 }
             }
         }
 
-        if vertices.is_empty() {
+        if indices.is_empty() {
             return Err(anyhow!("Scene has no geometry to render"));
         }
 
@@ -260,11 +263,20 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
+        let index_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer index buffer"),
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
         let center = (min + max) * 0.5;
         let radius = ((max - min).length() * 0.5).max(1e-3);
         self.mesh = Some(MeshGpu {
             vertex_buffer,
-            vertex_count: vertices.len() as u32,
+            index_buffer,
+            index_count: indices.len() as u32,
             aabb_min: min,
             aabb_max: max,
             camera: OrbitCamera::new(center, radius),
@@ -406,7 +418,6 @@ impl Renderer {
 
         let uniforms = Uniforms {
             mvp: mvp.to_cols_array_2d(),
-            model: Mat4::IDENTITY.to_cols_array_2d(),
             light_dir: [0.5, 0.7, 1.0, 0.0],
         };
         self.queue
@@ -465,7 +476,8 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.draw(0..mesh.vertex_count, 0..1);
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
 
