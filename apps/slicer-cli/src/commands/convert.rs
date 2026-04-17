@@ -11,8 +11,9 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::load_mesh_from_path;
 
-use crate::commands::mesh_loader::{display_warnings, load_mesh};
+use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -49,10 +50,8 @@ pub(crate) fn convert(
         };
     }
 
-    let mut warnings = vec![];
-    let scene = load_mesh(&source_path, Some(source_format), &mut warnings)?;
+    let loaded = load_mesh_from_path(&source_path, Some(source_format))?;
+    display_warnings(&loaded.warnings);
 
-    display_warnings(&warnings);
-
-    write_scene(&scene, &target_path, target_format)
+    write_scene(&loaded.scene, &target_path, target_format)
 }

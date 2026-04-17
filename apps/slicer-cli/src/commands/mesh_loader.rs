@@ -5,36 +5,7 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-use std::fs::File;
-use std::path::Path;
-
-use anyhow::Result;
-use sc_mesh_core::scene::Scene;
-use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::messages::LoadMeshWarning;
-use sc_mesh_formats::obj::read_obj;
-use sc_mesh_formats::stl::{read_stl, read_stla, read_stlb};
-
-pub(crate) fn load_mesh(
-    source_path: &Path,
-    source_format: Option<MeshFileType>,
-    warnings: &mut Vec<LoadMeshWarning>,
-) -> Result<Scene> {
-    let source_format = match source_format {
-        Some(f) => f,
-        None => infer_mesh_file_format_from_extension(source_path)?,
-    };
-
-    let mut source_file = File::open(source_path)?;
-
-    match source_format {
-        MeshFileType::Stl => read_stl(&mut source_file),
-        MeshFileType::StlAscii => read_stla(&mut source_file),
-        MeshFileType::StlBin => read_stlb(&mut source_file),
-        MeshFileType::Obj => read_obj(&mut source_file, warnings),
-        _ => todo!("Not implemented yet!"),
-    }
-}
 
 pub(crate) fn display_warnings(warnings: &[LoadMeshWarning]) {
     for warning in warnings {

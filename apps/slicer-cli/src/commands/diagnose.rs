@@ -14,16 +14,16 @@ use sc_mesh_core::errors::{
 };
 use sc_mesh_core::scene::SceneObjectContent;
 use sc_mesh_formats::filetypes::MeshFileType;
+use sc_mesh_formats::load_mesh_from_path;
 
-use crate::commands::mesh_loader::{display_warnings, load_mesh};
+use crate::commands::mesh_loader::display_warnings;
 use crate::filesystem::validate_sourcefile_path;
 
 pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
-    let mut warnings = vec![];
-    let scene = load_mesh(&source_path, source_format, &mut warnings)?;
-
-    display_warnings(&warnings);
+    let loaded = load_mesh_from_path(&source_path, source_format)?;
+    display_warnings(&loaded.warnings);
+    let scene = loaded.scene;
 
     let mut detected_problems = false;
 

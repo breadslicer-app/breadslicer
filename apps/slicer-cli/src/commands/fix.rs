@@ -12,9 +12,10 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::MeshFix;
 use sc_mesh_core::scene::SceneObjectContent;
 use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::diagnose::show_vertex_errors;
-use crate::commands::mesh_loader::{display_warnings, load_mesh};
+use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
 use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
@@ -41,10 +42,9 @@ pub(crate) fn fix(
         None => infer_mesh_file_format_from_extension(&target_path)?,
     };
 
-    let mut warnings = vec![];
-    let mut scene = load_mesh(&source_path, source_format, &mut warnings)?;
-
-    display_warnings(&warnings);
+    let loaded = load_mesh_from_path(&source_path, source_format)?;
+    display_warnings(&loaded.warnings);
+    let mut scene = loaded.scene;
 
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 

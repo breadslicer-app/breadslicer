@@ -13,7 +13,6 @@ mod about_window;
 mod camera;
 mod error_dialog;
 mod i18n;
-mod mesh_loader;
 mod mesh_render;
 mod viewport_controller;
 
@@ -150,7 +149,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
                 // Catch a panic in the parser so the UI always gets notified
                 // and the loading flag is cleared.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    mesh_loader::load_scene(&path)
+                    sc_mesh_formats::load_mesh_from_path(&path, None)
                 }))
                 .unwrap_or_else(|payload| {
                     let msg = panic_message(&payload);

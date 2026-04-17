@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use sc_mesh_core::scene::Scene;
+use sc_mesh_formats::LoadedMesh;
+use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
@@ -17,7 +19,7 @@ use crate::error_dialog::{format_anyhow_chain, show_error_dialog, show_error_dia
 use crate::i18n::ctr;
 use crate::mesh_render::Renderer;
 
-pub type LoadSlot = Arc<Mutex<Option<(u64, PathBuf, anyhow::Result<Scene>)>>>;
+pub type LoadSlot = Arc<Mutex<Option<(u64, PathBuf, anyhow::Result<LoadedMesh>)>>>;
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -151,8 +153,9 @@ impl ViewportController {
             return;
         }
         match result {
-            Ok(loaded) => {
-                *self.scene.borrow_mut() = Some(loaded);
+            Ok(LoadedMesh { scene, warnings }) => {
+                log_load_warnings(&path, &warnings);
+                *self.scene.borrow_mut() = Some(scene);
                 *self.saved_camera.borrow_mut() = None;
                 self.needs_upload.set(true);
                 self.mark_dirty();
@@ -254,6 +257,55 @@ impl ViewportController {
                 format!("{err:?}"),
             ),
         }
+    }
+}
+
+// Load-time warnings (currently OBJ-only) are surfaced to stderr until the
+// UI grows a place to show them. Unifying logging is tracked as ARCH6.
+fn log_load_warnings(path: &std::path::Path, warnings: &[LoadMeshWarning]) {
+    for warning in warnings {
+        match warning {
+            LoadMeshWarning::Obj(w) => {
+                eprintln!("WARNING [{}]: {}", path.display(), describe_obj_warning(w));
+            }
+        }
+    }
+}
+
+fn describe_obj_warning(warning: &LoadObjWarning) -> String {
+    match warning {
+        LoadObjWarning::NoVertices => "OBJ file has no vertices".to_string(),
+        LoadObjWarning::NoFaces => "OBJ file has no faces".to_string(),
+        LoadObjWarning::SkippedTextureCoordinates { line } => {
+            format!("line {line}: skipped texture coordinates")
+        }
+        LoadObjWarning::SkippedVertexNormal { line } => {
+            format!("line {line}: skipped vertex normal")
+        }
+        LoadObjWarning::SkippedGroup { line, name } => {
+            format!("line {line}: skipped group '{name}'")
+        }
+        LoadObjWarning::SkippedSmoothingGroup { line } => {
+            format!("line {line}: skipped smoothing group")
+        }
+        LoadObjWarning::SkippedMaterialReference { line, material } => {
+            format!("line {line}: skipped material reference '{material}'")
+        }
+        LoadObjWarning::SkippedMaterialLibrary { line, path } => {
+            format!("line {line}: skipped material library '{path}'")
+        }
+        LoadObjWarning::SkippedComment { line } => format!("line {line}: skipped comment"),
+        LoadObjWarning::SharedVertices {
+            object_name,
+            shared_indices,
+        } => match object_name {
+            Some(name) => format!(
+                "object '{name}' shares global vertex indices with previously loaded objects: {shared_indices:?}"
+            ),
+            None => format!(
+                "an unnamed object shares global vertex indices with previously loaded objects: {shared_indices:?}"
+            ),
+        },
     }
 }
 
