@@ -13,7 +13,7 @@ use sc_mesh_core::scene::{Scene, SceneObjectContent};
 use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
 
-use crate::camera::{AxisView, OrbitCamera};
+use crate::camera::{AxisView, DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 
 const SHADER_SOURCE: &str = r#"
 struct Uniforms {
@@ -97,7 +97,17 @@ pub struct Renderer {
     bind_group: wgpu::BindGroup,
     mesh: Option<MeshGpu>,
     msaa: Option<MsaaTargets>,
-    focal_px: Option<f32>,
+}
+
+/// Vertical field of view in radians.
+///
+/// Chosen so that a sphere of the scene's bounding radius fills
+/// `FIT_FRACTION` of the viewport height when the camera sits at its initial
+/// framing distance (`DEFAULT_DISTANCE_FACTOR * radius`). Being a pure
+/// function of those constants, the FOV is viewport-independent — resizing
+/// the window rescales the image but never distorts perspective.
+fn default_fov_y() -> f32 {
+    2.0 * (1.0 / (FIT_FRACTION * DEFAULT_DISTANCE_FACTOR)).atan()
 }
 
 impl Renderer {
@@ -202,13 +212,11 @@ impl Renderer {
             bind_group,
             mesh: None,
             msaa: None,
-            focal_px: None,
         }
     }
 
     pub fn clear_scene(&mut self) {
         self.mesh = None;
-        self.focal_px = None;
     }
 
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
@@ -261,7 +269,6 @@ impl Renderer {
             aabb_max: max,
             camera: OrbitCamera::new(center, radius),
         });
-        self.focal_px = None;
 
         Ok(())
     }
@@ -275,12 +282,11 @@ impl Renderer {
     }
 
     pub fn pan(&mut self, dx_pixels: f32, dy_pixels: f32, viewport_height: f32) -> bool {
-        let fov_y = self.current_fov_y(viewport_height);
         let Some(mesh) = self.mesh.as_mut() else {
             return false;
         };
         mesh.camera
-            .pan(dx_pixels, dy_pixels, fov_y, viewport_height);
+            .pan(dx_pixels, dy_pixels, default_fov_y(), viewport_height);
         true
     }
 
@@ -292,7 +298,6 @@ impl Renderer {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        let fov_y = self.current_fov_y(viewport_height);
         let Some(mesh) = self.mesh.as_mut() else {
             return false;
         };
@@ -300,7 +305,7 @@ impl Renderer {
             factor,
             cursor_x,
             cursor_y,
-            fov_y,
+            default_fov_y(),
             viewport_width,
             viewport_height,
         );
@@ -321,13 +326,6 @@ impl Renderer {
         };
         mesh.camera.set_axis_view(view);
         true
-    }
-
-    fn current_fov_y(&self, viewport_height: f32) -> f32 {
-        match self.focal_px {
-            Some(focal_px) if focal_px > 0.0 => 2.0 * (viewport_height / (2.0 * focal_px)).atan(),
-            _ => std::f32::consts::FRAC_PI_4,
-        }
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) {
@@ -389,14 +387,9 @@ impl Renderer {
         let mesh = self.mesh.as_ref().unwrap();
 
         let diagonal = (mesh.aabb_max - mesh.aabb_min).length().max(1e-3);
-        let radius = diagonal * 0.5;
-        let initial_distance = radius * 3.0;
-        let focal_px = *self.focal_px.get_or_insert_with(|| {
-            FIT_FRACTION * height as f32 * initial_distance / (2.0 * radius)
-        });
 
         let aspect = width as f32 / height as f32;
-        let fov_y = 2.0 * (height as f32 / (2.0 * focal_px)).atan();
+        let fov_y = default_fov_y();
         let view_mat = mesh.camera.view_matrix();
         let proj = Mat4::perspective_rh(fov_y, aspect, 0.01 * diagonal, 100.0 * diagonal);
         let mvp = proj * view_mat;

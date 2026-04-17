@@ -10,7 +10,7 @@ const MIN_DISTANCE_FACTOR: f32 = 0.05;
 const MAX_DISTANCE_FACTOR: f32 = 50.0;
 const DEFAULT_YAW: f32 = 0.6749;
 const DEFAULT_PITCH: f32 = 0.6669;
-const DEFAULT_DISTANCE_FACTOR: f32 = 3.0;
+pub(crate) const DEFAULT_DISTANCE_FACTOR: f32 = 3.0;
 
 #[derive(Copy, Clone, Debug)]
 pub enum AxisView {
