@@ -48,11 +48,13 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Save");
                 shortcut: @keys(Control + S);
+                enabled: false;
             }
 
             MenuItem {
                 title: @tr("MenuBar" => "Save As");
                 shortcut: @keys(Control + Shift + S);
+                enabled: false;
             }
         }
 
@@ -60,22 +62,26 @@ export component MainWindow inherits Window {
             title: @tr("MenuBar" => "Help");
             MenuItem {
                 title: @tr("MenuBar" => "Documentation");
+                enabled: false;
             }
 
             MenuItem {
                 title: @tr("MenuBar" => "Show Release Notes");
+                enabled: false;
             }
 
             MenuSeparator { }
 
             MenuItem {
                 title: @tr("MenuBar" => "Report Issue");
+                enabled: false;
             }
 
             MenuSeparator { }
 
             MenuItem {
                 title: @tr("MenuBar" => "Check for Updates…");
+                enabled: false;
             }
 
             MenuSeparator { }
@@ -89,6 +95,7 @@ export component MainWindow inherits Window {
 
             MenuItem {
                 title: @tr("MenuBar" => "View License");
+                enabled: false;
             }
         }
     }
