@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-16 14:04+0000\n"
+"POT-Creation-Date: 2026-04-16 15:23+0000\n"
 "PO-Revision-Date: 2026-04-15 12:30+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Dutch <https://translate.codeberg.org/projects/soulcrafted-"
@@ -80,62 +80,67 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:23
+#: ui/main-window.slint:24
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Bestand"
 
-#: ui/main-window.slint:25
+#: ui/main-window.slint:26
 msgctxt "MenuBar"
 msgid "Open"
 msgstr "Openen"
 
-#: ui/main-window.slint:35
+#: ui/main-window.slint:34
+msgctxt "MenuBar"
+msgid "Close"
+msgstr ""
+
+#: ui/main-window.slint:43
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Opslaan"
 
-#: ui/main-window.slint:39
+#: ui/main-window.slint:48
 msgctxt "MenuBar"
 msgid "Save As"
 msgstr "Opslaan Als"
 
-#: ui/main-window.slint:44
+#: ui/main-window.slint:54
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Help"
 
-#: ui/main-window.slint:46
+#: ui/main-window.slint:56
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentatie"
 
-#: ui/main-window.slint:50
+#: ui/main-window.slint:60
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Toon Versie Info"
 
-#: ui/main-window.slint:56
+#: ui/main-window.slint:66
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Probleem Aangeven"
 
-#: ui/main-window.slint:62
+#: ui/main-window.slint:72
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Controleren op Updates…"
 
-#: ui/main-window.slint:68
+#: ui/main-window.slint:78
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Betreffende deze Software"
 
-#: ui/main-window.slint:75
+#: ui/main-window.slint:85
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Licentie Bekijken"
 
-#: ui/main-window.slint:82
+#: ui/main-window.slint:92
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
