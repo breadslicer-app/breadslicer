@@ -18,6 +18,22 @@ thread_local! {
     static NEXT_DIALOG_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// Queues `show_error_dialog` on the next iteration of the Slint event loop.
+///
+/// Use this when the caller runs inside a Slint hook where spawning a new
+/// window synchronously would reenter the event loop (e.g. inside a rendering
+/// notifier callback).
+pub(crate) fn show_error_dialog_deferred(
+    heading: String,
+    context: Option<String>,
+    message: String,
+    details: String,
+) {
+    let _ = slint::invoke_from_event_loop(move || {
+        show_error_dialog(&heading, context, message, details);
+    });
+}
+
 pub(crate) fn show_error_dialog(
     heading: &str,
     context: Option<String>,

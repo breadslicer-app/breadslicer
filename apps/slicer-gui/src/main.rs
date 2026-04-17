@@ -28,7 +28,7 @@ use slint::ComponentHandle;
 
 use crate::about_window::wire_about_window;
 use crate::camera::{AxisView, OrbitCamera};
-use crate::error_dialog::{format_anyhow_chain, show_error_dialog};
+use crate::error_dialog::{format_anyhow_chain, show_error_dialog, show_error_dialog_deferred};
 use crate::mesh_render::Renderer;
 
 slint::include_modules!();
@@ -272,8 +272,8 @@ fn render_frame(
         needs_upload.set(false);
         if let Some(scene_ref) = scene.borrow().as_ref() {
             if let Err(err) = renderer.upload_scene(scene_ref) {
-                show_error_dialog(
-                    ctr!("ErrorDialog", "Failed to load the 3D model").as_str(),
+                show_error_dialog_deferred(
+                    ctr!("ErrorDialog", "Failed to load the 3D model").to_string(),
                     Some(
                         ctr!(
                             "ErrorDialog",
@@ -314,8 +314,8 @@ fn render_frame(
     dirty.set(false);
     match slint::Image::try_from(texture) {
         Ok(image) => ui.set_mesh_rendering(image),
-        Err(err) => show_error_dialog(
-            ctr!("ErrorDialog", "Failed to display the 3D model").as_str(),
+        Err(err) => show_error_dialog_deferred(
+            ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
             Some(
                 ctr!(
                     "ErrorDialog",
