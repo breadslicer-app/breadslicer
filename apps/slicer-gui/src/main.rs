@@ -9,6 +9,8 @@
 // when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about_window;
+mod error_dialog;
 mod i18n;
 mod mesh_loader;
 mod mesh_render;
@@ -21,6 +23,8 @@ use i18n::ctr;
 use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 
+use about_window::wire_about_window;
+use error_dialog::{format_anyhow_chain, show_error_dialog};
 use mesh_render::Renderer;
 
 slint::include_modules!();
@@ -178,100 +182,4 @@ fn wire_close_scene(ui: &MainWindow, renderer: RendererCell, pending: PendingSce
             ui.set_mesh_rendering(slint::Image::default());
         }
     });
-}
-
-fn wire_about_window(ui: &MainWindow) {
-    let about_window: Rc<RefCell<Option<AboutWindow>>> = Rc::new(RefCell::new(None));
-    ui.on_show_about_requested(move || {
-        let mut slot = about_window.borrow_mut();
-        if let Some(existing) = slot.as_ref() {
-            let _ = existing.show();
-            return;
-        }
-        match build_about_window() {
-            Ok(about) => {
-                if let Err(err) = about.show() {
-                    eprintln!("Failed to show About window: {err}");
-                    return;
-                }
-                *slot = Some(about);
-            }
-            Err(err) => eprintln!("Failed to create About window: {err}"),
-        }
-    });
-}
-
-fn build_about_window() -> Result<AboutWindow, slint::PlatformError> {
-    let about = AboutWindow::new()?;
-    about.set_app_version(env!("CARGO_PKG_VERSION").into());
-
-    let about_weak = about.as_weak();
-    about.on_close_requested(move || {
-        if let Some(w) = about_weak.upgrade() {
-            let _ = w.hide();
-        }
-    });
-
-    Ok(about)
-}
-
-thread_local! {
-    static OPEN_ERROR_DIALOGS: RefCell<std::collections::HashMap<u64, ErrorDialog>> =
-        RefCell::new(std::collections::HashMap::new());
-    static NEXT_DIALOG_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-fn show_error_dialog(heading: &str, context: Option<String>, message: String, details: String) {
-    eprintln!("[error] {heading}: {message}\n{details}");
-    let dialog = match ErrorDialog::new() {
-        Ok(d) => d,
-        Err(err) => {
-            eprintln!("Failed to create error dialog: {err}");
-            return;
-        }
-    };
-    dialog.set_heading(heading.into());
-    if let Some(ctx) = context {
-        dialog.set_context(ctx.into());
-    }
-    dialog.set_message(message.into());
-    dialog.set_details(details.into());
-
-    let id = NEXT_DIALOG_ID.with(|c| {
-        let v = c.get();
-        c.set(v + 1);
-        v
-    });
-    let dialog_weak = dialog.as_weak();
-    dialog.on_close_requested(move || {
-        if let Some(d) = dialog_weak.upgrade() {
-            let _ = d.hide();
-        }
-        OPEN_ERROR_DIALOGS.with(|list| {
-            list.borrow_mut().remove(&id);
-        });
-    });
-
-    if let Err(err) = dialog.show() {
-        eprintln!("Failed to show error dialog: {err}");
-        return;
-    }
-    OPEN_ERROR_DIALOGS.with(|list| {
-        list.borrow_mut().insert(id, dialog);
-    });
-}
-
-fn format_anyhow_chain(err: &anyhow::Error) -> String {
-    let mut chain = err.chain();
-    let Some(first) = chain.next() else {
-        return String::new();
-    };
-    let Some(second) = chain.next() else {
-        return String::new();
-    };
-    let mut out = format!("{first}\n  caused by: {second}");
-    for cause in chain {
-        out.push_str(&format!("\n  caused by: {cause}"));
-    }
-    out
 }
