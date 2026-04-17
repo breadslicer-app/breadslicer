@@ -320,6 +320,16 @@ impl Renderer {
         true
     }
 
+    pub fn camera(&self) -> Option<OrbitCamera> {
+        self.mesh.as_ref().map(|m| m.camera.clone())
+    }
+
+    pub fn set_camera(&mut self, camera: OrbitCamera) {
+        if let Some(mesh) = self.mesh.as_mut() {
+            mesh.camera = camera;
+        }
+    }
+
     pub fn set_axis_view(&mut self, view: AxisView) -> bool {
         let Some(mesh) = self.mesh.as_mut() else {
             return false;

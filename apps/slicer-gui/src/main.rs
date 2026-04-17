@@ -25,16 +25,18 @@ use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 
 use crate::about_window::wire_about_window;
-use crate::camera::AxisView;
+use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::{format_anyhow_chain, show_error_dialog};
 use crate::mesh_render::Renderer;
 
 slint::include_modules!();
 
 type RendererCell = Rc<RefCell<Option<Renderer>>>;
-type PendingSceneCell = Rc<RefCell<Option<Scene>>>;
+type SceneCell = Rc<RefCell<Option<Scene>>>;
+type CameraCell = Rc<RefCell<Option<OrbitCamera>>>;
 type ViewportCell = Rc<Cell<(f32, f32)>>;
 type DirtyCell = Rc<Cell<bool>>;
+type NeedsUploadCell = Rc<Cell<bool>>;
 
 fn main() -> Result<(), Box<dyn Error>> {
     slint::BackendSelector::new()
@@ -43,19 +45,30 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let ui = MainWindow::new()?;
     let renderer: RendererCell = Rc::new(RefCell::new(None));
-    let pending_scene: PendingSceneCell = Rc::new(RefCell::new(None));
+    let scene: SceneCell = Rc::new(RefCell::new(None));
+    let saved_camera: CameraCell = Rc::new(RefCell::new(None));
     let viewport: ViewportCell = Rc::new(Cell::new((0.0, 0.0)));
     let dirty: DirtyCell = Rc::new(Cell::new(false));
+    let needs_upload: NeedsUploadCell = Rc::new(Cell::new(false));
 
     install_rendering_notifier(
         &ui,
         renderer.clone(),
-        pending_scene.clone(),
+        scene.clone(),
+        saved_camera.clone(),
         viewport.clone(),
         dirty.clone(),
+        needs_upload.clone(),
     )?;
-    wire_close_scene(&ui, renderer.clone(), pending_scene.clone(), dirty.clone());
-    wire_open_file(&ui, pending_scene, dirty.clone());
+    wire_close_scene(
+        &ui,
+        renderer.clone(),
+        scene.clone(),
+        saved_camera.clone(),
+        dirty.clone(),
+        needs_upload.clone(),
+    );
+    wire_open_file(&ui, scene, saved_camera, dirty.clone(), needs_upload);
     wire_viewport_resized(&ui, viewport.clone(), dirty.clone());
     wire_viewport_input(&ui, renderer, viewport, dirty);
     wire_about_window(&ui);
@@ -178,9 +191,11 @@ fn axis_from_code(code: i32) -> Option<AxisView> {
 fn install_rendering_notifier(
     ui: &MainWindow,
     renderer: RendererCell,
-    pending: PendingSceneCell,
+    scene: SceneCell,
+    saved_camera: CameraCell,
     viewport: ViewportCell,
     dirty: DirtyCell,
+    needs_upload: NeedsUploadCell,
 ) -> Result<(), slint::SetRenderingNotifierError> {
     let ui_weak = ui.as_weak();
     ui.window()
@@ -190,14 +205,37 @@ fn install_rendering_notifier(
                     return;
                 };
                 *renderer.borrow_mut() = Some(Renderer::new(device.clone(), queue.clone()));
-                if pending.borrow().is_some()
-                    && let Some(ui) = ui_weak.upgrade()
-                {
-                    ui.window().request_redraw();
+                if scene.borrow().is_some() {
+                    needs_upload.set(true);
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.window().request_redraw();
+                    }
                 }
             }
             slint::RenderingState::BeforeRendering => {
-                render_frame(&renderer, &pending, &viewport, &dirty, &ui_weak);
+                render_frame(
+                    &renderer,
+                    &scene,
+                    &saved_camera,
+                    &needs_upload,
+                    &viewport,
+                    &dirty,
+                    &ui_weak,
+                );
+            }
+            // Release GPU-owning state before the graphics context goes away.
+            // The Scene (CPU-side) and a camera snapshot are kept so the next
+            // RenderingSetup can re-upload and restore the user's view.
+            slint::RenderingState::RenderingTeardown => {
+                let camera_snapshot = renderer.borrow().as_ref().and_then(|r| r.camera());
+                if camera_snapshot.is_some() {
+                    *saved_camera.borrow_mut() = camera_snapshot;
+                }
+                *renderer.borrow_mut() = None;
+                dirty.set(false);
+                if scene.borrow().is_some() {
+                    needs_upload.set(true);
+                }
             }
             _ => {}
         })
@@ -205,7 +243,9 @@ fn install_rendering_notifier(
 
 fn render_frame(
     renderer: &RendererCell,
-    pending: &PendingSceneCell,
+    scene: &SceneCell,
+    saved_camera: &CameraCell,
+    needs_upload: &NeedsUploadCell,
     viewport: &ViewportCell,
     dirty: &DirtyCell,
     ui_weak: &slint::Weak<MainWindow>,
@@ -215,23 +255,29 @@ fn render_frame(
         return;
     };
 
-    if let Some(scene) = pending.borrow_mut().take() {
-        if let Err(err) = renderer.upload_scene(&scene) {
-            show_error_dialog(
-                ctr!("ErrorDialog", "Failed to load the 3D model").as_str(),
-                Some(
-                    ctr!(
-                        "ErrorDialog",
-                        "The mesh could not be prepared for rendering."
-                    )
-                    .to_string(),
-                ),
-                err.to_string(),
-                format_anyhow_chain(&err),
-            );
-            return;
+    if needs_upload.get() {
+        needs_upload.set(false);
+        if let Some(scene_ref) = scene.borrow().as_ref() {
+            if let Err(err) = renderer.upload_scene(scene_ref) {
+                show_error_dialog(
+                    ctr!("ErrorDialog", "Failed to load the 3D model").as_str(),
+                    Some(
+                        ctr!(
+                            "ErrorDialog",
+                            "The mesh could not be prepared for rendering."
+                        )
+                        .to_string(),
+                    ),
+                    err.to_string(),
+                    format_anyhow_chain(&err),
+                );
+                return;
+            }
+            if let Some(cam) = saved_camera.borrow_mut().take() {
+                renderer.set_camera(cam);
+            }
+            dirty.set(true);
         }
-        dirty.set(true);
     }
 
     if !dirty.get() {
@@ -270,7 +316,13 @@ fn render_frame(
     }
 }
 
-fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell, dirty: DirtyCell) {
+fn wire_open_file(
+    ui: &MainWindow,
+    scene: SceneCell,
+    saved_camera: CameraCell,
+    dirty: DirtyCell,
+    needs_upload: NeedsUploadCell,
+) {
     let ui_weak = ui.as_weak();
     ui.on_open_file_requested(move || {
         let dialog = rfd::AsyncFileDialog::new()
@@ -284,8 +336,10 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell, dirty: DirtyCell) 
                 &["stl", "stla", "stlb"],
             );
 
-        let pending = pending.clone();
+        let scene = scene.clone();
+        let saved_camera = saved_camera.clone();
         let dirty = dirty.clone();
+        let needs_upload = needs_upload.clone();
         let ui_weak = ui_weak.clone();
         if let Err(err) = slint::spawn_local(async move {
             let Some(handle) = dialog.pick_file().await else {
@@ -293,8 +347,10 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell, dirty: DirtyCell) 
             };
             let path = handle.path().to_path_buf();
             match mesh_loader::load_scene(&path) {
-                Ok(scene) => {
-                    *pending.borrow_mut() = Some(scene);
+                Ok(loaded) => {
+                    *scene.borrow_mut() = Some(loaded);
+                    *saved_camera.borrow_mut() = None;
+                    needs_upload.set(true);
                     dirty.set(true);
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.window().request_redraw();
@@ -316,12 +372,16 @@ fn wire_open_file(ui: &MainWindow, pending: PendingSceneCell, dirty: DirtyCell) 
 fn wire_close_scene(
     ui: &MainWindow,
     renderer: RendererCell,
-    pending: PendingSceneCell,
+    scene: SceneCell,
+    saved_camera: CameraCell,
     dirty: DirtyCell,
+    needs_upload: NeedsUploadCell,
 ) {
     let ui_weak = ui.as_weak();
     ui.on_close_current_scene(move || {
-        *pending.borrow_mut() = None;
+        *scene.borrow_mut() = None;
+        *saved_camera.borrow_mut() = None;
+        needs_upload.set(false);
         dirty.set(false);
         if let Some(r) = renderer.borrow_mut().as_mut() {
             r.clear_scene();
