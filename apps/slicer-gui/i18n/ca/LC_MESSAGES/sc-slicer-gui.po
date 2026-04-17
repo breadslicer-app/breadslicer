@@ -142,47 +142,47 @@ msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Obre un model 3D per a visualitzar-lo aquí"
 
-#: src/main.rs:91
+#: src/main.rs:276
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr "No s'ha pogut carregar el model 3D"
 
-#: src/main.rs:95
+#: src/main.rs:280
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr "La malla no s'ha pogut preparar per a ser renderitzada."
 
-#: src/main.rs:114
+#: src/main.rs:318
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "No s'ha pogut mostrar el model 3D"
 
-#: src/main.rs:118
+#: src/main.rs:322
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "La textura renderitzada no s'ha pogut passar a la interfície gràfica."
 
-#: src/main.rs:133
-msgctxt "FileDialog"
-msgid "All files"
-msgstr "Tots els fitxers"
-
-#: src/main.rs:136
-msgctxt "FileDialog"
-msgid "OBJ files"
-msgstr "Fitxers OBJ"
-
-#: src/main.rs:138
-msgctxt "FileDialog"
-msgid "STL files"
-msgstr "Fitxers STL"
-
-#: src/main.rs:157
+#: src/main.rs:374
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr "No s'ha pogut obrir el model 3D"
 
-#: src/main.rs:158
+#: src/main.rs:375
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr "Arxiu: {}"
+
+#: src/main.rs:399
+msgctxt "FileDialog"
+msgid "All files"
+msgstr "Tots els fitxers"
+
+#: src/main.rs:402
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr "Fitxers OBJ"
+
+#: src/main.rs:404
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr "Fitxers STL"

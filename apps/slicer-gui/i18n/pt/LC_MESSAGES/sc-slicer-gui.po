@@ -142,47 +142,47 @@ msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Abrir um modelo 3D para visualizar aqui"
 
-#: src/main.rs:91
+#: src/main.rs:276
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr "Falha a carregar modelo 3D"
 
-#: src/main.rs:95
+#: src/main.rs:280
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr "A malha 3D não pôde ser preparada para renderização."
 
-#: src/main.rs:114
+#: src/main.rs:318
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "Falha a exibir o modelo 3D"
 
-#: src/main.rs:118
+#: src/main.rs:322
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "A textura renderizada não pôde ser entregue à interface gráfica."
 
-#: src/main.rs:133
-msgctxt "FileDialog"
-msgid "All files"
-msgstr "Todos os ficheiros"
-
-#: src/main.rs:136
-msgctxt "FileDialog"
-msgid "OBJ files"
-msgstr "Ficheiros OBJ"
-
-#: src/main.rs:138
-msgctxt "FileDialog"
-msgid "STL files"
-msgstr "Ficheiros STL"
-
-#: src/main.rs:157
+#: src/main.rs:374
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr "Falha ao abrir o modelo 3D"
 
-#: src/main.rs:158
+#: src/main.rs:375
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr "Ficheiro: {}"
+
+#: src/main.rs:399
+msgctxt "FileDialog"
+msgid "All files"
+msgstr "Todos os ficheiros"
+
+#: src/main.rs:402
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr "Ficheiros OBJ"
+
+#: src/main.rs:404
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr "Ficheiros STL"
