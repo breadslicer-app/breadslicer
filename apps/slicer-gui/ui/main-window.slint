@@ -14,9 +14,11 @@ export component MainWindow inherits Window {
     preferred-height: 400px;
 
     in property <image> mesh-rendering;
+    in property <bool> loading: false;
 
     callback open-file-requested();
     callback close-current-scene();
+    callback scene-load-finished();
     callback show-about-requested();
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
@@ -31,6 +33,7 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Open");
                 shortcut: @keys(Control + O);
+                enabled: !root.loading;
                 activated => {
                     root.open-file-requested();
                 }

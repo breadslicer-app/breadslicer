@@ -18,7 +18,9 @@ mod mesh_render;
 
 use std::cell::{Cell, RefCell};
 use std::error::Error;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use i18n::ctr;
 use sc_mesh_core::scene::Scene;
@@ -37,6 +39,8 @@ type CameraCell = Rc<RefCell<Option<OrbitCamera>>>;
 type ViewportCell = Rc<Cell<(f32, f32)>>;
 type DirtyCell = Rc<Cell<bool>>;
 type NeedsUploadCell = Rc<Cell<bool>>;
+type LoadGenCell = Rc<Cell<u64>>;
+type LoadSlot = Arc<Mutex<Option<(u64, PathBuf, anyhow::Result<Scene>)>>>;
 
 fn main() -> Result<(), Box<dyn Error>> {
     slint::BackendSelector::new()
@@ -50,6 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let viewport: ViewportCell = Rc::new(Cell::new((0.0, 0.0)));
     let dirty: DirtyCell = Rc::new(Cell::new(false));
     let needs_upload: NeedsUploadCell = Rc::new(Cell::new(false));
+    let load_gen: LoadGenCell = Rc::new(Cell::new(0));
 
     install_rendering_notifier(
         &ui,
@@ -67,8 +72,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         saved_camera.clone(),
         dirty.clone(),
         needs_upload.clone(),
+        load_gen.clone(),
     );
-    wire_open_file(&ui, scene, saved_camera, dirty.clone(), needs_upload);
+    wire_open_file(
+        &ui,
+        scene,
+        saved_camera,
+        dirty.clone(),
+        needs_upload,
+        load_gen,
+    );
     wire_viewport_resized(&ui, viewport.clone(), dirty.clone());
     wire_viewport_input(&ui, renderer, viewport, dirty);
     wire_about_window(&ui);
@@ -322,31 +335,32 @@ fn wire_open_file(
     saved_camera: CameraCell,
     dirty: DirtyCell,
     needs_upload: NeedsUploadCell,
+    load_gen: LoadGenCell,
 ) {
-    let ui_weak = ui.as_weak();
-    ui.on_open_file_requested(move || {
-        let dialog = rfd::AsyncFileDialog::new()
-            .add_filter(
-                ctr!("FileDialog", "All files").to_string(),
-                &["obj", "stl", "stla", "stlb"],
-            )
-            .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
-            .add_filter(
-                ctr!("FileDialog", "STL files").to_string(),
-                &["stl", "stla", "stlb"],
-            );
+    // Shared mailbox between the parsing worker and the UI-thread consumer.
+    let slot: LoadSlot = Arc::new(Mutex::new(None));
 
-        let scene = scene.clone();
-        let saved_camera = saved_camera.clone();
-        let dirty = dirty.clone();
-        let needs_upload = needs_upload.clone();
-        let ui_weak = ui_weak.clone();
-        if let Err(err) = slint::spawn_local(async move {
-            let Some(handle) = dialog.pick_file().await else {
+    // Runs on the UI thread when a background load finishes. Drains the slot,
+    // checks the generation against the current one (to discard stale results
+    // from loads the user has since cancelled via Close), and deposits.
+    {
+        let slot = slot.clone();
+        let load_gen = load_gen.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_scene_load_finished(move || {
+            let taken = slot.lock().expect("load slot poisoned").take();
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_loading(false);
+            }
+            let Some((stamp, path, result)) = taken else {
                 return;
             };
-            let path = handle.path().to_path_buf();
-            match mesh_loader::load_scene(&path) {
+            if stamp != load_gen.get() {
+                // The user cancelled (Close) or something else bumped the
+                // generation while this worker was parsing. Drop the result.
+                return;
+            }
+            match result {
                 Ok(loaded) => {
                     *scene.borrow_mut() = Some(loaded);
                     *saved_camera.borrow_mut() = None;
@@ -363,10 +377,85 @@ fn wire_open_file(
                     format_anyhow_chain(&err),
                 ),
             }
+        });
+    }
+
+    let ui_weak = ui.as_weak();
+    ui.on_open_file_requested(move || {
+        // The Slint event loop keeps processing callbacks while the native
+        // file dialog is open, and `enabled: !root.loading` on the menu item
+        // doesn't block that. So gate here in Rust *before* touching the
+        // dialog, and flip `loading` immediately (not after pick_file awaits).
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+        if ui.get_loading() {
+            return;
+        }
+        ui.set_loading(true);
+
+        let dialog = rfd::AsyncFileDialog::new()
+            .add_filter(
+                ctr!("FileDialog", "All files").to_string(),
+                &["obj", "stl", "stla", "stlb"],
+            )
+            .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
+            .add_filter(
+                ctr!("FileDialog", "STL files").to_string(),
+                &["stl", "stla", "stlb"],
+            );
+
+        let slot = slot.clone();
+        let load_gen = load_gen.clone();
+        let ui_weak_inner = ui_weak.clone();
+        let ui_weak_for_err = ui_weak.clone();
+        if let Err(err) = slint::spawn_local(async move {
+            let Some(handle) = dialog.pick_file().await else {
+                // User cancelled the dialog: clear the gate.
+                if let Some(ui) = ui_weak_inner.upgrade() {
+                    ui.set_loading(false);
+                }
+                return;
+            };
+            let path = handle.path().to_path_buf();
+
+            let my_stamp = load_gen.get().wrapping_add(1);
+            load_gen.set(my_stamp);
+
+            let worker_ui_weak = ui_weak_inner.clone();
+            std::thread::spawn(move || {
+                // Catch a panic in the parser so the UI always gets notified
+                // and the loading flag is cleared.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    mesh_loader::load_scene(&path)
+                }))
+                .unwrap_or_else(|payload| {
+                    let msg = panic_message(&payload);
+                    Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
+                });
+
+                *slot.lock().expect("load slot poisoned") = Some((my_stamp, path, result));
+                let _ = worker_ui_weak.upgrade_in_event_loop(|ui| {
+                    ui.invoke_scene_load_finished();
+                });
+            });
         }) {
             eprintln!("Failed to spawn file dialog task: {err}");
+            if let Some(ui) = ui_weak_for_err.upgrade() {
+                ui.set_loading(false);
+            }
         }
     });
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
 }
 
 fn wire_close_scene(
@@ -376,9 +465,12 @@ fn wire_close_scene(
     saved_camera: CameraCell,
     dirty: DirtyCell,
     needs_upload: NeedsUploadCell,
+    load_gen: LoadGenCell,
 ) {
     let ui_weak = ui.as_weak();
     ui.on_close_current_scene(move || {
+        // Invalidate any in-flight load so its result is dropped on arrival.
+        load_gen.set(load_gen.get().wrapping_add(1));
         *scene.borrow_mut() = None;
         *saved_camera.borrow_mut() = None;
         needs_upload.set(false);
