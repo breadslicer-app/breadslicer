@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-04-17 17:57+0000\n"
+"POT-Creation-Date: 2026-04-17 19:08+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,27 +17,27 @@ msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr ""
 
-#: ui/about-window.slint:33
+#: ui/about-window.slint:40
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/about-window.slint:40
+#: ui/about-window.slint:47
 msgctxt "About"
 msgid "Version {0}"
 msgstr ""
 
-#: ui/about-window.slint:46
+#: ui/about-window.slint:53
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr ""
 
-#: ui/about-window.slint:52
+#: ui/about-window.slint:59
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr ""
 
-#: ui/about-window.slint:62
+#: ui/about-window.slint:69
 msgctxt "About"
 msgid "Close"
 msgstr ""
@@ -52,17 +52,17 @@ msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr ""
 
-#: ui/error-dialog.slint:71
+#: ui/error-dialog.slint:95
 msgctxt "ErrorDialog"
 msgid "▾ Hide technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:72
+#: ui/error-dialog.slint:95
 msgctxt "ErrorDialog"
 msgid "▸ Show technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:98
+#: ui/error-dialog.slint:122
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
@@ -137,21 +137,21 @@ msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/mesh-viewer.slint:19
+#: ui/mesh-viewer.slint:21
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr ""
 
-#: ui/mesh-viewer.slint:20
+#: ui/mesh-viewer.slint:22
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr ""
 
-#: ui/mesh-viewer.slint:21
+#: ui/mesh-viewer.slint:23
 msgctxt "MeshViewer"
 msgid ""
-"Right-click drag to rotate. Shift with right-click drag, or middle-click "
-"drag, to pan. Scroll to zoom. Press F or Home to frame the model. Press 1, "
-"3, or 7 for front, right, or top views; hold Control for back, left, or "
-"bottom."
+"Right-click drag or arrow keys to rotate. Shift with right-click drag, "
+"middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or "
+"Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
+"for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""

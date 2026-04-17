@@ -20,7 +20,7 @@ export component MeshViewer inherits Rectangle {
     accessible-label: root.rendering.width == 0
         ? (root.placeholder-text != "" ? root.placeholder-text : @tr("MeshViewer" => "3D model viewer, empty"))
         : @tr("MeshViewer" => "3D model viewer");
-    accessible-description: @tr("MeshViewer" => "Right-click drag to rotate. Shift with right-click drag, or middle-click drag, to pan. Scroll to zoom. Press F or Home to frame the model. Press 1, 3, or 7 for front, right, or top views; hold Control for back, left, or bottom.");
+    accessible-description: @tr("MeshViewer" => "Right-click drag or arrow keys to rotate. Shift with right-click drag, middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 for front, right, or top views; hold Control for back, left, or bottom.");
 
     // Viewport background stays dark regardless of OS theme — the CAD/DCC
     // convention, keeps the light-grey mesh legible under both light and
@@ -80,6 +80,53 @@ export component MeshViewer inherits Rectangle {
             }
             if (event.text == "7") {
                 root.axis-view-requested(event.modifiers.control ? 5 : 4);
+                return accept;
+            }
+            // Arrow keys drive rotate / pan with the same (dx, dy) sign
+            // conventions as a right-drag: Right = positive dx, Down =
+            // positive dy. Shift switches the gesture from rotate to pan,
+            // matching the mouse modifier.
+            if (event.text == Key.LeftArrow) {
+                if (event.modifiers.shift) {
+                    root.pan-drag(-30px, 0px);
+                } else {
+                    root.rotate-drag(-20px, 0px);
+                }
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                if (event.modifiers.shift) {
+                    root.pan-drag(30px, 0px);
+                } else {
+                    root.rotate-drag(20px, 0px);
+                }
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                if (event.modifiers.shift) {
+                    root.pan-drag(0px, -30px);
+                } else {
+                    root.rotate-drag(0px, -20px);
+                }
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                if (event.modifiers.shift) {
+                    root.pan-drag(0px, 30px);
+                } else {
+                    root.rotate-drag(0px, 20px);
+                }
+                return accept;
+            }
+            // Keyboard zoom targets the viewport centre and uses 120 logical
+            // pixels per press, matching a single mouse-wheel notch on the
+            // Rust side (`factor = exp(-delta * 0.005)`).
+            if (event.text == "+" || event.text == "=" || event.text == Key.PageUp) {
+                root.zoom-at(120px, root.width / 2, root.height / 2);
+                return accept;
+            }
+            if (event.text == "-" || event.text == Key.PageDown) {
+                root.zoom-at(-120px, root.width / 2, root.height / 2);
                 return accept;
             }
             return reject;
