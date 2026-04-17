@@ -29,83 +29,100 @@ export component ErrorDialog inherits Window {
 
     callback close-requested();
 
-    body := VerticalLayout {
-        padding: 16px;
-        spacing: 16px;
+    // Focus the Close button when the dialog opens so Enter activates it.
+    forward-focus: close-button;
 
-        HorizontalLayout {
-            spacing: 14px;
-            alignment: start;
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
 
-            Text {
-                text: "⚠";
-                font-size: 36px;
-                color: #e5a500;
-                vertical-alignment: top;
-                horizontal-alignment: center;
-                width: 48px;
+        // Escape always closes the dialog; Enter is handled natively by the
+        // focused Button.
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
             }
-
-            VerticalLayout {
-                spacing: 6px;
-                horizontal-stretch: 1;
-
-                Text {
-                    text: root.heading;
-                    font-weight: 700;
-                    wrap: word-wrap;
-                }
-
-                if root.context != "": Text {
-                    text: root.context;
-                    font-size: root.font-secondary;
-                    color: Palette.foreground.transparentize(0.5);
-                    wrap: word-wrap;
-                }
-
-                if root.message != "": Text {
-                    text: root.message;
-                    font-size: root.font-secondary;
-                    wrap: word-wrap;
-                }
-
-                if root.details != "": HorizontalLayout {
-                    alignment: start;
-                    TouchArea {
-                        width: toggle-text.preferred-width;
-                        height: toggle-text.preferred-height;
-                        toggle-text := Text {
-                            text: root.details-visible
-                                ? @tr("▾ Hide technical details")
-                                : @tr("▸ Show technical details");
-                            font-size: root.font-footnote;
-                            color: Palette.accent-background;
-                        }
-                        clicked => {
-                            root.details-visible = !root.details-visible;
-                        }
-                    }
-                }
-
-                if root.details != "" && root.details-visible: ScrollView {
-                    max-height: 160px;
-                    Text {
-                        text: root.details;
-                        font-size: root.font-footnote;
-                        wrap: word-wrap;
-                        horizontal-alignment: left;
-                        color: Palette.foreground.transparentize(0.35);
-                    }
-                }
-            }
+            return reject;
         }
 
-        HorizontalLayout {
-            alignment: end;
-            Button {
-                text: @tr("Close");
-                clicked => {
-                    root.close-requested();
+        body := VerticalLayout {
+            padding: 16px;
+            spacing: 16px;
+
+            HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+
+                Text {
+                    text: "⚠";
+                    font-size: 36px;
+                    color: #e5a500;
+                    vertical-alignment: top;
+                    horizontal-alignment: center;
+                    width: 48px;
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: root.heading;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                    }
+
+                    if root.context != "": Text {
+                        text: root.context;
+                        font-size: root.font-secondary;
+                        color: Palette.foreground.transparentize(0.5);
+                        wrap: word-wrap;
+                    }
+
+                    if root.message != "": Text {
+                        text: root.message;
+                        font-size: root.font-secondary;
+                        wrap: word-wrap;
+                    }
+
+                    if root.details != "": HorizontalLayout {
+                        alignment: start;
+                        TouchArea {
+                            width: toggle-text.preferred-width;
+                            height: toggle-text.preferred-height;
+                            toggle-text := Text {
+                                text: root.details-visible ? @tr("▾ Hide technical details") : @tr("▸ Show technical details");
+                                font-size: root.font-footnote;
+                                color: Palette.accent-background;
+                            }
+
+                            clicked => {
+                                root.details-visible = !root.details-visible;
+                            }
+                        }
+                    }
+
+                    if root.details != "" && root.details-visible: ScrollView {
+                        max-height: 160px;
+                        Text {
+                            text: root.details;
+                            font-size: root.font-footnote;
+                            wrap: word-wrap;
+                            horizontal-alignment: left;
+                            color: Palette.foreground.transparentize(0.35);
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                close-button := Button {
+                    text: @tr("Close");
+                    clicked => {
+                        root.close-requested();
+                    }
                 }
             }
         }
