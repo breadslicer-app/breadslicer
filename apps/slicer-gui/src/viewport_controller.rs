@@ -47,6 +47,12 @@ pub struct ViewportController {
     // render target size up to the next `RESIZE_BUCKET` multiple so drag
     // resizes don't churn the MSAA/target allocations on every pointer move.
     resizing: Cell<bool>,
+    // Consecutive upload failures for the currently-loaded scene. `needs_upload`
+    // stays true after a failure (so a new renderer or a fresh scene can still
+    // drive a retry); this counter is what gates dialog-spam — the error dialog
+    // only fires on the transition from 0 → 1 failures. Reset on successful
+    // upload, scene load/close, and on `RenderingSetup`.
+    upload_failures: Cell<u32>,
     dialogs: Rc<DialogManager>,
 }
 
@@ -75,6 +81,7 @@ impl ViewportController {
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Cell::new(0),
             resizing: Cell::new(false),
+            upload_failures: Cell::new(0),
             dialogs: DialogManager::new(),
         }
     }
@@ -194,6 +201,7 @@ impl ViewportController {
         *self.scene.borrow_mut() = None;
         *self.camera.borrow_mut() = None;
         self.needs_upload.set(false);
+        self.upload_failures.set(0);
         self.dirty.set(false);
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.clear_scene();
@@ -228,6 +236,7 @@ impl ViewportController {
                 *self.camera.borrow_mut() = camera_for_scene(&scene);
                 *self.scene.borrow_mut() = Some(scene);
                 self.needs_upload.set(true);
+                self.upload_failures.set(0);
                 if let Some(ui) = self.ui.upgrade() {
                     ui.set_has_scene(true);
                 }
@@ -244,6 +253,7 @@ impl ViewportController {
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
         *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
+        self.upload_failures.set(0);
         if self.scene.borrow().is_some() {
             self.needs_upload.set(true);
             self.request_redraw();
@@ -267,24 +277,43 @@ impl ViewportController {
         };
 
         if self.needs_upload.get() {
-            self.needs_upload.set(false);
             if let Some(scene_ref) = self.scene.borrow().as_ref() {
-                if let Err(err) = renderer.upload_scene(scene_ref) {
-                    self.dialogs.show_error_deferred(
-                        ctr!("ErrorDialog", "Failed to load the 3D model").to_string(),
-                        Some(
-                            ctr!(
-                                "ErrorDialog",
-                                "The mesh could not be prepared for rendering."
-                            )
-                            .to_string(),
-                        ),
-                        err.to_string(),
-                        format_anyhow_chain(&err),
-                    );
-                    return;
+                match renderer.upload_scene(scene_ref) {
+                    Ok(()) => {
+                        self.needs_upload.set(false);
+                        self.upload_failures.set(0);
+                        self.dirty.set(true);
+                    }
+                    Err(err) => {
+                        // Leave `needs_upload = true` so the flag continues
+                        // to represent "upload owed" — a subsequent renderer
+                        // setup or scene reload (both of which reset
+                        // `upload_failures`) will drive a retry without
+                        // relying on coincidental side effects. The counter
+                        // gates dialog-spam: the error fires only on the
+                        // 0 → 1 transition.
+                        let prior = self.upload_failures.get();
+                        self.upload_failures.set(prior.saturating_add(1));
+                        if prior == 0 {
+                            self.dialogs.show_error_deferred(
+                                ctr!("ErrorDialog", "Failed to load the 3D model").to_string(),
+                                Some(
+                                    ctr!(
+                                        "ErrorDialog",
+                                        "The mesh could not be prepared for rendering."
+                                    )
+                                    .to_string(),
+                                ),
+                                err.to_string(),
+                                format_anyhow_chain(&err),
+                            );
+                        }
+                        return;
+                    }
                 }
-                self.dirty.set(true);
+            } else {
+                // Flag set but the scene was cleared before we got to it.
+                self.needs_upload.set(false);
             }
         }
 
