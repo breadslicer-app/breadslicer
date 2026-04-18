@@ -216,49 +216,13 @@ impl Renderer {
     }
 
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
-        let mut vertices: Vec<GpuVertex> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
-        let mut min = Vec3::splat(f32::INFINITY);
-        let mut max = Vec3::splat(f32::NEG_INFINITY);
-
-        for object in &scene.objects {
-            let mesh = match &object.content {
-                SceneObjectContent::Mesh(m) => m,
-                SceneObjectContent::Resource(idx) => scene
-                    .resources
-                    .get(*idx)
-                    .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
-            };
-
-            let base = u32::try_from(vertices.len())
-                .map_err(|_| anyhow!("Scene has more than {} vertices", u32::MAX))?;
-
-            vertices.reserve(mesh.vertices.len());
-            for vertex in &mesh.vertices {
-                let pos = vertex.0;
-                vertices.push(GpuVertex { position: pos });
-                let p = Vec3::from(pos);
-                min = min.min(p);
-                max = max.max(p);
-            }
-
-            indices.reserve(mesh.faces.len() * 3);
-            for face in &mesh.faces {
-                for &vidx in &face.vertices {
-                    indices.push(base + vidx);
-                }
-            }
-        }
-
-        if indices.is_empty() {
-            return Err(anyhow!("Scene has no geometry to render"));
-        }
+        let data = build_gpu_mesh_data(scene)?;
 
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh-viewer vertex buffer"),
-                contents: bytemuck::cast_slice(&vertices),
+                contents: bytemuck::cast_slice(&data.vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
@@ -266,16 +230,16 @@ impl Renderer {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh-viewer index buffer"),
-                contents: bytemuck::cast_slice(&indices),
+                contents: bytemuck::cast_slice(&data.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
 
         self.mesh = Some(MeshGpu {
             vertex_buffer,
             index_buffer,
-            index_count: indices.len() as u32,
-            aabb_min: min,
-            aabb_max: max,
+            index_count: data.indices.len() as u32,
+            aabb_min: data.aabb_min,
+            aabb_max: data.aabb_max,
         });
 
         Ok(())
@@ -418,5 +382,133 @@ impl Renderer {
         self.queue.submit(std::iter::once(encoder.finish()));
 
         Some(target)
+    }
+}
+
+/// CPU-only view of an uploaded mesh: flattened vertex/index buffers plus
+/// the axis-aligned bounding box. Kept separate from the GPU buffer creation
+/// so the transformation can be unit-tested without a `wgpu::Device`.
+struct GpuMeshData {
+    vertices: Vec<GpuVertex>,
+    indices: Vec<u32>,
+    aabb_min: Vec3,
+    aabb_max: Vec3,
+}
+
+fn build_gpu_mesh_data(scene: &Scene) -> Result<GpuMeshData> {
+    let mut vertices: Vec<GpuVertex> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+
+    for object in &scene.objects {
+        let mesh = match &object.content {
+            SceneObjectContent::Mesh(m) => m,
+            SceneObjectContent::Resource(idx) => scene
+                .resources
+                .get(*idx)
+                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
+        };
+
+        let base = u32::try_from(vertices.len())
+            .map_err(|_| anyhow!("Scene has more than {} vertices", u32::MAX))?;
+
+        vertices.reserve(mesh.vertices.len());
+        for vertex in &mesh.vertices {
+            let pos = vertex.0;
+            vertices.push(GpuVertex { position: pos });
+            let p = Vec3::from(pos);
+            min = min.min(p);
+            max = max.max(p);
+        }
+
+        indices.reserve(mesh.faces.len() * 3);
+        for face in &mesh.faces {
+            for &vidx in &face.vertices {
+                indices.push(base + vidx);
+            }
+        }
+    }
+
+    if indices.is_empty() {
+        return Err(anyhow!("Scene has no geometry to render"));
+    }
+
+    Ok(GpuMeshData {
+        vertices,
+        indices,
+        aabb_min: min,
+        aabb_max: max,
+    })
+}
+
+#[cfg(test)]
+mod build_gpu_mesh_data_tests {
+    use super::*;
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+
+    fn triangle_mesh(vertices: Vec<[f32; 3]>, face_vertices: [u32; 3]) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vertices.into_iter().map(Vertex::new).collect(),
+            faces: vec![IndexedTriangle {
+                normal: Normal::new([0.0, 0.0, 1.0]),
+                vertices: face_vertices,
+            }],
+        }
+    }
+
+    fn inline_object(mesh: IndexedMesh) -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    #[test]
+    fn empty_scene_returns_error() {
+        let scene = Scene::default();
+        assert!(build_gpu_mesh_data(&scene).is_err());
+    }
+
+    #[test]
+    fn dangling_resource_index_returns_error() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(7),
+            }],
+        };
+        assert!(build_gpu_mesh_data(&scene).is_err());
+    }
+
+    #[test]
+    fn two_inline_meshes_offset_indices_and_merge_aabb() {
+        let a = triangle_mesh(
+            vec![[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 0.0, 0.0]],
+            [0, 1, 2],
+        );
+        let b = triangle_mesh(
+            vec![[-7.0, 8.0, 0.5], [0.0, 0.0, 9.0], [2.0, 2.0, 2.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(a), inline_object(b)],
+        };
+
+        let data = build_gpu_mesh_data(&scene).unwrap();
+        assert_eq!(data.vertices.len(), 6);
+        // Indices of the second mesh are offset by the first mesh's vertex count.
+        assert_eq!(data.indices, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(data.aabb_min, Vec3::new(-7.0, -2.0, -6.0));
+        assert_eq!(data.aabb_max, Vec3::new(4.0, 8.0, 9.0));
     }
 }
