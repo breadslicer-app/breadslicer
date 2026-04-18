@@ -198,6 +198,13 @@ impl ViewportController {
     pub fn on_close_scene(&self) {
         // Invalidate any in-flight load so its result is dropped on arrival.
         self.load_gen.set(self.load_gen.get().wrapping_add(1));
+        // Drop any already-deposited result now rather than waiting for the
+        // queued `scene_load_finished` handler to drain it. Frees the
+        // `LoadedMesh` (which can be large) immediately.
+        *self
+            .load_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         *self.scene.borrow_mut() = None;
         *self.camera.borrow_mut() = None;
         self.needs_upload.set(false);
