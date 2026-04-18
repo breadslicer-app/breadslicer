@@ -222,13 +222,12 @@ impl ViewportController {
 
     // Release GPU-owning state before the graphics context goes away. The
     // scene (CPU-side) and the camera stay in the controller, so the next
-    // RenderingSetup can re-upload without losing the user's view.
+    // `RenderingSetup` can re-upload without losing the user's view —
+    // `handle_rendering_setup` flips `needs_upload` on its own when a scene
+    // is present, so we don't set it here.
     pub fn handle_rendering_teardown(&self) {
         *self.renderer.borrow_mut() = None;
         self.dirty.set(false);
-        if self.scene.borrow().is_some() {
-            self.needs_upload.set(true);
-        }
     }
 
     pub fn handle_before_rendering(&self) {
