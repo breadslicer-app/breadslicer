@@ -176,6 +176,15 @@ pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
                 // and the UI invocation below (e.g. allocation failure while
                 // constructing the slot tuple) would otherwise kill the
                 // worker silently and leave `loading == true` forever.
+                //
+                // `AssertUnwindSafe` is sound today because the captures
+                // (`slot: Arc<Mutex<…>>`, `path: PathBuf`, `my_stamp: u64`)
+                // carry no `!UnwindSafe` interior-mutability, and the parser
+                // returns an owned `Result<LoadedMesh, anyhow::Error>`, so a
+                // mid-parse panic drops any partial state on the stack. If
+                // `load_mesh_from_path` is ever changed to return a type
+                // borrowing from a memory-mapped region, revisit this — the
+                // assertion would then hide potential UB.
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         sc_mesh_formats::load_mesh_from_path(&path, None)
