@@ -226,6 +226,12 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
         (*s).to_string()
     } else if let Some(s) = payload.downcast_ref::<String>() {
         s.clone()
+    } else if let Some(e) =
+        payload.downcast_ref::<Box<dyn std::error::Error + Send + Sync + 'static>>()
+    {
+        e.to_string()
+    } else if let Some(e) = payload.downcast_ref::<Box<dyn std::error::Error + Send + 'static>>() {
+        e.to_string()
     } else {
         "unknown panic payload".to_string()
     }
