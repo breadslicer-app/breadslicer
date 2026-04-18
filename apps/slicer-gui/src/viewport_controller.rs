@@ -142,7 +142,11 @@ impl ViewportController {
     }
 
     pub fn on_scene_load_finished(&self) {
-        let taken = self.load_slot.lock().expect("load slot poisoned").take();
+        let taken = self
+            .load_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_loading(false);
         }

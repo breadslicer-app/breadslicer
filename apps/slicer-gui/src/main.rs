@@ -139,17 +139,31 @@ pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 
             let worker_ui_weak = ui_weak_inner.clone();
             std::thread::spawn(move || {
-                // Catch a panic in the parser so the UI always gets notified
-                // and the loading flag is cleared.
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    sc_mesh_formats::load_mesh_from_path(&path, None)
-                }))
-                .unwrap_or_else(|payload| {
-                    let msg = panic_message(&payload);
-                    Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-                });
+                // Catch panics from the parser *and* from the post-parse
+                // deposit. A panic between `load_mesh_from_path` returning
+                // and the UI invocation below (e.g. allocation failure while
+                // constructing the slot tuple) would otherwise kill the
+                // worker silently and leave `loading == true` forever.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        sc_mesh_formats::load_mesh_from_path(&path, None)
+                    }))
+                    .unwrap_or_else(|payload| {
+                        let msg = panic_message(&payload);
+                        Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
+                    });
 
-                *slot.lock().expect("load slot poisoned") = Some((my_stamp, path, result));
+                    // Tolerate poisoning so a previous worker's panic here
+                    // doesn't cascade into this one.
+                    *slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        Some((my_stamp, path, result));
+                }));
+
+                // Always notify the UI so `loading` is cleared, even if the
+                // deposit above panicked. The UI handler tolerates an empty
+                // slot and simply drops the load as stale.
                 let _ = worker_ui_weak.upgrade_in_event_loop(|ui| {
                     ui.invoke_scene_load_finished();
                 });
