@@ -24,7 +24,7 @@ use i18n::ctr;
 use slint::ComponentHandle;
 
 use crate::app_state::AppState;
-use crate::viewport_controller::ViewportController;
+use crate::viewport_controller::{RESIZE_SETTLE, ViewportController};
 
 slint::include_modules!();
 
@@ -46,7 +46,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 pub(crate) fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
-    ui.on_viewport_resized(move |w, h| ctrl.on_viewport_resized(w, h));
+    // A single `Timer` captured by the closure below acts as the resize
+    // debounce: each `viewport-resized` restarts it, and when no event
+    // arrives for `RESIZE_SETTLE`, it fires `on_resize_settled` to snap the
+    // renderer allocations back to exact pixel size.
+    let settle_timer = slint::Timer::default();
+    ui.on_viewport_resized(move |w, h| {
+        ctrl.on_viewport_resized(w, h);
+        let ctrl_settled = ctrl.clone();
+        settle_timer.start(slint::TimerMode::SingleShot, RESIZE_SETTLE, move || {
+            ctrl_settled.on_resize_settled()
+        });
+    });
 }
 
 pub(crate) fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {

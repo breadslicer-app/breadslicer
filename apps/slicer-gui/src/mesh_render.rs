@@ -231,6 +231,16 @@ impl Renderer {
         self.targets = None;
     }
 
+    /// Drops the viewport-sized allocations (MSAA + target pool) so the
+    /// next `render` reallocates them at the current `(width, height)`.
+    /// Used by `ViewportController::on_resize_settled` to snap back from
+    /// bucketed drag-resize sizing to exact pixel sizing once the user
+    /// stops resizing.
+    pub fn invalidate_sizing(&mut self) {
+        self.msaa = None;
+        self.targets = None;
+    }
+
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
         let data = build_gpu_mesh_data(scene)?;
 

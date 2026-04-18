@@ -42,8 +42,24 @@ pub struct ViewportController {
     // Open (the case behind B1). In practice the count is always 0 or 1,
     // because the open gate rejects a new load while any is in flight.
     inflight: Cell<u32>,
+    // True between a `viewport-resized` event and the debounce timer firing
+    // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
+    // render target size up to the next `RESIZE_BUCKET` multiple so drag
+    // resizes don't churn the MSAA/target allocations on every pointer move.
+    resizing: Cell<bool>,
     dialogs: Rc<DialogManager>,
 }
+
+// Granularity for the allocation bucketing applied during active resize.
+// A smaller value reduces the aspect distortion that `image-fit: fill` would
+// apply while dragging (texture sized at bucket, stretched to logical); a
+// larger value reduces reallocation rate. 64 px keeps the worst-case stretch
+// under ~3% on a 1080p window, which is barely perceptible during a drag.
+const RESIZE_BUCKET: u32 = 64;
+
+// How long `viewport-resized` must stay quiet before we snap back to exact
+// pixel sizing.
+pub(crate) const RESIZE_SETTLE: core::time::Duration = core::time::Duration::from_millis(200);
 
 impl ViewportController {
     pub fn new(ui: &MainWindow) -> Self {
@@ -58,6 +74,7 @@ impl ViewportController {
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Cell::new(0),
+            resizing: Cell::new(false),
             dialogs: DialogManager::new(),
         }
     }
@@ -112,6 +129,19 @@ impl ViewportController {
 
     pub fn on_viewport_resized(&self, w: f32, h: f32) {
         self.viewport.set((w, h));
+        self.resizing.set(true);
+        self.mark_dirty();
+    }
+
+    /// Called once `viewport-resized` has stayed quiet for `RESIZE_SETTLE`.
+    /// Drops the bucketed MSAA / target allocations so the next frame
+    /// reallocates at the exact logical size, eliminating the `image-fit:
+    /// fill` stretch that persisted during the drag.
+    pub fn on_resize_settled(&self) {
+        self.resizing.set(false);
+        if let Some(r) = self.renderer.borrow_mut().as_mut() {
+            r.invalidate_sizing();
+        }
         self.mark_dirty();
     }
 
@@ -273,12 +303,21 @@ impl ViewportController {
             return;
         }
 
+        let (eff_w, eff_h) = if self.resizing.get() {
+            (
+                width.div_ceil(RESIZE_BUCKET) * RESIZE_BUCKET,
+                height.div_ceil(RESIZE_BUCKET) * RESIZE_BUCKET,
+            )
+        } else {
+            (width, height)
+        };
+
         let camera_slot = self.camera.borrow();
         let Some(camera) = camera_slot.as_ref() else {
             return;
         };
 
-        let Some(texture) = renderer.render(camera, width, height) else {
+        let Some(texture) = renderer.render(camera, eff_w, eff_h) else {
             return;
         };
         self.dirty.set(false);
