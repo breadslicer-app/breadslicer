@@ -138,6 +138,7 @@ impl ViewportController {
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_mesh_rendering(slint::Image::default());
+            ui.set_has_scene(false);
         }
     }
 
@@ -167,6 +168,9 @@ impl ViewportController {
                 *self.camera.borrow_mut() = camera_for_scene(&scene);
                 *self.scene.borrow_mut() = Some(scene);
                 self.needs_upload.set(true);
+                if let Some(ui) = self.ui.upgrade() {
+                    ui.set_has_scene(true);
+                }
                 self.mark_dirty();
             }
             Err(err) => self.dialogs.show_error(
