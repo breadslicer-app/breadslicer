@@ -389,7 +389,7 @@ impl ViewportController {
 }
 
 // Load-time warnings (currently OBJ-only) are surfaced to stderr until the
-// UI grows a place to show them. Unifying logging is tracked as ARCH6.
+// UI grows a place to show them.
 fn log_load_warnings(path: &std::path::Path, warnings: &[LoadMeshWarning]) {
     for warning in warnings {
         match warning {

@@ -41,9 +41,11 @@ impl AppState {
         })
     }
 
-    /// Creates, wires, and shows a new `MainWindow`. Any per-window Slint
-    /// callbacks (viewport input, rendering notifier, file open/close, and
-    /// the app-level "About" / "New Window" menu items) get installed here.
+    /// Creates, wires, and shows a new `MainWindow`. Per-window Slint
+    /// callbacks (viewport input, rendering notifier, file open/close,
+    /// resize debounce) are installed by `crate::wiring::wire_main_window`;
+    /// the app-level "About" and "New Window" menu items and the OS
+    /// close-request handler are wired here.
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<(), Box<dyn Error>> {
         let ui = MainWindow::new()?;
         let ctrl = Rc::new(ViewportController::new(&ui));
