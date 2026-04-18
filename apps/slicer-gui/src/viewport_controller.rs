@@ -36,6 +36,12 @@ pub struct ViewportController {
     needs_upload: Cell<bool>,
     load_gen: Cell<u64>,
     load_slot: LoadSlot,
+    // Number of load operations that have begun but not yet called
+    // `end_load`. `loading` on the UI stays true while this is > 0, so a
+    // stale worker that finishes after a Close cannot prematurely re-enable
+    // Open (the case behind B1). In practice the count is always 0 or 1,
+    // because the open gate rejects a new load while any is in flight.
+    inflight: Cell<u32>,
     dialogs: Rc<DialogManager>,
 }
 
@@ -51,6 +57,7 @@ impl ViewportController {
             needs_upload: Cell::new(false),
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
+            inflight: Cell::new(0),
             dialogs: DialogManager::new(),
         }
     }
@@ -65,6 +72,31 @@ impl ViewportController {
         let stamp = self.load_gen.get().wrapping_add(1);
         self.load_gen.set(stamp);
         stamp
+    }
+
+    /// Starts a new load. Returns `false` if one is already in flight and
+    /// the caller must abort. Pair every successful call with exactly one
+    /// `end_load` (invoked from `on_scene_load_finished`, or manually on
+    /// paths that bail before a worker gets spawned).
+    pub fn begin_load(&self) -> bool {
+        if self.inflight.get() > 0 {
+            return false;
+        }
+        self.inflight.set(self.inflight.get() + 1);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_loading(true);
+        }
+        true
+    }
+
+    pub fn end_load(&self) {
+        let remaining = self.inflight.get().saturating_sub(1);
+        self.inflight.set(remaining);
+        if remaining == 0
+            && let Some(ui) = self.ui.upgrade()
+        {
+            ui.set_loading(false);
+        }
     }
 
     fn request_redraw(&self) {
@@ -148,9 +180,7 @@ impl ViewportController {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_loading(false);
-        }
+        self.end_load();
         let Some((stamp, path, result)) = taken else {
             return;
         };

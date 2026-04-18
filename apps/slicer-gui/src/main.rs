@@ -105,15 +105,12 @@ pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_open_file_requested(move || {
         // The Slint event loop keeps processing callbacks while the native
         // file dialog is open, and `enabled: !root.loading` on the menu item
-        // doesn't block that. So gate here in Rust *before* touching the
-        // dialog, and flip `loading` immediately (not after pick_file awaits).
-        let Some(ui) = ui_weak.upgrade() else {
-            return;
-        };
-        if ui.get_loading() {
+        // doesn't block that. Gate in Rust via `begin_load` *before* touching
+        // the dialog, so `loading` flips immediately (not after pick_file
+        // awaits) and the in-flight counter is bumped atomically with it.
+        if !ctrl.begin_load() {
             return;
         }
-        ui.set_loading(true);
 
         let dialog = rfd::AsyncFileDialog::new()
             .add_filter(
@@ -127,21 +124,18 @@ pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
             )
             .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
 
-        let ctrl = ctrl.clone();
+        let ctrl_async = ctrl.clone();
         let ui_weak_inner = ui_weak.clone();
-        let ui_weak_for_err = ui_weak.clone();
         if let Err(err) = slint::spawn_local(async move {
             let Some(handle) = dialog.pick_file().await else {
-                // User cancelled the dialog: clear the gate.
-                if let Some(ui) = ui_weak_inner.upgrade() {
-                    ui.set_loading(false);
-                }
+                // User cancelled the dialog: release the gate.
+                ctrl_async.end_load();
                 return;
             };
             let path = handle.path().to_path_buf();
 
-            let my_stamp = ctrl.next_load_stamp();
-            let slot = ctrl.load_slot();
+            let my_stamp = ctrl_async.next_load_stamp();
+            let slot = ctrl_async.load_slot();
 
             // Pre-check the file size. If it exceeds the ceiling, deposit an
             // error into the slot and trigger the same finish-handler path as
@@ -211,9 +205,7 @@ pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
             });
         }) {
             eprintln!("Failed to spawn file dialog task: {err}");
-            if let Some(ui) = ui_weak_for_err.upgrade() {
-                ui.set_loading(false);
-            }
+            ctrl.end_load();
         }
     });
 }
