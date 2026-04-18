@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use glam::Vec3;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
@@ -237,10 +236,12 @@ impl ViewportController {
         match result {
             Ok(LoadedMesh { scene, warnings }) => {
                 log_load_warnings(&path, &warnings);
-                // Build a fresh camera from the scene's bounds. If the scene
-                // has no geometry, leave camera = None; the subsequent GPU
-                // upload will surface the empty-scene error.
-                *self.camera.borrow_mut() = camera_for_scene(&scene);
+                // Reset the camera — it will be reframed from the mesh AABB
+                // computed during `upload_scene`, so we don't re-scan the
+                // scene's vertices here. On upload failure (empty scene /
+                // dangling resource index) the camera stays `None`, no frame
+                // is rendered, and the error dialog surfaces the cause.
+                *self.camera.borrow_mut() = None;
                 *self.scene.borrow_mut() = Some(scene);
                 self.needs_upload.set(true);
                 self.upload_failures.set(0);
@@ -290,6 +291,18 @@ impl ViewportController {
                         self.needs_upload.set(false);
                         self.upload_failures.set(0);
                         self.dirty.set(true);
+                        // Frame the camera off the AABB the upload just
+                        // computed. Skipped if a camera already exists
+                        // (e.g. this was a re-upload across a
+                        // RenderingTeardown→Setup cycle, and the user's
+                        // view should persist).
+                        if self.camera.borrow().is_none()
+                            && let Some((min, max)) = renderer.scene_bounds()
+                        {
+                            let center = (min + max) * 0.5;
+                            let radius = ((max - min).length() * 0.5).max(1e-3);
+                            *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
+                        }
                     }
                     Err(err) => {
                         // Leave `needs_upload = true` so the flag continues
@@ -373,18 +386,6 @@ impl ViewportController {
             ),
         }
     }
-}
-
-// Builds an `OrbitCamera` framed on the scene's bounding box. Returns `None`
-// for empty scenes or scenes with dangling `Resource` references; the later
-// GPU upload surfaces the underlying problem with a translated error dialog.
-fn camera_for_scene(scene: &Scene) -> Option<OrbitCamera> {
-    let (min, max) = scene.aabb().ok()??;
-    let min = Vec3::from(min.0);
-    let max = Vec3::from(max.0);
-    let center = (min + max) * 0.5;
-    let radius = ((max - min).length() * 0.5).max(1e-3);
-    Some(OrbitCamera::new(center, radius))
 }
 
 // Load-time warnings (currently OBJ-only) are surfaced to stderr until the

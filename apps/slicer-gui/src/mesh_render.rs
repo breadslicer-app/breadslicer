@@ -241,6 +241,14 @@ impl Renderer {
         self.targets = None;
     }
 
+    /// AABB of the currently uploaded mesh, `None` if nothing has been
+    /// uploaded yet. Computed once inside `build_gpu_mesh_data` so callers
+    /// (e.g. `ViewportController` framing the camera) can reuse it without
+    /// re-scanning every vertex of the `Scene`.
+    pub fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
+        self.mesh.as_ref().map(|m| (m.aabb_min, m.aabb_max))
+    }
+
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
         let data = build_gpu_mesh_data(scene)?;
 
