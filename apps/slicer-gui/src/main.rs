@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod about_window;
+mod app_state;
 mod camera;
 mod error_dialog;
 mod i18n;
@@ -22,7 +23,7 @@ use std::rc::Rc;
 use i18n::ctr;
 use slint::ComponentHandle;
 
-use crate::about_window::wire_about_window;
+use crate::app_state::AppState;
 use crate::viewport_controller::ViewportController;
 
 slint::include_modules!();
@@ -32,25 +33,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::default())
         .select()?;
 
-    let ui = MainWindow::new()?;
-    let ctrl = Rc::new(ViewportController::new(&ui));
-
-    install_rendering_notifier(&ui, ctrl.clone())?;
-    wire_close_scene(&ui, ctrl.clone());
-    wire_open_file(&ui, ctrl.clone());
-    wire_viewport_resized(&ui, ctrl.clone());
-    wire_viewport_input(&ui, ctrl);
-    wire_about_window(&ui);
-
-    ui.run()?;
+    let app = AppState::new();
+    app.spawn_main_window()?;
+    slint::run_event_loop()?;
     Ok(())
 }
 
-fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+pub(crate) fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_viewport_resized(move |w, h| ctrl.on_viewport_resized(w, h));
 }
 
-fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+pub(crate) fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     {
         let ctrl = ctrl.clone();
         ui.on_rotate_drag(move |dx, dy| ctrl.on_rotate(dx, dy));
@@ -70,7 +63,7 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_axis_view_requested(move |code| ctrl.on_axis_view(code));
 }
 
-fn install_rendering_notifier(
+pub(crate) fn install_rendering_notifier(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
@@ -92,11 +85,11 @@ fn install_rendering_notifier(
         })
 }
 
-fn wire_close_scene(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+pub(crate) fn wire_close_scene(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_close_current_scene(move || ctrl.on_close_scene());
 }
 
-fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     {
         let ctrl = ctrl.clone();
         ui.on_scene_load_finished(move || ctrl.on_scene_load_finished());

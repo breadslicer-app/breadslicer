@@ -20,6 +20,7 @@ export component MainWindow inherits Window {
     callback close-current-scene();
     callback scene-load-finished();
     callback show-about-requested();
+    callback new-window-requested();
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -30,6 +31,17 @@ export component MainWindow inherits Window {
     MenuBar {
         Menu {
             title: @tr("MenuBar" => "File");
+
+            MenuItem {
+                title: @tr("MenuBar" => "New Window");
+                shortcut: @keys(Control + Shift + N);
+                activated => {
+                    root.new-window-requested();
+                }
+            }
+
+            MenuSeparator { }
+
             MenuItem {
                 title: @tr("MenuBar" => "Open…");
                 shortcut: @keys(Control + O);
@@ -46,6 +58,7 @@ export component MainWindow inherits Window {
                     root.close-current-scene();
                 }
             }
+
             MenuSeparator { }
 
             MenuItem {
