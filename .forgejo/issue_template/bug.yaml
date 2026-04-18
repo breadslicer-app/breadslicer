@@ -26,6 +26,7 @@ body:
         - "Linux"
         - "Macos"
         - "Windows"
+        - "Not relevant"
     validations:
       required: true
 
@@ -50,8 +51,18 @@ body:
         - "amd64 (x86_64) - 'classic PC', Intel & AMD processors"
         - "arm64 - Apple M1/M2/..., Chromebooks, ..."
         - "riscv - Some experimental/fringe platforms"
+        - "Not relevant"
     validations:
       required: true
+
+  - type: "input"
+    id: "slicer_version"
+    attributes:
+      label: "Slicer Version"
+      description: |
+        The version of the Slicer application where you found the issue.
+    validations:
+      required: false
 
   - type: "input"
     id: "printer_model"
