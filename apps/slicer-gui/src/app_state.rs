@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::error::Error;
 use std::rc::Rc;
 
-use slint::ComponentHandle;
+use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::about_window::build_about_window;
 use crate::viewport_controller::ViewportController;
@@ -27,14 +28,16 @@ use crate::{AboutWindow, MainWindow};
 /// a strong-reference cycle.
 pub(crate) struct AppState {
     about_window: RefCell<Option<AboutWindow>>,
-    main_windows: RefCell<Vec<MainWindow>>,
+    main_windows: RefCell<HashMap<u64, MainWindow>>,
+    next_window_id: Cell<u64>,
 }
 
 impl AppState {
     pub fn new() -> Rc<Self> {
         Rc::new(Self {
             about_window: RefCell::new(None),
-            main_windows: RefCell::new(Vec::new()),
+            main_windows: RefCell::new(HashMap::new()),
+            next_window_id: Cell::new(0),
         })
     }
 
@@ -52,8 +55,23 @@ impl AppState {
         crate::wire_viewport_input(&ui, ctrl);
         self.wire_app_level_menus(&ui);
 
+        let id = self.next_window_id.get();
+        self.next_window_id.set(id.wrapping_add(1));
+
+        // On OS-level close: drop our strong `MainWindow` handle so the
+        // window's `ViewportController`, `Renderer`, and scene can be
+        // released. Without this, hidden windows accumulate for the whole
+        // session.
+        let app_weak = Rc::downgrade(self);
+        ui.window().on_close_requested(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.main_windows.borrow_mut().remove(&id);
+            }
+            CloseRequestResponse::HideWindow
+        });
+
         ui.show()?;
-        self.main_windows.borrow_mut().push(ui);
+        self.main_windows.borrow_mut().insert(id, ui);
         Ok(())
     }
 
