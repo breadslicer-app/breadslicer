@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-17 22:52+0200\n"
+"POT-Creation-Date: 2026-04-18 14:20+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,53 +17,59 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/main.rs:122
+#: src/main.rs:120
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/main.rs:125
+#: src/main.rs:123
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/main.rs:127
+#: src/main.rs:125
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/main.rs:130
+#: src/main.rs:128
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/viewport_controller.rs:163
+#: src/main.rs:157
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""
+
+#: src/viewport_controller.rs:173
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:164
+#: src/viewport_controller.rs:174
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/viewport_controller.rs:205
+#: src/viewport_controller.rs:211
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:209
+#: src/viewport_controller.rs:215
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr ""
 
-#: src/viewport_controller.rs:247
+#: src/viewport_controller.rs:255
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:251
+#: src/viewport_controller.rs:259
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""

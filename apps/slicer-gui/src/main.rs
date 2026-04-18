@@ -28,6 +28,12 @@ use crate::viewport_controller::ViewportController;
 
 slint::include_modules!();
 
+// Reject mesh files larger than this before spawning the loader worker, so
+// the UI doesn't sit in `loading=true` for hours (or OOM) on an accidental
+// huge pick. 2 GiB is already well beyond anything a resin printer slices.
+const MAX_MESH_FILE_SIZE_MIB: u64 = 2048;
+const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
+
 fn main() -> Result<(), Box<dyn Error>> {
     slint::BackendSelector::new()
         .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::default())
@@ -136,6 +142,32 @@ pub(crate) fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 
             let my_stamp = ctrl.next_load_stamp();
             let slot = ctrl.load_slot();
+
+            // Pre-check the file size. If it exceeds the ceiling, deposit an
+            // error into the slot and trigger the same finish-handler path as
+            // a real load failure. `metadata()` failures fall through to the
+            // worker, which surfaces a more specific error when it opens the
+            // file.
+            if let Ok(meta) = std::fs::metadata(&path)
+                && meta.len() > MAX_MESH_FILE_SIZE_BYTES
+            {
+                let size_mib = meta.len() / (1024 * 1024);
+                let message = ctr!(
+                    "ErrorDialog",
+                    "File is {} MiB, which exceeds the {} MiB limit.",
+                    size_mib,
+                    MAX_MESH_FILE_SIZE_MIB
+                );
+                let err = anyhow::Error::msg(message.to_string());
+                *slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some((my_stamp, path, Err(err)));
+                if let Some(ui) = ui_weak_inner.upgrade() {
+                    ui.invoke_scene_load_finished();
+                }
+                return;
+            }
 
             let worker_ui_weak = ui_weak_inner.clone();
             std::thread::spawn(move || {
