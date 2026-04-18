@@ -48,11 +48,7 @@ impl AppState {
         let ui = MainWindow::new()?;
         let ctrl = Rc::new(ViewportController::new(&ui));
 
-        crate::install_rendering_notifier(&ui, ctrl.clone())?;
-        crate::wire_close_scene(&ui, ctrl.clone());
-        crate::wire_open_file(&ui, ctrl.clone());
-        crate::wire_viewport_resized(&ui, ctrl.clone());
-        crate::wire_viewport_input(&ui, ctrl);
+        crate::wiring::wire_main_window(&ui, ctrl)?;
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
