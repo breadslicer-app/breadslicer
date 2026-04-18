@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use glam::Vec3;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
@@ -17,7 +18,7 @@ use crate::MainWindow;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::{format_anyhow_chain, show_error_dialog, show_error_dialog_deferred};
 use crate::i18n::ctr;
-use crate::mesh_render::Renderer;
+use crate::mesh_render::{Renderer, default_fov_y};
 
 pub type LoadSlot = Arc<Mutex<Option<(u64, PathBuf, anyhow::Result<LoadedMesh>)>>>;
 
@@ -25,7 +26,10 @@ pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
     renderer: RefCell<Option<Renderer>>,
     scene: RefCell<Option<Scene>>,
-    saved_camera: RefCell<Option<OrbitCamera>>,
+    // The camera lives next to the scene (not inside the GPU renderer), so it
+    // survives device-loss / RenderingTeardown→Setup cycles for free and can
+    // be manipulated without a GPU present.
+    camera: RefCell<Option<OrbitCamera>>,
     viewport: Cell<(f32, f32)>,
     dirty: Cell<bool>,
     needs_upload: Cell<bool>,
@@ -39,7 +43,7 @@ impl ViewportController {
             ui: ui.as_weak(),
             renderer: RefCell::new(None),
             scene: RefCell::new(None),
-            saved_camera: RefCell::new(None),
+            camera: RefCell::new(None),
             viewport: Cell::new((0.0, 0.0)),
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
@@ -78,18 +82,16 @@ impl ViewportController {
 
     pub fn on_rotate(&self, dx: f32, dy: f32) {
         let (_, h) = self.viewport.get();
-        if let Some(r) = self.renderer.borrow_mut().as_mut()
-            && r.rotate(dx, dy, h)
-        {
+        if let Some(cam) = self.camera.borrow_mut().as_mut() {
+            cam.orbit(dx, dy, h);
             self.mark_dirty();
         }
     }
 
     pub fn on_pan(&self, dx: f32, dy: f32) {
         let (_, h) = self.viewport.get();
-        if let Some(r) = self.renderer.borrow_mut().as_mut()
-            && r.pan(dx, dy, h)
-        {
+        if let Some(cam) = self.camera.borrow_mut().as_mut() {
+            cam.pan(dx, dy, default_fov_y(), h);
             self.mark_dirty();
         }
     }
@@ -100,26 +102,23 @@ impl ViewportController {
             return;
         }
         let factor = (-delta * 0.005).exp().clamp(0.1, 10.0);
-        if let Some(r) = self.renderer.borrow_mut().as_mut()
-            && r.zoom_at(factor, cursor_x, cursor_y, w, h)
-        {
+        if let Some(cam) = self.camera.borrow_mut().as_mut() {
+            cam.zoom_at(factor, cursor_x, cursor_y, default_fov_y(), w, h);
             self.mark_dirty();
         }
     }
 
     pub fn on_frame_view(&self) {
-        if let Some(r) = self.renderer.borrow_mut().as_mut()
-            && r.frame_view()
-        {
+        if let Some(cam) = self.camera.borrow_mut().as_mut() {
+            cam.frame_scene();
             self.mark_dirty();
         }
     }
 
     pub fn on_axis_view(&self, view: crate::AxisView) {
         let axis = axis_from_ui(view);
-        if let Some(r) = self.renderer.borrow_mut().as_mut()
-            && r.set_axis_view(axis)
-        {
+        if let Some(cam) = self.camera.borrow_mut().as_mut() {
+            cam.set_axis_view(axis);
             self.mark_dirty();
         }
     }
@@ -128,7 +127,7 @@ impl ViewportController {
         // Invalidate any in-flight load so its result is dropped on arrival.
         self.load_gen.set(self.load_gen.get().wrapping_add(1));
         *self.scene.borrow_mut() = None;
-        *self.saved_camera.borrow_mut() = None;
+        *self.camera.borrow_mut() = None;
         self.needs_upload.set(false);
         self.dirty.set(false);
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
@@ -155,8 +154,11 @@ impl ViewportController {
         match result {
             Ok(LoadedMesh { scene, warnings }) => {
                 log_load_warnings(&path, &warnings);
+                // Build a fresh camera from the scene's bounds. If the scene
+                // has no geometry, leave camera = None; the subsequent GPU
+                // upload will surface the empty-scene error.
+                *self.camera.borrow_mut() = camera_for_scene(&scene);
                 *self.scene.borrow_mut() = Some(scene);
-                *self.saved_camera.borrow_mut() = None;
                 self.needs_upload.set(true);
                 self.mark_dirty();
             }
@@ -177,14 +179,10 @@ impl ViewportController {
         }
     }
 
-    // Release GPU-owning state before the graphics context goes away.
-    // The Scene (CPU-side) and a camera snapshot are kept so the next
-    // RenderingSetup can re-upload and restore the user's view.
+    // Release GPU-owning state before the graphics context goes away. The
+    // scene (CPU-side) and the camera stay in the controller, so the next
+    // RenderingSetup can re-upload without losing the user's view.
     pub fn handle_rendering_teardown(&self) {
-        let camera_snapshot = self.renderer.borrow().as_ref().and_then(|r| r.camera());
-        if camera_snapshot.is_some() {
-            *self.saved_camera.borrow_mut() = camera_snapshot;
-        }
         *self.renderer.borrow_mut() = None;
         self.dirty.set(false);
         if self.scene.borrow().is_some() {
@@ -216,9 +214,6 @@ impl ViewportController {
                     );
                     return;
                 }
-                if let Some(cam) = self.saved_camera.borrow_mut().take() {
-                    renderer.set_camera(cam);
-                }
                 self.dirty.set(true);
             }
         }
@@ -238,7 +233,12 @@ impl ViewportController {
             return;
         }
 
-        let Some(texture) = renderer.render(width, height) else {
+        let camera_slot = self.camera.borrow();
+        let Some(camera) = camera_slot.as_ref() else {
+            return;
+        };
+
+        let Some(texture) = renderer.render(camera, width, height) else {
             return;
         };
         self.dirty.set(false);
@@ -258,6 +258,18 @@ impl ViewportController {
             ),
         }
     }
+}
+
+// Builds an `OrbitCamera` framed on the scene's bounding box. Returns `None`
+// for empty scenes or scenes with dangling `Resource` references; the later
+// GPU upload surfaces the underlying problem with a translated error dialog.
+fn camera_for_scene(scene: &Scene) -> Option<OrbitCamera> {
+    let (min, max) = scene.aabb().ok()??;
+    let min = Vec3::from(min.0);
+    let max = Vec3::from(max.0);
+    let center = (min + max) * 0.5;
+    let radius = ((max - min).length() * 0.5).max(1e-3);
+    Some(OrbitCamera::new(center, radius))
 }
 
 // Load-time warnings (currently OBJ-only) are surfaced to stderr until the

@@ -4,7 +4,7 @@
  */
 
 use crate::indexed_mesh::IndexedMesh;
-use crate::primitives::IndexedTriangle;
+use crate::primitives::{IndexedTriangle, Vertex};
 use anyhow::{Result, anyhow};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -40,6 +40,38 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Axis-aligned bounding box over every vertex referenced by any object
+    /// in the scene, resolving `Resource` references against `self.resources`.
+    /// Returns `None` when the scene has no geometry, and an error if any
+    /// resource index is out of bounds.
+    pub fn aabb(&self) -> Result<Option<(Vertex, Vertex)>> {
+        let mut min = Vertex::new([f32::INFINITY; 3]);
+        let mut max = Vertex::new([f32::NEG_INFINITY; 3]);
+        let mut has_any = false;
+
+        for obj in &self.objects {
+            let mesh = match &obj.content {
+                SceneObjectContent::Mesh(m) => m,
+                SceneObjectContent::Resource(idx) => self
+                    .resources
+                    .get(*idx)
+                    .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
+            };
+            for vertex in &mesh.vertices {
+                let v = vertex.0;
+                min.0[0] = min.0[0].min(v[0]);
+                min.0[1] = min.0[1].min(v[1]);
+                min.0[2] = min.0[2].min(v[2]);
+                max.0[0] = max.0[0].max(v[0]);
+                max.0[1] = max.0[1].max(v[1]);
+                max.0[2] = max.0[2].max(v[2]);
+                has_any = true;
+            }
+        }
+
+        Ok(has_any.then_some((min, max)))
+    }
+
     /// Merges all meshes in the scene into a single [`IndexedMesh`].
     /// Returns `Ok(None)` if the scene contains no geometry,
     /// or an error if any resource index is out of bounds.
@@ -81,6 +113,20 @@ impl Scene {
     }
 }
 
+impl From<IndexedMesh> for Scene {
+    fn from(mesh: IndexedMesh) -> Self {
+        Self {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        }
+    }
+}
+
 #[cfg(test)]
 mod merge_meshes_tests {
     use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
@@ -118,6 +164,31 @@ mod merge_meshes_tests {
     fn empty_scene_returns_none() {
         let scene = Scene::default();
         assert_eq!(scene.merge_meshes().unwrap(), None);
+    }
+
+    #[test]
+    fn empty_scene_has_no_aabb() {
+        assert_eq!(Scene::default().aabb().unwrap(), None);
+    }
+
+    #[test]
+    fn aabb_covers_inline_and_resource_meshes() {
+        let resource = triangle_mesh(
+            vec![[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 0.0, 0.0]],
+            [0, 1, 2],
+        );
+        let inline = triangle_mesh(
+            vec![[-7.0, 8.0, 0.5], [0.0, 0.0, 9.0], [2.0, 2.0, 2.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![resource],
+            objects: vec![resource_object(0), inline_object(inline)],
+        };
+        let (min, max) = scene.aabb().unwrap().unwrap();
+        assert_eq!(min.0, [-7.0, -2.0, -6.0]);
+        assert_eq!(max.0, [4.0, 8.0, 9.0]);
     }
 
     #[test]
@@ -205,19 +276,5 @@ mod merge_meshes_tests {
         };
         let result = scene.merge_meshes().unwrap().unwrap();
         assert_eq!(result.meta, None);
-    }
-}
-
-impl From<IndexedMesh> for Scene {
-    fn from(mesh: IndexedMesh) -> Self {
-        Self {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        }
     }
 }

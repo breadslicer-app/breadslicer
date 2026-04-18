@@ -13,7 +13,7 @@ use sc_mesh_core::scene::{Scene, SceneObjectContent};
 use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
 
-use crate::camera::{AxisView, DEFAULT_DISTANCE_FACTOR, OrbitCamera};
+use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 
 const SHADER_SOURCE: &str = r#"
 struct Uniforms {
@@ -79,7 +79,6 @@ struct MeshGpu {
     index_count: u32,
     aabb_min: Vec3,
     aabb_max: Vec3,
-    camera: OrbitCamera,
 }
 
 struct MsaaTargets {
@@ -106,7 +105,7 @@ pub struct Renderer {
 /// framing distance (`DEFAULT_DISTANCE_FACTOR * radius`). Being a pure
 /// function of those constants, the FOV is viewport-independent — resizing
 /// the window rescales the image but never distorts perspective.
-fn default_fov_y() -> f32 {
+pub fn default_fov_y() -> f32 {
     2.0 * (1.0 / (FIT_FRACTION * DEFAULT_DISTANCE_FACTOR)).atan()
 }
 
@@ -271,83 +270,15 @@ impl Renderer {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let center = (min + max) * 0.5;
-        let radius = ((max - min).length() * 0.5).max(1e-3);
         self.mesh = Some(MeshGpu {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
             aabb_min: min,
             aabb_max: max,
-            camera: OrbitCamera::new(center, radius),
         });
 
         Ok(())
-    }
-
-    pub fn rotate(&mut self, dx_pixels: f32, dy_pixels: f32, viewport_height: f32) -> bool {
-        let Some(mesh) = self.mesh.as_mut() else {
-            return false;
-        };
-        mesh.camera.orbit(dx_pixels, dy_pixels, viewport_height);
-        true
-    }
-
-    pub fn pan(&mut self, dx_pixels: f32, dy_pixels: f32, viewport_height: f32) -> bool {
-        let Some(mesh) = self.mesh.as_mut() else {
-            return false;
-        };
-        mesh.camera
-            .pan(dx_pixels, dy_pixels, default_fov_y(), viewport_height);
-        true
-    }
-
-    pub fn zoom_at(
-        &mut self,
-        factor: f32,
-        cursor_x: f32,
-        cursor_y: f32,
-        viewport_width: f32,
-        viewport_height: f32,
-    ) -> bool {
-        let Some(mesh) = self.mesh.as_mut() else {
-            return false;
-        };
-        mesh.camera.zoom_at(
-            factor,
-            cursor_x,
-            cursor_y,
-            default_fov_y(),
-            viewport_width,
-            viewport_height,
-        );
-        true
-    }
-
-    pub fn frame_view(&mut self) -> bool {
-        let Some(mesh) = self.mesh.as_mut() else {
-            return false;
-        };
-        mesh.camera.frame_scene();
-        true
-    }
-
-    pub fn camera(&self) -> Option<OrbitCamera> {
-        self.mesh.as_ref().map(|m| m.camera.clone())
-    }
-
-    pub fn set_camera(&mut self, camera: OrbitCamera) {
-        if let Some(mesh) = self.mesh.as_mut() {
-            mesh.camera = camera;
-        }
-    }
-
-    pub fn set_axis_view(&mut self, view: AxisView) -> bool {
-        let Some(mesh) = self.mesh.as_mut() else {
-            return false;
-        };
-        mesh.camera.set_axis_view(view);
-        true
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) {
@@ -399,7 +330,12 @@ impl Renderer {
         });
     }
 
-    pub fn render(&mut self, width: u32, height: u32) -> Option<wgpu::Texture> {
+    pub fn render(
+        &mut self,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Option<wgpu::Texture> {
         if width == 0 || height == 0 || self.mesh.is_none() {
             return None;
         }
@@ -412,7 +348,7 @@ impl Renderer {
 
         let aspect = width as f32 / height as f32;
         let fov_y = default_fov_y();
-        let view_mat = mesh.camera.view_matrix();
+        let view_mat = camera.view_matrix();
         let proj = Mat4::perspective_rh(fov_y, aspect, 0.01 * diagonal, 100.0 * diagonal);
         let mvp = proj * view_mat;
 
