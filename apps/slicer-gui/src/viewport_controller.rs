@@ -5,6 +5,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use glam::Vec3;
@@ -16,7 +17,7 @@ use slint::wgpu_28::wgpu;
 
 use crate::MainWindow;
 use crate::camera::{AxisView, OrbitCamera};
-use crate::error_dialog::{format_anyhow_chain, show_error_dialog, show_error_dialog_deferred};
+use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_render::{Renderer, default_fov_y};
 
@@ -35,6 +36,7 @@ pub struct ViewportController {
     needs_upload: Cell<bool>,
     load_gen: Cell<u64>,
     load_slot: LoadSlot,
+    dialogs: Rc<DialogManager>,
 }
 
 impl ViewportController {
@@ -49,6 +51,7 @@ impl ViewportController {
             needs_upload: Cell::new(false),
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
+            dialogs: DialogManager::new(),
         }
     }
 
@@ -162,7 +165,7 @@ impl ViewportController {
                 self.needs_upload.set(true);
                 self.mark_dirty();
             }
-            Err(err) => show_error_dialog(
+            Err(err) => self.dialogs.show_error(
                 ctr!("ErrorDialog", "Failed to open 3D model").as_str(),
                 Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
                 err.to_string(),
@@ -200,7 +203,7 @@ impl ViewportController {
             self.needs_upload.set(false);
             if let Some(scene_ref) = self.scene.borrow().as_ref() {
                 if let Err(err) = renderer.upload_scene(scene_ref) {
-                    show_error_dialog_deferred(
+                    self.dialogs.show_error_deferred(
                         ctr!("ErrorDialog", "Failed to load the 3D model").to_string(),
                         Some(
                             ctr!(
@@ -244,7 +247,7 @@ impl ViewportController {
         self.dirty.set(false);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
-            Err(err) => show_error_dialog_deferred(
+            Err(err) => self.dialogs.show_error_deferred(
                 ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
                 Some(
                     ctr!(

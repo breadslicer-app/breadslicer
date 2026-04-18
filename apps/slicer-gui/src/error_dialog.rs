@@ -5,78 +5,94 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use slint::ComponentHandle;
 
 use crate::ErrorDialog;
 
-thread_local! {
-    static OPEN_ERROR_DIALOGS: RefCell<HashMap<u64, ErrorDialog>> =
-        RefCell::new(HashMap::new());
-    static NEXT_DIALOG_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+/// Owns every currently-visible `ErrorDialog` window so they stay alive for
+/// as long as the user hasn't dismissed them. Held as `Rc<DialogManager>`
+/// by the controller; close callbacks carry a `Weak<DialogManager>` back in
+/// so the map entry can be cleared without creating an ownership cycle.
+pub(crate) struct DialogManager {
+    dialogs: RefCell<HashMap<u64, ErrorDialog>>,
+    next_id: Cell<u64>,
 }
 
-/// Queues `show_error_dialog` on the next iteration of the Slint event loop.
-///
-/// Use this when the caller runs inside a Slint hook where spawning a new
-/// window synchronously would reenter the event loop (e.g. inside a rendering
-/// notifier callback).
-pub(crate) fn show_error_dialog_deferred(
-    heading: String,
-    context: Option<String>,
-    message: String,
-    details: String,
-) {
-    let _ = slint::invoke_from_event_loop(move || {
-        show_error_dialog(&heading, context, message, details);
-    });
-}
+impl DialogManager {
+    pub fn new() -> Rc<Self> {
+        Rc::new(Self {
+            dialogs: RefCell::new(HashMap::new()),
+            next_id: Cell::new(0),
+        })
+    }
 
-pub(crate) fn show_error_dialog(
-    heading: &str,
-    context: Option<String>,
-    message: String,
-    details: String,
-) {
-    eprintln!("[error] {heading}: {message}\n{details}");
-    let dialog = match ErrorDialog::new() {
-        Ok(d) => d,
-        Err(err) => {
-            eprintln!("Failed to create error dialog: {err}");
+    /// Shows an error dialog immediately. Must run on the Slint UI thread.
+    pub fn show_error(
+        self: &Rc<Self>,
+        heading: &str,
+        context: Option<String>,
+        message: String,
+        details: String,
+    ) {
+        eprintln!("[error] {heading}: {message}\n{details}");
+        let dialog = match ErrorDialog::new() {
+            Ok(d) => d,
+            Err(err) => {
+                eprintln!("Failed to create error dialog: {err}");
+                return;
+            }
+        };
+        dialog.set_heading(heading.into());
+        if let Some(ctx) = context {
+            dialog.set_context(ctx.into());
+        }
+        dialog.set_message(message.into());
+        dialog.set_details(details.into());
+
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+
+        let dialog_weak = dialog.as_weak();
+        let mgr_weak = Rc::downgrade(self);
+        dialog.on_close_requested(move || {
+            if let Some(d) = dialog_weak.upgrade() {
+                let _ = d.hide();
+            }
+            if let Some(mgr) = mgr_weak.upgrade() {
+                mgr.dialogs.borrow_mut().remove(&id);
+            }
+        });
+
+        if let Err(err) = dialog.show() {
+            eprintln!("Failed to show error dialog: {err}");
             return;
         }
-    };
-    dialog.set_heading(heading.into());
-    if let Some(ctx) = context {
-        dialog.set_context(ctx.into());
+        self.dialogs.borrow_mut().insert(id, dialog);
     }
-    dialog.set_message(message.into());
-    dialog.set_details(details.into());
 
-    let id = NEXT_DIALOG_ID.with(|c| {
-        let v = c.get();
-        c.set(v + 1);
-        v
-    });
-    let dialog_weak = dialog.as_weak();
-    dialog.on_close_requested(move || {
-        if let Some(d) = dialog_weak.upgrade() {
-            let _ = d.hide();
-        }
-        OPEN_ERROR_DIALOGS.with(|list| {
-            list.borrow_mut().remove(&id);
+    /// Queues `show_error` on the next iteration of the Slint event loop.
+    ///
+    /// Use this when the caller runs inside a Slint hook where spawning a
+    /// new window synchronously would reenter the event loop (e.g. inside a
+    /// rendering notifier callback). `Timer::single_shot` (rather than
+    /// `invoke_from_event_loop`) is used so the callback stays on the UI
+    /// thread and `Rc<DialogManager>` can be captured without `Send`.
+    pub fn show_error_deferred(
+        self: &Rc<Self>,
+        heading: String,
+        context: Option<String>,
+        message: String,
+        details: String,
+    ) {
+        let me = self.clone();
+        slint::Timer::single_shot(core::time::Duration::ZERO, move || {
+            me.show_error(&heading, context, message, details);
         });
-    });
-
-    if let Err(err) = dialog.show() {
-        eprintln!("Failed to show error dialog: {err}");
-        return;
     }
-    OPEN_ERROR_DIALOGS.with(|list| {
-        list.borrow_mut().insert(id, dialog);
-    });
 }
 
 pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
