@@ -88,6 +88,18 @@ struct MsaaTargets {
     depth_view: wgpu::TextureView,
 }
 
+// Double-buffered ring of destination color textures. `render` writes to one
+// texture while the `slint::Image` returned last frame (which wraps the
+// *other* texture) is still being sampled by Slint. Retaining both across
+// frames avoids the per-frame GPU-allocator churn of freshly creating a
+// RENDER_ATTACHMENT | TEXTURE_BINDING texture on every orbit tick.
+struct TargetPool {
+    width: u32,
+    height: u32,
+    textures: [wgpu::Texture; 2],
+    next: usize,
+}
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -96,6 +108,7 @@ pub struct Renderer {
     bind_group: wgpu::BindGroup,
     mesh: Option<MeshGpu>,
     msaa: Option<MsaaTargets>,
+    targets: Option<TargetPool>,
 }
 
 /// Vertical field of view in radians.
@@ -208,11 +221,14 @@ impl Renderer {
             bind_group,
             mesh: None,
             msaa: None,
+            targets: None,
         }
     }
 
     pub fn clear_scene(&mut self) {
         self.mesh = None;
+        self.msaa = None;
+        self.targets = None;
     }
 
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
@@ -294,6 +310,25 @@ impl Renderer {
         });
     }
 
+    fn ensure_targets(&mut self, width: u32, height: u32) {
+        let same = self
+            .targets
+            .as_ref()
+            .is_some_and(|t| t.width == width && t.height == height);
+        if same {
+            return;
+        }
+
+        let a = create_color_target(&self.device, width, height);
+        let b = create_color_target(&self.device, width, height);
+        self.targets = Some(TargetPool {
+            width,
+            height,
+            textures: [a, b],
+            next: 0,
+        });
+    }
+
     pub fn render(
         &mut self,
         camera: &OrbitCamera,
@@ -305,6 +340,7 @@ impl Renderer {
         }
 
         self.ensure_msaa(width, height);
+        self.ensure_targets(width, height);
         let msaa = self.msaa.as_ref().unwrap();
         let mesh = self.mesh.as_ref().unwrap();
 
@@ -323,20 +359,15 @@ impl Renderer {
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let target = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer color"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let target = {
+            let pool = self
+                .targets
+                .as_mut()
+                .expect("ensure_targets populated the pool");
+            let idx = pool.next;
+            pool.next = (idx + 1) % pool.textures.len();
+            pool.textures[idx].clone()
+        };
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = self
@@ -383,6 +414,23 @@ impl Renderer {
 
         Some(target)
     }
+}
+
+fn create_color_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("mesh-viewer color"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TEXTURE_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
 }
 
 /// CPU-only view of an uploaded mesh: flattened vertex/index buffers plus
