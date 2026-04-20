@@ -3,12 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { ComboBox, Palette } from "std-widgets.slint";
+import { ComboBox } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
-import { AppearanceSettings, ThemePreference } from "./appearance-settings.slint";
+
+export enum ThemePreference { System, Light, Dark }
 
 export component AppearancePreferences inherits PreferencesPage {
     title: @tr("PreferencesPage" => "UI & Theme");
+
+    in-out property <ThemePreference> current-theme: ThemePreference.System;
+    callback theme-selected(ThemePreference);
 
     // Order must match the `theme-for-index` / `index-for-theme` mappings
     // below; changing it requires updating both.
@@ -30,12 +34,6 @@ export component AppearancePreferences inherits PreferencesPage {
         return 0;
     }
 
-    function color-scheme-for-theme(t: ThemePreference) -> ColorScheme {
-        if (t == ThemePreference.Light) { return ColorScheme.light; }
-        if (t == ThemePreference.Dark) { return ColorScheme.dark; }
-        return ColorScheme.unknown;
-    }
-
     HorizontalLayout {
         spacing: 12px;
         alignment: start;
@@ -47,10 +45,10 @@ export component AppearancePreferences inherits PreferencesPage {
 
         ComboBox {
             model: root.theme-options;
-            current-index: root.index-for-theme(AppearanceSettings.theme);
+            current-index: root.index-for-theme(root.current-theme);
             selected(_value) => {
-                AppearanceSettings.theme = root.theme-for-index(self.current-index);
-                Palette.color-scheme = root.color-scheme-for-theme(AppearanceSettings.theme);
+                root.current-theme = root.theme-for-index(self.current-index);
+                root.theme-selected(root.current-theme);
             }
         }
     }

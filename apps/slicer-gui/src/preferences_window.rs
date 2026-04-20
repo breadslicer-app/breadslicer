@@ -5,9 +5,11 @@
 
 use slint::ComponentHandle;
 
-use crate::PreferencesWindow;
+use crate::{PreferencesWindow, ThemePreference};
 
-pub(crate) fn build_preferences_window() -> Result<PreferencesWindow, slint::PlatformError> {
+pub(crate) fn build_preferences_window(
+    on_theme_changed: impl Fn(ThemePreference) + 'static,
+) -> Result<PreferencesWindow, slint::PlatformError> {
     let prefs = PreferencesWindow::new()?;
 
     let prefs_weak = prefs.as_weak();
@@ -16,6 +18,8 @@ pub(crate) fn build_preferences_window() -> Result<PreferencesWindow, slint::Pla
             let _ = w.hide();
         }
     });
+
+    prefs.on_theme_changed(on_theme_changed);
 
     Ok(prefs)
 }

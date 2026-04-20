@@ -13,7 +13,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::about_window::build_about_window;
 use crate::preferences_window::build_preferences_window;
 use crate::viewport_controller::ViewportController;
-use crate::{AboutWindow, MainWindow, PreferencesWindow};
+use crate::{AboutWindow, MainWindow, PreferencesWindow, ThemePreference};
 
 /// Owns every piece of state that is app-wide (not tied to a single
 /// `MainWindow`):
@@ -34,6 +34,7 @@ pub(crate) struct AppState {
     preferences_window: RefCell<Option<PreferencesWindow>>,
     main_windows: RefCell<HashMap<u64, MainWindow>>,
     next_window_id: Cell<u64>,
+    current_theme: Cell<ThemePreference>,
 }
 
 impl AppState {
@@ -43,6 +44,7 @@ impl AppState {
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
+            current_theme: Cell::new(ThemePreference::System),
         })
     }
 
@@ -53,6 +55,7 @@ impl AppState {
     /// close-request handler are wired here.
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<(), Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        ui.set_theme(self.current_theme.get());
         let ctrl = Rc::new(ViewportController::new(&ui));
 
         crate::wiring::wire_main_window(&ui, ctrl)?;
@@ -132,14 +135,21 @@ impl AppState {
 
     /// Shows the app-wide Preferences window, creating it on first use and
     /// re-showing the same instance on subsequent calls.
-    fn show_preferences(&self) {
+    fn show_preferences(self: &Rc<Self>) {
         let mut slot = self.preferences_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
             let _ = existing.show();
             return;
         }
-        match build_preferences_window() {
+        let app_weak = Rc::downgrade(self);
+        let on_theme_changed = move |t| {
+            if let Some(app) = app_weak.upgrade() {
+                app.apply_theme(t);
+            }
+        };
+        match build_preferences_window(on_theme_changed) {
             Ok(prefs) => {
+                prefs.set_theme(self.current_theme.get());
                 if let Err(err) = prefs.show() {
                     eprintln!("Failed to show Preferences window: {err}");
                     return;
@@ -147,6 +157,18 @@ impl AppState {
                 *slot = Some(prefs);
             }
             Err(err) => eprintln!("Failed to create Preferences window: {err}"),
+        }
+    }
+
+    /// Records the new theme and pushes it to every live window so their
+    /// per-tree `Palette.color-scheme` bindings update in lock-step.
+    fn apply_theme(&self, new_theme: ThemePreference) {
+        self.current_theme.set(new_theme);
+        for w in self.main_windows.borrow().values() {
+            w.set_theme(new_theme);
+        }
+        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
+            prefs.set_theme(new_theme);
         }
     }
 }

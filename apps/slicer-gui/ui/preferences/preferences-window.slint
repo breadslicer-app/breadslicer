@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, HorizontalBox } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
 import { SideBar } from "../sidebar.slint";
-import { AppearancePreferences } from "./appearance.slint";
+import { AppearancePreferences, ThemePreference } from "./appearance.slint";
 import { _3DViewPreferences } from "./3dview.slint";
 
 export component PreferencesWindow inherits Window {
@@ -18,7 +18,16 @@ export component PreferencesWindow inherits Window {
 
     forward-focus: key-handler;
 
+    in-out property <ThemePreference> theme: ThemePreference.System;
     callback close-requested();
+    callback theme-changed(ThemePreference);
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
 
     key-handler := FocusScope {
         key-pressed(event) => {
@@ -38,7 +47,13 @@ export component PreferencesWindow inherits Window {
                 ];
             }
 
-            if(side-bar.current-item == 0) : AppearancePreferences {}
+            if(side-bar.current-item == 0) : AppearancePreferences {
+                current-theme: root.theme;
+                theme-selected(t) => {
+                    root.theme = t;
+                    root.theme-changed(t);
+                }
+            }
             if(side-bar.current-item == 1) : _3DViewPreferences {}
         }
     }

@@ -3,12 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { Palette } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer } from "./mesh-viewer.slint";
+import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 
-export { AboutWindow, AxisView, ErrorDialog, PreferencesWindow }
+export { AboutWindow, AxisView, ErrorDialog, PreferencesWindow, ThemePreference }
 
 export component MainWindow inherits Window {
     title: @tr("SoulCrafted Slicer");
@@ -22,6 +24,14 @@ export component MainWindow inherits Window {
     in property <image> mesh-rendering;
     in property <bool> loading: false;
     in property <bool> has-scene: false;
+    in property <ThemePreference> theme: ThemePreference.System;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
 
     callback open-file-requested();
     callback close-current-scene();
