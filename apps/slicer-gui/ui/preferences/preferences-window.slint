@@ -4,11 +4,12 @@
  */
 
 import { Button, HorizontalBox } from "std-widgets.slint";
-import { SideBar } from "./sidebar.slint";
+import { SideBar } from "../sidebar.slint";
+import { AppearancePreferences } from "./appearance.slint";
+import { _3DViewPreferences } from "./3dview.slint";
 
 export component PreferencesWindow inherits Window {
     title: @tr("Preferences");
-    icon: @image-url("../assets/images/soulcrafted.svg");
 
     min-width: 480px;
     min-height: 320px;
@@ -37,7 +38,8 @@ export component PreferencesWindow inherits Window {
                 ];
             }
 
-            // Preference panel here
+            if(side-bar.current-item == 0) : AppearancePreferences {}
+            if(side-bar.current-item == 1) : _3DViewPreferences {}
         }
     }
 }
