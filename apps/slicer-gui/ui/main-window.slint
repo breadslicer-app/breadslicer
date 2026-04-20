@@ -77,6 +77,28 @@ export component MainWindow inherits Window {
         }
 
         Menu {
+            title: @tr("MenuBar" => "Edit");
+            MenuItem {
+                title: @tr("MenuBar" => "Undo");
+                shortcut: @keys(Control + Z);
+                enabled: false;
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Redo");
+                shortcut: @keys(Control + Shift + Z);
+                enabled: false;
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Preferences");
+                shortcut: @keys(Control + Comma);
+            }
+        }
+
+        Menu {
             title: @tr("MenuBar" => "Help");
             MenuItem {
                 title: @tr("MenuBar" => "Documentation");
