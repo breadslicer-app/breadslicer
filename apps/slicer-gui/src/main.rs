@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod about_window;
+mod app_settings;
 mod app_state;
 mod camera;
 mod error_dialog;

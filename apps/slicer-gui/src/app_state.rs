@@ -11,6 +11,7 @@ use std::rc::Rc;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::about_window::build_about_window;
+use crate::app_settings::AppSettings;
 use crate::preferences_window::build_preferences_window;
 use crate::viewport_controller::ViewportController;
 use crate::{AboutWindow, MainWindow, PreferencesWindow, ThemePreference};
@@ -35,16 +36,20 @@ pub(crate) struct AppState {
     main_windows: RefCell<HashMap<u64, MainWindow>>,
     next_window_id: Cell<u64>,
     current_theme: Cell<ThemePreference>,
+    settings: RefCell<AppSettings>,
 }
 
 impl AppState {
     pub fn new() -> Rc<Self> {
+        let settings = AppSettings::load();
+        let theme = settings.theme();
         Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
-            current_theme: Cell::new(ThemePreference::System),
+            current_theme: Cell::new(theme),
+            settings: RefCell::new(settings),
         })
     }
 
@@ -160,10 +165,18 @@ impl AppState {
         }
     }
 
-    /// Records the new theme and pushes it to every live window so their
-    /// per-tree `Palette.color-scheme` bindings update in lock-step.
+    /// Records the new theme, persists it, and pushes it to every live
+    /// window so their per-tree `Palette.color-scheme` bindings update in
+    /// lock-step.
     fn apply_theme(&self, new_theme: ThemePreference) {
         self.current_theme.set(new_theme);
+        {
+            let mut settings = self.settings.borrow_mut();
+            settings.set_theme(new_theme);
+            if let Err(err) = settings.save() {
+                eprintln!("Failed to save settings: {err}");
+            }
+        }
         for w in self.main_windows.borrow().values() {
             w.set_theme(new_theme);
         }
