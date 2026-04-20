@@ -9,27 +9,39 @@ export component PreferencesWindow inherits Window {
     preferred-width: 480px;
     preferred-height: 320px;
 
+    forward-focus: key-handler;
+
     callback close-requested();
 
-    VerticalLayout {
-        padding: 20px;
-        spacing: 12px;
-        alignment: center;
-
-        Text {
-            text: @tr("Preferences" => "No preferences available yet.");
-            horizontal-alignment: center;
-            wrap: word-wrap;
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            }
+            reject
         }
 
-        HorizontalLayout {
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
             alignment: center;
-            padding-top: 8px;
 
-            Button {
-                text: @tr("Preferences" => "Close");
-                clicked => {
-                    root.close-requested();
+            Text {
+                text: @tr("Preferences" => "No preferences available yet.");
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                padding-top: 8px;
+
+                Button {
+                    text: @tr("Preferences" => "Close");
+                    clicked => {
+                        root.close-requested();
+                    }
                 }
             }
         }
