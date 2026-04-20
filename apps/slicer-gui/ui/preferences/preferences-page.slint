@@ -1,0 +1,20 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+export component PreferencesPage inherits VerticalLayout {
+    in property <string> title;
+
+    padding: 16px;
+    spacing: 12px;
+    alignment: start;
+
+    Text {
+        text: root.title;
+        font-size: 1.2rem;
+        font-weight: 700;
+    }
+
+    @children
+}

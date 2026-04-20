@@ -1,3 +1,57 @@
-export component AppearancePreferences inherits Rectangle {
-    //
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { ComboBox, Palette } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+import { AppearanceSettings, ThemePreference } from "./appearance-settings.slint";
+
+export component AppearancePreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "UI & Theme");
+
+    // Order must match the `theme-for-index` / `index-for-theme` mappings
+    // below; changing it requires updating both.
+    property <[string]> theme-options: [
+        @tr("AppearancePreferences" => "System"),
+        @tr("AppearancePreferences" => "Light"),
+        @tr("AppearancePreferences" => "Dark"),
+    ];
+
+    function theme-for-index(i: int) -> ThemePreference {
+        if (i == 1) { return ThemePreference.Light; }
+        if (i == 2) { return ThemePreference.Dark; }
+        return ThemePreference.System;
+    }
+
+    function index-for-theme(t: ThemePreference) -> int {
+        if (t == ThemePreference.Light) { return 1; }
+        if (t == ThemePreference.Dark) { return 2; }
+        return 0;
+    }
+
+    function color-scheme-for-theme(t: ThemePreference) -> ColorScheme {
+        if (t == ThemePreference.Light) { return ColorScheme.light; }
+        if (t == ThemePreference.Dark) { return ColorScheme.dark; }
+        return ColorScheme.unknown;
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Theme");
+            vertical-alignment: center;
+        }
+
+        ComboBox {
+            model: root.theme-options;
+            current-index: root.index-for-theme(AppearanceSettings.theme);
+            selected(_value) => {
+                AppearanceSettings.theme = root.theme-for-index(self.current-index);
+                Palette.color-scheme = root.color-scheme-for-theme(AppearanceSettings.theme);
+            }
+        }
+    }
 }

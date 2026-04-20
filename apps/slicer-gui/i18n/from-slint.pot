@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-04-20 15:55+0000\n"
+"POT-Creation-Date: 2026-04-20 17:04+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -42,24 +42,54 @@ msgctxt "About"
 msgid "Close"
 msgstr ""
 
-#: ui/preferences-window.slint:10
+#: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences-window.slint:33
+#: ui/preferences/preferences-window.slint:34
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences-window.slint:35
+#: ui/preferences/preferences-window.slint:36
 msgctxt "PreferencesMenu"
-msgid "Appearance"
+msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences-window.slint:36
+#: ui/preferences/preferences-window.slint:37
 msgctxt "PreferencesMenu"
 msgid "3D View"
+msgstr ""
+
+#: ui/preferences/3dview.slint:9
+msgctxt "PreferencesPage"
+msgid "3D View"
+msgstr ""
+
+#: ui/preferences/appearance.slint:11
+msgctxt "PreferencesPage"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:16
+msgctxt "AppearancePreferences"
+msgid "System"
+msgstr ""
+
+#: ui/preferences/appearance.slint:17
+msgctxt "AppearancePreferences"
+msgid "Light"
+msgstr ""
+
+#: ui/preferences/appearance.slint:18
+msgctxt "AppearancePreferences"
+msgid "Dark"
+msgstr ""
+
+#: ui/preferences/appearance.slint:44
+msgctxt "AppearancePreferences"
+msgid "Theme"
 msgstr ""
 
 #: ui/error-dialog.slint:9
