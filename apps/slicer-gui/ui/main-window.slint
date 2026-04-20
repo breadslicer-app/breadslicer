@@ -1,8 +1,9 @@
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer } from "mesh-viewer.slint";
+import { PreferencesWindow } from "preferences-window.slint";
 
-export { AboutWindow, AxisView, ErrorDialog }
+export { AboutWindow, AxisView, ErrorDialog, PreferencesWindow }
 
 export component MainWindow inherits Window {
     title: @tr("SoulCrafted Slicer");
@@ -21,6 +22,7 @@ export component MainWindow inherits Window {
     callback close-current-scene();
     callback scene-load-finished();
     callback show-about-requested();
+    callback show-preferences-requested();
     callback new-window-requested();
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
@@ -95,6 +97,9 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Preferences");
                 shortcut: @keys(Control + Comma);
+                activated => {
+                    root.show-preferences-requested();
+                }
             }
         }
 

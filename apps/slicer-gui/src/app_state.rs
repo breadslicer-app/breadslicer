@@ -11,13 +11,16 @@ use std::rc::Rc;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::about_window::build_about_window;
+use crate::preferences_window::build_preferences_window;
 use crate::viewport_controller::ViewportController;
-use crate::{AboutWindow, MainWindow};
+use crate::{AboutWindow, MainWindow, PreferencesWindow};
 
 /// Owns every piece of state that is app-wide (not tied to a single
 /// `MainWindow`):
 ///
 /// - a lazily-created, app-wide `AboutWindow` shared across every main window;
+/// - a lazily-created, app-wide `PreferencesWindow` shared across every main
+///   window;
 /// - strong handles to each live `MainWindow`, so they aren't dropped while
 ///   the event loop is running.
 ///
@@ -28,6 +31,7 @@ use crate::{AboutWindow, MainWindow};
 /// a strong-reference cycle.
 pub(crate) struct AppState {
     about_window: RefCell<Option<AboutWindow>>,
+    preferences_window: RefCell<Option<PreferencesWindow>>,
     main_windows: RefCell<HashMap<u64, MainWindow>>,
     next_window_id: Cell<u64>,
 }
@@ -36,6 +40,7 @@ impl AppState {
     pub fn new() -> Rc<Self> {
         Rc::new(Self {
             about_window: RefCell::new(None),
+            preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
         })
@@ -86,6 +91,14 @@ impl AppState {
         }
         {
             let app = Rc::downgrade(self);
+            ui.on_show_preferences_requested(move || {
+                if let Some(app) = app.upgrade() {
+                    app.show_preferences();
+                }
+            });
+        }
+        {
+            let app = Rc::downgrade(self);
             ui.on_new_window_requested(move || {
                 let Some(app) = app.upgrade() else {
                     return;
@@ -114,6 +127,26 @@ impl AppState {
                 *slot = Some(about);
             }
             Err(err) => eprintln!("Failed to create About window: {err}"),
+        }
+    }
+
+    /// Shows the app-wide Preferences window, creating it on first use and
+    /// re-showing the same instance on subsequent calls.
+    fn show_preferences(&self) {
+        let mut slot = self.preferences_window.borrow_mut();
+        if let Some(existing) = slot.as_ref() {
+            let _ = existing.show();
+            return;
+        }
+        match build_preferences_window() {
+            Ok(prefs) => {
+                if let Err(err) = prefs.show() {
+                    eprintln!("Failed to show Preferences window: {err}");
+                    return;
+                }
+                *slot = Some(prefs);
+            }
+            Err(err) => eprintln!("Failed to create Preferences window: {err}"),
         }
     }
 }

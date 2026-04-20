@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-04-20 11:43+0000\n"
+"POT-Creation-Date: 2026-04-20 11:50+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -42,6 +42,21 @@ msgctxt "About"
 msgid "Close"
 msgstr ""
 
+#: ui/preferences-window.slint:4
+msgctxt "PreferencesWindow"
+msgid "Preferences"
+msgstr ""
+
+#: ui/preferences-window.slint:20
+msgctxt "Preferences"
+msgid "No preferences available yet."
+msgstr ""
+
+#: ui/preferences-window.slint:30
+msgctxt "Preferences"
+msgid "Close"
+msgstr ""
+
 #: ui/error-dialog.slint:4
 msgctxt "ErrorDialog"
 msgid "Error"
@@ -74,97 +89,97 @@ msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:8
+#: ui/main-window.slint:9
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:34
+#: ui/main-window.slint:36
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:37
+#: ui/main-window.slint:39
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:47
+#: ui/main-window.slint:49
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:56
+#: ui/main-window.slint:58
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:67
+#: ui/main-window.slint:69
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:73
+#: ui/main-window.slint:75
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:80
+#: ui/main-window.slint:82
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:82
+#: ui/main-window.slint:84
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:88
+#: ui/main-window.slint:90
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:96
+#: ui/main-window.slint:98
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:102
+#: ui/main-window.slint:107
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:104
+#: ui/main-window.slint:109
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:109
+#: ui/main-window.slint:114
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:116
+#: ui/main-window.slint:121
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:123
+#: ui/main-window.slint:128
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:130
+#: ui/main-window.slint:135
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:137
+#: ui/main-window.slint:142
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:145
+#: ui/main-window.slint:150
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""

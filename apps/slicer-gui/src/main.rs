@@ -15,6 +15,7 @@ mod camera;
 mod error_dialog;
 mod i18n;
 mod mesh_render;
+mod preferences_window;
 mod viewport_controller;
 mod wiring;
 
