@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-18 10:47+0000\n"
+"POT-Creation-Date: 2026-04-20 17:04+0000\n"
 "PO-Revision-Date: 2026-04-17 09:57+0000\n"
 "Last-Translator: bittin <bittin@noreply.codeberg.org>\n"
 "Language-Team: Swedish <https://translate.codeberg.org/projects/soulcrafted-"
@@ -14,12 +14,12 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 5.17\n"
 
-#: ui/about-window.slint:4
+#: ui/about-window.slint:9
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr "Om SoulCrafted Slicer"
 
-#: ui/about-window.slint:40
+#: ui/about-window.slint:45
 #, fuzzy
 #| msgctxt "MainWindow"
 #| msgid "SoulCrafted Slicer"
@@ -27,74 +27,124 @@ msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/about-window.slint:47
+#: ui/about-window.slint:52
 msgctxt "About"
 msgid "Version {0}"
 msgstr ""
 
-#: ui/about-window.slint:53
+#: ui/about-window.slint:58
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr ""
 
-#: ui/about-window.slint:59
+#: ui/about-window.slint:64
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr ""
 
-#: ui/about-window.slint:69
+#: ui/about-window.slint:74
 msgctxt "About"
 msgid "Close"
 msgstr ""
 
-#: ui/error-dialog.slint:4
+#: ui/preferences/preferences-window.slint:12
+msgctxt "PreferencesWindow"
+msgid "Preferences"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:34
+msgctxt "PreferencesMenu"
+msgid "Preferences Sections"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:36
+msgctxt "PreferencesMenu"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:37
+msgctxt "PreferencesMenu"
+msgid "3D View"
+msgstr ""
+
+#: ui/preferences/3dview.slint:9
+msgctxt "PreferencesPage"
+msgid "3D View"
+msgstr ""
+
+#: ui/preferences/appearance.slint:11
+msgctxt "PreferencesPage"
+msgid "UI & Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:16
+msgctxt "AppearancePreferences"
+msgid "System"
+msgstr ""
+
+#: ui/preferences/appearance.slint:17
+msgctxt "AppearancePreferences"
+msgid "Light"
+msgstr ""
+
+#: ui/preferences/appearance.slint:18
+msgctxt "AppearancePreferences"
+msgid "Dark"
+msgstr ""
+
+#: ui/preferences/appearance.slint:44
+msgctxt "AppearancePreferences"
+msgid "Theme"
+msgstr ""
+
+#: ui/error-dialog.slint:9
 msgctxt "ErrorDialog"
 msgid "Error"
 msgstr ""
 
-#: ui/error-dialog.slint:7
+#: ui/error-dialog.slint:12
 msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr ""
 
-#: ui/error-dialog.slint:68
+#: ui/error-dialog.slint:73
 msgctxt "ErrorDialog"
 msgid "Warning"
 msgstr ""
 
 #. runs automatically.
-#: ui/error-dialog.slint:110
+#: ui/error-dialog.slint:115
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
 msgstr ""
 
 #. runs automatically.
-#: ui/error-dialog.slint:110
+#: ui/error-dialog.slint:115
 msgctxt "ErrorDialog"
 msgid "Show technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:137
+#: ui/error-dialog.slint:142
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:8
+#: ui/main-window.slint:14
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:33
+#: ui/main-window.slint:41
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Fil"
 
-#: ui/main-window.slint:36
+#: ui/main-window.slint:44
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:46
+#: ui/main-window.slint:54
 #, fuzzy
 #| msgctxt "MenuBar"
 #| msgid "Open"
@@ -102,17 +152,17 @@ msgctxt "MenuBar"
 msgid "Open…"
 msgstr "Öppna"
 
-#: ui/main-window.slint:55
+#: ui/main-window.slint:63
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:65
+#: ui/main-window.slint:74
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Spara"
 
-#: ui/main-window.slint:71
+#: ui/main-window.slint:80
 #, fuzzy
 #| msgctxt "MenuBar"
 #| msgid "Save As"
@@ -120,57 +170,77 @@ msgctxt "MenuBar"
 msgid "Save As…"
 msgstr "Spara som"
 
-#: ui/main-window.slint:78
+#: ui/main-window.slint:87
+msgctxt "MenuBar"
+msgid "Edit"
+msgstr ""
+
+#: ui/main-window.slint:89
+msgctxt "MenuBar"
+msgid "Undo"
+msgstr ""
+
+#: ui/main-window.slint:95
+msgctxt "MenuBar"
+msgid "Redo"
+msgstr ""
+
+#: ui/main-window.slint:103
+msgctxt "MenuBar"
+msgid "Preferences"
+msgstr ""
+
+#: ui/main-window.slint:112
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Hjälp"
 
-#: ui/main-window.slint:80
+#: ui/main-window.slint:114
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Dokumentation"
 
-#: ui/main-window.slint:85
+#: ui/main-window.slint:119
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Visa versionsinformation"
 
-#: ui/main-window.slint:92
+#: ui/main-window.slint:126
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Rapportera problem"
 
-#: ui/main-window.slint:99
+#: ui/main-window.slint:133
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Kontrollera efter uppdateringar…"
 
-#: ui/main-window.slint:106
+#: ui/main-window.slint:140
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Om"
 
-#: ui/main-window.slint:113
+#: ui/main-window.slint:147
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Visa licens"
 
-#: ui/main-window.slint:121
+#: ui/main-window.slint:155
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/mesh-viewer.slint:30
+#: ui/mesh-viewer.slint:35
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr ""
 
-#: ui/mesh-viewer.slint:31
+#: ui/mesh-viewer.slint:36
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr ""
 
-#: ui/mesh-viewer.slint:32
+#: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Shift with right-click drag, "
