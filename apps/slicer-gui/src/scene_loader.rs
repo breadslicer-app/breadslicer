@@ -73,6 +73,25 @@ impl SceneLoader {
         }
     }
 
+    /// Constructor for pure-state unit tests. The stored `Weak` is
+    /// dangling, so `begin_load` / `end_load` skip their UI pushes and the
+    /// FSM can be exercised without a Slint backend or a live
+    /// `MainWindow`. Tests must avoid paths that surface a dialog
+    /// (`take_finished_load` Err branch, `note_upload_failure` on the
+    /// 0 → 1 transition), since the `DialogManager` there calls into
+    /// Slint component construction and requires an event loop.
+    #[cfg(test)]
+    pub(crate) fn new_for_test(dialogs: Rc<DialogManager>) -> Self {
+        Self {
+            ui: slint::Weak::default(),
+            dialogs,
+            load_gen: Cell::new(0),
+            load_slot: Arc::new(Mutex::new(None)),
+            inflight: Cell::new(0),
+            upload_failures: Cell::new(0),
+        }
+    }
+
     // Exposed so the file-loader worker thread (which can't hold an Rc) can
     // deposit results and tag them with a generation stamp.
     pub fn load_slot(&self) -> LoadSlot {
@@ -246,5 +265,135 @@ fn describe_obj_warning(warning: &LoadObjWarning) -> String {
                 "an unnamed object shares global vertex indices with previously loaded objects: {shared_indices:?}"
             ),
         },
+    }
+}
+
+#[cfg(test)]
+mod scene_loader_tests {
+    use super::*;
+
+    use sc_mesh_core::scene::Scene;
+    use sc_mesh_formats::LoadedMesh;
+
+    fn loader() -> SceneLoader {
+        SceneLoader::new_for_test(DialogManager::new())
+    }
+
+    fn deposit(loader: &SceneLoader, stamp: u64, result: anyhow::Result<LoadedMesh>) {
+        *loader.load_slot().lock().unwrap() = Some((stamp, PathBuf::from("/tmp/fake.obj"), result));
+    }
+
+    fn empty_loaded_mesh() -> LoadedMesh {
+        LoadedMesh {
+            scene: Scene::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn next_load_stamp_advances_monotonically() {
+        let loader = loader();
+        let s1 = loader.next_load_stamp();
+        let s2 = loader.next_load_stamp();
+        let s3 = loader.next_load_stamp();
+        assert_eq!(s2, s1.wrapping_add(1));
+        assert_eq!(s3, s2.wrapping_add(1));
+    }
+
+    #[test]
+    fn begin_load_rejects_while_inflight() {
+        let loader = loader();
+        assert!(loader.begin_load());
+        assert!(
+            !loader.begin_load(),
+            "second begin_load must fail while the first is in flight"
+        );
+    }
+
+    #[test]
+    fn end_load_reopens_the_gate() {
+        let loader = loader();
+        assert!(loader.begin_load());
+        loader.end_load();
+        assert!(
+            loader.begin_load(),
+            "after end_load, a fresh begin_load must succeed"
+        );
+    }
+
+    #[test]
+    fn invalidate_and_clear_advances_generation() {
+        let loader = loader();
+        let before = loader.next_load_stamp();
+        loader.invalidate_and_clear();
+        let after = loader.next_load_stamp();
+        // invalidate_and_clear inserts an extra bump between the two
+        // next_load_stamp calls.
+        assert_eq!(after, before.wrapping_add(2));
+    }
+
+    #[test]
+    fn invalidate_and_clear_drops_deposited_result() {
+        let loader = loader();
+        let stamp = loader.next_load_stamp();
+        deposit(&loader, stamp, Ok(empty_loaded_mesh()));
+
+        loader.invalidate_and_clear();
+
+        assert!(
+            loader.load_slot().lock().unwrap().is_none(),
+            "invalidate_and_clear must drop any pending deposit"
+        );
+    }
+
+    #[test]
+    fn take_finished_load_on_empty_slot_returns_none_and_ends_load() {
+        let loader = loader();
+        assert!(loader.begin_load());
+
+        assert!(loader.take_finished_load().is_none());
+
+        // A follow-up begin_load must succeed, proving take_finished_load
+        // called end_load even when the slot was empty.
+        assert!(
+            loader.begin_load(),
+            "take_finished_load on an empty slot must still decrement inflight"
+        );
+    }
+
+    #[test]
+    fn take_finished_load_drops_stale_stamped_result() {
+        let loader = loader();
+        assert!(loader.begin_load());
+        let stale_stamp = loader.next_load_stamp();
+
+        // User closes the scene while the worker is still running.
+        loader.invalidate_and_clear();
+        // Worker finishes and deposits against the old stamp.
+        deposit(&loader, stale_stamp, Ok(empty_loaded_mesh()));
+
+        assert!(
+            loader.take_finished_load().is_none(),
+            "a stale-stamped deposit must be dropped"
+        );
+        assert!(
+            loader.begin_load(),
+            "inflight must have been decremented even when the deposit was stale"
+        );
+    }
+
+    #[test]
+    fn take_finished_load_returns_scene_for_matching_stamp() {
+        let loader = loader();
+        assert!(loader.begin_load());
+        let stamp = loader.next_load_stamp();
+
+        deposit(&loader, stamp, Ok(empty_loaded_mesh()));
+
+        assert!(loader.take_finished_load().is_some());
+        assert!(
+            loader.begin_load(),
+            "successful take_finished_load must also decrement inflight"
+        );
     }
 }
