@@ -16,6 +16,7 @@ mod camera;
 mod error_dialog;
 mod i18n;
 mod language;
+mod mesh_loader;
 mod mesh_render;
 mod preferences_window;
 mod scene_loader;

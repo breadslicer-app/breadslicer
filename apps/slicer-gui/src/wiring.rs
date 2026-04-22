@@ -8,19 +8,16 @@
 //! controller itself so neither gets polluted with `rfd` / file-dialog /
 //! worker-thread plumbing.
 
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::i18n::ctr;
+use crate::mesh_loader;
+use crate::scene_loader::LoadTicket;
 use crate::viewport_controller::{RESIZE_SETTLE, ViewportController};
-
-// Reject mesh files larger than this before spawning the loader worker, so
-// the UI doesn't sit in `loading=true` for hours (or OOM) on an accidental
-// huge pick. 2 GiB is already well beyond anything a resin printer slices.
-const MAX_MESH_FILE_SIZE_MIB: u64 = 2048;
-const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
 
 /// Installs every per-window Slint callback (rendering notifier, input
 /// handlers, file open/close, resize debounce). Called once per
@@ -114,88 +111,41 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let Some(ticket) = loader.begin_load() else {
             return;
         };
-
-        let dialog = rfd::AsyncFileDialog::new()
-            .add_filter(
-                ctr!("FileDialog", "All supported files").to_string(),
-                &["obj", "stl", "stla", "stlb"],
-            )
-            .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
-            .add_filter(
-                ctr!("FileDialog", "STL files").to_string(),
-                &["stl", "stla", "stlb"],
-            )
-            .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
-
-        if let Err(err) = slint::spawn_local(async move {
-            let Some(handle) = dialog.pick_file().await else {
-                // User cancelled: `ticket` drops here and releases the gate.
-                return;
-            };
-            let path = handle.path().to_path_buf();
-
-            // Pre-check the file size. If it exceeds the ceiling, deposit a
-            // synthetic error so the UI finish-handler path surfaces it like
-            // any other load failure. `metadata()` failures fall through to
-            // the worker, which surfaces a more specific error when it opens
-            // the file.
-            if let Ok(meta) = std::fs::metadata(&path)
-                && meta.len() > MAX_MESH_FILE_SIZE_BYTES
-            {
-                let size_mib = meta.len() / (1024 * 1024);
-                let message = ctr!(
-                    "ErrorDialog",
-                    "File is {} MiB, which exceeds the {} MiB limit.",
-                    size_mib,
-                    MAX_MESH_FILE_SIZE_MIB
-                );
-                ticket.deposit(path, Err(anyhow::Error::msg(message.to_string())));
-                return;
-            }
-
-            std::thread::spawn(move || {
-                // Catch parser panics and convert them to an `Err` result.
-                // `AssertUnwindSafe` is sound because the parser returns an
-                // owned `Result<LoadedMesh, anyhow::Error>`, so a mid-parse
-                // panic drops any partial state on the stack. A panic
-                // elsewhere in this closure (post-parse, pre-deposit) unwinds
-                // out of the thread; `ticket` drops on the worker thread, its
-                // `Drop` decrements inflight and schedules `loading = false`
-                // via the event loop, so the UI still recovers.
-                //
-                // If `load_mesh_from_path` is ever changed to return a type
-                // borrowing from a memory-mapped region, revisit this — the
-                // assertion would then hide potential UB.
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    sc_mesh_formats::load_mesh_from_path(&path, None)
-                }))
-                .unwrap_or_else(|payload| {
-                    let msg = panic_message(&payload);
-                    Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-                });
-                ticket.deposit(path, result);
-            });
-        }) {
+        if let Err(err) = slint::spawn_local(run_open_file_flow(ticket)) {
             eprintln!("Failed to spawn file dialog task: {err}");
-            // `ticket` was moved into the async block; when `spawn_local`
-            // returns `Err`, the block is dropped and the ticket with it,
-            // releasing the gate.
+            // `ticket` was moved into the future; when `spawn_local`
+            // returns `Err`, the future is dropped and the ticket with
+            // it, releasing the gate.
         }
     });
 }
 
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else if let Some(e) =
-        payload.downcast_ref::<Box<dyn std::error::Error + Send + Sync + 'static>>()
-    {
-        e.to_string()
-    } else if let Some(e) = payload.downcast_ref::<Box<dyn std::error::Error + Send + 'static>>() {
-        e.to_string()
-    } else {
-        "unknown panic payload".to_string()
+/// Orchestrates one "Open…" command: show the dialog, precheck the
+/// file, hand the load off to the background pipeline. Each step
+/// drops the ticket on its bailout path and the gate releases itself.
+async fn run_open_file_flow(ticket: LoadTicket) {
+    let Some(path) = pick_mesh_file().await else {
+        // User cancelled the dialog.
+        return;
+    };
+    if let Err(err) = mesh_loader::check_file_size(&path) {
+        ticket.deposit(path, Err(err));
+        return;
     }
+    mesh_loader::spawn_load(ticket, path);
+}
+
+async fn pick_mesh_file() -> Option<PathBuf> {
+    let dialog = rfd::AsyncFileDialog::new()
+        .add_filter(
+            ctr!("FileDialog", "All supported files").to_string(),
+            &["obj", "stl", "stla", "stlb"],
+        )
+        .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
+        .add_filter(
+            ctr!("FileDialog", "STL files").to_string(),
+            &["stl", "stla", "stlb"],
+        )
+        .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
+    dialog.pick_file().await.map(|h| h.path().to_path_buf())
 }
