@@ -104,6 +104,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         ui.on_scene_load_finished(move || ctrl.on_scene_load_finished());
     }
 
+    let loader = ctrl.loader();
     let ui_weak = ui.as_weak();
     ui.on_open_file_requested(move || {
         // The Slint event loop keeps processing callbacks while the native
@@ -111,7 +112,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         // doesn't block that. Gate in Rust via `begin_load` *before* touching
         // the dialog, so `loading` flips immediately (not after pick_file
         // awaits) and the in-flight counter is bumped atomically with it.
-        if !ctrl.begin_load() {
+        if !loader.begin_load() {
             return;
         }
 
@@ -127,18 +128,18 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
             )
             .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
 
-        let ctrl_async = ctrl.clone();
+        let loader_async = loader.clone();
         let ui_weak_inner = ui_weak.clone();
         if let Err(err) = slint::spawn_local(async move {
             let Some(handle) = dialog.pick_file().await else {
                 // User cancelled the dialog: release the gate.
-                ctrl_async.end_load();
+                loader_async.end_load();
                 return;
             };
             let path = handle.path().to_path_buf();
 
-            let my_stamp = ctrl_async.next_load_stamp();
-            let slot = ctrl_async.load_slot();
+            let my_stamp = loader_async.next_load_stamp();
+            let slot = loader_async.load_slot();
 
             // Pre-check the file size. If it exceeds the ceiling, deposit an
             // error into the slot and trigger the same finish-handler path as
@@ -208,7 +209,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
             });
         }) {
             eprintln!("Failed to spawn file dialog task: {err}");
-            ctrl.end_load();
+            loader.end_load();
         }
     });
 }

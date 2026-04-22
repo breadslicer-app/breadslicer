@@ -18,6 +18,7 @@ mod i18n;
 mod language;
 mod mesh_render;
 mod preferences_window;
+mod scene_loader;
 mod viewport_controller;
 mod wiring;
 

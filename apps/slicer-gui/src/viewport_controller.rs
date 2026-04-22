@@ -4,23 +4,18 @@
  */
 
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 use sc_mesh_core::scene::Scene;
-use sc_mesh_formats::LoadedMesh;
-use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
 use crate::MainWindow;
 use crate::camera::{AxisView, OrbitCamera};
-use crate::error_dialog::{DialogManager, format_anyhow_chain};
+use crate::error_dialog::DialogManager;
 use crate::i18n::ctr;
 use crate::mesh_render::{Renderer, default_fov_y};
-
-pub type LoadSlot = Arc<Mutex<Option<(u64, PathBuf, anyhow::Result<LoadedMesh>)>>>;
+use crate::scene_loader::SceneLoader;
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -33,25 +28,12 @@ pub struct ViewportController {
     viewport: Cell<(f32, f32)>,
     dirty: Cell<bool>,
     needs_upload: Cell<bool>,
-    load_gen: Cell<u64>,
-    load_slot: LoadSlot,
-    // Number of load operations that have begun but not yet called
-    // `end_load`. `loading` on the UI stays true while this is > 0, so a
-    // stale worker that finishes after a Close cannot prematurely re-enable
-    // Open (the case behind B1). In practice the count is always 0 or 1,
-    // because the open gate rejects a new load while any is in flight.
-    inflight: Cell<u32>,
+    loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
     // render target size up to the next `RESIZE_BUCKET` multiple so drag
     // resizes don't churn the MSAA/target allocations on every pointer move.
     resizing: Cell<bool>,
-    // Consecutive upload failures for the currently-loaded scene. `needs_upload`
-    // stays true after a failure (so a new renderer or a fresh scene can still
-    // drive a retry); this counter is what gates dialog-spam — the error dialog
-    // only fires on the transition from 0 → 1 failures. Reset on successful
-    // upload, scene load/close, and on `RenderingSetup`.
-    upload_failures: Cell<u32>,
     dialogs: Rc<DialogManager>,
 }
 
@@ -68,6 +50,7 @@ pub(crate) const RESIZE_SETTLE: core::time::Duration = core::time::Duration::fro
 
 impl ViewportController {
     pub fn new(ui: &MainWindow) -> Self {
+        let dialogs = DialogManager::new();
         Self {
             ui: ui.as_weak(),
             renderer: RefCell::new(None),
@@ -76,50 +59,17 @@ impl ViewportController {
             viewport: Cell::new((0.0, 0.0)),
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
-            load_gen: Cell::new(0),
-            load_slot: Arc::new(Mutex::new(None)),
-            inflight: Cell::new(0),
+            loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
-            upload_failures: Cell::new(0),
-            dialogs: DialogManager::new(),
+            dialogs,
         }
     }
 
-    // Exposed so the file-loader worker thread (which can't hold an Rc) can
-    // deposit results and tag them with a generation stamp.
-    pub fn load_slot(&self) -> LoadSlot {
-        self.load_slot.clone()
-    }
-
-    pub fn next_load_stamp(&self) -> u64 {
-        let stamp = self.load_gen.get().wrapping_add(1);
-        self.load_gen.set(stamp);
-        stamp
-    }
-
-    /// Starts a new load. Returns `false` if one is already in flight and
-    /// the caller must abort. Pair every successful call with exactly one
-    /// `end_load` (invoked from `on_scene_load_finished`, or manually on
-    /// paths that bail before a worker gets spawned).
-    pub fn begin_load(&self) -> bool {
-        if self.inflight.get() > 0 {
-            return false;
-        }
-        self.inflight.set(self.inflight.get() + 1);
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_loading(true);
-        }
-        true
-    }
-
-    pub fn end_load(&self) {
-        let remaining = self.inflight.get().saturating_sub(1);
-        self.inflight.set(remaining);
-        if remaining == 0
-            && let Some(ui) = self.ui.upgrade()
-        {
-            ui.set_loading(false);
-        }
+    /// Access to the loader FSM. `wiring.rs` drives the async file-load
+    /// handshake (begin/end, stamp, slot) against the loader directly
+    /// rather than through delegating methods on the controller.
+    pub fn loader(&self) -> Rc<SceneLoader> {
+        self.loader.clone()
     }
 
     fn request_redraw(&self) {
@@ -195,19 +145,10 @@ impl ViewportController {
     }
 
     pub fn on_close_scene(&self) {
-        // Invalidate any in-flight load so its result is dropped on arrival.
-        self.load_gen.set(self.load_gen.get().wrapping_add(1));
-        // Drop any already-deposited result now rather than waiting for the
-        // queued `scene_load_finished` handler to drain it. Frees the
-        // `LoadedMesh` (which can be large) immediately.
-        *self
-            .load_slot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.loader.invalidate_and_clear();
         *self.scene.borrow_mut() = None;
         *self.camera.borrow_mut() = None;
         self.needs_upload.set(false);
-        self.upload_failures.set(0);
         self.dirty.set(false);
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.clear_scene();
@@ -219,49 +160,26 @@ impl ViewportController {
     }
 
     pub fn on_scene_load_finished(&self) {
-        let taken = self
-            .load_slot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        self.end_load();
-        let Some((stamp, path, result)) = taken else {
+        let Some(scene) = self.loader.take_finished_load() else {
             return;
         };
-        if stamp != self.load_gen.get() {
-            // The user cancelled (Close) or something else bumped the
-            // generation while this worker was parsing. Drop the result.
-            return;
+        // Reset the camera — it will be reframed from the mesh AABB
+        // computed during `upload_scene`, so we don't re-scan the
+        // scene's vertices here. On upload failure (empty scene /
+        // dangling resource index) the camera stays `None`, no frame
+        // is rendered, and the error dialog surfaces the cause.
+        *self.camera.borrow_mut() = None;
+        *self.scene.borrow_mut() = Some(scene);
+        self.needs_upload.set(true);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_has_scene(true);
         }
-        match result {
-            Ok(LoadedMesh { scene, warnings }) => {
-                log_load_warnings(&path, &warnings);
-                // Reset the camera — it will be reframed from the mesh AABB
-                // computed during `upload_scene`, so we don't re-scan the
-                // scene's vertices here. On upload failure (empty scene /
-                // dangling resource index) the camera stays `None`, no frame
-                // is rendered, and the error dialog surfaces the cause.
-                *self.camera.borrow_mut() = None;
-                *self.scene.borrow_mut() = Some(scene);
-                self.needs_upload.set(true);
-                self.upload_failures.set(0);
-                if let Some(ui) = self.ui.upgrade() {
-                    ui.set_has_scene(true);
-                }
-                self.mark_dirty();
-            }
-            Err(err) => self.dialogs.show_error(
-                ctr!("ErrorDialog", "Failed to open 3D model").as_str(),
-                Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-                err.to_string(),
-                format_anyhow_chain(&err),
-            ),
-        }
+        self.mark_dirty();
     }
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
         *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
-        self.upload_failures.set(0);
+        self.loader.reset_upload_failures();
         if self.scene.borrow().is_some() {
             self.needs_upload.set(true);
             self.request_redraw();
@@ -289,7 +207,7 @@ impl ViewportController {
                 match renderer.upload_scene(scene_ref) {
                     Ok(()) => {
                         self.needs_upload.set(false);
-                        self.upload_failures.set(0);
+                        self.loader.note_upload_success();
                         self.dirty.set(true);
                         // Frame the camera off the AABB the upload just
                         // computed. Skipped if a camera already exists
@@ -307,27 +225,10 @@ impl ViewportController {
                     Err(err) => {
                         // Leave `needs_upload = true` so the flag continues
                         // to represent "upload owed" — a subsequent renderer
-                        // setup or scene reload (both of which reset
-                        // `upload_failures`) will drive a retry without
-                        // relying on coincidental side effects. The counter
-                        // gates dialog-spam: the error fires only on the
-                        // 0 → 1 transition.
-                        let prior = self.upload_failures.get();
-                        self.upload_failures.set(prior.saturating_add(1));
-                        if prior == 0 {
-                            self.dialogs.show_error_deferred(
-                                ctr!("ErrorDialog", "Failed to load the 3D model").to_string(),
-                                Some(
-                                    ctr!(
-                                        "ErrorDialog",
-                                        "The mesh could not be prepared for rendering."
-                                    )
-                                    .to_string(),
-                                ),
-                                err.to_string(),
-                                format_anyhow_chain(&err),
-                            );
-                        }
+                        // setup or scene reload (both of which reset the
+                        // loader's failure counter) will drive a retry
+                        // without relying on coincidental side effects.
+                        self.loader.note_upload_failure(&err);
                         return;
                     }
                 }
@@ -385,55 +286,6 @@ impl ViewportController {
                 format!("{err:?}"),
             ),
         }
-    }
-}
-
-// Load-time warnings (currently OBJ-only) are surfaced to stderr until the
-// UI grows a place to show them.
-fn log_load_warnings(path: &std::path::Path, warnings: &[LoadMeshWarning]) {
-    for warning in warnings {
-        match warning {
-            LoadMeshWarning::Obj(w) => {
-                eprintln!("WARNING [{}]: {}", path.display(), describe_obj_warning(w));
-            }
-        }
-    }
-}
-
-fn describe_obj_warning(warning: &LoadObjWarning) -> String {
-    match warning {
-        LoadObjWarning::NoVertices => "OBJ file has no vertices".to_string(),
-        LoadObjWarning::NoFaces => "OBJ file has no faces".to_string(),
-        LoadObjWarning::SkippedTextureCoordinates { line } => {
-            format!("line {line}: skipped texture coordinates")
-        }
-        LoadObjWarning::SkippedVertexNormal { line } => {
-            format!("line {line}: skipped vertex normal")
-        }
-        LoadObjWarning::SkippedGroup { line, name } => {
-            format!("line {line}: skipped group '{name}'")
-        }
-        LoadObjWarning::SkippedSmoothingGroup { line } => {
-            format!("line {line}: skipped smoothing group")
-        }
-        LoadObjWarning::SkippedMaterialReference { line, material } => {
-            format!("line {line}: skipped material reference '{material}'")
-        }
-        LoadObjWarning::SkippedMaterialLibrary { line, path } => {
-            format!("line {line}: skipped material library '{path}'")
-        }
-        LoadObjWarning::SkippedComment { line } => format!("line {line}: skipped comment"),
-        LoadObjWarning::SharedVertices {
-            object_name,
-            shared_indices,
-        } => match object_name {
-            Some(name) => format!(
-                "object '{name}' shares global vertex indices with previously loaded objects: {shared_indices:?}"
-            ),
-            None => format!(
-                "an unnamed object shares global vertex indices with previously loaded objects: {shared_indices:?}"
-            ),
-        },
     }
 }
 
