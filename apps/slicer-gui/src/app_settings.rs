@@ -15,6 +15,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::ThemePreference;
+use crate::language::LanguagePreference;
 
 // Linux's config_dir = $XDG_CONFIG_HOME/<application>. Bare "slicer" would
 // collide with unrelated tools, so use the fully-namespaced name on Linux.
@@ -66,10 +67,10 @@ impl From<ThemeSetting> for ThemePreference {
 pub(crate) struct Appearance {
     #[serde(default)]
     theme: ThemeSetting,
-    /// `None` means "follow the OS locale". `Some(code)` is a locale code
-    /// matching one of the bundled `i18n/` directories.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
+    /// Omitted in TOML when the user is on `System` (the default) so a
+    /// fresh config stays minimal.
+    #[serde(default, skip_serializing_if = "LanguagePreference::is_system")]
+    language: LanguagePreference,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -114,11 +115,11 @@ impl AppSettings {
         self.appearance.theme = theme.into();
     }
 
-    pub fn language(&self) -> Option<&str> {
-        self.appearance.language.as_deref()
+    pub fn language(&self) -> LanguagePreference {
+        self.appearance.language
     }
 
-    pub fn set_language(&mut self, language: Option<String>) {
+    pub fn set_language(&mut self, language: LanguagePreference) {
         self.appearance.language = language;
     }
 }

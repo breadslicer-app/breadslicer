@@ -5,12 +5,12 @@
 
 use slint::ComponentHandle;
 
-use crate::language;
+use crate::language::LanguagePreference;
 use crate::{PreferencesWindow, ThemePreference};
 
 pub(crate) fn build_preferences_window(
     on_theme_changed: impl Fn(ThemePreference) + 'static,
-    on_language_changed: impl Fn(Option<String>) + 'static,
+    on_language_changed: impl Fn(LanguagePreference) + 'static,
 ) -> Result<PreferencesWindow, slint::PlatformError> {
     let prefs = PreferencesWindow::new()?;
 
@@ -22,7 +22,9 @@ pub(crate) fn build_preferences_window(
     });
 
     prefs.on_theme_changed(on_theme_changed);
-    prefs.on_language_changed(move |index| on_language_changed(language::pref_for(index)));
+    prefs.on_language_changed(move |index| {
+        on_language_changed(LanguagePreference::from_combo_index(index))
+    });
 
     Ok(prefs)
 }

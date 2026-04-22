@@ -12,7 +12,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::about_window::build_about_window;
 use crate::app_settings::AppSettings;
-use crate::language;
+use crate::language::LanguagePreference;
 use crate::preferences_window::build_preferences_window;
 use crate::viewport_controller::ViewportController;
 use crate::{AboutWindow, MainWindow, PreferencesWindow, ThemePreference};
@@ -37,8 +37,7 @@ pub(crate) struct AppState {
     main_windows: RefCell<HashMap<u64, MainWindow>>,
     next_window_id: Cell<u64>,
     current_theme: Cell<ThemePreference>,
-    /// `None` means "follow the OS locale".
-    current_language: RefCell<Option<String>>,
+    current_language: Cell<LanguagePreference>,
     settings: RefCell<AppSettings>,
 }
 
@@ -46,20 +45,16 @@ impl AppState {
     pub fn new() -> Rc<Self> {
         let settings = AppSettings::load();
         let theme = settings.theme();
-        let language = settings.language().map(str::to_owned);
+        let language = settings.language();
         Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
             current_theme: Cell::new(theme),
-            current_language: RefCell::new(language),
+            current_language: Cell::new(language),
             settings: RefCell::new(settings),
         })
-    }
-
-    pub fn current_language(&self) -> Option<String> {
-        self.current_language.borrow().clone()
     }
 
     /// Creates, wires, and shows a new `MainWindow`. Per-window Slint
@@ -72,7 +67,7 @@ impl AppState {
         // `select_bundled_translation` requires a component to exist; apply
         // the persisted preference (or re-resolve "system") now that we
         // have one. Idempotent on subsequent windows.
-        language::apply(self.current_language().as_deref());
+        self.current_language.get().apply();
         ui.set_theme(self.current_theme.get());
         let ctrl = Rc::new(ViewportController::new(&ui));
 
@@ -170,9 +165,9 @@ impl AppState {
         };
         let on_language_changed = {
             let app_weak = Rc::downgrade(self);
-            move |code: Option<String>| {
+            move |pref: LanguagePreference| {
                 if let Some(app) = app_weak.upgrade() {
-                    app.apply_language(code);
+                    app.apply_language(pref);
                 }
             }
         };
@@ -195,10 +190,8 @@ impl AppState {
     /// every time it is re-shown so the "System" entry shows the correct
     /// translation for the active language.
     fn refresh_preferences_language(&self, prefs: &PreferencesWindow) {
-        prefs.set_language_options(language::display_options());
-        prefs.set_current_language_index(language::index_for(
-            self.current_language.borrow().as_deref(),
-        ));
+        prefs.set_language_options(LanguagePreference::display_options());
+        prefs.set_current_language_index(self.current_language.get().combo_index());
     }
 
     /// Records the new theme, persists it, and pushes it to every live
@@ -226,16 +219,16 @@ impl AppState {
     /// window's language model so the "System" label re-translates.
     /// `@tr` bindings in the rest of the UI re-evaluate automatically once
     /// `select_bundled_translation` flips the active language.
-    fn apply_language(&self, new_language: Option<String>) {
-        *self.current_language.borrow_mut() = new_language.clone();
+    fn apply_language(&self, new_language: LanguagePreference) {
+        self.current_language.set(new_language);
         {
             let mut settings = self.settings.borrow_mut();
-            settings.set_language(new_language.clone());
+            settings.set_language(new_language);
             if let Err(err) = settings.save() {
                 eprintln!("Failed to save settings: {err}");
             }
         }
-        language::apply(new_language.as_deref());
+        new_language.apply();
         if let Some(prefs) = self.preferences_window.borrow().as_ref() {
             self.refresh_preferences_language(prefs);
         }
