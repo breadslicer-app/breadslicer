@@ -179,6 +179,19 @@ mod language_tests {
     }
 
     #[test]
+    fn english_is_available_as_the_source_language() {
+        // Regression guard: English is injected by build.rs even though
+        // there is no `i18n/en/` directory. Users must be able to pick
+        // it explicitly rather than relying on the System-auto-detects-
+        // English path.
+        let en =
+            BundledLanguage::from_code("en").expect("`en` must be bundled as the source language");
+        assert_eq!(en.native_name(), "English");
+        let pref = LanguagePreference::Bundled(en);
+        assert!(pref.combo_index() > 0);
+    }
+
+    #[test]
     fn out_of_range_combo_index_falls_back_to_system() {
         assert_eq!(
             LanguagePreference::from_combo_index(-1),

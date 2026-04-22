@@ -20,6 +20,14 @@ const PO_BASENAME: &str = "sc-slicer-gui.po";
 /// count as translated.
 const COVERAGE_THRESHOLD_PERCENT: u32 = 50;
 
+/// Locale code of the source language the `.po` files are authored
+/// against. No `i18n/<this>/` directory ships because every `msgid` is
+/// already in this language; a `.po` would be a trivially self-identical
+/// file. The build script synthesises a `BundledLanguage` variant for
+/// this code so users can pick it explicitly in the language selector
+/// instead of relying on the System-auto-detects-it path.
+const SOURCE_LANGUAGE_CODE: &str = "en";
+
 fn main() {
     generate_language_table();
 
@@ -72,6 +80,11 @@ fn generate_language_table() {
         });
     }
     for code in names.keys() {
+        if code == SOURCE_LANGUAGE_CODE {
+            // The source language never ships a directory — see the
+            // constant's comment.
+            continue;
+        }
         if !locales.contains(code) {
             // Stale entry — surfaced as a warning rather than a hard error
             // so a translator removing a directory doesn't block the build.
@@ -81,6 +94,29 @@ fn generate_language_table() {
             );
         }
     }
+
+    // Synthesise an entry for the source language so users can select it
+    // explicitly. At runtime `select_bundled_translation("en")` will fail
+    // (no bundle), and `LanguagePreference::apply` falls through to
+    // `select_bundled_translation("")`, which resolves to the source
+    // strings — i.e. English. If a translator ever adds a real
+    // `i18n/en/` directory it will show up through the normal path
+    // above; skip injection in that case.
+    if !entries.iter().any(|e| e.code == SOURCE_LANGUAGE_CODE) {
+        let Some(name) = names.get(SOURCE_LANGUAGE_CODE) else {
+            panic!(
+                "{LOCALE_NAMES_FILE} must contain an entry for the source language \
+                 '{SOURCE_LANGUAGE_CODE}'; the build script synthesises a \
+                 BundledLanguage variant from it."
+            );
+        };
+        entries.push(Locale {
+            variant: variant_ident(SOURCE_LANGUAGE_CODE),
+            code: SOURCE_LANGUAGE_CODE.to_string(),
+            native_name: name.clone(),
+        });
+    }
+
     entries.sort_by(|a, b| a.code.cmp(&b.code));
 
     let generated = render_module(&entries);
