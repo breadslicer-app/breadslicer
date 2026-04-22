@@ -4418,6 +4418,7 @@ dependencies = [
  "serde",
  "slint",
  "slint-build",
+ "sys-locale",
  "toml 1.1.2+spec-1.1.0",
 ]
 

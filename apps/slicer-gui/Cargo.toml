@@ -17,11 +17,13 @@ rfd = "0.17.2"
 slint = { version = "1.15.1", features = ["renderer-skia", "unstable-wgpu-28"] }
 directories = "6.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
+sys-locale = "0.3.2"
 toml = "1.1.2"
 
 
 [build-dependencies]
 slint-build = "1.14.1"
+toml = "1.1.2"
 
 [dev-dependencies]
 float-cmp = { workspace = true }

@@ -1,0 +1,32 @@
+# Native display names for the bundled translation locales.
+#
+# Keys are the locale codes (matching the directory names under `i18n/`),
+# values are the language names spelled in the language itself. The build
+# script (`build.rs`) walks `i18n/` and cross-checks this file: every
+# locale that ships a `.po` MUST have an entry here, and the build fails
+# otherwise. Add a new translation? Add the matching line here.
+
+ca = "Català"
+cs = "Čeština"
+da = "Dansk"
+de = "Deutsch"
+el = "Ελληνικά"
+es = "Español"
+et = "Eesti"
+fi = "Suomi"
+fr = "Français"
+ga = "Gaeilge"
+hu = "Magyar"
+it = "Italiano"
+lt = "Lietuvių"
+lv = "Latviešu"
+nl = "Nederlands"
+pl = "Polski"
+pt = "Português"
+ro = "Română"
+ru = "Русский"
+sk = "Slovenčina"
+sl = "Slovenščina"
+sr = "Српски"
+sv = "Svenska"
+uk = "Українська"

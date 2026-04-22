@@ -14,6 +14,13 @@ export component AppearancePreferences inherits PreferencesPage {
     in-out property <ThemePreference> current-theme: ThemePreference.System;
     callback theme-selected(ThemePreference);
 
+    // Language model is built in Rust (see src/language.rs): index 0 is
+    // always "System (use the OS locale)", indices 1.. are the bundled
+    // translations in the order produced by build.rs.
+    in property <[string]> language-options;
+    in-out property <int> current-language-index: 0;
+    callback language-selected(int);
+
     // Order must match the `theme-for-index` / `index-for-theme` mappings
     // below; changing it requires updating both.
     property <[string]> theme-options: [
@@ -54,6 +61,27 @@ export component AppearancePreferences inherits PreferencesPage {
             selected(_value) => {
                 root.current-theme = root.theme-for-index(self.current-index);
                 root.theme-selected(root.current-theme);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("AppearancePreferences" => "Language");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        ComboBox {
+            model: root.language-options;
+            current-index: root.current-language-index;
+            accessible-label: @tr("AppearancePreferences" => "Language");
+            selected(_value) => {
+                root.current-language-index = self.current-index;
+                root.language-selected(self.current-index);
             }
         }
     }

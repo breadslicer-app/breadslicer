@@ -12,6 +12,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::about_window::build_about_window;
 use crate::app_settings::AppSettings;
+use crate::language;
 use crate::preferences_window::build_preferences_window;
 use crate::viewport_controller::ViewportController;
 use crate::{AboutWindow, MainWindow, PreferencesWindow, ThemePreference};
@@ -36,6 +37,8 @@ pub(crate) struct AppState {
     main_windows: RefCell<HashMap<u64, MainWindow>>,
     next_window_id: Cell<u64>,
     current_theme: Cell<ThemePreference>,
+    /// `None` means "follow the OS locale".
+    current_language: RefCell<Option<String>>,
     settings: RefCell<AppSettings>,
 }
 
@@ -43,14 +46,20 @@ impl AppState {
     pub fn new() -> Rc<Self> {
         let settings = AppSettings::load();
         let theme = settings.theme();
+        let language = settings.language().map(str::to_owned);
         Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
             current_theme: Cell::new(theme),
+            current_language: RefCell::new(language),
             settings: RefCell::new(settings),
         })
+    }
+
+    pub fn current_language(&self) -> Option<String> {
+        self.current_language.borrow().clone()
     }
 
     /// Creates, wires, and shows a new `MainWindow`. Per-window Slint
@@ -60,6 +69,10 @@ impl AppState {
     /// close-request handler are wired here.
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<(), Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        // `select_bundled_translation` requires a component to exist; apply
+        // the persisted preference (or re-resolve "system") now that we
+        // have one. Idempotent on subsequent windows.
+        language::apply(self.current_language().as_deref());
         ui.set_theme(self.current_theme.get());
         let ctrl = Rc::new(ViewportController::new(&ui));
 
@@ -143,18 +156,30 @@ impl AppState {
     fn show_preferences(self: &Rc<Self>) {
         let mut slot = self.preferences_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
+            self.refresh_preferences_language(existing);
             let _ = existing.show();
             return;
         }
-        let app_weak = Rc::downgrade(self);
-        let on_theme_changed = move |t| {
-            if let Some(app) = app_weak.upgrade() {
-                app.apply_theme(t);
+        let on_theme_changed = {
+            let app_weak = Rc::downgrade(self);
+            move |t| {
+                if let Some(app) = app_weak.upgrade() {
+                    app.apply_theme(t);
+                }
             }
         };
-        match build_preferences_window(on_theme_changed) {
+        let on_language_changed = {
+            let app_weak = Rc::downgrade(self);
+            move |code: Option<String>| {
+                if let Some(app) = app_weak.upgrade() {
+                    app.apply_language(code);
+                }
+            }
+        };
+        match build_preferences_window(on_theme_changed, on_language_changed) {
             Ok(prefs) => {
                 prefs.set_theme(self.current_theme.get());
+                self.refresh_preferences_language(&prefs);
                 if let Err(err) = prefs.show() {
                     eprintln!("Failed to show Preferences window: {err}");
                     return;
@@ -163,6 +188,17 @@ impl AppState {
             }
             Err(err) => eprintln!("Failed to create Preferences window: {err}"),
         }
+    }
+
+    /// Pushes the current language model and selected index into the
+    /// Preferences window. Called both when the window is first built and
+    /// every time it is re-shown so the "System" entry shows the correct
+    /// translation for the active language.
+    fn refresh_preferences_language(&self, prefs: &PreferencesWindow) {
+        prefs.set_language_options(language::display_options());
+        prefs.set_current_language_index(language::index_for(
+            self.current_language.borrow().as_deref(),
+        ));
     }
 
     /// Records the new theme, persists it, and pushes it to every live
@@ -182,6 +218,26 @@ impl AppState {
         }
         if let Some(prefs) = self.preferences_window.borrow().as_ref() {
             prefs.set_theme(new_theme);
+        }
+    }
+
+    /// Records the new language preference, persists it, calls into Slint
+    /// to switch the bundled translation, and refreshes the Preferences
+    /// window's language model so the "System" label re-translates.
+    /// `@tr` bindings in the rest of the UI re-evaluate automatically once
+    /// `select_bundled_translation` flips the active language.
+    fn apply_language(&self, new_language: Option<String>) {
+        *self.current_language.borrow_mut() = new_language.clone();
+        {
+            let mut settings = self.settings.borrow_mut();
+            settings.set_language(new_language.clone());
+            if let Err(err) = settings.save() {
+                eprintln!("Failed to save settings: {err}");
+            }
+        }
+        language::apply(new_language.as_deref());
+        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
+            self.refresh_preferences_language(prefs);
         }
     }
 }

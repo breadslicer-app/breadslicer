@@ -15,6 +15,7 @@ mod app_state;
 mod camera;
 mod error_dialog;
 mod i18n;
+mod language;
 mod mesh_render;
 mod preferences_window;
 mod viewport_controller;

@@ -22,8 +22,11 @@ export component PreferencesWindow inherits Window {
     forward-focus: side-bar;
 
     in-out property <ThemePreference> theme: ThemePreference.System;
+    in property <[string]> language-options;
+    in-out property <int> current-language-index: 0;
     callback close-requested();
     callback theme-changed(ThemePreference);
+    callback language-changed(int);
 
     changed theme => {
         Palette.color-scheme =
@@ -52,9 +55,15 @@ export component PreferencesWindow inherits Window {
 
             if(side-bar.current-item == 0) : AppearancePreferences {
                 current-theme: root.theme;
+                language-options: root.language-options;
+                current-language-index: root.current-language-index;
                 theme-selected(t) => {
                     root.theme = t;
                     root.theme-changed(t);
+                }
+                language-selected(i) => {
+                    root.current-language-index = i;
+                    root.language-changed(i);
                 }
             }
             if(side-bar.current-item == 1) : _3DViewPreferences {}

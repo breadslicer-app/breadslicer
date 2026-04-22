@@ -66,6 +66,10 @@ impl From<ThemeSetting> for ThemePreference {
 pub(crate) struct Appearance {
     #[serde(default)]
     theme: ThemeSetting,
+    /// `None` means "follow the OS locale". `Some(code)` is a locale code
+    /// matching one of the bundled `i18n/` directories.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -108,6 +112,14 @@ impl AppSettings {
 
     pub fn set_theme(&mut self, theme: ThemePreference) {
         self.appearance.theme = theme.into();
+    }
+
+    pub fn language(&self) -> Option<&str> {
+        self.appearance.language.as_deref()
+    }
+
+    pub fn set_language(&mut self, language: Option<String>) {
+        self.appearance.language = language;
     }
 }
 
