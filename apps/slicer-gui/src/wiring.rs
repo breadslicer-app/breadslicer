@@ -105,16 +105,15 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
 
     let loader = ctrl.loader();
-    let ui_weak = ui.as_weak();
     ui.on_open_file_requested(move || {
         // The Slint event loop keeps processing callbacks while the native
         // file dialog is open, and `enabled: !root.loading` on the menu item
         // doesn't block that. Gate in Rust via `begin_load` *before* touching
         // the dialog, so `loading` flips immediately (not after pick_file
-        // awaits) and the in-flight counter is bumped atomically with it.
-        if !loader.begin_load() {
+        // awaits) and a ticket is held for the duration of the load.
+        let Some(ticket) = loader.begin_load() else {
             return;
-        }
+        };
 
         let dialog = rfd::AsyncFileDialog::new()
             .add_filter(
@@ -128,24 +127,18 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
             )
             .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
 
-        let loader_async = loader.clone();
-        let ui_weak_inner = ui_weak.clone();
         if let Err(err) = slint::spawn_local(async move {
             let Some(handle) = dialog.pick_file().await else {
-                // User cancelled the dialog: release the gate.
-                loader_async.end_load();
+                // User cancelled: `ticket` drops here and releases the gate.
                 return;
             };
             let path = handle.path().to_path_buf();
 
-            let my_stamp = loader_async.next_load_stamp();
-            let slot = loader_async.load_slot();
-
-            // Pre-check the file size. If it exceeds the ceiling, deposit an
-            // error into the slot and trigger the same finish-handler path as
-            // a real load failure. `metadata()` failures fall through to the
-            // worker, which surfaces a more specific error when it opens the
-            // file.
+            // Pre-check the file size. If it exceeds the ceiling, deposit a
+            // synthetic error so the UI finish-handler path surfaces it like
+            // any other load failure. `metadata()` failures fall through to
+            // the worker, which surfaces a more specific error when it opens
+            // the file.
             if let Ok(meta) = std::fs::metadata(&path)
                 && meta.len() > MAX_MESH_FILE_SIZE_BYTES
             {
@@ -156,60 +149,37 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
                     size_mib,
                     MAX_MESH_FILE_SIZE_MIB
                 );
-                let err = anyhow::Error::msg(message.to_string());
-                *slot
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    Some((my_stamp, path, Err(err)));
-                if let Some(ui) = ui_weak_inner.upgrade() {
-                    ui.invoke_scene_load_finished();
-                }
+                ticket.deposit(path, Err(anyhow::Error::msg(message.to_string())));
                 return;
             }
 
-            let worker_ui_weak = ui_weak_inner.clone();
             std::thread::spawn(move || {
-                // Catch panics from the parser *and* from the post-parse
-                // deposit. A panic between `load_mesh_from_path` returning
-                // and the UI invocation below (e.g. allocation failure while
-                // constructing the slot tuple) would otherwise kill the
-                // worker silently and leave `loading == true` forever.
+                // Catch parser panics and convert them to an `Err` result.
+                // `AssertUnwindSafe` is sound because the parser returns an
+                // owned `Result<LoadedMesh, anyhow::Error>`, so a mid-parse
+                // panic drops any partial state on the stack. A panic
+                // elsewhere in this closure (post-parse, pre-deposit) unwinds
+                // out of the thread; `ticket` drops on the worker thread, its
+                // `Drop` decrements inflight and schedules `loading = false`
+                // via the event loop, so the UI still recovers.
                 //
-                // `AssertUnwindSafe` is sound today because the captures
-                // (`slot: Arc<Mutex<…>>`, `path: PathBuf`, `my_stamp: u64`)
-                // carry no `!UnwindSafe` interior-mutability, and the parser
-                // returns an owned `Result<LoadedMesh, anyhow::Error>`, so a
-                // mid-parse panic drops any partial state on the stack. If
-                // `load_mesh_from_path` is ever changed to return a type
+                // If `load_mesh_from_path` is ever changed to return a type
                 // borrowing from a memory-mapped region, revisit this — the
                 // assertion would then hide potential UB.
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        sc_mesh_formats::load_mesh_from_path(&path, None)
-                    }))
-                    .unwrap_or_else(|payload| {
-                        let msg = panic_message(&payload);
-                        Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-                    });
-
-                    // Tolerate poisoning so a previous worker's panic here
-                    // doesn't cascade into this one.
-                    *slot
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        Some((my_stamp, path, result));
-                }));
-
-                // Always notify the UI so `loading` is cleared, even if the
-                // deposit above panicked. The UI handler tolerates an empty
-                // slot and simply drops the load as stale.
-                let _ = worker_ui_weak.upgrade_in_event_loop(|ui| {
-                    ui.invoke_scene_load_finished();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    sc_mesh_formats::load_mesh_from_path(&path, None)
+                }))
+                .unwrap_or_else(|payload| {
+                    let msg = panic_message(&payload);
+                    Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
                 });
+                ticket.deposit(path, result);
             });
         }) {
             eprintln!("Failed to spawn file dialog task: {err}");
-            loader.end_load();
+            // `ticket` was moved into the async block; when `spawn_local`
+            // returns `Err`, the block is dropped and the ticket with it,
+            // releasing the gate.
         }
     });
 }
