@@ -43,15 +43,27 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_mesh_core::scene::Scene;
-use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
 use slint::ComponentHandle;
+use slint::wgpu_28::wgpu;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
+use crate::mesh_render::MeshGpu;
 
-type LoadSlot = Arc<Mutex<Option<(LoadTicket, PathBuf, anyhow::Result<LoadedMesh>)>>>;
+/// Worker-built bundle handed to the UI thread. The `MeshGpu` is pre-
+/// uploaded against `device`; the `Scene` is retained for device-loss
+/// recovery (a fresh `RenderingSetup` re-uploads via
+/// `Renderer::upload_scene`).
+pub(crate) struct PreparedScene {
+    pub scene: Scene,
+    pub mesh_gpu: MeshGpu,
+    pub device: wgpu::Device,
+    pub warnings: Vec<LoadMeshWarning>,
+}
+
+type LoadSlot = Arc<Mutex<Option<(LoadTicket, PathBuf, anyhow::Result<PreparedScene>)>>>;
 
 /// RAII handle to an in-flight load. Holding a ticket means the inflight
 /// counter is >= 1 and the UI's `loading` property is `true`; dropping
@@ -80,7 +92,7 @@ impl LoadTicket {
     /// Publishes the load result and notifies the UI thread. Consumes
     /// the ticket; the ticket drops later, when the UI handler drains
     /// the slot via `take_finished_load`.
-    pub fn deposit(self, path: PathBuf, result: anyhow::Result<LoadedMesh>) {
+    pub fn deposit(self, path: PathBuf, result: anyhow::Result<PreparedScene>) {
         let ui = self.ui.clone();
         let slot = self.slot.clone();
         *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((self, path, result));
@@ -132,6 +144,11 @@ pub struct SceneLoader {
     // successful upload, scene load/close, and on `RenderingSetup`
     // (via `reset_upload_failures`).
     upload_failures: Cell<u32>,
+    // Current graphics device/queue, populated by `RenderingSetup` and
+    // cleared by `RenderingTeardown`. A clone is handed to the worker at
+    // `spawn_load` time so parse + GPU upload both run off the UI
+    // thread; the UI thread only installs the finished `MeshGpu`.
+    gpu: Mutex<Option<(wgpu::Device, wgpu::Queue)>>,
 }
 
 impl SceneLoader {
@@ -143,6 +160,7 @@ impl SceneLoader {
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
+            gpu: Mutex::new(None),
         }
     }
 
@@ -162,12 +180,20 @@ impl SceneLoader {
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
+            gpu: Mutex::new(None),
         }
     }
 
     /// Starts a new load. Returns `None` if one is already in flight.
     /// The returned `LoadTicket` is the only way to deposit a result,
     /// and releases the gate on drop.
+    ///
+    /// The gpu slot is *not* checked here — callers must read it via
+    /// [`SceneLoader::gpu_snapshot`] after the user has actually
+    /// picked a file, since the loader is constructed before the
+    /// first `RenderingSetup` and a synchronous gate would prevent
+    /// the file dialog from opening at all in unit-test or
+    /// pre-first-paint scenarios.
     pub fn begin_load(&self) -> Option<LoadTicket> {
         // compare_exchange 0 → 1: atomically checks that no ticket is
         // alive. `AcqRel` on success synchronises with the prior
@@ -190,6 +216,32 @@ impl SceneLoader {
             slot: self.load_slot.clone(),
             ui: self.ui.clone(),
         })
+    }
+
+    /// Publishes the graphics device/queue. Called from
+    /// `handle_rendering_setup`; the worker clones this pair at
+    /// `spawn_load` time so parsing + upload both happen off the UI
+    /// thread.
+    pub fn set_gpu(&self, device: wgpu::Device, queue: wgpu::Queue) {
+        *self.gpu.lock().unwrap_or_else(PoisonError::into_inner) = Some((device, queue));
+    }
+
+    /// Clears the graphics device/queue. Called on
+    /// `RenderingTeardown`. In-flight workers hold `Arc`-backed clones
+    /// and continue running; if a resulting `PreparedScene` arrives
+    /// against a stale device, `Renderer::install_mesh` drops it and
+    /// the UI thread re-uploads via the recovery path.
+    pub fn clear_gpu(&self) {
+        *self.gpu.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// Snapshot of the current device/queue. `None` if
+    /// `RenderingSetup` hasn't fired yet (or a teardown cleared it).
+    pub fn gpu_snapshot(&self) -> Option<(wgpu::Device, wgpu::Queue)> {
+        self.gpu
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Invalidates any in-flight load and drops any already-deposited
@@ -255,7 +307,36 @@ impl SceneLoader {
     /// The ticket that was in the slot drops here on the UI thread,
     /// which synchronously flips `loading = false` when the counter
     /// hits zero.
-    pub fn take_finished_load(&self) -> Option<Scene> {
+    pub fn take_finished_load(&self) -> Option<PreparedScene> {
+        let (path, result) = self.drain_matching_deposit()?;
+        match result {
+            Ok(prepared) => {
+                log_load_warnings(&path, &prepared.warnings);
+                self.upload_failures.set(0);
+                Some(prepared)
+            }
+            Err(err) => {
+                self.dialogs.show_error(
+                    ctr!("ErrorDialog", "Failed to open 3D model").as_str(),
+                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
+                    err.to_string(),
+                    format_anyhow_chain(&err),
+                );
+                None
+            }
+        }
+    }
+
+    /// Drains the result slot and applies the stamp check, returning
+    /// the raw `(path, result)` for the caller to dispatch on. The
+    /// ticket that was in the slot drops here, releasing the gate when
+    /// its drop runs the inflight counter down to zero. Returns `None`
+    /// for empty / stale deposits — same condition as
+    /// `take_finished_load`'s early return — without surfacing any
+    /// dialog. Split from `take_finished_load` so the FSM-only
+    /// behaviour (drain + stamp + gate release) is unit-testable
+    /// without a `wgpu::Device` or a Slint event loop.
+    fn drain_matching_deposit(&self) -> Option<(PathBuf, anyhow::Result<PreparedScene>)> {
         let taken = self
             .load_slot
             .lock()
@@ -268,22 +349,7 @@ impl SceneLoader {
             // ticket (and the result along with it).
             return None;
         }
-        match result {
-            Ok(LoadedMesh { scene, warnings }) => {
-                log_load_warnings(&path, &warnings);
-                self.upload_failures.set(0);
-                Some(scene)
-            }
-            Err(err) => {
-                self.dialogs.show_error(
-                    ctr!("ErrorDialog", "Failed to open 3D model").as_str(),
-                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-                    err.to_string(),
-                    format_anyhow_chain(&err),
-                );
-                None
-            }
-        }
+        Some((path, result))
     }
 }
 
@@ -340,18 +406,17 @@ fn describe_obj_warning(warning: &LoadObjWarning) -> String {
 mod scene_loader_tests {
     use super::*;
 
-    use sc_mesh_core::scene::Scene;
-    use sc_mesh_formats::LoadedMesh;
-
     fn loader() -> SceneLoader {
         SceneLoader::new_for_test(DialogManager::new())
     }
 
-    fn empty_loaded_mesh() -> LoadedMesh {
-        LoadedMesh {
-            scene: Scene::default(),
-            warnings: Vec::new(),
-        }
+    /// Stub deposit payload used by FSM-only tests — only the
+    /// stamp-check / gate-release / slot-drain paths are exercised
+    /// here, never the `Ok(PreparedScene)` arm of `take_finished_load`
+    /// (which would require a real `wgpu::Device` to construct a
+    /// `MeshGpu`).
+    fn stub_err() -> anyhow::Result<PreparedScene> {
+        Err(anyhow::anyhow!("stub"))
     }
 
     #[test]
@@ -411,7 +476,7 @@ mod scene_loader_tests {
     fn invalidate_and_clear_drops_deposited_result_and_reopens_gate() {
         let loader = loader();
         let ticket = loader.begin_load().expect("begin");
-        ticket.deposit(PathBuf::from("/tmp/fake.obj"), Ok(empty_loaded_mesh()));
+        ticket.deposit(PathBuf::from("/tmp/fake.obj"), stub_err());
 
         loader.invalidate_and_clear();
 
@@ -446,8 +511,9 @@ mod scene_loader_tests {
         // ticket is still in flight, but the generation advances.
         loader.invalidate_and_clear();
         // Worker finishes and deposits; the ticket in the slot now has
-        // a stale stamp.
-        ticket.deposit(PathBuf::from("/tmp/fake.obj"), Ok(empty_loaded_mesh()));
+        // a stale stamp. Stamp mismatch returns `None` before either
+        // payload arm runs, so the stub is never inspected.
+        ticket.deposit(PathBuf::from("/tmp/fake.obj"), stub_err());
 
         assert!(
             loader.take_finished_load().is_none(),
@@ -460,15 +526,46 @@ mod scene_loader_tests {
     }
 
     #[test]
-    fn take_finished_load_returns_scene_for_matching_stamp() {
+    fn drain_returns_payload_for_matching_stamp_and_releases_gate() {
         let loader = loader();
         let ticket = loader.begin_load().expect("begin");
-        ticket.deposit(PathBuf::from("/tmp/fake.obj"), Ok(empty_loaded_mesh()));
+        ticket.deposit(PathBuf::from("/tmp/fake.obj"), stub_err());
 
-        assert!(loader.take_finished_load().is_some());
+        let drained = loader.drain_matching_deposit();
+        assert!(
+            drained.is_some(),
+            "a matching-stamp deposit must drain the slot"
+        );
         assert!(
             loader.begin_load().is_some(),
-            "the ticket dropped during take_finished_load must have released the gate"
+            "the ticket dropped during drain must have released the gate"
+        );
+    }
+
+    #[test]
+    fn drain_on_empty_slot_is_none() {
+        let loader = loader();
+        let ticket = loader.begin_load().expect("begin");
+        // Ticket is alive but nothing is in the slot yet.
+        assert!(loader.drain_matching_deposit().is_none());
+        drop(ticket);
+    }
+
+    #[test]
+    fn clear_gpu_empties_the_snapshot() {
+        let loader = loader();
+        // `new_for_test` starts with `None`; verify the initial state
+        // and the post-clear state both read as empty. (Populating the
+        // slot with a real `(Device, Queue)` pair would require a
+        // `wgpu::Instance`, which belongs in an integration test.)
+        assert!(
+            loader.gpu_snapshot().is_none(),
+            "a freshly constructed loader has no gpu snapshot"
+        );
+        loader.clear_gpu();
+        assert!(
+            loader.gpu_snapshot().is_none(),
+            "clear_gpu on an already-empty slot must stay empty"
         );
     }
 }

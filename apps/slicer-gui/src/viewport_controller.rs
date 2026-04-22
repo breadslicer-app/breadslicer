@@ -15,7 +15,7 @@ use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::i18n::ctr;
 use crate::mesh_render::{Renderer, default_fov_y};
-use crate::scene_loader::SceneLoader;
+use crate::scene_loader::{PreparedScene, SceneLoader};
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -160,17 +160,49 @@ impl ViewportController {
     }
 
     pub fn on_scene_load_finished(&self) {
-        let Some(scene) = self.loader.take_finished_load() else {
+        let Some(prepared) = self.loader.take_finished_load() else {
             return;
         };
-        // Reset the camera — it will be reframed from the mesh AABB
-        // computed during `upload_scene`, so we don't re-scan the
-        // scene's vertices here. On upload failure (empty scene /
-        // dangling resource index) the camera stays `None`, no frame
-        // is rendered, and the error dialog surfaces the cause.
+        let PreparedScene {
+            scene,
+            mesh_gpu,
+            device: built_with,
+            warnings: _,
+        } = prepared;
+
+        // Try to install the worker-built buffers directly. Falls
+        // through to the UI-thread upload path if the renderer is
+        // gone (post-teardown) or has rotated to a different device
+        // than the worker built against (mid-load device loss).
+        let mesh_installed = self
+            .renderer
+            .borrow_mut()
+            .as_mut()
+            .map(|r| r.install_mesh(mesh_gpu, &built_with))
+            .unwrap_or(false);
+
         *self.camera.borrow_mut() = None;
         *self.scene.borrow_mut() = Some(scene);
-        self.needs_upload.set(true);
+        // If install succeeded, the buffers are already on the GPU; no
+        // upload owed. Otherwise, defer to the recovery upload path.
+        self.needs_upload.set(!mesh_installed);
+
+        if mesh_installed {
+            self.loader.note_upload_success();
+            // Frame the camera off the AABB the worker computed.
+            let bounds = self
+                .renderer
+                .borrow()
+                .as_ref()
+                .and_then(|r| r.scene_bounds());
+            if let Some((min, max)) = bounds {
+                let center = (min + max) * 0.5;
+                let radius = ((max - min).length() * 0.5).max(1e-3);
+                *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
+            }
+            self.dirty.set(true);
+        }
+
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
         }
@@ -178,6 +210,7 @@ impl ViewportController {
     }
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
+        self.loader.set_gpu(device.clone(), queue.clone());
         *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
         self.loader.reset_upload_failures();
         if self.scene.borrow().is_some() {
@@ -190,8 +223,12 @@ impl ViewportController {
     // scene (CPU-side) and the camera stay in the controller, so the next
     // `RenderingSetup` can re-upload without losing the user's view —
     // `handle_rendering_setup` flips `needs_upload` on its own when a scene
-    // is present, so we don't set it here.
+    // is present, so we don't set it here. The loader's gpu slot is
+    // cleared too, so a click on Open between teardown and the next
+    // setup is bounced by `begin_load` instead of leaving a worker to
+    // build buffers against an unowned device.
     pub fn handle_rendering_teardown(&self) {
+        self.loader.clear_gpu();
         *self.renderer.borrow_mut() = None;
         self.dirty.set(false);
     }

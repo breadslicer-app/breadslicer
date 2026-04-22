@@ -35,12 +35,41 @@ struct Uniforms {
     light_dir: [f32; 4],
 }
 
-struct MeshGpu {
+/// GPU-resident mesh: vertex+index buffers plus the AABB computed at
+/// flatten time. Construction ([`MeshGpu::build`]) touches a `wgpu::Device`
+/// but not the UI loop, so it can run on the worker thread that parsed
+/// the mesh — handing the finished buffers to the UI thread instead of a
+/// `Scene` avoids the per-load hitch of flattening + uploading inside
+/// `handle_before_rendering`.
+pub(crate) struct MeshGpu {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
     aabb_min: Vec3,
     aabb_max: Vec3,
+}
+
+impl MeshGpu {
+    pub(crate) fn build(device: &wgpu::Device, scene: &Scene) -> Result<Self> {
+        let data = build_gpu_mesh_data(scene)?;
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer vertex buffer"),
+            contents: bytemuck::cast_slice(&data.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer index buffer"),
+            contents: bytemuck::cast_slice(&data.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        Ok(Self {
+            vertex_buffer,
+            index_buffer,
+            index_count: data.indices.len() as u32,
+            aabb_min: data.aabb_min,
+            aabb_max: data.aabb_max,
+        })
+    }
 }
 
 struct MsaaTargets {
@@ -211,34 +240,26 @@ impl Renderer {
         self.mesh.as_ref().map(|m| (m.aabb_min, m.aabb_max))
     }
 
+    /// UI-thread upload path. Used only on `RenderingTeardown` →
+    /// `RenderingSetup` recovery, where the new device is local to this
+    /// `Renderer` and a worker-built `MeshGpu` from the previous device
+    /// would be unusable. New scene loads go through the worker via
+    /// [`MeshGpu::build`] + [`Renderer::install_mesh`] instead.
     pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
-        let data = build_gpu_mesh_data(scene)?;
-
-        let vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer vertex buffer"),
-                contents: bytemuck::cast_slice(&data.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-        let index_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer index buffer"),
-                contents: bytemuck::cast_slice(&data.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-
-        self.mesh = Some(MeshGpu {
-            vertex_buffer,
-            index_buffer,
-            index_count: data.indices.len() as u32,
-            aabb_min: data.aabb_min,
-            aabb_max: data.aabb_max,
-        });
-
+        self.mesh = Some(MeshGpu::build(&self.device, scene)?);
         Ok(())
+    }
+
+    /// Installs a `MeshGpu` built on a worker thread, but only if it was
+    /// built against this renderer's device. Returns `false` if the
+    /// device has rotated since the worker started (mid-load device
+    /// loss); the caller falls back to the recovery upload path.
+    pub fn install_mesh(&mut self, mesh: MeshGpu, built_with: &wgpu::Device) -> bool {
+        if &self.device != built_with {
+            return false;
+        }
+        self.mesh = Some(mesh);
+        true
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) {

@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Background mesh-load pipeline. Given a `LoadTicket` and a path,
-//! runs the parser off the UI thread, catches parser panics, and
-//! deposits the outcome into the ticket. The Slint side of the open
-//! flow (menu callback, file dialog, size precheck) lives in
+//! Background mesh-load pipeline. Given a `LoadTicket`, a path, and a
+//! `wgpu::Device`, runs both the parser and the GPU upload off the UI
+//! thread, catches parser panics, and deposits a ready-to-install
+//! `PreparedScene` into the ticket. The Slint side of the open flow
+//! (menu callback, file dialog, size precheck, gpu snapshot) lives in
 //! `wiring.rs` and drives this module.
 //!
 //! This module does not touch Slint callbacks or Rc-owned state: it
@@ -17,8 +18,12 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
+use sc_mesh_formats::LoadedMesh;
+use slint::wgpu_28::wgpu;
+
 use crate::i18n::ctr;
-use crate::scene_loader::LoadTicket;
+use crate::mesh_render::MeshGpu;
+use crate::scene_loader::{LoadTicket, PreparedScene};
 
 // Reject mesh files larger than this before spawning the loader
 // worker, so the UI doesn't sit in `loading=true` for hours (or OOM)
@@ -51,8 +56,11 @@ pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
     ))
 }
 
-/// Spawns a worker thread that parses the mesh at `path` and deposits
-/// the outcome via `ticket`.
+/// Spawns a worker thread that parses the mesh at `path`, uploads its
+/// vertex+index buffers to `device`, and deposits the outcome via
+/// `ticket`. Doing both on the worker keeps the UI thread free of the
+/// flatten + `create_buffer_init` hitch that a large mesh otherwise
+/// costs when handled inside `handle_before_rendering`.
 ///
 /// `AssertUnwindSafe` around the parser call is sound because
 /// `load_mesh_from_path` returns an owned `Result<LoadedMesh,
@@ -65,14 +73,23 @@ pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
 /// If `load_mesh_from_path` is ever changed to return a type
 /// borrowing from a memory-mapped region, revisit the
 /// `AssertUnwindSafe` claim — it would then hide potential UB.
-pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf) {
+pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf, device: wgpu::Device) {
     std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             sc_mesh_formats::load_mesh_from_path(&path, None)
         }))
         .unwrap_or_else(|payload| {
             let msg = panic_message(&payload);
             Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
+        });
+        let result = parsed.and_then(|LoadedMesh { scene, warnings }| {
+            let mesh_gpu = MeshGpu::build(&device, &scene)?;
+            Ok(PreparedScene {
+                scene,
+                mesh_gpu,
+                device: device.clone(),
+                warnings,
+            })
         });
         ticket.deposit(path, result);
     });

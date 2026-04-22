@@ -16,7 +16,7 @@ use slint::ComponentHandle;
 use crate::MainWindow;
 use crate::i18n::ctr;
 use crate::mesh_loader;
-use crate::scene_loader::LoadTicket;
+use crate::scene_loader::{LoadTicket, SceneLoader};
 use crate::viewport_controller::{RESIZE_SETTLE, ViewportController};
 
 /// Installs every per-window Slint callback (rendering notifier, input
@@ -111,7 +111,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let Some(ticket) = loader.begin_load() else {
             return;
         };
-        if let Err(err) = slint::spawn_local(run_open_file_flow(ticket)) {
+        if let Err(err) = slint::spawn_local(run_open_file_flow(ticket, loader.clone())) {
             eprintln!("Failed to spawn file dialog task: {err}");
             // `ticket` was moved into the future; when `spawn_local`
             // returns `Err`, the future is dropped and the ticket with
@@ -123,7 +123,7 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 /// Orchestrates one "Open…" command: show the dialog, precheck the
 /// file, hand the load off to the background pipeline. Each step
 /// drops the ticket on its bailout path and the gate releases itself.
-async fn run_open_file_flow(ticket: LoadTicket) {
+async fn run_open_file_flow(ticket: LoadTicket, loader: Rc<SceneLoader>) {
     let Some(path) = pick_mesh_file().await else {
         // User cancelled the dialog.
         return;
@@ -132,7 +132,19 @@ async fn run_open_file_flow(ticket: LoadTicket) {
         ticket.deposit(path, Err(err));
         return;
     }
-    mesh_loader::spawn_load(ticket, path);
+    let Some((device, _queue)) = loader.gpu_snapshot() else {
+        // RenderingSetup hasn't fired (or a teardown cleared the
+        // slot between begin_load and now). `begin_load` already
+        // gates on this in the steady state, so this only catches a
+        // narrow race; bail with a synthetic error so the user sees
+        // *something* rather than a stuck `loading=true`.
+        ticket.deposit(
+            path,
+            Err(anyhow::anyhow!("Graphics device is not available yet")),
+        );
+        return;
+    };
+    mesh_loader::spawn_load(ticket, path, device);
 }
 
 async fn pick_mesh_file() -> Option<PathBuf> {
