@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-20 17:04+0000\n"
+"POT-Creation-Date: 2026-04-22 09:13+0000\n"
 "PO-Revision-Date: 2026-04-17 09:56+0000\n"
 "Last-Translator: Viriato <viriato@noreply.codeberg.org>\n"
 "Language-Team: Portuguese <https://translate.codeberg.org/projects/"
@@ -49,17 +49,17 @@ msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:34
+#: ui/preferences/preferences-window.slint:49
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:36
+#: ui/preferences/preferences-window.slint:51
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:37
+#: ui/preferences/preferences-window.slint:52
 msgctxt "PreferencesMenu"
 msgid "3D View"
 msgstr ""
@@ -69,29 +69,34 @@ msgctxt "PreferencesPage"
 msgid "3D View"
 msgstr ""
 
-#: ui/preferences/appearance.slint:11
+#: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/appearance.slint:16
+#: ui/preferences/appearance.slint:27
 msgctxt "AppearancePreferences"
 msgid "System"
 msgstr ""
 
-#: ui/preferences/appearance.slint:17
+#: ui/preferences/appearance.slint:28
 msgctxt "AppearancePreferences"
 msgid "Light"
 msgstr ""
 
-#: ui/preferences/appearance.slint:18
+#: ui/preferences/appearance.slint:29
 msgctxt "AppearancePreferences"
 msgid "Dark"
 msgstr ""
 
-#: ui/preferences/appearance.slint:44
+#: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
 msgctxt "AppearancePreferences"
 msgid "Theme"
+msgstr ""
+
+#: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
+msgctxt "AppearancePreferences"
+msgid "Language"
 msgstr ""
 
 #: ui/error-dialog.slint:9
@@ -132,22 +137,22 @@ msgctxt "ErrorDialog"
 msgid "Close"
 msgstr "Fechar"
 
-#: ui/main-window.slint:14
+#: ui/main-window.slint:16
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:41
+#: ui/main-window.slint:51
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Ficheiro"
 
-#: ui/main-window.slint:44
+#: ui/main-window.slint:54
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:54
+#: ui/main-window.slint:64
 #, fuzzy
 #| msgctxt "MenuBar"
 #| msgid "Open"
@@ -155,7 +160,7 @@ msgctxt "MenuBar"
 msgid "Open…"
 msgstr "Abrir"
 
-#: ui/main-window.slint:63
+#: ui/main-window.slint:73
 #, fuzzy
 #| msgctxt "About"
 #| msgid "Close"
@@ -163,12 +168,12 @@ msgctxt "MenuBar"
 msgid "Close"
 msgstr "Fechar"
 
-#: ui/main-window.slint:74
+#: ui/main-window.slint:84
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/main-window.slint:80
+#: ui/main-window.slint:90
 #, fuzzy
 #| msgctxt "MenuBar"
 #| msgid "Save As"
@@ -176,62 +181,62 @@ msgctxt "MenuBar"
 msgid "Save As…"
 msgstr "Guardar Como"
 
-#: ui/main-window.slint:87
+#: ui/main-window.slint:97
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:89
+#: ui/main-window.slint:99
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:95
+#: ui/main-window.slint:105
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:103
+#: ui/main-window.slint:113
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:112
+#: ui/main-window.slint:122
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Ajuda"
 
-#: ui/main-window.slint:114
+#: ui/main-window.slint:124
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentação"
 
-#: ui/main-window.slint:119
+#: ui/main-window.slint:129
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Notas da Versão"
 
-#: ui/main-window.slint:126
+#: ui/main-window.slint:136
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Reportar Problema"
 
-#: ui/main-window.slint:133
+#: ui/main-window.slint:143
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Verificar Atualizações…"
 
-#: ui/main-window.slint:140
+#: ui/main-window.slint:150
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Acerca"
 
-#: ui/main-window.slint:147
+#: ui/main-window.slint:157
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Ver Licença"
 
-#: ui/main-window.slint:155
+#: ui/main-window.slint:165
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Abrir um modelo 3D para visualizar aqui"
@@ -255,7 +260,7 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/main.rs:120
+#: src/wiring.rs:120
 #, fuzzy
 #| msgctxt "FileDialog"
 #| msgid "All files"
@@ -263,52 +268,52 @@ msgctxt "FileDialog"
 msgid "All supported files"
 msgstr "Todos os ficheiros"
 
-#: src/main.rs:123
+#: src/wiring.rs:123
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr "Ficheiros OBJ"
 
-#: src/main.rs:125
+#: src/wiring.rs:125
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr "Ficheiros STL"
 
-#: src/main.rs:128
+#: src/wiring.rs:128
 msgctxt "FileDialog"
 msgid "All files"
 msgstr "Todos os ficheiros"
 
-#: src/main.rs:157
+#: src/wiring.rs:154
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/viewport_controller.rs:173
+#: src/viewport_controller.rs:254
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr "Falha ao abrir o modelo 3D"
 
-#: src/viewport_controller.rs:174
+#: src/viewport_controller.rs:255
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr "Ficheiro: {}"
 
-#: src/viewport_controller.rs:211
+#: src/viewport_controller.rs:319
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr "Falha a carregar modelo 3D"
 
-#: src/viewport_controller.rs:215
+#: src/viewport_controller.rs:323
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr "A malha 3D não pôde ser preparada para renderização."
 
-#: src/viewport_controller.rs:255
+#: src/viewport_controller.rs:376
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "Falha a exibir o modelo 3D"
 
-#: src/viewport_controller.rs:259
+#: src/viewport_controller.rs:380
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "A textura renderizada não pôde ser entregue à interface gráfica."
