@@ -260,7 +260,7 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/wiring.rs:120
+#: src/wiring.rs:141
 #, fuzzy
 #| msgctxt "FileDialog"
 #| msgid "All files"
@@ -268,52 +268,52 @@ msgctxt "FileDialog"
 msgid "All supported files"
 msgstr "Todos los archivos"
 
-#: src/wiring.rs:123
+#: src/wiring.rs:144
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr "Archivos OBJ"
 
-#: src/wiring.rs:125
+#: src/wiring.rs:146
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr "Archivos STL"
 
-#: src/wiring.rs:128
+#: src/wiring.rs:149
 msgctxt "FileDialog"
 msgid "All files"
 msgstr "Todos los archivos"
 
-#: src/wiring.rs:154
-msgctxt "ErrorDialog"
-msgid "File is {} MiB, which exceeds the {} MiB limit."
-msgstr ""
-
-#: src/viewport_controller.rs:254
-msgctxt "ErrorDialog"
-msgid "Failed to open 3D model"
-msgstr "No se pudo abrir el modelo 3D"
-
-#: src/viewport_controller.rs:255
-msgctxt "ErrorDialog"
-msgid "File: {}"
-msgstr "Archivo: {}"
-
-#: src/viewport_controller.rs:319
-msgctxt "ErrorDialog"
-msgid "Failed to load the 3D model"
-msgstr "No se pudo cargar el modelo 3D"
-
-#: src/viewport_controller.rs:323
-msgctxt "ErrorDialog"
-msgid "The mesh could not be prepared for rendering."
-msgstr "La malla presenta algún problema que impide su representación."
-
-#: src/viewport_controller.rs:376
+#: src/viewport_controller.rs:277
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "No se pudo mostrar el modelo 3D"
 
-#: src/viewport_controller.rs:380
+#: src/viewport_controller.rs:281
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "No se ha podido pasar la textura renderizada a la interfaz gráfica."
+
+#: src/scene_loader.rs:234
+msgctxt "ErrorDialog"
+msgid "Failed to load the 3D model"
+msgstr "No se pudo cargar el modelo 3D"
+
+#: src/scene_loader.rs:238
+msgctxt "ErrorDialog"
+msgid "The mesh could not be prepared for rendering."
+msgstr "La malla presenta algún problema que impide su representación."
+
+#: src/scene_loader.rs:279
+msgctxt "ErrorDialog"
+msgid "Failed to open 3D model"
+msgstr "No se pudo abrir el modelo 3D"
+
+#: src/scene_loader.rs:280
+msgctxt "ErrorDialog"
+msgid "File: {}"
+msgstr "Archivo: {}"
+
+#: src/mesh_loader.rs:46
+msgctxt "ErrorDialog"
+msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""

@@ -254,37 +254,52 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/wiring.rs:120
+#: src/wiring.rs:141
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:123
+#: src/wiring.rs:144
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:125
+#: src/wiring.rs:146
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:128
+#: src/wiring.rs:149
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:154
+#: src/viewport_controller.rs:277
 msgctxt "ErrorDialog"
-msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:254
+#: src/viewport_controller.rs:281
+msgctxt "ErrorDialog"
+msgid "The rendered texture could not be handed to the UI."
+msgstr ""
+
+#: src/scene_loader.rs:234
+msgctxt "ErrorDialog"
+msgid "Failed to load the 3D model"
+msgstr ""
+
+#: src/scene_loader.rs:238
+msgctxt "ErrorDialog"
+msgid "The mesh could not be prepared for rendering."
+msgstr ""
+
+#: src/scene_loader.rs:279
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:255
+#: src/scene_loader.rs:280
 #, fuzzy
 #| msgctxt "MenuBar"
 #| msgid "File"
@@ -292,22 +307,7 @@ msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr "Fil"
 
-#: src/viewport_controller.rs:319
+#: src/mesh_loader.rs:46
 msgctxt "ErrorDialog"
-msgid "Failed to load the 3D model"
-msgstr ""
-
-#: src/viewport_controller.rs:323
-msgctxt "ErrorDialog"
-msgid "The mesh could not be prepared for rendering."
-msgstr ""
-
-#: src/viewport_controller.rs:376
-msgctxt "ErrorDialog"
-msgid "Failed to display the 3D model"
-msgstr ""
-
-#: src/viewport_controller.rs:380
-msgctxt "ErrorDialog"
-msgid "The rendered texture could not be handed to the UI."
+msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
