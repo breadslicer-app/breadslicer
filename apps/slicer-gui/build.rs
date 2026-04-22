@@ -14,6 +14,12 @@ const I18N_DIR: &str = "i18n";
 const LOCALE_NAMES_FILE: &str = "i18n/locale-names.toml";
 const PO_BASENAME: &str = "sc-slicer-gui.po";
 
+/// Locales with less than this fraction of their msgids translated are
+/// dropped from the language selector (so users can't pick a locale that
+/// would render the UI mostly in English anyway). Fuzzy entries do not
+/// count as translated.
+const COVERAGE_THRESHOLD_PERCENT: u32 = 50;
+
 fn main() {
     generate_language_table();
 
@@ -35,6 +41,24 @@ fn generate_language_table() {
 
     let mut entries: Vec<Locale> = Vec::with_capacity(locales.len());
     for code in &locales {
+        let po_path = Path::new(I18N_DIR)
+            .join(code)
+            .join("LC_MESSAGES")
+            .join(PO_BASENAME);
+        let stats = po_coverage(&po_path);
+        let pct = stats.percent();
+        if pct < COVERAGE_THRESHOLD_PERCENT {
+            // Below threshold: drop from the selector with a build-log
+            // line so it's visible without being a hard error. Locales
+            // ship at zero coverage right after `msgmerge` adds them.
+            println!(
+                "cargo:warning=skipping locale '{code}' from the language selector: {pct}% \
+                 translated ({translated}/{total}); threshold is {COVERAGE_THRESHOLD_PERCENT}%",
+                translated = stats.translated,
+                total = stats.total,
+            );
+            continue;
+        }
         let Some(name) = names.get(code) else {
             panic!(
                 "i18n locale '{code}' has translations under {I18N_DIR}/{code}/ but no native name \
@@ -193,6 +217,157 @@ fn load_locale_names(path: &Path) -> BTreeMap<String, String> {
             path.display()
         )
     })
+}
+
+/// Translation coverage of a single `.po` file: how many non-header
+/// `msgid`s have a non-empty, non-fuzzy `msgstr`.
+struct CoverageStats {
+    translated: u32,
+    total: u32,
+}
+
+impl CoverageStats {
+    fn percent(&self) -> u32 {
+        (self.translated * 100).checked_div(self.total).unwrap_or(0)
+    }
+}
+
+/// Counts translated vs. total messages in a gettext `.po` file. Mirrors
+/// the rule `msgfmt --statistics` uses: header entry (empty `msgid`) is
+/// excluded; an entry counts as translated iff every `msgstr`/`msgstr[N]`
+/// in it has non-empty content AND the entry is not flagged `fuzzy`.
+///
+/// Implemented as a small line-state parser rather than pulling a
+/// dedicated PO crate or shelling out to `msgfmt`: the dependency would
+/// be either heavy or env-dependent, and the format is simple enough.
+fn po_coverage(po_path: &Path) -> CoverageStats {
+    let raw = fs::read_to_string(po_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", po_path.display()));
+
+    #[derive(Clone, Copy)]
+    enum Field {
+        None,
+        Msgid,
+        Msgstr,
+    }
+
+    // Per-entry accumulators.
+    let mut field = Field::None;
+    let mut started = false;
+    let mut fuzzy = false;
+    let mut msgid_empty = true;
+    // `true` until we've seen a non-empty msgstr/msgstr[N] payload.
+    let mut all_msgstr_empty = true;
+    let mut translated = 0u32;
+    let mut total = 0u32;
+
+    let flush = |started: &mut bool,
+                 fuzzy: &mut bool,
+                 msgid_empty: &mut bool,
+                 all_msgstr_empty: &mut bool,
+                 field: &mut Field,
+                 translated: &mut u32,
+                 total: &mut u32| {
+        if *started {
+            // Skip the header (msgid "" entry).
+            if !*msgid_empty {
+                *total += 1;
+                if !*all_msgstr_empty && !*fuzzy {
+                    *translated += 1;
+                }
+            }
+        }
+        *started = false;
+        *fuzzy = false;
+        *msgid_empty = true;
+        *all_msgstr_empty = true;
+        *field = Field::None;
+    };
+
+    for line in raw.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            flush(
+                &mut started,
+                &mut fuzzy,
+                &mut msgid_empty,
+                &mut all_msgstr_empty,
+                &mut field,
+                &mut translated,
+                &mut total,
+            );
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            // `#, fuzzy[, …]` flag line. Other comments (`#.`, `#:`, `# `) are noise.
+            if let Some(flags) = rest.strip_prefix(',')
+                && flags.split(',').any(|f| f.trim() == "fuzzy")
+            {
+                fuzzy = true;
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("msgctxt ") {
+            started = true;
+            field = Field::None;
+            // Context isn't part of the translated/total count; ignore payload.
+            let _ = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("msgid_plural ") {
+            field = Field::Msgid;
+            if !is_empty_quoted(rest) {
+                msgid_empty = false;
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("msgid ") {
+            started = true;
+            field = Field::Msgid;
+            if !is_empty_quoted(rest) {
+                msgid_empty = false;
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("msgstr ") {
+            field = Field::Msgstr;
+            if !is_empty_quoted(rest) {
+                all_msgstr_empty = false;
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("msgstr[") {
+            // `msgstr[N] "…"` — strip past the `]`.
+            field = Field::Msgstr;
+            let payload = rest.split_once(']').map(|(_, r)| r.trim()).unwrap_or("");
+            if !is_empty_quoted(payload) {
+                all_msgstr_empty = false;
+            }
+        } else if trimmed.starts_with('"') {
+            // Continuation of the previous `msgid` / `msgstr`.
+            match field {
+                Field::Msgid => {
+                    if !is_empty_quoted(trimmed) {
+                        msgid_empty = false;
+                    }
+                }
+                Field::Msgstr => {
+                    if !is_empty_quoted(trimmed) {
+                        all_msgstr_empty = false;
+                    }
+                }
+                Field::None => {}
+            }
+        }
+    }
+    // Flush trailing entry (file may not end with a blank line).
+    flush(
+        &mut started,
+        &mut fuzzy,
+        &mut msgid_empty,
+        &mut all_msgstr_empty,
+        &mut field,
+        &mut translated,
+        &mut total,
+    );
+
+    CoverageStats { translated, total }
+}
+
+fn is_empty_quoted(s: &str) -> bool {
+    s.trim() == "\"\""
 }
 
 /// Quotes a string as a valid Rust string literal. Translation native
