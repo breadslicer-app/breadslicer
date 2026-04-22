@@ -68,6 +68,12 @@ export component SideBar inherits Rectangle {
     width: 180px;
     forward-focus: fs;
 
+    // Keep the keyboard cursor on whichever tab is active. Without this,
+    // re-focusing the sidebar after a click would jump back to tab 0.
+    changed current-item => {
+        fs.focused-tab = root.current-item;
+    }
+
     Rectangle {
         background: Palette.background.darker(0.2);
     }
@@ -104,6 +110,14 @@ export component SideBar inherits Rectangle {
                          self.focused-tab = Math.min(self.focused-tab + 1, root.model.length - 1);
                          return accept;
                     }
+                    if (event.text == Key.Home) {
+                         self.focused-tab = 0;
+                         return accept;
+                    }
+                    if (event.text == Key.End) {
+                         self.focused-tab = root.model.length - 1;
+                         return accept;
+                    }
                     return reject;
                 }
 
@@ -115,7 +129,7 @@ export component SideBar inherits Rectangle {
                     return reject;
                 }
 
-                property <int> focused-tab: 0;
+                property <int> focused-tab: root.current-item;
 
                 x: 0;
                 width: 0; // Do not react on clicks

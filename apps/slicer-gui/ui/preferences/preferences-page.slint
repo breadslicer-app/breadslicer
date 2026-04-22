@@ -10,10 +10,16 @@ export component PreferencesPage inherits VerticalLayout {
     spacing: 12px;
     alignment: start;
 
+    accessible-role: tab-panel;
+    accessible-label: root.title;
+
     Text {
         text: root.title;
         font-size: 1.2rem;
         font-weight: 700;
+        // Title is already exposed as the panel's accessible-label; avoid
+        // a duplicate node in the a11y tree.
+        accessible-role: none;
     }
 
     @children

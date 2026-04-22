@@ -41,11 +41,16 @@ export component AppearancePreferences inherits PreferencesPage {
         Text {
             text: @tr("AppearancePreferences" => "Theme");
             vertical-alignment: center;
+            // Slint has no labelled-by relation; mirror the visible caption
+            // onto the ComboBox via accessible-label and hide this text from
+            // the a11y tree to avoid a disconnected duplicate announcement.
+            accessible-role: none;
         }
 
         ComboBox {
             model: root.theme-options;
             current-index: root.index-for-theme(root.current-theme);
+            accessible-label: @tr("AppearancePreferences" => "Theme");
             selected(_value) => {
                 root.current-theme = root.theme-for-index(self.current-index);
                 root.theme-selected(root.current-theme);

@@ -16,7 +16,10 @@ export component PreferencesWindow inherits Window {
     preferred-width: 480px;
     preferred-height: 320px;
 
-    forward-focus: key-handler;
+    // Land initial focus on the tab list so arrow keys work straight away.
+    // Escape still works from any descendant: the wrapping FocusScope
+    // intercepts it via key-event bubbling.
+    forward-focus: side-bar;
 
     in-out property <ThemePreference> theme: ThemePreference.System;
     callback close-requested();
@@ -29,7 +32,7 @@ export component PreferencesWindow inherits Window {
             ColorScheme.unknown;
     }
 
-    key-handler := FocusScope {
+    FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 root.close-requested();
