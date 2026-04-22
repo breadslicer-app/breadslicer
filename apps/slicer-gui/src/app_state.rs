@@ -10,50 +10,114 @@ use std::rc::Rc;
 
 use slint::{CloseRequestResponse, ComponentHandle};
 
-use crate::about_window::build_about_window;
+use crate::MainWindow;
+use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
-use crate::language::LanguagePreference;
-use crate::preferences_window::build_preferences_window;
+use crate::preferences_bus::{
+    PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
+};
+use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
 use crate::viewport_controller::ViewportController;
-use crate::{AboutWindow, MainWindow, PreferencesWindow, ThemePreference};
+use crate::window_prefs::WindowPreferences;
+
+/// A main window paired with its preference-bus subscription. Drop of
+/// this struct drops the subscription, unregistering the window's
+/// preference-apply listener. Held by value in `AppState::main_windows`
+/// so closing a window via `on_close_requested` cleans up both halves
+/// in one step. The `window` field is load-bearing — holding the Slint
+/// handle by value keeps the component alive — even though the only
+/// accesses to the live window happen through the `Weak<MainWindow>`
+/// captured in the subscription's listener.
+struct WiredMainWindow {
+    #[allow(dead_code)]
+    window: MainWindow,
+    _subscription: Subscription,
+}
 
 /// Owns every piece of state that is app-wide (not tied to a single
 /// `MainWindow`):
 ///
-/// - a lazily-created, app-wide `AboutWindow` shared across every main window;
-/// - a lazily-created, app-wide `PreferencesWindow` shared across every main
+/// - a lazily-created, app-wide `AboutWindow` shared across every main
 ///   window;
-/// - strong handles to each live `MainWindow`, so they aren't dropped while
-///   the event loop is running.
+/// - a lazily-created, app-wide `PreferencesWindow` shared across
+///   every main window;
+/// - the `PreferencesBus`, which owns the canonical theme / language
+///   state and notifies every live window on change;
+/// - strong handles to each live `MainWindow`, so they aren't dropped
+///   while the event loop is running.
 ///
-/// Per-window state (scene, camera, GPU renderer, per-window error dialogs)
-/// stays inside `ViewportController`, one instance per `MainWindow`. Closures
-/// installed on a `MainWindow` that need to reach `AppState` hold a
-/// `Weak<AppState>` so the window→closure→AppState→window graph doesn't form
-/// a strong-reference cycle.
+/// Per-window state (scene, camera, GPU renderer, per-window error
+/// dialogs) stays inside `ViewportController`, one instance per
+/// `MainWindow`. Closures installed on a `MainWindow` that need to
+/// reach `AppState` hold a `Weak<AppState>` so the
+/// window→closure→AppState→window graph doesn't form a strong-
+/// reference cycle.
 pub(crate) struct AppState {
-    about_window: RefCell<Option<AboutWindow>>,
-    preferences_window: RefCell<Option<PreferencesWindow>>,
-    main_windows: RefCell<HashMap<u64, MainWindow>>,
+    about_window: RefCell<Option<WiredAboutWindow>>,
+    preferences_window: RefCell<Option<WiredPreferencesWindow>>,
+    main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
-    current_theme: Cell<ThemePreference>,
-    current_language: Cell<LanguagePreference>,
-    settings: RefCell<AppSettings>,
+    prefs: Rc<PreferencesBus>,
+    // Bus subscriptions owned by AppState. They run on every
+    // `bus.update`; dropping them unregisters. Stored here so they
+    // live as long as `AppState`. The settings subscription owns the
+    // `AppSettings` it writes to, so it lives and dies with AppState.
+    _settings_sub: Subscription,
+    _language_apply_sub: Subscription,
 }
 
 impl AppState {
     pub fn new() -> Rc<Self> {
         let settings = AppSettings::load();
-        let theme = settings.theme();
-        let language = settings.language();
+        let snapshot = PreferencesSnapshot {
+            theme: settings.theme(),
+            language: settings.language(),
+        };
+        // Apply the persisted language *once* up front so the very
+        // first `@tr` evaluation during window construction uses the
+        // right locale. `select_bundled_translation` is a no-op until
+        // at least one Slint component exists, but the next
+        // successful call after the first window is built will retry;
+        // keeping this call here preserves the pre-bus behaviour.
+        snapshot.language.apply();
+
+        let prefs = PreferencesBus::new(snapshot);
+
+        // Persistence: on any change, mirror the snapshot into
+        // `AppSettings` and save. Captures the `AppSettings` by move
+        // so its lifetime is tied to the subscription. Kept ahead of
+        // window listeners so a disk-write failure happens before
+        // any UI re-render.
+        let settings_sub = {
+            let settings = RefCell::new(settings);
+            prefs.subscribe(move |snap, _change| {
+                let mut settings = settings.borrow_mut();
+                settings.set_theme(snap.theme);
+                settings.set_language(snap.language);
+                if let Err(err) = settings.save() {
+                    eprintln!("Failed to save settings: {err}");
+                }
+            })
+        };
+
+        // Language side-effect: flip the process-global bundled
+        // translation before per-window listeners re-render. The
+        // `PreferencesWindow`'s listener rebuilds its language combo
+        // against the *active* translation, so this must come first.
+        let language_apply_sub = prefs.subscribe(|snap, change| {
+            if *change == PreferencesChange::Language {
+                snap.language.apply();
+            }
+        });
+
         Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
-            current_theme: Cell::new(theme),
-            current_language: Cell::new(language),
-            settings: RefCell::new(settings),
+            prefs,
+            _settings_sub: settings_sub,
+            _language_apply_sub: language_apply_sub,
         })
     }
 
@@ -64,11 +128,7 @@ impl AppState {
     /// close-request handler are wired here.
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<(), Box<dyn Error>> {
         let ui = MainWindow::new()?;
-        // `select_bundled_translation` requires a component to exist; apply
-        // the persisted preference (or re-resolve "system") now that we
-        // have one. Idempotent on subsequent windows.
-        self.current_language.get().apply();
-        ui.set_theme(self.current_theme.get());
+        ui.apply_preferences(&self.prefs.snapshot());
         let ctrl = Rc::new(ViewportController::new(&ui));
 
         crate::wiring::wire_main_window(&ui, ctrl)?;
@@ -77,10 +137,17 @@ impl AppState {
         let id = self.next_window_id.get();
         self.next_window_id.set(id.wrapping_add(1));
 
-        // On OS-level close: drop our strong `MainWindow` handle so the
-        // window's `ViewportController`, `Renderer`, and scene can be
-        // released. Without this, hidden windows accumulate for the whole
-        // session.
+        let ui_weak = ui.as_weak();
+        let subscription = self.prefs.subscribe(move |snap, _change| {
+            if let Some(w) = ui_weak.upgrade() {
+                w.apply_preferences(snap);
+            }
+        });
+
+        // On OS-level close: drop our strong handle so the window's
+        // `ViewportController`, `Renderer`, and scene — and the
+        // preference subscription — can be released. Without this,
+        // hidden windows accumulate for the whole session.
         let app_weak = Rc::downgrade(self);
         ui.window().on_close_requested(move || {
             if let Some(app) = app_weak.upgrade() {
@@ -90,13 +157,20 @@ impl AppState {
         });
 
         ui.show()?;
-        self.main_windows.borrow_mut().insert(id, ui);
+        self.main_windows.borrow_mut().insert(
+            id,
+            WiredMainWindow {
+                window: ui,
+                _subscription: subscription,
+            },
+        );
         Ok(())
     }
 
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {
-        // Closures hold `Weak<AppState>` so the MainWindow → closure →
-        // AppState → main_windows(MainWindow) chain isn't a strong cycle.
+        // Closures hold `Weak<AppState>` so the MainWindow → closure
+        // → AppState → main_windows(MainWindow) chain isn't a strong
+        // cycle.
         {
             let app = Rc::downgrade(self);
             ui.on_show_about_requested(move || {
@@ -127,110 +201,45 @@ impl AppState {
     }
 
     /// Shows the app-wide About window, creating it on first use and
-    /// re-showing the same instance on subsequent calls.
+    /// re-showing the same instance on subsequent calls. The window's
+    /// bus subscription keeps it up-to-date while hidden, so no extra
+    /// re-apply is needed here.
     fn show_about(&self) {
         let mut slot = self.about_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
-            let _ = existing.show();
+            let _ = existing.window.show();
             return;
         }
-        match build_about_window() {
-            Ok(about) => {
-                if let Err(err) = about.show() {
+        match build_about_window(&self.prefs) {
+            Ok(wired) => {
+                if let Err(err) = wired.window.show() {
                     eprintln!("Failed to show About window: {err}");
                     return;
                 }
-                *slot = Some(about);
+                *slot = Some(wired);
             }
             Err(err) => eprintln!("Failed to create About window: {err}"),
         }
     }
 
-    /// Shows the app-wide Preferences window, creating it on first use and
-    /// re-showing the same instance on subsequent calls.
-    fn show_preferences(self: &Rc<Self>) {
+    /// Shows the app-wide Preferences window, creating it on first
+    /// use and re-showing the same instance on subsequent calls. The
+    /// window's bus subscription keeps it up-to-date while hidden.
+    fn show_preferences(&self) {
         let mut slot = self.preferences_window.borrow_mut();
         if let Some(existing) = slot.as_ref() {
-            self.refresh_preferences_language(existing);
-            let _ = existing.show();
+            let _ = existing.window.show();
             return;
         }
-        let on_theme_changed = {
-            let app_weak = Rc::downgrade(self);
-            move |t| {
-                if let Some(app) = app_weak.upgrade() {
-                    app.apply_theme(t);
-                }
-            }
-        };
-        let on_language_changed = {
-            let app_weak = Rc::downgrade(self);
-            move |pref: LanguagePreference| {
-                if let Some(app) = app_weak.upgrade() {
-                    app.apply_language(pref);
-                }
-            }
-        };
-        match build_preferences_window(on_theme_changed, on_language_changed) {
-            Ok(prefs) => {
-                prefs.set_theme(self.current_theme.get());
-                self.refresh_preferences_language(&prefs);
-                if let Err(err) = prefs.show() {
+        match build_preferences_window(&self.prefs) {
+            Ok(wired) => {
+                if let Err(err) = wired.window.show() {
                     eprintln!("Failed to show Preferences window: {err}");
                     return;
                 }
-                *slot = Some(prefs);
+                *slot = Some(wired);
             }
             Err(err) => eprintln!("Failed to create Preferences window: {err}"),
-        }
-    }
-
-    /// Pushes the current language model and selected index into the
-    /// Preferences window. Called both when the window is first built and
-    /// every time it is re-shown so the "System" entry shows the correct
-    /// translation for the active language.
-    fn refresh_preferences_language(&self, prefs: &PreferencesWindow) {
-        prefs.set_language_options(LanguagePreference::display_options());
-        prefs.set_current_language_index(self.current_language.get().combo_index());
-    }
-
-    /// Records the new theme, persists it, and pushes it to every live
-    /// window so their per-tree `Palette.color-scheme` bindings update in
-    /// lock-step.
-    fn apply_theme(&self, new_theme: ThemePreference) {
-        self.current_theme.set(new_theme);
-        {
-            let mut settings = self.settings.borrow_mut();
-            settings.set_theme(new_theme);
-            if let Err(err) = settings.save() {
-                eprintln!("Failed to save settings: {err}");
-            }
-        }
-        for w in self.main_windows.borrow().values() {
-            w.set_theme(new_theme);
-        }
-        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
-            prefs.set_theme(new_theme);
-        }
-    }
-
-    /// Records the new language preference, persists it, calls into Slint
-    /// to switch the bundled translation, and refreshes the Preferences
-    /// window's language model so the "System" label re-translates.
-    /// `@tr` bindings in the rest of the UI re-evaluate automatically once
-    /// `select_bundled_translation` flips the active language.
-    fn apply_language(&self, new_language: LanguagePreference) {
-        self.current_language.set(new_language);
-        {
-            let mut settings = self.settings.borrow_mut();
-            settings.set_language(new_language);
-            if let Err(err) = settings.save() {
-                eprintln!("Failed to save settings: {err}");
-            }
-        }
-        new_language.apply();
-        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
-            self.refresh_preferences_language(prefs);
         }
     }
 }

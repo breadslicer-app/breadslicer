@@ -3,13 +3,22 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button } from "std-widgets.slint";
+import { Button, Palette } from "std-widgets.slint";
+import { ThemePreference } from "./preferences/appearance.slint";
 
 export component AboutWindow inherits Window {
     title: @tr("About SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
 
     in property <string> app-version: "";
+    in property <ThemePreference> theme: ThemePreference.System;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
 
     // Font sizes in `rem`: 1rem = Window.default-font-size at render time,
     // so these track OS text-size preferences automatically. Centralised

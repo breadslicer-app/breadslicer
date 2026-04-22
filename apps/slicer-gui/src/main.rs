@@ -18,9 +18,11 @@ mod i18n;
 mod language;
 mod mesh_loader;
 mod mesh_render;
+mod preferences_bus;
 mod preferences_window;
 mod scene_loader;
 mod viewport_controller;
+mod window_prefs;
 mod wiring;
 
 use std::error::Error;
