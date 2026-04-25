@@ -3,238 +3,239 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-22 09:13+0000\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-04-27 08:55+0000\n"
+"Last-Translator: Swearfy <swearfy@noreply.codeberg.org>\n"
+"Language-Team: Romanian <https://translate.codeberg.org/projects/soulcrafted-"
+"slicer/slicer-gui/ro/>\n"
 "Language: ro\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=n==1 ? 0 : (n==0 || (n%100 > 0 && n%100 < "
 "20)) ? 1 : 2;\n"
-"X-Generator: Poedit 3.7\n"
+"X-Generator: Weblate 5.17\n"
 
 #: ui/about-window.slint:9
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
-msgstr ""
+msgstr "Despre SoulCrafted Slicer"
 
 #: ui/about-window.slint:45
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
-msgstr ""
+msgstr "SoulCrafted Slicer"
 
 #: ui/about-window.slint:52
 msgctxt "About"
 msgid "Version {0}"
-msgstr ""
+msgstr "Versiunea {0}"
 
 #: ui/about-window.slint:58
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
-msgstr ""
+msgstr "Un slicer open source pentru imprimante 3D cu rășină."
 
 #: ui/about-window.slint:64
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
-msgstr ""
+msgstr "Licențiat doar sub AGPL-3.0"
 
 #: ui/about-window.slint:74
 msgctxt "About"
 msgid "Close"
-msgstr ""
+msgstr "închide"
 
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
 msgid "Preferences"
-msgstr ""
+msgstr "Preferințe"
 
 #: ui/preferences/preferences-window.slint:49
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
-msgstr ""
+msgstr "Secțiunile de preferințe"
 
 #: ui/preferences/preferences-window.slint:51
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
-msgstr ""
+msgstr "Interfață și temă"
 
 #: ui/preferences/preferences-window.slint:52
 msgctxt "PreferencesMenu"
 msgid "3D View"
-msgstr ""
+msgstr "Vizualizare 3D"
 
 #: ui/preferences/3dview.slint:9
 msgctxt "PreferencesPage"
 msgid "3D View"
-msgstr ""
+msgstr "Vizualizare 3D"
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
 msgid "UI & Theme"
-msgstr ""
+msgstr "Interfață și temă"
 
 #: ui/preferences/appearance.slint:27
 msgctxt "AppearancePreferences"
 msgid "System"
-msgstr ""
+msgstr "Sistem"
 
 #: ui/preferences/appearance.slint:28
 msgctxt "AppearancePreferences"
 msgid "Light"
-msgstr ""
+msgstr "Luminoasă"
 
 #: ui/preferences/appearance.slint:29
 msgctxt "AppearancePreferences"
 msgid "Dark"
-msgstr ""
+msgstr "Întunecată"
 
 #: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
 msgctxt "AppearancePreferences"
 msgid "Theme"
-msgstr ""
+msgstr "Temă"
 
 #: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
 msgctxt "AppearancePreferences"
 msgid "Language"
-msgstr ""
+msgstr "Limbă"
 
 #: ui/error-dialog.slint:9
 msgctxt "ErrorDialog"
 msgid "Error"
-msgstr ""
+msgstr "Eroare"
 
 #: ui/error-dialog.slint:12
 msgctxt "ErrorDialog"
 msgid "An error occurred"
-msgstr ""
+msgstr "A apărut o eroare"
 
 #: ui/error-dialog.slint:73
 msgctxt "ErrorDialog"
 msgid "Warning"
-msgstr ""
+msgstr "Avertisment"
 
 #. runs automatically.
 #: ui/error-dialog.slint:115
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
-msgstr ""
+msgstr "Ascunde detaliile tehnice"
 
 #. runs automatically.
 #: ui/error-dialog.slint:115
 msgctxt "ErrorDialog"
 msgid "Show technical details"
-msgstr ""
+msgstr "Afișați detaliile tehnice"
 
 #: ui/error-dialog.slint:142
 msgctxt "ErrorDialog"
 msgid "Close"
-msgstr ""
+msgstr "Închide"
 
 #: ui/main-window.slint:16
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
-msgstr ""
+msgstr "SoulCrafted Slicer"
 
 #: ui/main-window.slint:51
 msgctxt "MenuBar"
 msgid "File"
-msgstr ""
+msgstr "Fişier"
 
 #: ui/main-window.slint:54
 msgctxt "MenuBar"
 msgid "New Window"
-msgstr ""
+msgstr "Fereastră nouă"
 
 #: ui/main-window.slint:64
 msgctxt "MenuBar"
 msgid "Open…"
-msgstr ""
+msgstr "Deschide…"
 
 #: ui/main-window.slint:73
 msgctxt "MenuBar"
 msgid "Close"
-msgstr ""
+msgstr "Închide"
 
 #: ui/main-window.slint:84
 msgctxt "MenuBar"
 msgid "Save"
-msgstr ""
+msgstr "Salvează"
 
 #: ui/main-window.slint:90
 msgctxt "MenuBar"
 msgid "Save As…"
-msgstr ""
+msgstr "Salvare ca…"
 
 #: ui/main-window.slint:97
 msgctxt "MenuBar"
 msgid "Edit"
-msgstr ""
+msgstr "Editare"
 
 #: ui/main-window.slint:99
 msgctxt "MenuBar"
 msgid "Undo"
-msgstr ""
+msgstr "Anulează"
 
 #: ui/main-window.slint:105
 msgctxt "MenuBar"
 msgid "Redo"
-msgstr ""
+msgstr "Repetă"
 
 #: ui/main-window.slint:113
 msgctxt "MenuBar"
 msgid "Preferences"
-msgstr ""
+msgstr "Preferințe"
 
 #: ui/main-window.slint:122
 msgctxt "MenuBar"
 msgid "Help"
-msgstr ""
+msgstr "Ajutor"
 
 #: ui/main-window.slint:124
 msgctxt "MenuBar"
 msgid "Documentation"
-msgstr ""
+msgstr "Documentaţie"
 
 #: ui/main-window.slint:129
 msgctxt "MenuBar"
 msgid "Show Release Notes"
-msgstr ""
+msgstr "Vezi noutățile"
 
 #: ui/main-window.slint:136
 msgctxt "MenuBar"
 msgid "Report Issue"
-msgstr ""
+msgstr "Raportează o problemă"
 
 #: ui/main-window.slint:143
 msgctxt "MenuBar"
 msgid "Check for Updates…"
-msgstr ""
+msgstr "Caută actualizări…"
 
 #: ui/main-window.slint:150
 msgctxt "MenuBar"
 msgid "About"
-msgstr ""
+msgstr "Despre"
 
 #: ui/main-window.slint:157
 msgctxt "MenuBar"
 msgid "View License"
-msgstr ""
+msgstr "Vezi licența"
 
 #: ui/main-window.slint:165
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
-msgstr ""
+msgstr "Deschide un model 3D pentru a-l vizualiza aici"
 
 #: ui/mesh-viewer.slint:35
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
-msgstr ""
+msgstr "Vizualizator 3D, Gol"
 
 #: ui/mesh-viewer.slint:36
 msgctxt "MeshViewer"
 msgid "3D model viewer"
-msgstr ""
+msgstr "Vizualizator modele 3D"
 
 #: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
@@ -244,58 +245,64 @@ msgid ""
 "Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
+"Pentru a roti, folosește clic dreapta și trage sau tastele săgeată. Pentru a "
+"mișca, folosește Shift + clic dreapta și trage, clic rotiță sau Shift + "
+"tastele săgeată. Pentru zoom, folosește rotița, Plus/Minus sau Page Up/Down. "
+"Pentru a încadra modelul, apasă F sau Home. Pentru a schimba perspectiva, "
+"apasă 1, 3 sau 7 pentru față, dreapta sau sus; ține apăsat Control pentru "
+"spate, stânga sau jos."
 
 #: src/wiring.rs:141
 msgctxt "FileDialog"
 msgid "All supported files"
-msgstr ""
+msgstr "Toate fișierele acceptate"
 
 #: src/wiring.rs:144
 msgctxt "FileDialog"
 msgid "OBJ files"
-msgstr ""
+msgstr "Fișiere OBJ"
 
 #: src/wiring.rs:146
 msgctxt "FileDialog"
 msgid "STL files"
-msgstr ""
+msgstr "Fișiere STL"
 
 #: src/wiring.rs:149
 msgctxt "FileDialog"
 msgid "All files"
-msgstr ""
+msgstr "Toate fișierele"
 
 #: src/viewport_controller.rs:277
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
-msgstr ""
+msgstr "Nu s-a putut afișa modelul 3D"
 
 #: src/viewport_controller.rs:281
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
-msgstr ""
+msgstr "Textura randată nu a putut fi transmisă interfeței."
 
 #: src/scene_loader.rs:234
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
-msgstr ""
+msgstr "Nu s-a putut încărca modelul 3D"
 
 #: src/scene_loader.rs:238
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
-msgstr ""
+msgstr "Mesh-ul nu a putut fi pregătit pentru randare."
 
 #: src/scene_loader.rs:279
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
-msgstr ""
+msgstr "Nu s-a putut deschide modelul 3D"
 
 #: src/scene_loader.rs:280
 msgctxt "ErrorDialog"
 msgid "File: {}"
-msgstr ""
+msgstr "Fișier: {}"
 
 #: src/mesh_loader.rs:46
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
-msgstr ""
+msgstr "Fișierul are {} MiB, ceea ce depășește limita de {} MiB."
