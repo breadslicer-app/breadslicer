@@ -3,50 +3,51 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-22 09:13+0000\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-04-27 08:55+0000\n"
+"Last-Translator: Colamann <colamann@noreply.codeberg.org>\n"
+"Language-Team: German <https://translate.codeberg.org/projects/soulcrafted-"
+"slicer/slicer-gui/de/>\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Poedit 3.7\n"
+"X-Generator: Weblate 5.17\n"
 
 #: ui/about-window.slint:9
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
-msgstr ""
+msgstr "Über Soulcrafted Slicer"
 
 #: ui/about-window.slint:45
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
-msgstr ""
+msgstr "SoulCrafted Slicer"
 
 #: ui/about-window.slint:52
 msgctxt "About"
 msgid "Version {0}"
-msgstr ""
+msgstr "Version {0}"
 
 #: ui/about-window.slint:58
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
-msgstr ""
+msgstr "Ein Open-Source Slicer für Resin 3D Drucker."
 
 #: ui/about-window.slint:64
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
-msgstr ""
+msgstr "Lizenziert unter AGPL-3.0-only"
 
 #: ui/about-window.slint:74
 msgctxt "About"
 msgid "Close"
-msgstr ""
+msgstr "Schließen"
 
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
 msgid "Preferences"
-msgstr ""
+msgstr "Einstellungen"
 
 #: ui/preferences/preferences-window.slint:49
 msgctxt "PreferencesMenu"
@@ -56,169 +57,169 @@ msgstr ""
 #: ui/preferences/preferences-window.slint:51
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
-msgstr ""
+msgstr "UI & Theme"
 
 #: ui/preferences/preferences-window.slint:52
 msgctxt "PreferencesMenu"
 msgid "3D View"
-msgstr ""
+msgstr "3D Ansicht"
 
 #: ui/preferences/3dview.slint:9
 msgctxt "PreferencesPage"
 msgid "3D View"
-msgstr ""
+msgstr "3D Ansicht"
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
 msgid "UI & Theme"
-msgstr ""
+msgstr "UI & Theme"
 
 #: ui/preferences/appearance.slint:27
 msgctxt "AppearancePreferences"
 msgid "System"
-msgstr ""
+msgstr "System"
 
 #: ui/preferences/appearance.slint:28
 msgctxt "AppearancePreferences"
 msgid "Light"
-msgstr ""
+msgstr "Hell"
 
 #: ui/preferences/appearance.slint:29
 msgctxt "AppearancePreferences"
 msgid "Dark"
-msgstr ""
+msgstr "Dunkel"
 
 #: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
 msgctxt "AppearancePreferences"
 msgid "Theme"
-msgstr ""
+msgstr "Theme"
 
 #: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
 msgctxt "AppearancePreferences"
 msgid "Language"
-msgstr ""
+msgstr "Sprache"
 
 #: ui/error-dialog.slint:9
 msgctxt "ErrorDialog"
 msgid "Error"
-msgstr ""
+msgstr "Fehler"
 
 #: ui/error-dialog.slint:12
 msgctxt "ErrorDialog"
 msgid "An error occurred"
-msgstr ""
+msgstr "Es ist ein Fehler aufgetreten"
 
 #: ui/error-dialog.slint:73
 msgctxt "ErrorDialog"
 msgid "Warning"
-msgstr ""
+msgstr "Warnung"
 
 #. runs automatically.
 #: ui/error-dialog.slint:115
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
-msgstr ""
+msgstr "Technische Details ausblenden"
 
 #. runs automatically.
 #: ui/error-dialog.slint:115
 msgctxt "ErrorDialog"
 msgid "Show technical details"
-msgstr ""
+msgstr "Technische Details anzeigen"
 
 #: ui/error-dialog.slint:142
 msgctxt "ErrorDialog"
 msgid "Close"
-msgstr ""
+msgstr "Schließen"
 
 #: ui/main-window.slint:16
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
-msgstr ""
+msgstr "SoulCrafted Slicer"
 
 #: ui/main-window.slint:51
 msgctxt "MenuBar"
 msgid "File"
-msgstr ""
+msgstr "Datei"
 
 #: ui/main-window.slint:54
 msgctxt "MenuBar"
 msgid "New Window"
-msgstr ""
+msgstr "Neues Fenster"
 
 #: ui/main-window.slint:64
 msgctxt "MenuBar"
 msgid "Open…"
-msgstr ""
+msgstr "Öffnen…"
 
 #: ui/main-window.slint:73
 msgctxt "MenuBar"
 msgid "Close"
-msgstr ""
+msgstr "Schließen"
 
 #: ui/main-window.slint:84
 msgctxt "MenuBar"
 msgid "Save"
-msgstr ""
+msgstr "Speichern"
 
 #: ui/main-window.slint:90
 msgctxt "MenuBar"
 msgid "Save As…"
-msgstr ""
+msgstr "Speichern unter…"
 
 #: ui/main-window.slint:97
 msgctxt "MenuBar"
 msgid "Edit"
-msgstr ""
+msgstr "Bearbeiten"
 
 #: ui/main-window.slint:99
 msgctxt "MenuBar"
 msgid "Undo"
-msgstr ""
+msgstr "Rückgängig"
 
 #: ui/main-window.slint:105
 msgctxt "MenuBar"
 msgid "Redo"
-msgstr ""
+msgstr "Wiederherstellen"
 
 #: ui/main-window.slint:113
 msgctxt "MenuBar"
 msgid "Preferences"
-msgstr ""
+msgstr "Einstellungen"
 
 #: ui/main-window.slint:122
 msgctxt "MenuBar"
 msgid "Help"
-msgstr ""
+msgstr "Hilfe"
 
 #: ui/main-window.slint:124
 msgctxt "MenuBar"
 msgid "Documentation"
-msgstr ""
+msgstr "Dokumentation"
 
 #: ui/main-window.slint:129
 msgctxt "MenuBar"
 msgid "Show Release Notes"
-msgstr ""
+msgstr "Release Notes anzeigen"
 
 #: ui/main-window.slint:136
 msgctxt "MenuBar"
 msgid "Report Issue"
-msgstr ""
+msgstr "Ein Problem melden"
 
 #: ui/main-window.slint:143
 msgctxt "MenuBar"
 msgid "Check for Updates…"
-msgstr ""
+msgstr "Nach Updates suchen…"
 
 #: ui/main-window.slint:150
 msgctxt "MenuBar"
 msgid "About"
-msgstr ""
+msgstr "Über"
 
 #: ui/main-window.slint:157
 msgctxt "MenuBar"
 msgid "View License"
-msgstr ""
+msgstr "Lizenzinformation anzeigen"
 
 #: ui/main-window.slint:165
 msgctxt "MainWindow"
@@ -228,12 +229,12 @@ msgstr ""
 #: ui/mesh-viewer.slint:35
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
-msgstr ""
+msgstr "3D-Modellbetrachter, leer"
 
 #: ui/mesh-viewer.slint:36
 msgctxt "MeshViewer"
 msgid "3D model viewer"
-msgstr ""
+msgstr "3d-Modellbetrachter"
 
 #: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
@@ -247,22 +248,22 @@ msgstr ""
 #: src/wiring.rs:141
 msgctxt "FileDialog"
 msgid "All supported files"
-msgstr ""
+msgstr "Alle unterstützten Dateien"
 
 #: src/wiring.rs:144
 msgctxt "FileDialog"
 msgid "OBJ files"
-msgstr ""
+msgstr "OBJ Dateien"
 
 #: src/wiring.rs:146
 msgctxt "FileDialog"
 msgid "STL files"
-msgstr ""
+msgstr "STL Dateien"
 
 #: src/wiring.rs:149
 msgctxt "FileDialog"
 msgid "All files"
-msgstr ""
+msgstr "Alle Dateien"
 
 #: src/viewport_controller.rs:277
 msgctxt "ErrorDialog"
