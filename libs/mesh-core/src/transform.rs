@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 
 use anyhow::{Result, anyhow};
 
-use crate::primitives::{Vector3D, Vertex};
+use crate::primitives::{Normal, Vector3D, Vertex};
 
 /// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
 ///
@@ -151,7 +151,7 @@ impl AffineTransform3D {
     /// Applies the linear part of the transform to a direction or
     /// displacement, ignoring the translation. Use this for tangents and
     /// other vectors that should not be affected by translation. For
-    /// surface normals see `apply_to_normal` (TBD), which uses the
+    /// surface normals see `apply_to_normal`, which uses the
     /// inverse-transpose.
     pub fn apply_to_vector(&self, v: Vector3D<f32>) -> Vector3D<f32> {
         let v = [v.0[0] as f64, v.0[1] as f64, v.0[2] as f64];
@@ -160,6 +160,92 @@ impl AffineTransform3D {
         let y = m[1][0].mul_add(v[0], m[1][1].mul_add(v[1], m[1][2] * v[2]));
         let z = m[2][0].mul_add(v[0], m[2][1].mul_add(v[1], m[2][2] * v[2]));
         Vector3D::new([x as f32, y as f32, z as f32])
+    }
+
+    /// Determinant of the 3×3 linear part. Module-internal for now; a
+    /// public version is introduced alongside `inverse` and `compose`.
+    pub(super) fn linear_determinant(&self) -> f64 {
+        let m = &self.linear;
+        // Cofactor expansion along the first row, written with `mul_add`
+        // chains to keep precision consistent with the rest of the module.
+        let c0 = m[1][1].mul_add(m[2][2], -m[1][2] * m[2][1]);
+        let c1 = m[1][0].mul_add(m[2][2], -m[1][2] * m[2][0]);
+        let c2 = m[1][0].mul_add(m[2][1], -m[1][1] * m[2][0]);
+        m[0][0].mul_add(c0, m[0][1].mul_add(-c1, m[0][2] * c2))
+    }
+
+    /// Applies the transform to a unit surface normal.
+    ///
+    /// The mathematically correct way to transform a normal under a
+    /// general affine map is to multiply by the **inverse-transpose** of
+    /// the linear part and then re-normalise. For a pure rotation or
+    /// uniform scale the inverse-transpose equals the linear part up to a
+    /// positive scalar, so the renormalised result is identical; for
+    /// non-uniform scale, shear, or mirror it is not, and using the
+    /// linear part directly would yield a normal that is no longer
+    /// perpendicular to the transformed surface.
+    ///
+    /// Returns an error if the linear part is singular (determinant zero
+    /// to within `f64::EPSILON`) or if the resulting normal has zero
+    /// magnitude (which can happen for pathological inputs).
+    pub fn apply_to_normal(&self, n: Normal) -> Result<Normal> {
+        let det = self.linear_determinant();
+        if !matches!(
+            det.abs().partial_cmp(&f64::EPSILON),
+            Some(Ordering::Greater)
+        ) {
+            return Err(anyhow!("Cannot transform normal: singular linear part"));
+        }
+
+        // The (i, j) entry of M⁻ᵀ is the (j, i) cofactor of M divided by
+        // det(M). The 1/|det| factor is removed by the final
+        // renormalisation, but its sign is not — a mirror (det < 0)
+        // must flip the normal, so the sign is reapplied explicitly
+        // after the matrix multiply.
+        let m = &self.linear;
+        let cof = [
+            [
+                m[1][1].mul_add(m[2][2], -m[1][2] * m[2][1]),
+                -m[1][0].mul_add(m[2][2], -m[1][2] * m[2][0]),
+                m[1][0].mul_add(m[2][1], -m[1][1] * m[2][0]),
+            ],
+            [
+                -m[0][1].mul_add(m[2][2], -m[0][2] * m[2][1]),
+                m[0][0].mul_add(m[2][2], -m[0][2] * m[2][0]),
+                -m[0][0].mul_add(m[2][1], -m[0][1] * m[2][0]),
+            ],
+            [
+                m[0][1].mul_add(m[1][2], -m[0][2] * m[1][1]),
+                -m[0][0].mul_add(m[1][2], -m[0][2] * m[1][0]),
+                m[0][0].mul_add(m[1][1], -m[0][1] * m[1][0]),
+            ],
+        ];
+
+        let n64 = [n.0[0] as f64, n.0[1] as f64, n.0[2] as f64];
+        // (M⁻ᵀ)ᵢⱼ = cof(M)ᵢⱼ / det(M); (M⁻ᵀ · n)ᵢ = Σⱼ cof(M)ᵢⱼ · nⱼ / det.
+        let mut out = [
+            cof[0][0].mul_add(n64[0], cof[0][1].mul_add(n64[1], cof[0][2] * n64[2])),
+            cof[1][0].mul_add(n64[0], cof[1][1].mul_add(n64[1], cof[1][2] * n64[2])),
+            cof[2][0].mul_add(n64[0], cof[2][1].mul_add(n64[1], cof[2][2] * n64[2])),
+        ];
+
+        // Apply the sign of det so that a mirror (det < 0) genuinely
+        // flips the normal. The magnitude is removed by renormalisation
+        // below.
+        if det < 0.0 {
+            out = [-out[0], -out[1], -out[2]];
+        }
+
+        let mag_sq = out[0].mul_add(out[0], out[1].mul_add(out[1], out[2] * out[2]));
+        if !matches!(mag_sq.partial_cmp(&f64::EPSILON), Some(Ordering::Greater)) {
+            return Err(anyhow!("Cannot transform normal: zero-magnitude result"));
+        }
+        let inv_mag = 1.0 / mag_sq.sqrt();
+        Ok(Normal::new([
+            (out[0] * inv_mag) as f32,
+            (out[1] * inv_mag) as f32,
+            (out[2] * inv_mag) as f32,
+        ]))
     }
 }
 
@@ -190,6 +276,12 @@ mod affine_transform_3d_tests {
     }
 
     fn assert_vector_approx(actual: Vector3D<f32>, expected: [f32; 3], eps: f32) {
+        for (a, e) in actual.0.iter().zip(expected.iter()) {
+            assert_approx_eq!(f32, *a, *e, epsilon = eps);
+        }
+    }
+
+    fn assert_normal_approx(actual: Normal, expected: [f32; 3], eps: f32) {
         for (a, e) in actual.0.iter().zip(expected.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
@@ -489,6 +581,132 @@ mod affine_transform_3d_tests {
         let t = AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]);
         let v = Vector3D::<f32>::new([1.0, 1.0, 1.0]);
         assert_vector_approx(t.apply_to_vector(v), [2.0, 3.0, 4.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_identity_is_pass_through() {
+        let t = AffineTransform3D::identity();
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, 1.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_translation_does_not_change_normal() {
+        let t = AffineTransform3D::from_translation([10.0, -5.0, 2.5]);
+        let n = Normal::new([0.0, 1.0, 0.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 1.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_rotation_rotates_the_normal() {
+        // A π/2 rotation about Z sends +X to +Y; a normal pointing along
+        // +X should be rotated identically.
+        let t = AffineTransform3D::from_rotation_z(FRAC_PI_2);
+        let n = Normal::new([1.0, 0.0, 0.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 1.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_uniform_scale_does_not_change_normal() {
+        // Uniform scale: M⁻ᵀ = (1/s)·I, so the normal direction is
+        // unchanged after renormalisation.
+        let t = AffineTransform3D::from_uniform_scale(7.5);
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, 1.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_non_uniform_scale_uses_inverse_transpose() {
+        // Surface in the XY plane (normal = +Z), tilted by stretching
+        // along X. With non-uniform scale s = (s_x, 1, 1), naively
+        // applying the linear part would give (s_x, 0, 0)·n = (0, 0, 1)
+        // (correct here because the normal has no X component) — so a
+        // more meaningful test uses a tilted plane.
+        //
+        // Consider the surface containing (1,0,0), (0,1,0), (0,0,0).
+        // Its (unit) normal is (1, 1, 0)/√2. Apply non-uniform scale
+        // s = (2, 1, 1). The transformed surface contains (2,0,0),
+        // (0,1,0), (0,0,0); its true normal is (1, 2, 0)/√5.
+        //
+        // Using the linear part naively would give
+        // (2,1,0)/√5 ≠ (1,2,0)/√5 — the inverse-transpose is required.
+        let t = AffineTransform3D::from_non_uniform_scale([2.0, 1.0, 1.0]);
+        let n = Normal::new([
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+            0.0,
+        ]);
+        let result = t.apply_to_normal(n).unwrap();
+        let inv_sqrt5 = 1.0 / 5.0_f32.sqrt();
+        assert_normal_approx(result, [inv_sqrt5, 2.0 * inv_sqrt5, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_result_is_unit_length() {
+        // For any non-singular transform, the result must be unit-length.
+        let t = AffineTransform3D::from_non_uniform_scale([3.0, 0.5, 7.0]);
+        let n = Normal::new([
+            1.0 / 3.0_f32.sqrt(),
+            1.0 / 3.0_f32.sqrt(),
+            1.0 / 3.0_f32.sqrt(),
+        ]);
+        let result = t.apply_to_normal(n).unwrap();
+        let mag = result.0.iter().map(|c| c * c).sum::<f32>().sqrt();
+        assert_approx_eq!(f32, mag, 1.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_mirror_along_z_flips_the_normal() {
+        // A reflection across the XY plane has linear = diag(1, 1, -1)
+        // and det = -1. A surface whose original normal was +Z faces -Z
+        // after the reflection. `apply_to_normal` returns the normal
+        // direction that matches the *winding-reversed* triangle (which
+        // is what `merge_meshes` produces for negative-det transforms),
+        // so the result here is -Z.
+        let t = AffineTransform3D::from_non_uniform_scale([1.0, 1.0, -1.0]);
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, -1.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_mirror_along_x_does_not_flip_z_normal() {
+        // A reflection across the YZ plane (linear = diag(-1, 1, 1)) is
+        // also a negative-determinant transform, but a normal along +Z
+        // remains pointing along +Z because the mirrored +Z face still
+        // faces +Z. The internal sign-flip exactly compensates for the
+        // cofactor's sign change, leaving the +Z direction untouched.
+        let t = AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]);
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 0.0, 1.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_singular_linear_returns_error() {
+        // A rank-2 linear part: column 2 is zero.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert!(t.apply_to_normal(n).is_err());
+    }
+
+    #[test]
+    fn apply_to_normal_zero_input_returns_error() {
+        // A zero-length normal cannot be normalised after multiplication.
+        let t = AffineTransform3D::from_uniform_scale(2.0);
+        let n = Normal::new([0.0, 0.0, 0.0]);
+        assert!(t.apply_to_normal(n).is_err());
+    }
+
+    #[test]
+    fn apply_to_normal_rotation_then_translation_ignores_translation() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [1000.0, -500.0, 7.0],
+        );
+        let n = Normal::new([1.0, 0.0, 0.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 1.0, 0.0], 1e-6);
     }
 
     #[test]
