@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-// Helpers in this module are unit-tested in isolation; their callers
-// (the renderer and the controller's drag FSM) land in follow-up
-// commits. The blanket allow is removed once the wiring catches up.
-#![allow(dead_code)]
-
 //! Pure-CPU helpers for the translate gizmo: pivot, world-aligned
 //! axes, screen-constant scale, ray-vs-axis-handle hit test, and the
 //! drag-time closest-point math. Renderer-agnostic so it can be

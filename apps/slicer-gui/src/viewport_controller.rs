@@ -6,7 +6,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use sc_mesh_core::scene::Scene;
+use glam::Vec3;
+use sc_mesh_core::scene::{Scene, Transform3D};
+use sc_mesh_core::transform::AffineTransform3D;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
@@ -14,8 +16,9 @@ use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 use crate::MainWindow;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
+use crate::gizmo::{self, Axis};
 use crate::i18n::ctr;
-use crate::mesh_render::{Renderer, default_fov_y};
+use crate::mesh_render::{GizmoFrame, Renderer, default_fov_y};
 use crate::picking;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 
@@ -40,8 +43,10 @@ pub struct ViewportController {
     // pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
     // `on_pointer_up` reads it to decide whether the gesture was a
     // click (small movement → run picker) or a drag (large movement →
-    // ignored for now; the gizmo FSM will consume it once wired).
+    // either consumed by the gizmo FSM or dropped on the floor).
     press_origin: Cell<Option<(f32, f32)>>,
+    // Translate-gizmo drag state. Idle when no drag is in progress.
+    gizmo: Cell<GizmoState>,
     loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
@@ -69,6 +74,27 @@ pub(crate) const RESIZE_SETTLE: core::time::Duration = core::time::Duration::fro
 // clicks bleed into starts-of-drags.
 const CLICK_DRAG_THRESHOLD: f32 = 4.0;
 
+/// Translate-gizmo input FSM. The `Idle` variant is the resting state
+/// (no axis is being dragged). `Drag` captures the axis, the object's
+/// transform at gesture start, the world-space pivot and anchor — the
+/// running translation is composed each frame as
+/// `Transform3D::Affine(delta) ∘ original`, where `delta` is the
+/// world-space difference between the current ray's closest point on
+/// the axis and the captured anchor. Composing onto `original` rather
+/// than the running transform keeps the gesture numerically clean —
+/// no float-error accumulation across hundreds of move events.
+#[derive(Copy, Clone, Debug)]
+enum GizmoState {
+    Idle,
+    Drag {
+        axis: Axis,
+        original: Transform3D,
+        pivot: Vec3,
+        anchor: Vec3,
+        object_idx: usize,
+    },
+}
+
 impl ViewportController {
     pub fn new(ui: &MainWindow) -> Self {
         let dialogs = DialogManager::new();
@@ -82,6 +108,7 @@ impl ViewportController {
             needs_upload: Cell::new(false),
             selection: Cell::new(None),
             press_origin: Cell::new(None),
+            gizmo: Cell::new(GizmoState::Idle),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -107,6 +134,7 @@ impl ViewportController {
             needs_upload: Cell::new(false),
             selection: Cell::new(None),
             press_origin: Cell::new(None),
+            gizmo: Cell::new(GizmoState::Idle),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -204,6 +232,11 @@ impl ViewportController {
         self.needs_upload.set(false);
         self.dirty.set(false);
         self.selection.set(None);
+        // The drag's captured `object_idx` becomes meaningless once
+        // the scene is gone; clear FSM state without trying to
+        // revert (the object no longer exists).
+        self.gizmo.set(GizmoState::Idle);
+        self.press_origin.set(None);
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.clear_scene();
         }
@@ -306,8 +339,12 @@ impl ViewportController {
 
     /// Esc / "click on empty space" path. Always sets selection to
     /// `None` and mirrors back. The dirty-flag fires a redraw so the
-    /// renderer drops the highlight tint and outline.
+    /// renderer drops the highlight tint and outline. If a gizmo
+    /// drag is in progress, it is aborted and the affected object's
+    /// transform is reverted to its captured original — leaving an
+    /// object half-translated would be confusing.
     pub fn on_clear_selection(&self) {
+        self.abort_gizmo_drag();
         if self.selection.get().is_none() {
             return;
         }
@@ -318,25 +355,72 @@ impl ViewportController {
 
     /// Left button pressed at logical coords `(x, y)`. Records the
     /// press position so `on_pointer_up` can disambiguate click from
-    /// drag. The gizmo FSM (when wired) will consume this to enter
-    /// drag state if a handle is hit.
+    /// drag. If a gizmo handle is selected and the press hits it,
+    /// the FSM also enters `Drag`, capturing the original transform
+    /// and the world-space anchor on the axis.
     pub fn on_pointer_down(&self, x: f32, y: f32) {
         self.press_origin.set(Some((x, y)));
+        self.try_start_gizmo_drag(x, y);
     }
 
     /// Pointer moved while the left button is held and no camera
-    /// gesture is active. No-op for now; the gizmo FSM will consume
-    /// this stream to update an in-progress drag.
-    pub fn on_pointer_move(&self, _x: f32, _y: f32) {}
+    /// gesture is active. Drives the gizmo drag — recomputes the
+    /// closest point on the axis from the current cursor ray and
+    /// composes the resulting world-delta as a translation onto the
+    /// captured original transform.
+    pub fn on_pointer_move(&self, x: f32, y: f32) {
+        let GizmoState::Drag {
+            axis,
+            original,
+            pivot,
+            anchor,
+            object_idx,
+        } = self.gizmo.get()
+        else {
+            return;
+        };
+        let (w, h) = self.viewport.get();
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
 
-    /// Left button released at logical coords `(x, y)`. If the
-    /// release sits within `CLICK_DRAG_THRESHOLD` of the press
-    /// position the gesture is treated as a click and dispatched
-    /// through the picker (same selection / deselection semantics as
-    /// before). A drag is currently dropped on the floor; the gizmo
-    /// FSM will pick it up.
+        let new_anchor = {
+            let camera_slot = self.camera.borrow();
+            let Some(camera) = camera_slot.as_ref() else {
+                return;
+            };
+            let ray = picking::ray_from_pixel(camera, default_fov_y(), w, h, x, y);
+            gizmo::closest_point_on_axis(&ray, pivot, axis)
+        };
+        let delta = new_anchor - anchor;
+        let translation =
+            AffineTransform3D::from_translation([delta.x as f64, delta.y as f64, delta.z as f64]);
+        let new_transform = Transform3D::Affine(translation).compose(&original);
+
+        let mut scene_slot = self.scene.borrow_mut();
+        let Some(scene) = scene_slot.as_mut() else {
+            return;
+        };
+        if let Some(obj) = scene.objects.get_mut(object_idx) {
+            obj.transform = new_transform;
+        }
+        drop(scene_slot);
+        self.mark_dirty();
+    }
+
+    /// Left button released at logical coords `(x, y)`. If a drag was
+    /// in progress, the final composed transform stands and the FSM
+    /// returns to `Idle`. Otherwise the press → release is treated as
+    /// a click iff its movement stays within `CLICK_DRAG_THRESHOLD`,
+    /// dispatching through the picker in that case.
     pub fn on_pointer_up(&self, x: f32, y: f32) {
-        let Some((px, py)) = self.press_origin.take() else {
+        let press = self.press_origin.take();
+        if matches!(self.gizmo.get(), GizmoState::Drag { .. }) {
+            self.gizmo.set(GizmoState::Idle);
+            self.mark_dirty();
+            return;
+        }
+        let Some((px, py)) = press else {
             // Up without a matching down — defensive, can happen if a
             // press was captured by another control before reaching us.
             return;
@@ -346,6 +430,79 @@ impl ViewportController {
         if dx * dx + dy * dy <= CLICK_DRAG_THRESHOLD * CLICK_DRAG_THRESHOLD {
             self.run_pick_at(x, y);
         }
+    }
+
+    /// Hit-tests the gizmo against the current camera + cursor ray
+    /// and, if a handle is grabbed, transitions the FSM into `Drag`.
+    /// Bails on missing camera / scene / no selection / zero
+    /// viewport, in which case the press behaves like a plain click
+    /// candidate.
+    fn try_start_gizmo_drag(&self, x: f32, y: f32) {
+        let Some(sel) = self.selection.get() else {
+            return;
+        };
+        let (w, h) = self.viewport.get();
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+
+        let camera_slot = self.camera.borrow();
+        let Some(camera) = camera_slot.as_ref() else {
+            return;
+        };
+        let scene_slot = self.scene.borrow();
+        let Some(scene) = scene_slot.as_ref() else {
+            return;
+        };
+        let Some(pivot) = gizmo::pivot_for_object(scene, sel) else {
+            return;
+        };
+        let fov_y = default_fov_y();
+        let scale = gizmo::gizmo_scale(camera, fov_y, h);
+        let radius = gizmo::hit_radius_world(camera, fov_y, h);
+        let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
+        let Some(axis) = gizmo::hit_test(&ray, pivot, scale, radius) else {
+            return;
+        };
+        let Some(obj) = scene.objects.get(sel) else {
+            return;
+        };
+        let original = obj.transform;
+        let anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+        drop(scene_slot);
+        drop(camera_slot);
+        self.gizmo.set(GizmoState::Drag {
+            axis,
+            original,
+            pivot,
+            anchor,
+            object_idx: sel,
+        });
+    }
+
+    /// Aborts any in-progress drag and reverts the affected object's
+    /// transform to its captured original. Called from
+    /// `on_clear_selection` and `on_close_scene` so a drag never
+    /// outlives its valid context.
+    fn abort_gizmo_drag(&self) {
+        let GizmoState::Drag {
+            original,
+            object_idx,
+            ..
+        } = self.gizmo.get()
+        else {
+            return;
+        };
+        self.gizmo.set(GizmoState::Idle);
+        self.press_origin.set(None);
+        let mut scene_slot = self.scene.borrow_mut();
+        if let Some(scene) = scene_slot.as_mut()
+            && let Some(obj) = scene.objects.get_mut(object_idx)
+        {
+            obj.transform = original;
+        }
+        drop(scene_slot);
+        self.mark_dirty();
     }
 
     /// Picker dispatch: build the ray at `(x, y)`, run `pick_object`,
@@ -485,11 +642,15 @@ impl ViewportController {
             return;
         };
 
+        let gizmo_frame = self.selection.get().and_then(|sel| {
+            build_gizmo_frame(scene_for_render, camera, sel, h_logical, self.gizmo.get())
+        });
+
         let Some(texture) = renderer.render(
             scene_for_render,
             camera,
             self.selection.get(),
-            None,
+            gizmo_frame,
             eff_w,
             eff_h,
         ) else {
@@ -523,6 +684,46 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
         crate::AxisView::Top => AxisView::Top,
         crate::AxisView::Bottom => AxisView::Bottom,
     }
+}
+
+/// Builds the per-frame `GizmoFrame` for the renderer when a single
+/// object is selected. Returns `None` if the object has no geometry
+/// (no pivot to attach to). The locked-axes mask uses the camera's
+/// forward direction as a single representative ray — for a small
+/// gizmo near the screen centre, all rays through the gizmo region
+/// are within a degree or so of the camera forward, so a per-frame
+/// "is this axis grabbable from this view" check is uniform across
+/// the handle.
+fn build_gizmo_frame(
+    scene: &Scene,
+    camera: &OrbitCamera,
+    selection: usize,
+    viewport_h_logical: f32,
+    state: GizmoState,
+) -> Option<GizmoFrame> {
+    let pivot = gizmo::pivot_for_object(scene, selection)?;
+    let fov_y = default_fov_y();
+    let scale = gizmo::gizmo_scale(camera, fov_y, viewport_h_logical);
+    let active_axis = match state {
+        GizmoState::Drag { axis, .. } => Some(axis),
+        GizmoState::Idle => None,
+    };
+    let forward = (camera.target - camera.eye()).normalize_or_zero();
+    let view_ray = picking::Ray {
+        origin: camera.eye(),
+        direction: forward,
+    };
+    let locked = [
+        !gizmo::axis_pickable(&view_ray, Axis::X),
+        !gizmo::axis_pickable(&view_ray, Axis::Y),
+        !gizmo::axis_pickable(&view_ray, Axis::Z),
+    ];
+    Some(GizmoFrame {
+        pivot,
+        scale,
+        active_axis,
+        locked,
+    })
 }
 
 /// Display names for the object-list panel. Falls back to a localised
@@ -827,6 +1028,7 @@ mod selection_tests {
 mod viewport_click_tests {
     use super::*;
     use crate::camera::OrbitCamera;
+    use float_cmp::assert_approx_eq;
     use glam::Vec3;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
@@ -934,6 +1136,189 @@ mod viewport_click_tests {
         // Press over the triangle, release 50 px away → drag.
         ctrl.on_pointer_down(100.0, 50.0);
         ctrl.on_pointer_up(150.0, 50.0);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    /// Camera looking along +Y from `(0, -3, 0)` toward the origin
+    /// with up = +Z. The world axes project as: +X = screen-right,
+    /// +Z = screen-up, +Y = into the screen. With the gizmo pivot
+    /// at the origin, the X handle lies along the centre horizontal
+    /// of the viewport — clicks at `(centre_x + Δ, centre_y)` land on
+    /// the X handle.
+    fn front_camera() -> OrbitCamera {
+        let mut c = OrbitCamera::new(Vec3::ZERO, 1.0);
+        c.set_axis_view(crate::camera::AxisView::Front);
+        c
+    }
+
+    fn install_single_object_at_origin(ctrl: &ViewportController) {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
+        };
+        ctrl.install_scene_for_test(scene);
+        *ctrl.camera.borrow_mut() = Some(front_camera());
+        ctrl.viewport.set((200.0, 100.0));
+        ctrl.on_select_by_index(0);
+    }
+
+    fn read_translation(ctrl: &ViewportController) -> Vec3 {
+        let scene_slot = ctrl.scene.borrow();
+        let scene = scene_slot.as_ref().unwrap();
+        match scene.objects[0].transform {
+            Transform3D::Identity => Vec3::ZERO,
+            Transform3D::Affine(a) => Vec3::new(
+                a.translation[0] as f32,
+                a.translation[1] as f32,
+                a.translation[2] as f32,
+            ),
+        }
+    }
+
+    #[test]
+    fn pointer_down_on_x_handle_enters_drag_state() {
+        // The X handle in the front-camera setup lies along world +X
+        // (which projects to screen-right at centre-y). A press at
+        // (150, 50) puts the cursor over the handle (the gizmo
+        // shaft extends from the origin to ~world X = 2 at the
+        // current camera distance and viewport size).
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.on_pointer_down(150.0, 50.0);
+        match ctrl.gizmo.get() {
+            GizmoState::Drag { axis, .. } => assert_eq!(axis, Axis::X),
+            other => panic!("expected Drag(X), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pointer_down_off_handle_does_not_enter_drag_state() {
+        // A press far from any handle lands as a plain click
+        // candidate — the FSM stays Idle.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.on_pointer_down(0.0, 0.0);
+        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+    }
+
+    #[test]
+    fn drag_translates_object_along_world_axis() {
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        // Compute the expected translation from the press / release
+        // rays and the closest-point-on-axis formula. The expected
+        // delta is what the renderer-agnostic helpers return for
+        // these two cursor positions; the controller's job is to
+        // apply that as a translation onto the object's transform.
+        let press = (150.0_f32, 50.0_f32);
+        let release = (175.0_f32, 50.0_f32);
+        let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
+        let fov_y = default_fov_y();
+        let press_ray = picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, press.0, press.1);
+        let release_ray = picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, release.0, release.1);
+        let press_anchor = gizmo::closest_point_on_axis(&press_ray, Vec3::ZERO, Axis::X);
+        let release_anchor = gizmo::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
+        let expected = release_anchor - press_anchor;
+
+        ctrl.on_pointer_down(press.0, press.1);
+        // Drag must have started — otherwise the move is a no-op.
+        assert!(matches!(ctrl.gizmo.get(), GizmoState::Drag { .. }));
+        ctrl.on_pointer_move(release.0, release.1);
+
+        let actual = read_translation(&ctrl);
+        assert_approx_eq!(f32, actual.x, expected.x, epsilon = 1e-4);
+        assert_approx_eq!(f32, actual.y, expected.y, epsilon = 1e-4);
+        assert_approx_eq!(f32, actual.z, expected.z, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn second_drag_move_recomposes_from_original_not_running_transform() {
+        // Two pointer-moves during the same drag: the final transform
+        // must reflect the absolute cursor position relative to the
+        // press, *not* the cumulative sum of per-frame deltas. The
+        // distinction matters when Phase D adds rotation/scale —
+        // pinning it here means a bug in that direction trips this
+        // test loudly.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        let press = (150.0_f32, 50.0_f32);
+        let mid = (160.0_f32, 50.0_f32);
+        let release = (175.0_f32, 50.0_f32);
+        let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
+        let fov_y = default_fov_y();
+        let press_anchor = gizmo::closest_point_on_axis(
+            &picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, press.0, press.1),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        let release_anchor = gizmo::closest_point_on_axis(
+            &picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, release.0, release.1),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        let expected = release_anchor - press_anchor;
+
+        ctrl.on_pointer_down(press.0, press.1);
+        ctrl.on_pointer_move(mid.0, mid.1);
+        ctrl.on_pointer_move(release.0, release.1);
+
+        let actual = read_translation(&ctrl);
+        assert_approx_eq!(f32, actual.x, expected.x, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn pointer_up_after_drag_clears_state_and_keeps_translation() {
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        ctrl.on_pointer_down(150.0, 50.0);
+        ctrl.on_pointer_move(175.0, 50.0);
+        let mid_drag = read_translation(&ctrl);
+        ctrl.on_pointer_up(175.0, 50.0);
+
+        // Drag state cleared.
+        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        // Translation persists — the user committed the drag.
+        let after = read_translation(&ctrl);
+        assert_approx_eq!(f32, after.x, mid_drag.x, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn esc_mid_drag_reverts_transform() {
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        ctrl.on_pointer_down(150.0, 50.0);
+        ctrl.on_pointer_move(175.0, 50.0);
+        // Object has moved.
+        assert!(read_translation(&ctrl).x.abs() > 1e-4);
+
+        // Esc / clear-selection during a drag aborts and reverts.
+        ctrl.on_clear_selection();
+        let reverted = read_translation(&ctrl);
+        assert_approx_eq!(f32, reverted.x, 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, reverted.y, 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, reverted.z, 0.0, epsilon = 1e-6);
+        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn close_scene_mid_drag_does_not_panic() {
+        // The drag captures `object_idx`, which becomes invalid when
+        // the scene is dropped. `on_close_scene` must clear FSM
+        // state without trying to revert through the missing scene.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        ctrl.on_pointer_down(150.0, 50.0);
+        ctrl.on_pointer_move(175.0, 50.0);
+        ctrl.on_close_scene();
+
+        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
         assert_eq!(ctrl.selection(), None);
     }
 

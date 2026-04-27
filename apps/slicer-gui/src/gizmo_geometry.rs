@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-// The geometry builder and its count constants are exercised by the
-// test module below but not yet read from production code; the
-// renderer wiring lands in a follow-up commit. Blanket allow until
-// the consumer catches up.
-#![allow(dead_code)]
-
 //! Procedural mesh for one gizmo axis: an 8-sided prism (the shaft)
 //! capped with a 12-sided cone (the tip), in **handle-local space**
 //! — pivot at origin, axis along +X. The renderer draws this buffer
@@ -115,14 +109,6 @@ pub fn build_axis_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// Vertex count returned by `build_axis_geometry`. Handy for upload-
-/// size assertions in the renderer (and for the test suite below).
-pub const VERTEX_COUNT: usize = (SHAFT_SIDES * 2 + CONE_SIDES + 1) as usize;
-/// Triangle count (one prism side = 2 tris, one cone side = 1 tri).
-pub const TRIANGLE_COUNT: usize = (SHAFT_SIDES * 2 + CONE_SIDES) as usize;
-/// Index count = `TRIANGLE_COUNT * 3`.
-pub const INDEX_COUNT: usize = TRIANGLE_COUNT * 3;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,17 +116,15 @@ mod tests {
     use glam::Vec3;
 
     #[test]
-    fn vertex_count_matches_documented_constant() {
+    fn vertex_count_is_two_rings_plus_cone_base_plus_tip() {
         let (v, _) = build_axis_geometry();
-        assert_eq!(v.len(), VERTEX_COUNT);
-        // Independently: 8 sides × 2 ring vertices + 12 cone base + 1 tip.
+        // 8 sides × 2 ring vertices + 12 cone base + 1 tip.
         assert_eq!(v.len(), 8 * 2 + 12 + 1);
     }
 
     #[test]
-    fn index_count_matches_documented_constant() {
+    fn index_count_is_two_tris_per_side_plus_one_per_cone_face() {
         let (_, i) = build_axis_geometry();
-        assert_eq!(i.len(), INDEX_COUNT);
         // 8 sides × 2 tris × 3 indices + 12 cone tris × 3 indices.
         assert_eq!(i.len(), 8 * 6 + 12 * 3);
     }
