@@ -31,9 +31,10 @@ pub struct ViewportController {
     dirty: Cell<bool>,
     needs_upload: Cell<bool>,
     // Index into `scene.objects` of the single currently-selected
-    // object, or `None` if nothing is selected. The renderer reads this
-    // when writing per-frame model entries (Phase B+) and the gizmo will
-    // attach to it (Phase C+).
+    // object, or `None` if nothing is selected. The renderer reads
+    // this when writing per-frame model entries (driving the
+    // selection tint and the outline pass); the translate gizmo will
+    // attach to it once wired.
     selection: Cell<Option<usize>>,
     loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
@@ -261,9 +262,7 @@ impl ViewportController {
     }
 
     /// Selection, in the controller's authoritative form. Tests use
-    /// this to assert FSM transitions; the renderer will read it later
-    /// in Phase B (step 4 — tint highlight) when writing per-frame
-    /// model entries.
+    /// this to assert FSM transitions.
     #[cfg(test)]
     pub(crate) fn selection(&self) -> Option<usize> {
         self.selection.get()
@@ -292,8 +291,7 @@ impl ViewportController {
 
     /// Esc / "click on empty space" path. Always sets selection to
     /// `None` and mirrors back. The dirty-flag fires a redraw so the
-    /// renderer can drop the highlight (once tinting lands later in
-    /// Phase B).
+    /// renderer drops the highlight tint and outline.
     pub fn on_clear_selection(&self) {
         if self.selection.get().is_none() {
             return;

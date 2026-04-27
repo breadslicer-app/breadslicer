@@ -15,6 +15,7 @@ mod app_state;
 mod camera;
 mod error_dialog;
 mod gizmo;
+mod gizmo_geometry;
 mod i18n;
 mod language;
 mod mesh_loader;

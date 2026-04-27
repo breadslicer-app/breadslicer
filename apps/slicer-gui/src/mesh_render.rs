@@ -43,8 +43,9 @@ struct Uniforms {
 }
 
 /// Per-object entry in the model uniform buffer. Mirrors the WGSL
-/// `ModelEntry` struct one-for-one. `flags.x` is reserved for the
-/// selection bit (Phase B); the remaining lanes are zero today.
+/// `ModelEntry` struct one-for-one. `flags.x` is the selection bit
+/// (1 for the selected object, 0 otherwise); the remaining lanes are
+/// reserved for future per-object hints (hover, gizmo focus, …).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
 struct ModelEntry {
@@ -978,10 +979,10 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn vertices_stay_local_even_with_affine_transform() {
-        // The whole point of Phase A: vertex buffers are local-space.
-        // The transform is applied at draw time via the model storage
-        // buffer, so `build_gpu_scene_data` must NOT bake it into the
-        // vertex stream.
+        // Vertex buffers are local-space; the transform is applied at
+        // draw time via the per-object model uniform, so
+        // `build_gpu_scene_data` must NOT bake it into the vertex
+        // stream.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -1115,10 +1116,10 @@ mod build_gpu_scene_data_tests {
             resources: vec![],
             objects: vec![affine_object(mesh, singular)],
         };
-        // Phase A doesn't reject singular transforms here — the GPU
-        // path is fine with a singular model matrix (it just collapses
-        // the mesh to a plane). Mirror this in the assertion so the
-        // test fails loudly if the behaviour changes.
+        // Singular transforms aren't rejected here — the GPU path is
+        // fine with a singular model matrix (it just collapses the
+        // mesh to a plane). Mirror this in the assertion so the test
+        // fails loudly if the behaviour changes.
         assert!(build_gpu_scene_data(&scene).is_ok());
     }
 }

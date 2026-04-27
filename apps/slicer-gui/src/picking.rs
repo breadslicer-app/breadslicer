@@ -625,7 +625,7 @@ mod pick_object_tests {
     #[test]
     fn dangling_resource_index_is_treated_as_a_no_op() {
         // The picker shouldn't surface errors for malformed scenes —
-        // it just skips the object. Phase A's `build_gpu_scene_data`
+        // it just skips the object. The renderer's scene-build path
         // already errors on dangling indices, so the picker only sees
         // such scenes if something else has gone wrong upstream.
         let scene = Scene {

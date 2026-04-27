@@ -4,9 +4,8 @@
  */
 
 // Helpers in this module are unit-tested in isolation; their callers
-// (the renderer and the controller's drag FSM) land in subsequent
-// commits of Phase C. The blanket allow is removed once the wiring
-// catches up.
+// (the renderer and the controller's drag FSM) land in follow-up
+// commits. The blanket allow is removed once the wiring catches up.
 #![allow(dead_code)]
 
 //! Pure-CPU helpers for the translate gizmo: pivot, world-aligned
@@ -22,7 +21,7 @@ use crate::camera::OrbitCamera;
 use crate::picking::Ray;
 
 /// World-aligned gizmo axis. The X/Y/Z directions are global +X, +Y,
-/// +Z; local-axis frame is Phase E.
+/// +Z; a local-axis option is left as a future toggle.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Axis {
     X,
@@ -50,10 +49,13 @@ pub const HANDLE_PIXEL_LENGTH: f32 = 80.0;
 /// near (but not on) the shaft still registers.
 pub const HANDLE_PIXEL_RADIUS: f32 = 6.0;
 
-/// Cosine of the lock-out angle from §6.5 of the sub-plan: when
-/// `|axis_world · ray_dir| > LOCKOUT_COS`, the closest-point math
-/// becomes unstable (the angle is < 8° from the camera ray) and the
-/// axis is dropped from the hit test and rendered greyed.
+/// Cosine of the lock-out angle: when
+/// `|axis_world · ray_dir| > LOCKOUT_COS`, the angle between the
+/// camera ray and the axis is below 8° and the closest-point math
+/// becomes unstable — `1 − (axis · ray_dir)²` drops below `sin²(8°)`
+/// and a one-pixel cursor jitter would translate the object far more
+/// than the user expects. Such an axis is dropped from the hit test
+/// and rendered greyed so the user sees why it is unresponsive.
 ///
 /// `cos(8°) ≈ 0.99027`.
 const LOCKOUT_COS: f32 = 0.990_268_07;
@@ -117,8 +119,8 @@ pub fn hit_radius_world(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f3
 }
 
 /// Whether an axis is grabbable. Returns false when the camera is
-/// looking too closely along the axis (per §6.5 lock-out). The
-/// renderer should also greys the axis tint when this returns false
+/// looking too closely along the axis (see `LOCKOUT_COS`). The
+/// renderer should also grey the axis tint when this returns false
 /// so the user sees that the lock-out is intentional.
 pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
     let a = axis.world_dir();
@@ -225,8 +227,9 @@ pub fn ray_hits_axis_handle(
 ///
 /// Stable as long as `axis_pickable(ray, axis)` is true at gesture
 /// start; if the camera rotates into the unstable region mid-drag,
-/// the drag continues using the same (now-noisier) formula —
-/// per-§6.5 we don't switch policies inside a gesture.
+/// the drag continues using the same (now-noisier) formula — we
+/// don't switch policies inside a gesture, since a mid-drag jump in
+/// world delta would be more confusing than a few noisy frames.
 pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Vec3 {
     let a = axis.world_dir();
     let d = ray.direction;
@@ -238,10 +241,10 @@ pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Vec3 {
 
     let denom = 1.0 - d_dot_a * d_dot_a;
     // Caller is responsible for ensuring denom is non-tiny via the
-    // §6.5 lock-out at gesture start. Inside a tolerated-but-marginal
-    // drag, we clamp denom to a small positive floor rather than
-    // dividing by zero — keeps the formula well-defined even at the
-    // exact 8° edge.
+    // `axis_pickable` lock-out at gesture start. Inside a
+    // tolerated-but-marginal drag, we clamp denom to a small positive
+    // floor rather than dividing by zero — keeps the formula
+    // well-defined even at the exact lock-out edge.
     let denom = denom.max(1e-6);
 
     // Derivation: with `q = pivot − O`, the perpendicularity
@@ -543,7 +546,8 @@ mod hit_test_tests {
 
     #[test]
     fn locked_out_axis_is_not_picked() {
-        // Ray pointing nearly along +X — X is locked out per §6.5.
+        // Ray pointing nearly along +X — X is locked out by the
+        // 8° threshold in `axis_pickable`.
         // A barely-perpendicular component still places the ray
         // close enough to the X handle that the cylinder math would
         // otherwise hit. The lock-out should override.
