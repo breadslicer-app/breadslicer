@@ -244,4 +244,16 @@ mod language_tests {
         assert_eq!(base_language("en@latin"), "en");
         assert_eq!(base_language("de"), "de");
     }
+
+    #[test]
+    fn is_system_distinguishes_the_two_variants() {
+        assert!(LanguagePreference::System.is_system());
+        let en = BundledLanguage::from_code("en").unwrap();
+        assert!(!LanguagePreference::Bundled(en).is_system());
+    }
+
+    #[test]
+    fn base_language_handles_empty_input() {
+        assert_eq!(base_language(""), "");
+    }
 }

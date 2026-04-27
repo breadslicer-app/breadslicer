@@ -1560,3 +1560,124 @@ mod indexed_mesh_fix_faces_orientation_tests {
         assert!(mesh.validate_normal_vectors().is_ok());
     }
 }
+
+#[cfg(test)]
+mod indexed_mesh_fix_zero_length_edges_tests {
+    use super::*;
+    use crate::errors::{MeshFaceError, MeshFix};
+    use crate::primitives::Normal;
+
+    fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
+            faces,
+        }
+    }
+
+    fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
+        IndexedTriangle {
+            normal: Normal::new([0.0, 0.0, 1.0]),
+            vertices: [v0, v1, v2],
+        }
+    }
+
+    #[test]
+    fn no_errors_means_no_fixes_and_no_face_removed() {
+        let mut mesh = make_mesh(3, vec![face(0, 1, 2)]);
+        let fixes = mesh.fix_zero_length_edges(&[]);
+        assert!(fixes.is_empty());
+        assert_eq!(mesh.faces.len(), 1);
+    }
+
+    #[test]
+    fn empty_face_list_with_unrelated_errors_is_a_no_op() {
+        // Pass face errors that are *not* ZeroLengthEdge — the fix routine
+        // should ignore them and leave the mesh untouched.
+        let mut mesh = make_mesh(3, vec![face(0, 1, 2)]);
+        let errors = vec![MeshFaceError::OutOfRangeVertexIndex {
+            face_idx: 0,
+            vertex_pos: 0,
+            vertex_idx: 99,
+        }];
+        let fixes = mesh.fix_zero_length_edges(&errors);
+        assert!(fixes.is_empty());
+        assert_eq!(mesh.faces.len(), 1);
+    }
+
+    #[test]
+    fn single_collapsed_face_is_removed_with_a_fix_record() {
+        let mut mesh = make_mesh(3, vec![face(0, 1, 1)]);
+        let errors = mesh.validate_faces().unwrap_err();
+
+        let fixes = mesh.fix_zero_length_edges(&errors);
+
+        assert_eq!(mesh.faces.len(), 0);
+        assert_eq!(fixes.len(), 1);
+        assert!(matches!(
+            fixes[0],
+            MeshFix::RemovedZeroLengthEdgeFace { face_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn dedup_keeps_face_removed_only_once_when_multiple_edges_collapse() {
+        // A degenerate triangle (all three vertices equal) emits three
+        // ZeroLengthEdge errors for the same face. Dedup must reduce
+        // those to a single removal so we don't try to remove face 0 three
+        // times (and panic on the second).
+        let mut mesh = make_mesh(3, vec![face(0, 0, 0)]);
+        let errors = mesh.validate_faces().unwrap_err();
+        assert_eq!(errors.len(), 3);
+
+        let fixes = mesh.fix_zero_length_edges(&errors);
+
+        assert_eq!(mesh.faces.len(), 0);
+        // One face was removed, but the fix log still mirrors the original
+        // error list — caller can choose to deduplicate the report.
+        assert_eq!(fixes.len(), 3);
+        assert!(
+            fixes
+                .iter()
+                .all(|f| matches!(f, MeshFix::RemovedZeroLengthEdgeFace { face_idx: 0 }))
+        );
+    }
+
+    #[test]
+    fn removes_in_descending_order_so_remaining_indices_stay_valid() {
+        // Two collapsed faces at positions 0 and 2; face 1 is healthy.
+        // The implementation removes higher indices first, so face 1's
+        // index doesn't shift while face 2 is being removed.
+        let mut mesh = make_mesh(4, vec![face(0, 1, 1), face(0, 1, 2), face(2, 3, 3)]);
+        let errors = mesh.validate_faces().unwrap_err();
+
+        let fixes = mesh.fix_zero_length_edges(&errors);
+
+        assert_eq!(mesh.faces.len(), 1);
+        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(fixes.len(), 2);
+    }
+
+    #[test]
+    fn mixed_error_kinds_only_remove_collapsed_faces() {
+        let mut mesh = make_mesh(3, vec![face(0, 1, 2), face(0, 1, 1)]);
+        let mut errors = vec![MeshFaceError::OutOfRangeVertexIndex {
+            face_idx: 0,
+            vertex_pos: 0,
+            vertex_idx: 99,
+        }];
+        errors.extend(mesh.validate_faces().unwrap_err());
+
+        let fixes = mesh.fix_zero_length_edges(&errors);
+
+        // Only the collapsed face (index 1) was removed; the OutOfRange
+        // error is irrelevant to this fix routine.
+        assert_eq!(mesh.faces.len(), 1);
+        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert!(
+            fixes
+                .iter()
+                .all(|f| matches!(f, MeshFix::RemovedZeroLengthEdgeFace { .. }))
+        );
+    }
+}

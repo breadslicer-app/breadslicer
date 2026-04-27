@@ -96,3 +96,86 @@ pub struct IndexedTriangle {
     pub normal: Normal,
     pub vertices: [u32; 3],
 }
+
+#[cfg(test)]
+mod vector3d_constructor_tests {
+    use super::Vector3D;
+
+    #[test]
+    fn new_stores_components_in_order() {
+        let v = Vector3D::new([1.0_f32, 2.0, 3.0]);
+        assert_eq!(v.0, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn new_is_const() {
+        const V: Vector3D<f32> = Vector3D::new([4.0, 5.0, 6.0]);
+        assert_eq!(V.0, [4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn array_into_vector3d_round_trip() {
+        let arr: [f32; 3] = [1.5, -2.5, 0.0];
+        let v = Vector3D::new(arr);
+        let back: [f32; 3] = v.into();
+        assert_eq!(back, arr);
+    }
+}
+
+#[cfg(test)]
+mod vector3d_conversion_tests {
+    use super::Vector3D;
+
+    #[test]
+    fn f32_to_f64_widens_components() {
+        let v32: Vector3D<f32> = Vector3D::new([1.5, -2.5, 0.0]);
+        let v64: Vector3D<f64> = v32.into();
+        assert_eq!(v64.0, [1.5_f64, -2.5_f64, 0.0_f64]);
+    }
+
+    #[test]
+    fn f64_to_f32_truncates_components() {
+        // 0.1 + 0.2 in f64 cannot be represented exactly in f32; the
+        // conversion is a plain `as f32` cast, so this checks that the
+        // component-wise cast is what's happening (no rounding mode tweak).
+        let v64: Vector3D<f64> = Vector3D::new([0.1 + 0.2, 1.0e30, -1.0e-30]);
+        let v32: Vector3D<f32> = v64.into();
+        assert_eq!(
+            v32.0,
+            [(0.1 + 0.2) as f32, 1.0e30_f64 as f32, -1.0e-30_f64 as f32]
+        );
+    }
+
+    #[test]
+    fn f32_to_f64_to_f32_is_identity_for_normal_finite() {
+        // Casting f32 -> f64 -> f32 is lossless for any non-NaN finite f32:
+        // f64 can exactly represent every f32, and the back cast picks the
+        // exact same value.
+        for &c in &[0.0_f32, 1.0, -1.0, 1.234e10, -7.5e-12, f32::MIN, f32::MAX] {
+            let v32: Vector3D<f32> = Vector3D::new([c, c, c]);
+            let v64: Vector3D<f64> = v32.into();
+            let back: Vector3D<f32> = v64.into();
+            assert_eq!(v32.0, back.0, "round-trip failed for {c}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod vector3d_index_tests {
+    use super::Vector3D;
+
+    #[test]
+    fn index_returns_each_component() {
+        let v = Vector3D::new([10.0_f32, 20.0, 30.0]);
+        assert_eq!(v[0], 10.0);
+        assert_eq!(v[1], 20.0);
+        assert_eq!(v[2], 30.0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn index_out_of_bounds_panics() {
+        let v = Vector3D::new([1.0_f32, 2.0, 3.0]);
+        let _ = v[3];
+    }
+}

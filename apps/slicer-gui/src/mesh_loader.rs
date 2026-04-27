@@ -110,3 +110,59 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
         "unknown panic payload".to_string()
     }
 }
+
+#[cfg(test)]
+mod check_file_size_tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    #[test]
+    fn small_file_is_accepted() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tiny.stl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"hello").unwrap();
+        assert!(check_file_size(&path).is_ok());
+    }
+
+    #[test]
+    fn missing_file_falls_through_as_ok() {
+        // metadata() failure (e.g. missing file) intentionally returns
+        // Ok(()) — the precheck defers the real error to the parser
+        // which produces a more specific message.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("missing.stl");
+        assert!(check_file_size(&path).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod panic_message_tests {
+    use super::panic_message;
+    use std::any::Any;
+
+    fn boxed(p: impl Any + Send) -> Box<dyn Any + Send> {
+        Box::new(p)
+    }
+
+    #[test]
+    fn static_str_payload_is_stringified() {
+        let payload = boxed("boom");
+        assert_eq!(panic_message(&payload), "boom");
+    }
+
+    #[test]
+    fn string_payload_is_stringified() {
+        let payload = boxed(String::from("dynamic boom"));
+        assert_eq!(panic_message(&payload), "dynamic boom");
+    }
+
+    #[test]
+    fn unknown_payload_returns_placeholder() {
+        // i32 is `Any + Send` but doesn't match any of the downcast
+        // arms; the function falls through to the placeholder string.
+        let payload = boxed(42i32);
+        assert_eq!(panic_message(&payload), "unknown panic payload");
+    }
+}
