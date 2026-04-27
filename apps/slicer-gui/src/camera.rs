@@ -128,7 +128,12 @@ impl OrbitCamera {
         (right, cam_up)
     }
 
-    fn world_per_pixel(&self, fov_y: f32, viewport_height: f32) -> f32 {
+    /// World-space units per logical pixel at the camera's current
+    /// distance. Used by the camera's own pan/zoom code, by
+    /// `gizmo::gizmo_scale`/`hit_radius_world`, and by the controller
+    /// to derive world-space sizes for the gizmo's cube and arc
+    /// handles from their screen-pixel constants.
+    pub fn world_per_pixel(&self, fov_y: f32, viewport_height: f32) -> f32 {
         let h = viewport_height.max(1.0);
         2.0 * self.distance * (fov_y * 0.5).tan() / h
     }

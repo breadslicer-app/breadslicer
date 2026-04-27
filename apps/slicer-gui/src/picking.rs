@@ -88,6 +88,38 @@ pub fn ray_from_pixel(
     }
 }
 
+/// Projects a world-space point onto the viewport in logical-pixel
+/// coordinates (top-left origin, y growing downward — same convention
+/// as `ray_from_pixel`'s input). Returns `None` when the point is
+/// behind the camera.
+///
+/// Used by the gizmo's uniform-scale drag, where the press distance
+/// is measured in screen pixels relative to the projected pivot. The
+/// near/far depths used here are placeholders: the projection
+/// matrix's near/far only affect z, and we discard the z component
+/// after the perspective divide.
+pub fn project_world_to_screen(
+    camera: &OrbitCamera,
+    fov_y: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+    world_point: Vec3,
+) -> Option<(f32, f32)> {
+    let aspect = viewport_w / viewport_h.max(1.0);
+    let view = camera.view_matrix();
+    let proj = Mat4::perspective_rh(fov_y, aspect, 0.01, 100.0);
+    let clip = (proj * view) * Vec4::new(world_point.x, world_point.y, world_point.z, 1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    let ndc_x = clip.x / clip.w;
+    let ndc_y = clip.y / clip.w;
+    let screen_x = (ndc_x + 1.0) * 0.5 * viewport_w;
+    // Slint-y grows downward, NDC-y grows upward → flip.
+    let screen_y = (1.0 - ndc_y) * 0.5 * viewport_h;
+    Some((screen_x, screen_y))
+}
+
 /// Picks the closest object the ray hits, by index into
 /// `scene.objects`. Returns `None` if every object misses (whether by
 /// AABB pre-pass or triangle test).

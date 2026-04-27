@@ -30,7 +30,7 @@ use glam::Vec3;
 
 use crate::gizmo::{
     AXIS_SCALE_CUBE_PIXELS, CENTRE_CUBE_PIXELS, HANDLE_PIXEL_LENGTH, MIDPOINT_FRACTION,
-    ROTATE_ARC_RADIUS_FRACTION, ROTATE_ARC_TUBE_PIXELS,
+    ROTATE_ARC_RADIUS_FRACTION, ROTATE_ARC_TUBE_PIXELS, ROTATE_CONE_LENGTH, ROTATE_CONE_RADIUS,
 };
 
 #[repr(C)]
@@ -252,6 +252,106 @@ pub fn build_rotate_arc_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     }
 
     (vertices, indices)
+}
+
+/// Builds the rotate-handle two-cone spindle in handle-local space.
+/// Two cones share their bases at the arc's camera-facing midpoint
+/// `(0, R, 0)` (where `R = ROTATE_ARC_RADIUS_LOCAL`), tips at
+/// `(±ROTATE_CONE_LENGTH, R, 0)` along the rotation axis (handle-
+/// local +X).
+///
+/// The renderer composes the same per-frame X-roll used for the
+/// torus arc to swing the spindle onto the camera-facing direction
+/// before the world-axis rotation lifts it onto +X / +Y / +Z. This
+/// is the *active* rotate handle; the torus arc itself
+/// ([`build_rotate_arc_geometry`]) is decorative.
+#[allow(dead_code)]
+pub fn build_rotate_cones_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+    let mut vertices = Vec::with_capacity((CONE_SIDES * 2 + 2) as usize);
+    let mut indices = Vec::with_capacity((CONE_SIDES * 6) as usize);
+    let midpoint = Vec3::new(0.0, ROTATE_ARC_RADIUS_LOCAL, 0.0);
+    let axis = Vec3::X;
+    // The cone's basis in the plane perpendicular to its axis. For
+    // `axis = +X`, +Y is the radial direction at the arc midpoint;
+    // we use +Z and the axial-cross-radial direction (also +Z, since
+    // axis × radial = +X × +Y = +Z) as the in-plane basis. Picking
+    // (basis_a, basis_b) = (+Z, ?). Simpler: any orthonormal pair
+    // perpendicular to +X. Use (+Z, +Y) — but +Y is the radial,
+    // which is fine: the cone base ring lies in the plane
+    // perpendicular to the cone's axis (+X), centred at the
+    // midpoint, and we just need any two orthonormal vectors
+    // spanning that plane.
+    let basis_a = Vec3::Y;
+    let basis_b = Vec3::Z;
+    append_cone(
+        &mut vertices,
+        &mut indices,
+        midpoint,
+        axis,
+        basis_a,
+        basis_b,
+        ROTATE_CONE_LENGTH,
+        ROTATE_CONE_RADIUS,
+    );
+    append_cone(
+        &mut vertices,
+        &mut indices,
+        midpoint,
+        -axis,
+        basis_a,
+        basis_b,
+        ROTATE_CONE_LENGTH,
+        ROTATE_CONE_RADIUS,
+    );
+    (vertices, indices)
+}
+
+/// Appends one solid cone to `vertices` / `indices`. The cone has
+/// its base centred at `base_centre`, base ring in the plane
+/// spanned by `basis_a` / `basis_b` (both unit, both perpendicular
+/// to `axis_dir`), and tip at `base_centre + axis_dir * length`.
+/// CCW-from-outside winding for `axis × basis_a = basis_b`.
+#[allow(clippy::too_many_arguments)]
+fn append_cone(
+    vertices: &mut Vec<GizmoVertex>,
+    indices: &mut Vec<u32>,
+    base_centre: Vec3,
+    axis_dir: Vec3,
+    basis_a: Vec3,
+    basis_b: Vec3,
+    length: f32,
+    radius: f32,
+) {
+    let base_start = vertices.len() as u32;
+    for i in 0..CONE_SIDES {
+        let theta = (i as f32 / CONE_SIDES as f32) * std::f32::consts::TAU;
+        let (s, c) = theta.sin_cos();
+        let p = base_centre + basis_a * (radius * c) + basis_b * (radius * s);
+        vertices.push(GizmoVertex {
+            position: [p.x, p.y, p.z],
+        });
+    }
+    let tip_index = vertices.len() as u32;
+    let tip = base_centre + axis_dir * length;
+    vertices.push(GizmoVertex {
+        position: [tip.x, tip.y, tip.z],
+    });
+    // Side faces. Winding `(base[i+1], base[i], tip)` produces an
+    // outward normal when `axis_dir = +basis_a × basis_b` (the
+    // expected right-handed convention for the caller's inputs).
+    // The negative-axis cone passed `-axis` here uses the same
+    // `basis_a`/`basis_b`, which flips the winding sense — those
+    // triangles render correctly from outside because the apex is
+    // on the opposite side.
+    let positive = axis_dir.dot(basis_a.cross(basis_b)) > 0.0;
+    for i in 0..CONE_SIDES {
+        let next = (i + 1) % CONE_SIDES;
+        if positive {
+            indices.extend_from_slice(&[base_start + i, base_start + next, tip_index]);
+        } else {
+            indices.extend_from_slice(&[base_start + next, base_start + i, tip_index]);
+        }
+    }
 }
 
 /// Appends a 6-face axis-aligned cube to `vertices` / `indices`,

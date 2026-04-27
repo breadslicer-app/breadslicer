@@ -74,24 +74,60 @@ pub(crate) const RESIZE_SETTLE: core::time::Duration = core::time::Duration::fro
 // clicks bleed into starts-of-drags.
 const CLICK_DRAG_THRESHOLD: f32 = 4.0;
 
-/// Translate-gizmo input FSM. The `Idle` variant is the resting state
-/// (no axis is being dragged). `Drag` captures the axis, the object's
-/// transform at gesture start, the world-space pivot and anchor — the
-/// running translation is composed each frame as
-/// `Transform3D::Affine(delta) ∘ original`, where `delta` is the
-/// world-space difference between the current ray's closest point on
-/// the axis and the captured anchor. Composing onto `original` rather
-/// than the running transform keeps the gesture numerically clean —
-/// no float-error accumulation across hundreds of move events.
+/// Gizmo input FSM. `Idle` is the resting state (no drag in
+/// progress). `Drag` captures the operation (translate / rotate /
+/// scale-axis / scale-uniform), the object's transform at gesture
+/// start, the world-space pivot, and the object index. The running
+/// transform is composed each frame *from the captured original*,
+/// not from the running transform — composing-from-original keeps
+/// long drags numerically clean (no float drift across hundreds of
+/// move events).
 #[derive(Copy, Clone, Debug)]
 enum GizmoState {
     Idle,
     Drag {
-        axis: Axis,
+        op: DragOp,
         original: Transform3D,
         pivot: Vec3,
-        anchor: Vec3,
         object_idx: usize,
+    },
+}
+
+/// Per-operation drag state carried inside `GizmoState::Drag`.
+///
+/// - `Translate` composes a translation; `anchor` is the world-space
+///   closest point on the axis at press, recomputed each move.
+/// - `Rotate` composes a rotation about the axis through the pivot.
+///   `start_angle` is the angular position at press; `last_raw` and
+///   `current_unwrapped` track the unwrap counter so a full-revolution
+///   drag yields a real 360°+ rotation instead of resetting at ±π.
+/// - `ScaleAxis` composes a per-axis scale about the pivot.
+///   `start_anchor` is the world-space closest point on the axis at
+///   press; the factor is `(current_proj / start_proj)` along the
+///   axis, clamped at `EPS_SCALE`.
+/// - `ScaleUniform` composes a uniform scale about the pivot.
+///   `press_screen` is the cursor position at press;
+///   `pivot_screen` is the projected pivot in pixel coords (also
+///   captured at press, so subsequent moves use a stable reference).
+#[derive(Copy, Clone, Debug)]
+enum DragOp {
+    Translate {
+        axis: Axis,
+        anchor: Vec3,
+    },
+    Rotate {
+        axis: Axis,
+        start_angle: f32,
+        last_raw: f32,
+        current_unwrapped: f32,
+    },
+    ScaleAxis {
+        axis: Axis,
+        start_anchor: Vec3,
+    },
+    ScaleUniform {
+        press_screen: (f32, f32),
+        pivot_screen: (f32, f32),
     },
 }
 
@@ -364,16 +400,15 @@ impl ViewportController {
     }
 
     /// Pointer moved while the left button is held and no camera
-    /// gesture is active. Drives the gizmo drag — recomputes the
-    /// closest point on the axis from the current cursor ray and
-    /// composes the resulting world-delta as a translation onto the
-    /// captured original transform.
+    /// gesture is active. Drives the gizmo drag — branches on the
+    /// active `DragOp`, recomputes the per-op delta from the current
+    /// cursor ray, and composes the resulting transform onto the
+    /// captured original.
     pub fn on_pointer_move(&self, x: f32, y: f32) {
         let GizmoState::Drag {
-            axis,
+            op,
             original,
             pivot,
-            anchor,
             object_idx,
         } = self.gizmo.get()
         else {
@@ -384,18 +419,31 @@ impl ViewportController {
             return;
         }
 
-        let new_anchor = {
+        // Compute the new transform and the (possibly mutated) op
+        // state inside a borrow scope, then drop the camera borrow
+        // before mutating the scene.
+        let result: Option<(Transform3D, DragOp)> = {
             let camera_slot = self.camera.borrow();
             let Some(camera) = camera_slot.as_ref() else {
                 return;
             };
             let ray = picking::ray_from_pixel(camera, default_fov_y(), w, h, x, y);
-            gizmo::closest_point_on_axis(&ray, pivot, axis)
+            apply_drag_move(op, &ray, pivot, &original, x, y)
         };
-        let delta = new_anchor - anchor;
-        let translation =
-            AffineTransform3D::from_translation([delta.x as f64, delta.y as f64, delta.z as f64]);
-        let new_transform = Transform3D::Affine(translation).compose(&original);
+
+        let Some((new_transform, new_op)) = result else {
+            return;
+        };
+
+        // Persist the (possibly updated) drag state — Rotate's
+        // unwrap counter mutates per move; the others' state is
+        // captured at press and stays put.
+        self.gizmo.set(GizmoState::Drag {
+            op: new_op,
+            original,
+            pivot,
+            object_idx,
+        });
 
         let mut scene_slot = self.scene.borrow_mut();
         let Some(scene) = scene_slot.as_mut() else {
@@ -432,11 +480,13 @@ impl ViewportController {
         }
     }
 
-    /// Hit-tests the gizmo against the current camera + cursor ray
-    /// and, if a handle is grabbed, transitions the FSM into `Drag`.
-    /// Bails on missing camera / scene / no selection / zero
-    /// viewport, in which case the press behaves like a plain click
-    /// candidate.
+    /// Runs the four gizmo hit tests against the current camera +
+    /// cursor ray and, if a handle is grabbed, transitions the FSM
+    /// into `Drag`. The front-most candidate (smallest positive `t`
+    /// along the press ray) wins across translate cones, rotate
+    /// arcs, scale midpoint cubes, and the centre cube. Bails on
+    /// missing camera / scene / no selection / zero viewport, in
+    /// which case the press behaves like a plain click candidate.
     fn try_start_gizmo_drag(&self, x: f32, y: f32) {
         let Some(sel) = self.selection.get() else {
             return;
@@ -459,23 +509,98 @@ impl ViewportController {
         };
         let fov_y = default_fov_y();
         let scale = gizmo::gizmo_scale(camera, fov_y, h);
-        let radius = gizmo::hit_radius_world(camera, fov_y, h);
+        let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
+        let arc_radius_world = scale * gizmo::ROTATE_ARC_RADIUS_FRACTION;
+        // Both rotate cones and scale cubes scale with the gizmo —
+        // their handle-local sizes (in `gizmo` constants) become
+        // world-space sizes via the per-frame shaft length.
+        let rotate_cone_length_world = scale * gizmo::ROTATE_CONE_LENGTH;
+        let rotate_cone_radius_world = scale * gizmo::ROTATE_CONE_RADIUS;
+        let world_per_pixel = camera.world_per_pixel(fov_y, h);
+        let axis_cube_world = world_per_pixel * gizmo::AXIS_SCALE_CUBE_PIXELS;
+        let centre_cube_world = world_per_pixel * gizmo::CENTRE_CUBE_PIXELS;
+
         let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
-        let Some(axis) = gizmo::hit_test(&ray, pivot, scale, radius) else {
+
+        // Front-most across the four hit tests. Each candidate is
+        // tagged with its category so the dispatch below knows which
+        // `DragOp` variant to construct.
+        let mut best: Option<(HandleHit, f32)> = None;
+        let mut consider = |hit: HandleHit, t: f32| match best {
+            Some((_, prev_t)) if prev_t <= t => {}
+            _ => best = Some((hit, t)),
+        };
+        if let Some((axis, t)) = gizmo::hit_test(&ray, pivot, scale, cyl_radius) {
+            consider(HandleHit::Translate(axis), t);
+        }
+        if let Some((axis, t)) = gizmo::rotate_hit_test(
+            &ray,
+            pivot,
+            arc_radius_world,
+            rotate_cone_length_world,
+            rotate_cone_radius_world,
+        ) {
+            consider(HandleHit::Rotate(axis), t);
+        }
+        if let Some((axis_or_none, t)) =
+            gizmo::scale_hit_test(&ray, pivot, scale, axis_cube_world, centre_cube_world)
+        {
+            match axis_or_none {
+                Some(axis) => consider(HandleHit::ScaleAxis(axis), t),
+                None => consider(HandleHit::ScaleCentre, t),
+            }
+        }
+        let Some((winner, _)) = best else {
             return;
         };
+
         let Some(obj) = scene.objects.get(sel) else {
             return;
         };
         let original = obj.transform;
-        let anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+
+        let op = match winner {
+            HandleHit::Translate(axis) => {
+                let anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+                DragOp::Translate { axis, anchor }
+            }
+            HandleHit::Rotate(axis) => {
+                // `rotate_drag_angle` returns `None` only inside the
+                // arc lock-out, which `rotate_hit_test` already
+                // rejected — but bail defensively if it slips
+                // through, leaving the press as a click candidate.
+                let Some(start_angle) = gizmo::rotate_drag_angle(&ray, pivot, axis) else {
+                    return;
+                };
+                DragOp::Rotate {
+                    axis,
+                    start_angle,
+                    last_raw: start_angle,
+                    current_unwrapped: start_angle,
+                }
+            }
+            HandleHit::ScaleAxis(axis) => {
+                let start_anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+                DragOp::ScaleAxis { axis, start_anchor }
+            }
+            HandleHit::ScaleCentre => {
+                let Some(pivot_screen) =
+                    picking::project_world_to_screen(camera, fov_y, w, h, pivot)
+                else {
+                    return;
+                };
+                DragOp::ScaleUniform {
+                    press_screen: (x, y),
+                    pivot_screen,
+                }
+            }
+        };
         drop(scene_slot);
         drop(camera_slot);
         self.gizmo.set(GizmoState::Drag {
-            axis,
+            op,
             original,
             pivot,
-            anchor,
             object_idx: sel,
         });
     }
@@ -686,6 +811,145 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
     }
 }
 
+/// Categorised winner of the press-time gizmo hit-test. Used by
+/// `try_start_gizmo_drag` to map across-category arbitration into
+/// the matching `DragOp` variant.
+enum HandleHit {
+    Translate(Axis),
+    Rotate(Axis),
+    ScaleAxis(Axis),
+    ScaleCentre,
+}
+
+/// Per-op delta computation for a move event. Returns the new
+/// transform composed onto `original`, paired with the (possibly
+/// updated) `DragOp` state — Rotate's unwrap counter mutates per
+/// frame; the others are pure functions of the press capture and the
+/// current cursor.
+///
+/// Returns `None` if the cursor produces no usable delta this frame
+/// (e.g. rotate ray slipped into the lock-out region between move
+/// events) — the controller leaves the running transform unchanged
+/// in that case rather than snapping the object.
+fn apply_drag_move(
+    op: DragOp,
+    ray: &picking::Ray,
+    pivot: Vec3,
+    original: &Transform3D,
+    cursor_x: f32,
+    cursor_y: f32,
+) -> Option<(Transform3D, DragOp)> {
+    match op {
+        DragOp::Translate { axis, anchor } => {
+            let new_anchor = gizmo::closest_point_on_axis(ray, pivot, axis);
+            let delta = new_anchor - anchor;
+            let translation = AffineTransform3D::from_translation([
+                delta.x as f64,
+                delta.y as f64,
+                delta.z as f64,
+            ]);
+            Some((Transform3D::Affine(translation).compose(original), op))
+        }
+        DragOp::Rotate {
+            axis,
+            start_angle,
+            last_raw,
+            current_unwrapped,
+        } => {
+            let raw = gizmo::rotate_drag_angle(ray, pivot, axis)?;
+            let new_unwrapped = unwrap_angle(last_raw, current_unwrapped, raw);
+            let delta_angle = new_unwrapped - start_angle;
+            let new_op = DragOp::Rotate {
+                axis,
+                start_angle,
+                last_raw: raw,
+                current_unwrapped: new_unwrapped,
+            };
+            // R(axis, delta_angle) about the world-space pivot:
+            //   T(pivot) ∘ R ∘ T(-pivot) ∘ original.
+            let rotation =
+                axis_rotation(axis, delta_angle).map(|r| compose_about_pivot(&r, pivot, original));
+            rotation.map(|new_t| (new_t, new_op))
+        }
+        DragOp::ScaleAxis { axis, start_anchor } => {
+            let current_anchor = gizmo::closest_point_on_axis(ray, pivot, axis);
+            let factor = gizmo::scale_factor_along_axis(start_anchor, current_anchor, pivot, axis);
+            let scale_mat = scale_along_axis(axis, factor);
+            Some((compose_about_pivot(&scale_mat, pivot, original), op))
+        }
+        DragOp::ScaleUniform {
+            press_screen,
+            pivot_screen,
+        } => {
+            let factor = gizmo::uniform_scale_factor(
+                pivot_screen.0,
+                pivot_screen.1,
+                press_screen.0,
+                press_screen.1,
+                cursor_x,
+                cursor_y,
+            );
+            let scale_mat = AffineTransform3D::from_uniform_scale(factor as f64);
+            Some((compose_about_pivot(&scale_mat, pivot, original), op))
+        }
+    }
+}
+
+/// Updates the unwrap counter so a multi-revolution drag yields a
+/// continuous angle. `last_raw` and `current_unwrapped` are the
+/// previous frame's raw atan2 reading and the cumulative unwrapped
+/// angle; `raw` is this frame's raw reading. When the per-frame raw
+/// difference exceeds π, atan2 has wrapped through ±π — adjust by
+/// 2π in the opposite direction so the unwrapped angle stays
+/// continuous.
+fn unwrap_angle(last_raw: f32, current_unwrapped: f32, raw: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let mut diff = raw - last_raw;
+    if diff > PI {
+        diff -= TAU;
+    } else if diff < -PI {
+        diff += TAU;
+    }
+    current_unwrapped + diff
+}
+
+/// Affine rotation about a world-aligned axis by `angle` radians,
+/// right-handed. Returns `None` if the axis happens to be zero —
+/// can't happen for `Axis::{X,Y,Z}` but the propagation keeps the
+/// caller's `?` chain typed.
+fn axis_rotation(axis: Axis, angle: f32) -> Option<AffineTransform3D> {
+    let angle_f64 = angle as f64;
+    Some(match axis {
+        Axis::X => AffineTransform3D::from_rotation_x(angle_f64),
+        Axis::Y => AffineTransform3D::from_rotation_y(angle_f64),
+        Axis::Z => AffineTransform3D::from_rotation_z(angle_f64),
+    })
+}
+
+/// Per-axis scale, with the off-axis components held at 1.0 (no
+/// non-uniformity bleed). Used by `ScaleAxis`.
+fn scale_along_axis(axis: Axis, factor: f32) -> AffineTransform3D {
+    let f = factor as f64;
+    let s = match axis {
+        Axis::X => [f, 1.0, 1.0],
+        Axis::Y => [1.0, f, 1.0],
+        Axis::Z => [1.0, 1.0, f],
+    };
+    AffineTransform3D::from_non_uniform_scale(s)
+}
+
+/// Composes a rotation/scale operation `m` about a world-space
+/// `pivot`, then applies it to `original`:
+///   `T(pivot) ∘ m ∘ T(-pivot) ∘ original`.
+fn compose_about_pivot(m: &AffineTransform3D, pivot: Vec3, original: &Transform3D) -> Transform3D {
+    let to_pivot =
+        AffineTransform3D::from_translation([pivot.x as f64, pivot.y as f64, pivot.z as f64]);
+    let from_pivot =
+        AffineTransform3D::from_translation([-pivot.x as f64, -pivot.y as f64, -pivot.z as f64]);
+    let about_pivot = to_pivot.compose(&m.compose(&from_pivot));
+    Transform3D::Affine(about_pivot).compose(original)
+}
+
 /// Builds the per-frame `GizmoFrame` for the renderer when a single
 /// object is selected. Returns `None` if the object has no geometry
 /// (no pivot to attach to). The locked-axes mask uses the camera's
@@ -705,7 +969,12 @@ fn build_gizmo_frame(
     let fov_y = default_fov_y();
     let scale = gizmo::gizmo_scale(camera, fov_y, viewport_h_logical);
     let visibility = match state {
-        GizmoState::Drag { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
+        GizmoState::Drag { op, .. } => match op {
+            DragOp::Translate { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
+            DragOp::Rotate { axis, .. } => GizmoVisibility::DraggingRotate { axis },
+            DragOp::ScaleAxis { axis, .. } => GizmoVisibility::DraggingScaleAxis { axis },
+            DragOp::ScaleUniform { .. } => GizmoVisibility::DraggingScaleUniform,
+        },
         GizmoState::Idle => GizmoVisibility::Idle,
     };
     let forward = (camera.target - camera.eye()).normalize_or_zero();
@@ -1157,6 +1426,14 @@ mod viewport_click_tests {
         c
     }
 
+    /// Width / height of the viewport used by the gizmo-drag tests.
+    /// 400×200 is wide enough that the X-axis cone tip
+    /// (`gizmo_scale × 1.18 ≈ 1.89` world units along +X with the
+    /// front camera at distance 3) lands well inside the viewport.
+    /// Smaller viewports clip the cone off-screen and make
+    /// cone-tip presses impossible.
+    const GIZMO_TEST_VIEWPORT: (f32, f32) = (400.0, 200.0);
+
     fn install_single_object_at_origin(ctrl: &ViewportController) {
         let scene = Scene {
             meta: None,
@@ -1165,9 +1442,16 @@ mod viewport_click_tests {
         };
         ctrl.install_scene_for_test(scene);
         *ctrl.camera.borrow_mut() = Some(front_camera());
-        ctrl.viewport.set((200.0, 100.0));
+        ctrl.viewport.set(GIZMO_TEST_VIEWPORT);
         ctrl.on_select_by_index(0);
     }
+
+    /// Logical-pixel position of a click on the X-axis cone tip.
+    /// Computed for the gizmo test setup (front camera, 400×200
+    /// viewport, default FOV, scene radius 1.0): the cone occupies
+    /// `screen-x ∈ [320, 350]`, screen-y ≈ 100. `(335, 100)` lands
+    /// safely inside.
+    const X_CONE_PRESS: (f32, f32) = (335.0, 100.0);
 
     fn read_translation(ctrl: &ViewportController) -> Vec3 {
         let scene_slot = ctrl.scene.borrow();
@@ -1184,17 +1468,19 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_down_on_x_handle_enters_drag_state() {
-        // The X handle in the front-camera setup lies along world +X
-        // (which projects to screen-right at centre-y). A press at
-        // (150, 50) puts the cursor over the handle (the gizmo
-        // shaft extends from the origin to ~world X = 2 at the
-        // current camera distance and viewport size).
+        // The X cone in the front-camera + 400×200 setup lives at
+        // screen-x ∈ [320, 350] / screen-y = 100. `X_CONE_PRESS` is
+        // a press inside that region; only the cone tip is the
+        // active translate handle (the shaft line is decorative).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(150.0, 50.0);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
         match ctrl.gizmo.get() {
-            GizmoState::Drag { axis, .. } => assert_eq!(axis, Axis::X),
-            other => panic!("expected Drag(X), got {other:?}"),
+            GizmoState::Drag {
+                op: DragOp::Translate { axis, .. },
+                ..
+            } => assert_eq!(axis, Axis::X),
+            other => panic!("expected Drag(Translate, X), got {other:?}"),
         }
     }
 
@@ -1213,17 +1499,16 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        // Compute the expected translation from the press / release
-        // rays and the closest-point-on-axis formula. The expected
-        // delta is what the renderer-agnostic helpers return for
-        // these two cursor positions; the controller's job is to
-        // apply that as a translation onto the object's transform.
-        let press = (150.0_f32, 50.0_f32);
-        let release = (175.0_f32, 50.0_f32);
+        // Press lands on the X cone tip; release stays on the cone
+        // (close enough that the closest-point-on-axis delta is the
+        // controller's only output to verify).
+        let press = X_CONE_PRESS;
+        let release = (X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
+        let (vw, vh) = GIZMO_TEST_VIEWPORT;
         let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
         let fov_y = default_fov_y();
-        let press_ray = picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, press.0, press.1);
-        let release_ray = picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, release.0, release.1);
+        let press_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1);
+        let release_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1);
         let press_anchor = gizmo::closest_point_on_axis(&press_ray, Vec3::ZERO, Axis::X);
         let release_anchor = gizmo::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
         let expected = release_anchor - press_anchor;
@@ -1250,18 +1535,19 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        let press = (150.0_f32, 50.0_f32);
-        let mid = (160.0_f32, 50.0_f32);
-        let release = (175.0_f32, 50.0_f32);
+        let press = X_CONE_PRESS;
+        let mid = (X_CONE_PRESS.0 + 3.0, X_CONE_PRESS.1);
+        let release = (X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
+        let (vw, vh) = GIZMO_TEST_VIEWPORT;
         let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
         let fov_y = default_fov_y();
         let press_anchor = gizmo::closest_point_on_axis(
-            &picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, press.0, press.1),
+            &picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1),
             Vec3::ZERO,
             Axis::X,
         );
         let release_anchor = gizmo::closest_point_on_axis(
-            &picking::ray_from_pixel(&cam, fov_y, 200.0, 100.0, release.0, release.1),
+            &picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1),
             Vec3::ZERO,
             Axis::X,
         );
@@ -1280,10 +1566,10 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(150.0, 50.0);
-        ctrl.on_pointer_move(175.0, 50.0);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
         let mid_drag = read_translation(&ctrl);
-        ctrl.on_pointer_up(175.0, 50.0);
+        ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
 
         // Drag state cleared.
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
@@ -1297,8 +1583,8 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(150.0, 50.0);
-        ctrl.on_pointer_move(175.0, 50.0);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
         // Object has moved.
         assert!(read_translation(&ctrl).x.abs() > 1e-4);
 
@@ -1320,8 +1606,8 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(150.0, 50.0);
-        ctrl.on_pointer_move(175.0, 50.0);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
         ctrl.on_close_scene();
 
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
@@ -1346,5 +1632,202 @@ mod viewport_click_tests {
         ctrl.on_pointer_down(100.0, 50.0);
         ctrl.on_pointer_up(101.5, 51.5);
         assert_eq!(ctrl.selection(), Some(0));
+    }
+}
+
+#[cfg(test)]
+mod unwrap_angle_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    #[test]
+    fn small_step_does_not_wrap() {
+        // No wrap: cumulative grows by the same amount as the raw
+        // difference.
+        let result = unwrap_angle(0.5, 0.5, 0.6);
+        assert_approx_eq!(f32, result, 0.6, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn cw_wrap_through_negative_pi_adjusts_by_2pi() {
+        // Last raw was just below π, this raw is just above -π. The
+        // user dragged CCW past the discontinuity; the unwrapped
+        // angle should keep growing past π.
+        let pi = std::f32::consts::PI;
+        let last_raw = pi - 0.1;
+        let last_unwrapped = pi - 0.1;
+        let raw_now = -pi + 0.1; // jumped by ~ -2π + 0.2 (raw)
+        let result = unwrap_angle(last_raw, last_unwrapped, raw_now);
+        assert_approx_eq!(f32, result, pi + 0.1, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn ccw_wrap_through_positive_pi_adjusts_by_minus_2pi() {
+        // Symmetric case in the other direction: cursor jumped CCW
+        // through +π → unwrapped angle should keep decreasing.
+        let pi = std::f32::consts::PI;
+        let last_raw = -pi + 0.1;
+        let last_unwrapped = -pi + 0.1;
+        let raw_now = pi - 0.1;
+        let result = unwrap_angle(last_raw, last_unwrapped, raw_now);
+        assert_approx_eq!(f32, result, -pi - 0.1, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn full_revolution_yields_continuous_angle() {
+        // Simulate dragging CCW through a full 2π. Successive raw
+        // readings: 0, π/2, π−ε, −π+ε, −π/2, −ε, 0, π/2, ... . The
+        // unwrapped sequence should grow monotonically over a full
+        // revolution.
+        let pi = std::f32::consts::PI;
+        let mut last_raw = 0.0_f32;
+        let mut unwrapped = 0.0_f32;
+        for raw in [pi * 0.5, pi - 0.01, -pi + 0.01, -pi * 0.5, -0.01, 0.01] {
+            unwrapped = unwrap_angle(last_raw, unwrapped, raw);
+            last_raw = raw;
+        }
+        // After a full revolution, unwrapped should be just past 2π.
+        assert!(
+            unwrapped > 2.0 * pi - 0.05 && unwrapped < 2.0 * pi + 0.05,
+            "expected unwrapped ≈ 2π, got {unwrapped}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod apply_drag_move_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    fn ray_from(origin: Vec3, target: Vec3) -> picking::Ray {
+        picking::Ray {
+            origin,
+            direction: (target - origin).normalize(),
+        }
+    }
+
+    fn pivot_origin() -> Vec3 {
+        Vec3::ZERO
+    }
+
+    /// Read the affine linear part as a row-major 3×3 of f64.
+    fn read_linear(t: &Transform3D) -> [[f64; 3]; 3] {
+        match t {
+            Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            Transform3D::Affine(a) => a.linear,
+        }
+    }
+
+    fn read_translation_t(t: &Transform3D) -> [f64; 3] {
+        match t {
+            Transform3D::Identity => [0.0; 3],
+            Transform3D::Affine(a) => a.translation,
+        }
+    }
+
+    #[test]
+    fn translate_op_composes_a_pure_translation() {
+        // Press anchor on +X at (1, 0, 0); cursor moves the closest
+        // point to (1.5, 0, 0). Object should end up translated by
+        // +0.5 along X.
+        let pivot = pivot_origin();
+        let original = Transform3D::Identity;
+        let op = DragOp::Translate {
+            axis: Axis::X,
+            anchor: Vec3::new(1.0, 0.0, 0.0),
+        };
+        // Construct a ray whose closest point on +X axis is (1.5, 0, 0).
+        let ray = ray_from(Vec3::new(1.5, -3.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
+        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
+        let translation = read_translation_t(&new_t);
+        assert_approx_eq!(f64, translation[0], 0.5, epsilon = 1e-4);
+        assert_approx_eq!(f64, translation[1], 0.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, translation[2], 0.0, epsilon = 1e-4);
+        // Linear part stays identity.
+        let m = read_linear(&new_t);
+        assert_approx_eq!(f64, m[0][0], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f64, m[1][1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f64, m[2][2], 1.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn scale_axis_op_composes_a_diagonal_scale_about_pivot() {
+        // Press anchor at (1, 0, 0); current anchor at (2, 0, 0)
+        // → factor 2 along X. Pivot at origin → translation stays 0.
+        let pivot = pivot_origin();
+        let original = Transform3D::Identity;
+        let op = DragOp::ScaleAxis {
+            axis: Axis::X,
+            start_anchor: Vec3::new(1.0, 0.0, 0.0),
+        };
+        let ray = ray_from(Vec3::new(2.0, -3.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
+        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
+        let m = read_linear(&new_t);
+        assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[1][1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f64, m[2][2], 1.0, epsilon = 1e-6);
+        let translation = read_translation_t(&new_t);
+        assert_approx_eq!(f64, translation[0], 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn scale_uniform_op_composes_a_uniform_diagonal_about_pivot() {
+        // Press at distance 50 px from projected pivot, current at
+        // 100 px → factor 2.
+        let pivot = pivot_origin();
+        let original = Transform3D::Identity;
+        let op = DragOp::ScaleUniform {
+            press_screen: (150.0, 100.0), // 50 px right of pivot
+            pivot_screen: (100.0, 100.0),
+        };
+        // The ray itself doesn't enter the formula for ScaleUniform —
+        // factor is purely from screen distances. Use any ray.
+        let ray = ray_from(Vec3::new(0.0, -3.0, 0.0), Vec3::ZERO);
+        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 200.0, 100.0).unwrap();
+        let m = read_linear(&new_t);
+        assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[2][2], 2.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn rotate_op_composes_a_rotation_about_pivot() {
+        // Press angle 0 (cursor on +Y for the X-axis arc), current
+        // angle +π/2 (cursor on +Z). The rotation is +π/2 about +X,
+        // which takes +Y → +Z. Verify the linear part.
+        let pivot = pivot_origin();
+        let original = Transform3D::Identity;
+        let start = 0.0_f32;
+        let op = DragOp::Rotate {
+            axis: Axis::X,
+            start_angle: start,
+            last_raw: start,
+            current_unwrapped: start,
+        };
+        // Ray crosses the X arc plane at (0, 0, 1) — a point on +Z
+        // → angle π/2 in the X-axis basis (u=Y, v=Z).
+        let ray = ray_from(Vec3::new(5.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
+        let (new_t, new_op) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
+        // The linear part rotates +Y onto +Z (right-handed about +X).
+        let m = read_linear(&new_t);
+        // R(X, π/2) maps (0, 1, 0) → (0, 0, 1):
+        //   m[0][1] = 0, m[1][1] = 0, m[2][1] = 1.
+        assert_approx_eq!(f64, m[0][1], 0.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[1][1], 0.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[2][1], 1.0, epsilon = 1e-4);
+        // The new op state should have advanced last_raw + unwrapped.
+        if let DragOp::Rotate {
+            current_unwrapped, ..
+        } = new_op
+        {
+            assert_approx_eq!(
+                f32,
+                current_unwrapped,
+                std::f32::consts::FRAC_PI_2,
+                epsilon = 1e-4
+            );
+        } else {
+            panic!("expected Rotate, got {new_op:?}");
+        }
     }
 }

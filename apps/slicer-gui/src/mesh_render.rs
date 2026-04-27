@@ -301,9 +301,17 @@ pub struct Renderer {
     /// handle-local space, centred on +Y. The per-frame X-roll
     /// (baked into `axis_rotation`) swings the arc to face the
     /// camera before the world-axis rotation maps it onto X/Y/Z.
+    /// Decorative — the click target is the cone spindle below.
     gizmo_arc_vertex_buffer: wgpu::Buffer,
     gizmo_arc_index_buffer: wgpu::Buffer,
     gizmo_arc_index_count: u32,
+    /// Rotate-handle two-cone spindle: bases touching at the arc's
+    /// camera-facing midpoint, tips along ±axis. The active rotate
+    /// handle (mirrors `gizmo::ray_hits_rotate_cones` on the picker
+    /// side).
+    gizmo_rotate_cones_vertex_buffer: wgpu::Buffer,
+    gizmo_rotate_cones_index_buffer: wgpu::Buffer,
+    gizmo_rotate_cones_index_count: u32,
     /// Centre cube geometry for the uniform-scale handle.
     gizmo_centre_vertex_buffer: wgpu::Buffer,
     gizmo_centre_index_buffer: wgpu::Buffer,
@@ -580,6 +588,22 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let (rotate_cones_vertices, rotate_cones_indices) =
+            gizmo_geometry::build_rotate_cones_geometry();
+        let gizmo_rotate_cones_index_count = rotate_cones_indices.len() as u32;
+        let gizmo_rotate_cones_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo rotate cones vbo"),
+                contents: bytemuck::cast_slice(&rotate_cones_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let gizmo_rotate_cones_index_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo rotate cones ibo"),
+                contents: bytemuck::cast_slice(&rotate_cones_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
         let (centre_vertices, centre_indices) = gizmo_geometry::build_centre_cube_geometry();
         let gizmo_centre_index_count = centre_indices.len() as u32;
         let gizmo_centre_vertex_buffer =
@@ -739,6 +763,9 @@ impl Renderer {
             gizmo_arc_vertex_buffer,
             gizmo_arc_index_buffer,
             gizmo_arc_index_count,
+            gizmo_rotate_cones_vertex_buffer,
+            gizmo_rotate_cones_index_buffer,
+            gizmo_rotate_cones_index_count,
             gizmo_centre_vertex_buffer,
             gizmo_centre_index_buffer,
             gizmo_centre_index_count,
@@ -1185,6 +1212,7 @@ impl Renderer {
                 }
             }
             if render_rotate {
+                // Decorative torus arc.
                 gizmo_pass.set_vertex_buffer(0, self.gizmo_arc_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
                     self.gizmo_arc_index_buffer.slice(..),
@@ -1195,6 +1223,20 @@ impl Renderer {
                         ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
                     gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
                     gizmo_pass.draw_indexed(0..self.gizmo_arc_index_count, 0, 0..1);
+                }
+                // Active two-cone spindle at the arc's midpoint —
+                // shares the per-axis camera-rolled `axis_rotation`
+                // so it lands at the visual centre of the arc.
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_rotate_cones_vertex_buffer.slice(..));
+                gizmo_pass.set_index_buffer(
+                    self.gizmo_rotate_cones_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                for i in 0..3u32 {
+                    let offset =
+                        ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    gizmo_pass.draw_indexed(0..self.gizmo_rotate_cones_index_count, 0, 0..1);
                 }
             }
             if render_scale {

@@ -68,13 +68,15 @@ const LOCKOUT_COS: f32 = 0.990_268_07;
 /// `cos(82°) ≈ 0.13917`.
 const ROTATE_LOCKOUT_COS: f32 = 0.139_173_1;
 
-/// Half-extent of the rotate arc's azimuthal span around its
-/// camera-facing midpoint. The arc subtends a full 90° centred on the
-/// projection of the eye-to-pivot direction onto the axis-perpendicular
-/// plane, so the hit test accepts any in-plane angle within ±π/4 of
-/// that midpoint.
-#[allow(dead_code)]
-const ROTATE_ARC_HALF_SPAN: f32 = std::f32::consts::FRAC_PI_4;
+/// Length, in handle-local space, of each cone in the rotate
+/// "two-cone spindle" hit target. The two cones share their bases at
+/// the arc's camera-facing midpoint and point along ±axis with this
+/// length. Mirrors the translate cone's `1.18 - 1.0 = 0.18`.
+pub const ROTATE_CONE_LENGTH: f32 = 0.18;
+
+/// Base radius, in handle-local space, of each rotate cone — same as
+/// the translate cone's base radius for visual consistency.
+pub const ROTATE_CONE_RADIUS: f32 = 0.07;
 
 /// Lower bound on a single-axis or uniform scale factor. Factors
 /// below this are clamped up; factors above `1.0 / EPS_SCALE` are
@@ -178,93 +180,129 @@ pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
     a.dot(ray.direction).abs() < LOCKOUT_COS
 }
 
+/// Lower bound on the translate cone's hit cylinder, in handle-local
+/// space. Below this `s` along the axis the cylinder is dormant —
+/// the *shaft line* between the gizmo origin and the cone is purely
+/// decorative (clicks there fall through to other handle categories
+/// or the picker), the per-axis scale cube at the midpoint owns its
+/// own discrete target.
+const TRANSLATE_HIT_S_MIN: f32 = 1.0;
+/// Upper bound on the translate cone's hit cylinder. Extends past
+/// the visual tip (`CONE_TIP_X = 1.18`) by a small forgiving margin.
+const TRANSLATE_HIT_S_MAX: f32 = 1.25;
+
 /// Hit-test the three world-aligned axis handles against `ray`.
 /// Returns the front-most pickable axis (smallest positive `t` on
-/// the ray) whose hit cylinder the ray intersects, or `None`.
+/// the ray) whose cone cylinder the ray intersects, paired with that
+/// `t`, or `None`. The active region is the cone tip *only* — the
+/// shaft line below the cone is decorative.
 ///
-/// `pivot` is the world-space gizmo origin; `length_world` is the
-/// shaft length in world units (typically `gizmo_scale(...)`); the
-/// shaft is finite from `pivot` to `pivot + axis_dir * length_world`,
-/// extended slightly past the tip to fold in the visible cone cap.
-pub fn hit_test(ray: &Ray, pivot: Vec3, length_world: f32, radius_world: f32) -> Option<Axis> {
-    // Extend past the visual tip by 25% so the cone cap counts as a
-    // shaft hit without needing a separate ray-vs-cone code path.
-    let shaft_total = length_world * 1.25;
+/// The returned `t` is exposed so the controller can arbitrate
+/// front-most across the four hit-test categories (translate cones,
+/// rotate cones, scale midpoint cubes, scale centre cube).
+pub fn hit_test(
+    ray: &Ray,
+    pivot: Vec3,
+    length_world: f32,
+    radius_world: f32,
+) -> Option<(Axis, f32)> {
+    let s_min = length_world * TRANSLATE_HIT_S_MIN;
+    let s_max = length_world * TRANSLATE_HIT_S_MAX;
     let mut best: Option<(Axis, f32)> = None;
     for &axis in &ALL_AXES {
         if !axis_pickable(ray, axis) {
             continue;
         }
-        if let Some(t) = ray_hits_axis_handle(ray, pivot, axis, shaft_total, radius_world) {
+        if let Some(t) =
+            ray_hits_finite_cylinder(ray, pivot, axis.world_dir(), s_min, s_max, radius_world)
+        {
             match best {
                 Some((_, prev_t)) if prev_t <= t => {}
                 _ => best = Some((axis, t)),
             }
         }
     }
-    best.map(|(a, _)| a)
+    best
 }
 
-/// Ray-vs-finite-cylinder for a single axis handle. The cylinder
-/// extends from `pivot` (parameter 0 along the axis) to
-/// `pivot + axis_dir * length_world` (parameter `length_world`).
-/// Returns the smallest positive `t` on the ray at which it enters
-/// the cylinder, or `None` if it misses or the entry point is past
-/// the shaft's end / before its start.
-pub fn ray_hits_axis_handle(
+/// Ray-vs-finite-cylinder. The cylinder is centred at `centre`,
+/// oriented along the unit vector `axis_dir`, with parameter `s`
+/// along the axis ranging over `[s_min, s_max]` and radius `radius`
+/// perpendicular to the axis. Returns the smallest positive `t` at
+/// which the ray *enters* the cylinder from outside, or `None` if it
+/// misses, originates inside, or hits behind the camera.
+///
+/// Used for both the translate cone (centre = pivot, s ∈ [1, 1.25]
+/// times shaft length) and the rotate two-cone spindle (centre = arc
+/// midpoint, s ∈ ±cone half-length around 0).
+///
+/// The intersection is the conjunction of two slabs: the s-range
+/// (cap-bounded) and the radial-distance constraint (wall-bounded).
+/// `t_in = max(t_s_lo, t_r_lo)`, `t_out = min(t_s_hi, t_r_hi)`; the
+/// ray is inside iff `t_in ≤ t_out`. The hit `t` is `t_in` provided
+/// it is in front of the ray's origin.
+fn ray_hits_finite_cylinder(
     ray: &Ray,
-    pivot: Vec3,
-    axis: Axis,
-    length_world: f32,
-    radius_world: f32,
+    centre: Vec3,
+    axis_dir: Vec3,
+    s_min: f32,
+    s_max: f32,
+    radius: f32,
 ) -> Option<f32> {
-    let a = axis.world_dir();
-    let oc = ray.origin - pivot;
+    let q = ray.origin - centre;
+    let d_dot_a = ray.direction.dot(axis_dir);
+    let q_dot_a = q.dot(axis_dir);
 
-    // Cylinder axis intersection in the standard form: solve
-    // `(P + t·D − pivot − s·A)² = r²` for the smallest positive `t`.
-    // Rearranged into a quadratic in `t` with the s-component
-    // eliminated by projecting onto the plane perpendicular to A.
-    let d_dot_a = ray.direction.dot(a);
-    let oc_dot_a = oc.dot(a);
+    // Slab 1: cap-bounded s-range.
+    let (t_s_lo, t_s_hi) = if d_dot_a.abs() < 1e-10 {
+        // Ray parallel to the cylinder's axis. `s` is constant; the
+        // ray is in the slab iff its constant `s` lies in range.
+        if q_dot_a < s_min || q_dot_a > s_max {
+            return None;
+        }
+        (f32::NEG_INFINITY, f32::INFINITY)
+    } else {
+        let t1 = (s_min - q_dot_a) / d_dot_a;
+        let t2 = (s_max - q_dot_a) / d_dot_a;
+        if t1 < t2 { (t1, t2) } else { (t2, t1) }
+    };
 
-    let dp = ray.direction - a * d_dot_a; // perpendicular component
-    let ocp = oc - a * oc_dot_a;
-
+    // Slab 2: radial distance ≤ radius (wall constraint).
+    let dp = ray.direction - axis_dir * d_dot_a;
+    let qp = q - axis_dir * q_dot_a;
     let qa = dp.dot(dp);
-    let qb = 2.0 * dp.dot(ocp);
-    let qc = ocp.dot(ocp) - radius_world * radius_world;
+    let qb = 2.0 * dp.dot(qp);
+    let qc = qp.dot(qp) - radius * radius;
+    let (t_r_lo, t_r_hi) = if qa.abs() < 1e-10 {
+        // Ray parallel to the cylinder's axis (zero radial motion).
+        // Inside iff its current radial distance is within `radius`.
+        if qc > 0.0 {
+            return None;
+        }
+        (f32::NEG_INFINITY, f32::INFINITY)
+    } else {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc < 0.0 {
+            return None;
+        }
+        let sqrt_disc = disc.sqrt();
+        let inv_2qa = 1.0 / (2.0 * qa);
+        let t1 = (-qb - sqrt_disc) * inv_2qa;
+        let t2 = (-qb + sqrt_disc) * inv_2qa;
+        if t1 < t2 { (t1, t2) } else { (t2, t1) }
+    };
 
-    if qa.abs() < 1e-10 {
-        // Ray runs exactly along the axis — handled by the lock-out
-        // upstream, but defensively bail.
+    let t_in = t_s_lo.max(t_r_lo);
+    let t_out = t_s_hi.min(t_r_hi);
+    if t_in > t_out || t_out <= 0.0 {
         return None;
     }
-
-    let disc = qb * qb - 4.0 * qa * qc;
-    if disc < 0.0 {
+    // Origin-inside or behind-the-camera entry: reject. The user must
+    // be outside the hit volume to grab the handle.
+    if t_in <= 0.0 {
         return None;
     }
-    let sqrt_disc = disc.sqrt();
-    let inv_2qa = 1.0 / (2.0 * qa);
-
-    // Only the entry point (smaller root) counts. If the ray's
-    // origin sits inside the cylinder (`t0 ≤ 0 < t1`), the visible
-    // intersection ahead of the camera is the cylinder's *back wall*,
-    // not the front. Treating that as a hit lets the camera-on-axis
-    // case (e.g. Top view, where the eye sits on +Z) catch every
-    // click — the +Z handle would activate from anywhere on screen.
-    // Reject "from inside the handle" clicks; the user has to be
-    // outside the hit volume to grab a handle.
-    let t0 = (-qb - sqrt_disc) * inv_2qa;
-    if t0 <= 0.0 {
-        return None;
-    }
-    let s = oc_dot_a + t0 * d_dot_a;
-    if s < 0.0 || s > length_world {
-        return None;
-    }
-    Some(t0)
+    Some(t_in)
 }
 
 /// Closest point on the infinite world-space line `pivot + t * axis`
@@ -373,86 +411,94 @@ pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
     Some(axis_plane_angle(hit, pivot, axis))
 }
 
-/// Approximate ray-vs-90°-arc-of-torus, the rotate gizmo's hit test.
+/// World-space midpoint of the rotate arc for `axis`, i.e. the
+/// position of the two-cone spindle's shared base. The arc is the
+/// 90° quadrant of the major circle (radius `arc_radius_world` in
+/// the axis-perpendicular plane through `pivot`) centred on the
+/// projection of the eye-to-pivot direction onto that plane.
 ///
-/// The arc is modelled as the locus of points on the plane through
-/// `pivot` perpendicular to `axis`, at distance `arc_radius_world`
-/// from `pivot`, restricted to the 90° azimuthal quadrant centred
-/// on the camera-facing direction. The ray's perpendicular-plane
-/// intersection is accepted iff the in-plane radius lies in
-/// `[arc_radius − tube_radius, arc_radius + tube_radius]` *and* the
-/// in-plane angle lies within `±π/4` of the camera-direction angle.
+/// Returns `None` when the camera sits on the axis itself — the
+/// in-plane direction degenerates and the controller's `arc_pickable`
+/// gate is expected to have rejected the axis upstream.
+fn arc_midpoint_world(ray: &Ray, pivot: Vec3, axis: Axis, arc_radius_world: f32) -> Option<Vec3> {
+    let a = axis.world_dir();
+    let to_camera = ray.origin - pivot;
+    let in_plane = to_camera - a * to_camera.dot(a);
+    let len = in_plane.length();
+    if len < 1e-6 {
+        return None;
+    }
+    Some(pivot + in_plane * (arc_radius_world / len))
+}
+
+/// Hit-test the rotate handle for one axis. The handle is two cones
+/// sharing their bases at the arc's camera-facing midpoint, tips
+/// pointing along ±axis. Approximated as a single finite cylinder
+/// bounding both cones (centre at the midpoint, oriented along the
+/// axis, extending ±`cone_length_world`, radius `cone_radius_world`).
 ///
-/// The full ray-vs-torus would also account for the tube's extent
-/// *along* the axis; for a pixel-radius tube that thickness is
-/// invisible and the simpler test is enough. The camera direction
-/// is read from `ray.origin`, which `picking::ray_from_pixel` sets
-/// to `camera.eye()`.
-#[allow(dead_code)]
-pub fn ray_hits_torus_arc(
+/// Returns the entry parameter `t` if the ray crosses the bounding
+/// cylinder, or `None` if it misses. The torus *tube* itself is no
+/// longer a click target — it's a visual aid that connects the
+/// two-cone spindle around the rotation axis.
+pub fn ray_hits_rotate_cones(
     ray: &Ray,
     pivot: Vec3,
     axis: Axis,
     arc_radius_world: f32,
-    tube_radius_world: f32,
+    cone_length_world: f32,
+    cone_radius_world: f32,
 ) -> Option<f32> {
-    let hit = ray_hits_axis_plane(ray, pivot, axis)?;
-    let p = hit - pivot;
-    let r = p.length();
-    if (r - arc_radius_world).abs() > tube_radius_world {
-        return None;
-    }
-
-    let a = axis.world_dir();
-    let to_camera = ray.origin - pivot;
-    let to_camera_in_plane = to_camera - a * to_camera.dot(a);
-    if to_camera_in_plane.length() < 1e-6 {
-        // Camera sits on the axis itself — `arc_pickable` is
-        // expected to have rejected this configuration upstream.
-        return None;
-    }
-
-    let (u, v) = axis_basis(axis);
-    let camera_angle = to_camera_in_plane.dot(v).atan2(to_camera_in_plane.dot(u));
-    let hit_angle = p.dot(v).atan2(p.dot(u));
-    let two_pi = std::f32::consts::TAU;
-    let pi = std::f32::consts::PI;
-    let diff = (hit_angle - camera_angle + pi).rem_euclid(two_pi) - pi;
-    if diff.abs() > ROTATE_ARC_HALF_SPAN {
-        return None;
-    }
-    let t = (hit - ray.origin).dot(ray.direction);
-    Some(t)
+    let midpoint = arc_midpoint_world(ray, pivot, axis, arc_radius_world)?;
+    ray_hits_finite_cylinder(
+        ray,
+        midpoint,
+        axis.world_dir(),
+        -cone_length_world,
+        cone_length_world,
+        cone_radius_world,
+    )
 }
 
-/// Hit-test the three world-aligned rotate arcs against `ray`.
-/// Returns the front-most pickable arc (smallest positive `t`), or
-/// `None`. Mirrors `hit_test`'s structure for the translate cones,
-/// using `arc_pickable` as the lock-out and `ray_hits_torus_arc` as
-/// the per-axis test. Callers compute `arc_radius_world` and
-/// `tube_radius_world` from the per-frame gizmo scale — a typical
-/// choice is `arc_radius_world = gizmo_scale * 0.85`, keeping the
-/// arc inside the translate cone tip without occluding it.
-#[allow(dead_code)]
+/// Hit-test the three world-aligned rotate handles against `ray`.
+/// Returns the front-most pickable axis (smallest positive `t`)
+/// whose rotate-cone spindle the ray intersects, paired with that
+/// `t`, or `None`. Mirrors `hit_test`'s structure for the translate
+/// cones, using `arc_pickable` as the lock-out and
+/// `ray_hits_rotate_cones` as the per-axis test.
+///
+/// `arc_radius_world` is the major-circle radius (typically
+/// `gizmo_scale * ROTATE_ARC_RADIUS_FRACTION`); `cone_length_world`
+/// is each cone's length along the axis; `cone_radius_world` is the
+/// shared cone base radius — both follow the per-frame world-per-
+/// pixel ratio so the cones keep a constant on-screen size.
 pub fn rotate_hit_test(
     ray: &Ray,
     pivot: Vec3,
     arc_radius_world: f32,
-    tube_radius_world: f32,
-) -> Option<Axis> {
+    cone_length_world: f32,
+    cone_radius_world: f32,
+) -> Option<(Axis, f32)> {
     let mut best: Option<(Axis, f32)> = None;
     for &axis in &ALL_AXES {
         if !arc_pickable(ray, axis) {
             continue;
         }
-        if let Some(t) = ray_hits_torus_arc(ray, pivot, axis, arc_radius_world, tube_radius_world) {
+        if let Some(t) = ray_hits_rotate_cones(
+            ray,
+            pivot,
+            axis,
+            arc_radius_world,
+            cone_length_world,
+            cone_radius_world,
+        ) {
             match best {
                 Some((_, prev_t)) if prev_t <= t => {}
                 _ => best = Some((axis, t)),
             }
         }
     }
-    best.map(|(a, _)| a)
+    best
 }
 
 /// Ray-vs-AABB for one axis's midpoint scale cube. The cube is
@@ -500,7 +546,7 @@ pub fn scale_hit_test(
     shaft_length_world: f32,
     axis_cube_world: f32,
     centre_cube_world: f32,
-) -> Option<Option<Axis>> {
+) -> Option<(Option<Axis>, f32)> {
     let mut best: Option<(Option<Axis>, f32)> = None;
 
     if let Some(t) = ray_hits_centre_cube(ray, pivot, centre_cube_world) {
@@ -519,7 +565,7 @@ pub fn scale_hit_test(
         }
     }
 
-    best.map(|(a, _)| a)
+    best
 }
 
 /// Per-axis scale factor for a drag whose press anchor was
@@ -775,19 +821,19 @@ mod axis_pickable_tests {
 }
 
 #[cfg(test)]
-mod ray_hits_axis_handle_tests {
+mod ray_hits_finite_cylinder_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
 
     #[test]
-    fn perpendicular_ray_hits_x_handle_centre() {
-        // Pivot at origin, X handle along +X, ray crosses (+0.5, 0, 0).
+    fn perpendicular_ray_hits_cylinder_at_radius_distance() {
+        // Cylinder centred at origin along +X, s ∈ [-1, 1], radius 0.05.
+        // Ray crosses through (+0.5, 0, 0) along -Z; entry at z=+0.05.
         let ray = Ray {
             origin: Vec3::new(0.5, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        let t = ray_hits_axis_handle(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).unwrap();
-        // Ray enters cylinder at z = +0.05 (radius), so t = 5 - 0.05.
+        let t = ray_hits_finite_cylinder(&ray, Vec3::ZERO, Vec3::X, -1.0, 1.0, 0.05).unwrap();
         assert_approx_eq!(f32, t, 5.0 - 0.05, epsilon = 1e-4);
     }
 
@@ -797,36 +843,49 @@ mod ray_hits_axis_handle_tests {
             origin: Vec3::new(0.5, 1.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_axis_handle(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
+        assert!(ray_hits_finite_cylinder(&ray, Vec3::ZERO, Vec3::X, -1.0, 1.0, 0.05).is_none());
     }
 
     #[test]
-    fn ray_past_shaft_end_misses() {
-        // Ray hits the X axis at x = 5 (well past length 1).
+    fn ray_outside_s_range_misses() {
+        // Ray hits the X axis at x = 5; cylinder s ∈ [-1, 1] excludes
+        // it. Even with the wider radius the s-test rejects.
         let ray = Ray {
             origin: Vec3::new(5.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_axis_handle(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
+        assert!(ray_hits_finite_cylinder(&ray, Vec3::ZERO, Vec3::X, -1.0, 1.0, 0.05).is_none());
     }
 
     #[test]
-    fn ray_before_pivot_along_axis_misses() {
-        // Ray crosses x = -2 (before pivot at origin).
-        let ray = Ray {
-            origin: Vec3::new(-2.0, 0.0, 5.0),
-            direction: -Vec3::Z,
-        };
-        assert!(ray_hits_axis_handle(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
-    }
-
-    #[test]
-    fn ray_pointing_away_from_handle_misses() {
+    fn ray_pointing_away_from_cylinder_misses() {
         let ray = Ray {
             origin: Vec3::new(0.5, 0.0, 5.0),
             direction: Vec3::Z, // away from origin
         };
-        assert!(ray_hits_axis_handle(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
+        assert!(ray_hits_finite_cylinder(&ray, Vec3::ZERO, Vec3::X, -1.0, 1.0, 0.05).is_none());
+    }
+
+    #[test]
+    fn translate_cone_region_rejects_shaft_clicks() {
+        // Translate hit uses s ∈ [length, length·1.25] — clicks on
+        // the shaft (s in [0, length]) must miss. Pin the contract.
+        // length = 1.0; ray crosses (0.5, 0, *) at s = 0.5.
+        let ray = Ray {
+            origin: Vec3::new(0.5, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_finite_cylinder(&ray, Vec3::ZERO, Vec3::X, 1.0, 1.25, 0.05).is_none());
+    }
+
+    #[test]
+    fn translate_cone_region_accepts_cone_clicks() {
+        // Same cylinder, ray crosses at s = 1.1 (inside cone region).
+        let ray = Ray {
+            origin: Vec3::new(1.1, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_finite_cylinder(&ray, Vec3::ZERO, Vec3::X, 1.0, 1.25, 0.05).is_some());
     }
 }
 
@@ -845,34 +904,45 @@ mod hit_test_tests {
 
     #[test]
     fn x_axis_ray_picks_x_handle() {
+        // Ray crosses (1.1, 0, 0) — inside the cone region
+        // (s ∈ [1.0, 1.25]).
+        let ray = Ray {
+            origin: Vec3::new(1.1, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert_eq!(
+            hit_test(&ray, Vec3::ZERO, 1.0, 0.05).map(|(a, _)| a),
+            Some(Axis::X)
+        );
+    }
+
+    #[test]
+    fn shaft_line_clicks_miss_translate_handle() {
+        // Click on the visible shaft line (s ∈ [0, 1.0)) must NOT
+        // start a translate drag — the shaft is decorative; only the
+        // cone tip is the active translate handle. The midpoint
+        // (s = 0.5) belongs to the per-axis scale cube anyway.
         let ray = Ray {
             origin: Vec3::new(0.5, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert_eq!(hit_test(&ray, Vec3::ZERO, 1.0, 0.05), Some(Axis::X));
+        assert!(hit_test(&ray, Vec3::ZERO, 1.0, 0.05).is_none());
     }
 
     #[test]
     fn frontmost_handle_wins_when_screen_overlap() {
-        // Two handles at the same world position is impossible
-        // (they're orthogonal), but two rays converging on a corner
-        // can hit two cylinders. Verify the closer one wins.
-        // X handle from origin to +X; Y handle from origin to +Y.
-        // A ray that enters the X handle's cylinder before the Y
-        // handle's cylinder picks X.
+        // Both X and Y cones near the cone region. Construct a ray
+        // that hits the X cone (s ≈ 1.1 along +X). The Y cone is
+        // around (0, 1.1, *), which the ray (offset 1.1 in x) is
+        // far from — Y misses, X wins.
         let ray = Ray {
-            origin: Vec3::new(0.5, 0.05, 5.0),
+            origin: Vec3::new(1.1, 0.05, 5.0),
             direction: -Vec3::Z,
         };
-        // Both handles are roughly along the ray's path; the X
-        // cylinder's centre line runs through (0.5, 0, *) so the
-        // ray enters at z ≈ +0.05 - 0.05√(1−0.05²/0.05²) which is
-        // simply z ≈ 0 for this configuration. The Y cylinder runs
-        // through (0, 0.05, *) — the ray is offset 0.5 in x, well
-        // outside the 0.05 radius, so the Y handle misses.
-        // This reduces to "X wins, Y misses" — still a valid
-        // front-most-wins assertion.
-        assert_eq!(hit_test(&ray, Vec3::ZERO, 1.0, 0.05), Some(Axis::X));
+        assert_eq!(
+            hit_test(&ray, Vec3::ZERO, 1.0, 0.05).map(|(a, _)| a),
+            Some(Axis::X)
+        );
     }
 
     #[test]
@@ -892,7 +962,7 @@ mod hit_test_tests {
         // we assert it's not X. Y/Z might or might not be hit
         // depending on the geometry — the only contract is X is
         // forbidden.
-        let picked = hit_test(&ray, Vec3::ZERO, 1.0, 0.05);
+        let picked = hit_test(&ray, Vec3::ZERO, 1.0, 0.05).map(|(a, _)| a);
         assert_ne!(picked, Some(Axis::X));
     }
 }
@@ -1129,63 +1199,63 @@ mod rotate_drag_angle_tests {
 }
 
 #[cfg(test)]
-mod ray_hits_torus_arc_tests {
+mod ray_hits_rotate_cones_tests {
     use super::*;
+    use float_cmp::assert_approx_eq;
 
     #[test]
-    fn ray_through_arc_midpoint_hits() {
-        // X-axis arc: midpoint faces the camera. Camera at (5, 0, 0)
-        // looking at the origin → eye-to-pivot in YZ plane is the
-        // zero vector projection (camera is on-axis), which the
-        // hit-test rejects. Use an off-axis camera instead.
-        // Place camera at (5, 0.1, 0); the in-plane camera direction
-        // is along +Y. Arc circle radius 1, ray crosses (0, 1, 0).
+    fn ray_through_camera_facing_midpoint_hits() {
+        // X-axis arc midpoint faces the camera. Place camera at
+        // (5, 0.1, 0): the in-plane camera direction (in YZ) is +Y,
+        // so the arc midpoint is at world (0, 1, 0) for arc_radius=1.
+        // The two rotate cones share their base there, tips at +X and
+        // −X with cone_length = 0.18. A ray crossing (0, 1, 0) along
+        // -X enters the bounding cylinder.
         let ray = Ray {
             origin: Vec3::new(5.0, 0.1, 0.0),
             direction: (Vec3::new(0.0, 1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
         };
-        // Sanity: this ray hits the YZ plane at some t > 0 near (0, 1, 0).
-        let result = ray_hits_torus_arc(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05);
-        assert!(
-            result.is_some(),
-            "ray aimed at the X arc's midpoint should hit"
-        );
+        assert!(ray_hits_rotate_cones(&ray, Vec3::ZERO, Axis::X, 1.0, 0.18, 0.07).is_some());
     }
 
     #[test]
-    fn ray_outside_radius_band_misses() {
-        // Camera looking down +X at the YZ plane through origin; ray
-        // crosses (0, 0.3, 0) — well inside the arc circle (radius 1)
-        // and outside the tube's tolerance.
+    fn arc_midpoint_falls_back_when_camera_on_axis() {
+        // Camera exactly on +X axis → in-plane camera projection is
+        // zero → the helper returns `None`, and the hit test follows
+        // suit.
         let ray = Ray {
-            origin: Vec3::new(5.0, 0.3, 0.0),
+            origin: Vec3::new(5.0, 0.0, 0.0),
             direction: -Vec3::X,
         };
-        assert!(ray_hits_torus_arc(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
+        assert!(arc_midpoint_world(&ray, Vec3::ZERO, Axis::X, 1.0).is_none());
+        assert!(ray_hits_rotate_cones(&ray, Vec3::ZERO, Axis::X, 1.0, 0.18, 0.07).is_none());
     }
 
     #[test]
-    fn ray_in_radius_band_but_outside_arc_quadrant_misses() {
-        // Camera-facing side of the X arc is on +Y (when camera is
-        // off-axis at (5, 0.1, 0)). A ray crossing (0, -1, 0) — the
-        // *back* side, 180° away — should miss because it's outside
-        // the 90° quadrant.
+    fn ray_far_from_midpoint_misses() {
+        // Camera at (5, 0.1, 0), arc midpoint at world (0, 1, 0). A
+        // ray crossing (0, -1, 0) — the *back* side of the rotation
+        // axis, 180° away — is far from the midpoint cone spindle.
         let ray = Ray {
             origin: Vec3::new(5.0, 0.1, 0.0),
             direction: (Vec3::new(0.0, -1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
         };
-        assert!(ray_hits_torus_arc(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
+        assert!(ray_hits_rotate_cones(&ray, Vec3::ZERO, Axis::X, 1.0, 0.18, 0.07).is_none());
     }
 
     #[test]
-    fn ray_parallel_to_arc_plane_misses() {
-        // Ray entirely in the YZ plane — no perpendicular-plane
-        // intersection.
+    fn arc_midpoint_lies_on_camera_facing_radial() {
+        // Sanity for the helper: with camera at (0, 0, 5), the X
+        // arc's in-plane camera direction is +Z, so the midpoint
+        // sits at (0, 0, R).
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_torus_arc(&ray, Vec3::ZERO, Axis::X, 1.0, 0.05).is_none());
+        let m = arc_midpoint_world(&ray, Vec3::ZERO, Axis::X, 1.5).unwrap();
+        assert_approx_eq!(f32, m.x, 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, m.y, 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, m.z, 1.5, epsilon = 1e-6);
     }
 }
 
@@ -1195,33 +1265,38 @@ mod rotate_hit_test_tests {
 
     #[test]
     fn empty_space_returns_none() {
-        // Ray pointing nowhere near any arc.
         let ray = Ray {
             origin: Vec3::new(100.0, 100.0, 100.0),
             direction: Vec3::new(1.0, 0.0, 0.0),
         };
-        assert!(rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.05).is_none());
+        assert!(rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.18, 0.07).is_none());
     }
 
     #[test]
-    fn ray_through_x_arc_picks_x() {
+    fn ray_through_x_arc_midpoint_picks_x() {
         let ray = Ray {
             origin: Vec3::new(5.0, 0.1, 0.0),
             direction: (Vec3::new(0.0, 1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
         };
-        assert_eq!(rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.05), Some(Axis::X));
+        assert_eq!(
+            rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.18, 0.07).map(|(a, _)| a),
+            Some(Axis::X)
+        );
     }
 
     #[test]
     fn locked_out_axis_is_skipped() {
-        // X arc is in the YZ plane; ray sits inside that plane → the
-        // X arc must be locked out and skipped. Y/Z arcs may or may
-        // not be hit; the only contract is X is forbidden.
+        // X arc lives in the YZ plane; ray inside that plane is
+        // edge-on — `arc_pickable` rejects X. Y/Z may or may not be
+        // hit; the only contract is X is forbidden.
         let ray = Ray {
             origin: Vec3::new(0.0, 5.0, 0.0),
             direction: -Vec3::Y,
         };
-        assert_ne!(rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.05), Some(Axis::X));
+        assert_ne!(
+            rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.18, 0.07).map(|(a, _)| a),
+            Some(Axis::X)
+        );
     }
 }
 
@@ -1312,7 +1387,10 @@ mod scale_hit_test_tests {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert_eq!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2), Some(None));
+        assert_eq!(
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(a, _)| a),
+            Some(None)
+        );
     }
 
     #[test]
@@ -1322,7 +1400,7 @@ mod scale_hit_test_tests {
             direction: -Vec3::Z,
         };
         assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2),
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(a, _)| a),
             Some(Some(Axis::X))
         );
     }
@@ -1349,7 +1427,7 @@ mod scale_hit_test_tests {
             direction: dir,
         };
         assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2),
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(a, _)| a),
             Some(Some(Axis::Y))
         );
     }
@@ -1364,7 +1442,7 @@ mod scale_hit_test_tests {
             origin: Vec3::new(-5.0, 0.0, 0.0),
             direction: dir,
         };
-        let hit = scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2);
+        let hit = scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(a, _)| a);
         assert_ne!(hit, Some(Some(Axis::X)));
     }
 }
