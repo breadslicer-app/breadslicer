@@ -7,6 +7,8 @@ use std::cmp::Ordering;
 
 use anyhow::{Result, anyhow};
 
+use crate::primitives::{Vector3D, Vertex};
+
 /// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
 ///
 /// Stored as `f64` to keep precision under repeated composition (GUI
@@ -132,6 +134,33 @@ impl AffineTransform3D {
             translation,
         }
     }
+
+    /// Applies the transform to a point: `M · v + t`.
+    /// Math is performed in `f64`; the result is downcast to `f32` to fit
+    /// the mesh's storage type.
+    pub fn apply_to_vertex(&self, v: Vertex) -> Vertex {
+        let v = [v.0[0] as f64, v.0[1] as f64, v.0[2] as f64];
+        let m = &self.linear;
+        let t = &self.translation;
+        let x = m[0][0].mul_add(v[0], m[0][1].mul_add(v[1], m[0][2].mul_add(v[2], t[0])));
+        let y = m[1][0].mul_add(v[0], m[1][1].mul_add(v[1], m[1][2].mul_add(v[2], t[1])));
+        let z = m[2][0].mul_add(v[0], m[2][1].mul_add(v[1], m[2][2].mul_add(v[2], t[2])));
+        Vertex::new([x as f32, y as f32, z as f32])
+    }
+
+    /// Applies the linear part of the transform to a direction or
+    /// displacement, ignoring the translation. Use this for tangents and
+    /// other vectors that should not be affected by translation. For
+    /// surface normals see `apply_to_normal` (TBD), which uses the
+    /// inverse-transpose.
+    pub fn apply_to_vector(&self, v: Vector3D<f32>) -> Vector3D<f32> {
+        let v = [v.0[0] as f64, v.0[1] as f64, v.0[2] as f64];
+        let m = &self.linear;
+        let x = m[0][0].mul_add(v[0], m[0][1].mul_add(v[1], m[0][2] * v[2]));
+        let y = m[1][0].mul_add(v[0], m[1][1].mul_add(v[1], m[1][2] * v[2]));
+        let z = m[2][0].mul_add(v[0], m[2][1].mul_add(v[1], m[2][2] * v[2]));
+        Vector3D::new([x as f32, y as f32, z as f32])
+    }
 }
 
 impl Default for AffineTransform3D {
@@ -147,10 +176,22 @@ mod affine_transform_3d_tests {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
     fn assert_linear_approx(actual: &[[f64; 3]; 3], expected: &[[f64; 3]; 3], eps: f64) {
-        for r in 0..3 {
-            for c in 0..3 {
-                assert_approx_eq!(f64, actual[r][c], expected[r][c], epsilon = eps);
+        for (a_row, e_row) in actual.iter().zip(expected.iter()) {
+            for (a, e) in a_row.iter().zip(e_row.iter()) {
+                assert_approx_eq!(f64, *a, *e, epsilon = eps);
             }
+        }
+    }
+
+    fn assert_vertex_approx(actual: Vertex, expected: [f32; 3], eps: f32) {
+        for (a, e) in actual.0.iter().zip(expected.iter()) {
+            assert_approx_eq!(f32, *a, *e, epsilon = eps);
+        }
+    }
+
+    fn assert_vector_approx(actual: Vector3D<f32>, expected: [f32; 3], eps: f32) {
+        for (a, e) in actual.0.iter().zip(expected.iter()) {
+            assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
 
@@ -338,6 +379,116 @@ mod affine_transform_3d_tests {
         let t = AffineTransform3D::from_linear_and_translation(linear, translation);
         assert_eq!(t.linear, linear);
         assert_eq!(t.translation, translation);
+    }
+
+    #[test]
+    fn apply_to_vertex_identity_is_pass_through() {
+        let t = AffineTransform3D::identity();
+        let v = Vertex::new([1.5, -2.0, 7.25]);
+        assert_eq!(t.apply_to_vertex(v), v);
+    }
+
+    #[test]
+    fn apply_to_vertex_translation_adds_offset() {
+        let t = AffineTransform3D::from_translation([10.0, -5.0, 2.5]);
+        let v = Vertex::new([1.0, 2.0, 3.0]);
+        assert_vertex_approx(t.apply_to_vertex(v), [11.0, -3.0, 5.5], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_uniform_scale_scales_each_coordinate() {
+        let t = AffineTransform3D::from_uniform_scale(2.5);
+        let v = Vertex::new([1.0, -2.0, 3.0]);
+        assert_vertex_approx(t.apply_to_vertex(v), [2.5, -5.0, 7.5], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_non_uniform_scale_scales_each_axis_independently() {
+        let t = AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]);
+        let v = Vertex::new([1.0, 1.0, 1.0]);
+        assert_vertex_approx(t.apply_to_vertex(v), [2.0, 3.0, 4.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_rotation_z_quarter_turn_sends_x_to_y() {
+        let t = AffineTransform3D::from_rotation_z(FRAC_PI_2);
+        let v = Vertex::new([1.0, 0.0, 0.0]);
+        assert_vertex_approx(t.apply_to_vertex(v), [0.0, 1.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_rotation_x_quarter_turn_sends_y_to_z() {
+        let t = AffineTransform3D::from_rotation_x(FRAC_PI_2);
+        let v = Vertex::new([0.0, 1.0, 0.0]);
+        assert_vertex_approx(t.apply_to_vertex(v), [0.0, 0.0, 1.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_rotation_y_quarter_turn_sends_z_to_x() {
+        let t = AffineTransform3D::from_rotation_y(FRAC_PI_2);
+        let v = Vertex::new([0.0, 0.0, 1.0]);
+        assert_vertex_approx(t.apply_to_vertex(v), [1.0, 0.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_translation_then_rotation_uses_correct_order() {
+        // The transform is applied as `M·v + t`, so the linear part acts on
+        // `v` first and the translation is added after.
+        let t = AffineTransform3D::from_linear_and_translation(
+            // Rotation by π/2 about Z.
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [10.0, 20.0, 30.0],
+        );
+        let v = Vertex::new([1.0, 0.0, 0.0]);
+        // M·v = (0, 1, 0); + t = (10, 21, 30).
+        assert_vertex_approx(t.apply_to_vertex(v), [10.0, 21.0, 30.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vertex_far_from_origin_keeps_precision() {
+        // A short edge anchored far from the origin: in pure-f32 arithmetic
+        // the rotated direction would lose several bits of precision, but
+        // f64 internals preserve it.
+        let base = 1.0e6_f32;
+        let t = AffineTransform3D::from_rotation_z(FRAC_PI_2);
+        let near = Vertex::new([base, 0.0, 0.0]);
+        let far = Vertex::new([base + 1.0, 0.0, 0.0]);
+        let near_rot = t.apply_to_vertex(near);
+        let far_rot = t.apply_to_vertex(far);
+        // The image should still be a unit-length displacement along +Y.
+        assert_approx_eq!(f32, far_rot.0[0] - near_rot.0[0], 0.0, epsilon = 1e-3);
+        assert_approx_eq!(f32, far_rot.0[1] - near_rot.0[1], 1.0, epsilon = 1e-3);
+        assert_approx_eq!(f32, far_rot.0[2] - near_rot.0[2], 0.0, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn apply_to_vector_ignores_translation() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [100.0, -50.0, 7.0],
+        );
+        let v = Vector3D::<f32>::new([1.0, 2.0, 3.0]);
+        // Linear part is identity; the result must be unchanged despite the
+        // huge translation.
+        assert_vector_approx(t.apply_to_vector(v), [1.0, 2.0, 3.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vector_uses_linear_part() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            // Rotation by π/2 about Z.
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [999.0, 999.0, 999.0],
+        );
+        let v = Vector3D::<f32>::new([1.0, 0.0, 0.0]);
+        assert_vector_approx(t.apply_to_vector(v), [0.0, 1.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_vector_scales_displacement() {
+        let t = AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]);
+        let v = Vector3D::<f32>::new([1.0, 1.0, 1.0]);
+        assert_vector_approx(t.apply_to_vector(v), [2.0, 3.0, 4.0], 1e-6);
     }
 
     #[test]
