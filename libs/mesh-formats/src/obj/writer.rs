@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::scene::{Scene, SceneObjectContent};
+use sc_mesh_core::scene::Scene;
 
 pub fn write_obj<W>(scene: &Scene, writer: &mut W) -> Result<()>
 where
@@ -21,14 +21,23 @@ where
     let mut vertex_offset: u32 = 0;
 
     for obj in &scene.objects {
-        let mesh = match &obj.content {
-            SceneObjectContent::Mesh(m) => m,
-            SceneObjectContent::Resource(idx) => scene
-                .resources
-                .get(*idx)
-                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
-        };
-        write_mesh_section(mesh, write_object_markers, &mut vertex_offset, writer)?;
+        // OBJ has no per-object transform, so we bake each object's
+        // transform into its vertices and face normals before writing.
+        // The source mesh's name is preserved via the `o` marker; the
+        // baked mesh drops metadata by design.
+        let name = obj
+            .resolve_mesh(&scene.resources)?
+            .meta
+            .as_ref()
+            .and_then(|m| m.name.clone());
+        let baked = obj.baked_mesh(&scene.resources)?;
+        write_mesh_section(
+            &baked,
+            name.as_deref(),
+            write_object_markers,
+            &mut vertex_offset,
+            writer,
+        )?;
     }
 
     writer.flush()?;
@@ -37,6 +46,7 @@ where
 
 fn write_mesh_section<W>(
     mesh: &IndexedMesh,
+    obj_name: Option<&str>,
     write_object_marker: bool,
     vertex_offset: &mut u32,
     writer: &mut W,
@@ -48,7 +58,6 @@ where
         return Ok(());
     }
 
-    let obj_name = mesh.meta.as_ref().and_then(|m| m.name.as_deref());
     if write_object_marker || obj_name.is_some() {
         match obj_name {
             Some(name) => writeln!(writer, "o {name}")?,
@@ -257,6 +266,93 @@ mod tests {
                 meta: None,
                 transform: Transform3D::Identity,
                 content: SceneObjectContent::Resource(0),
+            }],
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        assert!(write_obj(&scene, &mut buf).is_err());
+    }
+
+    #[test]
+    fn affine_translation_is_baked_into_vertex_positions() {
+        use sc_mesh_core::transform::AffineTransform3D;
+
+        let mesh = make_triangle_mesh(None);
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Affine(AffineTransform3D::from_translation([
+                    10.0, 5.0, -2.0,
+                ])),
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        };
+        let out = write_to_string(&scene);
+        // Original vertices were (1,0,0), (0,1,0), (0,0,1); after the
+        // translation each becomes the original plus (10, 5, -2).
+        assert_eq!(out, "v 11 5 -2\nv 10 6 -2\nv 10 5 -1\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn affine_mirror_reverses_winding_in_face_indices() {
+        use sc_mesh_core::transform::AffineTransform3D;
+
+        let mesh = make_triangle_mesh(None);
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([
+                    -1.0, 1.0, 1.0,
+                ])),
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        };
+        let out = write_to_string(&scene);
+        // Vertex 0 was (1,0,0); after x→-x it's (-1,0,0). Winding goes
+        // from [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
+        assert_eq!(out, "v -1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\n");
+    }
+
+    #[test]
+    fn affine_object_keeps_source_mesh_name_in_o_marker() {
+        use sc_mesh_core::transform::AffineTransform3D;
+
+        let mesh = make_triangle_mesh(Some("MyObj"));
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Affine(AffineTransform3D::from_translation([
+                    0.0, 0.0, 0.0,
+                ])),
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        };
+        let out = write_to_string(&scene);
+        // The `o MyObj` marker comes from the source mesh's metadata even
+        // though `baked_mesh` strips its own metadata.
+        assert!(out.starts_with("o MyObj\n"));
+    }
+
+    #[test]
+    fn singular_transform_propagates_error() {
+        use sc_mesh_core::transform::AffineTransform3D;
+
+        let singular = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Affine(singular),
+                content: SceneObjectContent::Mesh(make_triangle_mesh(None)),
             }],
         };
         let mut buf: Vec<u8> = Vec::new();
