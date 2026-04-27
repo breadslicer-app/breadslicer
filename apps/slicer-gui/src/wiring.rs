@@ -122,6 +122,30 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let ctrl = ctrl.clone();
         ui.on_viewport_pointer_up(move |x, y, m| ctrl.on_pointer_up(x, y, m));
     }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_gizmo_focus_translate_pressed(move || ctrl.on_gizmo_focus_translate());
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_gizmo_focus_rotate_pressed(move || ctrl.on_gizmo_focus_rotate());
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_gizmo_focus_scale_pressed(move || ctrl.on_gizmo_focus_scale());
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_gizmo_arrow_pressed(move |code| ctrl.on_gizmo_arrow_pressed(code));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_gizmo_arrow_released(move |code| ctrl.on_gizmo_arrow_released(code));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_selection_cycle(move |delta| ctrl.on_selection_cycle(delta));
+    }
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
 

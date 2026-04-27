@@ -98,6 +98,17 @@ export component MainWindow inherits Window {
     callback viewport-pointer-move(length, length, PointerModifiers);
     callback viewport-pointer-up(length, length, PointerModifiers);
     callback selection-cleared();
+    in property <bool> gizmo-keyboard-focus-active: false;
+    callback gizmo-focus-translate-pressed();
+    callback gizmo-focus-rotate-pressed();
+    callback gizmo-focus-scale-pressed();
+    callback gizmo-arrow-pressed(int);
+    callback gizmo-arrow-released(int);
+    // Tab / Shift+Tab selection cycling — the property gates whether
+    // the viewport's FocusScope accepts Tab or lets it fall through
+    // to native focus traversal. True iff a scene with at least one
+    // object is loaded.
+    callback selection-cycle(int);
 
     MenuBar {
         Menu {
@@ -235,6 +246,12 @@ export component MainWindow inherits Window {
             horizontal-stretch: 1;
             rendering: root.mesh-rendering;
             placeholder-text: @tr("Open a 3D model to visualize it here");
+            gizmo-keyboard-focus-active: root.gizmo-keyboard-focus-active;
+            // Tab cycles selection while a scene is loaded; without a
+            // scene there's nothing to cycle, so Tab returns to its
+            // native role of moving focus through the GUI's
+            // interactive elements.
+            can-cycle-selection: root.has-scene;
             viewport-resized(w, h) => {
                 root.viewport-resized(w, h);
             }
@@ -264,6 +281,24 @@ export component MainWindow inherits Window {
             }
             selection-cleared() => {
                 root.selection-cleared();
+            }
+            gizmo-focus-translate-pressed() => {
+                root.gizmo-focus-translate-pressed();
+            }
+            gizmo-focus-rotate-pressed() => {
+                root.gizmo-focus-rotate-pressed();
+            }
+            gizmo-focus-scale-pressed() => {
+                root.gizmo-focus-scale-pressed();
+            }
+            gizmo-arrow-pressed(code) => {
+                root.gizmo-arrow-pressed(code);
+            }
+            gizmo-arrow-released(code) => {
+                root.gizmo-arrow-released(code);
+            }
+            selection-cycle(delta) => {
+                root.selection-cycle(delta);
             }
         }
 

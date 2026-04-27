@@ -5,6 +5,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Instant;
 
 use glam::Vec3;
 use sc_mesh_core::scene::{Scene, Transform3D};
@@ -48,6 +49,21 @@ pub struct ViewportController {
     press_origin: Cell<Option<(f32, f32)>>,
     // Translate-gizmo drag state. Idle when no drag is in progress.
     gizmo: Cell<GizmoState>,
+    // Keyboard gizmo focus. `None` when the viewport's keyboard input
+    // routes to camera (rotate/pan/zoom). Set to one of Translate /
+    // Rotate / Scale by `T`/`R`/`S` keypresses while a selection
+    // exists; cleared by Esc, by losing the selection, or by
+    // explicitly switching to a different focus type.
+    keyboard_focus: Cell<KbdFocus>,
+    // Held-arrow-key bitset. Driven by `gizmo-arrow-pressed/released`
+    // callbacks while a keyboard focus is active. Sampled by the
+    // per-frame integrator in `handle_before_rendering`.
+    arrow_drive: Cell<ArrowDrive>,
+    // Wall-clock timestamp of the previous integrator tick. `Some`
+    // while the integrator is actively driving frames; reset to
+    // `None` when no arrow keys are held so the next press starts a
+    // fresh dt instead of accumulating idle time.
+    last_arrow_tick: Cell<Option<Instant>>,
     loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
@@ -142,6 +158,82 @@ enum DragOp {
     },
 }
 
+/// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through
+/// the three operation types; Esc returns to `None`. While focus is
+/// non-`None`, the arrow / PageUp / PageDown keys are hijacked by
+/// the per-frame integrator and no longer drive the camera.
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+enum KbdFocus {
+    #[default]
+    None,
+    Translate,
+    Rotate,
+    Scale,
+}
+
+/// Bitset of held arrow-driving keys, with the per-axis sign:
+/// `Right`/`Left` = ±X, `Up`/`Down` = ±Y, `PageUp`/`PageDown` = ±Z.
+/// Driven by `key-pressed` / `key-released` from the FocusScope and
+/// sampled every animation tick to integrate continuous motion.
+#[derive(Copy, Clone, Default, Debug)]
+struct ArrowDrive {
+    x_pos: bool,
+    x_neg: bool,
+    y_pos: bool,
+    y_neg: bool,
+    z_pos: bool,
+    z_neg: bool,
+}
+
+impl ArrowDrive {
+    /// Per-axis sign as `(±1, ±1, ±1)`, with `0` for any axis whose
+    /// keys are both unpressed (or both pressed at once, in which
+    /// case they cancel).
+    fn signs(self) -> (f32, f32, f32) {
+        let x = i32::from(self.x_pos) - i32::from(self.x_neg);
+        let y = i32::from(self.y_pos) - i32::from(self.y_neg);
+        let z = i32::from(self.z_pos) - i32::from(self.z_neg);
+        (x as f32, y as f32, z as f32)
+    }
+
+    fn any_held(self) -> bool {
+        self.x_pos || self.x_neg || self.y_pos || self.y_neg || self.z_pos || self.z_neg
+    }
+}
+
+/// Codes carried on `gizmo-arrow-pressed` / `gizmo-arrow-released`.
+/// `0/1` = ±X, `2/3` = ±Y, `4/5` = ±Z. The Slint layer uses bare
+/// `int`s because Slint's typed enums can't be passed through a
+/// callback that's bound at runtime; the Rust layer normalises into
+/// the `ArrowDrive` bitset above.
+const ARROW_X_POS: i32 = 0;
+const ARROW_X_NEG: i32 = 1;
+const ARROW_Y_POS: i32 = 2;
+const ARROW_Y_NEG: i32 = 3;
+const ARROW_Z_POS: i32 = 4;
+const ARROW_Z_NEG: i32 = 5;
+
+/// Translation rate for keyboard-focus drive: 30 logical pixels of
+/// screen-projected motion per second along the chosen world axis.
+/// Converted to world units per frame via the camera's
+/// `world_per_pixel` ratio.
+const KBD_TRANSLATE_PIXELS_PER_SEC: f32 = 30.0;
+
+/// Rotation rate for keyboard-focus drive: 45° per second about the
+/// chosen world axis.
+const KBD_ROTATE_RAD_PER_SEC: f32 = std::f32::consts::FRAC_PI_4;
+
+/// Scale-rate base for keyboard-focus drive: factor `1.5` per second
+/// of held key. Combined with per-axis sign, the effective per-axis
+/// factor each tick is `1.5 ^ (sign * dt)`.
+const KBD_SCALE_BASE: f32 = 1.5;
+
+/// Maximum integrator step. Caps the per-frame delta so a stalled
+/// frame (debugger pause, garbage collection, anything that delays
+/// the next render past ~100 ms) doesn't translate the object across
+/// the viewport in a single jump when the loop resumes.
+const KBD_MAX_DT: f32 = 0.1;
+
 impl ViewportController {
     pub fn new(ui: &MainWindow) -> Self {
         let dialogs = DialogManager::new();
@@ -156,6 +248,9 @@ impl ViewportController {
             selection: Cell::new(None),
             press_origin: Cell::new(None),
             gizmo: Cell::new(GizmoState::Idle),
+            keyboard_focus: Cell::new(KbdFocus::None),
+            arrow_drive: Cell::new(ArrowDrive::default()),
+            last_arrow_tick: Cell::new(None),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -182,6 +277,9 @@ impl ViewportController {
             selection: Cell::new(None),
             press_origin: Cell::new(None),
             gizmo: Cell::new(GizmoState::Idle),
+            keyboard_focus: Cell::new(KbdFocus::None),
+            arrow_drive: Cell::new(ArrowDrive::default()),
+            last_arrow_tick: Cell::new(None),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -284,6 +382,12 @@ impl ViewportController {
         // revert (the object no longer exists).
         self.gizmo.set(GizmoState::Idle);
         self.press_origin.set(None);
+        // Keyboard focus is anchored on the (now-missing) selection;
+        // reset it together with the held-arrow bitset so a stuck
+        // key can't drive a phantom integrator after scene close.
+        self.keyboard_focus.set(KbdFocus::None);
+        self.arrow_drive.set(ArrowDrive::default());
+        self.last_arrow_tick.set(None);
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.clear_scene();
         }
@@ -292,6 +396,7 @@ impl ViewportController {
             ui.set_has_scene(false);
             push_object_list(&ui, Vec::new());
             ui.set_selected_object_index(-1);
+            ui.set_gizmo_keyboard_focus_active(false);
         }
     }
 
@@ -384,19 +489,149 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Esc / "click on empty space" path. Always sets selection to
-    /// `None` and mirrors back. The dirty-flag fires a redraw so the
-    /// renderer drops the highlight tint and outline. If a gizmo
-    /// drag is in progress, it is aborted and the affected object's
-    /// transform is reverted to its captured original — leaving an
-    /// object half-translated would be confusing.
+    /// Tab / Shift+Tab selection cycling.
+    ///
+    /// - `delta == 1` advances forward (Tab); `delta == -1` advances
+    ///   backward (Shift+Tab). Other deltas are clamped to ±1 so a
+    ///   stale Slint binding can't drive larger jumps.
+    /// - With no selection, either direction selects
+    ///   `scene.objects[0]` — the same key thus serves "select the
+    ///   first thing" and "advance to the next".
+    /// - With a selection, the index wraps modulo `len`.
+    /// - On an empty / missing scene, nothing happens.
+    ///
+    /// A side-effect of changing the selection through this path is
+    /// that any in-progress mouse drag aborts (because the abort runs
+    /// out of the same `on_clear_selection` cascade — but we don't
+    /// invoke it here, since Tab on a different object should pick
+    /// up the new selection cleanly without touching the running
+    /// transform). The current implementation does not abort an
+    /// in-progress drag on Tab; if that turns out to be wrong, the
+    /// fix is to call `abort_gizmo_drag` here.
+    pub fn on_selection_cycle(&self, delta: i32) {
+        let scene_len = self
+            .scene
+            .borrow()
+            .as_ref()
+            .map(|s| s.objects.len())
+            .unwrap_or(0);
+        if scene_len == 0 {
+            return;
+        }
+        let step = delta.signum();
+        let next = match self.selection.get() {
+            None => 0,
+            Some(i) => {
+                let len_i = scene_len as i32;
+                let cur = i as i32;
+                ((cur + step).rem_euclid(len_i)) as usize
+            }
+        };
+        self.on_select_by_index(next);
+    }
+
+    /// Esc / "click on empty space" path. Cascades through the
+    /// gesture stack one level per call:
+    ///
+    /// 1. If a gizmo drag is in progress → abort it (transform reverts
+    ///    to the captured original), keep selection / focus.
+    /// 2. Else if keyboard gizmo focus is active → drop focus only,
+    ///    keep selection.
+    /// 3. Else → clear selection (Phase B behaviour).
+    ///
+    /// "Click on empty space" enters at level 3 (the picker has
+    /// already dispatched here from `on_pointer_up` after determining
+    /// no object was hit); Esc enters at level 1 and naturally
+    /// cascades through repeated presses.
     pub fn on_clear_selection(&self) {
-        self.abort_gizmo_drag();
+        if matches!(self.gizmo.get(), GizmoState::Drag { .. }) {
+            self.abort_gizmo_drag();
+            return;
+        }
+        if self.keyboard_focus.get() != KbdFocus::None {
+            self.set_keyboard_focus(KbdFocus::None);
+            return;
+        }
         if self.selection.get().is_none() {
             return;
         }
         self.selection.set(None);
         self.mirror_selection_to_ui();
+        self.mark_dirty();
+    }
+
+    /// `T`/`R`/`S` keyboard handlers. Each requires a selection to
+    /// exist; without one, the press is a no-op (the user has to
+    /// pick something to focus on first). Pressing the same focus
+    /// type twice is a no-op so the integrator's tick clock isn't
+    /// reset by autorepeat.
+    pub fn on_gizmo_focus_translate(&self) {
+        self.set_keyboard_focus(KbdFocus::Translate);
+    }
+
+    pub fn on_gizmo_focus_rotate(&self) {
+        self.set_keyboard_focus(KbdFocus::Rotate);
+    }
+
+    pub fn on_gizmo_focus_scale(&self) {
+        self.set_keyboard_focus(KbdFocus::Scale);
+    }
+
+    /// Internal: writes the focus cell, mirrors to the UI property,
+    /// and resets the held-arrow bitset on focus change so a held key
+    /// from one mode doesn't bleed into another.
+    fn set_keyboard_focus(&self, focus: KbdFocus) {
+        if focus != KbdFocus::None && self.selection.get().is_none() {
+            return;
+        }
+        if self.keyboard_focus.get() == focus {
+            return;
+        }
+        self.keyboard_focus.set(focus);
+        self.arrow_drive.set(ArrowDrive::default());
+        self.last_arrow_tick.set(None);
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_gizmo_keyboard_focus_active(focus != KbdFocus::None);
+        }
+        self.mark_dirty();
+    }
+
+    /// Held-key handler for the arrow / PageUp / PageDown bindings
+    /// while keyboard gizmo focus is active. `code` is the
+    /// `ARROW_*` index defined above; out-of-range codes are
+    /// ignored. Marks the controller dirty so the next render-tick
+    /// runs the integrator.
+    pub fn on_gizmo_arrow_pressed(&self, code: i32) {
+        if self.keyboard_focus.get() == KbdFocus::None {
+            return;
+        }
+        self.update_arrow_drive(code, true);
+    }
+
+    /// Counterpart to `on_gizmo_arrow_pressed`. Released codes are
+    /// always processed even with focus dropped — a release that
+    /// arrives just after the focus was cleared (race with Esc
+    /// → focus drop) still has to clear its bit so the bitset
+    /// doesn't accumulate stuck flags.
+    pub fn on_gizmo_arrow_released(&self, code: i32) {
+        self.update_arrow_drive(code, false);
+    }
+
+    fn update_arrow_drive(&self, code: i32, pressed: bool) {
+        let mut d = self.arrow_drive.get();
+        match code {
+            ARROW_X_POS => d.x_pos = pressed,
+            ARROW_X_NEG => d.x_neg = pressed,
+            ARROW_Y_POS => d.y_pos = pressed,
+            ARROW_Y_NEG => d.y_neg = pressed,
+            ARROW_Z_POS => d.z_pos = pressed,
+            ARROW_Z_NEG => d.z_neg = pressed,
+            _ => return,
+        }
+        self.arrow_drive.set(d);
+        if pressed && self.last_arrow_tick.get().is_none() {
+            self.last_arrow_tick.set(Some(Instant::now()));
+        }
         self.mark_dirty();
     }
 
@@ -703,6 +938,82 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// Per-frame integrator: if a keyboard gizmo focus is active and
+    /// any arrow key is held, applies one tick of motion to the
+    /// selected object. Bails (without resetting the tick clock) on
+    /// missing camera / scene / selection / zero viewport so a hot
+    /// re-init doesn't hand back time the user didn't drive.
+    ///
+    /// Marks the controller dirty when a tick fires so the next
+    /// `handle_before_rendering` runs again — the integrator
+    /// self-pumps as long as the user holds keys, and quiesces when
+    /// they release.
+    fn integrate_keyboard_arrows(&self) {
+        let focus = self.keyboard_focus.get();
+        if focus == KbdFocus::None {
+            return;
+        }
+        let arrows = self.arrow_drive.get();
+        if !arrows.any_held() {
+            self.last_arrow_tick.set(None);
+            return;
+        }
+        let Some(idx) = self.selection.get() else {
+            return;
+        };
+        let (_, h) = self.viewport.get();
+        if h <= 0.0 {
+            return;
+        }
+
+        let now = Instant::now();
+        let last = self.last_arrow_tick.get().unwrap_or(now);
+        let dt = (now - last).as_secs_f32().min(KBD_MAX_DT);
+        self.last_arrow_tick.set(Some(now));
+        if dt <= 0.0 {
+            return;
+        }
+
+        // Pull the running transform + pivot + camera out of the
+        // RefCells before re-borrowing mut to write the new transform.
+        let (pivot, running, world_per_pixel) = {
+            let scene_slot = self.scene.borrow();
+            let Some(scene) = scene_slot.as_ref() else {
+                return;
+            };
+            let Some(pivot) = gizmo::pivot_for_object(scene, idx) else {
+                return;
+            };
+            let Some(obj) = scene.objects.get(idx) else {
+                return;
+            };
+            let camera_slot = self.camera.borrow();
+            let Some(camera) = camera_slot.as_ref() else {
+                return;
+            };
+            (
+                pivot,
+                obj.transform,
+                camera.world_per_pixel(default_fov_y(), h),
+            )
+        };
+
+        let Some(new_transform) =
+            keyboard_step(focus, arrows, dt, pivot, &running, world_per_pixel)
+        else {
+            return;
+        };
+
+        let mut scene_slot = self.scene.borrow_mut();
+        if let Some(scene) = scene_slot.as_mut()
+            && let Some(obj) = scene.objects.get_mut(idx)
+        {
+            obj.transform = new_transform;
+        }
+        drop(scene_slot);
+        self.mark_dirty();
+    }
+
     /// Picker dispatch: build the ray at `(x, y)`, run `pick_object`,
     /// update the selection. Bails on missing camera / scene / zero
     /// viewport.
@@ -765,6 +1076,12 @@ impl ViewportController {
     }
 
     pub fn handle_before_rendering(&self) {
+        // Step the keyboard-focus integrator before borrowing the
+        // renderer — the integrator mutates the scene's transform
+        // and marks dirty, which is exactly the input the renderer
+        // pass below needs to read in this same frame.
+        self.integrate_keyboard_arrows();
+
         let mut renderer_slot = self.renderer.borrow_mut();
         let Some(renderer) = renderer_slot.as_mut() else {
             return;
@@ -1082,6 +1399,72 @@ fn compose_about_pivot(m: &AffineTransform3D, pivot: Vec3, original: &Transform3
         AffineTransform3D::from_translation([-pivot.x as f64, -pivot.y as f64, -pivot.z as f64]);
     let about_pivot = to_pivot.compose(&m.compose(&from_pivot));
     Transform3D::Affine(about_pivot).compose(original)
+}
+
+/// Pure helper: produces one tick of the keyboard-focus integrator.
+/// Returns `None` when there's nothing to integrate (no axes held,
+/// or the focus is `None`); otherwise returns the new running
+/// transform composed onto the previous frame's `running` transform.
+///
+/// Translate steps compose as `T(delta) ∘ running`. Rotate steps
+/// compose as `T(p) ∘ R_z ∘ R_y ∘ R_x ∘ T(-p) ∘ running` — a fixed
+/// canonical order across held axes; for the small per-tick angles
+/// this matters only by a second-order amount. Scale steps compose
+/// as `T(p) ∘ diag(s) ∘ T(-p) ∘ running`, with off-axes held at
+/// `1.0`.
+fn keyboard_step(
+    focus: KbdFocus,
+    arrows: ArrowDrive,
+    dt: f32,
+    pivot: Vec3,
+    running: &Transform3D,
+    world_per_pixel: f32,
+) -> Option<Transform3D> {
+    let (sx, sy, sz) = arrows.signs();
+    if sx == 0.0 && sy == 0.0 && sz == 0.0 {
+        return None;
+    }
+    match focus {
+        KbdFocus::None => None,
+        KbdFocus::Translate => {
+            let speed_world = world_per_pixel * KBD_TRANSLATE_PIXELS_PER_SEC * dt;
+            let delta = Vec3::new(sx, sy, sz) * speed_world;
+            let translation = AffineTransform3D::from_translation([
+                delta.x as f64,
+                delta.y as f64,
+                delta.z as f64,
+            ]);
+            Some(Transform3D::Affine(translation).compose(running))
+        }
+        KbdFocus::Rotate => {
+            let mut t = *running;
+            for (sign, axis) in [(sx, Axis::X), (sy, Axis::Y), (sz, Axis::Z)] {
+                if sign == 0.0 {
+                    continue;
+                }
+                let angle = sign * KBD_ROTATE_RAD_PER_SEC * dt;
+                if let Some(r) = axis_rotation(axis, angle) {
+                    t = compose_about_pivot(&r, pivot, &t);
+                }
+            }
+            Some(t)
+        }
+        KbdFocus::Scale => {
+            let pow = |sign: f32| {
+                if sign == 0.0 {
+                    1.0
+                } else {
+                    KBD_SCALE_BASE.powf(sign * dt)
+                }
+            };
+            let scale_mat = AffineTransform3D::from_non_uniform_scale([
+                pow(sx) as f64,
+                pow(sy) as f64,
+                pow(sz) as f64,
+            ]);
+            Some(compose_about_pivot(&scale_mat, pivot, running))
+        }
+    }
 }
 
 /// Builds the per-frame `GizmoFrame` for the renderer when a single
@@ -1438,6 +1821,98 @@ mod selection_tests {
         ctrl.on_pointer_up(50.0, 50.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
+
+    #[test]
+    fn cycle_with_no_selection_picks_first_object() {
+        // Tab from "nothing selected" doubles as "select the first
+        // thing". Both directions land on index 0 — the user's
+        // mental model is "advance to the first item that exists".
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), Some(0));
+
+        ctrl.on_clear_selection();
+        ctrl.on_selection_cycle(-1);
+        assert_eq!(ctrl.selection(), Some(0));
+    }
+
+    #[test]
+    fn cycle_forward_advances_through_objects_and_wraps() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.on_select_by_index(0);
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), Some(1));
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), Some(2));
+        ctrl.on_selection_cycle(1);
+        // Wraps from the end back to the start.
+        assert_eq!(ctrl.selection(), Some(0));
+    }
+
+    #[test]
+    fn cycle_backward_advances_in_reverse_and_wraps() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.on_select_by_index(0);
+        // From index 0, Shift+Tab wraps to the last object.
+        ctrl.on_selection_cycle(-1);
+        assert_eq!(ctrl.selection(), Some(2));
+        ctrl.on_selection_cycle(-1);
+        assert_eq!(ctrl.selection(), Some(1));
+        ctrl.on_selection_cycle(-1);
+        assert_eq!(ctrl.selection(), Some(0));
+    }
+
+    #[test]
+    fn cycle_on_empty_scene_is_a_no_op() {
+        let ctrl = ViewportController::new_for_test();
+        // No scene installed.
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), None);
+
+        // Empty scene installed.
+        ctrl.install_scene_for_test(Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![],
+        });
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn cycle_with_single_object_stays_on_it() {
+        // One-object scene → cycling either direction lands on
+        // index 0 every time. Mod-N arithmetic with N=1 collapses
+        // to 0 cleanly.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), Some(0));
+        ctrl.on_selection_cycle(1);
+        assert_eq!(ctrl.selection(), Some(0));
+        ctrl.on_selection_cycle(-1);
+        assert_eq!(ctrl.selection(), Some(0));
+    }
+
+    #[test]
+    fn cycle_clamps_non_unit_deltas() {
+        // A delta != ±1 from a stale Slint binding should still
+        // advance by exactly one step (or none for delta == 0)
+        // rather than indexing past the array.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.on_select_by_index(0);
+        ctrl.on_selection_cycle(99);
+        assert_eq!(ctrl.selection(), Some(1));
+        ctrl.on_selection_cycle(0);
+        // delta == 0 → step is 0; selection is unchanged.
+        assert_eq!(ctrl.selection(), Some(1));
+        ctrl.on_selection_cycle(-99);
+        assert_eq!(ctrl.selection(), Some(0));
+    }
 }
 
 #[cfg(test)]
@@ -1766,13 +2241,24 @@ mod viewport_click_tests {
         // Object has moved.
         assert!(read_translation(&ctrl).x.abs() > 1e-4);
 
-        // Esc / clear-selection during a drag aborts and reverts.
+        // First Esc cascades into the drag-abort: transform reverts,
+        // FSM returns to Idle, but the selection survives (Esc only
+        // drops one level per press).
         ctrl.on_clear_selection();
         let reverted = read_translation(&ctrl);
         assert_approx_eq!(f32, reverted.x, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, reverted.y, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, reverted.z, 0.0, epsilon = 1e-6);
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert_eq!(
+            ctrl.selection(),
+            Some(0),
+            "first Esc only aborts the drag — selection is the next level of the cascade"
+        );
+
+        // A second Esc, with no drag and no keyboard focus, clears
+        // the selection (Phase B behaviour).
+        ctrl.on_clear_selection();
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -2222,6 +2708,307 @@ mod apply_drag_move_tests {
             );
         } else {
             panic!("expected Rotate, got {new_op:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod keyboard_focus_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::primitives::Vertex;
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+
+    fn one_object_scene() -> Scene {
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(IndexedMesh {
+                    meta: None,
+                    vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+                    faces: vec![],
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn focus_requires_an_existing_selection() {
+        // No selection → T is a no-op. Pinning this matters because
+        // the integrator dereferences `selection`; a focus without a
+        // selection would crash.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_gizmo_focus_translate();
+        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::None);
+    }
+
+    #[test]
+    fn focus_set_with_selection_takes_effect() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Translate);
+        ctrl.on_gizmo_focus_rotate();
+        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Rotate);
+        ctrl.on_gizmo_focus_scale();
+        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Scale);
+    }
+
+    #[test]
+    fn switching_focus_resets_held_arrow_bitset() {
+        // Holding +X under translate focus, then switching to rotate
+        // focus must clear the held bit — the user's mental model
+        // is "release on mode switch".
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        assert!(ctrl.arrow_drive.get().any_held());
+
+        ctrl.on_gizmo_focus_rotate();
+        assert!(
+            !ctrl.arrow_drive.get().any_held(),
+            "switching focus must clear held arrows so a held key from one mode \
+             doesn't leak into another"
+        );
+    }
+
+    #[test]
+    fn arrow_press_without_focus_is_a_no_op() {
+        // Without focus, an arrow code is silently ignored — the
+        // FocusScope on the Slint side filters them out, but the
+        // Rust handler still has to be defensive in case the
+        // contract is ever violated.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        assert!(!ctrl.arrow_drive.get().any_held());
+    }
+
+    #[test]
+    fn arrow_release_clears_bit_even_with_focus_dropped() {
+        // A release that arrives after focus was dropped (race with
+        // Esc) must still clear the bit — otherwise the next focus
+        // session would inherit a phantom held key.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        // Focus drop happens (e.g. via Esc cascade).
+        ctrl.on_clear_selection();
+        // Stale release arrives.
+        ctrl.on_gizmo_arrow_released(ARROW_X_POS);
+        assert!(!ctrl.arrow_drive.get().any_held());
+    }
+
+    #[test]
+    fn esc_cascade_drag_then_focus_then_selection() {
+        // Each Esc drops one level of the cascade.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+        // No drag is possible without a camera; simulate the
+        // mid-cascade state by directly writing the gizmo cell.
+        ctrl.gizmo.set(GizmoState::Drag {
+            op: DragOp::Translate {
+                axis: Axis::X,
+                anchor: Vec3::ZERO,
+            },
+            original: Transform3D::Identity,
+            pivot: Vec3::ZERO,
+            object_idx: 0,
+        });
+
+        // Level 1 → drag aborts; focus and selection survive.
+        ctrl.on_clear_selection();
+        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Translate);
+        assert_eq!(ctrl.selection(), Some(0));
+
+        // Level 2 → focus drops; selection survives.
+        ctrl.on_clear_selection();
+        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::None);
+        assert_eq!(ctrl.selection(), Some(0));
+
+        // Level 3 → selection clears.
+        ctrl.on_clear_selection();
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn arrow_drive_signs_compose_per_axis_kbd() {
+        // +X and −X cancel; +Y alone keeps a sign; mixed bits across
+        // axes drive each axis independently.
+        let d = ArrowDrive {
+            x_pos: true,
+            x_neg: true,
+            ..ArrowDrive::default()
+        };
+        let (sx, sy, sz) = d.signs();
+        assert_eq!((sx, sy, sz), (0.0, 0.0, 0.0));
+
+        let d = ArrowDrive {
+            y_pos: true,
+            ..ArrowDrive::default()
+        };
+        let (sx, sy, sz) = d.signs();
+        assert_eq!((sx, sy, sz), (0.0, 1.0, 0.0));
+
+        let d = ArrowDrive {
+            x_neg: true,
+            z_pos: true,
+            ..ArrowDrive::default()
+        };
+        let (sx, sy, sz) = d.signs();
+        assert_eq!((sx, sy, sz), (-1.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn keyboard_step_translate_produces_pure_translation() {
+        // 1 second of held +X at 30 px/sec, world_per_pixel = 0.1
+        // → world delta = 30 * 0.1 = 3.0 along +X. Off-axis stays 0.
+        let arrows = ArrowDrive {
+            x_pos: true,
+            ..ArrowDrive::default()
+        };
+        let result = keyboard_step(
+            KbdFocus::Translate,
+            arrows,
+            1.0,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            0.1,
+        )
+        .unwrap();
+        match result {
+            Transform3D::Affine(a) => {
+                assert_approx_eq!(f64, a.translation[0], 3.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.translation[1], 0.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.translation[2], 0.0, epsilon = 1e-6);
+                // Linear part stays identity.
+                assert_approx_eq!(f64, a.linear[0][0], 1.0, epsilon = 1e-6);
+            }
+            other => panic!("expected Affine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keyboard_step_no_keys_returns_none() {
+        let result = keyboard_step(
+            KbdFocus::Translate,
+            ArrowDrive::default(),
+            1.0,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            1.0,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn keyboard_step_focus_none_returns_none() {
+        let arrows = ArrowDrive {
+            x_pos: true,
+            ..ArrowDrive::default()
+        };
+        let result = keyboard_step(
+            KbdFocus::None,
+            arrows,
+            1.0,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            1.0,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn keyboard_step_rotate_about_x_takes_y_into_z() {
+        // 1 s at 45°/s about +X = π/4 rotation. R_x(π/4) maps
+        // (0, 1, 0) → (0, cos π/4, sin π/4).
+        let arrows = ArrowDrive {
+            x_pos: true,
+            ..ArrowDrive::default()
+        };
+        let result = keyboard_step(
+            KbdFocus::Rotate,
+            arrows,
+            1.0,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            0.0, // world_per_pixel unused for rotate
+        )
+        .unwrap();
+        match result {
+            Transform3D::Affine(a) => {
+                let cos = (std::f64::consts::PI * 0.25).cos();
+                let sin = (std::f64::consts::PI * 0.25).sin();
+                // Column 1 of the linear part is the image of `+Y`.
+                assert_approx_eq!(f64, a.linear[0][1], 0.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear[1][1], cos, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear[2][1], sin, epsilon = 1e-6);
+            }
+            other => panic!("expected Affine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keyboard_step_scale_factor_15_per_second_along_x() {
+        // 1 s of held +X scale → factor 1.5 on X, 1.0 on Y/Z.
+        let arrows = ArrowDrive {
+            x_pos: true,
+            ..ArrowDrive::default()
+        };
+        let result = keyboard_step(
+            KbdFocus::Scale,
+            arrows,
+            1.0,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            0.0,
+        )
+        .unwrap();
+        match result {
+            Transform3D::Affine(a) => {
+                assert_approx_eq!(f64, a.linear[0][0], 1.5, epsilon = 1e-5);
+                assert_approx_eq!(f64, a.linear[1][1], 1.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear[2][2], 1.0, epsilon = 1e-6);
+            }
+            other => panic!("expected Affine, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keyboard_step_scale_negative_sign_inverts_factor() {
+        // Held −X for 1 s → factor 1/1.5 along X.
+        let arrows = ArrowDrive {
+            x_neg: true,
+            ..ArrowDrive::default()
+        };
+        let result = keyboard_step(
+            KbdFocus::Scale,
+            arrows,
+            1.0,
+            Vec3::ZERO,
+            &Transform3D::Identity,
+            0.0,
+        )
+        .unwrap();
+        match result {
+            Transform3D::Affine(a) => {
+                assert_approx_eq!(f64, a.linear[0][0], 1.0 / 1.5, epsilon = 1e-5);
+            }
+            other => panic!("expected Affine, got {other:?}"),
         }
     }
 }
