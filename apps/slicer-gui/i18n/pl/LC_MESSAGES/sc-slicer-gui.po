@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-22 09:13+0000\n"
+"POT-Creation-Date: 2026-04-27 16:01+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -14,32 +14,32 @@ msgstr ""
 "|| n%100>=20) ? 1 : 2;\n"
 "X-Generator: Poedit 3.7\n"
 
-#: ui/about-window.slint:9
+#: ui/about-window.slint:10
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr ""
 
-#: ui/about-window.slint:45
+#: ui/about-window.slint:54
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/about-window.slint:52
+#: ui/about-window.slint:61
 msgctxt "About"
 msgid "Version {0}"
 msgstr ""
 
-#: ui/about-window.slint:58
+#: ui/about-window.slint:67
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr ""
 
-#: ui/about-window.slint:64
+#: ui/about-window.slint:73
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr ""
 
-#: ui/about-window.slint:74
+#: ui/about-window.slint:83
 msgctxt "About"
 msgid "Close"
 msgstr ""
@@ -131,112 +131,142 @@ msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:16
+#: ui/object-list-panel.slint:18
+msgctxt "ObjectList"
+msgid "Scene objects"
+msgstr ""
+
+#: ui/object-list-panel.slint:38
+msgctxt "ObjectList"
+msgid "Scene Objects"
+msgstr ""
+
+#: ui/object-list-panel.slint:59
+msgctxt "ObjectList"
+msgid "No objects to display"
+msgstr ""
+
+#: ui/main-window.slint:60
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:51
+#: ui/main-window.slint:102
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:54
+#: ui/main-window.slint:105
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:64
+#: ui/main-window.slint:115
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:73
+#: ui/main-window.slint:124
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:84
+#: ui/main-window.slint:135
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:90
+#: ui/main-window.slint:141
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:97
+#: ui/main-window.slint:148
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:99
+#: ui/main-window.slint:150
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:105
+#: ui/main-window.slint:156
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:113
+#: ui/main-window.slint:164
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:122
+#: ui/main-window.slint:173
+msgctxt "MenuBar"
+msgid "View"
+msgstr ""
+
+#: ui/main-window.slint:177
+msgctxt "MenuBar"
+msgid "Hide Object List"
+msgstr ""
+
+#: ui/main-window.slint:178
+msgctxt "MenuBar"
+msgid "Show Object List"
+msgstr ""
+
+#: ui/main-window.slint:188
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:124
+#: ui/main-window.slint:190
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:129
+#: ui/main-window.slint:195
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:136
+#: ui/main-window.slint:202
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:143
+#: ui/main-window.slint:209
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:150
+#: ui/main-window.slint:216
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:157
+#: ui/main-window.slint:223
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:165
+#: ui/main-window.slint:235
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/mesh-viewer.slint:35
+#: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr ""
 
-#: ui/mesh-viewer.slint:36
+#: ui/mesh-viewer.slint:38
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr ""
 
-#: ui/mesh-viewer.slint:37
+#: ui/mesh-viewer.slint:39
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Shift with right-click drag, "
@@ -245,57 +275,62 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/wiring.rs:141
+#: src/wiring.rs:175
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:144
+#: src/wiring.rs:178
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:146
+#: src/wiring.rs:180
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:149
+#: src/wiring.rs:183
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/viewport_controller.rs:277
+#: src/viewport_controller.rs:429
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:281
+#: src/viewport_controller.rs:433
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
 
-#: src/scene_loader.rs:234
+#: src/viewport_controller.rs:470
+msgctxt "ObjectList"
+msgid "Object {}"
+msgstr ""
+
+#: src/scene_loader.rs:286
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr ""
 
-#: src/scene_loader.rs:238
+#: src/scene_loader.rs:290
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr ""
 
-#: src/scene_loader.rs:279
+#: src/scene_loader.rs:320
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/scene_loader.rs:280
+#: src/scene_loader.rs:321
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/mesh_loader.rs:46
+#: src/mesh_loader.rs:51
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
