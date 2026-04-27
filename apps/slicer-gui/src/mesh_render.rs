@@ -15,11 +15,18 @@ use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
 
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
+use crate::gizmo::Axis;
+use crate::gizmo_geometry::{self, GizmoVertex};
 
 const MESH_SHADER_SOURCE: &str = include_str!("shaders/mesh_render.wgsl");
 const OUTLINE_SHADER_SOURCE: &str = include_str!("shaders/outline.wgsl");
+const GIZMO_SHADER_SOURCE: &str = include_str!("shaders/gizmo.wgsl");
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// Format for the gizmo pass's private depth attachment. Stencil is
+/// not used by the gizmo pipeline, so a plain `Depth32Float` (default-
+/// limits supported, single-aspect) suffices.
+const GIZMO_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 // Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a
 // single attachment. The selection-outline post-pass writes `1` to
 // stencil for the selected object via per-draw stencil reference, then
@@ -54,6 +61,43 @@ struct ModelEntry {
 }
 
 const MODEL_ENTRY_SIZE: u64 = std::mem::size_of::<ModelEntry>() as u64;
+
+/// Per-frame uniform for the gizmo pass: the camera transform plus
+/// the world-space pivot and shaft-length, both packed into a vec4
+/// so the shader gets one contiguous load.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug)]
+struct GizmoUniformsGpu {
+    view_proj: [[f32; 4]; 4],
+    pivot_and_scale: [f32; 4],
+}
+
+/// Per-axis draw entry uploaded to the dynamic-offset uniform buffer.
+/// Mirrors `DrawEntry` in `gizmo.wgsl` one-for-one.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable, Debug)]
+struct GizmoDrawEntry {
+    axis_rotation: [[f32; 4]; 4],
+    tint: [f32; 4],
+}
+
+const GIZMO_DRAW_ENTRY_SIZE: u64 = std::mem::size_of::<GizmoDrawEntry>() as u64;
+
+/// Per-frame data the renderer needs to draw the translate gizmo.
+/// `pivot` is the world-space gizmo origin; `scale` is the world-unit
+/// length of the shaft (so the gizmo subtends a constant pixel size);
+/// `active_axis` is the axis currently being dragged (drawn at full
+/// brightness); `locked` flags axes the user can't grab right now
+/// (drawn greyed, matching the lock-out behaviour exposed by
+/// `gizmo::axis_pickable`).
+#[derive(Copy, Clone, Debug)]
+pub struct GizmoFrame {
+    pub pivot: Vec3,
+    pub scale: f32,
+    pub active_axis: Option<Axis>,
+    /// Indexed in order [X, Y, Z]; `true` greys the axis out.
+    pub locked: [bool; 3],
+}
 
 /// Round `size` up to the next multiple of `alignment`. Used to space
 /// successive `ModelEntry` slots in the per-scene uniform buffer at the
@@ -155,6 +199,14 @@ struct MsaaTargets {
     /// outline post-pass as a multisampled u32 texture. Recreated
     /// alongside `depth_view` since they share the underlying texture.
     outline_bind_group: wgpu::BindGroup,
+    /// Private depth attachment for the gizmo pass. The gizmo
+    /// renders to the resolved (non-MSAA) target with depth cleared
+    /// at pass start so it sits on top of the mesh, but the gizmo
+    /// pipeline still runs depth-test-on internally so the three
+    /// axes order correctly where they overlap near the pivot. We
+    /// can't reuse the main MSAA depth — its sample count (4)
+    /// doesn't match the gizmo pipeline's count (1).
+    gizmo_depth_view: wgpu::TextureView,
 }
 
 // Double-buffered ring of destination color textures. `render` writes to one
@@ -187,6 +239,15 @@ pub struct Renderer {
     uniform_buffer: wgpu::Buffer,
     uniforms_bind_group: wgpu::BindGroup,
     models_bind_group_layout: wgpu::BindGroupLayout,
+    gizmo_pipeline: wgpu::RenderPipeline,
+    gizmo_vertex_buffer: wgpu::Buffer,
+    gizmo_index_buffer: wgpu::Buffer,
+    gizmo_index_count: u32,
+    gizmo_uniforms_buffer: wgpu::Buffer,
+    gizmo_entries_buffer: wgpu::Buffer,
+    gizmo_entry_stride: u64,
+    gizmo_uniforms_bind_group: wgpu::BindGroup,
+    gizmo_entries_bind_group: wgpu::BindGroup,
     scene: Option<InstalledScene>,
     msaa: Option<MsaaTargets>,
     targets: Option<TargetPool>,
@@ -414,6 +475,152 @@ impl Renderer {
             }],
         });
 
+        // ---- gizmo pipeline + static buffers --------------------------------
+        let gizmo_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh-viewer gizmo shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(GIZMO_SHADER_SOURCE)),
+        });
+
+        let (gizmo_vertices, gizmo_indices) = gizmo_geometry::build_axis_geometry();
+        let gizmo_index_count = gizmo_indices.len() as u32;
+        let gizmo_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo vbo"),
+            contents: bytemuck::cast_slice(&gizmo_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let gizmo_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo ibo"),
+            contents: bytemuck::cast_slice(&gizmo_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let gizmo_uniforms_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mesh-viewer gizmo uniforms bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(
+                            std::mem::size_of::<GizmoUniformsGpu>() as u64
+                        ),
+                    },
+                    count: None,
+                }],
+            });
+
+        let gizmo_entries_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh-viewer gizmo entries bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                // Same dynamic-offset uniform pattern as the main
+                // pipeline's models bgl: one entry-sized window, the
+                // bind group is rebound with the per-axis offset.
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: NonZeroU64::new(GIZMO_DRAW_ENTRY_SIZE),
+                },
+                count: None,
+            }],
+        });
+
+        let gizmo_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("mesh-viewer gizmo pll"),
+                bind_group_layouts: &[&gizmo_uniforms_bgl, &gizmo_entries_bgl],
+                immediate_size: 0,
+            });
+
+        let gizmo_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer gizmo pipeline"),
+            layout: Some(&gizmo_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &gizmo_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<GizmoVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                }],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: GIZMO_DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            // Resolved (non-MSAA) target → 1-sample pipeline.
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &gizmo_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let gizmo_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-viewer gizmo uniforms"),
+            size: std::mem::size_of::<GizmoUniformsGpu>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
+        let gizmo_entry_stride = align_up(GIZMO_DRAW_ENTRY_SIZE, alignment);
+        let gizmo_entries_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-viewer gizmo entries"),
+            size: gizmo_entry_stride * 3,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let gizmo_uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh-viewer gizmo uniforms bg"),
+            layout: &gizmo_uniforms_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: gizmo_uniforms_buffer.as_entire_binding(),
+            }],
+        });
+        let gizmo_entries_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh-viewer gizmo entries bg"),
+            layout: &gizmo_entries_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &gizmo_entries_buffer,
+                    offset: 0,
+                    size: NonZeroU64::new(GIZMO_DRAW_ENTRY_SIZE),
+                }),
+            }],
+        });
+
         Self {
             device,
             queue,
@@ -423,6 +630,15 @@ impl Renderer {
             uniform_buffer,
             uniforms_bind_group,
             models_bind_group_layout,
+            gizmo_pipeline,
+            gizmo_vertex_buffer,
+            gizmo_index_buffer,
+            gizmo_index_count,
+            gizmo_uniforms_buffer,
+            gizmo_entries_buffer,
+            gizmo_entry_stride,
+            gizmo_uniforms_bind_group,
+            gizmo_entries_bind_group,
             scene: None,
             msaa: None,
             targets: None,
@@ -557,12 +773,29 @@ impl Renderer {
             }],
         });
 
+        let gizmo_depth = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mesh-viewer gizmo depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: GIZMO_DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let gizmo_depth_view = gizmo_depth.create_view(&wgpu::TextureViewDescriptor::default());
+
         self.msaa = Some(MsaaTargets {
             width,
             height,
             color_view,
             depth_view,
             outline_bind_group,
+            gizmo_depth_view,
         });
     }
 
@@ -590,6 +823,7 @@ impl Renderer {
         scene: &Scene,
         camera: &OrbitCamera,
         selection: Option<usize>,
+        gizmo: Option<GizmoFrame>,
         width: u32,
         height: u32,
     ) -> Option<wgpu::Texture> {
@@ -741,6 +975,65 @@ impl Renderer {
             outline_pass.set_bind_group(0, &msaa.outline_bind_group, &[]);
             outline_pass.draw(0..3, 0..1);
         }
+        // Gizmo pass: drawn last so it sits on top of the mesh + the
+        // outline. Depth is cleared at pass start so the gizmo is
+        // never occluded by the mesh; depth-test stays enabled
+        // *within* the pass so the three axes order correctly where
+        // they overlap near the pivot.
+        if let Some(frame) = gizmo {
+            let uniforms = GizmoUniformsGpu {
+                view_proj: view_proj.to_cols_array_2d(),
+                pivot_and_scale: [frame.pivot.x, frame.pivot.y, frame.pivot.z, frame.scale],
+            };
+            self.queue.write_buffer(
+                &self.gizmo_uniforms_buffer,
+                0,
+                bytemuck::bytes_of(&uniforms),
+            );
+            let entries = build_gizmo_entries(&frame);
+            for (i, entry) in entries.iter().enumerate() {
+                let offset = i as u64 * self.gizmo_entry_stride;
+                self.queue.write_buffer(
+                    &self.gizmo_entries_buffer,
+                    offset,
+                    bytemuck::bytes_of(entry),
+                );
+            }
+
+            let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mesh-viewer gizmo pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &msaa.gizmo_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            gizmo_pass.set_pipeline(&self.gizmo_pipeline);
+            gizmo_pass.set_bind_group(0, &self.gizmo_uniforms_bind_group, &[]);
+            gizmo_pass.set_vertex_buffer(0, self.gizmo_vertex_buffer.slice(..));
+            gizmo_pass
+                .set_index_buffer(self.gizmo_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            for i in 0..3u32 {
+                let offset = (i as u64 * self.gizmo_entry_stride) as u32;
+                gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                gizmo_pass.draw_indexed(0..self.gizmo_index_count, 0, 0..1);
+            }
+        }
         self.queue.submit(std::iter::once(encoder.finish()));
 
         Some(target)
@@ -776,6 +1069,51 @@ fn affine_to_mat4(a: &AffineTransform3D) -> Mat4 {
         Vec4::new(l[0][2] as f32, l[1][2] as f32, l[2][2] as f32, 0.0),
         Vec4::new(t[0] as f32, t[1] as f32, t[2] as f32, 1.0),
     )
+}
+
+/// Per-axis colours (full saturation). Brightness multiplier comes
+/// from `axis_tint` based on the axis's active/locked state.
+const fn axis_base_color(axis: Axis) -> [f32; 3] {
+    match axis {
+        Axis::X => [1.0, 0.25, 0.25],
+        Axis::Y => [0.25, 1.0, 0.25],
+        Axis::Z => [0.35, 0.45, 1.0],
+    }
+}
+
+/// Tint for one axis given the frame state. Locked axes are grey
+/// (clearly distinguishable from the inactive axis tint), the active
+/// axis is full-bright, the rest sit at 0.65 brightness.
+fn axis_tint(axis: Axis, frame: &GizmoFrame, locked: bool) -> [f32; 4] {
+    if locked {
+        return [0.35, 0.35, 0.35, 1.0];
+    }
+    let active = frame.active_axis == Some(axis);
+    let brightness = if active { 1.0 } else { 0.65 };
+    let [r, g, b] = axis_base_color(axis);
+    [r * brightness, g * brightness, b * brightness, 1.0]
+}
+
+fn build_gizmo_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
+    use std::f32::consts::FRAC_PI_2;
+    // Rotation that maps handle-local +X onto each world axis.
+    let rotations = [
+        Mat4::IDENTITY,
+        Mat4::from_rotation_z(FRAC_PI_2),
+        Mat4::from_rotation_y(-FRAC_PI_2),
+    ];
+    let axes = [Axis::X, Axis::Y, Axis::Z];
+    let mut out = [GizmoDrawEntry {
+        axis_rotation: [[0.0; 4]; 4],
+        tint: [0.0; 4],
+    }; 3];
+    for (i, axis) in axes.into_iter().enumerate() {
+        out[i] = GizmoDrawEntry {
+            axis_rotation: rotations[i].to_cols_array_2d(),
+            tint: axis_tint(axis, frame, frame.locked[i]),
+        };
+    }
+    out
 }
 
 fn transform_to_mat4(t: &Transform3D) -> Mat4 {
@@ -1276,6 +1614,62 @@ mod transform_to_mat4_tests {
 }
 
 #[cfg(test)]
+mod gizmo_entry_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    fn frame(active: Option<Axis>, locked: [bool; 3]) -> GizmoFrame {
+        GizmoFrame {
+            pivot: Vec3::ZERO,
+            scale: 1.0,
+            active_axis: active,
+            locked,
+        }
+    }
+
+    #[test]
+    fn axis_rotations_map_handle_local_x_to_world_axes() {
+        let entries = build_gizmo_entries(&frame(None, [false; 3]));
+        // Handle-local +X under each rotation should land on +X, +Y, +Z.
+        let local_x = Vec4::new(1.0, 0.0, 0.0, 1.0);
+        let rx = Mat4::from_cols_array_2d(&entries[0].axis_rotation) * local_x;
+        let ry = Mat4::from_cols_array_2d(&entries[1].axis_rotation) * local_x;
+        let rz = Mat4::from_cols_array_2d(&entries[2].axis_rotation) * local_x;
+        assert_approx_eq!(f32, rx.x, 1.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, ry.y, 1.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, rz.z, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn no_active_no_locked_yields_inactive_brightness_for_all_axes() {
+        let entries = build_gizmo_entries(&frame(None, [false; 3]));
+        // Inactive brightness multiplier is 0.65; X base is (1.0, 0.25, 0.25).
+        assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
+        assert_approx_eq!(f32, entries[0].tint[1], 0.25 * 0.65, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn active_axis_renders_at_full_brightness() {
+        let entries = build_gizmo_entries(&frame(Some(Axis::X), [false; 3]));
+        assert_approx_eq!(f32, entries[0].tint[0], 1.0, epsilon = 1e-5);
+        // Other axes stay inactive.
+        assert_approx_eq!(f32, entries[1].tint[1], 1.0 * 0.65, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn locked_axis_renders_grey_regardless_of_active_state() {
+        // Even if "active" said X, if locked[X] is true the lock-out
+        // wins and the axis renders grey. (In practice the controller
+        // would never set both, but the renderer must not amplify
+        // contradictory state.)
+        let entries = build_gizmo_entries(&frame(Some(Axis::X), [true, false, false]));
+        assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
+        assert_approx_eq!(f32, entries[0].tint[1], 0.35, epsilon = 1e-5);
+        assert_approx_eq!(f32, entries[0].tint[2], 0.35, epsilon = 1e-5);
+    }
+}
+
+#[cfg(test)]
 mod align_up_tests {
     use super::*;
 
@@ -1422,7 +1816,7 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let texture = renderer
-            .render(&scene, &camera, None, 64, 64)
+            .render(&scene, &camera, None, None, 64, 64)
             .expect("render should produce a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
@@ -1449,7 +1843,7 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let texture = renderer
-            .render(&scene, &camera, Some(0), 64, 64)
+            .render(&scene, &camera, Some(0), None, 64, 64)
             .expect("render with selection should produce a texture");
         assert_eq!(texture.size().width, 64);
     }
@@ -1481,11 +1875,47 @@ mod gpu_integration_tests {
         // Twice — first frame creates the MSAA targets and outline
         // bind group; second exercises the cached path.
         let _ = renderer
-            .render(&scene, &camera, Some(0), 64, 64)
+            .render(&scene, &camera, Some(0), None, 64, 64)
             .expect("render with selection runs the outline pass");
         let _ = renderer
-            .render(&scene, &camera, Some(0), 64, 64)
+            .render(&scene, &camera, Some(0), None, 64, 64)
             .expect("cached outline bind group survives a second frame");
+    }
+
+    /// Gizmo pass smoke test: drive a render with `Some(GizmoFrame)`
+    /// so the gizmo pipeline binds, the per-axis dynamic-offset
+    /// uniform path runs, and the private depth attachment is
+    /// validated under default limits. Two consecutive frames so the
+    /// MSAA-targets cache + the gizmo depth view both go through the
+    /// reuse path.
+    #[test]
+    fn render_with_gizmo_under_default_limits_is_validated() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&scene)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let frame = GizmoFrame {
+            pivot: center,
+            scale: 0.5,
+            active_axis: Some(Axis::X),
+            locked: [false, false, true],
+        };
+        let _ = renderer
+            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .expect("first gizmo render should succeed");
+        let _ = renderer
+            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .expect("cached gizmo resources survive a second frame");
     }
 
     /// Multi-object scene drives one draw call per object; the
@@ -1542,7 +1972,7 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let _texture = renderer
-            .render(&scene, &camera, None, 64, 64)
+            .render(&scene, &camera, None, None, 64, 64)
             .expect("render multi-object");
     }
 }

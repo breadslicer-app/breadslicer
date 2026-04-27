@@ -440,9 +440,14 @@ impl ViewportController {
             return;
         };
 
-        let Some(texture) =
-            renderer.render(scene_for_render, camera, self.selection.get(), eff_w, eff_h)
-        else {
+        let Some(texture) = renderer.render(
+            scene_for_render,
+            camera,
+            self.selection.get(),
+            None,
+            eff_w,
+            eff_h,
+        ) else {
             return;
         };
         self.dirty.set(false);
