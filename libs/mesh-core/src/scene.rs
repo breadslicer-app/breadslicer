@@ -305,24 +305,20 @@ impl Scene {
         Ok(has_any.then_some((min, max)))
     }
 
-    /// Merges all meshes in the scene into a single [`IndexedMesh`].
-    /// Returns `Ok(None)` if the scene contains no geometry,
-    /// or an error if any resource index is out of bounds.
+    /// Merges all meshes in the scene into a single [`IndexedMesh`],
+    /// baking each object's transform into its vertices and face normals.
+    /// Returns `Ok(None)` if the scene contains no geometry, or an error
+    /// if any resource index is out of bounds or any object's transform
+    /// is singular (which makes `apply_to_normal` fail).
     pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>> {
         let mut vertices = Vec::new();
         let mut faces = Vec::new();
 
         for obj in &self.objects {
-            let mesh = match &obj.content {
-                SceneObjectContent::Mesh(m) => m,
-                SceneObjectContent::Resource(idx) => self
-                    .resources
-                    .get(*idx)
-                    .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
-            };
+            let baked = obj.baked_mesh(&self.resources)?;
             let offset = vertices.len() as u32;
-            vertices.extend_from_slice(&mesh.vertices);
-            for face in &mesh.faces {
+            vertices.extend(baked.vertices);
+            for face in baked.faces {
                 faces.push(IndexedTriangle {
                     normal: face.normal,
                     vertices: [
@@ -1080,5 +1076,156 @@ mod merge_meshes_tests {
             )],
         };
         assert_eq!(scene.aabb().unwrap(), None);
+    }
+
+    #[test]
+    fn merge_meshes_bakes_translation_into_vertices() {
+        let mesh = triangle_mesh(
+            vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(
+                mesh,
+                AffineTransform3D::from_translation([10.0, -5.0, 2.0]),
+            )],
+        };
+        let result = scene.merge_meshes().unwrap().unwrap();
+        assert_eq!(result.vertices[0].0, [11.0, -5.0, 2.0]);
+        assert_eq!(result.vertices[1].0, [10.0, -4.0, 2.0]);
+        assert_eq!(result.vertices[2].0, [10.0, -5.0, 3.0]);
+    }
+
+    #[test]
+    fn merge_meshes_bakes_rotation_into_face_normals() {
+        // π/2 rotation about Z sends a +X normal to +Y.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+                Vertex::new([0.0, 0.0, 1.0]),
+            ],
+            faces: vec![IndexedTriangle {
+                normal: Normal::new([1.0, 0.0, 0.0]),
+                vertices: [0, 1, 2],
+            }],
+        };
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(
+                mesh,
+                AffineTransform3D::from_rotation_z(std::f64::consts::FRAC_PI_2),
+            )],
+        };
+        let result = scene.merge_meshes().unwrap().unwrap();
+        assert_approx_eq!(f32, result.faces[0].normal.0[0], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.faces[0].normal.0[1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.faces[0].normal.0[2], 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn merge_meshes_reverses_winding_for_negative_determinant() {
+        let mesh = triangle_mesh(
+            vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(
+                mesh,
+                AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]),
+            )],
+        };
+        let result = scene.merge_meshes().unwrap().unwrap();
+        assert_eq!(result.faces[0].vertices, [0, 2, 1]);
+    }
+
+    #[test]
+    fn merge_meshes_propagates_singular_transform_error() {
+        let singular = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let mesh = triangle_mesh(
+            vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(mesh, singular)],
+        };
+        assert!(scene.merge_meshes().is_err());
+    }
+
+    #[test]
+    fn merge_meshes_offsets_indices_after_baking() {
+        // Two translated objects: vertex indices in the second object's
+        // faces should be offset by the count from the first.
+        let mesh_a = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        );
+        let mesh_b = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                affine_object(mesh_a, AffineTransform3D::from_translation([0.0, 0.0, 0.0])),
+                affine_object(
+                    mesh_b,
+                    AffineTransform3D::from_translation([10.0, 0.0, 0.0]),
+                ),
+            ],
+        };
+        let result = scene.merge_meshes().unwrap().unwrap();
+        assert_eq!(result.vertices.len(), 6);
+        assert_eq!(result.faces.len(), 2);
+        assert_eq!(result.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(result.faces[1].vertices, [3, 4, 5]);
+        // Second object's vertices were translated by (10, 0, 0).
+        assert_approx_eq!(f32, result.vertices[3].0[0], 10.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[4].0[0], 11.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[5].0[0], 10.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn merge_meshes_mixes_identity_and_affine_objects() {
+        // Identity object passes through untouched; affine object is
+        // baked. Both contribute to the merged result.
+        let mesh_id = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        );
+        let mesh_aff = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        );
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                inline_object(mesh_id),
+                affine_object(
+                    mesh_aff,
+                    AffineTransform3D::from_translation([100.0, 0.0, 0.0]),
+                ),
+            ],
+        };
+        let result = scene.merge_meshes().unwrap().unwrap();
+        // Identity object's vertices are unchanged.
+        assert_eq!(result.vertices[0].0, [0.0, 0.0, 0.0]);
+        assert_eq!(result.vertices[1].0, [1.0, 0.0, 0.0]);
+        // Affine object's vertices are translated.
+        assert_approx_eq!(f32, result.vertices[3].0[0], 100.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[4].0[0], 101.0, epsilon = 1e-6);
     }
 }
