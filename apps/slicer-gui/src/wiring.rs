@@ -112,15 +112,15 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_viewport_pointer_down(move |x, y| ctrl.on_pointer_down(x, y));
+        ui.on_viewport_pointer_down(move |x, y, m| ctrl.on_pointer_down(x, y, m));
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_viewport_pointer_move(move |x, y| ctrl.on_pointer_move(x, y));
+        ui.on_viewport_pointer_move(move |x, y, m| ctrl.on_pointer_move(x, y, m));
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_viewport_pointer_up(move |x, y| ctrl.on_pointer_up(x, y));
+        ui.on_viewport_pointer_up(move |x, y, m| ctrl.on_pointer_up(x, y, m));
     }
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }

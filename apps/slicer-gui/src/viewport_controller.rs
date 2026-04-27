@@ -14,6 +14,7 @@ use slint::wgpu_28::wgpu;
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
 use crate::MainWindow;
+use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::gizmo::{self, Axis};
@@ -101,12 +102,19 @@ enum GizmoState {
 ///   `start_angle` is the angular position at press; `last_raw` and
 ///   `current_unwrapped` track the unwrap counter so a full-revolution
 ///   drag yields a real 360°+ rotation instead of resetting at ±π.
-/// - `ScaleAxis` composes a per-axis scale about the pivot.
-///   `start_anchor` is the world-space closest point on the axis at
-///   press; the factor is `(current_proj / start_proj)` along the
-///   axis, clamped at `EPS_SCALE`.
-/// - `ScaleUniform` composes a uniform scale about the pivot.
-///   `press_screen` is the cursor position at press;
+/// - `ScaleAxis` composes either a per-axis scale or a uniform scale
+///   about the pivot, selected by `proportional` (driven by the live
+///   Shift state). `start_anchor` is the world-space closest point on
+///   the axis (used by the per-axis branch); `press_screen` /
+///   `pivot_screen` carry the equivalent screen anchors used by the
+///   uniform branch. Both anchor sets are captured at press *and*
+///   re-captured on every Shift toggle so the formula switch is
+///   visually snap-free (see `re_anchor_scale_axis`).
+/// - `ScaleUniform` composes a uniform scale about the pivot. Started
+///   only by pressing the centre cube — the per-axis-cube-with-Shift
+///   path goes through `ScaleAxis { proportional: true }` instead, so
+///   releasing Shift can revert it without losing the originating
+///   axis. `press_screen` is the cursor position at press;
 ///   `pivot_screen` is the projected pivot in pixel coords (also
 ///   captured at press, so subsequent moves use a stable reference).
 #[derive(Copy, Clone, Debug)]
@@ -124,6 +132,9 @@ enum DragOp {
     ScaleAxis {
         axis: Axis,
         start_anchor: Vec3,
+        proportional: bool,
+        press_screen: (f32, f32),
+        pivot_screen: (f32, f32),
     },
     ScaleUniform {
         press_screen: (f32, f32),
@@ -393,21 +404,28 @@ impl ViewportController {
     /// press position so `on_pointer_up` can disambiguate click from
     /// drag. If a gizmo handle is selected and the press hits it,
     /// the FSM also enters `Drag`, capturing the original transform
-    /// and the world-space anchor on the axis.
-    pub fn on_pointer_down(&self, x: f32, y: f32) {
+    /// and the world-space anchor on the axis. The modifier state
+    /// at press feeds the `ScaleAxis` proportional flag — pressing
+    /// the per-axis cube with Shift already held starts the drag in
+    /// uniform-scale mode.
+    pub fn on_pointer_down(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         self.press_origin.set(Some((x, y)));
-        self.try_start_gizmo_drag(x, y);
+        self.try_start_gizmo_drag(x, y, modifiers);
     }
 
     /// Pointer moved while the left button is held and no camera
     /// gesture is active. Drives the gizmo drag — branches on the
     /// active `DragOp`, recomputes the per-op delta from the current
     /// cursor ray, and composes the resulting transform onto the
-    /// captured original.
-    pub fn on_pointer_move(&self, x: f32, y: f32) {
+    /// captured original. If a `ScaleAxis` drag is live and the live
+    /// Shift state has flipped since the last frame, re-anchors the
+    /// drag (current transform → new `original`, current cursor →
+    /// new anchors) so the per-axis ↔ uniform formula switch is
+    /// visually snap-free.
+    pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         let GizmoState::Drag {
-            op,
-            original,
+            mut op,
+            mut original,
             pivot,
             object_idx,
         } = self.gizmo.get()
@@ -427,6 +445,35 @@ impl ViewportController {
             let Some(camera) = camera_slot.as_ref() else {
                 return;
             };
+            let scene_slot = self.scene.borrow();
+            let scene = scene_slot.as_ref();
+            // Live Shift toggle on a `ScaleAxis` drag re-anchors before
+            // the move's delta is computed — the running transform
+            // becomes the new `original`, the current cursor becomes
+            // the new press, so the per-axis ↔ uniform formula switch
+            // does not snap the object.
+            if let DragOp::ScaleAxis { proportional, .. } = op
+                && proportional != modifiers.shift
+                && let Some(scene_ref) = scene
+                && let Some(obj) = scene_ref.objects.get(object_idx)
+            {
+                let fov_y = default_fov_y();
+                if let Some(re_anchored) = re_anchor_scale_axis(
+                    op,
+                    obj.transform,
+                    camera,
+                    pivot,
+                    fov_y,
+                    w,
+                    h,
+                    x,
+                    y,
+                    modifiers.shift,
+                ) {
+                    op = re_anchored.0;
+                    original = re_anchored.1;
+                }
+            }
             let ray = picking::ray_from_pixel(camera, default_fov_y(), w, h, x, y);
             apply_drag_move(op, &ray, pivot, &original, x, y)
         };
@@ -437,7 +484,8 @@ impl ViewportController {
 
         // Persist the (possibly updated) drag state — Rotate's
         // unwrap counter mutates per move; the others' state is
-        // captured at press and stays put.
+        // captured at press and stays put. `original` may also have
+        // been reset by a Shift re-anchor on this frame.
         self.gizmo.set(GizmoState::Drag {
             op: new_op,
             original,
@@ -460,8 +508,11 @@ impl ViewportController {
     /// in progress, the final composed transform stands and the FSM
     /// returns to `Idle`. Otherwise the press → release is treated as
     /// a click iff its movement stays within `CLICK_DRAG_THRESHOLD`,
-    /// dispatching through the picker in that case.
-    pub fn on_pointer_up(&self, x: f32, y: f32) {
+    /// dispatching through the picker in that case. Modifier state
+    /// at release is currently unused; threaded through for symmetry
+    /// with the down/move callbacks and so future operations
+    /// (snapping, etc.) can read it without another signature change.
+    pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
         let press = self.press_origin.take();
         if matches!(self.gizmo.get(), GizmoState::Drag { .. }) {
             self.gizmo.set(GizmoState::Idle);
@@ -487,7 +538,12 @@ impl ViewportController {
     /// arcs, scale midpoint cubes, and the centre cube. Bails on
     /// missing camera / scene / no selection / zero viewport, in
     /// which case the press behaves like a plain click candidate.
-    fn try_start_gizmo_drag(&self, x: f32, y: f32) {
+    ///
+    /// `modifiers.shift` at press time captures into the resulting
+    /// `ScaleAxis.proportional` flag — a press on the per-axis cube
+    /// with Shift held starts uniformly; subsequent toggles
+    /// re-anchor through the move path.
+    fn try_start_gizmo_drag(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         let Some(sel) = self.selection.get() else {
             return;
         };
@@ -581,7 +637,24 @@ impl ViewportController {
             }
             HandleHit::ScaleAxis(axis) => {
                 let start_anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
-                DragOp::ScaleAxis { axis, start_anchor }
+                // The uniform-branch anchors are captured at press as
+                // well, even when `proportional` starts false — that
+                // way a mid-drag Shift press flips the formula
+                // through the same `re_anchor_scale_axis` path
+                // either direction without needing a "first-toggle"
+                // special case.
+                let Some(pivot_screen) =
+                    picking::project_world_to_screen(camera, fov_y, w, h, pivot)
+                else {
+                    return;
+                };
+                DragOp::ScaleAxis {
+                    axis,
+                    start_anchor,
+                    proportional: modifiers.shift,
+                    press_screen: (x, y),
+                    pivot_screen,
+                }
             }
             HandleHit::ScaleCentre => {
                 let Some(pivot_screen) =
@@ -871,10 +944,29 @@ fn apply_drag_move(
                 axis_rotation(axis, delta_angle).map(|r| compose_about_pivot(&r, pivot, original));
             rotation.map(|new_t| (new_t, new_op))
         }
-        DragOp::ScaleAxis { axis, start_anchor } => {
-            let current_anchor = gizmo::closest_point_on_axis(ray, pivot, axis);
-            let factor = gizmo::scale_factor_along_axis(start_anchor, current_anchor, pivot, axis);
-            let scale_mat = scale_along_axis(axis, factor);
+        DragOp::ScaleAxis {
+            axis,
+            start_anchor,
+            proportional,
+            press_screen,
+            pivot_screen,
+        } => {
+            let scale_mat = if proportional {
+                let factor = gizmo::uniform_scale_factor(
+                    pivot_screen.0,
+                    pivot_screen.1,
+                    press_screen.0,
+                    press_screen.1,
+                    cursor_x,
+                    cursor_y,
+                );
+                AffineTransform3D::from_uniform_scale(factor as f64)
+            } else {
+                let current_anchor = gizmo::closest_point_on_axis(ray, pivot, axis);
+                let factor =
+                    gizmo::scale_factor_along_axis(start_anchor, current_anchor, pivot, axis);
+                scale_along_axis(axis, factor)
+            };
             Some((compose_about_pivot(&scale_mat, pivot, original), op))
         }
         DragOp::ScaleUniform {
@@ -893,6 +985,48 @@ fn apply_drag_move(
             Some((compose_about_pivot(&scale_mat, pivot, original), op))
         }
     }
+}
+
+/// Re-anchors a `ScaleAxis` drag for a Shift toggle: the scene's
+/// running transform becomes the new `original`, the cursor's current
+/// position becomes the new press, both anchor sets (axis + screen)
+/// are recomputed from the cursor, and `proportional` is set to the
+/// new Shift state. After this call `apply_drag_move` produces the
+/// running transform unchanged for the toggling frame, so the formula
+/// switch is visually snap-free.
+///
+/// Returns `None` if the pivot's screen projection fails (degenerate
+/// camera) — the caller leaves the drag unchanged in that case.
+/// Defensive against op variants other than `ScaleAxis`: returns
+/// `None` so the move dispatch falls through to the regular path.
+#[allow(clippy::too_many_arguments)]
+fn re_anchor_scale_axis(
+    op: DragOp,
+    running_transform: Transform3D,
+    camera: &OrbitCamera,
+    pivot: Vec3,
+    fov_y: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+    cursor_x: f32,
+    cursor_y: f32,
+    new_proportional: bool,
+) -> Option<(DragOp, Transform3D)> {
+    let DragOp::ScaleAxis { axis, .. } = op else {
+        return None;
+    };
+    let pivot_screen =
+        picking::project_world_to_screen(camera, fov_y, viewport_w, viewport_h, pivot)?;
+    let ray = picking::ray_from_pixel(camera, fov_y, viewport_w, viewport_h, cursor_x, cursor_y);
+    let start_anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+    let new_op = DragOp::ScaleAxis {
+        axis,
+        start_anchor,
+        proportional: new_proportional,
+        press_screen: (cursor_x, cursor_y),
+        pivot_screen,
+    };
+    Some((new_op, running_transform))
 }
 
 /// Updates the unwrap counter so a multi-revolution drag yields a
@@ -1167,6 +1301,13 @@ mod selection_tests {
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
 
+    /// `PointerModifiers::default()` with all flags off. The selection
+    /// tests don't exercise modifier-driven branches, so every press
+    /// uses this.
+    fn no_mods() -> PointerModifiers {
+        PointerModifiers::default()
+    }
+
     fn empty_obj() -> SceneObject {
         SceneObject {
             meta: None,
@@ -1270,8 +1411,8 @@ mod selection_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(scene_with_n_objects(1));
         // No camera installed.
-        ctrl.on_pointer_down(50.0, 50.0);
-        ctrl.on_pointer_up(50.0, 50.0);
+        ctrl.on_pointer_down(50.0, 50.0, no_mods());
+        ctrl.on_pointer_up(50.0, 50.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1282,8 +1423,8 @@ mod selection_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(scene_with_n_objects(1));
         // viewport defaults to (0.0, 0.0)
-        ctrl.on_pointer_down(0.0, 0.0);
-        ctrl.on_pointer_up(0.0, 0.0);
+        ctrl.on_pointer_down(0.0, 0.0, no_mods());
+        ctrl.on_pointer_up(0.0, 0.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1294,7 +1435,7 @@ mod selection_tests {
         // controller must not run the picker against an unset press.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(scene_with_n_objects(1));
-        ctrl.on_pointer_up(50.0, 50.0);
+        ctrl.on_pointer_up(50.0, 50.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 }
@@ -1309,6 +1450,21 @@ mod viewport_click_tests {
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::transform::AffineTransform3D;
+
+    /// `PointerModifiers::default()` — all four flags off.
+    fn no_mods() -> PointerModifiers {
+        PointerModifiers::default()
+    }
+
+    /// `PointerModifiers` with Shift held; other flags off.
+    fn shift_held() -> PointerModifiers {
+        PointerModifiers {
+            shift: true,
+            control: false,
+            alt: false,
+            meta: false,
+        }
+    }
 
     fn front_facing_triangle_at(translation: [f32; 3]) -> SceneObject {
         // CCW from +Z → front face faces +Z.
@@ -1364,8 +1520,8 @@ mod viewport_click_tests {
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.viewport.set((200.0, 100.0));
 
-        ctrl.on_pointer_down(100.0, 50.0);
-        ctrl.on_pointer_up(100.0, 50.0);
+        ctrl.on_pointer_down(100.0, 50.0, no_mods());
+        ctrl.on_pointer_up(100.0, 50.0, no_mods());
         assert_eq!(ctrl.selection(), Some(0));
     }
 
@@ -1386,8 +1542,8 @@ mod viewport_click_tests {
         assert_eq!(ctrl.selection(), Some(0));
 
         // Click at the corner — no triangle there.
-        ctrl.on_pointer_down(0.0, 0.0);
-        ctrl.on_pointer_up(0.0, 0.0);
+        ctrl.on_pointer_down(0.0, 0.0, no_mods());
+        ctrl.on_pointer_up(0.0, 0.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1409,8 +1565,8 @@ mod viewport_click_tests {
         ctrl.viewport.set((200.0, 100.0));
 
         // Press over the triangle, release 50 px away → drag.
-        ctrl.on_pointer_down(100.0, 50.0);
-        ctrl.on_pointer_up(150.0, 50.0);
+        ctrl.on_pointer_down(100.0, 50.0, no_mods());
+        ctrl.on_pointer_up(150.0, 50.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1466,6 +1622,28 @@ mod viewport_click_tests {
         }
     }
 
+    fn read_linear(ctrl: &ViewportController) -> [[f64; 3]; 3] {
+        let scene_slot = ctrl.scene.borrow();
+        let scene = scene_slot.as_ref().unwrap();
+        match scene.objects[0].transform {
+            Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            Transform3D::Affine(a) => a.linear,
+        }
+    }
+
+    /// Project the X-axis midpoint cube's centre to logical-pixel
+    /// coords for the standard test setup. The cube sits at
+    /// `pivot + axis_world * (scale * MIDPOINT_FRACTION)`; with the
+    /// front camera, that lands on screen-y = viewport-centre.
+    fn x_midpoint_press_screen(ctrl: &ViewportController) -> (f32, f32) {
+        let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
+        let (vw, vh) = ctrl.viewport.get();
+        let fov_y = default_fov_y();
+        let scale = gizmo::gizmo_scale(&cam, fov_y, vh);
+        let midpoint = Vec3::new(scale * gizmo::MIDPOINT_FRACTION, 0.0, 0.0);
+        picking::project_world_to_screen(&cam, fov_y, vw, vh, midpoint).unwrap()
+    }
+
     #[test]
     fn pointer_down_on_x_handle_enters_drag_state() {
         // The X cone in the front-camera + 400×200 setup lives at
@@ -1474,7 +1652,7 @@ mod viewport_click_tests {
         // active translate handle (the shaft line is decorative).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
         match ctrl.gizmo.get() {
             GizmoState::Drag {
                 op: DragOp::Translate { axis, .. },
@@ -1490,7 +1668,7 @@ mod viewport_click_tests {
         // candidate — the FSM stays Idle.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(0.0, 0.0);
+        ctrl.on_pointer_down(0.0, 0.0, no_mods());
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
     }
 
@@ -1513,10 +1691,10 @@ mod viewport_click_tests {
         let release_anchor = gizmo::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
         let expected = release_anchor - press_anchor;
 
-        ctrl.on_pointer_down(press.0, press.1);
+        ctrl.on_pointer_down(press.0, press.1, no_mods());
         // Drag must have started — otherwise the move is a no-op.
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Drag { .. }));
-        ctrl.on_pointer_move(release.0, release.1);
+        ctrl.on_pointer_move(release.0, release.1, no_mods());
 
         let actual = read_translation(&ctrl);
         assert_approx_eq!(f32, actual.x, expected.x, epsilon = 1e-4);
@@ -1553,9 +1731,9 @@ mod viewport_click_tests {
         );
         let expected = release_anchor - press_anchor;
 
-        ctrl.on_pointer_down(press.0, press.1);
-        ctrl.on_pointer_move(mid.0, mid.1);
-        ctrl.on_pointer_move(release.0, release.1);
+        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        ctrl.on_pointer_move(mid.0, mid.1, no_mods());
+        ctrl.on_pointer_move(release.0, release.1, no_mods());
 
         let actual = read_translation(&ctrl);
         assert_approx_eq!(f32, actual.x, expected.x, epsilon = 1e-4);
@@ -1566,10 +1744,10 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         let mid_drag = read_translation(&ctrl);
-        ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
 
         // Drag state cleared.
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
@@ -1583,8 +1761,8 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         // Object has moved.
         assert!(read_translation(&ctrl).x.abs() > 1e-4);
 
@@ -1606,8 +1784,8 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1);
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_close_scene();
 
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
@@ -1629,9 +1807,194 @@ mod viewport_click_tests {
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.viewport.set((200.0, 100.0));
 
-        ctrl.on_pointer_down(100.0, 50.0);
-        ctrl.on_pointer_up(101.5, 51.5);
+        ctrl.on_pointer_down(100.0, 50.0, no_mods());
+        ctrl.on_pointer_up(101.5, 51.5, no_mods());
         assert_eq!(ctrl.selection(), Some(0));
+    }
+
+    #[test]
+    fn pressing_axis_cube_with_shift_held_starts_proportional_drag() {
+        // Pressing the per-axis midpoint cube while Shift is already
+        // held captures `proportional = true` immediately — the very
+        // first move applies the uniform formula, no toggle needed.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        let press = x_midpoint_press_screen(&ctrl);
+        ctrl.on_pointer_down(press.0, press.1, shift_held());
+        match ctrl.gizmo.get() {
+            GizmoState::Drag {
+                op: DragOp::ScaleAxis {
+                    axis, proportional, ..
+                },
+                ..
+            } => {
+                assert_eq!(axis, Axis::X);
+                assert!(
+                    proportional,
+                    "proportional must capture from press-time Shift state"
+                );
+            }
+            other => panic!("expected Drag(ScaleAxis, X, proportional=true), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pressing_axis_cube_without_shift_starts_per_axis_drag() {
+        // Sanity check the inverse: no Shift → per-axis (proportional
+        // = false). Pins the default so a future regression that
+        // captures stale modifier state surfaces here.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        let press = x_midpoint_press_screen(&ctrl);
+        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        match ctrl.gizmo.get() {
+            GizmoState::Drag {
+                op: DragOp::ScaleAxis { proportional, .. },
+                ..
+            } => assert!(
+                !proportional,
+                "no Shift at press → proportional must be false"
+            ),
+            other => panic!("expected Drag(ScaleAxis, .., proportional=false), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shift_toggle_during_axis_scale_flips_to_uniform_formula() {
+        // Press without Shift → per-axis drag, move to grow X. Then
+        // press Shift on a subsequent move: re-anchor (running
+        // transform preserved). A *further* move with Shift held
+        // exercises the uniform formula — its `diag(f, f, f)`
+        // composes onto the captured running transform, so Y and Z
+        // both pick up the same `f` factor while X picks up an extra
+        // `f` on top of the per-axis stretch baked in by the first
+        // move.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        let press = x_midpoint_press_screen(&ctrl);
+
+        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        let move_no_shift = (press.0 + 20.0, press.1);
+        ctrl.on_pointer_move(move_no_shift.0, move_no_shift.1, no_mods());
+        let m_axis = read_linear(&ctrl);
+        assert!(
+            m_axis[0][0] > 1.0 + 1e-3,
+            "X should have grown, got m[0][0]={}",
+            m_axis[0][0]
+        );
+        assert_approx_eq!(f64, m_axis[1][1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f64, m_axis[2][2], 1.0, epsilon = 1e-6);
+
+        // Shift toggles on at the same cursor position — re-anchors
+        // without changing the running transform.
+        let toggle = (move_no_shift.0, move_no_shift.1);
+        ctrl.on_pointer_move(toggle.0, toggle.1, shift_held());
+
+        // Move further with Shift held — uniform formula runs against
+        // the re-anchored press at `toggle`.
+        let further = (toggle.0 + 20.0, toggle.1);
+        ctrl.on_pointer_move(further.0, further.1, shift_held());
+        let m_uniform = read_linear(&ctrl);
+
+        // Uniform formula → Y and Z scale by the same factor.
+        assert_approx_eq!(f64, m_uniform[1][1], m_uniform[2][2], epsilon = 1e-4);
+        // Both moved away from 1.0 (the formula did something).
+        assert!(
+            (m_uniform[1][1] - 1.0).abs() > 1e-3,
+            "Y should have scaled under uniform formula, got m[1][1]={}",
+            m_uniform[1][1]
+        );
+        // X carries the per-axis stretch on top of the uniform factor,
+        // so it differs from Y/Z.
+        assert!(
+            (m_uniform[0][0] - m_uniform[1][1]).abs() > 1e-3,
+            "X should differ from Y under uniform-after-per-axis: m[0][0]={} m[1][1]={}",
+            m_uniform[0][0],
+            m_uniform[1][1]
+        );
+    }
+
+    #[test]
+    fn shift_toggle_does_not_snap_running_transform() {
+        // Re-anchoring on a Shift toggle must preserve the running
+        // transform on the toggling frame: the scene's transform
+        // immediately after the toggle move equals the running
+        // transform from immediately before.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        let press = x_midpoint_press_screen(&ctrl);
+
+        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        let move1 = (press.0 + 20.0, press.1);
+        ctrl.on_pointer_move(move1.0, move1.1, no_mods());
+        let before_toggle = read_linear(&ctrl);
+        let translation_before = read_translation(&ctrl);
+
+        // Same cursor position, Shift toggles on. Re-anchor must
+        // preserve the running transform — a "toggle without cursor
+        // motion" is the easiest snap-bug to write a test for.
+        ctrl.on_pointer_move(move1.0, move1.1, shift_held());
+        let after_toggle = read_linear(&ctrl);
+        let translation_after = read_translation(&ctrl);
+
+        for r in 0..3 {
+            for c in 0..3 {
+                assert_approx_eq!(f64, after_toggle[r][c], before_toggle[r][c], epsilon = 1e-4);
+            }
+        }
+        assert_approx_eq!(
+            f32,
+            translation_after.x,
+            translation_before.x,
+            epsilon = 1e-4
+        );
+        assert_approx_eq!(
+            f32,
+            translation_after.y,
+            translation_before.y,
+            epsilon = 1e-4
+        );
+        assert_approx_eq!(
+            f32,
+            translation_after.z,
+            translation_before.z,
+            epsilon = 1e-4
+        );
+    }
+
+    #[test]
+    fn shift_toggle_off_returns_to_per_axis_formula() {
+        // Press with Shift held → uniform. Move once. Release Shift on
+        // the next move (re-anchor again) → per-axis formula should
+        // resume on subsequent moves: only X scales relative to the
+        // new anchor, while Y and Z stay at the value frozen at the
+        // toggle.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        let press = x_midpoint_press_screen(&ctrl);
+
+        // Start uniform.
+        ctrl.on_pointer_down(press.0, press.1, shift_held());
+        let move1 = (press.0 + 20.0, press.1);
+        ctrl.on_pointer_move(move1.0, move1.1, shift_held());
+
+        // Release Shift — re-anchor. Frozen Y/Z factors persist.
+        ctrl.on_pointer_move(move1.0, move1.1, no_mods());
+        let frozen = read_linear(&ctrl);
+
+        // Move further along X — only m[0][0] should change.
+        let move2 = (move1.0 + 10.0, move1.1);
+        ctrl.on_pointer_move(move2.0, move2.1, no_mods());
+        let after = read_linear(&ctrl);
+
+        assert!(
+            (after[0][0] - frozen[0][0]).abs() > 1e-3,
+            "X should have scaled further: frozen={} after={}",
+            frozen[0][0],
+            after[0][0]
+        );
+        assert_approx_eq!(f64, after[1][1], frozen[1][1], epsilon = 1e-4);
+        assert_approx_eq!(f64, after[2][2], frozen[2][2], epsilon = 1e-4);
     }
 }
 
@@ -1759,6 +2122,10 @@ mod apply_drag_move_tests {
         let op = DragOp::ScaleAxis {
             axis: Axis::X,
             start_anchor: Vec3::new(1.0, 0.0, 0.0),
+            proportional: false,
+            // Unused in the per-axis branch — supply zeros.
+            press_screen: (0.0, 0.0),
+            pivot_screen: (0.0, 0.0),
         };
         let ray = ray_from(Vec3::new(2.0, -3.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
         let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
@@ -1768,6 +2135,33 @@ mod apply_drag_move_tests {
         assert_approx_eq!(f64, m[2][2], 1.0, epsilon = 1e-6);
         let translation = read_translation_t(&new_t);
         assert_approx_eq!(f64, translation[0], 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn scale_axis_op_with_proportional_uses_uniform_formula() {
+        // Same `ScaleAxis` op — the only difference is the
+        // `proportional` flag. With it set, the formula is the uniform
+        // one: factor = current_dist / press_dist in screen pixels.
+        // Press at 50 px from pivot, current at 100 px → factor 2.
+        let pivot = pivot_origin();
+        let original = Transform3D::Identity;
+        let op = DragOp::ScaleAxis {
+            axis: Axis::X,
+            // `start_anchor` becomes irrelevant in the proportional
+            // branch — supply something out-of-range to make the
+            // contrast visible if a regression flips the dispatch
+            // back to the per-axis formula.
+            start_anchor: Vec3::new(99.0, 0.0, 0.0),
+            proportional: true,
+            press_screen: (150.0, 100.0),
+            pivot_screen: (100.0, 100.0),
+        };
+        let ray = ray_from(Vec3::new(0.0, -3.0, 0.0), Vec3::ZERO);
+        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 200.0, 100.0).unwrap();
+        let m = read_linear(&new_t);
+        assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[2][2], 2.0, epsilon = 1e-4);
     }
 
     #[test]

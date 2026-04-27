@@ -6,12 +6,12 @@
 import { Palette } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
-import { AxisView, MeshViewer } from "./mesh-viewer.slint";
+import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { ObjectListPanel } from "./object-list-panel.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 
-export { AboutWindow, AxisView, ErrorDialog, PreferencesWindow, ThemePreference }
+export { AboutWindow, AxisView, ErrorDialog, PointerModifiers, PreferencesWindow, ThemePreference }
 
 // Resize handle between the viewport and the object-list panel. Tracks
 // the cursor in absolute window coordinates so the splitter remains
@@ -94,9 +94,9 @@ export component MainWindow inherits Window {
     callback frame-view-requested();
     callback axis-view-requested(AxisView);
     callback object-list-selection-changed(int);
-    callback viewport-pointer-down(length, length);
-    callback viewport-pointer-move(length, length);
-    callback viewport-pointer-up(length, length);
+    callback viewport-pointer-down(length, length, PointerModifiers);
+    callback viewport-pointer-move(length, length, PointerModifiers);
+    callback viewport-pointer-up(length, length, PointerModifiers);
     callback selection-cleared();
 
     MenuBar {
@@ -253,14 +253,14 @@ export component MainWindow inherits Window {
             axis-view-requested(view) => {
                 root.axis-view-requested(view);
             }
-            viewport-pointer-down(x, y) => {
-                root.viewport-pointer-down(x, y);
+            viewport-pointer-down(x, y, modifiers) => {
+                root.viewport-pointer-down(x, y, modifiers);
             }
-            viewport-pointer-move(x, y) => {
-                root.viewport-pointer-move(x, y);
+            viewport-pointer-move(x, y, modifiers) => {
+                root.viewport-pointer-move(x, y, modifiers);
             }
-            viewport-pointer-up(x, y) => {
-                root.viewport-pointer-up(x, y);
+            viewport-pointer-up(x, y, modifiers) => {
+                root.viewport-pointer-up(x, y, modifiers);
             }
             selection-cleared() => {
                 root.selection-cleared();

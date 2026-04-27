@@ -14,6 +14,18 @@ export enum AxisView {
     Bottom,
 }
 
+// Snapshot of keyboard modifier state at the moment of a pointer event.
+// Carried alongside the cursor coordinates on every viewport-pointer
+// callback so the controller's drag FSM can read modifier state inline
+// (Slint's `moved` callback alone does not carry modifiers, so the move
+// path is dispatched through `pointer-event(Move)` instead).
+export struct PointerModifiers {
+    shift: bool,
+    control: bool,
+    alt: bool,
+    meta: bool,
+}
+
 export component MeshViewer inherits Rectangle {
     in property <image> rendering;
     in property <string> placeholder-text: "";
@@ -39,9 +51,9 @@ export component MeshViewer inherits Rectangle {
     // gesture is active). The Rust side decides whether a press →
     // release was a "click" (small movement) or a "drag", so this
     // callback set is finer-grained than Slint's built-in `clicked`.
-    callback viewport-pointer-down(length, length);
-    callback viewport-pointer-move(length, length);
-    callback viewport-pointer-up(length, length);
+    callback viewport-pointer-down(length, length, PointerModifiers);
+    callback viewport-pointer-move(length, length, PointerModifiers);
+    callback viewport-pointer-up(length, length, PointerModifiers);
     callback selection-cleared();
 
     accessible-role: image;
@@ -174,7 +186,12 @@ export component MeshViewer inherits Rectangle {
                     root.last-y = ta.mouse-y;
                     if (event.button == PointerEventButton.left) {
                         root.left-pressed = true;
-                        root.viewport-pointer-down(ta.mouse-x, ta.mouse-y);
+                        root.viewport-pointer-down(ta.mouse-x, ta.mouse-y, {
+                            shift: event.modifiers.shift,
+                            control: event.modifiers.control,
+                            alt: event.modifiers.alt,
+                            meta: event.modifiers.meta,
+                        });
                     } else if (event.button == PointerEventButton.right) {
                         root.active-gesture = event.modifiers.shift ? 2 : 1;
                     } else if (event.button == PointerEventButton.middle) {
@@ -183,10 +200,30 @@ export component MeshViewer inherits Rectangle {
                 } else if (event.kind == PointerEventKind.up) {
                     if (event.button == PointerEventButton.left) {
                         root.left-pressed = false;
-                        root.viewport-pointer-up(ta.mouse-x, ta.mouse-y);
+                        root.viewport-pointer-up(ta.mouse-x, ta.mouse-y, {
+                            shift: event.modifiers.shift,
+                            control: event.modifiers.control,
+                            alt: event.modifiers.alt,
+                            meta: event.modifiers.meta,
+                        });
                     } else if (event.button == PointerEventButton.right || event.button == PointerEventButton.middle) {
                         root.active-gesture = 0;
                     }
+                } else if (event.kind == PointerEventKind.move && root.left-pressed && root.active-gesture == 0) {
+                    // Camera gestures (right/middle drag) take priority
+                    // over a left-press, so the pointer-move stream is
+                    // suppressed while the camera is moving even if
+                    // both buttons are held simultaneously. The Move
+                    // case lives in `pointer-event` (not `moved`)
+                    // because only `pointer-event` carries the
+                    // `event.modifiers` snapshot the controller's drag
+                    // FSM needs to read the Shift state inline.
+                    root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
+                        shift: event.modifiers.shift,
+                        control: event.modifiers.control,
+                        alt: event.modifiers.alt,
+                        meta: event.modifiers.meta,
+                    });
                 }
             }
 
@@ -199,12 +236,6 @@ export component MeshViewer inherits Rectangle {
                     root.pan-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
                     root.last-x = ta.mouse-x;
                     root.last-y = ta.mouse-y;
-                } else if (root.left-pressed) {
-                    // Camera gestures (right/middle drag) take priority
-                    // over a left-press, so the pointer-move stream is
-                    // suppressed while the camera is moving even if
-                    // both buttons are held simultaneously.
-                    root.viewport-pointer-move(ta.mouse-x, ta.mouse-y);
                 }
             }
 
