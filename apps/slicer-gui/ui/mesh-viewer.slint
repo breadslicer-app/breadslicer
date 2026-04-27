@@ -20,6 +20,11 @@ export component MeshViewer inherits Rectangle {
 
     // 0 = none, 1 = rotating, 2 = panning
     property <int> active-gesture: 0;
+    // Whether the left button is currently pressed (for selection /
+    // gizmo drag — see the pointer-down/move/up callbacks). Tracked
+    // separately from `active-gesture` so a left-press doesn't stop
+    // the user from also right-dragging to rotate the camera.
+    property <bool> left-pressed: false;
     property <length> last-x;
     property <length> last-y;
 
@@ -29,7 +34,14 @@ export component MeshViewer inherits Rectangle {
     callback zoom-at(length, length, length);
     callback frame-view-requested();
     callback axis-view-requested(AxisView);
-    callback viewport-clicked(length, length);
+    // Left-button events. `down` fires on press, `up` on release;
+    // `move` fires while the left button is held (and no camera
+    // gesture is active). The Rust side decides whether a press →
+    // release was a "click" (small movement) or a "drag", so this
+    // callback set is finer-grained than Slint's built-in `clicked`.
+    callback viewport-pointer-down(length, length);
+    callback viewport-pointer-move(length, length);
+    callback viewport-pointer-up(length, length);
     callback selection-cleared();
 
     accessible-role: image;
@@ -155,39 +167,44 @@ export component MeshViewer inherits Rectangle {
             height: parent.height;
             mouse-cursor: root.active-gesture == 1 ? MouseCursor.grabbing : (root.active-gesture == 2 ? MouseCursor.move : MouseCursor.default);
 
-            // TouchArea.clicked fires on a clean left-button up that
-            // followed a left-button down on this area without a drag,
-            // so the existing right/middle drag gestures are unaffected.
-            clicked => {
-                root.viewport-clicked(self.mouse-x, self.mouse-y);
-            }
-
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     fs.focus();
                     root.last-x = ta.mouse-x;
                     root.last-y = ta.mouse-y;
-                    if (event.button == PointerEventButton.right) {
+                    if (event.button == PointerEventButton.left) {
+                        root.left-pressed = true;
+                        root.viewport-pointer-down(ta.mouse-x, ta.mouse-y);
+                    } else if (event.button == PointerEventButton.right) {
                         root.active-gesture = event.modifiers.shift ? 2 : 1;
                     } else if (event.button == PointerEventButton.middle) {
                         root.active-gesture = 2;
                     }
                 } else if (event.kind == PointerEventKind.up) {
-                    if (event.button == PointerEventButton.right || event.button == PointerEventButton.middle) {
+                    if (event.button == PointerEventButton.left) {
+                        root.left-pressed = false;
+                        root.viewport-pointer-up(ta.mouse-x, ta.mouse-y);
+                    } else if (event.button == PointerEventButton.right || event.button == PointerEventButton.middle) {
                         root.active-gesture = 0;
                     }
                 }
             }
 
             moved => {
-                if (root.active-gesture != 0) {
-                    if (root.active-gesture == 1) {
-                        root.rotate-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
-                    } else if (root.active-gesture == 2) {
-                        root.pan-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
-                    }
+                if (root.active-gesture == 1) {
+                    root.rotate-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
                     root.last-x = ta.mouse-x;
                     root.last-y = ta.mouse-y;
+                } else if (root.active-gesture == 2) {
+                    root.pan-drag(ta.mouse-x - root.last-x, ta.mouse-y - root.last-y);
+                    root.last-x = ta.mouse-x;
+                    root.last-y = ta.mouse-y;
+                } else if (root.left-pressed) {
+                    // Camera gestures (right/middle drag) take priority
+                    // over a left-press, so the pointer-move stream is
+                    // suppressed while the camera is moving even if
+                    // both buttons are held simultaneously.
+                    root.viewport-pointer-move(ta.mouse-x, ta.mouse-y);
                 }
             }
 

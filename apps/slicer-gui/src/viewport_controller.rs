@@ -36,6 +36,12 @@ pub struct ViewportController {
     // selection tint and the outline pass); the translate gizmo will
     // attach to it once wired.
     selection: Cell<Option<usize>>,
+    // Logical-pixel position at which the left button was last
+    // pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
+    // `on_pointer_up` reads it to decide whether the gesture was a
+    // click (small movement → run picker) or a drag (large movement →
+    // ignored for now; the gizmo FSM will consume it once wired).
+    press_origin: Cell<Option<(f32, f32)>>,
     loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
@@ -56,6 +62,13 @@ const RESIZE_BUCKET: u32 = 64;
 // pixel sizing.
 pub(crate) const RESIZE_SETTLE: core::time::Duration = core::time::Duration::from_millis(200);
 
+// Maximum logical-pixel distance between a left-button press and its
+// release for the gesture to count as a click rather than a drag.
+// 4 px is roughly two-finger-on-trackpad jitter; tighter than this and
+// users with imprecise pointers fail to select; looser and stationary
+// clicks bleed into starts-of-drags.
+const CLICK_DRAG_THRESHOLD: f32 = 4.0;
+
 impl ViewportController {
     pub fn new(ui: &MainWindow) -> Self {
         let dialogs = DialogManager::new();
@@ -68,6 +81,7 @@ impl ViewportController {
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
             selection: Cell::new(None),
+            press_origin: Cell::new(None),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -92,6 +106,7 @@ impl ViewportController {
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
             selection: Cell::new(None),
+            press_origin: Cell::new(None),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -301,12 +316,42 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Left-click in the viewport at logical coords `(x, y)`.
-    /// Constructs a world-space ray from the click position, picks the
-    /// nearest object whose front face the ray intersects, and updates
-    /// the selection. A miss clears the selection (so clicking on
-    /// empty space deselects, matching the Esc-key path).
-    pub fn on_viewport_click(&self, x: f32, y: f32) {
+    /// Left button pressed at logical coords `(x, y)`. Records the
+    /// press position so `on_pointer_up` can disambiguate click from
+    /// drag. The gizmo FSM (when wired) will consume this to enter
+    /// drag state if a handle is hit.
+    pub fn on_pointer_down(&self, x: f32, y: f32) {
+        self.press_origin.set(Some((x, y)));
+    }
+
+    /// Pointer moved while the left button is held and no camera
+    /// gesture is active. No-op for now; the gizmo FSM will consume
+    /// this stream to update an in-progress drag.
+    pub fn on_pointer_move(&self, _x: f32, _y: f32) {}
+
+    /// Left button released at logical coords `(x, y)`. If the
+    /// release sits within `CLICK_DRAG_THRESHOLD` of the press
+    /// position the gesture is treated as a click and dispatched
+    /// through the picker (same selection / deselection semantics as
+    /// before). A drag is currently dropped on the floor; the gizmo
+    /// FSM will pick it up.
+    pub fn on_pointer_up(&self, x: f32, y: f32) {
+        let Some((px, py)) = self.press_origin.take() else {
+            // Up without a matching down — defensive, can happen if a
+            // press was captured by another control before reaching us.
+            return;
+        };
+        let dx = x - px;
+        let dy = y - py;
+        if dx * dx + dy * dy <= CLICK_DRAG_THRESHOLD * CLICK_DRAG_THRESHOLD {
+            self.run_pick_at(x, y);
+        }
+    }
+
+    /// Picker dispatch: build the ray at `(x, y)`, run `pick_object`,
+    /// update the selection. Bails on missing camera / scene / zero
+    /// viewport.
+    fn run_pick_at(&self, x: f32, y: f32) {
         let (w, h) = self.viewport.get();
         if w <= 0.0 || h <= 0.0 {
             return;
@@ -743,14 +788,14 @@ mod selection_tests {
 
     #[test]
     fn viewport_click_with_no_camera_is_a_no_op() {
-        // The picker requires a camera. If `on_viewport_click` runs
-        // before the first `RenderingSetup` (or after a teardown that
-        // dropped the camera), we expect no panic and no selection
-        // change.
+        // The picker requires a camera. If a click runs before the
+        // first `RenderingSetup` (or after a teardown that dropped
+        // the camera), we expect no panic and no selection change.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(scene_with_n_objects(1));
         // No camera installed.
-        ctrl.on_viewport_click(50.0, 50.0);
+        ctrl.on_pointer_down(50.0, 50.0);
+        ctrl.on_pointer_up(50.0, 50.0);
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -761,7 +806,19 @@ mod selection_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(scene_with_n_objects(1));
         // viewport defaults to (0.0, 0.0)
-        ctrl.on_viewport_click(0.0, 0.0);
+        ctrl.on_pointer_down(0.0, 0.0);
+        ctrl.on_pointer_up(0.0, 0.0);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn pointer_up_without_matching_down_is_ignored() {
+        // Defensive: if Slint somehow sends an up without a down (a
+        // press captured elsewhere, or our state out of sync), the
+        // controller must not run the picker against an unset press.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        ctrl.on_pointer_up(50.0, 50.0);
         assert_eq!(ctrl.selection(), None);
     }
 }
@@ -830,7 +887,8 @@ mod viewport_click_tests {
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.viewport.set((200.0, 100.0));
 
-        ctrl.on_viewport_click(100.0, 50.0);
+        ctrl.on_pointer_down(100.0, 50.0);
+        ctrl.on_pointer_up(100.0, 50.0);
         assert_eq!(ctrl.selection(), Some(0));
     }
 
@@ -851,7 +909,51 @@ mod viewport_click_tests {
         assert_eq!(ctrl.selection(), Some(0));
 
         // Click at the corner — no triangle there.
-        ctrl.on_viewport_click(0.0, 0.0);
+        ctrl.on_pointer_down(0.0, 0.0);
+        ctrl.on_pointer_up(0.0, 0.0);
         assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn drag_does_not_run_the_picker() {
+        // A press → release with movement larger than the click
+        // threshold is a drag, which is currently dropped on the
+        // floor (the gizmo FSM will consume it once wired). It must
+        // not hand off to the picker — that would let large pointer
+        // moves change the selection.
+        let ctrl = ViewportController::new_for_test();
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
+        };
+        ctrl.install_scene_for_test(scene);
+        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        ctrl.viewport.set((200.0, 100.0));
+
+        // Press over the triangle, release 50 px away → drag.
+        ctrl.on_pointer_down(100.0, 50.0);
+        ctrl.on_pointer_up(150.0, 50.0);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn jitter_within_threshold_still_counts_as_a_click() {
+        // A press → release that moves only a few subpixels
+        // (trackpad jitter, debounced finger lift) must still be
+        // treated as a click. Threshold is 4 logical pixels.
+        let ctrl = ViewportController::new_for_test();
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
+        };
+        ctrl.install_scene_for_test(scene);
+        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        ctrl.viewport.set((200.0, 100.0));
+
+        ctrl.on_pointer_down(100.0, 50.0);
+        ctrl.on_pointer_up(101.5, 51.5);
+        assert_eq!(ctrl.selection(), Some(0));
     }
 }
