@@ -16,6 +16,7 @@ use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::i18n::ctr;
 use crate::mesh_render::{Renderer, default_fov_y};
+use crate::picking;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 
 pub struct ViewportController {
@@ -302,12 +303,34 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Left-click in the viewport at logical coords `(x, y)`. Phase B
-    /// step 3 will replace this stub with a ray-pick. For step 1, the
-    /// click round-trip is wired but does nothing visible, so the rest
-    /// of the surface (scene, camera, list panel) can be exercised
-    /// without picking.
-    pub fn on_viewport_click(&self, _x: f32, _y: f32) {}
+    /// Left-click in the viewport at logical coords `(x, y)`.
+    /// Constructs a world-space ray from the click position, picks the
+    /// nearest object whose front face the ray intersects, and updates
+    /// the selection. A miss clears the selection (so clicking on
+    /// empty space deselects, matching the Esc-key path).
+    pub fn on_viewport_click(&self, x: f32, y: f32) {
+        let (w, h) = self.viewport.get();
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let pick = {
+            let camera_slot = self.camera.borrow();
+            let Some(camera) = camera_slot.as_ref() else {
+                return;
+            };
+            let scene_slot = self.scene.borrow();
+            let Some(scene) = scene_slot.as_ref() else {
+                return;
+            };
+            let ray = picking::ray_from_pixel(camera, default_fov_y(), w, h, x, y);
+            picking::pick_object(&ray, scene)
+            // borrows drop here so the selection setters can re-borrow
+        };
+        match pick {
+            Some(idx) => self.on_select_by_index(idx),
+            None => self.on_clear_selection(),
+        }
+    }
 
     fn mirror_selection_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
@@ -714,13 +737,116 @@ mod selection_tests {
     }
 
     #[test]
-    fn viewport_click_does_not_select_in_phase_b_step_1() {
-        // Step 1's viewport-click is a stub: the round-trip exists but
-        // picks nothing. Step 3 replaces the body with a real ray-pick;
-        // pinning the current behaviour here means the swap is loud.
+    fn viewport_click_with_no_camera_is_a_no_op() {
+        // The picker requires a camera. If `on_viewport_click` runs
+        // before the first `RenderingSetup` (or after a teardown that
+        // dropped the camera), we expect no panic and no selection
+        // change.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        // No camera installed.
         ctrl.on_viewport_click(50.0, 50.0);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn viewport_click_with_zero_viewport_is_a_no_op() {
+        // Width/height of zero means we have no projection to build a
+        // ray from. Bail rather than divide-by-zeroing.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        // viewport defaults to (0.0, 0.0)
+        ctrl.on_viewport_click(0.0, 0.0);
+        assert_eq!(ctrl.selection(), None);
+    }
+}
+
+#[cfg(test)]
+mod viewport_click_tests {
+    use super::*;
+    use crate::camera::OrbitCamera;
+    use glam::Vec3;
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::transform::AffineTransform3D;
+
+    fn front_facing_triangle_at(translation: [f32; 3]) -> SceneObject {
+        // CCW from +Z → front face faces +Z.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([-0.5, -0.5, 0.0]),
+                Vertex::new([0.5, -0.5, 0.0]),
+                Vertex::new([0.0, 0.5, 0.0]),
+            ],
+            faces: vec![IndexedTriangle {
+                normal: Normal::new([0.0, 0.0, 1.0]),
+                vertices: [0, 1, 2],
+            }],
+        };
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Affine(AffineTransform3D::from_translation([
+                translation[0] as f64,
+                translation[1] as f64,
+                translation[2] as f64,
+            ])),
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    /// Camera looking at a target along `-Z` from `+Z` so the centre
+    /// of the viewport projects onto the world-space line `x = tx,
+    /// y = ty, z ∈ R`. Picking a triangle on that line via the centre
+    /// pixel is the cleanest way to exercise the ray pipeline
+    /// end-to-end.
+    fn camera_looking_down_minus_z_at(target: Vec3, distance: f32) -> OrbitCamera {
+        let mut cam = OrbitCamera::new(target, distance);
+        cam.set_axis_view(crate::camera::AxisView::Top);
+        cam
+    }
+
+    #[test]
+    fn click_centre_picks_the_triangle_directly_under_the_cursor() {
+        let ctrl = ViewportController::new_for_test();
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                front_facing_triangle_at([0.0, 0.0, 0.0]),
+                front_facing_triangle_at([10.0, 0.0, 0.0]),
+            ],
+        };
+        ctrl.install_scene_for_test(scene);
+
+        // Camera framed on the first triangle, looking down -Z.
+        // Centre pixel of the viewport casts a ray straight at it.
+        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        ctrl.viewport.set((200.0, 100.0));
+
+        ctrl.on_viewport_click(100.0, 50.0);
+        assert_eq!(ctrl.selection(), Some(0));
+    }
+
+    #[test]
+    fn click_in_empty_space_clears_the_selection() {
+        let ctrl = ViewportController::new_for_test();
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
+        };
+        ctrl.install_scene_for_test(scene);
+        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        ctrl.viewport.set((200.0, 100.0));
+
+        // Pre-seed a selection so we can observe the clear.
+        ctrl.on_select_by_index(0);
+        assert_eq!(ctrl.selection(), Some(0));
+
+        // Click at the corner — no triangle there.
+        ctrl.on_viewport_click(0.0, 0.0);
         assert_eq!(ctrl.selection(), None);
     }
 }
