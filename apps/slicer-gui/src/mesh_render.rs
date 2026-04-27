@@ -481,7 +481,8 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(GIZMO_SHADER_SOURCE)),
         });
 
-        let (gizmo_vertices, gizmo_indices) = gizmo_geometry::build_axis_geometry();
+        let (gizmo_vertices, gizmo_indices, _shaft_tip_index_count) =
+            gizmo_geometry::build_axis_geometry();
         let gizmo_index_count = gizmo_indices.len() as u32;
         let gizmo_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh-viewer gizmo vbo"),

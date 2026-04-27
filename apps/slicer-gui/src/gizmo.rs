@@ -37,7 +37,9 @@ impl Axis {
 pub const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 
 /// Screen-pixel length of the gizmo shaft. Drives `gizmo_scale`.
-pub const HANDLE_PIXEL_LENGTH: f32 = 80.0;
+/// Sized to leave room for the per-axis midpoint cube *and* the cone
+/// tip without either occluding the other.
+pub const HANDLE_PIXEL_LENGTH: f32 = 120.0;
 
 /// Screen-pixel radius of the cylinder hit volume. The visual shaft
 /// is thinner than this — the hit cylinder is fattened so a click
@@ -86,22 +88,29 @@ pub const EPS_SCALE: f32 = 1e-3;
 /// Side length, in screen pixels, of the per-axis scale cube. The
 /// cube sits at the midpoint of the translate shaft (`scale * 0.5`)
 /// and is small enough to leave the cone tip clearly distinct.
-#[allow(dead_code)]
 pub const AXIS_SCALE_CUBE_PIXELS: f32 = 10.0;
 
 /// Side length, in screen pixels, of the centre cube driving the
 /// uniform-scale gesture. Sized larger than the per-axis cube so the
 /// pivot's handle reads as a single distinct target rather than a
 /// fourth axis.
-#[allow(dead_code)]
 pub const CENTRE_CUBE_PIXELS: f32 = 14.0;
 
 /// Fraction of the translate shaft length at which the scale-axis
 /// midpoint cube sits (`pivot + axis * scale * MIDPOINT_FRACTION`).
 /// Pinned at the *midpoint* — not the tip — so per-axis scale doesn't
 /// collide with the translate cone.
-#[allow(dead_code)]
 pub const MIDPOINT_FRACTION: f32 = 0.5;
+
+/// Tube (minor) radius of the rotate arc, in screen pixels. The
+/// matching world radius is derived per-frame from `gizmo_scale`.
+pub const ROTATE_ARC_TUBE_PIXELS: f32 = 3.0;
+
+/// Major (circle) radius of the rotate arc, expressed as a fraction
+/// of the translate shaft length. 0.85 keeps the arc inside the
+/// translate cone tip so the two handle types don't fight for the
+/// same screen pixels.
+pub const ROTATE_ARC_RADIUS_FRACTION: f32 = 0.85;
 
 /// World-space pivot for the gizmo: the local-AABB centre of the
 /// object, transformed by the object's `Transform3D`. Returns `None`
@@ -240,28 +249,23 @@ pub fn ray_hits_axis_handle(
     let sqrt_disc = disc.sqrt();
     let inv_2qa = 1.0 / (2.0 * qa);
 
-    // Two ray-cylinder intersection candidates; we want the smaller
-    // positive one (front face of the cylinder).
+    // Only the entry point (smaller root) counts. If the ray's
+    // origin sits inside the cylinder (`t0 ≤ 0 < t1`), the visible
+    // intersection ahead of the camera is the cylinder's *back wall*,
+    // not the front. Treating that as a hit lets the camera-on-axis
+    // case (e.g. Top view, where the eye sits on +Z) catch every
+    // click — the +Z handle would activate from anywhere on screen.
+    // Reject "from inside the handle" clicks; the user has to be
+    // outside the hit volume to grab a handle.
     let t0 = (-qb - sqrt_disc) * inv_2qa;
-    let t1 = (-qb + sqrt_disc) * inv_2qa;
-
-    let mut chosen: Option<f32> = None;
-    for &t in &[t0, t1] {
-        if t <= 0.0 {
-            continue;
-        }
-        // Verify the entry point sits within the finite shaft span.
-        let s = oc_dot_a + t * d_dot_a;
-        if s < 0.0 || s > length_world {
-            continue;
-        }
-        chosen = Some(match chosen {
-            Some(prev) if prev <= t => prev,
-            _ => t,
-        });
-        break;
+    if t0 <= 0.0 {
+        return None;
     }
-    chosen
+    let s = oc_dot_a + t0 * d_dot_a;
+    if s < 0.0 || s > length_world {
+        return None;
+    }
+    Some(t0)
 }
 
 /// Closest point on the infinite world-space line `pivot + t * axis`
