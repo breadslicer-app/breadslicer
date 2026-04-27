@@ -92,7 +92,29 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let ctrl = ctrl.clone();
         ui.on_frame_view_requested(move || ctrl.on_frame_view());
     }
-    ui.on_axis_view_requested(move |code| ctrl.on_axis_view(code));
+    {
+        let ctrl = ctrl.clone();
+        ui.on_axis_view_requested(move |code| ctrl.on_axis_view(code));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_object_list_selection_changed(move |idx| {
+            // Slint hands us an i32; clamp non-negative values into a
+            // usize for the controller. A negative idx means "no
+            // selection", which the controller models as `None` via
+            // `on_clear_selection` rather than via this callback.
+            if idx >= 0 {
+                ctrl.on_select_by_index(idx as usize);
+            } else {
+                ctrl.on_clear_selection();
+            }
+        });
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_viewport_clicked(move |x, y| ctrl.on_viewport_click(x, y));
+    }
+    ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
 
 fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {

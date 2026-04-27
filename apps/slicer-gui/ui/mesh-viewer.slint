@@ -29,6 +29,8 @@ export component MeshViewer inherits Rectangle {
     callback zoom-at(length, length, length);
     callback frame-view-requested();
     callback axis-view-requested(AxisView);
+    callback viewport-clicked(length, length);
+    callback selection-cleared();
 
     accessible-role: image;
     accessible-label: root.rendering.width == 0
@@ -76,6 +78,10 @@ export component MeshViewer inherits Rectangle {
         accessible-role: none;
 
         key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.selection-cleared();
+                return accept;
+            }
             if (event.text == Key.Home || event.text == "f" || event.text == "F") {
                 root.frame-view-requested();
                 return accept;
@@ -148,6 +154,13 @@ export component MeshViewer inherits Rectangle {
             width: parent.width;
             height: parent.height;
             mouse-cursor: root.active-gesture == 1 ? MouseCursor.grabbing : (root.active-gesture == 2 ? MouseCursor.move : MouseCursor.default);
+
+            // TouchArea.clicked fires on a clean left-button up that
+            // followed a left-button down on this area without a drag,
+            // so the existing right/middle drag gestures are unaffected.
+            clicked => {
+                root.viewport-clicked(self.mouse-x, self.mouse-y);
+            }
 
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {

@@ -1,0 +1,73 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Palette, StandardListView } from "std-widgets.slint";
+
+export component ObjectListPanel inherits Rectangle {
+    in property <[StandardListViewItem]> model: [];
+    in-out property <int> selected-index: -1;
+    callback selection-changed(int);
+
+    background: Palette.background.darker(0.15);
+    border-color: Palette.border;
+    border-width: 1px;
+
+    accessible-role: list;
+    accessible-label: @tr("ObjectList" => "Scene objects");
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // Header row. Distinct background so the panel reads as
+        // "title + content" rather than a single block.
+        Rectangle {
+            height: 32px;
+            background: Palette.background.darker(0.3);
+
+            Text {
+                x: 12px;
+                y: 0;
+                width: parent.width - 24px;
+                height: parent.height;
+                vertical-alignment: center;
+                font-weight: 600;
+                color: Palette.foreground;
+                text: @tr("ObjectList" => "Scene Objects");
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+
+        // Empty-state placeholder. Shown when the scene has zero
+        // objects (rare but possible — e.g. the loader currently
+        // strips empty meshes silently elsewhere). Gives the panel a
+        // hint about its purpose instead of an empty rectangle.
+        if (root.model.length == 0): Rectangle {
+            vertical-stretch: 1;
+
+            Text {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                color: Palette.foreground.transparentize(0.4);
+                text: @tr("ObjectList" => "No objects to display");
+                accessible-role: text;
+            }
+        }
+
+        if (root.model.length > 0): StandardListView {
+            vertical-stretch: 1;
+            model: root.model;
+            current-item <=> root.selected-index;
+            current-item-changed(idx) => {
+                root.selection-changed(idx);
+            }
+        }
+    }
+}

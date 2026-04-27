@@ -9,6 +9,7 @@ use std::rc::Rc;
 use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
+use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
 use crate::MainWindow;
 use crate::camera::{AxisView, OrbitCamera};
@@ -28,6 +29,11 @@ pub struct ViewportController {
     viewport: Cell<(f32, f32)>,
     dirty: Cell<bool>,
     needs_upload: Cell<bool>,
+    // Index into `scene.objects` of the single currently-selected
+    // object, or `None` if nothing is selected. The renderer reads this
+    // when writing per-frame model entries (Phase B+) and the gizmo will
+    // attach to it (Phase C+).
+    selection: Cell<Option<usize>>,
     loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
@@ -59,10 +65,40 @@ impl ViewportController {
             viewport: Cell::new((0.0, 0.0)),
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
+            selection: Cell::new(None),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
         }
+    }
+
+    /// Constructor for selection-FSM unit tests. The stored `Weak` is
+    /// dangling, so every `ui.upgrade()` returns `None` and the
+    /// UI-mirroring side effects (`set_selected_object_index`,
+    /// `set_object_list`, `request_redraw`) silently skip — leaving the
+    /// in-Rust selection cell, scene cell, and dirty flag as the only
+    /// observable state. This matches `SceneLoader::new_for_test`.
+    #[cfg(test)]
+    pub(crate) fn new_for_test() -> Self {
+        let dialogs = DialogManager::new();
+        Self {
+            ui: slint::Weak::default(),
+            renderer: RefCell::new(None),
+            scene: RefCell::new(None),
+            camera: RefCell::new(None),
+            viewport: Cell::new((0.0, 0.0)),
+            dirty: Cell::new(false),
+            needs_upload: Cell::new(false),
+            selection: Cell::new(None),
+            loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
+            resizing: Cell::new(false),
+            dialogs,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_scene_for_test(&self, scene: Scene) {
+        *self.scene.borrow_mut() = Some(scene);
     }
 
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
@@ -150,12 +186,15 @@ impl ViewportController {
         *self.camera.borrow_mut() = None;
         self.needs_upload.set(false);
         self.dirty.set(false);
+        self.selection.set(None);
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.clear_scene();
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_mesh_rendering(slint::Image::default());
             ui.set_has_scene(false);
+            push_object_list(&ui, Vec::new());
+            ui.set_selected_object_index(-1);
         }
     }
 
@@ -183,6 +222,9 @@ impl ViewportController {
 
         *self.camera.borrow_mut() = None;
         *self.scene.borrow_mut() = Some(scene);
+        // A new scene has its own object indices; any prior selection
+        // referred to the previous scene and is no longer meaningful.
+        self.selection.set(None);
         // If install succeeded, the buffers are already on the GPU; no
         // upload owed. Otherwise, defer to the recovery upload path.
         self.needs_upload.set(!scene_installed);
@@ -205,8 +247,76 @@ impl ViewportController {
 
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
+            let names = self
+                .scene
+                .borrow()
+                .as_ref()
+                .map(build_object_list_names)
+                .unwrap_or_default();
+            push_object_list(&ui, names);
+            ui.set_selected_object_index(-1);
         }
         self.mark_dirty();
+    }
+
+    /// Selection, in the controller's authoritative form. Tests use
+    /// this to assert FSM transitions; the renderer will read it later
+    /// in Phase B (step 4 — tint highlight) when writing per-frame
+    /// model entries.
+    #[cfg(test)]
+    pub(crate) fn selection(&self) -> Option<usize> {
+        self.selection.get()
+    }
+
+    /// Slint-side selection-changed callback. Out-of-bounds indices map
+    /// to `None` (defensive — the UI shouldn't normally hand us one,
+    /// but a stale callback can race with a scene reload). The Cell
+    /// guard short-circuits the round-trip so the mirror-back to the UI
+    /// doesn't fire `selection-changed` again.
+    pub fn on_select_by_index(&self, idx: usize) {
+        let scene_len = self
+            .scene
+            .borrow()
+            .as_ref()
+            .map(|s| s.objects.len())
+            .unwrap_or(0);
+        let new_sel = if idx < scene_len { Some(idx) } else { None };
+        if self.selection.get() == new_sel {
+            return;
+        }
+        self.selection.set(new_sel);
+        self.mirror_selection_to_ui();
+        self.mark_dirty();
+    }
+
+    /// Esc / "click on empty space" path. Always sets selection to
+    /// `None` and mirrors back. The dirty-flag fires a redraw so the
+    /// renderer can drop the highlight (once tinting lands later in
+    /// Phase B).
+    pub fn on_clear_selection(&self) {
+        if self.selection.get().is_none() {
+            return;
+        }
+        self.selection.set(None);
+        self.mirror_selection_to_ui();
+        self.mark_dirty();
+    }
+
+    /// Left-click in the viewport at logical coords `(x, y)`. Phase B
+    /// step 3 will replace this stub with a ray-pick. For step 1, the
+    /// click round-trip is wired but does nothing visible, so the rest
+    /// of the surface (scene, camera, list panel) can be exercised
+    /// without picking.
+    pub fn on_viewport_click(&self, _x: f32, _y: f32) {}
+
+    fn mirror_selection_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let idx = match self.selection.get() {
+                Some(i) => i as i32,
+                None => -1,
+            };
+            ui.set_selected_object_index(idx);
+        }
     }
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
@@ -339,5 +449,278 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
         crate::AxisView::Left => AxisView::Left,
         crate::AxisView::Top => AxisView::Top,
         crate::AxisView::Bottom => AxisView::Bottom,
+    }
+}
+
+/// Display names for the object-list panel. Falls back to a localised
+/// `Object N` (1-indexed) when an object has no `SceneMetadata.name`,
+/// then disambiguates duplicates with a `(2)` / `(3)` suffix on every
+/// repeat (the first occurrence stays bare). O(N²) on object count;
+/// fine for slicer-typical scenes (tens of objects). Pure helper so it
+/// can be unit-tested without a `MainWindow`.
+fn build_object_list_names(scene: &Scene) -> Vec<String> {
+    let raw: Vec<String> = scene
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(i, obj)| {
+            obj.meta
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .unwrap_or_else(|| ctr!("ObjectList", "Object {}", i + 1).to_string())
+        })
+        .collect();
+
+    raw.iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let total = raw.iter().filter(|n| n.as_str() == name.as_str()).count();
+            if total < 2 {
+                name.clone()
+            } else {
+                let nth = raw
+                    .iter()
+                    .take(i + 1)
+                    .filter(|n| n.as_str() == name.as_str())
+                    .count();
+                if nth == 1 {
+                    name.clone()
+                } else {
+                    format!("{name} ({nth})")
+                }
+            }
+        })
+        .collect()
+}
+
+/// Pushes a fresh `[StandardListViewItem]` model to the window. A
+/// fresh `VecModel` per call is the simplest way to keep the UI in
+/// sync — the list rebuilds rarely (only on scene load/close), so the
+/// extra alloc is irrelevant next to mesh I/O.
+fn push_object_list(ui: &MainWindow, names: Vec<String>) {
+    let items: Vec<StandardListViewItem> = names
+        .into_iter()
+        .map(|n| StandardListViewItem::from(SharedString::from(n)))
+        .collect();
+    ui.set_object_list(ModelRc::new(VecModel::from(items)));
+}
+
+#[cfg(test)]
+mod build_object_list_names_tests {
+    use super::*;
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::primitives::Vertex;
+    use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
+
+    fn empty_mesh() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![],
+        }
+    }
+
+    fn named(name: &str) -> SceneObject {
+        SceneObject {
+            meta: Some(SceneMetadata {
+                name: Some(name.to_string()),
+                comment: None,
+            }),
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Mesh(empty_mesh()),
+        }
+    }
+
+    fn anonymous() -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Mesh(empty_mesh()),
+        }
+    }
+
+    #[test]
+    fn anonymous_objects_get_one_indexed_fallback_names() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![anonymous(), anonymous(), anonymous()],
+        };
+        let names = build_object_list_names(&scene);
+        // Translation pipeline returns "Object {N}" verbatim when no .po
+        // catalogue is loaded (the test runtime), so we can compare
+        // strings directly.
+        assert_eq!(names, vec!["Object 1", "Object 2", "Object 3"]);
+    }
+
+    #[test]
+    fn named_objects_keep_their_names() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![named("Body"), named("Cap"), named("Pin")],
+        };
+        let names = build_object_list_names(&scene);
+        assert_eq!(names, vec!["Body", "Cap", "Pin"]);
+    }
+
+    #[test]
+    fn duplicate_names_are_disambiguated_only_after_the_first() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![named("Body"), named("Body"), named("Body")],
+        };
+        let names = build_object_list_names(&scene);
+        assert_eq!(names, vec!["Body", "Body (2)", "Body (3)"]);
+    }
+
+    #[test]
+    fn unique_names_are_left_alone_even_when_others_collide() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![named("Body"), named("Body"), named("Pin")],
+        };
+        let names = build_object_list_names(&scene);
+        assert_eq!(names, vec!["Body", "Body (2)", "Pin"]);
+    }
+
+    #[test]
+    fn fallback_names_can_collide_with_explicit_names() {
+        // A metadata-named "Object 2" at index 0 collides with the
+        // anonymous fallback for the object at index 1 (whose 1-indexed
+        // position is also 2). The dedup pass treats them uniformly —
+        // both are "Object 2", so the second instance gets a "(2)"
+        // suffix; the third anonymous, at index 2, falls back to the
+        // unique "Object 3".
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![named("Object 2"), anonymous(), anonymous()],
+        };
+        let names = build_object_list_names(&scene);
+        assert_eq!(names, vec!["Object 2", "Object 2 (2)", "Object 3"]);
+    }
+
+    #[test]
+    fn empty_scene_yields_empty_name_list() {
+        let scene = Scene::default();
+        let names = build_object_list_names(&scene);
+        assert!(names.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use sc_mesh_core::IndexedMesh;
+    use sc_mesh_core::primitives::Vertex;
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+
+    fn empty_obj() -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Mesh(IndexedMesh {
+                meta: None,
+                vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+                faces: vec![],
+            }),
+        }
+    }
+
+    fn scene_with_n_objects(n: usize) -> Scene {
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: (0..n).map(|_| empty_obj()).collect(),
+        }
+    }
+
+    #[test]
+    fn fresh_controller_has_no_selection() {
+        let ctrl = ViewportController::new_for_test();
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn select_by_index_records_in_bounds_indices() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.on_select_by_index(1);
+        assert_eq!(ctrl.selection(), Some(1));
+        ctrl.on_select_by_index(2);
+        assert_eq!(ctrl.selection(), Some(2));
+    }
+
+    #[test]
+    fn select_by_index_clamps_out_of_bounds_to_none() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        // Pre-seed a valid selection so we can observe the reset.
+        ctrl.on_select_by_index(0);
+        ctrl.on_select_by_index(99);
+        assert_eq!(
+            ctrl.selection(),
+            None,
+            "an out-of-bounds index must collapse to None, not silently keep the prior selection"
+        );
+    }
+
+    #[test]
+    fn select_by_index_with_no_scene_is_a_no_op() {
+        let ctrl = ViewportController::new_for_test();
+        // No `install_scene_for_test`; the scene cell holds None.
+        ctrl.on_select_by_index(0);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn clear_selection_resets_to_none() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.on_select_by_index(1);
+        assert_eq!(ctrl.selection(), Some(1));
+        ctrl.on_clear_selection();
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn close_scene_clears_selection() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.on_select_by_index(2);
+        assert_eq!(ctrl.selection(), Some(2));
+        ctrl.on_close_scene();
+        assert_eq!(ctrl.selection(), None);
+        // The scene cell is cleared too — a follow-up select must not
+        // resurrect a prior index against a missing scene.
+        ctrl.on_select_by_index(2);
+        assert_eq!(ctrl.selection(), None);
+    }
+
+    #[test]
+    fn select_then_select_same_index_is_idempotent() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.on_select_by_index(0);
+        ctrl.dirty.set(false);
+        ctrl.on_select_by_index(0);
+        assert!(
+            !ctrl.dirty.get(),
+            "re-selecting the current index should not re-mark the controller dirty"
+        );
+    }
+
+    #[test]
+    fn viewport_click_does_not_select_in_phase_b_step_1() {
+        // Step 1's viewport-click is a stub: the round-trip exists but
+        // picks nothing. Step 3 replaces the body with a real ray-pick;
+        // pinning the current behaviour here means the swap is loud.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.on_viewport_click(50.0, 50.0);
+        assert_eq!(ctrl.selection(), None);
     }
 }

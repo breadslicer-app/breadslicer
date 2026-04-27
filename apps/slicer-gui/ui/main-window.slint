@@ -7,10 +7,54 @@ import { Palette } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer } from "./mesh-viewer.slint";
+import { ObjectListPanel } from "./object-list-panel.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 
 export { AboutWindow, AxisView, ErrorDialog, PreferencesWindow, ThemePreference }
+
+// Resize handle between the viewport and the object-list panel. Tracks
+// the cursor in absolute window coordinates so the splitter remains
+// stable even as the layout reflows under the drag (the handle's local
+// frame moves with the panel; using `absolute-position + mouse-x`
+// converts both back to a fixed reference frame).
+component ObjectListSplitter inherits Rectangle {
+    in-out property <length> panel-width;
+    in property <length> panel-min-width: 120px;
+    in property <length> panel-max-width: 600px;
+
+    width: 4px;
+    background: Palette.border;
+
+    property <length> press-cursor-x;
+    property <length> press-panel-width;
+
+    TouchArea {
+        mouse-cursor: ew-resize;
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.press-cursor-x = self.absolute-position.x + self.mouse-x;
+                root.press-panel-width = root.panel-width;
+            }
+        }
+
+        moved => {
+            if (self.pressed) {
+                // Panel sits to the right of the splitter, so dragging
+                // right (positive delta) shrinks the panel.
+                root.panel-width = Math.min(
+                    Math.max(
+                        root.press-panel-width
+                            - ((self.absolute-position.x + self.mouse-x) - root.press-cursor-x),
+                        root.panel-min-width
+                    ),
+                    root.panel-max-width
+                );
+            }
+        }
+    }
+}
 
 export component MainWindow inherits Window {
     title: @tr("SoulCrafted Slicer");
@@ -25,6 +69,10 @@ export component MainWindow inherits Window {
     in property <bool> loading: false;
     in property <bool> has-scene: false;
     in property <ThemePreference> theme: ThemePreference.System;
+    in property <[StandardListViewItem]> object-list: [];
+    in-out property <int> selected-object-index: -1;
+    in-out property <bool> show-object-list: true;
+    in-out property <length> object-list-width: 220px;
 
     changed theme => {
         Palette.color-scheme =
@@ -45,6 +93,9 @@ export component MainWindow inherits Window {
     callback zoom-at(length, length, length);
     callback frame-view-requested();
     callback axis-view-requested(AxisView);
+    callback object-list-selection-changed(int);
+    callback viewport-clicked(length, length);
+    callback selection-cleared();
 
     MenuBar {
         Menu {
@@ -119,6 +170,21 @@ export component MainWindow inherits Window {
         }
 
         Menu {
+            title: @tr("MenuBar" => "View");
+
+            MenuItem {
+                title: root.show-object-list
+                    ? @tr("MenuBar" => "Hide Object List")
+                    : @tr("MenuBar" => "Show Object List");
+                shortcut: @keys(Control + L);
+                enabled: root.has-scene;
+                activated => {
+                    root.show-object-list = !root.show-object-list;
+                }
+            }
+        }
+
+        Menu {
             title: @tr("MenuBar" => "Help");
             MenuItem {
                 title: @tr("MenuBar" => "Documentation");
@@ -160,26 +226,54 @@ export component MainWindow inherits Window {
         }
     }
 
-    MeshViewer {
-        rendering: root.mesh-rendering;
-        placeholder-text: @tr("Open a 3D model to visualize it here");
-        viewport-resized(w, h) => {
-            root.viewport-resized(w, h);
+    HorizontalLayout {
+        spacing: 0px;
+
+        MeshViewer {
+            horizontal-stretch: 1;
+            rendering: root.mesh-rendering;
+            placeholder-text: @tr("Open a 3D model to visualize it here");
+            viewport-resized(w, h) => {
+                root.viewport-resized(w, h);
+            }
+            rotate-drag(dx, dy) => {
+                root.rotate-drag(dx, dy);
+            }
+            pan-drag(dx, dy) => {
+                root.pan-drag(dx, dy);
+            }
+            zoom-at(dy, x, y) => {
+                root.zoom-at(dy, x, y);
+            }
+            frame-view-requested() => {
+                root.frame-view-requested();
+            }
+            axis-view-requested(view) => {
+                root.axis-view-requested(view);
+            }
+            viewport-clicked(x, y) => {
+                root.viewport-clicked(x, y);
+            }
+            selection-cleared() => {
+                root.selection-cleared();
+            }
         }
-        rotate-drag(dx, dy) => {
-            root.rotate-drag(dx, dy);
+
+        // Object-list panel sits to the right of the viewport. Fixed
+        // side for now; the data model below (selected-object-index,
+        // object-list, show-object-list, object-list-width) is
+        // side-agnostic so a future preference can flip the order
+        // without touching the controller.
+        if (root.has-scene && root.show-object-list): ObjectListSplitter {
+            panel-width <=> root.object-list-width;
         }
-        pan-drag(dx, dy) => {
-            root.pan-drag(dx, dy);
-        }
-        zoom-at(dy, x, y) => {
-            root.zoom-at(dy, x, y);
-        }
-        frame-view-requested() => {
-            root.frame-view-requested();
-        }
-        axis-view-requested(view) => {
-            root.axis-view-requested(view);
+        if (root.has-scene && root.show-object-list): ObjectListPanel {
+            width: root.object-list-width;
+            model: root.object-list;
+            selected-index <=> root.selected-object-index;
+            selection-changed(idx) => {
+                root.object-list-selection-changed(idx);
+            }
         }
     }
 }
