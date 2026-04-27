@@ -16,10 +16,16 @@ use wgpu::util::DeviceExt;
 
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 
-const SHADER_SOURCE: &str = include_str!("shaders/mesh_render.wgsl");
+const MESH_SHADER_SOURCE: &str = include_str!("shaders/mesh_render.wgsl");
+const OUTLINE_SHADER_SOURCE: &str = include_str!("shaders/outline.wgsl");
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+// Depth24PlusStencil8 carries an 8-bit stencil alongside depth in a
+// single attachment. The selection-outline post-pass writes `1` to
+// stencil for the selected object via per-draw stencil reference, then
+// reads that stencil aspect in a fullscreen edge-detect. Default-limits
+// supported on every wgpu backend Slint may pick.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
@@ -144,6 +150,10 @@ struct MsaaTargets {
     height: u32,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    /// Stencil-aspect view of the depth-stencil texture, bound by the
+    /// outline post-pass as a multisampled u32 texture. Recreated
+    /// alongside `depth_view` since they share the underlying texture.
+    outline_bind_group: wgpu::BindGroup,
 }
 
 // Double-buffered ring of destination color textures. `render` writes to one
@@ -171,6 +181,8 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    outline_pipeline: wgpu::RenderPipeline,
+    outline_bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
     uniforms_bind_group: wgpu::BindGroup,
     models_bind_group_layout: wgpu::BindGroupLayout,
@@ -194,7 +206,11 @@ impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SHADER_SOURCE)),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(MESH_SHADER_SOURCE)),
+        });
+        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh-viewer outline shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(OUTLINE_SHADER_SOURCE)),
         });
 
         let uniforms_bind_group_layout =
@@ -267,7 +283,29 @@ impl Renderer {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
+                // Every fragment that passes depth replaces the stencil
+                // with the per-draw `stencil_reference` value (set by
+                // the render loop to 1 for the selected object and 0
+                // otherwise). This means after the main pass the
+                // stencil holds 1 only over the selected object's
+                // visible silhouette — exactly what the outline
+                // post-pass dilates.
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::Always,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Replace,
+                    },
+                    back: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::Always,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Replace,
+                    },
+                    read_mask: 0xFF,
+                    write_mask: 0xFF,
+                },
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -281,6 +319,76 @@ impl Renderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: TEXTURE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let outline_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mesh-viewer outline bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        // Stencil reads as Uint. The depth-stencil
+                        // texture is bound via a StencilOnly aspect
+                        // view; the fragment shader sees a u32 sample.
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: true,
+                    },
+                    count: None,
+                }],
+            });
+
+        let outline_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("mesh-viewer outline pll"),
+                bind_group_layouts: &[&outline_bind_group_layout],
+                immediate_size: 0,
+            });
+
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer outline pipeline"),
+            layout: Some(&outline_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &outline_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            // The post-pass renders to the resolved (non-MSAA) target
+            // and samples the still-MSAA stencil as input — colour and
+            // attachment sample counts agree at 1, while the texture
+            // binding is multisampled.
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &outline_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    // Outline fragments are opaque; non-edge fragments
+                    // `discard` so the underlying main-pass colour
+                    // stays put without needing alpha blending.
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -309,6 +417,8 @@ impl Renderer {
             device,
             queue,
             pipeline,
+            outline_pipeline,
+            outline_bind_group_layout,
             uniform_buffer,
             uniforms_bind_group,
             models_bind_group_layout,
@@ -425,16 +535,33 @@ impl Renderer {
             sample_count: SAMPLE_COUNT,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // TEXTURE_BINDING lets the outline post-pass sample the
+            // stencil aspect after the main pass writes it.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let stencil_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("mesh-viewer msaa stencil view"),
+            aspect: wgpu::TextureAspect::StencilOnly,
+            ..Default::default()
+        });
+
+        let outline_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh-viewer outline bg"),
+            layout: &self.outline_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&stencil_view),
+            }],
+        });
 
         self.msaa = Some(MsaaTargets {
             width,
             height,
             color_view,
             depth_view,
+            outline_bind_group,
         });
     }
 
@@ -558,7 +685,10 @@ impl Renderer {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                 }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
@@ -569,14 +699,46 @@ impl Renderer {
             // One draw call per object. The models bind group is rebound
             // at each step with the dynamic offset of the matching
             // ModelEntry slot, so the vertex shader's `model_entry`
-            // uniform reads that object's matrix.
+            // uniform reads that object's matrix. The stencil
+            // reference is `1` only for the selected object, so after
+            // this pass the stencil holds 1 over its visible silhouette
+            // and 0 everywhere else — what the outline post-pass
+            // dilates.
             for (i, obj) in installed.gpu.objects.iter().enumerate() {
                 let offset = (i as u64 * installed.gpu.model_stride) as u32;
                 pass.set_bind_group(1, &installed.models_bind_group, &[offset]);
                 pass.set_vertex_buffer(0, obj.vertex_buffer.slice(..));
                 pass.set_index_buffer(obj.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_stencil_reference(if Some(i) == selection { 1 } else { 0 });
                 pass.draw_indexed(0..obj.index_count, 0, 0..1);
             }
+        }
+        // Outline post-pass: only run when something is selected, since
+        // an empty stencil yields no edges anyway and the extra draw
+        // is wasted bandwidth on every unselected frame.
+        if selection.is_some() {
+            let mut outline_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mesh-viewer outline pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        // Preserve the resolved colour from the main
+                        // pass; non-edge fragments `discard` so the
+                        // existing pixels survive.
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            outline_pass.set_pipeline(&self.outline_pipeline);
+            outline_pass.set_bind_group(0, &msaa.outline_bind_group, &[]);
+            outline_pass.draw(0..3, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -1289,6 +1451,40 @@ mod gpu_integration_tests {
             .render(&scene, &camera, Some(0), 64, 64)
             .expect("render with selection should produce a texture");
         assert_eq!(texture.size().width, 64);
+    }
+
+    /// Outline post-pass smoke test. Drives a render with `Some(0)`
+    /// so the stencil-aspect bind group is bound and the fullscreen
+    /// edge-detect runs; pins that
+    /// `RENDER_ATTACHMENT | TEXTURE_BINDING` on a multisampled
+    /// `Depth24PlusStencil8` is accepted under the default-limits
+    /// profile, plus that the `multisampled: true, sample_type: Uint`
+    /// stencil binding declared in the layout matches the WGSL
+    /// `texture_multisampled_2d<u32>` the outline shader expects.
+    #[test]
+    fn outline_post_pass_under_default_limits_is_validated() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&scene)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        // Twice — first frame creates the MSAA targets and outline
+        // bind group; second exercises the cached path.
+        let _ = renderer
+            .render(&scene, &camera, Some(0), 64, 64)
+            .expect("render with selection runs the outline pass");
+        let _ = renderer
+            .render(&scene, &camera, Some(0), 64, 64)
+            .expect("cached outline bind group survives a second frame");
     }
 
     /// Multi-object scene drives one draw call per object; the
