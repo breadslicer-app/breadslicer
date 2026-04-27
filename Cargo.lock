@@ -4366,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "sc-mesh-core"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "float-cmp 0.10.0",
@@ -4374,7 +4374,7 @@ dependencies = [
 
 [[package]]
 name = "sc-mesh-formats"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "float-cmp 0.10.0",
@@ -4396,7 +4396,7 @@ version = "0.0.1"
 
 [[package]]
 name = "sc-slicer-cli"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "bpaf",
@@ -4406,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "sc-slicer-gui"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "bytemuck",
