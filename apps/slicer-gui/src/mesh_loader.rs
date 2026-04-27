@@ -22,7 +22,7 @@ use sc_mesh_formats::LoadedMesh;
 use slint::wgpu_28::wgpu;
 
 use crate::i18n::ctr;
-use crate::mesh_render::MeshGpu;
+use crate::mesh_render::GpuScene;
 use crate::scene_loader::{LoadTicket, PreparedScene};
 
 // Reject mesh files larger than this before spawning the loader
@@ -83,10 +83,10 @@ pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf, device: wgpu::Device
             Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
         });
         let result = parsed.and_then(|LoadedMesh { scene, warnings }| {
-            let mesh_gpu = MeshGpu::build(&device, &scene)?;
+            let gpu_scene = GpuScene::build(&device, &scene)?;
             Ok(PreparedScene {
                 scene,
-                mesh_gpu,
+                gpu_scene,
                 device: device.clone(),
                 warnings,
             })

@@ -4413,6 +4413,7 @@ dependencies = [
  "directories",
  "float-cmp 0.10.0",
  "glam",
+ "pollster",
  "rfd",
  "sc-mesh-core",
  "sc-mesh-formats",

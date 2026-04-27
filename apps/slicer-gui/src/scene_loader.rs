@@ -50,15 +50,15 @@ use slint::wgpu_28::wgpu;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
-use crate::mesh_render::MeshGpu;
+use crate::mesh_render::GpuScene;
 
-/// Worker-built bundle handed to the UI thread. The `MeshGpu` is pre-
+/// Worker-built bundle handed to the UI thread. The `GpuScene` is pre-
 /// uploaded against `device`; the `Scene` is retained for device-loss
 /// recovery (a fresh `RenderingSetup` re-uploads via
 /// `Renderer::upload_scene`).
 pub(crate) struct PreparedScene {
     pub scene: Scene,
-    pub mesh_gpu: MeshGpu,
+    pub gpu_scene: GpuScene,
     pub device: wgpu::Device,
     pub warnings: Vec<LoadMeshWarning>,
 }

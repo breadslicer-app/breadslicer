@@ -165,7 +165,7 @@ impl ViewportController {
         };
         let PreparedScene {
             scene,
-            mesh_gpu,
+            gpu_scene,
             device: built_with,
             warnings: _,
         } = prepared;
@@ -174,20 +174,20 @@ impl ViewportController {
         // through to the UI-thread upload path if the renderer is
         // gone (post-teardown) or has rotated to a different device
         // than the worker built against (mid-load device loss).
-        let mesh_installed = self
+        let scene_installed = self
             .renderer
             .borrow_mut()
             .as_mut()
-            .map(|r| r.install_mesh(mesh_gpu, &built_with))
+            .map(|r| r.install_scene(gpu_scene, &built_with))
             .unwrap_or(false);
 
         *self.camera.borrow_mut() = None;
         *self.scene.borrow_mut() = Some(scene);
         // If install succeeded, the buffers are already on the GPU; no
         // upload owed. Otherwise, defer to the recovery upload path.
-        self.needs_upload.set(!mesh_installed);
+        self.needs_upload.set(!scene_installed);
 
-        if mesh_installed {
+        if scene_installed {
             self.loader.note_upload_success();
             // Frame the camera off the AABB the worker computed.
             let bounds = self
@@ -303,8 +303,13 @@ impl ViewportController {
         let Some(camera) = camera_slot.as_ref() else {
             return;
         };
+        let scene_slot = self.scene.borrow();
+        let Some(scene_for_render) = scene_slot.as_ref() else {
+            // Scene was cleared between the upload check and now.
+            return;
+        };
 
-        let Some(texture) = renderer.render(camera, eff_w, eff_h) else {
+        let Some(texture) = renderer.render(scene_for_render, camera, eff_w, eff_h) else {
             return;
         };
         self.dirty.set(false);
