@@ -83,20 +83,65 @@ struct GizmoDrawEntry {
 
 const GIZMO_DRAW_ENTRY_SIZE: u64 = std::mem::size_of::<GizmoDrawEntry>() as u64;
 
-/// Per-frame data the renderer needs to draw the translate gizmo.
-/// `pivot` is the world-space gizmo origin; `scale` is the world-unit
-/// length of the shaft (so the gizmo subtends a constant pixel size);
-/// `active_axis` is the axis currently being dragged (drawn at full
-/// brightness); `locked` flags axes the user can't grab right now
-/// (drawn greyed, matching the lock-out behaviour exposed by
-/// `gizmo::axis_pickable`).
+/// Total number of per-frame draw entries reserved in
+/// `gizmo_entries_buffer`. The slots are laid out so each pass
+/// binds a contiguous range:
+/// - `[0, 3)` translate (one per X/Y/Z),
+/// - `[3, 6)` rotate (one per X/Y/Z),
+/// - `[6, 9)` scale-axis midpoint cubes (one per X/Y/Z),
+/// - `[9, 10)` centre cube (uniform-scale).
+const GIZMO_ENTRY_SLOTS: u64 = 10;
+const GIZMO_TRANSLATE_SLOT_BASE: u64 = 0;
+const GIZMO_ROTATE_SLOT_BASE: u64 = 3;
+const GIZMO_SCALE_AXIS_SLOT_BASE: u64 = 6;
+const GIZMO_CENTRE_SLOT: u64 = 9;
+
+/// Per-frame data the renderer needs to draw the gizmo. `pivot` is
+/// the world-space gizmo origin; `scale` is the world-unit length of
+/// the translate shaft (so the gizmo subtends a constant pixel size);
+/// `visibility` tells the renderer which handle types to draw and
+/// which axis (if any) is the currently-active drag target — handles
+/// matching the active axis render at full brightness, the rest at
+/// dim brightness. `locked_translate` / `locked_rotate` flag axes the
+/// user can't grab right now (matching `gizmo::axis_pickable` and
+/// `gizmo::arc_pickable` respectively); locked axes render greyed.
 #[derive(Copy, Clone, Debug)]
 pub struct GizmoFrame {
     pub pivot: Vec3,
     pub scale: f32,
-    pub active_axis: Option<Axis>,
-    /// Indexed in order [X, Y, Z]; `true` greys the axis out.
-    pub locked: [bool; 3],
+    pub visibility: GizmoVisibility,
+    /// Indexed [X, Y, Z]. Greys the translate cone *and* the per-axis
+    /// scale midpoint cube for that axis (both share the closest-
+    /// point-on-axis math and thus the same lock-out condition).
+    pub locked_translate: [bool; 3],
+    /// Indexed [X, Y, Z]. Greys the rotate arc for that axis.
+    pub locked_rotate: [bool; 3],
+}
+
+/// Which gizmo handle category is currently visible (and which axis,
+/// if any, is the active drag target). The rule:
+/// - `Idle`: render all four handle categories (translate cones,
+///   midpoint scale cubes, rotate arcs, centre cube). No axis is
+///   highlighted as "active".
+/// - `Dragging*`: render only the *category* the drag belongs to.
+///   The named axis is the active drag target and renders bright;
+///   other axes in the same category render dim.
+///
+/// `DraggingScaleAxis` and `DraggingScaleUniform` both render the
+/// same category (the scale group: 3 midpoint cubes + the centre
+/// cube). They differ only in which sub-handle is highlighted.
+//
+// `DraggingRotate` / `DraggingScaleAxis` / `DraggingScaleUniform`
+// have no controller-side producer until the FSM extension lands;
+// they're consumed by tests today.
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GizmoVisibility {
+    Idle,
+    DraggingTranslate { axis: Axis },
+    DraggingRotate { axis: Axis },
+    DraggingScaleAxis { axis: Axis },
+    DraggingScaleUniform,
 }
 
 /// Round `size` up to the next multiple of `alignment`. Used to space
@@ -240,10 +285,34 @@ pub struct Renderer {
     uniforms_bind_group: wgpu::BindGroup,
     models_bind_group_layout: wgpu::BindGroupLayout,
     gizmo_pipeline: wgpu::RenderPipeline,
-    gizmo_vertex_buffer: wgpu::Buffer,
-    gizmo_index_buffer: wgpu::Buffer,
-    gizmo_index_count: u32,
+    /// Axis geometry: shaft prism + cone tip + per-axis midpoint
+    /// cube, all in handle-local space (axis = +X). The renderer
+    /// draws the shaft+cone subrange as the translate handle and
+    /// the midpoint-cube subrange as the scale-axis handle.
+    gizmo_axis_vertex_buffer: wgpu::Buffer,
+    gizmo_axis_index_buffer: wgpu::Buffer,
+    /// Number of indices in the translate (shaft + cone) subrange,
+    /// from `[0, gizmo_axis_shaft_tip_index_count)`. The remaining
+    /// indices `[gizmo_axis_shaft_tip_index_count, end)` belong to
+    /// the per-axis midpoint cube.
+    gizmo_axis_shaft_tip_index_count: u32,
+    gizmo_axis_total_index_count: u32,
+    /// Rotate-arc geometry: a 90° torus segment around +X in
+    /// handle-local space, centred on +Y. The per-frame X-roll
+    /// (baked into `axis_rotation`) swings the arc to face the
+    /// camera before the world-axis rotation maps it onto X/Y/Z.
+    gizmo_arc_vertex_buffer: wgpu::Buffer,
+    gizmo_arc_index_buffer: wgpu::Buffer,
+    gizmo_arc_index_count: u32,
+    /// Centre cube geometry for the uniform-scale handle.
+    gizmo_centre_vertex_buffer: wgpu::Buffer,
+    gizmo_centre_index_buffer: wgpu::Buffer,
+    gizmo_centre_index_count: u32,
     gizmo_uniforms_buffer: wgpu::Buffer,
+    /// Per-frame draw-entry buffer with `GIZMO_ENTRY_SLOTS` slots.
+    /// Each pass binds a window of one entry via a dynamic offset:
+    /// translate occupies `[0, 3)`, rotate `[3, 6)`, scale-axis
+    /// `[6, 9)`, scale-uniform / centre `[9, 10)`.
     gizmo_entries_buffer: wgpu::Buffer,
     gizmo_entry_stride: u64,
     gizmo_uniforms_bind_group: wgpu::BindGroup,
@@ -481,19 +550,50 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(GIZMO_SHADER_SOURCE)),
         });
 
-        let (gizmo_vertices, gizmo_indices, _shaft_tip_index_count) =
+        let (axis_vertices, axis_indices, axis_shaft_tip_index_count) =
             gizmo_geometry::build_axis_geometry();
-        let gizmo_index_count = gizmo_indices.len() as u32;
-        let gizmo_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo vbo"),
-            contents: bytemuck::cast_slice(&gizmo_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let gizmo_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo ibo"),
-            contents: bytemuck::cast_slice(&gizmo_indices),
+        let gizmo_axis_total_index_count = axis_indices.len() as u32;
+        let gizmo_axis_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo axis vbo"),
+                contents: bytemuck::cast_slice(&axis_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let gizmo_axis_index_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo axis ibo"),
+                contents: bytemuck::cast_slice(&axis_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        let (arc_vertices, arc_indices) = gizmo_geometry::build_rotate_arc_geometry();
+        let gizmo_arc_index_count = arc_indices.len() as u32;
+        let gizmo_arc_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo arc vbo"),
+                contents: bytemuck::cast_slice(&arc_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let gizmo_arc_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo arc ibo"),
+            contents: bytemuck::cast_slice(&arc_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+
+        let (centre_vertices, centre_indices) = gizmo_geometry::build_centre_cube_geometry();
+        let gizmo_centre_index_count = centre_indices.len() as u32;
+        let gizmo_centre_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo centre vbo"),
+                contents: bytemuck::cast_slice(&centre_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let gizmo_centre_index_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo centre ibo"),
+                contents: bytemuck::cast_slice(&centre_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         let gizmo_uniforms_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -596,7 +696,7 @@ impl Renderer {
         let gizmo_entry_stride = align_up(GIZMO_DRAW_ENTRY_SIZE, alignment);
         let gizmo_entries_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh-viewer gizmo entries"),
-            size: gizmo_entry_stride * 3,
+            size: gizmo_entry_stride * GIZMO_ENTRY_SLOTS,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -632,9 +732,16 @@ impl Renderer {
             uniforms_bind_group,
             models_bind_group_layout,
             gizmo_pipeline,
-            gizmo_vertex_buffer,
-            gizmo_index_buffer,
-            gizmo_index_count,
+            gizmo_axis_vertex_buffer,
+            gizmo_axis_index_buffer,
+            gizmo_axis_shaft_tip_index_count: axis_shaft_tip_index_count,
+            gizmo_axis_total_index_count,
+            gizmo_arc_vertex_buffer,
+            gizmo_arc_index_buffer,
+            gizmo_arc_index_count,
+            gizmo_centre_vertex_buffer,
+            gizmo_centre_index_buffer,
+            gizmo_centre_index_count,
             gizmo_uniforms_buffer,
             gizmo_entries_buffer,
             gizmo_entry_stride,
@@ -819,6 +926,17 @@ impl Renderer {
         });
     }
 
+    fn write_gizmo_entries(&self, slot_base: u64, entries: &[GizmoDrawEntry]) {
+        for (i, entry) in entries.iter().enumerate() {
+            let offset = (slot_base + i as u64) * self.gizmo_entry_stride;
+            self.queue.write_buffer(
+                &self.gizmo_entries_buffer,
+                offset,
+                bytemuck::bytes_of(entry),
+            );
+        }
+    }
+
     pub fn render(
         &mut self,
         scene: &Scene,
@@ -991,14 +1109,39 @@ impl Renderer {
                 0,
                 bytemuck::bytes_of(&uniforms),
             );
-            let entries = build_gizmo_entries(&frame);
-            for (i, entry) in entries.iter().enumerate() {
-                let offset = i as u64 * self.gizmo_entry_stride;
-                self.queue.write_buffer(
-                    &self.gizmo_entries_buffer,
-                    offset,
-                    bytemuck::bytes_of(entry),
-                );
+
+            // Decide which categories to draw and write the matching
+            // entry slots. Other slots are not used this frame, so we
+            // skip writing them — the dynamic-offset bind only ever
+            // points at slots that received fresh data.
+            let render_translate = matches!(
+                frame.visibility,
+                GizmoVisibility::Idle | GizmoVisibility::DraggingTranslate { .. }
+            );
+            let render_rotate = matches!(
+                frame.visibility,
+                GizmoVisibility::Idle | GizmoVisibility::DraggingRotate { .. }
+            );
+            let render_scale = matches!(
+                frame.visibility,
+                GizmoVisibility::Idle
+                    | GizmoVisibility::DraggingScaleAxis { .. }
+                    | GizmoVisibility::DraggingScaleUniform
+            );
+
+            if render_translate {
+                let entries = build_translate_entries(&frame);
+                self.write_gizmo_entries(GIZMO_TRANSLATE_SLOT_BASE, &entries);
+            }
+            if render_rotate {
+                let entries = build_rotate_entries(&frame, camera);
+                self.write_gizmo_entries(GIZMO_ROTATE_SLOT_BASE, &entries);
+            }
+            if render_scale {
+                let axis_entries = build_scale_axis_entries(&frame);
+                self.write_gizmo_entries(GIZMO_SCALE_AXIS_SLOT_BASE, &axis_entries);
+                let centre_entry = build_scale_centre_entry(&frame);
+                self.write_gizmo_entries(GIZMO_CENTRE_SLOT, &[centre_entry]);
             }
 
             let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1026,13 +1169,60 @@ impl Renderer {
             });
             gizmo_pass.set_pipeline(&self.gizmo_pipeline);
             gizmo_pass.set_bind_group(0, &self.gizmo_uniforms_bind_group, &[]);
-            gizmo_pass.set_vertex_buffer(0, self.gizmo_vertex_buffer.slice(..));
-            gizmo_pass
-                .set_index_buffer(self.gizmo_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            for i in 0..3u32 {
-                let offset = (i as u64 * self.gizmo_entry_stride) as u32;
+
+            if render_translate {
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_axis_vertex_buffer.slice(..));
+                gizmo_pass.set_index_buffer(
+                    self.gizmo_axis_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                for i in 0..3u32 {
+                    let offset =
+                        ((GIZMO_TRANSLATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    // Translate handle = shaft + cone subrange.
+                    gizmo_pass.draw_indexed(0..self.gizmo_axis_shaft_tip_index_count, 0, 0..1);
+                }
+            }
+            if render_rotate {
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_arc_vertex_buffer.slice(..));
+                gizmo_pass.set_index_buffer(
+                    self.gizmo_arc_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                for i in 0..3u32 {
+                    let offset =
+                        ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    gizmo_pass.draw_indexed(0..self.gizmo_arc_index_count, 0, 0..1);
+                }
+            }
+            if render_scale {
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_axis_vertex_buffer.slice(..));
+                gizmo_pass.set_index_buffer(
+                    self.gizmo_axis_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                for i in 0..3u32 {
+                    let offset =
+                        ((GIZMO_SCALE_AXIS_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    // Scale-axis handle = midpoint-cube subrange.
+                    gizmo_pass.draw_indexed(
+                        self.gizmo_axis_shaft_tip_index_count..self.gizmo_axis_total_index_count,
+                        0,
+                        0..1,
+                    );
+                }
+
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_centre_vertex_buffer.slice(..));
+                gizmo_pass.set_index_buffer(
+                    self.gizmo_centre_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                let offset = (GIZMO_CENTRE_SLOT * self.gizmo_entry_stride) as u32;
                 gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
-                gizmo_pass.draw_indexed(0..self.gizmo_index_count, 0, 0..1);
+                gizmo_pass.draw_indexed(0..self.gizmo_centre_index_count, 0, 0..1);
             }
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -1072,8 +1262,9 @@ fn affine_to_mat4(a: &AffineTransform3D) -> Mat4 {
     )
 }
 
-/// Per-axis colours (full saturation). Brightness multiplier comes
-/// from `axis_tint` based on the axis's active/locked state.
+/// Per-axis colours (full saturation). The renderer modulates these
+/// with a brightness factor that depends on the axis's active/locked
+/// state for the current handle category.
 const fn axis_base_color(axis: Axis) -> [f32; 3] {
     match axis {
         Axis::X => [1.0, 0.25, 0.25],
@@ -1082,39 +1273,174 @@ const fn axis_base_color(axis: Axis) -> [f32; 3] {
     }
 }
 
-/// Tint for one axis given the frame state. Locked axes are grey
-/// (clearly distinguishable from the inactive axis tint), the active
-/// axis is full-bright, the rest sit at 0.65 brightness.
-fn axis_tint(axis: Axis, frame: &GizmoFrame, locked: bool) -> [f32; 4] {
+/// Brightness multipliers for the three handle states. Active is
+/// the drag-target axis (or hover-target, conceptually identical);
+/// inactive axes still render visibly so the user can see the
+/// gizmo, just at reduced contrast.
+const TINT_ACTIVE: f32 = 1.0;
+const TINT_INACTIVE: f32 = 0.65;
+const TINT_LOCKED: f32 = 0.35;
+
+fn tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
     if locked {
-        return [0.35, 0.35, 0.35, 1.0];
+        return [TINT_LOCKED, TINT_LOCKED, TINT_LOCKED, 1.0];
     }
-    let active = frame.active_axis == Some(axis);
-    let brightness = if active { 1.0 } else { 0.65 };
+    let brightness = if active { TINT_ACTIVE } else { TINT_INACTIVE };
     let [r, g, b] = axis_base_color(axis);
     [r * brightness, g * brightness, b * brightness, 1.0]
 }
 
-fn build_gizmo_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
+/// Locked grey for the centre cube — it has no per-axis lock-out
+/// concept so this function returns a fixed greyscale palette,
+/// dim/bright following the visibility's "uniform-scale active"
+/// flag.
+fn centre_tint(active: bool) -> [f32; 4] {
+    let g = if active { TINT_ACTIVE } else { TINT_INACTIVE };
+    [g, g, g, 1.0]
+}
+
+/// Rotation that maps handle-local +X onto each world axis. Indexed
+/// in the order `[X, Y, Z]`.
+fn axis_world_rotations() -> [Mat4; 3] {
     use std::f32::consts::FRAC_PI_2;
-    // Rotation that maps handle-local +X onto each world axis.
-    let rotations = [
+    [
         Mat4::IDENTITY,
         Mat4::from_rotation_z(FRAC_PI_2),
         Mat4::from_rotation_y(-FRAC_PI_2),
-    ];
+    ]
+}
+
+/// Three translate-pass entries (X/Y/Z), one shaft+cone draw each.
+fn build_translate_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
+    let rotations = axis_world_rotations();
     let axes = [Axis::X, Axis::Y, Axis::Z];
+    let active_axis = match frame.visibility {
+        GizmoVisibility::DraggingTranslate { axis } => Some(axis),
+        _ => None,
+    };
     let mut out = [GizmoDrawEntry {
         axis_rotation: [[0.0; 4]; 4],
         tint: [0.0; 4],
     }; 3];
     for (i, axis) in axes.into_iter().enumerate() {
+        let active = active_axis == Some(axis);
         out[i] = GizmoDrawEntry {
             axis_rotation: rotations[i].to_cols_array_2d(),
-            tint: axis_tint(axis, frame, frame.locked[i]),
+            tint: tint_for(axis, active, frame.locked_translate[i]),
         };
     }
     out
+}
+
+/// Three scale-axis-pass entries (X/Y/Z midpoint cubes), sharing
+/// the per-axis world rotation with translate. The cube sub-range
+/// of the axis IBO carries the geometry; only the tint differs from
+/// the translate entry. The scale-axis lock-out is the same as
+/// translate's (closest-point-on-axis math).
+fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
+    let rotations = axis_world_rotations();
+    let axes = [Axis::X, Axis::Y, Axis::Z];
+    let active_axis = match frame.visibility {
+        GizmoVisibility::DraggingScaleAxis { axis } => Some(axis),
+        _ => None,
+    };
+    let mut out = [GizmoDrawEntry {
+        axis_rotation: [[0.0; 4]; 4],
+        tint: [0.0; 4],
+    }; 3];
+    for (i, axis) in axes.into_iter().enumerate() {
+        let active = active_axis == Some(axis);
+        out[i] = GizmoDrawEntry {
+            axis_rotation: rotations[i].to_cols_array_2d(),
+            tint: tint_for(axis, active, frame.locked_translate[i]),
+        };
+    }
+    out
+}
+
+/// Centre-cube entry. Identity rotation (the cube is axis-aligned
+/// at the pivot) and a greyscale tint so the centre handle reads as
+/// a single "uniform-scale" target rather than a fourth axis.
+fn build_scale_centre_entry(frame: &GizmoFrame) -> GizmoDrawEntry {
+    let active = matches!(frame.visibility, GizmoVisibility::DraggingScaleUniform);
+    GizmoDrawEntry {
+        axis_rotation: Mat4::IDENTITY.to_cols_array_2d(),
+        tint: centre_tint(active),
+    }
+}
+
+/// Three rotate-pass entries (X/Y/Z arcs). Each axis bakes a
+/// per-frame X-roll into its `axis_rotation` so the 90° arc faces
+/// the camera in handle-local space *before* the world-axis rotation
+/// maps it onto +X / +Y / +Z.
+fn build_rotate_entries(frame: &GizmoFrame, camera: &OrbitCamera) -> [GizmoDrawEntry; 3] {
+    let rotations = axis_world_rotations();
+    let axes = [Axis::X, Axis::Y, Axis::Z];
+    let active_axis = match frame.visibility {
+        GizmoVisibility::DraggingRotate { axis } => Some(axis),
+        _ => None,
+    };
+    let mut out = [GizmoDrawEntry {
+        axis_rotation: [[0.0; 4]; 4],
+        tint: [0.0; 4],
+    }; 3];
+    for (i, axis) in axes.into_iter().enumerate() {
+        let roll = arc_camera_roll(camera, frame.pivot, axis);
+        // Compose: world_axis_rotation × X-roll. The arc is laid out
+        // around handle-local +X, centred on +Y; rolling it around
+        // +X swings the centre onto the camera-facing direction
+        // before the world-axis rotation lifts it onto X/Y/Z.
+        let composed = rotations[i] * Mat4::from_rotation_x(roll);
+        let active = active_axis == Some(axis);
+        out[i] = GizmoDrawEntry {
+            axis_rotation: composed.to_cols_array_2d(),
+            tint: tint_for(axis, active, frame.locked_rotate[i]),
+        };
+    }
+    out
+}
+
+/// Per-axis X-roll in handle-local space that swings the rotate arc
+/// onto the camera-facing 90° quadrant.
+///
+/// In handle-local space the arc is centred on +Y, spanning ±π/4. We
+/// want the centre of the arc to align with the camera direction
+/// projected into the handle-local YZ plane. The roll is the angle
+/// from +Y to that projection, measured CCW about +X (right-hand
+/// rule). When the camera is on the axis itself (rotate lock-out),
+/// the projection is degenerate; the controller's lock-out should
+/// already have removed the axis from the visible set, but the
+/// geometry guards against div-by-zero with a fallback to `0.0`.
+fn arc_camera_roll(camera: &OrbitCamera, pivot: Vec3, axis: Axis) -> f32 {
+    // Camera direction in world space, then expressed in handle-
+    // local coords by inverting the world-axis rotation. The
+    // rotation matrix is orthogonal, so the inverse is the
+    // transpose — but glam's `inverse` on rigid rotations is cheap
+    // enough to avoid premature optimisation here.
+    let world_to_local = world_to_handle_local(axis);
+    let to_camera_world = camera.eye() - pivot;
+    let to_camera_local = world_to_local.transform_vector3(to_camera_world);
+    // YZ-plane projection (drop +X axis component).
+    let y = to_camera_local.y;
+    let z = to_camera_local.z;
+    if y.hypot(z) < 1e-6 {
+        return 0.0;
+    }
+    z.atan2(y)
+}
+
+/// Inverse of the per-axis world rotation: maps world-space vectors
+/// into the axis's handle-local frame. The world rotation maps
+/// handle-local +X onto the world axis; the inverse undoes that.
+fn world_to_handle_local(axis: Axis) -> Mat4 {
+    use std::f32::consts::FRAC_PI_2;
+    match axis {
+        Axis::X => Mat4::IDENTITY,
+        // World rotation is Rz(+π/2); inverse is Rz(-π/2).
+        Axis::Y => Mat4::from_rotation_z(-FRAC_PI_2),
+        // World rotation is Ry(-π/2); inverse is Ry(+π/2).
+        Axis::Z => Mat4::from_rotation_y(FRAC_PI_2),
+    }
 }
 
 fn transform_to_mat4(t: &Transform3D) -> Mat4 {
@@ -1619,19 +1945,23 @@ mod gizmo_entry_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
 
-    fn frame(active: Option<Axis>, locked: [bool; 3]) -> GizmoFrame {
+    fn frame_with(visibility: GizmoVisibility, locked_translate: [bool; 3]) -> GizmoFrame {
         GizmoFrame {
             pivot: Vec3::ZERO,
             scale: 1.0,
-            active_axis: active,
-            locked,
+            visibility,
+            locked_translate,
+            locked_rotate: [false; 3],
         }
     }
 
+    fn idle_frame() -> GizmoFrame {
+        frame_with(GizmoVisibility::Idle, [false; 3])
+    }
+
     #[test]
-    fn axis_rotations_map_handle_local_x_to_world_axes() {
-        let entries = build_gizmo_entries(&frame(None, [false; 3]));
-        // Handle-local +X under each rotation should land on +X, +Y, +Z.
+    fn translate_axis_rotations_map_handle_local_x_to_world_axes() {
+        let entries = build_translate_entries(&idle_frame());
         let local_x = Vec4::new(1.0, 0.0, 0.0, 1.0);
         let rx = Mat4::from_cols_array_2d(&entries[0].axis_rotation) * local_x;
         let ry = Mat4::from_cols_array_2d(&entries[1].axis_rotation) * local_x;
@@ -1642,31 +1972,111 @@ mod gizmo_entry_tests {
     }
 
     #[test]
-    fn no_active_no_locked_yields_inactive_brightness_for_all_axes() {
-        let entries = build_gizmo_entries(&frame(None, [false; 3]));
+    fn idle_visibility_yields_inactive_brightness_for_all_translate_axes() {
+        let entries = build_translate_entries(&idle_frame());
         // Inactive brightness multiplier is 0.65; X base is (1.0, 0.25, 0.25).
         assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
         assert_approx_eq!(f32, entries[0].tint[1], 0.25 * 0.65, epsilon = 1e-5);
     }
 
     #[test]
-    fn active_axis_renders_at_full_brightness() {
-        let entries = build_gizmo_entries(&frame(Some(Axis::X), [false; 3]));
+    fn dragging_translate_renders_active_axis_at_full_brightness() {
+        let entries = build_translate_entries(&frame_with(
+            GizmoVisibility::DraggingTranslate { axis: Axis::X },
+            [false; 3],
+        ));
         assert_approx_eq!(f32, entries[0].tint[0], 1.0, epsilon = 1e-5);
-        // Other axes stay inactive.
+        // Y stays inactive — only the dragging axis brightens.
         assert_approx_eq!(f32, entries[1].tint[1], 1.0 * 0.65, epsilon = 1e-5);
     }
 
     #[test]
     fn locked_axis_renders_grey_regardless_of_active_state() {
-        // Even if "active" said X, if locked[X] is true the lock-out
-        // wins and the axis renders grey. (In practice the controller
-        // would never set both, but the renderer must not amplify
-        // contradictory state.)
-        let entries = build_gizmo_entries(&frame(Some(Axis::X), [true, false, false]));
+        let entries = build_translate_entries(&frame_with(
+            GizmoVisibility::DraggingTranslate { axis: Axis::X },
+            [true, false, false],
+        ));
         assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
         assert_approx_eq!(f32, entries[0].tint[1], 0.35, epsilon = 1e-5);
         assert_approx_eq!(f32, entries[0].tint[2], 0.35, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn dragging_rotate_does_not_brighten_translate_axes() {
+        // Visibility carries the active *for the rotate category*;
+        // the translate entries should see no active axis even
+        // though `axis: X` is named.
+        let entries = build_translate_entries(&frame_with(
+            GizmoVisibility::DraggingRotate { axis: Axis::X },
+            [false; 3],
+        ));
+        assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn dragging_scale_axis_brightens_only_the_matching_midpoint_cube() {
+        let entries = build_scale_axis_entries(&frame_with(
+            GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
+            [false; 3],
+        ));
+        // Y axis is active.
+        assert_approx_eq!(f32, entries[1].tint[1], 1.0, epsilon = 1e-5);
+        // X / Z stay inactive.
+        assert_approx_eq!(f32, entries[0].tint[0], 0.65, epsilon = 1e-5);
+        assert_approx_eq!(f32, entries[2].tint[2], 0.65, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn scale_axis_inherits_translate_lockout() {
+        // The midpoint cubes share the closest-point-on-axis math
+        // with the translate cones, so they must grey together.
+        let entries = build_scale_axis_entries(&frame_with(
+            GizmoVisibility::DraggingScaleAxis { axis: Axis::X },
+            [true, false, false],
+        ));
+        assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn centre_cube_is_grey_and_active_only_under_uniform_scale() {
+        let idle = build_scale_centre_entry(&idle_frame());
+        // All three RGB channels equal under greyscale tint.
+        assert_approx_eq!(f32, idle.tint[0], idle.tint[1], epsilon = 1e-6);
+        assert_approx_eq!(f32, idle.tint[1], idle.tint[2], epsilon = 1e-6);
+        // Inactive brightness 0.65.
+        assert_approx_eq!(f32, idle.tint[0], 0.65, epsilon = 1e-5);
+
+        let active = build_scale_centre_entry(&frame_with(
+            GizmoVisibility::DraggingScaleUniform,
+            [false; 3],
+        ));
+        assert_approx_eq!(f32, active.tint[0], 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn rotate_arc_roll_aligns_with_camera_in_handle_local_yz_plane() {
+        // Camera at +Z above the pivot. For the X-axis arc (axis = +X
+        // in handle-local space), the camera-facing direction projects
+        // onto the YZ plane as +Z. The roll should bring +Y onto +Z,
+        // i.e. +π/2 about +X. Loose tolerance because `set_axis_view`
+        // uses a clamped pitch slightly less than π/2 to avoid the
+        // gimbal-lock degenerate, so the eye sits ~1e-3 off the +Z
+        // axis.
+        let mut camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        camera.set_axis_view(crate::camera::AxisView::Top);
+        let pivot = Vec3::ZERO;
+        let roll = arc_camera_roll(&camera, pivot, Axis::X);
+        assert_approx_eq!(f32, roll, std::f32::consts::FRAC_PI_2, epsilon = 1e-2);
+    }
+
+    #[test]
+    fn rotate_locked_axis_renders_grey() {
+        let mut frame = idle_frame();
+        frame.visibility = GizmoVisibility::DraggingRotate { axis: Axis::X };
+        frame.locked_rotate = [true, false, false];
+        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        let entries = build_rotate_entries(&frame, &camera);
+        assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
     }
 }
 
@@ -1908,8 +2318,9 @@ mod gpu_integration_tests {
         let frame = GizmoFrame {
             pivot: center,
             scale: 0.5,
-            active_axis: Some(Axis::X),
-            locked: [false, false, true],
+            visibility: GizmoVisibility::DraggingTranslate { axis: Axis::X },
+            locked_translate: [false, false, true],
+            locked_rotate: [false; 3],
         };
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(frame), 64, 64)
@@ -1917,6 +2328,109 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(frame), 64, 64)
             .expect("cached gizmo resources survive a second frame");
+    }
+
+    /// Idle visibility renders all four handle categories
+    /// simultaneously — exercises the translate, rotate, and scale
+    /// draws plus the centre cube in a single frame.
+    #[test]
+    fn render_with_idle_gizmo_under_default_limits() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&scene)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let frame = GizmoFrame {
+            pivot: center,
+            scale: 0.5,
+            visibility: GizmoVisibility::Idle,
+            locked_translate: [false; 3],
+            locked_rotate: [false; 3],
+        };
+        let _ = renderer
+            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .expect("idle gizmo render should succeed");
+    }
+
+    /// Rotate-drag visibility renders only the three rotate arcs.
+    /// Pins the rotate-arc VBO/IBO + per-axis camera-roll wiring
+    /// under default-limits.
+    #[test]
+    fn render_with_rotate_gizmo_under_default_limits() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&scene)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let frame = GizmoFrame {
+            pivot: center,
+            scale: 0.5,
+            visibility: GizmoVisibility::DraggingRotate { axis: Axis::X },
+            locked_translate: [false; 3],
+            locked_rotate: [false, false, false],
+        };
+        let _ = renderer
+            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .expect("rotate gizmo render should succeed");
+    }
+
+    /// Scale-axis and uniform-scale variants both render the same
+    /// pair of geometries (axis midpoint cubes + centre cube) — pins
+    /// the scale-pass wiring and the centre-cube VBO/IBO.
+    #[test]
+    fn render_with_scale_gizmo_under_default_limits() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&scene)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let scale_axis = GizmoFrame {
+            pivot: center,
+            scale: 0.5,
+            visibility: GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
+            locked_translate: [false; 3],
+            locked_rotate: [false; 3],
+        };
+        let _ = renderer
+            .render(&scene, &camera, Some(0), Some(scale_axis), 64, 64)
+            .expect("scale-axis gizmo render should succeed");
+        let scale_uniform = GizmoFrame {
+            pivot: center,
+            scale: 0.5,
+            visibility: GizmoVisibility::DraggingScaleUniform,
+            locked_translate: [false; 3],
+            locked_rotate: [false; 3],
+        };
+        let _ = renderer
+            .render(&scene, &camera, Some(0), Some(scale_uniform), 64, 64)
+            .expect("scale-uniform gizmo render should succeed");
     }
 
     /// Multi-object scene drives one draw call per object; the

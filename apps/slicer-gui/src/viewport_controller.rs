@@ -18,7 +18,7 @@ use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::gizmo::{self, Axis};
 use crate::i18n::ctr;
-use crate::mesh_render::{GizmoFrame, Renderer, default_fov_y};
+use crate::mesh_render::{GizmoFrame, GizmoVisibility, Renderer, default_fov_y};
 use crate::picking;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 
@@ -704,25 +704,31 @@ fn build_gizmo_frame(
     let pivot = gizmo::pivot_for_object(scene, selection)?;
     let fov_y = default_fov_y();
     let scale = gizmo::gizmo_scale(camera, fov_y, viewport_h_logical);
-    let active_axis = match state {
-        GizmoState::Drag { axis, .. } => Some(axis),
-        GizmoState::Idle => None,
+    let visibility = match state {
+        GizmoState::Drag { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
+        GizmoState::Idle => GizmoVisibility::Idle,
     };
     let forward = (camera.target - camera.eye()).normalize_or_zero();
     let view_ray = picking::Ray {
         origin: camera.eye(),
         direction: forward,
     };
-    let locked = [
+    let locked_translate = [
         !gizmo::axis_pickable(&view_ray, Axis::X),
         !gizmo::axis_pickable(&view_ray, Axis::Y),
         !gizmo::axis_pickable(&view_ray, Axis::Z),
     ];
+    let locked_rotate = [
+        !gizmo::arc_pickable(&view_ray, Axis::X),
+        !gizmo::arc_pickable(&view_ray, Axis::Y),
+        !gizmo::arc_pickable(&view_ray, Axis::Z),
+    ];
     Some(GizmoFrame {
         pivot,
         scale,
-        active_axis,
-        locked,
+        visibility,
+        locked_translate,
+        locked_rotate,
     })
 }
 

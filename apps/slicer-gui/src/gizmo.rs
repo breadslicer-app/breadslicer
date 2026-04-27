@@ -66,7 +66,6 @@ const LOCKOUT_COS: f32 = 0.990_268_07;
 /// complementary one (axis perpendicular to ray instead of parallel).
 ///
 /// `cos(82°) ≈ 0.13917`.
-#[allow(dead_code)]
 const ROTATE_LOCKOUT_COS: f32 = 0.139_173_1;
 
 /// Half-extent of the rotate arc's azimuthal span around its
@@ -307,7 +306,6 @@ pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Vec3 {
 /// — the basis of both hit-test and drag math — degenerates. The
 /// renderer should grey the arc in that state so the user sees why
 /// it is unresponsive.
-#[allow(dead_code)]
 pub fn arc_pickable(ray: &Ray, axis: Axis) -> bool {
     let a = axis.world_dir();
     a.dot(ray.direction).abs() >= ROTATE_LOCKOUT_COS
