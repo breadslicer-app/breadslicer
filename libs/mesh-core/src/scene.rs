@@ -109,11 +109,94 @@ pub struct Scene {
     pub objects: Vec<SceneObject>,
 }
 
+/// Computes the local (object-space) AABB of a mesh's vertices. Returns
+/// `None` if the mesh has no vertices.
+fn local_aabb(mesh: &IndexedMesh) -> Option<(Vertex, Vertex)> {
+    let mut iter = mesh.vertices.iter();
+    let first = iter.next()?;
+    let mut min = *first;
+    let mut max = *first;
+    for vertex in iter {
+        let v = vertex.0;
+        min.0[0] = min.0[0].min(v[0]);
+        min.0[1] = min.0[1].min(v[1]);
+        min.0[2] = min.0[2].min(v[2]);
+        max.0[0] = max.0[0].max(v[0]);
+        max.0[1] = max.0[1].max(v[1]);
+        max.0[2] = max.0[2].max(v[2]);
+    }
+    Some((min, max))
+}
+
+/// World-space AABB of an object-local AABB after applying an
+/// `AffineTransform3D`, computed in `f64` via Arvo's method:
+///
+/// > For an AABB with centre `c` and half-extents `h`, the transformed
+/// > AABB has centre `M·c + t` and half-extents
+/// > `h'ᵢ = Σⱼ |Mᵢⱼ| · hⱼ`.
+///
+/// Source: Jim Arvo, "Transforming Axis-Aligned Bounding Boxes",
+/// *Graphics Gems I* (1990), pp. 548-550. See also Ericson,
+/// *Real-Time Collision Detection*, §4.2.6. The output is conservative —
+/// it contains every transformed vertex and is exactly tight for
+/// axis-aligned scaling and translation.
+fn arvo_world_aabb(local: (Vertex, Vertex), a: &AffineTransform3D) -> (Vertex, Vertex) {
+    let (lmin, lmax) = local;
+    // Promote to f64 so the matrix-vector products match the precision of
+    // the rest of the transform module.
+    let cx = (lmin.0[0] as f64 + lmax.0[0] as f64) * 0.5;
+    let cy = (lmin.0[1] as f64 + lmax.0[1] as f64) * 0.5;
+    let cz = (lmin.0[2] as f64 + lmax.0[2] as f64) * 0.5;
+    let hx = (lmax.0[0] as f64 - lmin.0[0] as f64) * 0.5;
+    let hy = (lmax.0[1] as f64 - lmin.0[1] as f64) * 0.5;
+    let hz = (lmax.0[2] as f64 - lmin.0[2] as f64) * 0.5;
+
+    let m = &a.linear;
+    let t = &a.translation;
+
+    let center = [
+        m[0][0].mul_add(cx, m[0][1].mul_add(cy, m[0][2].mul_add(cz, t[0]))),
+        m[1][0].mul_add(cx, m[1][1].mul_add(cy, m[1][2].mul_add(cz, t[1]))),
+        m[2][0].mul_add(cx, m[2][1].mul_add(cy, m[2][2].mul_add(cz, t[2]))),
+    ];
+    let half = [
+        m[0][0]
+            .abs()
+            .mul_add(hx, m[0][1].abs().mul_add(hy, m[0][2].abs() * hz)),
+        m[1][0]
+            .abs()
+            .mul_add(hx, m[1][1].abs().mul_add(hy, m[1][2].abs() * hz)),
+        m[2][0]
+            .abs()
+            .mul_add(hx, m[2][1].abs().mul_add(hy, m[2][2].abs() * hz)),
+    ];
+
+    let min = Vertex::new([
+        (center[0] - half[0]) as f32,
+        (center[1] - half[1]) as f32,
+        (center[2] - half[2]) as f32,
+    ]);
+    let max = Vertex::new([
+        (center[0] + half[0]) as f32,
+        (center[1] + half[1]) as f32,
+        (center[2] + half[2]) as f32,
+    ]);
+    (min, max)
+}
+
 impl Scene {
-    /// Axis-aligned bounding box over every vertex referenced by any object
-    /// in the scene, resolving `Resource` references against `self.resources`.
-    /// Returns `None` when the scene has no geometry, and an error if any
-    /// resource index is out of bounds.
+    /// Axis-aligned bounding box over every object in the scene,
+    /// resolving `Resource` references against `self.resources` and
+    /// applying each object's `transform`. Returns `None` when the scene
+    /// has no geometry, and an error if any resource index is out of
+    /// bounds.
+    ///
+    /// Identity objects fold their vertices directly into the running
+    /// min/max. Affine objects use Arvo's method on the local AABB,
+    /// which is conservative and (for non-rotated transforms) tight.
+    /// TODO: cache the local AABB on `IndexedMesh` if recomputation
+    /// becomes a measured cost — it depends only on the mesh, not on
+    /// the transform.
     pub fn aabb(&self) -> Result<Option<(Vertex, Vertex)>> {
         let mut min = Vertex::new([f32::INFINITY; 3]);
         let mut max = Vertex::new([f32::NEG_INFINITY; 3]);
@@ -127,15 +210,32 @@ impl Scene {
                     .get(*idx)
                     .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
             };
-            for vertex in &mesh.vertices {
-                let v = vertex.0;
-                min.0[0] = min.0[0].min(v[0]);
-                min.0[1] = min.0[1].min(v[1]);
-                min.0[2] = min.0[2].min(v[2]);
-                max.0[0] = max.0[0].max(v[0]);
-                max.0[1] = max.0[1].max(v[1]);
-                max.0[2] = max.0[2].max(v[2]);
-                has_any = true;
+
+            match &obj.transform {
+                Transform3D::Identity => {
+                    for vertex in &mesh.vertices {
+                        let v = vertex.0;
+                        min.0[0] = min.0[0].min(v[0]);
+                        min.0[1] = min.0[1].min(v[1]);
+                        min.0[2] = min.0[2].min(v[2]);
+                        max.0[0] = max.0[0].max(v[0]);
+                        max.0[1] = max.0[1].max(v[1]);
+                        max.0[2] = max.0[2].max(v[2]);
+                        has_any = true;
+                    }
+                }
+                Transform3D::Affine(a) => {
+                    if let Some(local) = local_aabb(mesh) {
+                        let (wmin, wmax) = arvo_world_aabb(local, a);
+                        min.0[0] = min.0[0].min(wmin.0[0]);
+                        min.0[1] = min.0[1].min(wmin.0[1]);
+                        min.0[2] = min.0[2].min(wmin.0[2]);
+                        max.0[0] = max.0[0].max(wmax.0[0]);
+                        max.0[1] = max.0[1].max(wmax.0[1]);
+                        max.0[2] = max.0[2].max(wmax.0[2]);
+                        has_any = true;
+                    }
+                }
             }
         }
 
@@ -324,6 +424,9 @@ mod merge_meshes_tests {
     use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
     use crate::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use crate::transform::AffineTransform3D;
+    use float_cmp::assert_approx_eq;
+    use std::f64::consts::FRAC_PI_4;
 
     fn triangle_mesh(vertices: Vec<[f32; 3]>, face_vertices: [u32; 3]) -> IndexedMesh {
         IndexedMesh {
@@ -468,5 +571,286 @@ mod merge_meshes_tests {
         };
         let result = scene.merge_meshes().unwrap().unwrap();
         assert_eq!(result.meta, None);
+    }
+
+    /// Unit cube spanning [0, 1]³, made of two triangles on each of its
+    /// six faces. Provides 8 distinct vertex positions and 12 faces,
+    /// enough for the corner-method-vs-Arvo conservativeness checks.
+    fn unit_cube_mesh() -> IndexedMesh {
+        let v: Vec<Vertex> = vec![
+            Vertex::new([0.0, 0.0, 0.0]), // 0
+            Vertex::new([1.0, 0.0, 0.0]), // 1
+            Vertex::new([1.0, 1.0, 0.0]), // 2
+            Vertex::new([0.0, 1.0, 0.0]), // 3
+            Vertex::new([0.0, 0.0, 1.0]), // 4
+            Vertex::new([1.0, 0.0, 1.0]), // 5
+            Vertex::new([1.0, 1.0, 1.0]), // 6
+            Vertex::new([0.0, 1.0, 1.0]), // 7
+        ];
+        // Faces are arbitrary; only their vertex references matter for
+        // AABB. Normals are placeholders.
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        let face = |a, b, c| IndexedTriangle {
+            normal: n,
+            vertices: [a, b, c],
+        };
+        let faces = vec![
+            face(0, 1, 2),
+            face(0, 2, 3), // -Z
+            face(4, 6, 5),
+            face(4, 7, 6), // +Z
+            face(0, 4, 5),
+            face(0, 5, 1), // -Y
+            face(3, 6, 7),
+            face(3, 2, 6), // +Y
+            face(0, 3, 7),
+            face(0, 7, 4), // -X
+            face(1, 5, 6),
+            face(1, 6, 2), // +X
+        ];
+        IndexedMesh {
+            meta: None,
+            vertices: v,
+            faces,
+        }
+    }
+
+    fn affine_object(mesh: IndexedMesh, t: AffineTransform3D) -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Affine(t),
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    fn assert_aabb_approx(actual: (Vertex, Vertex), expected: ([f32; 3], [f32; 3]), eps: f32) {
+        for (a, e) in actual.0.0.iter().zip(expected.0.iter()) {
+            assert_approx_eq!(f32, *a, *e, epsilon = eps);
+        }
+        for (a, e) in actual.1.0.iter().zip(expected.1.iter()) {
+            assert_approx_eq!(f32, *a, *e, epsilon = eps);
+        }
+    }
+
+    /// Reference per-corner AABB: transform the 8 corners of the local
+    /// AABB and fold them into a fresh AABB. This is the math the Arvo
+    /// formula compresses into closed form; for a unit cube whose
+    /// vertices are exactly the corners, it gives the tight world-space
+    /// AABB of the transformed vertex set.
+    fn corner_aabb(mesh: &IndexedMesh, t: &AffineTransform3D) -> (Vertex, Vertex) {
+        let (lmin, lmax) = super::local_aabb(mesh).unwrap();
+        let corners = [
+            Vertex::new([lmin.0[0], lmin.0[1], lmin.0[2]]),
+            Vertex::new([lmax.0[0], lmin.0[1], lmin.0[2]]),
+            Vertex::new([lmin.0[0], lmax.0[1], lmin.0[2]]),
+            Vertex::new([lmax.0[0], lmax.0[1], lmin.0[2]]),
+            Vertex::new([lmin.0[0], lmin.0[1], lmax.0[2]]),
+            Vertex::new([lmax.0[0], lmin.0[1], lmax.0[2]]),
+            Vertex::new([lmin.0[0], lmax.0[1], lmax.0[2]]),
+            Vertex::new([lmax.0[0], lmax.0[1], lmax.0[2]]),
+        ];
+        let mut min = Vertex::new([f32::INFINITY; 3]);
+        let mut max = Vertex::new([f32::NEG_INFINITY; 3]);
+        for c in corners.iter() {
+            let w = t.apply_to_vertex(*c);
+            for i in 0..3 {
+                min.0[i] = min.0[i].min(w.0[i]);
+                max.0[i] = max.0[i].max(w.0[i]);
+            }
+        }
+        (min, max)
+    }
+
+    #[test]
+    fn aabb_with_identity_transform_matches_unwrapped() {
+        // A scene with explicit `Transform3D::Identity` produces the
+        // same AABB as one whose objects had no transform field at all
+        // — the `Identity` arm uses the same per-vertex fold.
+        let mesh = unit_cube_mesh();
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(mesh)],
+        };
+        let (min, max) = scene.aabb().unwrap().unwrap();
+        assert_eq!(min.0, [0.0, 0.0, 0.0]);
+        assert_eq!(max.0, [1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn aabb_applies_translation() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(
+                unit_cube_mesh(),
+                AffineTransform3D::from_translation([10.0, -5.0, 2.0]),
+            )],
+        };
+        let aabb = scene.aabb().unwrap().unwrap();
+        assert_aabb_approx(aabb, ([10.0, -5.0, 2.0], [11.0, -4.0, 3.0]), 1e-5);
+    }
+
+    #[test]
+    fn aabb_applies_non_uniform_scale() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(
+                unit_cube_mesh(),
+                AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]),
+            )],
+        };
+        let aabb = scene.aabb().unwrap().unwrap();
+        assert_aabb_approx(aabb, ([0.0, 0.0, 0.0], [2.0, 3.0, 4.0]), 1e-5);
+    }
+
+    #[test]
+    fn aabb_handles_rotation_centered_cube() {
+        // Rotate a cube centred at the origin by 45° about Z. The world
+        // AABB has half-extents (√2/2, √2/2, 0.5) (Z extent unchanged).
+        // Build a unit cube centred at origin by translating a [0,1]³
+        // cube by (-0.5, -0.5, -0.5).
+        let centred = AffineTransform3D::from_translation([-0.5, -0.5, -0.5]);
+        let rotate = AffineTransform3D::from_rotation_z(FRAC_PI_4);
+        let combined = rotate.compose(&centred);
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(unit_cube_mesh(), combined)],
+        };
+        let aabb = scene.aabb().unwrap().unwrap();
+        let half = std::f32::consts::FRAC_1_SQRT_2; // √2 / 2 ≈ 0.7071
+        assert_aabb_approx(aabb, ([-half, -half, -0.5], [half, half, 0.5]), 1e-5);
+    }
+
+    #[test]
+    fn aabb_arvo_matches_corner_aabb_for_a_cube() {
+        // For a unit cube whose vertices are exactly the corners of its
+        // local AABB, the Arvo method must give the same world AABB as
+        // transforming all 8 corners and folding them — they are
+        // computing the same set.
+        let mesh = unit_cube_mesh();
+        let t = AffineTransform3D::from_translation([2.0, 0.0, 0.0])
+            .compose(&AffineTransform3D::from_non_uniform_scale([1.5, 0.75, 2.0]))
+            .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
+
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(mesh.clone(), t)],
+        };
+        let arvo = scene.aabb().unwrap().unwrap();
+        let corners = corner_aabb(&mesh, &t);
+        assert_aabb_approx(arvo, (corners.0.0, corners.1.0), 1e-4);
+    }
+
+    #[test]
+    fn aabb_arvo_contains_per_vertex_for_non_box_mesh() {
+        // For a tetrahedron — whose convex hull is strictly smaller than
+        // its local AABB — Arvo's method must STILL produce an AABB
+        // that contains every transformed vertex (the conservativeness
+        // guarantee). It may be larger than the tightest possible AABB
+        // of the transformed vertices, which is fine.
+        let tetra = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+                Vertex::new([0.0, 0.0, 1.0]),
+            ],
+            faces: vec![
+                IndexedTriangle {
+                    normal: Normal::new([0.0, 0.0, 1.0]),
+                    vertices: [0, 2, 1],
+                },
+                IndexedTriangle {
+                    normal: Normal::new([0.0, -1.0, 0.0]),
+                    vertices: [0, 1, 3],
+                },
+                IndexedTriangle {
+                    normal: Normal::new([-1.0, 0.0, 0.0]),
+                    vertices: [0, 3, 2],
+                },
+                IndexedTriangle {
+                    normal: Normal::new([1.0, 1.0, 1.0]),
+                    vertices: [1, 2, 3],
+                },
+            ],
+        };
+        let t = AffineTransform3D::from_translation([5.0, -3.0, 1.0])
+            .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
+
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(tetra.clone(), t)],
+        };
+        let (amin, amax) = scene.aabb().unwrap().unwrap();
+
+        // Per-vertex transformed AABB.
+        let mut pmin = Vertex::new([f32::INFINITY; 3]);
+        let mut pmax = Vertex::new([f32::NEG_INFINITY; 3]);
+        for v in tetra.vertices.iter() {
+            let w = t.apply_to_vertex(*v);
+            for i in 0..3 {
+                pmin.0[i] = pmin.0[i].min(w.0[i]);
+                pmax.0[i] = pmax.0[i].max(w.0[i]);
+            }
+        }
+        for i in 0..3 {
+            assert!(
+                amin.0[i] <= pmin.0[i] + 1e-5,
+                "Arvo min[{i}] = {} is not <= per-vertex min = {}",
+                amin.0[i],
+                pmin.0[i]
+            );
+            assert!(
+                amax.0[i] >= pmax.0[i] - 1e-5,
+                "Arvo max[{i}] = {} is not >= per-vertex max = {}",
+                amax.0[i],
+                pmax.0[i]
+            );
+        }
+    }
+
+    #[test]
+    fn aabb_combines_identity_and_affine_objects() {
+        // Two objects: one at identity, one translated. The scene AABB
+        // is the union.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                inline_object(unit_cube_mesh()),
+                affine_object(
+                    unit_cube_mesh(),
+                    AffineTransform3D::from_translation([10.0, 0.0, 0.0]),
+                ),
+            ],
+        };
+        let aabb = scene.aabb().unwrap().unwrap();
+        assert_aabb_approx(aabb, ([0.0, 0.0, 0.0], [11.0, 1.0, 1.0]), 1e-5);
+    }
+
+    #[test]
+    fn aabb_with_empty_mesh_under_affine_is_skipped() {
+        // An object with no vertices contributes nothing to the AABB,
+        // even when it has a non-identity transform.
+        let empty = IndexedMesh {
+            meta: None,
+            vertices: vec![],
+            faces: vec![],
+        };
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![affine_object(
+                empty,
+                AffineTransform3D::from_translation([100.0, 0.0, 0.0]),
+            )],
+        };
+        assert_eq!(scene.aabb().unwrap(), None);
     }
 }
