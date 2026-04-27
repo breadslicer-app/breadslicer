@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-22 09:13+0000\n"
-"PO-Revision-Date: 2026-04-17 09:56+0000\n"
+"PO-Revision-Date: 2026-04-27 22:42+0000\n"
 "Last-Translator: Viriato <viriato@noreply.codeberg.org>\n"
 "Language-Team: Portuguese <https://translate.codeberg.org/projects/"
 "soulcrafted-slicer/slicer-gui/pt/>\n"
@@ -47,57 +47,57 @@ msgstr "Fechar"
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
 msgid "Preferences"
-msgstr ""
+msgstr "Preferências"
 
 #: ui/preferences/preferences-window.slint:49
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
-msgstr ""
+msgstr "Secção de Preferências"
 
 #: ui/preferences/preferences-window.slint:51
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
-msgstr ""
+msgstr "Tema e Interface"
 
 #: ui/preferences/preferences-window.slint:52
 msgctxt "PreferencesMenu"
 msgid "3D View"
-msgstr ""
+msgstr "Visualização 3D"
 
 #: ui/preferences/3dview.slint:9
 msgctxt "PreferencesPage"
 msgid "3D View"
-msgstr ""
+msgstr "Visualização 3D"
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
 msgid "UI & Theme"
-msgstr ""
+msgstr "Tema e Interface"
 
 #: ui/preferences/appearance.slint:27
 msgctxt "AppearancePreferences"
 msgid "System"
-msgstr ""
+msgstr "Sistema"
 
 #: ui/preferences/appearance.slint:28
 msgctxt "AppearancePreferences"
 msgid "Light"
-msgstr ""
+msgstr "Claro"
 
 #: ui/preferences/appearance.slint:29
 msgctxt "AppearancePreferences"
 msgid "Dark"
-msgstr ""
+msgstr "Escuro"
 
 #: ui/preferences/appearance.slint:49 ui/preferences/appearance.slint:60
 msgctxt "AppearancePreferences"
 msgid "Theme"
-msgstr ""
+msgstr "Tema"
 
 #: ui/preferences/appearance.slint:73 ui/preferences/appearance.slint:81
 msgctxt "AppearancePreferences"
 msgid "Language"
-msgstr ""
+msgstr "Língua"
 
 #: ui/error-dialog.slint:9
 msgctxt "ErrorDialog"
@@ -112,25 +112,19 @@ msgstr "Ocorreu um erro"
 #: ui/error-dialog.slint:73
 msgctxt "ErrorDialog"
 msgid "Warning"
-msgstr ""
+msgstr "Aviso"
 
 #. runs automatically.
 #: ui/error-dialog.slint:115
-#, fuzzy
-#| msgctxt "ErrorDialog"
-#| msgid "▾ Hide technical details"
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
-msgstr "▾ Esconder detalhes técnicos"
+msgstr "Esconder detalhes técnicos"
 
 #. runs automatically.
 #: ui/error-dialog.slint:115
-#, fuzzy
-#| msgctxt "ErrorDialog"
-#| msgid "▸ Show technical details"
 msgctxt "ErrorDialog"
 msgid "Show technical details"
-msgstr "▸ Mostrar detalhes técnicos"
+msgstr "Mostrar detalhes técnicos"
 
 #: ui/error-dialog.slint:142
 msgctxt "ErrorDialog"
@@ -150,20 +144,14 @@ msgstr "Ficheiro"
 #: ui/main-window.slint:54
 msgctxt "MenuBar"
 msgid "New Window"
-msgstr ""
+msgstr "Nova Janela"
 
 #: ui/main-window.slint:64
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "Open"
 msgctxt "MenuBar"
 msgid "Open…"
-msgstr "Abrir"
+msgstr "Abrir…"
 
 #: ui/main-window.slint:73
-#, fuzzy
-#| msgctxt "About"
-#| msgid "Close"
 msgctxt "MenuBar"
 msgid "Close"
 msgstr "Fechar"
@@ -174,32 +162,29 @@ msgid "Save"
 msgstr "Guardar"
 
 #: ui/main-window.slint:90
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "Save As"
 msgctxt "MenuBar"
 msgid "Save As…"
-msgstr "Guardar Como"
+msgstr "Guardar Como…"
 
 #: ui/main-window.slint:97
 msgctxt "MenuBar"
 msgid "Edit"
-msgstr ""
+msgstr "Editar"
 
 #: ui/main-window.slint:99
 msgctxt "MenuBar"
 msgid "Undo"
-msgstr ""
+msgstr "Anular"
 
 #: ui/main-window.slint:105
 msgctxt "MenuBar"
 msgid "Redo"
-msgstr ""
+msgstr "Refazer"
 
 #: ui/main-window.slint:113
 msgctxt "MenuBar"
 msgid "Preferences"
-msgstr ""
+msgstr "Preferências"
 
 #: ui/main-window.slint:122
 msgctxt "MenuBar"
@@ -244,12 +229,12 @@ msgstr "Abrir um modelo 3D para visualizar aqui"
 #: ui/mesh-viewer.slint:35
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
-msgstr ""
+msgstr "Visualizador de modelos 3D, vazio"
 
 #: ui/mesh-viewer.slint:36
 msgctxt "MeshViewer"
 msgid "3D model viewer"
-msgstr ""
+msgstr "Visualizador de modelos 3D"
 
 #: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
@@ -259,14 +244,17 @@ msgid ""
 "Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
+"Clique com o botão direito do rato para arrastar ou nas teclas de seta para "
+"rodar. Shift com arrastar com o botão direito, arrastar com o botão do meio "
+"ou Shift e teclas de seta para deslocar. Roda do rato, Mais/Menos ou Page Up/"
+"Down para ampliar. Prima F ou Home para enquadrar o modelo. Prima 1, 3 ou 7 "
+"para vistas frontal, direita ou superior; segure Control para trás, para a "
+"esquerda ou para a parte inferior."
 
 #: src/wiring.rs:141
-#, fuzzy
-#| msgctxt "FileDialog"
-#| msgid "All files"
 msgctxt "FileDialog"
 msgid "All supported files"
-msgstr "Todos os ficheiros"
+msgstr "Todos os ficheiros suportados"
 
 #: src/wiring.rs:144
 msgctxt "FileDialog"
@@ -316,4 +304,4 @@ msgstr "Ficheiro: {}"
 #: src/mesh_loader.rs:46
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
-msgstr ""
+msgstr "O Ficheiro tem {} MiB, excedendo o limite de {} MiB."
