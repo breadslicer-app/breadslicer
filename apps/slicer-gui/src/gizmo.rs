@@ -13,7 +13,7 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
 
 use crate::camera::OrbitCamera;
-use crate::picking::Ray;
+use crate::picking::{Ray, ray_hits_aabb_t};
 
 /// World-aligned gizmo axis. The X/Y/Z directions are global +X, +Y,
 /// +Z; a local-axis option is left as a future toggle.
@@ -74,6 +74,34 @@ const ROTATE_LOCKOUT_COS: f32 = 0.139_173_1;
 /// that midpoint.
 #[allow(dead_code)]
 const ROTATE_ARC_HALF_SPAN: f32 = std::f32::consts::FRAC_PI_4;
+
+/// Lower bound on a single-axis or uniform scale factor. Factors
+/// below this are clamped up; factors above `1.0 / EPS_SCALE` are
+/// clamped down. Mirroring (negative scale) is disallowed through
+/// the gizmo, so the bound also rejects sign flips. The user sees
+/// the gizmo "stick" at the limit.
+#[allow(dead_code)]
+pub const EPS_SCALE: f32 = 1e-3;
+
+/// Side length, in screen pixels, of the per-axis scale cube. The
+/// cube sits at the midpoint of the translate shaft (`scale * 0.5`)
+/// and is small enough to leave the cone tip clearly distinct.
+#[allow(dead_code)]
+pub const AXIS_SCALE_CUBE_PIXELS: f32 = 10.0;
+
+/// Side length, in screen pixels, of the centre cube driving the
+/// uniform-scale gesture. Sized larger than the per-axis cube so the
+/// pivot's handle reads as a single distinct target rather than a
+/// fourth axis.
+#[allow(dead_code)]
+pub const CENTRE_CUBE_PIXELS: f32 = 14.0;
+
+/// Fraction of the translate shaft length at which the scale-axis
+/// midpoint cube sits (`pivot + axis * scale * MIDPOINT_FRACTION`).
+/// Pinned at the *midpoint* — not the tip — so per-axis scale doesn't
+/// collide with the translate cone.
+#[allow(dead_code)]
+pub const MIDPOINT_FRACTION: f32 = 0.5;
 
 /// World-space pivot for the gizmo: the local-AABB centre of the
 /// object, transformed by the object's `Transform3D`. Returns `None`
@@ -423,6 +451,136 @@ pub fn rotate_hit_test(
         }
     }
     best.map(|(a, _)| a)
+}
+
+/// Ray-vs-AABB for one axis's midpoint scale cube. The cube is
+/// axis-aligned in world space, centred at
+/// `pivot + axis_dir * shaft_length_world * MIDPOINT_FRACTION`,
+/// with side length `cube_world`. Returns the entry parameter `t`
+/// when the ray hits, or `None`.
+#[allow(dead_code)]
+pub fn ray_hits_axis_cube(
+    ray: &Ray,
+    pivot: Vec3,
+    axis: Axis,
+    shaft_length_world: f32,
+    cube_world: f32,
+) -> Option<f32> {
+    let centre = pivot + axis.world_dir() * (shaft_length_world * MIDPOINT_FRACTION);
+    let half = Vec3::splat(cube_world * 0.5);
+    ray_hits_aabb_t(ray, centre - half, centre + half)
+}
+
+/// Ray-vs-AABB for the centre (uniform-scale) cube. The cube is
+/// axis-aligned in world space, centred at `pivot`, with side
+/// length `cube_world`.
+#[allow(dead_code)]
+pub fn ray_hits_centre_cube(ray: &Ray, pivot: Vec3, cube_world: f32) -> Option<f32> {
+    let half = Vec3::splat(cube_world * 0.5);
+    ray_hits_aabb_t(ray, pivot - half, pivot + half)
+}
+
+/// Hit-test the four scale handles (three midpoint cubes + the
+/// centre cube) against `ray`. Returns
+/// - `Some(Some(axis))` for a per-axis scale cube hit;
+/// - `Some(None)` for the centre (uniform-scale) cube;
+/// - `None` if the ray misses every cube.
+///
+/// Front-most-`t` wins across all four candidates. The per-axis
+/// cubes inherit the translate lock-out (the closest-point-on-axis
+/// drag math has the same instability as translate near the
+/// camera-parallel-to-axis configuration); the centre cube has no
+/// per-axis lock-out since its drag uses screen-space distance.
+#[allow(dead_code)]
+pub fn scale_hit_test(
+    ray: &Ray,
+    pivot: Vec3,
+    shaft_length_world: f32,
+    axis_cube_world: f32,
+    centre_cube_world: f32,
+) -> Option<Option<Axis>> {
+    let mut best: Option<(Option<Axis>, f32)> = None;
+
+    if let Some(t) = ray_hits_centre_cube(ray, pivot, centre_cube_world) {
+        best = Some((None, t));
+    }
+
+    for &axis in &ALL_AXES {
+        if !axis_pickable(ray, axis) {
+            continue;
+        }
+        if let Some(t) = ray_hits_axis_cube(ray, pivot, axis, shaft_length_world, axis_cube_world) {
+            match best {
+                Some((_, prev_t)) if prev_t <= t => {}
+                _ => best = Some((Some(axis), t)),
+            }
+        }
+    }
+
+    best.map(|(a, _)| a)
+}
+
+/// Per-axis scale factor for a drag whose press anchor was
+/// `start_anchor` and whose current anchor is `current_anchor`.
+/// Both anchors are world-space points on the axis line through
+/// `pivot` (typically produced by `closest_point_on_axis`). The raw
+/// ratio `current_proj / start_proj` is clamped into
+/// `[EPS_SCALE, 1/EPS_SCALE]`, which also rejects negative ratios
+/// — mirroring through the gizmo is disallowed.
+///
+/// Returns `1.0` (a no-op factor) when the press anchor coincides
+/// with the pivot along the axis: the ratio is undefined there
+/// and the drag should not move the object until the cursor leaves
+/// the pivot's neighbourhood.
+#[allow(dead_code)]
+pub fn scale_factor_along_axis(
+    start_anchor: Vec3,
+    current_anchor: Vec3,
+    pivot: Vec3,
+    axis: Axis,
+) -> f32 {
+    let a = axis.world_dir();
+    let start_proj = (start_anchor - pivot).dot(a);
+    let current_proj = (current_anchor - pivot).dot(a);
+    if start_proj.abs() < 1e-6 {
+        return 1.0;
+    }
+    (current_proj / start_proj).clamp(EPS_SCALE, 1.0 / EPS_SCALE)
+}
+
+/// Uniform scale factor for a drag of the centre cube (or the
+/// per-axis cube with the proportional-scale modifier held). Driven
+/// by the screen-space distance between the cursor and the
+/// projected pivot: the factor is the ratio of the current distance
+/// to the press distance, clamped into `[EPS_SCALE, 1/EPS_SCALE]`.
+///
+/// `pivot_screen_*` must be the projection of the world-space
+/// pivot into the same logical-pixel coordinate space as the
+/// cursor positions. The controller computes that projection from
+/// its camera + viewport once per move event.
+///
+/// Returns `1.0` when the press lands within `1e-6` pixels of the
+/// projected pivot — the ratio is undefined there.
+#[allow(dead_code)]
+pub fn uniform_scale_factor(
+    pivot_screen_x: f32,
+    pivot_screen_y: f32,
+    x_press: f32,
+    y_press: f32,
+    x_now: f32,
+    y_now: f32,
+) -> f32 {
+    let dx0 = x_press - pivot_screen_x;
+    let dy0 = y_press - pivot_screen_y;
+    let start_dist_sq = dx0 * dx0 + dy0 * dy0;
+    if start_dist_sq < 1e-12 {
+        return 1.0;
+    }
+    let dx1 = x_now - pivot_screen_x;
+    let dy1 = y_now - pivot_screen_y;
+    let current_dist_sq = dx1 * dx1 + dy1 * dy1;
+    let raw = (current_dist_sq / start_dist_sq).sqrt();
+    raw.clamp(EPS_SCALE, 1.0 / EPS_SCALE)
 }
 
 #[cfg(test)]
@@ -1062,5 +1220,292 @@ mod rotate_hit_test_tests {
             direction: -Vec3::Y,
         };
         assert_ne!(rotate_hit_test(&ray, Vec3::ZERO, 1.0, 0.05), Some(Axis::X));
+    }
+}
+
+#[cfg(test)]
+mod ray_hits_axis_cube_tests {
+    use super::*;
+
+    #[test]
+    fn cube_sits_at_shaft_midpoint_not_tip() {
+        // X-axis cube with shaft length 2.0 must be centred at x = 1.0
+        // (midpoint), *not* x = 2.0 (tip). Ray pointing through (1, 0)
+        // hits; ray pointing through (2, 0) misses (cube extents are
+        // [0.95, 1.05] for cube_world = 0.1).
+        let ray_at_midpoint = Ray {
+            origin: Vec3::new(1.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        let ray_at_tip = Ray {
+            origin: Vec3::new(2.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_axis_cube(&ray_at_midpoint, Vec3::ZERO, Axis::X, 2.0, 0.1).is_some());
+        assert!(ray_hits_axis_cube(&ray_at_tip, Vec3::ZERO, Axis::X, 2.0, 0.1).is_none());
+    }
+
+    #[test]
+    fn cube_centre_uses_axis_dir() {
+        // Y-axis cube on a shaft of length 4 sits at (0, 2, 0).
+        let ray = Ray {
+            origin: Vec3::new(0.0, 2.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_axis_cube(&ray, Vec3::ZERO, Axis::Y, 4.0, 0.1).is_some());
+    }
+
+    #[test]
+    fn ray_outside_cube_misses() {
+        let ray = Ray {
+            origin: Vec3::new(1.0, 5.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_axis_cube(&ray, Vec3::ZERO, Axis::X, 2.0, 0.1).is_none());
+    }
+
+    #[test]
+    fn pivot_translation_carries_cube() {
+        // Scene-space pivot at (10, 20, 30) → X cube centred at
+        // (10 + 1, 20, 30) for shaft length 2.
+        let pivot = Vec3::new(10.0, 20.0, 30.0);
+        let ray = Ray {
+            origin: Vec3::new(11.0, 20.0, 35.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_axis_cube(&ray, pivot, Axis::X, 2.0, 0.1).is_some());
+    }
+}
+
+#[cfg(test)]
+mod ray_hits_centre_cube_tests {
+    use super::*;
+
+    #[test]
+    fn ray_through_pivot_hits() {
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_centre_cube(&ray, Vec3::ZERO, 0.2).is_some());
+    }
+
+    #[test]
+    fn ray_outside_cube_misses() {
+        let ray = Ray {
+            origin: Vec3::new(1.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert!(ray_hits_centre_cube(&ray, Vec3::ZERO, 0.2).is_none());
+    }
+}
+
+#[cfg(test)]
+mod scale_hit_test_tests {
+    use super::*;
+
+    #[test]
+    fn ray_through_centre_returns_some_none() {
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert_eq!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2), Some(None));
+    }
+
+    #[test]
+    fn ray_through_x_midpoint_returns_some_some_x() {
+        let ray = Ray {
+            origin: Vec3::new(1.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        assert_eq!(
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2),
+            Some(Some(Axis::X))
+        );
+    }
+
+    #[test]
+    fn empty_space_returns_none() {
+        let ray = Ray {
+            origin: Vec3::new(100.0, 100.0, 100.0),
+            direction: -Vec3::Z,
+        };
+        assert!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).is_none());
+    }
+
+    #[test]
+    fn frontmost_t_wins_between_axis_cubes() {
+        // A ray hitting both Y and Z midpoint cubes: starts at
+        // (0, 5, -4), direction toward (0, 1, 0) then continuing on
+        // through (0, 0, 1). Y cube hits first (smaller `t`).
+        // Direction is 45° off both Y and Z so neither axis is
+        // locked out.
+        let dir = Vec3::new(0.0, -1.0, 1.0).normalize();
+        let ray = Ray {
+            origin: Vec3::new(0.0, 5.0, -4.0),
+            direction: dir,
+        };
+        assert_eq!(
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2),
+            Some(Some(Axis::Y))
+        );
+    }
+
+    #[test]
+    fn locked_out_axis_cube_is_skipped() {
+        // Ray nearly along +X — X axis is lock-out; the X cube must
+        // not be returned even if the ray geometrically crosses it.
+        let theta = 5.0_f32.to_radians();
+        let dir = Vec3::new(theta.cos(), 0.0, theta.sin()).normalize();
+        let ray = Ray {
+            origin: Vec3::new(-5.0, 0.0, 0.0),
+            direction: dir,
+        };
+        let hit = scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2);
+        assert_ne!(hit, Some(Some(Axis::X)));
+    }
+}
+
+#[cfg(test)]
+mod scale_factor_along_axis_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    #[test]
+    fn ratio_of_anchor_projections_drives_factor() {
+        // Press anchor at x = 1, current anchor at x = 2 → factor 2.
+        let factor = scale_factor_along_axis(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn off_axis_anchor_components_are_ignored() {
+        // Only the projection onto the axis matters; y/z drift is
+        // irrelevant.
+        let factor = scale_factor_along_axis(
+            Vec3::new(1.0, 100.0, -200.0),
+            Vec3::new(0.5, 999.0, 500.0),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        assert_approx_eq!(f32, factor, 0.5, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn pivot_translation_does_not_change_factor() {
+        let pivot = Vec3::new(10.0, 20.0, 30.0);
+        let factor = scale_factor_along_axis(
+            pivot + Vec3::new(2.0, 0.0, 0.0),
+            pivot + Vec3::new(3.0, 0.0, 0.0),
+            pivot,
+            Axis::X,
+        );
+        assert_approx_eq!(f32, factor, 1.5, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn factor_clamps_at_lower_bound() {
+        // Press at x = 1, current at x = +tiny → ratio under EPS,
+        // clamped to EPS_SCALE.
+        let factor = scale_factor_along_axis(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1e-9, 0.0, 0.0),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        assert_approx_eq!(f32, factor, EPS_SCALE, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn negative_ratio_is_clamped_not_mirrored() {
+        // Cursor crosses the pivot to the other side: raw ratio is
+        // negative, which the clamp turns into the lower bound.
+        // Mirroring through the gizmo is disallowed.
+        let factor = scale_factor_along_axis(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-2.0, 0.0, 0.0),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        assert_approx_eq!(f32, factor, EPS_SCALE, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn factor_clamps_at_upper_bound() {
+        // start_proj > 1e-6 (the press-at-pivot guard) but small
+        // enough that the raw ratio exceeds `1/EPS_SCALE`.
+        let factor = scale_factor_along_axis(
+            Vec3::new(1e-4, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::ZERO,
+            Axis::X,
+        );
+        assert_approx_eq!(f32, factor, 1.0 / EPS_SCALE, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn press_at_pivot_returns_unit_factor() {
+        // start_proj ≈ 0 → factor undefined; the no-op fallback is
+        // 1.0 so the drag doesn't move the object until the cursor
+        // leaves the pivot's neighbourhood.
+        let factor =
+            scale_factor_along_axis(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, Axis::X);
+        assert_approx_eq!(f32, factor, 1.0, epsilon = 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod uniform_scale_factor_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    #[test]
+    fn ratio_of_distances_drives_factor() {
+        // Press 50 px away, now 100 px away → factor 2.
+        let factor = uniform_scale_factor(0.0, 0.0, 50.0, 0.0, 100.0, 0.0);
+        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn factor_uses_euclidean_distance() {
+        // Press at (3, 4) → distance 5. Now at (6, 8) → distance 10.
+        // Factor = 10 / 5 = 2.
+        let factor = uniform_scale_factor(0.0, 0.0, 3.0, 4.0, 6.0, 8.0);
+        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn pivot_offset_does_not_change_factor() {
+        let factor = uniform_scale_factor(100.0, 200.0, 150.0, 200.0, 200.0, 200.0);
+        // Press 50 px away, now 100 px away → factor 2.
+        assert_approx_eq!(f32, factor, 2.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn factor_clamps_at_lower_bound() {
+        // Cursor moves toward the pivot — ratio approaches zero,
+        // clamps at EPS_SCALE.
+        let factor = uniform_scale_factor(0.0, 0.0, 100.0, 0.0, 1e-9, 0.0);
+        assert_approx_eq!(f32, factor, EPS_SCALE, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn factor_clamps_at_upper_bound() {
+        let factor = uniform_scale_factor(0.0, 0.0, 1e-3, 0.0, 1e6, 0.0);
+        assert_approx_eq!(f32, factor, 1.0 / EPS_SCALE, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn press_at_pivot_returns_unit_factor() {
+        // Press lands exactly on the projected pivot → no defined
+        // factor; helper returns 1.0 so the drag is a no-op.
+        let factor = uniform_scale_factor(0.0, 0.0, 0.0, 0.0, 50.0, 0.0);
+        assert_approx_eq!(f32, factor, 1.0, epsilon = 1e-6);
     }
 }

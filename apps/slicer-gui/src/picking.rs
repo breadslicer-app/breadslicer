@@ -116,6 +116,15 @@ pub fn pick_object(ray: &Ray, scene: &Scene) -> Option<usize> {
 /// slab, and reject when it isn't. Hits with `t_exit < 0` (box
 /// entirely behind the ray) are rejected.
 pub(crate) fn ray_hits_aabb(ray: &Ray, min: Vec3, max: Vec3) -> bool {
+    ray_hits_aabb_t(ray, min, max).is_some()
+}
+
+/// Slab test variant that returns the ray parameter at which the
+/// ray enters the box (`t_enter`), or `None` if the ray misses or
+/// the box is behind the origin. Origin-inside-box returns 0 as the
+/// entry parameter. Used by the gizmo cube hit tests to feed
+/// front-most-`t` arbitration alongside the cylinder / arc tests.
+pub(crate) fn ray_hits_aabb_t(ray: &Ray, min: Vec3, max: Vec3) -> Option<f32> {
     let inv_dir = Vec3::new(
         1.0 / ray.direction.x,
         1.0 / ray.direction.y,
@@ -125,7 +134,10 @@ pub(crate) fn ray_hits_aabb(ray: &Ray, min: Vec3, max: Vec3) -> bool {
     let t_high = (max - ray.origin) * inv_dir;
     let t_enter = t_low.min(t_high).max_element();
     let t_exit = t_low.max(t_high).min_element();
-    t_exit >= t_enter && t_exit >= 0.0
+    if t_exit < t_enter || t_exit < 0.0 {
+        return None;
+    }
+    Some(t_enter.max(0.0))
 }
 
 /// Möller–Trumbore intersection of a ray with a single triangle,
