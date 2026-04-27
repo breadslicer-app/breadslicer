@@ -26,6 +26,10 @@ struct VsIn {
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
+    // `flat` interpolation: every fragment of every triangle of this
+    // object reads the same value, so the mix factor is a clean 0/1
+    // switch instead of crossing a smooth gradient between objects.
+    @location(1) @interpolate(flat) selected: u32,
 };
 
 @vertex
@@ -34,6 +38,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let world = model_entry.model * vec4<f32>(in.position, 1.0);
     out.clip_pos = u.view_proj * world;
     out.world_pos = world.xyz;
+    out.selected = model_entry.flags.x;
     return out;
 }
 
@@ -46,6 +51,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let lambert = abs(dot(n, l));
     let ambient = 0.25;
     let intensity = ambient + (1.0 - ambient) * lambert;
-    let base_color = vec3<f32>(0.75, 0.78, 0.85);
+    let unselected = vec3<f32>(0.75, 0.78, 0.85);
+    let highlighted = vec3<f32>(1.00, 0.78, 0.42);
+    let base_color = mix(unselected, highlighted, f32(in.selected));
     return vec4<f32>(base_color * intensity, 1.0);
 }

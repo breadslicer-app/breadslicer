@@ -461,6 +461,7 @@ impl Renderer {
         &mut self,
         scene: &Scene,
         camera: &OrbitCamera,
+        selection: Option<usize>,
         width: u32,
         height: u32,
     ) -> Option<wgpu::Texture> {
@@ -483,7 +484,7 @@ impl Renderer {
             scene.objects.len(),
             "GpuScene and Scene have diverged in object count"
         );
-        let entries = build_model_entries(scene);
+        let entries = build_model_entries(scene, selection);
         if entries.is_empty() {
             // Defensive: nothing to draw.
             return None;
@@ -621,13 +622,21 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
     }
 }
 
-fn build_model_entries(scene: &Scene) -> Vec<ModelEntry> {
+/// `selection` is an index into `scene.objects`; out-of-bounds values
+/// (or `None`) mean nothing is selected and every entry's `flags.x`
+/// stays 0. The shader reads `flags.x` and mixes a warm tint when it
+/// is 1.
+fn build_model_entries(scene: &Scene, selection: Option<usize>) -> Vec<ModelEntry> {
     scene
         .objects
         .iter()
-        .map(|obj| ModelEntry {
-            model: transform_to_mat4(&obj.transform).to_cols_array_2d(),
-            flags: [0, 0, 0, 0],
+        .enumerate()
+        .map(|(idx, obj)| {
+            let selected = selection == Some(idx);
+            ModelEntry {
+                model: transform_to_mat4(&obj.transform).to_cols_array_2d(),
+                flags: [u32::from(selected), 0, 0, 0],
+            }
         })
         .collect()
 }
@@ -1036,7 +1045,7 @@ mod transform_to_mat4_tests {
                 },
             ],
         };
-        let entries = build_model_entries(&scene);
+        let entries = build_model_entries(&scene, None);
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -1045,6 +1054,61 @@ mod transform_to_mat4_tests {
         assert_approx_eq!(f32, entries[1].model[3][0], 7.0);
         assert_approx_eq!(f32, entries[1].model[3][1], 0.0);
         assert_approx_eq!(f32, entries[1].model[3][2], 0.0);
+    }
+
+    fn two_object_scene() -> Scene {
+        use sc_mesh_core::IndexedMesh;
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::scene::{SceneObject, SceneObjectContent};
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![IndexedTriangle {
+                normal: Normal::new([0.0, 0.0, 1.0]),
+                vertices: [0, 0, 0],
+            }],
+        };
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                SceneObject {
+                    meta: None,
+                    transform: Transform3D::Identity,
+                    content: SceneObjectContent::Mesh(mesh.clone()),
+                },
+                SceneObject {
+                    meta: None,
+                    transform: Transform3D::Identity,
+                    content: SceneObjectContent::Mesh(mesh),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn no_selection_leaves_every_flags_x_zero() {
+        let scene = two_object_scene();
+        let entries = build_model_entries(&scene, None);
+        assert_eq!(entries[0].flags[0], 0);
+        assert_eq!(entries[1].flags[0], 0);
+    }
+
+    #[test]
+    fn selected_index_sets_only_that_entrys_flags_x() {
+        let scene = two_object_scene();
+        let entries = build_model_entries(&scene, Some(1));
+        assert_eq!(entries[0].flags[0], 0);
+        assert_eq!(entries[1].flags[0], 1);
+    }
+
+    #[test]
+    fn out_of_bounds_selection_falls_back_to_no_highlight() {
+        let scene = two_object_scene();
+        let entries = build_model_entries(&scene, Some(99));
+        assert_eq!(entries[0].flags[0], 0);
+        assert_eq!(entries[1].flags[0], 0);
     }
 }
 
@@ -1195,10 +1259,36 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let texture = renderer
-            .render(&scene, &camera, 64, 64)
+            .render(&scene, &camera, None, 64, 64)
             .expect("render should produce a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
+    }
+
+    /// Identical to `render_succeeds_under_default_limits` but with a
+    /// non-`None` selection so the `flags.x` lane carries a 1 through
+    /// the per-frame uniform write. Catches any default-limits
+    /// regression in the selection-flag path before runtime.
+    #[test]
+    fn render_with_selection_under_default_limits() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&scene)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let texture = renderer
+            .render(&scene, &camera, Some(0), 64, 64)
+            .expect("render with selection should produce a texture");
+        assert_eq!(texture.size().width, 64);
     }
 
     /// Multi-object scene drives one draw call per object; the
@@ -1255,7 +1345,7 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let _texture = renderer
-            .render(&scene, &camera, 64, 64)
+            .render(&scene, &camera, None, 64, 64)
             .expect("render multi-object");
     }
 }
