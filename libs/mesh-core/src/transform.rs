@@ -162,9 +162,13 @@ impl AffineTransform3D {
         Vector3D::new([x as f32, y as f32, z as f32])
     }
 
-    /// Determinant of the 3×3 linear part. Module-internal for now; a
-    /// public version is introduced alongside `inverse` and `compose`.
-    pub(super) fn linear_determinant(&self) -> f64 {
+    /// Determinant of the 3×3 linear part.
+    ///
+    /// The translation does not affect the determinant. A negative
+    /// determinant indicates the transform mirrors space (reverses
+    /// orientation); zero indicates a singular transform that cannot be
+    /// inverted.
+    pub fn determinant(&self) -> f64 {
         let m = &self.linear;
         // Cofactor expansion along the first row, written with `mul_add`
         // chains to keep precision consistent with the rest of the module.
@@ -189,7 +193,7 @@ impl AffineTransform3D {
     /// to within `f64::EPSILON`) or if the resulting normal has zero
     /// magnitude (which can happen for pathological inputs).
     pub fn apply_to_normal(&self, n: Normal) -> Result<Normal> {
-        let det = self.linear_determinant();
+        let det = self.determinant();
         if !matches!(
             det.abs().partial_cmp(&f64::EPSILON),
             Some(Ordering::Greater)
@@ -246,6 +250,91 @@ impl AffineTransform3D {
             (out[1] * inv_mag) as f32,
             (out[2] * inv_mag) as f32,
         ]))
+    }
+
+    /// Composes two transforms: `self.compose(other)` is the transform
+    /// that applies `other` first and then `self`. That is,
+    /// `self.compose(other).apply_to_vertex(v)` equals
+    /// `self.apply_to_vertex(other.apply_to_vertex(v))`.
+    pub fn compose(&self, other: &Self) -> Self {
+        let a = &self.linear;
+        let b = &other.linear;
+
+        // Linear part: A · B.
+        let mut linear = [[0.0_f64; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                linear[i][j] =
+                    a[i][0].mul_add(b[0][j], a[i][1].mul_add(b[1][j], a[i][2] * b[2][j]));
+            }
+        }
+
+        // Translation: A · t_b + t_a (because (A·B)·v + A·t_b + t_a =
+        // A·(B·v + t_b) + t_a — i.e. apply `other` first, then `self`).
+        let tb = &other.translation;
+        let ta = &self.translation;
+        let translation = [
+            a[0][0].mul_add(tb[0], a[0][1].mul_add(tb[1], a[0][2].mul_add(tb[2], ta[0]))),
+            a[1][0].mul_add(tb[0], a[1][1].mul_add(tb[1], a[1][2].mul_add(tb[2], ta[1]))),
+            a[2][0].mul_add(tb[0], a[2][1].mul_add(tb[1], a[2][2].mul_add(tb[2], ta[2]))),
+        ];
+
+        Self {
+            linear,
+            translation,
+        }
+    }
+
+    /// Returns the inverse transform `T⁻¹` such that
+    /// `self.compose(&self.inverse()?).apply_to_vertex(v) == v` and
+    /// `self.inverse()?.compose(self).apply_to_vertex(v) == v`.
+    ///
+    /// Returns an error if the linear part is singular (determinant
+    /// magnitude below `f64::EPSILON`).
+    pub fn inverse(&self) -> Result<Self> {
+        let det = self.determinant();
+        if !matches!(
+            det.abs().partial_cmp(&f64::EPSILON),
+            Some(Ordering::Greater)
+        ) {
+            return Err(anyhow!("Cannot invert: singular linear part"));
+        }
+        let inv_det = 1.0 / det;
+
+        let m = &self.linear;
+        // M⁻¹ = adj(M) / det = cof(M)ᵀ / det.
+        let inv_linear = [
+            [
+                (m[1][1].mul_add(m[2][2], -m[1][2] * m[2][1])) * inv_det,
+                -(m[0][1].mul_add(m[2][2], -m[0][2] * m[2][1])) * inv_det,
+                (m[0][1].mul_add(m[1][2], -m[0][2] * m[1][1])) * inv_det,
+            ],
+            [
+                -(m[1][0].mul_add(m[2][2], -m[1][2] * m[2][0])) * inv_det,
+                (m[0][0].mul_add(m[2][2], -m[0][2] * m[2][0])) * inv_det,
+                -(m[0][0].mul_add(m[1][2], -m[0][2] * m[1][0])) * inv_det,
+            ],
+            [
+                (m[1][0].mul_add(m[2][1], -m[1][1] * m[2][0])) * inv_det,
+                -(m[0][0].mul_add(m[2][1], -m[0][1] * m[2][0])) * inv_det,
+                (m[0][0].mul_add(m[1][1], -m[0][1] * m[1][0])) * inv_det,
+            ],
+        ];
+
+        // For T(v) = M·v + t, the inverse is T⁻¹(w) = M⁻¹·(w - t)
+        //                             = M⁻¹·w + (-M⁻¹·t).
+        let t = &self.translation;
+        let il = &inv_linear;
+        let inv_translation = [
+            -(il[0][0].mul_add(t[0], il[0][1].mul_add(t[1], il[0][2] * t[2]))),
+            -(il[1][0].mul_add(t[0], il[1][1].mul_add(t[1], il[1][2] * t[2]))),
+            -(il[2][0].mul_add(t[0], il[2][1].mul_add(t[1], il[2][2] * t[2]))),
+        ];
+
+        Ok(Self {
+            linear: inv_linear,
+            translation: inv_translation,
+        })
     }
 }
 
@@ -707,6 +796,173 @@ mod affine_transform_3d_tests {
         );
         let n = Normal::new([1.0, 0.0, 0.0]);
         assert_normal_approx(t.apply_to_normal(n).unwrap(), [0.0, 1.0, 0.0], 1e-6);
+    }
+
+    fn assert_transform_approx(a: &AffineTransform3D, b: &AffineTransform3D, eps: f64) {
+        assert_linear_approx(&a.linear, &b.linear, eps);
+        for (av, bv) in a.translation.iter().zip(b.translation.iter()) {
+            assert_approx_eq!(f64, *av, *bv, epsilon = eps);
+        }
+    }
+
+    #[test]
+    fn determinant_identity_is_one() {
+        assert_approx_eq!(f64, AffineTransform3D::identity().determinant(), 1.0);
+    }
+
+    #[test]
+    fn determinant_translation_is_one() {
+        let t = AffineTransform3D::from_translation([5.0, -3.0, 1.5]);
+        assert_approx_eq!(f64, t.determinant(), 1.0);
+    }
+
+    #[test]
+    fn determinant_uniform_scale_is_cubed() {
+        let t = AffineTransform3D::from_uniform_scale(2.0);
+        assert_approx_eq!(f64, t.determinant(), 8.0);
+    }
+
+    #[test]
+    fn determinant_non_uniform_scale_is_product() {
+        let t = AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]);
+        assert_approx_eq!(f64, t.determinant(), 24.0);
+    }
+
+    #[test]
+    fn determinant_rotation_is_one() {
+        let t = AffineTransform3D::from_rotation_z(FRAC_PI_4);
+        assert_approx_eq!(f64, t.determinant(), 1.0, epsilon = 1e-15);
+    }
+
+    #[test]
+    fn determinant_mirror_is_negative() {
+        let t = AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]);
+        assert_approx_eq!(f64, t.determinant(), -1.0);
+    }
+
+    #[test]
+    fn determinant_singular_is_zero() {
+        // Two identical rows ⇒ rank 2 ⇒ determinant 0.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            [0.0, 0.0, 0.0],
+        );
+        assert_approx_eq!(f64, t.determinant(), 0.0, epsilon = 1e-15);
+    }
+
+    #[test]
+    fn compose_with_identity_on_either_side_is_a_no_op() {
+        let a = AffineTransform3D::from_axis_angle([1.0, 2.0, 3.0], FRAC_PI_4)
+            .unwrap()
+            .compose(&AffineTransform3D::from_translation([4.0, 5.0, 6.0]));
+        let id = AffineTransform3D::identity();
+        assert_transform_approx(&id.compose(&a), &a, 1e-15);
+        assert_transform_approx(&a.compose(&id), &a, 1e-15);
+    }
+
+    #[test]
+    fn compose_apply_equals_sequential_apply() {
+        // (A ∘ B)(v) == A(B(v)) for an arbitrary point.
+        let a = AffineTransform3D::from_rotation_z(FRAC_PI_4);
+        let b = AffineTransform3D::from_translation([1.0, 2.0, 3.0]);
+        let v = Vertex::new([4.0, -5.0, 6.0]);
+        let composed = a.compose(&b).apply_to_vertex(v);
+        let sequential = a.apply_to_vertex(b.apply_to_vertex(v));
+        assert_vertex_approx(composed, sequential.0, 1e-5);
+    }
+
+    #[test]
+    fn compose_is_associative() {
+        // (A ∘ B) ∘ C == A ∘ (B ∘ C). We compare the resulting transforms
+        // structurally, not just their action on a single point.
+        let a = AffineTransform3D::from_rotation_x(0.3);
+        let b = AffineTransform3D::from_non_uniform_scale([1.5, 0.75, 2.0]);
+        let c = AffineTransform3D::from_translation([7.0, -2.0, 0.5]);
+        let left = a.compose(&b).compose(&c);
+        let right = a.compose(&b.compose(&c));
+        assert_transform_approx(&left, &right, 1e-14);
+    }
+
+    #[test]
+    fn compose_translates_translations() {
+        // Composing two pure translations adds their offsets.
+        let a = AffineTransform3D::from_translation([1.0, 2.0, 3.0]);
+        let b = AffineTransform3D::from_translation([10.0, 20.0, 30.0]);
+        let composed = a.compose(&b);
+        assert_transform_approx(
+            &composed,
+            &AffineTransform3D::from_translation([11.0, 22.0, 33.0]),
+            1e-15,
+        );
+    }
+
+    #[test]
+    fn compose_translation_then_rotation_orders_correctly() {
+        // Apply translation first, then rotation: R ∘ T.
+        // For v = (1, 0, 0): T sends it to (2, 0, 0); R(π/2 about Z)
+        // sends that to (0, 2, 0).
+        let r = AffineTransform3D::from_rotation_z(FRAC_PI_2);
+        let t = AffineTransform3D::from_translation([1.0, 0.0, 0.0]);
+        let composed = r.compose(&t);
+        let v = Vertex::new([1.0, 0.0, 0.0]);
+        assert_vertex_approx(composed.apply_to_vertex(v), [0.0, 2.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn inverse_of_identity_is_identity() {
+        let inv = AffineTransform3D::identity().inverse().unwrap();
+        assert_transform_approx(&inv, &AffineTransform3D::identity(), 1e-15);
+    }
+
+    #[test]
+    fn inverse_of_translation_negates_offset() {
+        let t = AffineTransform3D::from_translation([1.0, -2.0, 3.5]);
+        let inv = t.inverse().unwrap();
+        assert_transform_approx(
+            &inv,
+            &AffineTransform3D::from_translation([-1.0, 2.0, -3.5]),
+            1e-15,
+        );
+    }
+
+    #[test]
+    fn inverse_compose_self_is_identity() {
+        let cases = [
+            AffineTransform3D::from_translation([3.0, -1.0, 2.0]),
+            AffineTransform3D::from_uniform_scale(2.5),
+            AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]),
+            AffineTransform3D::from_rotation_x(0.7),
+            AffineTransform3D::from_rotation_y(-1.2),
+            AffineTransform3D::from_rotation_z(FRAC_PI_4),
+            AffineTransform3D::from_axis_angle([1.0, 2.0, 3.0], 0.4).unwrap(),
+        ];
+        for t in cases.iter() {
+            let inv = t.inverse().unwrap();
+            assert_transform_approx(&t.compose(&inv), &AffineTransform3D::identity(), 1e-12);
+            assert_transform_approx(&inv.compose(t), &AffineTransform3D::identity(), 1e-12);
+        }
+    }
+
+    #[test]
+    fn inverse_of_combined_transform_is_correct() {
+        // Build a non-trivial transform: rotate, scale non-uniformly,
+        // translate. Verify that inverse undoes it on a point.
+        let t = AffineTransform3D::from_translation([10.0, -5.0, 2.0])
+            .compose(&AffineTransform3D::from_non_uniform_scale([2.0, 3.0, 4.0]))
+            .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
+        let inv = t.inverse().unwrap();
+        let v = Vertex::new([1.5, -0.5, 3.25]);
+        let round_trip = inv.apply_to_vertex(t.apply_to_vertex(v));
+        assert_vertex_approx(round_trip, v.0, 1e-4);
+    }
+
+    #[test]
+    fn inverse_singular_returns_error() {
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 0.0],
+        );
+        assert!(t.inverse().is_err());
     }
 
     #[test]
