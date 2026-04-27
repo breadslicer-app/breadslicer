@@ -102,6 +102,69 @@ pub struct SceneObject {
     pub content: SceneObjectContent,
 }
 
+impl SceneObject {
+    /// Resolves the object's referenced mesh against `resources`.
+    /// Returns an error if the object is a `Resource(idx)` whose index
+    /// is out of bounds.
+    pub fn resolve_mesh<'a>(&'a self, resources: &'a [IndexedMesh]) -> Result<&'a IndexedMesh> {
+        match &self.content {
+            SceneObjectContent::Mesh(m) => Ok(m),
+            SceneObjectContent::Resource(idx) => resources
+                .get(*idx)
+                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds")),
+        }
+    }
+
+    /// Returns a mesh with the object's transform baked into its
+    /// vertices and face normals.
+    ///
+    /// For `Transform3D::Identity`, this clones the referenced mesh
+    /// without touching its data. For `Affine`, every vertex is passed
+    /// through `apply_to_vertex`, every face normal through
+    /// `apply_to_normal`, and — when the transform's determinant is
+    /// negative (a mirror) — each face's vertex order is reversed so
+    /// the resulting mesh is consistently oriented in world space.
+    ///
+    /// The output mesh has no metadata; downstream consumers
+    /// (`merge_meshes`, format writers) attach their own.
+    pub fn baked_mesh(&self, resources: &[IndexedMesh]) -> Result<IndexedMesh> {
+        let mesh = self.resolve_mesh(resources)?;
+        match &self.transform {
+            Transform3D::Identity => Ok(IndexedMesh {
+                meta: None,
+                vertices: mesh.vertices.clone(),
+                faces: mesh.faces.clone(),
+            }),
+            Transform3D::Affine(a) => {
+                let vertices: Vec<Vertex> = mesh
+                    .vertices
+                    .iter()
+                    .map(|v| a.apply_to_vertex(*v))
+                    .collect();
+                let reverse_winding = a.determinant() < 0.0;
+                let mut faces: Vec<IndexedTriangle> = Vec::with_capacity(mesh.faces.len());
+                for face in &mesh.faces {
+                    let normal = a.apply_to_normal(face.normal)?;
+                    let v = if reverse_winding {
+                        [face.vertices[0], face.vertices[2], face.vertices[1]]
+                    } else {
+                        face.vertices
+                    };
+                    faces.push(IndexedTriangle {
+                        normal,
+                        vertices: v,
+                    });
+                }
+                Ok(IndexedMesh {
+                    meta: None,
+                    vertices,
+                    faces,
+                })
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
     pub meta: Option<SceneMetadata>,
@@ -416,6 +479,171 @@ mod transform_3d_tests {
     fn determinant_of_affine_delegates_to_inner() {
         let t = Transform3D::Affine(AffineTransform3D::from_uniform_scale(2.0));
         assert_approx_eq!(f64, t.determinant(), 8.0);
+    }
+}
+
+#[cfg(test)]
+mod scene_object_baked_mesh_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+    use std::f64::consts::FRAC_PI_2;
+
+    fn unit_triangle_mesh() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle {
+                normal: Normal::new([0.0, 0.0, 1.0]),
+                vertices: [0, 1, 2],
+            }],
+        }
+    }
+
+    fn inline(mesh: IndexedMesh, t: Transform3D) -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: t,
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    #[test]
+    fn resolve_mesh_returns_inline_content() {
+        let mesh = unit_triangle_mesh();
+        let obj = inline(mesh.clone(), Transform3D::Identity);
+        assert_eq!(obj.resolve_mesh(&[]).unwrap(), &mesh);
+    }
+
+    #[test]
+    fn resolve_mesh_resolves_resource_index() {
+        let mesh = unit_triangle_mesh();
+        let obj = SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Resource(0),
+        };
+        assert_eq!(
+            obj.resolve_mesh(std::slice::from_ref(&mesh)).unwrap(),
+            &mesh
+        );
+    }
+
+    #[test]
+    fn resolve_mesh_errors_on_out_of_bounds_resource() {
+        let obj = SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Resource(7),
+        };
+        assert!(obj.resolve_mesh(&[]).is_err());
+    }
+
+    #[test]
+    fn baked_mesh_identity_clones_vertices_and_faces() {
+        let mesh = unit_triangle_mesh();
+        let obj = inline(mesh.clone(), Transform3D::Identity);
+        let baked = obj.baked_mesh(&[]).unwrap();
+        assert_eq!(baked.vertices, mesh.vertices);
+        assert_eq!(baked.faces, mesh.faces);
+        assert_eq!(baked.meta, None);
+    }
+
+    #[test]
+    fn baked_mesh_affine_applies_translation_to_vertices() {
+        let obj = inline(
+            unit_triangle_mesh(),
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0])),
+        );
+        let baked = obj.baked_mesh(&[]).unwrap();
+        assert_eq!(baked.vertices[0].0, [10.0, -5.0, 2.0]);
+        assert_eq!(baked.vertices[1].0, [11.0, -5.0, 2.0]);
+        assert_eq!(baked.vertices[2].0, [10.0, -4.0, 2.0]);
+    }
+
+    #[test]
+    fn baked_mesh_affine_rotates_face_normals() {
+        // π/2 rotation about Z: a +Z normal stays at +Z (rotation axis
+        // preserves its own direction), but a +X normal rotates to +Y.
+        // Use a triangle with a +X normal to make the rotation visible.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+                Vertex::new([0.0, 0.0, 1.0]),
+            ],
+            faces: vec![IndexedTriangle {
+                normal: Normal::new([1.0, 0.0, 0.0]),
+                vertices: [0, 1, 2],
+            }],
+        };
+        let obj = inline(
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_rotation_z(FRAC_PI_2)),
+        );
+        let baked = obj.baked_mesh(&[]).unwrap();
+        assert_approx_eq!(f32, baked.faces[0].normal.0[0], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.faces[0].normal.0[1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.faces[0].normal.0[2], 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn baked_mesh_affine_preserves_winding_for_positive_determinant() {
+        let obj = inline(
+            unit_triangle_mesh(),
+            Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
+        );
+        let baked = obj.baked_mesh(&[]).unwrap();
+        assert_eq!(baked.faces[0].vertices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn baked_mesh_affine_reverses_winding_for_negative_determinant() {
+        // Mirror across YZ (det = -1): winding reversed.
+        let obj = inline(
+            unit_triangle_mesh(),
+            Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0])),
+        );
+        let baked = obj.baked_mesh(&[]).unwrap();
+        assert_eq!(baked.faces[0].vertices, [0, 2, 1]);
+    }
+
+    #[test]
+    fn baked_mesh_resolves_resource_reference() {
+        let mesh = unit_triangle_mesh();
+        let obj = SceneObject {
+            meta: None,
+            transform: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0])),
+            content: SceneObjectContent::Resource(0),
+        };
+        let baked = obj.baked_mesh(std::slice::from_ref(&mesh)).unwrap();
+        assert_eq!(baked.vertices[0].0, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn baked_mesh_drops_source_metadata() {
+        let mut mesh = unit_triangle_mesh();
+        mesh.meta = Some(crate::indexed_mesh::MeshMetadata {
+            name: Some("Source".to_string()),
+            ..Default::default()
+        });
+        let obj = inline(mesh, Transform3D::Identity);
+        let baked = obj.baked_mesh(&[]).unwrap();
+        assert_eq!(baked.meta, None);
+    }
+
+    #[test]
+    fn baked_mesh_propagates_singular_normal_error() {
+        let singular = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let obj = inline(unit_triangle_mesh(), Transform3D::Affine(singular));
+        assert!(obj.baked_mesh(&[]).is_err());
     }
 }
 
