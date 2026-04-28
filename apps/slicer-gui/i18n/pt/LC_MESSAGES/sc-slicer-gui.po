@@ -284,40 +284,40 @@ msgstr ""
 "para vistas frontal, direita ou superior; segure Control para trás, para a "
 "esquerda ou para a parte inferior."
 
-#: src/wiring.rs:175
-msgctxt "FileDialog"
-msgid "All supported files"
-msgstr "Todos os ficheiros suportados"
-
-#: src/wiring.rs:178
-msgctxt "FileDialog"
-msgid "OBJ files"
-msgstr "Ficheiros OBJ"
-
-#: src/wiring.rs:180
-msgctxt "FileDialog"
-msgid "STL files"
-msgstr "Ficheiros STL"
-
-#: src/wiring.rs:183
-msgctxt "FileDialog"
-msgid "All files"
-msgstr "Todos os ficheiros"
-
-#: src/viewport_controller.rs:429
+#: src/viewport/controller.rs:1178
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "Falha a exibir o modelo 3D"
 
-#: src/viewport_controller.rs:433
+#: src/viewport/controller.rs:1182
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "A textura renderizada não pôde ser entregue à interface gráfica."
 
-#: src/viewport_controller.rs:470
+#: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
+
+#: src/wiring.rs:207
+msgctxt "FileDialog"
+msgid "All supported files"
+msgstr "Todos os ficheiros suportados"
+
+#: src/wiring.rs:210
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr "Ficheiros OBJ"
+
+#: src/wiring.rs:212
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr "Ficheiros STL"
+
+#: src/wiring.rs:215
+msgctxt "FileDialog"
+msgid "All files"
+msgstr "Todos os ficheiros"
 
 #: src/scene_loader.rs:286
 msgctxt "ErrorDialog"

@@ -285,40 +285,40 @@ msgstr ""
 "apasă 1, 3 sau 7 pentru față, dreapta sau sus; ține apăsat Control pentru "
 "spate, stânga sau jos."
 
-#: src/wiring.rs:175
-msgctxt "FileDialog"
-msgid "All supported files"
-msgstr "Toate fișierele acceptate"
-
-#: src/wiring.rs:178
-msgctxt "FileDialog"
-msgid "OBJ files"
-msgstr "Fișiere OBJ"
-
-#: src/wiring.rs:180
-msgctxt "FileDialog"
-msgid "STL files"
-msgstr "Fișiere STL"
-
-#: src/wiring.rs:183
-msgctxt "FileDialog"
-msgid "All files"
-msgstr "Toate fișierele"
-
-#: src/viewport_controller.rs:429
+#: src/viewport/controller.rs:1178
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "Nu s-a putut afișa modelul 3D"
 
-#: src/viewport_controller.rs:433
+#: src/viewport/controller.rs:1182
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "Textura randată nu a putut fi transmisă interfeței."
 
-#: src/viewport_controller.rs:470
+#: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
+
+#: src/wiring.rs:207
+msgctxt "FileDialog"
+msgid "All supported files"
+msgstr "Toate fișierele acceptate"
+
+#: src/wiring.rs:210
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr "Fișiere OBJ"
+
+#: src/wiring.rs:212
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr "Fișiere STL"
+
+#: src/wiring.rs:215
+msgctxt "FileDialog"
+msgid "All files"
+msgstr "Toate fișierele"
 
 #: src/scene_loader.rs:286
 msgctxt "ErrorDialog"

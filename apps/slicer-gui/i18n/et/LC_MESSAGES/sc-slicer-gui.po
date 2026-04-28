@@ -274,39 +274,39 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/wiring.rs:175
-msgctxt "FileDialog"
-msgid "All supported files"
-msgstr ""
-
-#: src/wiring.rs:178
-msgctxt "FileDialog"
-msgid "OBJ files"
-msgstr ""
-
-#: src/wiring.rs:180
-msgctxt "FileDialog"
-msgid "STL files"
-msgstr ""
-
-#: src/wiring.rs:183
-msgctxt "FileDialog"
-msgid "All files"
-msgstr ""
-
-#: src/viewport_controller.rs:429
+#: src/viewport/controller.rs:1178
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport_controller.rs:433
+#: src/viewport/controller.rs:1182
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
 
-#: src/viewport_controller.rs:470
+#: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
+msgstr ""
+
+#: src/wiring.rs:207
+msgctxt "FileDialog"
+msgid "All supported files"
+msgstr ""
+
+#: src/wiring.rs:210
+msgctxt "FileDialog"
+msgid "OBJ files"
+msgstr ""
+
+#: src/wiring.rs:212
+msgctxt "FileDialog"
+msgid "STL files"
+msgstr ""
+
+#: src/wiring.rs:215
+msgctxt "FileDialog"
+msgid "All files"
 msgstr ""
 
 #: src/scene_loader.rs:286
