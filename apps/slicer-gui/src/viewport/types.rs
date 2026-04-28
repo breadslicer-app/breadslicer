@@ -81,6 +81,59 @@ impl FrameState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ViewportSize {
+    w: f32,
+    h: f32,
+}
+
+impl ViewportSize {
+    pub(super) fn new(w: f32, h: f32) -> Option<Self> {
+        if w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite() {
+            Some(Self { w, h })
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn width(self) -> f32 {
+        self.w
+    }
+
+    pub(super) fn height(self) -> f32 {
+        self.h
+    }
+}
+
+#[cfg(test)]
+mod viewport_size_tests {
+    use super::*;
+
+    #[test]
+    fn finite_positive_pair_is_accepted() {
+        let vp = ViewportSize::new(1920.0, 1080.0).expect("valid size");
+        assert_eq!(vp.width(), 1920.0);
+        assert_eq!(vp.height(), 1080.0);
+    }
+
+    #[test]
+    fn zero_or_negative_dimensions_are_rejected() {
+        assert!(ViewportSize::new(0.0, 100.0).is_none());
+        assert!(ViewportSize::new(100.0, 0.0).is_none());
+        assert!(ViewportSize::new(-1.0, 100.0).is_none());
+        assert!(ViewportSize::new(100.0, -1.0).is_none());
+    }
+
+    #[test]
+    fn nan_or_infinite_dimensions_are_rejected() {
+        assert!(ViewportSize::new(f32::NAN, 100.0).is_none());
+        assert!(ViewportSize::new(100.0, f32::NAN).is_none());
+        assert!(ViewportSize::new(f32::INFINITY, 100.0).is_none());
+        assert!(ViewportSize::new(100.0, f32::INFINITY).is_none());
+        assert!(ViewportSize::new(f32::NEG_INFINITY, 100.0).is_none());
+    }
+}
+
 #[cfg(test)]
 mod frame_state_tests {
     use super::*;

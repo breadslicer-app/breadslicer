@@ -19,7 +19,7 @@ use super::keyboard_drive::{
     ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS, ArrowDrive,
     KBD_MAX_DT, KbdFocus, keyboard_step,
 };
-use super::types::{FrameState, InputPhase, ObjectIdx, ScreenPoint, Selection};
+use super::types::{FrameState, InputPhase, ObjectIdx, ScreenPoint, Selection, ViewportSize};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
@@ -38,7 +38,7 @@ pub struct ViewportController {
     // survives device-loss / RenderingTeardown→Setup cycles for free and can
     // be manipulated without a GPU present.
     camera: RefCell<Option<OrbitCamera>>,
-    viewport: Cell<(f32, f32)>,
+    viewport: Cell<Option<ViewportSize>>,
     // Per-frame work owed: a redraw (something visual changed) and/or
     // a GPU upload (CPU-side scene differs from the renderer's
     // buffers). Both can be set independently — a successful upload
@@ -110,7 +110,7 @@ impl ViewportController {
             renderer: RefCell::new(None),
             scene: RefCell::new(None),
             camera: RefCell::new(None),
-            viewport: Cell::new((0.0, 0.0)),
+            viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             selection: Cell::new(Selection::None),
             input_phase: Cell::new(InputPhase::Idle),
@@ -138,7 +138,7 @@ impl ViewportController {
             renderer: RefCell::new(None),
             scene: RefCell::new(None),
             camera: RefCell::new(None),
-            viewport: Cell::new((0.0, 0.0)),
+            viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             selection: Cell::new(Selection::None),
             input_phase: Cell::new(InputPhase::Idle),
@@ -167,6 +167,16 @@ impl ViewportController {
         self.frame.get().redraw_owed()
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_viewport_for_test(&self, w: f32, h: f32) {
+        self.viewport.set(ViewportSize::new(w, h));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn viewport_for_test(&self) -> Option<(f32, f32)> {
+        self.viewport.get().map(|vp| (vp.width(), vp.height()))
+    }
+
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
     /// handshake (begin/end, stamp, slot) against the loader directly
     /// rather than through delegating methods on the controller.
@@ -186,7 +196,7 @@ impl ViewportController {
     }
 
     pub fn on_viewport_resized(&self, w: f32, h: f32) {
-        self.viewport.set((w, h));
+        self.viewport.set(ViewportSize::new(w, h));
         self.resizing.set(true);
         self.mark_dirty();
     }
@@ -204,29 +214,39 @@ impl ViewportController {
     }
 
     pub fn on_rotate(&self, dx: f32, dy: f32) {
-        let (_, h) = self.viewport.get();
+        let Some(vp) = self.viewport.get() else {
+            return;
+        };
         if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.orbit(dx, dy, h);
+            cam.orbit(dx, dy, vp.height());
             self.mark_dirty();
         }
     }
 
     pub fn on_pan(&self, dx: f32, dy: f32) {
-        let (_, h) = self.viewport.get();
+        let Some(vp) = self.viewport.get() else {
+            return;
+        };
         if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.pan(dx, dy, default_fov_y(), h);
+            cam.pan(dx, dy, default_fov_y(), vp.height());
             self.mark_dirty();
         }
     }
 
     pub fn on_zoom(&self, delta: f32, cursor_x: f32, cursor_y: f32) {
-        let (w, h) = self.viewport.get();
-        if w <= 0.0 || h <= 0.0 {
+        let Some(vp) = self.viewport.get() else {
             return;
-        }
+        };
         let factor = (-delta * 0.005).exp().clamp(0.1, 10.0);
         if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.zoom_at(factor, cursor_x, cursor_y, default_fov_y(), w, h);
+            cam.zoom_at(
+                factor,
+                cursor_x,
+                cursor_y,
+                default_fov_y(),
+                vp.width(),
+                vp.height(),
+            );
             self.mark_dirty();
         }
     }
@@ -548,10 +568,9 @@ impl ViewportController {
         else {
             return;
         };
-        let (w, h) = self.viewport.get();
-        if w <= 0.0 || h <= 0.0 {
+        let Some(vp) = self.viewport.get() else {
             return;
-        }
+        };
 
         // Compute the new transform and the (possibly mutated) op
         // state inside a borrow scope, then drop the camera borrow
@@ -577,7 +596,7 @@ impl ViewportController {
                     camera,
                     pivot,
                     fov_y: default_fov_y(),
-                    viewport: (w, h),
+                    viewport: (vp.width(), vp.height()),
                     cursor: (x, y),
                 };
                 if let Some(re_anchored) =
@@ -587,7 +606,8 @@ impl ViewportController {
                     original = re_anchored.1;
                 }
             }
-            let ray = picking::ray_from_pixel(camera, default_fov_y(), w, h, x, y);
+            let ray =
+                picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
             apply_drag_move(op, &ray, pivot, &original, x, y)
         };
 
@@ -664,10 +684,10 @@ impl ViewportController {
             return;
         };
         let sel_idx = sel.as_usize();
-        let (w, h) = self.viewport.get();
-        if w <= 0.0 || h <= 0.0 {
+        let Some(vp) = self.viewport.get() else {
             return;
-        }
+        };
+        let (w, h) = (vp.width(), vp.height());
 
         let camera_slot = self.camera.borrow();
         let Some(camera) = camera_slot.as_ref() else {
@@ -843,10 +863,10 @@ impl ViewportController {
         let Some(idx) = self.selection.get().primary().map(ObjectIdx::as_usize) else {
             return;
         };
-        let (_, h) = self.viewport.get();
-        if h <= 0.0 {
+        let Some(vp) = self.viewport.get() else {
             return;
-        }
+        };
+        let h = vp.height();
 
         let now = Instant::now();
         let last = self.last_arrow_tick.get().unwrap_or(now);
@@ -900,10 +920,9 @@ impl ViewportController {
     /// update the selection. Bails on missing camera / scene / zero
     /// viewport.
     fn run_pick_at(&self, x: f32, y: f32) {
-        let (w, h) = self.viewport.get();
-        if w <= 0.0 || h <= 0.0 {
+        let Some(vp) = self.viewport.get() else {
             return;
-        }
+        };
         let pick = {
             let camera_slot = self.camera.borrow();
             let Some(camera) = camera_slot.as_ref() else {
@@ -913,7 +932,8 @@ impl ViewportController {
             let Some(scene) = scene_slot.as_ref() else {
                 return;
             };
-            let ray = picking::ray_from_pixel(camera, default_fov_y(), w, h, x, y);
+            let ray =
+                picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
             picking::pick_object(&ray, scene)
             // borrows drop here so the selection setters can re-borrow
         };
@@ -1011,9 +1031,12 @@ impl ViewportController {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let (w_logical, h_logical) = self.viewport.get();
+        let Some(vp) = self.viewport.get() else {
+            return;
+        };
+        let h_logical = vp.height();
         let scale = ui.window().scale_factor();
-        let width = (w_logical * scale).round() as u32;
+        let width = (vp.width() * scale).round() as u32;
         let height = (h_logical * scale).round() as u32;
         if width == 0 || height == 0 {
             return;
@@ -1609,7 +1632,7 @@ mod viewport_click_tests {
         // Camera framed on the first triangle, looking down -Z.
         // Centre pixel of the viewport casts a ray straight at it.
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
-        ctrl.viewport.set((200.0, 100.0));
+        ctrl.set_viewport_for_test(200.0, 100.0);
 
         ctrl.on_pointer_down(100.0, 50.0, no_mods());
         ctrl.on_pointer_up(100.0, 50.0, no_mods());
@@ -1626,7 +1649,7 @@ mod viewport_click_tests {
         };
         ctrl.install_scene_for_test(scene);
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
-        ctrl.viewport.set((200.0, 100.0));
+        ctrl.set_viewport_for_test(200.0, 100.0);
 
         // Pre-seed a selection so we can observe the clear.
         ctrl.on_select_by_index(0);
@@ -1653,7 +1676,7 @@ mod viewport_click_tests {
         };
         ctrl.install_scene_for_test(scene);
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
-        ctrl.viewport.set((200.0, 100.0));
+        ctrl.set_viewport_for_test(200.0, 100.0);
 
         // Press over the triangle, release 50 px away → drag.
         ctrl.on_pointer_down(100.0, 50.0, no_mods());
@@ -1689,7 +1712,8 @@ mod viewport_click_tests {
         };
         ctrl.install_scene_for_test(scene);
         *ctrl.camera.borrow_mut() = Some(front_camera());
-        ctrl.viewport.set(GIZMO_TEST_VIEWPORT);
+        let (vw, vh) = GIZMO_TEST_VIEWPORT;
+        ctrl.set_viewport_for_test(vw, vh);
         ctrl.on_select_by_index(0);
     }
 
@@ -1728,7 +1752,7 @@ mod viewport_click_tests {
     /// front camera, that lands on screen-y = viewport-centre.
     fn x_midpoint_press_screen(ctrl: &ViewportController) -> (f32, f32) {
         let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
-        let (vw, vh) = ctrl.viewport.get();
+        let (vw, vh) = ctrl.viewport_for_test().unwrap();
         let fov_y = default_fov_y();
         let scale = gizmo::gizmo_scale(&cam, fov_y, vh);
         let midpoint = Vec3::new(scale * gizmo::MIDPOINT_FRACTION, 0.0, 0.0);
@@ -1907,7 +1931,7 @@ mod viewport_click_tests {
         };
         ctrl.install_scene_for_test(scene);
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
-        ctrl.viewport.set((200.0, 100.0));
+        ctrl.set_viewport_for_test(200.0, 100.0);
 
         ctrl.on_pointer_down(100.0, 50.0, no_mods());
         ctrl.on_pointer_up(101.5, 51.5, no_mods());
