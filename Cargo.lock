@@ -4499,18 +4499,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-remote-printers"
-version = "0.0.1"
-
-[[package]]
-name = "sc-sl1cer"
-version = "0.0.1"
-
-[[package]]
-name = "sc-sla-formats"
-version = "0.0.1"
-
-[[package]]
 name = "sc-slicer-cli"
 version = "0.0.9"
 dependencies = [
@@ -4543,10 +4531,6 @@ dependencies = [
  "tempfile",
  "toml 1.1.2+spec-1.1.0",
 ]
-
-[[package]]
-name = "sc-supports"
-version = "0.0.1"
 
 [[package]]
 name = "scoped-tls"

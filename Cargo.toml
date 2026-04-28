@@ -5,10 +5,6 @@ members = [
     "apps/slicer-gui",
     "libs/mesh-core",
     "libs/mesh-formats",
-    "libs/remote-printers",
-    "libs/sla-formats",
-    "libs/sl1cer",
-    "libs/supports"
 ]
 
 [profile.dev]
