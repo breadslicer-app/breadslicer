@@ -10,6 +10,20 @@ use anyhow::{Result, anyhow};
 
 use crate::primitives::{Normal, Vector3D, Vertex};
 
+/// Strict ordered comparison that returns `false` for NaN inputs.
+///
+/// Equivalent to `value > threshold` for ordered finite inputs, with one
+/// crucial difference: when either operand is NaN, `partial_cmp` returns
+/// `None` and this function returns `false`. Used as a safety guard in
+/// degeneracy / singularity checks where NaN must be rejected (treated as
+/// "not strictly greater") rather than propagated through `>`'s
+/// always-false NaN behaviour, which is the same value but makes the
+/// intent explicit at every call site.
+#[inline]
+pub(crate) fn gt_strict(value: f64, threshold: f64) -> bool {
+    matches!(value.partial_cmp(&threshold), Some(Ordering::Greater))
+}
+
 /// Computes a unit normal for a triangle using f64 precision internally.
 ///
 /// The f32 vertex coordinates are promoted to f64 before subtracting, taking
@@ -34,10 +48,7 @@ pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f6
     let cross_mag_sq = cross.squared_norm();
 
     // degenerate (zero-area) triangles; also handles NaN coordinates.
-    if match cross_mag_sq.partial_cmp(&(f32::EPSILON as f64)) {
-        Some(Ordering::Greater) => false, // We don't enter into the block
-        _ => true,
-    } {
+    if !gt_strict(cross_mag_sq, f32::EPSILON as f64) {
         return Err(anyhow!("Degenerate (near-zero area) triangle found"));
     }
 
@@ -156,5 +167,55 @@ mod geometry_tests {
         assert_normal_approx(&normal, [expected, expected, expected]);
         let mag = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         assert!((mag - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn gt_strict_strictly_greater_finite() {
+        assert!(gt_strict(2.0, 1.0));
+        assert!(gt_strict(1.0e-10, 0.0));
+        assert!(gt_strict(f64::EPSILON * 2.0, f64::EPSILON));
+    }
+
+    #[test]
+    fn gt_strict_equal_returns_false() {
+        assert!(!gt_strict(1.0, 1.0));
+        assert!(!gt_strict(0.0, 0.0));
+        assert!(!gt_strict(f64::EPSILON, f64::EPSILON));
+        assert!(!gt_strict(-0.0, 0.0));
+    }
+
+    #[test]
+    fn gt_strict_strictly_less_finite() {
+        assert!(!gt_strict(1.0, 2.0));
+        assert!(!gt_strict(-1.0, 0.0));
+        assert!(!gt_strict(0.0, f64::EPSILON));
+    }
+
+    #[test]
+    fn gt_strict_nan_returns_false() {
+        assert!(!gt_strict(f64::NAN, 0.0));
+        assert!(!gt_strict(0.0, f64::NAN));
+        assert!(!gt_strict(f64::NAN, f64::NAN));
+        assert!(!gt_strict(f64::NAN, f64::INFINITY));
+        assert!(!gt_strict(f64::INFINITY, f64::NAN));
+    }
+
+    #[test]
+    fn gt_strict_infinities() {
+        assert!(gt_strict(f64::INFINITY, 0.0));
+        assert!(gt_strict(f64::INFINITY, f64::MAX));
+        assert!(!gt_strict(f64::INFINITY, f64::INFINITY));
+        assert!(!gt_strict(f64::NEG_INFINITY, 0.0));
+        assert!(!gt_strict(f64::NEG_INFINITY, f64::NEG_INFINITY));
+        assert!(gt_strict(0.0, f64::NEG_INFINITY));
+    }
+
+    #[test]
+    fn gt_strict_subnormals() {
+        let subnormal = f64::MIN_POSITIVE / 2.0;
+        assert!(subnormal > 0.0 && subnormal < f64::MIN_POSITIVE);
+        assert!(gt_strict(subnormal, 0.0));
+        assert!(!gt_strict(0.0, subnormal));
+        assert!(!gt_strict(subnormal, subnormal));
     }
 }

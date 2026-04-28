@@ -4,7 +4,6 @@
  */
 
 use core::f32;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
@@ -13,7 +12,7 @@ use float_cmp::approx_eq;
 use crate::errors::{
     MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
-use crate::geometry::compute_normal_from_triangle_vertices;
+use crate::geometry::{compute_normal_from_triangle_vertices, gt_strict};
 use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -110,10 +109,7 @@ impl IndexedMesh {
             let cross_mag_sq = cross.squared_norm();
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
-            if match cross_mag_sq.partial_cmp(&(f32::EPSILON as f64)) {
-                Some(Ordering::Greater) => false, // We don't enter into the block
-                _ => true,
-            } {
+            if !gt_strict(cross_mag_sq, f32::EPSILON as f64) {
                 errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx: idx });
                 continue; // We don't continue processing this face
             }

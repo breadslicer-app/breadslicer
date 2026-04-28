@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::cmp::Ordering;
-
 use anyhow::{Result, anyhow};
 
+use crate::geometry::gt_strict;
 use crate::primitives::{Normal, Vector3D, Vertex};
 
 /// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
@@ -85,8 +84,8 @@ impl AffineTransform3D {
         let norm_sq = axis[0].mul_add(axis[0], axis[1].mul_add(axis[1], axis[2] * axis[2]));
         // Threshold matches the f64 working precision of the rest of the crate;
         // a near-zero axis cannot be normalised without catastrophic loss.
-        // `partial_cmp` form rejects NaN (which compares as `None`) too.
-        if !matches!(norm_sq.partial_cmp(&f64::EPSILON), Some(Ordering::Greater)) {
+        // `gt_strict` rejects NaN (treated as not-strictly-greater) too.
+        if !gt_strict(norm_sq, f64::EPSILON) {
             return Err(anyhow!("Rotation axis must be non-zero"));
         }
         let inv_norm = 1.0 / norm_sq.sqrt();
@@ -194,10 +193,7 @@ impl AffineTransform3D {
     /// magnitude (which can happen for pathological inputs).
     pub fn apply_to_normal(&self, n: Normal) -> Result<Normal> {
         let det = self.determinant();
-        if !matches!(
-            det.abs().partial_cmp(&f64::EPSILON),
-            Some(Ordering::Greater)
-        ) {
+        if !gt_strict(det.abs(), f64::EPSILON) {
             return Err(anyhow!("Cannot transform normal: singular linear part"));
         }
 
@@ -241,7 +237,7 @@ impl AffineTransform3D {
         }
 
         let mag_sq = out[0].mul_add(out[0], out[1].mul_add(out[1], out[2] * out[2]));
-        if !matches!(mag_sq.partial_cmp(&f64::EPSILON), Some(Ordering::Greater)) {
+        if !gt_strict(mag_sq, f64::EPSILON) {
             return Err(anyhow!("Cannot transform normal: zero-magnitude result"));
         }
         let inv_mag = 1.0 / mag_sq.sqrt();
@@ -293,10 +289,7 @@ impl AffineTransform3D {
     /// magnitude below `f64::EPSILON`).
     pub fn inverse(&self) -> Result<Self> {
         let det = self.determinant();
-        if !matches!(
-            det.abs().partial_cmp(&f64::EPSILON),
-            Some(Ordering::Greater)
-        ) {
+        if !gt_strict(det.abs(), f64::EPSILON) {
             return Err(anyhow!("Cannot invert: singular linear part"));
         }
         let inv_det = 1.0 / det;
