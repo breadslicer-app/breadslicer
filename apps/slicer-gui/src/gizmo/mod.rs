@@ -9,6 +9,8 @@
 //! unit-tested without a `wgpu::Device`.
 
 pub mod axis;
+pub mod dimensions;
+mod tolerances;
 
 use glam::Vec3;
 use sc_mesh_core::IndexedMesh;
@@ -18,83 +20,11 @@ use crate::camera::OrbitCamera;
 use crate::picking::{Ray, ray_hits_aabb_t};
 
 use self::axis::{ALL_AXES, Axis};
-
-/// Screen-pixel length of the gizmo shaft. Drives `gizmo_scale`.
-/// Sized to leave room for the per-axis midpoint cube *and* the cone
-/// tip without either occluding the other.
-pub const HANDLE_PIXEL_LENGTH: f32 = 120.0;
-
-/// Screen-pixel radius of the cylinder hit volume. The visual shaft
-/// is thinner than this — the hit cylinder is fattened so a click
-/// near (but not on) the shaft still registers.
-pub const HANDLE_PIXEL_RADIUS: f32 = 6.0;
-
-/// Cosine of the lock-out angle: when
-/// `|axis_world · ray_dir| > LOCKOUT_COS`, the angle between the
-/// camera ray and the axis is below 8° and the closest-point math
-/// becomes unstable — `1 − (axis · ray_dir)²` drops below `sin²(8°)`
-/// and a one-pixel cursor jitter would translate the object far more
-/// than the user expects. Such an axis is dropped from the hit test
-/// and rendered greyed so the user sees why it is unresponsive.
-///
-/// `cos(8°) ≈ 0.99027`.
-const LOCKOUT_COS: f32 = 0.990_268_07;
-
-/// Cosine of the rotate-arc lock-out's complementary threshold:
-/// when `|axis_world · ray_dir| < ROTATE_LOCKOUT_COS`, the camera ray
-/// is within 8° of the arc's plane. The ray-vs-arc-plane intersection
-/// then becomes ill-defined and the angular position around the axis
-/// jumps under one-pixel cursor jitter. Threshold magnitude matches
-/// `LOCKOUT_COS` (8° margin); the geometric configuration is the
-/// complementary one (axis perpendicular to ray instead of parallel).
-///
-/// `cos(82°) ≈ 0.13917`.
-const ROTATE_LOCKOUT_COS: f32 = 0.139_173_1;
-
-/// Length, in handle-local space, of each cone in the rotate
-/// "two-cone spindle" hit target. The two cones share their bases at
-/// the arc's camera-facing midpoint and point along ±axis with this
-/// length. Mirrors the translate cone's `1.18 - 1.0 = 0.18`.
-pub const ROTATE_CONE_LENGTH: f32 = 0.18;
-
-/// Base radius, in handle-local space, of each rotate cone — same as
-/// the translate cone's base radius for visual consistency.
-pub const ROTATE_CONE_RADIUS: f32 = 0.07;
-
-/// Lower bound on a single-axis or uniform scale factor. Factors
-/// below this are clamped up; factors above `1.0 / EPS_SCALE` are
-/// clamped down. Mirroring (negative scale) is disallowed through
-/// the gizmo, so the bound also rejects sign flips. The user sees
-/// the gizmo "stick" at the limit.
-#[allow(dead_code)]
-pub const EPS_SCALE: f32 = 1e-3;
-
-/// Side length, in screen pixels, of the per-axis scale cube. The
-/// cube sits at the midpoint of the translate shaft (`scale * 0.5`)
-/// and is small enough to leave the cone tip clearly distinct.
-pub const AXIS_SCALE_CUBE_PIXELS: f32 = 10.0;
-
-/// Side length, in screen pixels, of the centre cube driving the
-/// uniform-scale gesture. Sized larger than the per-axis cube so the
-/// pivot's handle reads as a single distinct target rather than a
-/// fourth axis.
-pub const CENTRE_CUBE_PIXELS: f32 = 14.0;
-
-/// Fraction of the translate shaft length at which the scale-axis
-/// midpoint cube sits (`pivot + axis * scale * MIDPOINT_FRACTION`).
-/// Pinned at the *midpoint* — not the tip — so per-axis scale doesn't
-/// collide with the translate cone.
-pub const MIDPOINT_FRACTION: f32 = 0.5;
-
-/// Tube (minor) radius of the rotate arc, in screen pixels. The
-/// matching world radius is derived per-frame from `gizmo_scale`.
-pub const ROTATE_ARC_TUBE_PIXELS: f32 = 3.0;
-
-/// Major (circle) radius of the rotate arc, expressed as a fraction
-/// of the translate shaft length. 0.85 keeps the arc inside the
-/// translate cone tip so the two handle types don't fight for the
-/// same screen pixels.
-pub const ROTATE_ARC_RADIUS_FRACTION: f32 = 0.85;
+use self::dimensions::{
+    HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS, MIDPOINT_FRACTION, TRANSLATE_HIT_S_MAX,
+    TRANSLATE_HIT_S_MIN,
+};
+use self::tolerances::{EPS_SCALE, LOCKOUT_COS, ROTATE_LOCKOUT_COS};
 
 /// World-space pivot for the gizmo: the local-AABB centre of the
 /// object, transformed by the object's `Transform3D`. Returns `None`
@@ -162,17 +92,6 @@ pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
     let a = axis.world_dir();
     a.dot(ray.direction).abs() < LOCKOUT_COS
 }
-
-/// Lower bound on the translate cone's hit cylinder, in handle-local
-/// space. Below this `s` along the axis the cylinder is dormant —
-/// the *shaft line* between the gizmo origin and the cone is purely
-/// decorative (clicks there fall through to other handle categories
-/// or the picker), the per-axis scale cube at the midpoint owns its
-/// own discrete target.
-const TRANSLATE_HIT_S_MIN: f32 = 1.0;
-/// Upper bound on the translate cone's hit cylinder. Extends past
-/// the visual tip (`CONE_TIP_X = 1.18`) by a small forgiving margin.
-const TRANSLATE_HIT_S_MAX: f32 = 1.25;
 
 /// Hit-test the three world-aligned axis handles against `ray`.
 /// Returns the front-most pickable axis (smallest positive `t` on

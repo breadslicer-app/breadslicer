@@ -704,15 +704,15 @@ impl ViewportController {
         let fov_y = default_fov_y();
         let scale = gizmo::gizmo_scale(camera, fov_y, h);
         let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
-        let arc_radius_world = scale * gizmo::ROTATE_ARC_RADIUS_FRACTION;
+        let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
         // Both rotate cones and scale cubes scale with the gizmo —
         // their handle-local sizes (in `gizmo` constants) become
         // world-space sizes via the per-frame shaft length.
-        let rotate_cone_length_world = scale * gizmo::ROTATE_CONE_LENGTH;
-        let rotate_cone_radius_world = scale * gizmo::ROTATE_CONE_RADIUS;
+        let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
+        let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
         let world_per_pixel = camera.world_per_pixel(fov_y, h);
-        let axis_cube_world = world_per_pixel * gizmo::AXIS_SCALE_CUBE_PIXELS;
-        let centre_cube_world = world_per_pixel * gizmo::CENTRE_CUBE_PIXELS;
+        let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
+        let centre_cube_world = world_per_pixel * gizmo::dimensions::CENTRE_CUBE_PIXELS;
 
         let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
 
@@ -1756,7 +1756,7 @@ mod viewport_click_tests {
         let (vw, vh) = ctrl.viewport_for_test().unwrap();
         let fov_y = default_fov_y();
         let scale = gizmo::gizmo_scale(&cam, fov_y, vh);
-        let midpoint = Vec3::new(scale * gizmo::MIDPOINT_FRACTION, 0.0, 0.0);
+        let midpoint = Vec3::new(scale * gizmo::dimensions::MIDPOINT_FRACTION, 0.0, 0.0);
         picking::project_world_to_screen(&cam, fov_y, vw, vh, midpoint).unwrap()
     }
 

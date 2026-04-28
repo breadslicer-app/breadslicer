@@ -28,7 +28,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-use crate::gizmo::{
+use crate::gizmo::dimensions::{
     AXIS_SCALE_CUBE_PIXELS, CENTRE_CUBE_PIXELS, HANDLE_PIXEL_LENGTH, MIDPOINT_FRACTION,
     ROTATE_ARC_RADIUS_FRACTION, ROTATE_ARC_TUBE_PIXELS, ROTATE_CONE_LENGTH, ROTATE_CONE_RADIUS,
 };
