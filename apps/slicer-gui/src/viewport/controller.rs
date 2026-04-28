@@ -25,6 +25,7 @@ use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::gizmo::axis::Axis;
+use crate::gizmo::hit_test::ScaleHandle;
 use crate::gizmo::{self};
 use crate::i18n::ctr;
 use crate::mesh_render::{GizmoFrame, GizmoVisibility, Renderer, default_fov_y};
@@ -724,10 +725,10 @@ impl ViewportController {
             Some((_, prev_t)) if prev_t <= t => {}
             _ => best = Some((hit, t)),
         };
-        if let Some((axis, t)) = gizmo::hit_test(&ray, pivot, scale, cyl_radius) {
+        if let Some((axis, t)) = gizmo::hit_test::hit_test(&ray, pivot, scale, cyl_radius) {
             consider(HandleHit::Translate(axis), t);
         }
-        if let Some((axis, t)) = gizmo::rotate_hit_test(
+        if let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
             &ray,
             pivot,
             arc_radius_world,
@@ -736,12 +737,12 @@ impl ViewportController {
         ) {
             consider(HandleHit::Rotate(axis), t);
         }
-        if let Some((axis_or_none, t)) =
-            gizmo::scale_hit_test(&ray, pivot, scale, axis_cube_world, centre_cube_world)
+        if let Some((handle, t)) =
+            gizmo::hit_test::scale_hit_test(&ray, pivot, scale, axis_cube_world, centre_cube_world)
         {
-            match axis_or_none {
-                Some(axis) => consider(HandleHit::ScaleAxis(axis), t),
-                None => consider(HandleHit::ScaleCentre, t),
+            match handle {
+                ScaleHandle::Axis(axis) => consider(HandleHit::ScaleAxis(axis), t),
+                ScaleHandle::Centre => consider(HandleHit::ScaleCentre, t),
             }
         }
         let Some((winner, _)) = best else {
@@ -1141,14 +1142,14 @@ fn build_gizmo_frame(
         direction: forward,
     };
     let locked_translate = [
-        !gizmo::axis_pickable(&view_ray, Axis::X),
-        !gizmo::axis_pickable(&view_ray, Axis::Y),
-        !gizmo::axis_pickable(&view_ray, Axis::Z),
+        !gizmo::hit_test::axis_pickable(&view_ray, Axis::X),
+        !gizmo::hit_test::axis_pickable(&view_ray, Axis::Y),
+        !gizmo::hit_test::axis_pickable(&view_ray, Axis::Z),
     ];
     let locked_rotate = [
-        !gizmo::arc_pickable(&view_ray, Axis::X),
-        !gizmo::arc_pickable(&view_ray, Axis::Y),
-        !gizmo::arc_pickable(&view_ray, Axis::Z),
+        !gizmo::hit_test::arc_pickable(&view_ray, Axis::X),
+        !gizmo::hit_test::arc_pickable(&view_ray, Axis::Y),
+        !gizmo::hit_test::arc_pickable(&view_ray, Axis::Z),
     ];
     Some(GizmoFrame {
         pivot,
