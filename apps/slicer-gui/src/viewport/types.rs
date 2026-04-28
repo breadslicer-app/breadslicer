@@ -26,3 +26,15 @@ impl Selection {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ScreenPoint {
+    pub(super) x: f32,
+    pub(super) y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum InputPhase {
+    Idle,
+    Pressed { origin: ScreenPoint },
+}

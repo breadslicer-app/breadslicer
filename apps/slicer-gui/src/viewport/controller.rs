@@ -19,7 +19,7 @@ use super::keyboard_drive::{
     ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS, ArrowDrive,
     KBD_MAX_DT, KbdFocus, keyboard_step,
 };
-use super::types::{ObjectIdx, Selection};
+use super::types::{InputPhase, ObjectIdx, ScreenPoint, Selection};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
@@ -66,7 +66,7 @@ pub struct ViewportController {
     // `on_pointer_up` reads it to decide whether the gesture was a
     // click (small movement → run picker) or a drag (large movement →
     // either consumed by the gizmo FSM or dropped on the floor).
-    press_origin: Cell<Option<(f32, f32)>>,
+    input_phase: Cell<InputPhase>,
     // Translate-gizmo drag state. Idle when no drag is in progress.
     gizmo: Cell<GizmoState>,
     // Keyboard gizmo focus. `None` when the viewport's keyboard input
@@ -123,7 +123,7 @@ impl ViewportController {
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
             selection: Cell::new(Selection::None),
-            press_origin: Cell::new(None),
+            input_phase: Cell::new(InputPhase::Idle),
             gizmo: Cell::new(GizmoState::Idle),
             keyboard_focus: Cell::new(KbdFocus::None),
             arrow_drive: Cell::new(ArrowDrive::default()),
@@ -152,7 +152,7 @@ impl ViewportController {
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
             selection: Cell::new(Selection::None),
-            press_origin: Cell::new(None),
+            input_phase: Cell::new(InputPhase::Idle),
             gizmo: Cell::new(GizmoState::Idle),
             keyboard_focus: Cell::new(KbdFocus::None),
             arrow_drive: Cell::new(ArrowDrive::default()),
@@ -258,7 +258,7 @@ impl ViewportController {
         // the scene is gone; clear FSM state without trying to
         // revert (the object no longer exists).
         self.gizmo.set(GizmoState::Idle);
-        self.press_origin.set(None);
+        self.input_phase.set(InputPhase::Idle);
         // Keyboard focus is anchored on the (now-missing) selection;
         // reset it together with the held-arrow bitset so a stuck
         // key can't drive a phantom integrator after scene close.
@@ -525,7 +525,9 @@ impl ViewportController {
     /// the per-axis cube with Shift already held starts the drag in
     /// uniform-scale mode.
     pub fn on_pointer_down(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        self.press_origin.set(Some((x, y)));
+        self.input_phase.set(InputPhase::Pressed {
+            origin: ScreenPoint { x, y },
+        });
         self.try_start_gizmo_drag(x, y, modifiers);
     }
 
@@ -626,13 +628,16 @@ impl ViewportController {
     /// with the down/move callbacks and so future operations
     /// (snapping, etc.) can read it without another signature change.
     pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
-        let press = self.press_origin.take();
+        let press = match self.input_phase.replace(InputPhase::Idle) {
+            InputPhase::Pressed { origin } => Some(origin),
+            InputPhase::Idle => None,
+        };
         if matches!(self.gizmo.get(), GizmoState::Drag { .. }) {
             self.gizmo.set(GizmoState::Idle);
             self.mark_dirty();
             return;
         }
-        let Some((px, py)) = press else {
+        let Some(ScreenPoint { x: px, y: py }) = press else {
             // Up without a matching down — defensive, can happen if a
             // press was captured by another control before reaching us.
             return;
@@ -806,7 +811,7 @@ impl ViewportController {
             return;
         };
         self.gizmo.set(GizmoState::Idle);
-        self.press_origin.set(None);
+        self.input_phase.set(InputPhase::Idle);
         let mut scene_slot = self.scene.borrow_mut();
         if let Some(scene) = scene_slot.as_mut()
             && let Some(obj) = scene.objects.get_mut(object_idx)
