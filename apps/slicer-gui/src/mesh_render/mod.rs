@@ -20,8 +20,7 @@ mod gizmo_entries;
 mod scene_upload;
 
 use gizmo_entries::{
-    GIZMO_CENTRE_SLOT, GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GIZMO_ROTATE_SLOT_BASE,
-    GIZMO_SCALE_AXIS_SLOT_BASE, GIZMO_TRANSLATE_SLOT_BASE, GizmoDrawEntry, GizmoUniformsGpu,
+    GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GIZMO_SLOTS, GizmoDrawEntry, GizmoUniformsGpu,
     build_rotate_entries, build_scale_axis_entries, build_scale_centre_entry,
     build_translate_entries,
 };
@@ -1037,17 +1036,17 @@ impl Renderer {
 
             if render_translate {
                 let entries = build_translate_entries(&frame);
-                self.write_gizmo_entries(GIZMO_TRANSLATE_SLOT_BASE, &entries);
+                self.write_gizmo_entries(GIZMO_SLOTS.translate.start(), &entries);
             }
             if render_rotate {
                 let entries = build_rotate_entries(&frame, camera);
-                self.write_gizmo_entries(GIZMO_ROTATE_SLOT_BASE, &entries);
+                self.write_gizmo_entries(GIZMO_SLOTS.rotate.start(), &entries);
             }
             if render_scale {
                 let axis_entries = build_scale_axis_entries(&frame);
-                self.write_gizmo_entries(GIZMO_SCALE_AXIS_SLOT_BASE, &axis_entries);
+                self.write_gizmo_entries(GIZMO_SLOTS.scale_axis.start(), &axis_entries);
                 let centre_entry = build_scale_centre_entry(&frame);
-                self.write_gizmo_entries(GIZMO_CENTRE_SLOT, &[centre_entry]);
+                self.write_gizmo_entries(GIZMO_SLOTS.centre, &[centre_entry]);
             }
 
             let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1088,7 +1087,7 @@ impl Renderer {
                 );
                 for i in 0..3u32 {
                     let offset =
-                        ((GIZMO_TRANSLATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                        (GIZMO_SLOTS.translate.slot(i as u64) * self.gizmo_entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
@@ -1107,7 +1106,7 @@ impl Renderer {
                 );
                 for i in 0..3u32 {
                     let offset =
-                        ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                        (GIZMO_SLOTS.rotate.slot(i as u64) * self.gizmo_entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
@@ -1125,7 +1124,7 @@ impl Renderer {
                 );
                 for i in 0..3u32 {
                     let offset =
-                        ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                        (GIZMO_SLOTS.rotate.slot(i as u64) * self.gizmo_entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
@@ -1142,7 +1141,7 @@ impl Renderer {
                 );
                 for i in 0..3u32 {
                     let offset =
-                        ((GIZMO_SCALE_AXIS_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
+                        (GIZMO_SLOTS.scale_axis.slot(i as u64) * self.gizmo_entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
@@ -1161,7 +1160,7 @@ impl Renderer {
                     self.gizmo_centre_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                let offset = (GIZMO_CENTRE_SLOT * self.gizmo_entry_stride) as u32;
+                let offset = (GIZMO_SLOTS.centre * self.gizmo_entry_stride) as u32;
                 gizmo_pass.set_bind_group(
                     GizmoBindGroup::Entries.idx(),
                     &self.gizmo_entries_bind_group,

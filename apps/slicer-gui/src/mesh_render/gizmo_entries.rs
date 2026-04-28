@@ -31,17 +31,53 @@ pub(super) struct GizmoDrawEntry {
 pub(super) const GIZMO_DRAW_ENTRY_SIZE: u64 = std::mem::size_of::<GizmoDrawEntry>() as u64;
 
 /// Total number of per-frame draw entries reserved in
-/// `gizmo_entries_buffer`. The slots are laid out so each pass
-/// binds a contiguous range:
-/// - `[0, 3)` translate (one per X/Y/Z),
-/// - `[3, 6)` rotate (one per X/Y/Z),
-/// - `[6, 9)` scale-axis midpoint cubes (one per X/Y/Z),
-/// - `[9, 10)` centre cube (uniform-scale).
+/// `gizmo_entries_buffer`. See `GIZMO_SLOTS` for the per-category
+/// layout that fills it.
 pub(super) const GIZMO_ENTRY_SLOTS: u64 = 10;
-pub(super) const GIZMO_TRANSLATE_SLOT_BASE: u64 = 0;
-pub(super) const GIZMO_ROTATE_SLOT_BASE: u64 = 3;
-pub(super) const GIZMO_SCALE_AXIS_SLOT_BASE: u64 = 6;
-pub(super) const GIZMO_CENTRE_SLOT: u64 = 9;
+
+/// Range of `gizmo_entries_buffer` slots reserved for one handle
+/// category. `start` is the first slot index, `count` is how many
+/// consecutive slots belong to the category.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct GizmoSlotRange {
+    start: u64,
+    count: u64,
+}
+
+impl GizmoSlotRange {
+    pub(super) const fn new(start: u64, count: u64) -> Self {
+        Self { start, count }
+    }
+    pub(super) fn start(self) -> u64 {
+        self.start
+    }
+    #[cfg(test)]
+    pub(super) fn count(self) -> u64 {
+        self.count
+    }
+    pub(super) fn slot(self, axis_ix: u64) -> u64 {
+        debug_assert!(axis_ix < self.count);
+        self.start + axis_ix
+    }
+}
+
+/// Static layout of `gizmo_entries_buffer`. Slots are contiguous and
+/// non-overlapping; the layout is a compile-time constant so the
+/// renderer never queries it at runtime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct GizmoSlots {
+    pub(super) translate: GizmoSlotRange,
+    pub(super) rotate: GizmoSlotRange,
+    pub(super) scale_axis: GizmoSlotRange,
+    pub(super) centre: u64,
+}
+
+pub(super) const GIZMO_SLOTS: GizmoSlots = GizmoSlots {
+    translate: GizmoSlotRange::new(0, 3),
+    rotate: GizmoSlotRange::new(3, 3),
+    scale_axis: GizmoSlotRange::new(6, 3),
+    centre: 9,
+};
 
 /// Per-frame data the renderer needs to draw the gizmo. `pivot` is
 /// the world-space gizmo origin; `scale` is the world-unit length of
@@ -413,5 +449,44 @@ mod gizmo_entry_tests {
         let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
         let entries = build_rotate_entries(&frame, &camera);
         assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod gizmo_slots_tests {
+    use super::*;
+
+    #[test]
+    fn slots_are_contiguous_and_non_overlapping() {
+        assert_eq!(
+            GIZMO_SLOTS.translate.start() + GIZMO_SLOTS.translate.count(),
+            GIZMO_SLOTS.rotate.start()
+        );
+        assert_eq!(
+            GIZMO_SLOTS.rotate.start() + GIZMO_SLOTS.rotate.count(),
+            GIZMO_SLOTS.scale_axis.start()
+        );
+        assert_eq!(
+            GIZMO_SLOTS.scale_axis.start() + GIZMO_SLOTS.scale_axis.count(),
+            GIZMO_SLOTS.centre
+        );
+        assert_eq!(GIZMO_SLOTS.centre + 1, GIZMO_ENTRY_SLOTS);
+    }
+
+    #[test]
+    fn slot_returns_offset_within_range() {
+        assert_eq!(GIZMO_SLOTS.translate.slot(0), 0);
+        assert_eq!(GIZMO_SLOTS.translate.slot(2), 2);
+        assert_eq!(GIZMO_SLOTS.rotate.slot(0), 3);
+        assert_eq!(GIZMO_SLOTS.rotate.slot(2), 5);
+        assert_eq!(GIZMO_SLOTS.scale_axis.slot(0), 6);
+        assert_eq!(GIZMO_SLOTS.scale_axis.slot(2), 8);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn slot_panics_when_axis_out_of_range() {
+        let _ = GIZMO_SLOTS.translate.slot(3);
     }
 }
