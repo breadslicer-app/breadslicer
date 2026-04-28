@@ -12,6 +12,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 [dependencies]
 anyhow.workspace = true
 float-cmp.workspace = true
+newtypes = "0.3.0"
 
 [dev-dependencies]
 proptest.workspace = true
