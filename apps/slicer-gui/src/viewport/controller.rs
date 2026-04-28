@@ -19,6 +19,7 @@ use super::keyboard_drive::{
     ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS, ArrowDrive,
     KBD_MAX_DT, KbdFocus, keyboard_step,
 };
+use super::types::{ObjectIdx, Selection};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
@@ -59,7 +60,7 @@ pub struct ViewportController {
     // this when writing per-frame model entries (driving the
     // selection tint and the outline pass); the translate gizmo will
     // attach to it once wired.
-    selection: Cell<Option<usize>>,
+    selection: Cell<Selection>,
     // Logical-pixel position at which the left button was last
     // pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
     // `on_pointer_up` reads it to decide whether the gesture was a
@@ -121,7 +122,7 @@ impl ViewportController {
             viewport: Cell::new((0.0, 0.0)),
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
-            selection: Cell::new(None),
+            selection: Cell::new(Selection::None),
             press_origin: Cell::new(None),
             gizmo: Cell::new(GizmoState::Idle),
             keyboard_focus: Cell::new(KbdFocus::None),
@@ -150,7 +151,7 @@ impl ViewportController {
             viewport: Cell::new((0.0, 0.0)),
             dirty: Cell::new(false),
             needs_upload: Cell::new(false),
-            selection: Cell::new(None),
+            selection: Cell::new(Selection::None),
             press_origin: Cell::new(None),
             gizmo: Cell::new(GizmoState::Idle),
             keyboard_focus: Cell::new(KbdFocus::None),
@@ -252,7 +253,7 @@ impl ViewportController {
         *self.camera.borrow_mut() = None;
         self.needs_upload.set(false);
         self.dirty.set(false);
-        self.selection.set(None);
+        self.selection.set(Selection::None);
         // The drag's captured `object_idx` becomes meaningless once
         // the scene is gone; clear FSM state without trying to
         // revert (the object no longer exists).
@@ -302,7 +303,7 @@ impl ViewportController {
         *self.scene.borrow_mut() = Some(scene);
         // A new scene has its own object indices; any prior selection
         // referred to the previous scene and is no longer meaningful.
-        self.selection.set(None);
+        self.selection.set(Selection::None);
         // If install succeeded, the buffers are already on the GPU; no
         // upload owed. Otherwise, defer to the recovery upload path.
         self.needs_upload.set(!scene_installed);
@@ -341,7 +342,7 @@ impl ViewportController {
     /// this to assert FSM transitions.
     #[cfg(test)]
     pub(crate) fn selection(&self) -> Option<usize> {
-        self.selection.get()
+        self.selection.get().primary().map(ObjectIdx::as_usize)
     }
 
     /// Slint-side selection-changed callback. Out-of-bounds indices map
@@ -356,7 +357,11 @@ impl ViewportController {
             .as_ref()
             .map(|s| s.objects.len())
             .unwrap_or(0);
-        let new_sel = if idx < scene_len { Some(idx) } else { None };
+        let new_sel = if idx < scene_len {
+            Selection::One(ObjectIdx(idx))
+        } else {
+            Selection::None
+        };
         if self.selection.get() == new_sel {
             return;
         }
@@ -396,10 +401,10 @@ impl ViewportController {
         }
         let step = delta.signum();
         let next = match self.selection.get() {
-            None => 0,
-            Some(i) => {
+            Selection::None => 0,
+            Selection::One(i) => {
                 let len_i = scene_len as i32;
-                let cur = i as i32;
+                let cur = i.as_usize() as i32;
                 ((cur + step).rem_euclid(len_i)) as usize
             }
         };
@@ -428,10 +433,10 @@ impl ViewportController {
             self.set_keyboard_focus(KbdFocus::None);
             return;
         }
-        if self.selection.get().is_none() {
+        if matches!(self.selection.get(), Selection::None) {
             return;
         }
-        self.selection.set(None);
+        self.selection.set(Selection::None);
         self.mirror_selection_to_ui();
         self.mark_dirty();
     }
@@ -457,7 +462,7 @@ impl ViewportController {
     /// and resets the held-arrow bitset on focus change so a held key
     /// from one mode doesn't bleed into another.
     fn set_keyboard_focus(&self, focus: KbdFocus) {
-        if focus != KbdFocus::None && self.selection.get().is_none() {
+        if focus != KbdFocus::None && matches!(self.selection.get(), Selection::None) {
             return;
         }
         if self.keyboard_focus.get() == focus {
@@ -652,9 +657,10 @@ impl ViewportController {
     /// with Shift held starts uniformly; subsequent toggles
     /// re-anchor through the move path.
     fn try_start_gizmo_drag(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        let Some(sel) = self.selection.get() else {
+        let Some(sel) = self.selection.get().primary() else {
             return;
         };
+        let sel_idx = sel.as_usize();
         let (w, h) = self.viewport.get();
         if w <= 0.0 || h <= 0.0 {
             return;
@@ -668,7 +674,7 @@ impl ViewportController {
         let Some(scene) = scene_slot.as_ref() else {
             return;
         };
-        let Some(pivot) = gizmo::pivot_for_object(scene, sel) else {
+        let Some(pivot) = gizmo::pivot_for_object(scene, sel_idx) else {
             return;
         };
         let fov_y = default_fov_y();
@@ -718,7 +724,7 @@ impl ViewportController {
             return;
         };
 
-        let Some(obj) = scene.objects.get(sel) else {
+        let Some(obj) = scene.objects.get(sel_idx) else {
             return;
         };
         let original = obj.transform;
@@ -782,7 +788,7 @@ impl ViewportController {
             op,
             original,
             pivot,
-            object_idx: sel,
+            object_idx: sel_idx,
         });
     }
 
@@ -831,7 +837,7 @@ impl ViewportController {
             self.last_arrow_tick.set(None);
             return;
         }
-        let Some(idx) = self.selection.get() else {
+        let Some(idx) = self.selection.get().primary().map(ObjectIdx::as_usize) else {
             return;
         };
         let (_, h) = self.viewport.get();
@@ -917,8 +923,8 @@ impl ViewportController {
     fn mirror_selection_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let idx = match self.selection.get() {
-                Some(i) => i as i32,
-                None => -1,
+                Selection::One(i) => i.as_usize() as i32,
+                Selection::None => -1,
             };
             ui.set_selected_object_index(idx);
         }
@@ -1030,14 +1036,15 @@ impl ViewportController {
             return;
         };
 
-        let gizmo_frame = self.selection.get().and_then(|sel| {
+        let selection_idx = self.selection.get().primary().map(ObjectIdx::as_usize);
+        let gizmo_frame = selection_idx.and_then(|sel| {
             build_gizmo_frame(scene_for_render, camera, sel, h_logical, self.gizmo.get())
         });
 
         let Some(texture) = renderer.render(
             scene_for_render,
             camera,
-            self.selection.get(),
+            selection_idx,
             gizmo_frame,
             eff_w,
             eff_h,
