@@ -50,14 +50,27 @@ pub fn hit_test(
 ) -> Option<(Axis, f32)> {
     let s_min = length_world * TRANSLATE_HIT_S_MIN;
     let s_max = length_world * TRANSLATE_HIT_S_MAX;
+    front_most_axis(
+        |a| axis_pickable(ray, a),
+        |a| ray_hits_finite_cylinder(ray, pivot, a.world_dir(), s_min, s_max, radius_world),
+    )
+}
+
+/// Walks `ALL_AXES`, keeps only those passing `gate`, runs `intersect`
+/// for each, and returns the front-most-`t` axis (smallest positive
+/// `t`). Shared body of [`hit_test`], [`rotate_hit_test`], and the
+/// per-axis pass of [`scale_hit_test`].
+fn front_most_axis<G, I>(gate: G, intersect: I) -> Option<(Axis, f32)>
+where
+    G: Fn(Axis) -> bool,
+    I: Fn(Axis) -> Option<f32>,
+{
     let mut best: Option<(Axis, f32)> = None;
     for &axis in &ALL_AXES {
-        if !axis_pickable(ray, axis) {
+        if !gate(axis) {
             continue;
         }
-        if let Some(t) =
-            ray_hits_finite_cylinder(ray, pivot, axis.world_dir(), s_min, s_max, radius_world)
-        {
+        if let Some(t) = intersect(axis) {
             match best {
                 Some((_, prev_t)) if prev_t <= t => {}
                 _ => best = Some((axis, t)),
@@ -226,26 +239,19 @@ pub fn rotate_hit_test(
     cone_length_world: f32,
     cone_radius_world: f32,
 ) -> Option<(Axis, f32)> {
-    let mut best: Option<(Axis, f32)> = None;
-    for &axis in &ALL_AXES {
-        if !arc_pickable(ray, axis) {
-            continue;
-        }
-        if let Some(t) = ray_hits_rotate_cones(
-            ray,
-            pivot,
-            axis,
-            arc_radius_world,
-            cone_length_world,
-            cone_radius_world,
-        ) {
-            match best {
-                Some((_, prev_t)) if prev_t <= t => {}
-                _ => best = Some((axis, t)),
-            }
-        }
-    }
-    best
+    front_most_axis(
+        |a| arc_pickable(ray, a),
+        |a| {
+            ray_hits_rotate_cones(
+                ray,
+                pivot,
+                a,
+                arc_radius_world,
+                cone_length_world,
+                cone_radius_world,
+            )
+        },
+    )
 }
 
 /// Ray-vs-AABB for one axis's midpoint scale cube. The cube is
@@ -292,25 +298,19 @@ pub fn scale_hit_test(
     axis_cube_world: f32,
     centre_cube_world: f32,
 ) -> Option<(ScaleHandle, f32)> {
-    let mut best: Option<(ScaleHandle, f32)> = None;
+    let centre =
+        ray_hits_centre_cube(ray, pivot, centre_cube_world).map(|t| (ScaleHandle::Centre, t));
+    let axis_hit = front_most_axis(
+        |a| axis_pickable(ray, a),
+        |a| ray_hits_axis_cube(ray, pivot, a, shaft_length_world, axis_cube_world),
+    )
+    .map(|(a, t)| (ScaleHandle::Axis(a), t));
 
-    if let Some(t) = ray_hits_centre_cube(ray, pivot, centre_cube_world) {
-        best = Some((ScaleHandle::Centre, t));
+    match (centre, axis_hit) {
+        (Some((_, ct)), Some((handle, at))) if at < ct => Some((handle, at)),
+        (Some(c), _) => Some(c),
+        (None, axis) => axis,
     }
-
-    for &axis in &ALL_AXES {
-        if !axis_pickable(ray, axis) {
-            continue;
-        }
-        if let Some(t) = ray_hits_axis_cube(ray, pivot, axis, shaft_length_world, axis_cube_world) {
-            match best {
-                Some((_, prev_t)) if prev_t <= t => {}
-                _ => best = Some((ScaleHandle::Axis(axis), t)),
-            }
-        }
-    }
-
-    best
 }
 
 #[cfg(test)]
