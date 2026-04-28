@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::fmt;
+
 use newtypes::{newtype_from_only, newtype_ord};
 
 use crate::primitives::Normal;
@@ -26,6 +28,16 @@ impl CoordAxis {
     }
 }
 
+impl fmt::Display for CoordAxis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+        })
+    }
+}
+
 /// Which of a triangle's three corners a diagnostic refers to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -45,10 +57,7 @@ impl TriVertexSlot {
     }
 }
 
-// Index into `IndexedMesh::vertices`. `newtype_ord!` emits the type as
-// `pub struct VertexIndex(u32);` `#[repr(transparent)]` plus
-// Debug/Clone/Copy/PartialEq/Eq/Hash/PartialOrd/Ord/Into<u32>;
-// `newtype_from_only!` adds `From<u32>` (no `FromStr`).
+// Index into `IndexedMesh::vertices`.
 newtype_ord!(VertexIndex, u32);
 newtype_from_only!(VertexIndex, u32);
 
@@ -104,8 +113,8 @@ impl Edge {
 
 #[derive(Debug)]
 pub enum MeshVertexError {
-    InfiniteCoordinate { vertex_idx: usize, coord: u8 },
-    NaNCoordinate { vertex_idx: usize, coord: u8 },
+    InfiniteCoordinate { vertex_idx: usize, coord: CoordAxis },
+    NaNCoordinate { vertex_idx: usize, coord: CoordAxis },
 }
 
 #[derive(Debug)]

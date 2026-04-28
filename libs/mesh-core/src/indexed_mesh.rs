@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 
 use crate::errors::{
-    MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
+    CoordAxis, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
 use crate::geometry::{compute_normal_from_triangle_vertices, gt_strict};
 use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
@@ -33,13 +33,14 @@ impl IndexedMesh {
         let mut errors: Vec<MeshVertexError> = vec![];
 
         for (idx, v) in self.vertices.iter().enumerate() {
-            for coord in 0..3u8 {
-                if v.0[coord as usize].is_infinite() {
+            for &coord in &CoordAxis::ALL {
+                let value = v.0[coord.as_index()];
+                if value.is_infinite() {
                     errors.push(MeshVertexError::InfiniteCoordinate {
                         vertex_idx: idx,
                         coord,
                     });
-                } else if v.0[coord as usize].is_nan() {
+                } else if value.is_nan() {
                     errors.push(MeshVertexError::NaNCoordinate {
                         vertex_idx: idx,
                         coord,
@@ -377,7 +378,7 @@ impl IndexedMesh {
 #[cfg(test)]
 mod indexed_mesh_validate_vertices_tests {
     use super::*;
-    use crate::errors::MeshVertexError;
+    use crate::errors::{CoordAxis, MeshVertexError};
 
     fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
         IndexedMesh {
@@ -411,7 +412,7 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
-                coord: 0
+                coord: CoordAxis::X,
             }
         ));
     }
@@ -425,7 +426,7 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
-                coord: 1
+                coord: CoordAxis::Y,
             }
         ));
     }
@@ -439,7 +440,7 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
-                coord: 2
+                coord: CoordAxis::Z,
             }
         ));
     }
@@ -453,7 +454,7 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
-                coord: 0
+                coord: CoordAxis::X,
             }
         ));
     }
@@ -467,7 +468,7 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
-                coord: 1
+                coord: CoordAxis::Y,
             }
         ));
     }
@@ -481,7 +482,7 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
-                coord: 2
+                coord: CoordAxis::Z,
             }
         ));
     }
@@ -499,21 +500,21 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
-                coord: 0
+                coord: CoordAxis::X,
             }
         ));
         assert!(matches!(
             errors[1],
             MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
-                coord: 1
+                coord: CoordAxis::Y,
             }
         ));
         assert!(matches!(
             errors[2],
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
-                coord: 2
+                coord: CoordAxis::Z,
             }
         ));
     }
@@ -531,14 +532,14 @@ mod indexed_mesh_validate_vertices_tests {
             errors[0],
             MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
-                coord: 0
+                coord: CoordAxis::X,
             }
         ));
         assert!(matches!(
             errors[1],
             MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 2,
-                coord: 1
+                coord: CoordAxis::Y,
             }
         ));
     }
