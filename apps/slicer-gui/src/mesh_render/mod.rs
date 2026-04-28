@@ -1208,7 +1208,7 @@ fn create_color_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::
 #[cfg(test)]
 mod gpu_integration_tests {
     use super::*;
-    use crate::gizmo::Axis;
+    use crate::gizmo::axis::Axis;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};

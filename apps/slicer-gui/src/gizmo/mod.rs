@@ -8,6 +8,8 @@
 //! drag-time closest-point math. Renderer-agnostic so it can be
 //! unit-tested without a `wgpu::Device`.
 
+pub mod axis;
+
 use glam::Vec3;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
@@ -15,26 +17,7 @@ use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
 use crate::camera::OrbitCamera;
 use crate::picking::{Ray, ray_hits_aabb_t};
 
-/// World-aligned gizmo axis. The X/Y/Z directions are global +X, +Y,
-/// +Z; a local-axis option is left as a future toggle.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Axis {
-    X,
-    Y,
-    Z,
-}
-
-impl Axis {
-    pub const fn world_dir(self) -> Vec3 {
-        match self {
-            Axis::X => Vec3::X,
-            Axis::Y => Vec3::Y,
-            Axis::Z => Vec3::Z,
-        }
-    }
-}
-
-pub const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
+use self::axis::{ALL_AXES, Axis};
 
 /// Screen-pixel length of the gizmo shaft. Drives `gizmo_scale`.
 /// Sized to leave room for the per-axis midpoint cube *and* the cone
@@ -349,21 +332,6 @@ pub fn arc_pickable(ray: &Ray, axis: Axis) -> bool {
     a.dot(ray.direction).abs() >= ROTATE_LOCKOUT_COS
 }
 
-/// In-plane orthonormal basis around `axis`, right-handed about the
-/// axis (`axis × u = v`). Used by every rotate primitive so the
-/// angular position returned by [`axis_plane_angle`] grows CCW about
-/// `+axis` (right-hand rule). Caller code that wants the user's
-/// "screen clockwise = +rotation" convention flips the sign at
-/// composition time, where the camera direction is also known.
-#[allow(dead_code)]
-fn axis_basis(axis: Axis) -> (Vec3, Vec3) {
-    match axis {
-        Axis::X => (Vec3::Y, Vec3::Z),
-        Axis::Y => (Vec3::Z, Vec3::X),
-        Axis::Z => (Vec3::X, Vec3::Y),
-    }
-}
-
 /// Intersects `ray` with the plane through `pivot` perpendicular to
 /// `axis`. Returns the world-space hit, or `None` if the ray is
 /// parallel to the plane or hits behind the camera. The rotate
@@ -390,7 +358,7 @@ fn ray_hits_axis_plane(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
 /// `pivot - u` returns ±π.
 #[allow(dead_code)]
 pub fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
-    let (u, v) = axis_basis(axis);
+    let (u, v) = self::axis::axis_basis(axis);
     let p = point - pivot;
     p.dot(v).atan2(p.dot(u))
 }
@@ -629,18 +597,6 @@ pub fn uniform_scale_factor(
     let current_dist_sq = dx1 * dx1 + dy1 * dy1;
     let raw = (current_dist_sq / start_dist_sq).sqrt();
     raw.clamp(EPS_SCALE, 1.0 / EPS_SCALE)
-}
-
-#[cfg(test)]
-mod axis_tests {
-    use super::*;
-
-    #[test]
-    fn world_dir_returns_basis_vectors() {
-        assert_eq!(Axis::X.world_dir(), Vec3::X);
-        assert_eq!(Axis::Y.world_dir(), Vec3::Y);
-        assert_eq!(Axis::Z.world_dir(), Vec3::Z);
-    }
 }
 
 #[cfg(test)]

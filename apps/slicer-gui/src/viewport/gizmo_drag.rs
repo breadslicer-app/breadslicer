@@ -17,7 +17,8 @@ use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 
 use crate::camera::OrbitCamera;
-use crate::gizmo::{self, Axis};
+use crate::gizmo::axis::Axis;
+use crate::gizmo::{self};
 use crate::picking;
 
 /// Gizmo input FSM. `Idle` is the resting state (no drag in

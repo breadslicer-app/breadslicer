@@ -7,7 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 use crate::camera::OrbitCamera;
-use crate::gizmo::Axis;
+use crate::gizmo::axis::Axis;
 
 /// Per-frame uniform for the gizmo pass: the camera transform plus
 /// the world-space pivot and shaft-length, both packed into a vec4

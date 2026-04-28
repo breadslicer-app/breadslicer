@@ -15,7 +15,7 @@ use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
-use crate::gizmo::Axis;
+use crate::gizmo::axis::Axis;
 
 /// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through
 /// the three operation types; Esc returns to `None`. While focus is
