@@ -57,6 +57,16 @@ impl TriVertexSlot {
     }
 }
 
+impl fmt::Display for TriVertexSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::V0 => "v0",
+            Self::V1 => "v1",
+            Self::V2 => "v2",
+        })
+    }
+}
+
 // Index into `IndexedMesh::vertices`.
 newtype_ord!(VertexIndex, u32);
 newtype_from_only!(VertexIndex, u32);
@@ -69,6 +79,12 @@ impl VertexIndex {
     }
 }
 
+impl fmt::Display for VertexIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
 // Index into `IndexedMesh::faces`. Same shape as `VertexIndex`.
 newtype_ord!(FaceIndex, usize);
 newtype_from_only!(FaceIndex, usize);
@@ -78,6 +94,12 @@ impl FaceIndex {
     #[inline]
     pub fn get(self) -> usize {
         self.into()
+    }
+}
+
+impl fmt::Display for FaceIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.get().fmt(f)
     }
 }
 
@@ -129,20 +151,20 @@ pub enum MeshFaceError {
     OutOfRangeVertexIndex {
         /// Index for the problematic face
         face_idx: usize,
-        /// 0, 1, or 2. Indicates which vertex index of the triangle is wrong
-        vertex_pos: u8,
-        /// Value of the problematic vertex index
-        vertex_idx: usize,
+        /// Which corner of the triangle holds the offending index.
+        vertex_pos: TriVertexSlot,
+        /// Value of the problematic vertex index, as found in the face.
+        vertex_idx: VertexIndex,
     },
     ZeroLengthEdge {
         /// Index for the problematic face
         face_idx: usize,
-        /// Position of one of the "first" vertex of the collapsed edge
-        vertex_pos_a: u8,
-        /// Position of one of the "second" vertex of the collapsed edge
-        vertex_pos_b: u8,
-        /// Value of the problematic vertex index
-        vertex_idx: usize,
+        /// One of the two corners that share the same vertex.
+        vertex_pos_a: TriVertexSlot,
+        /// The other corner that shares the same vertex.
+        vertex_pos_b: TriVertexSlot,
+        /// The shared vertex index.
+        vertex_idx: VertexIndex,
     },
 }
 
