@@ -47,6 +47,52 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStenci
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
+/// Bind-group indices for the mesh pipeline. Variant order must match
+/// the `bind_group_layouts: &[…]` ordering passed to
+/// `create_pipeline_layout` and the `@group(N)` decls in
+/// `shaders/mesh_render.wgsl`.
+#[repr(u32)]
+#[derive(Clone, Copy)]
+enum MeshBindGroup {
+    Uniforms = 0,
+    Models = 1,
+}
+
+impl MeshBindGroup {
+    fn idx(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Bind-group indices for the outline post-pass pipeline. Variant order
+/// must match `shaders/outline.wgsl`.
+#[repr(u32)]
+#[derive(Clone, Copy)]
+enum OutlineBindGroup {
+    Stencil = 0,
+}
+
+impl OutlineBindGroup {
+    fn idx(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Bind-group indices for the gizmo pipeline. Variant order must match
+/// `shaders/gizmo.wgsl`.
+#[repr(u32)]
+#[derive(Clone, Copy)]
+enum GizmoBindGroup {
+    Uniforms = 0,
+    Entries = 1,
+}
+
+impl GizmoBindGroup {
+    fn idx(self) -> u32 {
+        self as u32
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Uniforms {
@@ -209,6 +255,8 @@ impl Renderer {
                 }],
             });
 
+        debug_assert_eq!(MeshBindGroup::Uniforms.idx(), 0);
+        debug_assert_eq!(MeshBindGroup::Models.idx(), 1);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh-viewer pll"),
             bind_group_layouts: &[&uniforms_bind_group_layout, &models_bind_group_layout],
@@ -303,6 +351,7 @@ impl Renderer {
                 }],
             });
 
+        debug_assert_eq!(OutlineBindGroup::Stencil.idx(), 0);
         let outline_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("mesh-viewer outline pll"),
@@ -472,6 +521,8 @@ impl Renderer {
             }],
         });
 
+        debug_assert_eq!(GizmoBindGroup::Uniforms.idx(), 0);
+        debug_assert_eq!(GizmoBindGroup::Entries.idx(), 1);
         let gizmo_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("mesh-viewer gizmo pll"),
@@ -892,7 +943,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.uniforms_bind_group, &[]);
+            pass.set_bind_group(
+                MeshBindGroup::Uniforms.idx(),
+                &self.uniforms_bind_group,
+                &[],
+            );
             // One draw call per object. The models bind group is rebound
             // at each step with the dynamic offset of the matching
             // ModelEntry slot, so the vertex shader's `model_entry`
@@ -903,7 +958,11 @@ impl Renderer {
             // dilates.
             for (i, obj) in installed.gpu.objects().iter().enumerate() {
                 let offset = (i as u64 * installed.gpu.model_stride()) as u32;
-                pass.set_bind_group(1, &installed.models_bind_group, &[offset]);
+                pass.set_bind_group(
+                    MeshBindGroup::Models.idx(),
+                    &installed.models_bind_group,
+                    &[offset],
+                );
                 pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
                 pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
                 pass.set_stencil_reference(if Some(i) == selection { 1 } else { 0 });
@@ -934,7 +993,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             outline_pass.set_pipeline(&self.outline_pipeline);
-            outline_pass.set_bind_group(0, &msaa.outline_bind_group, &[]);
+            outline_pass.set_bind_group(
+                OutlineBindGroup::Stencil.idx(),
+                &msaa.outline_bind_group,
+                &[],
+            );
             outline_pass.draw(0..3, 0..1);
         }
         // Gizmo pass: drawn last so it sits on top of the mesh + the
@@ -1011,7 +1074,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             gizmo_pass.set_pipeline(&self.gizmo_pipeline);
-            gizmo_pass.set_bind_group(0, &self.gizmo_uniforms_bind_group, &[]);
+            gizmo_pass.set_bind_group(
+                GizmoBindGroup::Uniforms.idx(),
+                &self.gizmo_uniforms_bind_group,
+                &[],
+            );
 
             if render_translate {
                 gizmo_pass.set_vertex_buffer(0, self.gizmo_axis_vertex_buffer.slice(..));
@@ -1022,7 +1089,11 @@ impl Renderer {
                 for i in 0..3u32 {
                     let offset =
                         ((GIZMO_TRANSLATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
-                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    gizmo_pass.set_bind_group(
+                        GizmoBindGroup::Entries.idx(),
+                        &self.gizmo_entries_bind_group,
+                        &[offset],
+                    );
                     // Translate handle = shaft + cone subrange.
                     gizmo_pass.draw_indexed(0..self.gizmo_axis_shaft_tip_index_count, 0, 0..1);
                 }
@@ -1037,7 +1108,11 @@ impl Renderer {
                 for i in 0..3u32 {
                     let offset =
                         ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
-                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    gizmo_pass.set_bind_group(
+                        GizmoBindGroup::Entries.idx(),
+                        &self.gizmo_entries_bind_group,
+                        &[offset],
+                    );
                     gizmo_pass.draw_indexed(0..self.gizmo_arc_index_count, 0, 0..1);
                 }
                 // Active two-cone spindle at the arc's midpoint —
@@ -1051,7 +1126,11 @@ impl Renderer {
                 for i in 0..3u32 {
                     let offset =
                         ((GIZMO_ROTATE_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
-                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    gizmo_pass.set_bind_group(
+                        GizmoBindGroup::Entries.idx(),
+                        &self.gizmo_entries_bind_group,
+                        &[offset],
+                    );
                     gizmo_pass.draw_indexed(0..self.gizmo_rotate_cones_index_count, 0, 0..1);
                 }
             }
@@ -1064,7 +1143,11 @@ impl Renderer {
                 for i in 0..3u32 {
                     let offset =
                         ((GIZMO_SCALE_AXIS_SLOT_BASE + i as u64) * self.gizmo_entry_stride) as u32;
-                    gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                    gizmo_pass.set_bind_group(
+                        GizmoBindGroup::Entries.idx(),
+                        &self.gizmo_entries_bind_group,
+                        &[offset],
+                    );
                     // Scale-axis handle = midpoint-cube subrange.
                     gizmo_pass.draw_indexed(
                         self.gizmo_axis_shaft_tip_index_count..self.gizmo_axis_total_index_count,
@@ -1079,7 +1162,11 @@ impl Renderer {
                     wgpu::IndexFormat::Uint32,
                 );
                 let offset = (GIZMO_CENTRE_SLOT * self.gizmo_entry_stride) as u32;
-                gizmo_pass.set_bind_group(1, &self.gizmo_entries_bind_group, &[offset]);
+                gizmo_pass.set_bind_group(
+                    GizmoBindGroup::Entries.idx(),
+                    &self.gizmo_entries_bind_group,
+                    &[offset],
+                );
                 gizmo_pass.draw_indexed(0..self.gizmo_centre_index_count, 0, 0..1);
             }
         }
@@ -1492,5 +1579,30 @@ mod gpu_integration_tests {
         let _texture = renderer
             .render(&scene, &camera, None, None, 64, 64)
             .expect("render multi-object");
+    }
+}
+
+#[cfg(test)]
+mod bind_group_index_tests {
+    use super::*;
+
+    #[test]
+    fn mesh_bind_group_indices_match_wgsl() {
+        // shaders/mesh_render.wgsl: @group(0) → uniforms, @group(1) → model_entry.
+        assert_eq!(MeshBindGroup::Uniforms.idx(), 0);
+        assert_eq!(MeshBindGroup::Models.idx(), 1);
+    }
+
+    #[test]
+    fn outline_bind_group_indices_match_wgsl() {
+        // shaders/outline.wgsl: @group(0) → stencil texture.
+        assert_eq!(OutlineBindGroup::Stencil.idx(), 0);
+    }
+
+    #[test]
+    fn gizmo_bind_group_indices_match_wgsl() {
+        // shaders/gizmo.wgsl: @group(0) → uniforms, @group(1) → entry.
+        assert_eq!(GizmoBindGroup::Uniforms.idx(), 0);
+        assert_eq!(GizmoBindGroup::Entries.idx(), 1);
     }
 }
