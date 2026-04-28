@@ -38,7 +38,21 @@ pub struct ViewportController {
     // be manipulated without a GPU present.
     camera: RefCell<Option<OrbitCamera>>,
     viewport: Cell<(f32, f32)>,
+    // "Redraw owed": something that affects the rendered image
+    // changed (camera, selection, gizmo state, scene transform, …)
+    // and the next `handle_before_rendering` should produce a new
+    // frame. Cleared after the renderer hands back a texture.
     dirty: Cell<bool>,
+    // "GPU upload owed": the CPU-side scene differs from the buffers
+    // the renderer holds (fresh load, post-teardown re-init, …) and
+    // `handle_before_rendering` must call `upload_scene` before
+    // rendering. Cleared on successful upload; left set on upload
+    // failure so the next setup or scene reload retries.
+    //
+    // Independent of `dirty`: a successful upload also sets `dirty`
+    // so the just-uploaded scene is rendered, and `dirty` can be set
+    // alone (e.g. camera moved without a scene change). Both flags
+    // can legitimately be true at once.
     needs_upload: Cell<bool>,
     // Index into `scene.objects` of the single currently-selected
     // object, or `None` if nothing is selected. The renderer reads
