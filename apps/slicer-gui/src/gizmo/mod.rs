@@ -11,6 +11,7 @@
 pub mod axis;
 pub mod dimensions;
 pub mod drag_math;
+pub mod frame;
 pub mod hit_test;
 mod tolerances;
 

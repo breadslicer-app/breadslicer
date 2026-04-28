@@ -24,11 +24,13 @@ use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
-use crate::gizmo::axis::Axis;
 use crate::gizmo::hit_test::ScaleHandle;
 use crate::gizmo::{self};
 use crate::i18n::ctr;
-use crate::mesh_render::{GizmoFrame, GizmoVisibility, Renderer, default_fov_y};
+use crate::mesh_render::{GizmoVisibility, Renderer, default_fov_y};
+
+#[cfg(test)]
+use crate::gizmo::axis::Axis;
 use crate::picking;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 
@@ -1065,8 +1067,17 @@ impl ViewportController {
         };
 
         let selection_idx = self.selection.get().primary().map(ObjectIdx::as_usize);
+        let visibility = match self.gizmo.get() {
+            GizmoState::Drag { op, .. } => match op {
+                DragOp::Translate { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
+                DragOp::Rotate { axis, .. } => GizmoVisibility::DraggingRotate { axis },
+                DragOp::ScaleAxis { axis, .. } => GizmoVisibility::DraggingScaleAxis { axis },
+                DragOp::ScaleUniform { .. } => GizmoVisibility::DraggingScaleUniform,
+            },
+            GizmoState::Idle => GizmoVisibility::Idle,
+        };
         let gizmo_frame = selection_idx.and_then(|sel| {
-            build_gizmo_frame(scene_for_render, camera, sel, h_logical, self.gizmo.get())
+            gizmo::frame::build_gizmo_frame(scene_for_render, camera, sel, h_logical, visibility)
         });
 
         let Some(texture) = renderer.render(
@@ -1107,57 +1118,6 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
         crate::AxisView::Top => AxisView::Top,
         crate::AxisView::Bottom => AxisView::Bottom,
     }
-}
-
-/// Builds the per-frame `GizmoFrame` for the renderer when a single
-/// object is selected. Returns `None` if the object has no geometry
-/// (no pivot to attach to). The locked-axes mask uses the camera's
-/// forward direction as a single representative ray — for a small
-/// gizmo near the screen centre, all rays through the gizmo region
-/// are within a degree or so of the camera forward, so a per-frame
-/// "is this axis grabbable from this view" check is uniform across
-/// the handle.
-fn build_gizmo_frame(
-    scene: &Scene,
-    camera: &OrbitCamera,
-    selection: usize,
-    viewport_h_logical: f32,
-    state: GizmoState,
-) -> Option<GizmoFrame> {
-    let pivot = gizmo::pivot_for_object(scene, selection)?;
-    let fov_y = default_fov_y();
-    let scale = gizmo::gizmo_scale(camera, fov_y, viewport_h_logical);
-    let visibility = match state {
-        GizmoState::Drag { op, .. } => match op {
-            DragOp::Translate { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
-            DragOp::Rotate { axis, .. } => GizmoVisibility::DraggingRotate { axis },
-            DragOp::ScaleAxis { axis, .. } => GizmoVisibility::DraggingScaleAxis { axis },
-            DragOp::ScaleUniform { .. } => GizmoVisibility::DraggingScaleUniform,
-        },
-        GizmoState::Idle => GizmoVisibility::Idle,
-    };
-    let forward = (camera.target - camera.eye()).normalize_or_zero();
-    let view_ray = picking::Ray {
-        origin: camera.eye(),
-        direction: forward,
-    };
-    let locked_translate = [
-        !gizmo::hit_test::axis_pickable(&view_ray, Axis::X),
-        !gizmo::hit_test::axis_pickable(&view_ray, Axis::Y),
-        !gizmo::hit_test::axis_pickable(&view_ray, Axis::Z),
-    ];
-    let locked_rotate = [
-        !gizmo::hit_test::arc_pickable(&view_ray, Axis::X),
-        !gizmo::hit_test::arc_pickable(&view_ray, Axis::Y),
-        !gizmo::hit_test::arc_pickable(&view_ray, Axis::Z),
-    ];
-    Some(GizmoFrame {
-        pivot,
-        scale,
-        visibility,
-        locked_translate,
-        locked_rotate,
-    })
 }
 
 /// Display names for the object-list panel. Falls back to a localised
