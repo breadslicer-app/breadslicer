@@ -4,5 +4,6 @@
  */
 
 mod controller;
+mod gizmo_drag;
 
 pub(crate) use controller::{RESIZE_SETTLE, ViewportController};
