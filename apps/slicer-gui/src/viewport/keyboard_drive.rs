@@ -215,11 +215,11 @@ mod keyboard_step_tests {
         .unwrap();
         match result {
             Transform3D::Affine(a) => {
-                assert_approx_eq!(f64, a.translation[0], 3.0, epsilon = 1e-6);
-                assert_approx_eq!(f64, a.translation[1], 0.0, epsilon = 1e-6);
-                assert_approx_eq!(f64, a.translation[2], 0.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.translation()[0], 3.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.translation()[1], 0.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.translation()[2], 0.0, epsilon = 1e-6);
                 // Linear part stays identity.
-                assert_approx_eq!(f64, a.linear[0][0], 1.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear()[0][0], 1.0, epsilon = 1e-6);
             }
             other => panic!("expected Affine, got {other:?}"),
         }
@@ -277,9 +277,9 @@ mod keyboard_step_tests {
                 let cos = (std::f64::consts::PI * 0.25).cos();
                 let sin = (std::f64::consts::PI * 0.25).sin();
                 // Column 1 of the linear part is the image of `+Y`.
-                assert_approx_eq!(f64, a.linear[0][1], 0.0, epsilon = 1e-6);
-                assert_approx_eq!(f64, a.linear[1][1], cos, epsilon = 1e-6);
-                assert_approx_eq!(f64, a.linear[2][1], sin, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear()[0][1], 0.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear()[1][1], cos, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear()[2][1], sin, epsilon = 1e-6);
             }
             other => panic!("expected Affine, got {other:?}"),
         }
@@ -303,9 +303,9 @@ mod keyboard_step_tests {
         .unwrap();
         match result {
             Transform3D::Affine(a) => {
-                assert_approx_eq!(f64, a.linear[0][0], 1.5, epsilon = 1e-5);
-                assert_approx_eq!(f64, a.linear[1][1], 1.0, epsilon = 1e-6);
-                assert_approx_eq!(f64, a.linear[2][2], 1.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear()[0][0], 1.5, epsilon = 1e-5);
+                assert_approx_eq!(f64, a.linear()[1][1], 1.0, epsilon = 1e-6);
+                assert_approx_eq!(f64, a.linear()[2][2], 1.0, epsilon = 1e-6);
             }
             other => panic!("expected Affine, got {other:?}"),
         }
@@ -329,7 +329,7 @@ mod keyboard_step_tests {
         .unwrap();
         match result {
             Transform3D::Affine(a) => {
-                assert_approx_eq!(f64, a.linear[0][0], 1.0 / 1.5, epsilon = 1e-5);
+                assert_approx_eq!(f64, a.linear()[0][0], 1.0 / 1.5, epsilon = 1e-5);
             }
             other => panic!("expected Affine, got {other:?}"),
         }

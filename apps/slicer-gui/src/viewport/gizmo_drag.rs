@@ -379,14 +379,14 @@ mod apply_drag_move_tests {
     fn read_linear(t: &Transform3D) -> [[f64; 3]; 3] {
         match t {
             Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            Transform3D::Affine(a) => a.linear,
+            Transform3D::Affine(a) => *a.linear(),
         }
     }
 
     fn read_translation_t(t: &Transform3D) -> [f64; 3] {
         match t {
             Transform3D::Identity => [0.0; 3],
-            Transform3D::Affine(a) => a.translation,
+            Transform3D::Affine(a) => *a.translation(),
         }
     }
 

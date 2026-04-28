@@ -155,8 +155,8 @@ impl GpuScene {
 /// into glam's column-major 4×4. f64 internals are downcast to f32
 /// here at the GPU boundary.
 fn affine_to_mat4(a: &AffineTransform3D) -> Mat4 {
-    let l = &a.linear;
-    let t = &a.translation;
+    let l = a.linear();
+    let t = a.translation();
     Mat4::from_cols(
         Vec4::new(l[0][0] as f32, l[1][0] as f32, l[2][0] as f32, 0.0),
         Vec4::new(l[0][1] as f32, l[1][1] as f32, l[2][1] as f32, 0.0),
@@ -221,7 +221,7 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
                 .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
         };
 
-        if mesh.faces.is_empty() {
+        if mesh.faces().is_empty() {
             // An object with no geometry contributes nothing to the
             // draw set — skip it but keep its slot in the model
             // buffer so `instance_index` keeps lining up with
@@ -237,15 +237,15 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
         }
 
         let vertices: Vec<GpuVertex> = mesh
-            .vertices
+            .vertices()
             .iter()
             .map(|v| GpuVertex {
                 position: v.coords(),
             })
             .collect();
 
-        let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces.len() * 3);
-        for face in &mesh.faces {
+        let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
+        for face in mesh.faces() {
             for &vidx in &face.vertices {
                 indices.push(vidx);
             }

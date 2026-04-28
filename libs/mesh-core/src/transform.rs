@@ -16,12 +16,22 @@ use crate::primitives::{Normal, Vector3D, Vertex};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AffineTransform3D {
     /// Row-major 3×3 linear part.
-    pub linear: [[f64; 3]; 3],
+    pub(crate) linear: [[f64; 3]; 3],
     /// Translation applied after the linear part.
-    pub translation: [f64; 3],
+    pub(crate) translation: [f64; 3],
 }
 
 impl AffineTransform3D {
+    /// Row-major 3×3 linear part.
+    pub fn linear(&self) -> &[[f64; 3]; 3] {
+        &self.linear
+    }
+
+    /// Translation applied after the linear part.
+    pub fn translation(&self) -> &[f64; 3] {
+        &self.translation
+    }
+
     pub const fn identity() -> Self {
         Self {
             linear: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],

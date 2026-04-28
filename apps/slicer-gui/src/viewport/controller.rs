@@ -1730,9 +1730,9 @@ mod viewport_click_tests {
         match scene.objects[0].transform {
             Transform3D::Identity => Vec3::ZERO,
             Transform3D::Affine(a) => Vec3::new(
-                a.translation[0] as f32,
-                a.translation[1] as f32,
-                a.translation[2] as f32,
+                a.translation()[0] as f32,
+                a.translation()[1] as f32,
+                a.translation()[2] as f32,
             ),
         }
     }
@@ -1742,7 +1742,7 @@ mod viewport_click_tests {
         let scene = scene_slot.as_ref().unwrap();
         match scene.objects[0].transform {
             Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            Transform3D::Affine(a) => a.linear,
+            Transform3D::Affine(a) => *a.linear(),
         }
     }
 

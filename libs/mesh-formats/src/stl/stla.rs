@@ -180,7 +180,7 @@ impl<'a> AsciiStlReader<'a> {
             normal = compute_normal_from_triangle_vertices(&vertices)?;
         }
 
-        Ok(Some(Triangle { normal, vertices }))
+        Ok(Some(Triangle::new(normal, vertices)))
     }
 
     fn tokens_to_f32(tokens: &[String], output: &mut [f32]) -> Result<()> {

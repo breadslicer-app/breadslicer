@@ -59,9 +59,9 @@ pub(crate) fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
         0 => Err(anyhow!("Cannot flatten an empty scene to a single mesh")),
         1 => {
             let obj = &scene.objects[0];
-            let source_meta = obj.resolve_mesh(&scene.resources)?.meta.clone();
+            let source_meta = obj.resolve_mesh(&scene.resources)?.meta().clone();
             let mut baked = obj.baked_mesh(&scene.resources)?;
-            baked.meta = source_meta;
+            baked.set_meta(source_meta);
             Ok(FlattenedScene {
                 mesh: baked,
                 warnings: vec![],
@@ -165,11 +165,11 @@ mod flatten_scene_to_mesh_tests {
         let scene = scene_with_object(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
         let result = flatten_scene_to_mesh(&scene).unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.mesh.vertices[0].coords(), [1.0, 0.0, 0.0]);
-        assert_eq!(result.mesh.vertices[1].coords(), [0.0, 1.0, 0.0]);
-        assert_eq!(result.mesh.vertices[2].coords(), [0.0, 0.0, 1.0]);
+        assert_eq!(result.mesh.vertices()[0].coords(), [1.0, 0.0, 0.0]);
+        assert_eq!(result.mesh.vertices()[1].coords(), [0.0, 1.0, 0.0]);
+        assert_eq!(result.mesh.vertices()[2].coords(), [0.0, 0.0, 1.0]);
         assert_eq!(
-            result.mesh.meta.as_ref().and_then(|m| m.name.as_deref()),
+            result.mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
             Some("MyMesh")
         );
     }
@@ -180,9 +180,9 @@ mod flatten_scene_to_mesh_tests {
         let scene = scene_with_object(unit_triangle_mesh(None), t);
         let result = flatten_scene_to_mesh(&scene).unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.mesh.vertices[0].coords(), [11.0, -5.0, 2.0]);
-        assert_eq!(result.mesh.vertices[1].coords(), [10.0, -4.0, 2.0]);
-        assert_eq!(result.mesh.vertices[2].coords(), [10.0, -5.0, 3.0]);
+        assert_eq!(result.mesh.vertices()[0].coords(), [11.0, -5.0, 2.0]);
+        assert_eq!(result.mesh.vertices()[1].coords(), [10.0, -4.0, 2.0]);
+        assert_eq!(result.mesh.vertices()[2].coords(), [10.0, -5.0, 3.0]);
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod flatten_scene_to_mesh_tests {
         // mesh's name was preserved (so STL writers can put it in the
         // `solid <name>` / 80-byte header).
         assert_eq!(
-            result.mesh.meta.as_ref().and_then(|m| m.name.as_deref()),
+            result.mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
             Some("Translated")
         );
     }
@@ -221,10 +221,10 @@ mod flatten_scene_to_mesh_tests {
         };
         let result = flatten_scene_to_mesh(&scene).unwrap();
         // Both objects' vertices are present; the second is translated.
-        assert_eq!(result.mesh.vertices.len(), 6);
-        assert_eq!(result.mesh.vertices[3].coords(), [11.0, 0.0, 0.0]);
+        assert_eq!(result.mesh.vertices().len(), 6);
+        assert_eq!(result.mesh.vertices()[3].coords(), [11.0, 0.0, 0.0]);
         // Multi-object merge has no single name to keep.
-        assert!(result.mesh.meta.is_none());
+        assert!(result.mesh.meta().is_none());
         // The caller is told that names/boundaries were dropped.
         assert_eq!(
             result.warnings,

@@ -27,7 +27,7 @@ where
         // baked mesh drops metadata by design.
         let name = obj
             .resolve_mesh(&scene.resources)?
-            .meta
+            .meta()
             .as_ref()
             .and_then(|m| m.name.clone());
         let baked = obj.baked_mesh(&scene.resources)?;
@@ -54,7 +54,7 @@ fn write_mesh_section<W>(
 where
     W: std::io::Write,
 {
-    if mesh.faces.is_empty() {
+    if mesh.faces().is_empty() {
         return Ok(());
     }
 
@@ -65,18 +65,18 @@ where
         }
     }
 
-    for v in &mesh.vertices {
+    for v in mesh.vertices() {
         writeln!(writer, "v {} {} {}", v[0], v[1], v[2])?;
     }
 
-    for face in &mesh.faces {
+    for face in mesh.faces() {
         let v0 = face.vertices[0] + *vertex_offset + 1;
         let v1 = face.vertices[1] + *vertex_offset + 1;
         let v2 = face.vertices[2] + *vertex_offset + 1;
         writeln!(writer, "f {v0} {v1} {v2}")?;
     }
 
-    *vertex_offset += mesh.vertices.len() as u32;
+    *vertex_offset += mesh.vertices().len() as u32;
 
     Ok(())
 }

@@ -189,7 +189,7 @@ endsolid foo
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
         };
-        let n = mesh.faces[0].normal;
+        let n = mesh.faces()[0].normal;
         assert!((n[0]).abs() < 1e-6);
         assert!((n[1]).abs() < 1e-6);
         assert!((n[2] - 1.0).abs() < 1e-6);
@@ -267,7 +267,7 @@ mod binary_stl_malformed_tests {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
         };
-        assert!(mesh.faces.is_empty());
+        assert!(mesh.faces().is_empty());
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod binary_stl_malformed_tests {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
         };
-        let n = mesh.faces[0].normal;
+        let n = mesh.faces()[0].normal;
         assert!((n[0]).abs() < 1e-6);
         assert!((n[1]).abs() < 1e-6);
         assert!((n[2] - 1.0).abs() < 1e-6);

@@ -140,7 +140,7 @@ pub fn pivot_for_object(scene: &Scene, idx: usize) -> Option<Vec3> {
 }
 
 fn local_aabb_centre(mesh: &IndexedMesh) -> Option<(Vec3, Vec3)> {
-    let mut iter = mesh.vertices.iter();
+    let mut iter = mesh.vertices().iter();
     let first = Vec3::from(iter.next()?.coords());
     let mut min = first;
     let mut max = first;

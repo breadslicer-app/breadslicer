@@ -59,11 +59,7 @@ fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
                     vertices: [a as u32, b as u32, c as u32],
                 })
                 .collect();
-            IndexedMesh {
-                meta: None,
-                vertices,
-                faces,
-            }
+            IndexedMesh::new(None, vertices, faces)
         })
 }
 
@@ -74,12 +70,12 @@ fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
 /// happens to lay out the face list.
 fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
     let mut out: Vec<[[u32; 3]; 3]> = mesh
-        .faces
+        .faces()
         .iter()
         .map(|face| {
-            let v0 = mesh.vertices[face.vertices[0] as usize];
-            let v1 = mesh.vertices[face.vertices[1] as usize];
-            let v2 = mesh.vertices[face.vertices[2] as usize];
+            let v0 = mesh.vertices()[face.vertices[0] as usize];
+            let v1 = mesh.vertices()[face.vertices[1] as usize];
+            let v2 = mesh.vertices()[face.vertices[2] as usize];
             // Compare by exact f32 bit pattern: the on-grid values we
             // generate are exact, and the writers/readers preserve
             // them bit-for-bit (binary directly, ASCII via `{:e}`
@@ -115,7 +111,7 @@ proptest! {
         let scene = read_stla(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&scene);
 
-        prop_assert_eq!(recovered.faces.len(), mesh.faces.len());
+        prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
         prop_assert_eq!(triangle_multiset(recovered), triangle_multiset(&mesh));
     }
 
@@ -128,7 +124,7 @@ proptest! {
         let scene = read_stlb(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&scene);
 
-        prop_assert_eq!(recovered.faces.len(), mesh.faces.len());
+        prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
         prop_assert_eq!(triangle_multiset(recovered), triangle_multiset(&mesh));
     }
 
@@ -144,11 +140,11 @@ proptest! {
         let recovered = unwrap_single_mesh(&scene);
 
         let distinct_input: std::collections::HashSet<[u32; 3]> = mesh
-            .vertices
+            .vertices()
             .iter()
             .map(|v| v.coords().map(f32::to_bits))
             .collect();
-        prop_assert!(recovered.vertices.len() <= distinct_input.len());
+        prop_assert!(recovered.vertices().len() <= distinct_input.len());
     }
 
     #[test]
@@ -161,7 +157,7 @@ proptest! {
         let scene = read_stlb(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&scene);
 
-        for face in &recovered.faces {
+        for face in recovered.faces() {
             prop_assert_eq!(face.normal, NORMAL);
         }
     }

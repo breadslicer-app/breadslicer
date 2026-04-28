@@ -33,6 +33,36 @@ pub struct IndexedMesh {
 }
 
 impl IndexedMesh {
+    pub fn new(
+        meta: Option<MeshMetadata>,
+        vertices: Vec<Vertex>,
+        faces: Vec<IndexedTriangle>,
+    ) -> Self {
+        Self {
+            meta,
+            vertices,
+            faces,
+        }
+    }
+
+    pub fn meta(&self) -> &Option<MeshMetadata> {
+        &self.meta
+    }
+
+    pub fn vertices(&self) -> &[Vertex] {
+        &self.vertices
+    }
+
+    pub fn faces(&self) -> &[IndexedTriangle] {
+        &self.faces
+    }
+
+    pub fn set_meta(&mut self, meta: Option<MeshMetadata>) {
+        self.meta = meta;
+    }
+}
+
+impl IndexedMesh {
     pub fn validate_vertices(&self) -> Result<(), Vec<MeshVertexError>> {
         let mut errors: Vec<MeshVertexError> = vec![];
 

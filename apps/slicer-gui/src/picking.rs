@@ -213,7 +213,7 @@ pub(crate) fn ray_hits_object(ray: &Ray, scene: &Scene, idx: usize) -> Option<f3
     };
     let to_world = transform_to_mat4(&object.transform);
     let mut best: Option<f32> = None;
-    for face in &mesh.faces {
+    for face in mesh.faces() {
         let v0 = world_vertex(mesh, face.vertices[0], &to_world)?;
         let v1 = world_vertex(mesh, face.vertices[1], &to_world)?;
         let v2 = world_vertex(mesh, face.vertices[2], &to_world)?;
@@ -228,7 +228,7 @@ pub(crate) fn ray_hits_object(ray: &Ray, scene: &Scene, idx: usize) -> Option<f3
 }
 
 fn world_vertex(mesh: &IndexedMesh, vidx: u32, to_world: &Mat4) -> Option<Vec3> {
-    let v = mesh.vertices.get(vidx as usize)?;
+    let v = mesh.vertices().get(vidx as usize)?;
     Some(to_world.transform_point3(Vec3::from(v.coords())))
 }
 
@@ -246,7 +246,7 @@ fn world_aabb_for_object(scene: &Scene, idx: usize) -> Option<(Vec3, Vec3)> {
 }
 
 fn local_aabb(mesh: &IndexedMesh) -> Option<(Vec3, Vec3)> {
-    let mut iter = mesh.vertices.iter();
+    let mut iter = mesh.vertices().iter();
     let first = Vec3::from(iter.next()?.coords());
     let mut min = first;
     let mut max = first;
@@ -266,8 +266,8 @@ fn arvo(lmin: Vec3, lmax: Vec3, a: &AffineTransform3D) -> (Vec3, Vec3) {
     let center = (lmin + lmax) * 0.5;
     let half = (lmax - lmin) * 0.5;
 
-    let m = &a.linear;
-    let t = &a.translation;
+    let m = a.linear();
+    let t = a.translation();
 
     let new_center = Vec3::new(
         (m[0][0] as f32) * center.x
@@ -302,8 +302,8 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
     match t {
         Transform3D::Identity => Mat4::IDENTITY,
         Transform3D::Affine(a) => {
-            let l = &a.linear;
-            let t = &a.translation;
+            let l = a.linear();
+            let t = a.translation();
             // Row-major → column-major (glam) at the f64 → f32 boundary,
             // matching `mesh_render::affine_to_mat4`.
             Mat4::from_cols(

@@ -79,10 +79,10 @@ proptest! {
         let ba = b.cross_product(&a);
         for i in 0..3 {
             prop_assert!(
-                approx_eq!(f64, ab.0[i], -ba.0[i], epsilon = 1e-9),
+                approx_eq!(f64, ab[i], -ba[i], epsilon = 1e-9),
                 "axis {i}: cross(a,b)={}, cross(b,a)={}",
-                ab.0[i],
-                ba.0[i]
+                ab[i],
+                ba[i]
             );
         }
     }
@@ -143,7 +143,7 @@ proptest! {
         // the same value bit-for-bit).
         let widened: Vector3D<f64> = v.into();
         let back: Vector3D<f32> = widened.into();
-        prop_assert_eq!(v.0, back.0);
+        prop_assert_eq!(v, back);
     }
 }
 
@@ -195,11 +195,11 @@ proptest! {
         for i in 0..3 {
             for j in 0..3 {
                 prop_assert!(
-                    approx_eq!(f64, composed.linear[i][j], t.linear[i][j], epsilon = 1e-12),
+                    approx_eq!(f64, composed.linear()[i][j], t.linear()[i][j], epsilon = 1e-12),
                 );
             }
             prop_assert!(
-                approx_eq!(f64, composed.translation[i], t.translation[i], epsilon = 1e-12),
+                approx_eq!(f64, composed.translation()[i], t.translation()[i], epsilon = 1e-12),
             );
         }
     }
@@ -211,11 +211,11 @@ proptest! {
         for i in 0..3 {
             for j in 0..3 {
                 prop_assert!(
-                    approx_eq!(f64, composed.linear[i][j], t.linear[i][j], epsilon = 1e-12),
+                    approx_eq!(f64, composed.linear()[i][j], t.linear()[i][j], epsilon = 1e-12),
                 );
             }
             prop_assert!(
-                approx_eq!(f64, composed.translation[i], t.translation[i], epsilon = 1e-12),
+                approx_eq!(f64, composed.translation()[i], t.translation()[i], epsilon = 1e-12),
             );
         }
     }
@@ -233,13 +233,13 @@ proptest! {
         for i in 0..3 {
             for j in 0..3 {
                 prop_assert!(
-                    approx_eq!(f64, left.linear[i][j], right.linear[i][j], epsilon = 1e-9),
+                    approx_eq!(f64, left.linear()[i][j], right.linear()[i][j], epsilon = 1e-9),
                     "linear[{i}][{j}]: left={}, right={}",
-                    left.linear[i][j], right.linear[i][j]
+                    left.linear()[i][j], right.linear()[i][j]
                 );
             }
             prop_assert!(
-                approx_eq!(f64, left.translation[i], right.translation[i], epsilon = 1e-7),
+                approx_eq!(f64, left.translation()[i], right.translation()[i], epsilon = 1e-7),
             );
         }
     }
@@ -251,7 +251,7 @@ proptest! {
         v in vector3d_f32(),
     ) {
         // (A ∘ B)(v) == A(B(v)).
-        let v = Vertex::new(v.0);
+        let v = Vertex::new(v.coords());
         let composed = a.compose(&b).apply_to_vertex(v);
         let sequential = a.apply_to_vertex(b.apply_to_vertex(v));
         // The two routes accumulate slightly different f32 rounding, so
@@ -269,7 +269,7 @@ proptest! {
         t in affine_rotation_or_translation(),
         v in vector3d_f32(),
     ) {
-        let v = Vertex::new(v.0);
+        let v = Vertex::new(v.coords());
         let inv = t.inverse().expect("generator only produces well-conditioned transforms");
         let round_trip = inv.apply_to_vertex(t.apply_to_vertex(v));
         // Loose tolerance: f64 internals lose precision when we round-
@@ -309,7 +309,7 @@ proptest! {
         for i in 0..3 {
             for j in 0..3 {
                 prop_assert!(
-                    approx_eq!(f64, unit.linear[i][j], scaled.linear[i][j], epsilon = 1e-12),
+                    approx_eq!(f64, unit.linear()[i][j], scaled.linear()[i][j], epsilon = 1e-12),
                 );
             }
         }
@@ -332,8 +332,8 @@ proptest! {
                 prop_assert!(
                     approx_eq!(
                         f64,
-                        r_neg_axis.linear[i][j],
-                        r_neg_angle.linear[i][j],
+                        r_neg_axis.linear()[i][j],
+                        r_neg_angle.linear()[i][j],
                         epsilon = 1e-12
                     ),
                 );

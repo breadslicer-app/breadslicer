@@ -6,11 +6,16 @@
 use newtypes::newtype_array;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub [F; 3]);
+pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub(crate) [F; 3]);
 
 impl<F: Copy + PartialEq + PartialOrd> Vector3D<F> {
     pub const fn new(v: [F; 3]) -> Self {
         Self(v)
+    }
+
+    /// Components as a fixed-size array, by value.
+    pub fn coords(&self) -> [F; 3] {
+        self.0
     }
 }
 
@@ -152,8 +157,22 @@ impl Normal {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Triangle {
-    pub normal: Normal,
-    pub vertices: [Vertex; 3],
+    pub(crate) normal: Normal,
+    pub(crate) vertices: [Vertex; 3],
+}
+
+impl Triangle {
+    pub const fn new(normal: Normal, vertices: [Vertex; 3]) -> Self {
+        Self { normal, vertices }
+    }
+
+    pub fn normal(&self) -> Normal {
+        self.normal
+    }
+
+    pub fn vertices(&self) -> [Vertex; 3] {
+        self.vertices
+    }
 }
 
 /// Struct that represents a triangle in the context of a mesh, in which its

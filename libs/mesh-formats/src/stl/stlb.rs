@@ -109,7 +109,7 @@ impl<'a> BinaryStlReader<'a> {
             normal = compute_normal_from_triangle_vertices(&vertices)?;
         }
 
-        Ok(Triangle { normal, vertices })
+        Ok(Triangle::new(normal, vertices))
     }
 }
 

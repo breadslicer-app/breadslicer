@@ -62,11 +62,7 @@ fn flush_pending_object(
     Some(SceneObject {
         meta: None,
         transform: Transform3D::Identity,
-        content: SceneObjectContent::Mesh(IndexedMesh {
-            meta,
-            vertices: local_vertices,
-            faces: remapped_faces,
-        }),
+        content: SceneObjectContent::Mesh(IndexedMesh::new(meta, local_vertices, remapped_faces)),
     })
 }
 
@@ -598,15 +594,15 @@ f 1 2 3
         assert!(warnings.is_empty());
         assert_eq!(scene.meta, None);
         assert_eq!(mesh.meta, None);
-        assert_eq!(mesh.vertices.len(), 3);
-        assert_eq!(mesh.faces.len(), 1);
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces().len(), 1);
 
-        assert_eq!(mesh.vertices[0], Vertex::new([0.0, 0.0, 0.0]));
-        assert_eq!(mesh.vertices[1], Vertex::new([1.0, 0.0, 0.0]));
-        assert_eq!(mesh.vertices[2], Vertex::new([0.0, 1.0, 0.0]));
+        assert_eq!(mesh.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
+        assert_eq!(mesh.vertices()[1], Vertex::new([1.0, 0.0, 0.0]));
+        assert_eq!(mesh.vertices()[2], Vertex::new([0.0, 1.0, 0.0]));
 
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
-        assert_eq!(mesh.faces[0].normal, Normal::new([0.0, 0.0, 1.0]));
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 1.0]));
     }
 
     #[test]
@@ -736,8 +732,8 @@ f 1/1 2/2 3/3
                 LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 6 }),
             ]
         );
-        assert_eq!(mesh.faces.len(), 1);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces().len(), 1);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]
@@ -759,8 +755,8 @@ f 1/1/1 2/1/1 3/1/1
                 LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal { line: 5 }),
             ]
         );
-        assert_eq!(mesh.faces.len(), 1);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces().len(), 1);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]
@@ -780,8 +776,8 @@ f 1//1 2//1 3//1
                 line: 4
             })]
         );
-        assert_eq!(mesh.faces.len(), 1);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces().len(), 1);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]
@@ -797,13 +793,13 @@ f 1 2 3 4
         let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
-        assert_eq!(mesh.vertices.len(), 4);
-        assert_eq!(mesh.faces.len(), 2);
+        assert_eq!(mesh.vertices().len(), 4);
+        assert_eq!(mesh.faces().len(), 2);
 
         // First triangle: 0, 1, 2
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
         // Second triangle: 0, 2, 3
-        assert_eq!(mesh.faces[1].vertices, [0, 2, 3]);
+        assert_eq!(mesh.faces()[1].vertices, [0, 2, 3]);
     }
 
     #[test]
@@ -817,8 +813,8 @@ f -3 -2 -1
         let (scene, warnings) = read_obj_from_str(obj).unwrap();
         let mesh = single_mesh(&scene);
         assert!(warnings.is_empty());
-        assert_eq!(mesh.faces.len(), 1);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces().len(), 1);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]
@@ -858,8 +854,8 @@ f 1 2 3
                 }),
             ]
         );
-        assert_eq!(mesh.vertices.len(), 3);
-        assert_eq!(mesh.faces.len(), 1);
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces().len(), 1);
     }
 
     #[test]
@@ -898,7 +894,7 @@ f 1 2 3
 ";
         let (scene, _) = read_obj_from_str(obj).unwrap();
         let mesh = single_mesh(&scene);
-        assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
+        assert_eq!(mesh.vertices()[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
     #[test]
@@ -911,7 +907,7 @@ f 1 2 3
 ";
         let (scene, _) = read_obj_from_str(obj).unwrap();
         let mesh = single_mesh(&scene);
-        assert_eq!(mesh.vertices[0], Vertex::new([1.0, 2.0, 3.0]));
+        assert_eq!(mesh.vertices()[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
     #[test]
@@ -966,10 +962,10 @@ f 2 4 3
         let mesh = single_mesh(&scene);
 
         assert!(warnings.is_empty());
-        assert_eq!(mesh.vertices.len(), 4);
-        assert_eq!(mesh.faces.len(), 2);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
-        assert_eq!(mesh.faces[1].vertices, [1, 3, 2]);
+        assert_eq!(mesh.vertices().len(), 4);
+        assert_eq!(mesh.faces().len(), 2);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[1].vertices, [1, 3, 2]);
     }
 
     #[test]
@@ -1009,19 +1005,19 @@ f 4 5 6
             SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected mesh"),
         };
-        assert_eq!(mesh_a.meta.as_ref().unwrap().name, Some("TriA".into()));
-        assert_eq!(mesh_a.vertices.len(), 3);
-        assert_eq!(mesh_a.faces.len(), 1);
-        assert_eq!(mesh_a.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_a.meta().as_ref().unwrap().name, Some("TriA".into()));
+        assert_eq!(mesh_a.vertices().len(), 3);
+        assert_eq!(mesh_a.faces().len(), 1);
+        assert_eq!(mesh_a.faces()[0].vertices, [0, 1, 2]);
 
         let mesh_b = match &scene.objects[1].content {
             SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected mesh"),
         };
-        assert_eq!(mesh_b.meta.as_ref().unwrap().name, Some("TriB".into()));
-        assert_eq!(mesh_b.vertices.len(), 3);
-        assert_eq!(mesh_b.faces.len(), 1);
-        assert_eq!(mesh_b.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_b.meta().as_ref().unwrap().name, Some("TriB".into()));
+        assert_eq!(mesh_b.vertices().len(), 3);
+        assert_eq!(mesh_b.faces().len(), 1);
+        assert_eq!(mesh_b.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]
@@ -1054,22 +1050,22 @@ f 1 3 4
             _ => panic!("expected mesh"),
         };
         // ObjectA uses global vertices 0, 1, 2 → local 0, 1, 2
-        assert_eq!(mesh_a.vertices.len(), 3);
-        assert_eq!(mesh_a.vertices[0], Vertex::new([0.0, 0.0, 0.0]));
-        assert_eq!(mesh_a.vertices[1], Vertex::new([1.0, 0.0, 0.0]));
-        assert_eq!(mesh_a.vertices[2], Vertex::new([0.0, 1.0, 0.0]));
-        assert_eq!(mesh_a.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_a.vertices().len(), 3);
+        assert_eq!(mesh_a.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
+        assert_eq!(mesh_a.vertices()[1], Vertex::new([1.0, 0.0, 0.0]));
+        assert_eq!(mesh_a.vertices()[2], Vertex::new([0.0, 1.0, 0.0]));
+        assert_eq!(mesh_a.faces()[0].vertices, [0, 1, 2]);
 
         let mesh_b = match &scene.objects[1].content {
             SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected mesh"),
         };
         // ObjectB's face `f 1 3 4` uses global vertices 0, 2, 3 → local 0, 1, 2
-        assert_eq!(mesh_b.vertices.len(), 3);
-        assert_eq!(mesh_b.vertices[0], Vertex::new([0.0, 0.0, 0.0]));
-        assert_eq!(mesh_b.vertices[1], Vertex::new([0.0, 1.0, 0.0]));
-        assert_eq!(mesh_b.vertices[2], Vertex::new([1.0, 1.0, 0.0]));
-        assert_eq!(mesh_b.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_b.vertices().len(), 3);
+        assert_eq!(mesh_b.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
+        assert_eq!(mesh_b.vertices()[1], Vertex::new([0.0, 1.0, 0.0]));
+        assert_eq!(mesh_b.vertices()[2], Vertex::new([1.0, 1.0, 0.0]));
+        assert_eq!(mesh_b.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]
@@ -1091,10 +1087,10 @@ f 2 3 1
             SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected mesh"),
         };
-        assert_eq!(mesh.meta.as_ref().unwrap().name, Some("Real".into()));
+        assert_eq!(mesh.meta().as_ref().unwrap().name, Some("Real".into()));
         // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
-        assert_eq!(mesh.vertices.len(), 3);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
     }
 
     #[test]

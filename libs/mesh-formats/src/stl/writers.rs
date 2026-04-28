@@ -10,7 +10,7 @@ pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<()>
 where
     W: std::io::Write,
 {
-    let mesh_name = if let Some(metadata) = &mesh.meta {
+    let mesh_name = if let Some(metadata) = &mesh.meta() {
         &metadata.name
     } else {
         &None
@@ -23,7 +23,7 @@ where
     }
     writer.write_all(b"\n")?;
 
-    for face in &mesh.faces {
+    for face in mesh.faces() {
         writer.write_all(
             format!(
                 "  facet normal {:e} {:e} {:e}\n",
@@ -33,15 +33,15 @@ where
         )?;
         writer.write_all(b"    outer loop\n")?;
 
-        let v0 = mesh.vertices[face.vertices[0] as usize];
+        let v0 = mesh.vertices()[face.vertices[0] as usize];
         writer
             .write_all(format!("      vertex {:e} {:e} {:e}\n", v0[0], v0[1], v0[2]).as_bytes())?;
 
-        let v1 = mesh.vertices[face.vertices[1] as usize];
+        let v1 = mesh.vertices()[face.vertices[1] as usize];
         writer
             .write_all(format!("      vertex {:e} {:e} {:e}\n", v1[0], v1[1], v1[2]).as_bytes())?;
 
-        let v2 = mesh.vertices[face.vertices[2] as usize];
+        let v2 = mesh.vertices()[face.vertices[2] as usize];
         writer
             .write_all(format!("      vertex {:e} {:e} {:e}\n", v2[0], v2[1], v2[2]).as_bytes())?;
 
@@ -68,7 +68,7 @@ where
     let mut header = [0u8; 80];
     if let Some(MeshMetadata {
         name: Some(name), ..
-    }) = &mesh.meta
+    }) = &mesh.meta()
     {
         let bytes = name.as_bytes();
         let len = bytes.len().min(80);
@@ -77,16 +77,16 @@ where
     writer.write_all(&header)?;
 
     // Triangle count
-    writer.write_all(&(mesh.faces.len() as u32).to_le_bytes())?;
+    writer.write_all(&(mesh.faces().len() as u32).to_le_bytes())?;
 
     // Per-triangle records
-    for face in &mesh.faces {
+    for face in mesh.faces() {
         writer.write_all(&face.normal[0].to_le_bytes())?;
         writer.write_all(&face.normal[1].to_le_bytes())?;
         writer.write_all(&face.normal[2].to_le_bytes())?;
 
         for &vi in &face.vertices {
-            let v = mesh.vertices[vi as usize];
+            let v = mesh.vertices()[vi as usize];
             writer.write_all(&v[0].to_le_bytes())?;
             writer.write_all(&v[1].to_le_bytes())?;
             writer.write_all(&v[2].to_le_bytes())?;
