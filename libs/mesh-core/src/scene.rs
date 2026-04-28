@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use crate::aabb::Aabb;
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Normal, Vertex};
 use crate::transform::AffineTransform3D;
@@ -174,21 +175,14 @@ pub struct Scene {
 
 /// Computes the local (object-space) AABB of a mesh's vertices. Returns
 /// `None` if the mesh has no vertices.
-fn local_aabb(mesh: &IndexedMesh) -> Option<(Vertex, Vertex)> {
+fn local_aabb(mesh: &IndexedMesh) -> Option<Aabb> {
     let mut iter = mesh.vertices.iter();
-    let first = iter.next()?;
-    let mut min = first.coords();
-    let mut max = first.coords();
+    let first = *iter.next()?;
+    let mut aabb = Aabb::from_min_max(first, first);
     for vertex in iter {
-        let v = vertex.coords();
-        min[0] = min[0].min(v[0]);
-        min[1] = min[1].min(v[1]);
-        min[2] = min[2].min(v[2]);
-        max[0] = max[0].max(v[0]);
-        max[1] = max[1].max(v[1]);
-        max[2] = max[2].max(v[2]);
+        aabb.extend(*vertex);
     }
-    Some((Vertex::new(min), Vertex::new(max)))
+    Some(aabb)
 }
 
 /// World-space AABB of an object-local AABB after applying an
@@ -203,10 +197,9 @@ fn local_aabb(mesh: &IndexedMesh) -> Option<(Vertex, Vertex)> {
 /// *Real-Time Collision Detection*, §4.2.6. The output is conservative —
 /// it contains every transformed vertex and is exactly tight for
 /// axis-aligned scaling and translation.
-fn arvo_world_aabb(local: (Vertex, Vertex), a: &AffineTransform3D) -> (Vertex, Vertex) {
-    let (lmin, lmax) = local;
-    let lmin = lmin.coords();
-    let lmax = lmax.coords();
+fn arvo_world_aabb(local: Aabb, a: &AffineTransform3D) -> Aabb {
+    let lmin = local.min().coords();
+    let lmax = local.max().coords();
     // Promote to f64 so the matrix-vector products match the precision of
     // the rest of the transform module.
     let cx = (lmin[0] as f64 + lmax[0] as f64) * 0.5;
@@ -246,7 +239,7 @@ fn arvo_world_aabb(local: (Vertex, Vertex), a: &AffineTransform3D) -> (Vertex, V
         (center[1] + half[1]) as f32,
         (center[2] + half[2]) as f32,
     ]);
-    (min, max)
+    Aabb::from_min_max(min, max)
 }
 
 impl Scene {
@@ -262,9 +255,8 @@ impl Scene {
     /// TODO: cache the local AABB on `IndexedMesh` if recomputation
     /// becomes a measured cost — it depends only on the mesh, not on
     /// the transform.
-    pub fn aabb(&self) -> Result<Option<(Vertex, Vertex)>> {
-        let mut min = [f32::INFINITY; 3];
-        let mut max = [f32::NEG_INFINITY; 3];
+    pub fn aabb(&self) -> Result<Option<Aabb>> {
+        let mut aabb = Aabb::empty();
         let mut has_any = false;
 
         for obj in &self.objects {
@@ -279,36 +271,20 @@ impl Scene {
             match &obj.transform {
                 Transform3D::Identity => {
                     for vertex in &mesh.vertices {
-                        let v = vertex.coords();
-                        min[0] = min[0].min(v[0]);
-                        min[1] = min[1].min(v[1]);
-                        min[2] = min[2].min(v[2]);
-                        max[0] = max[0].max(v[0]);
-                        max[1] = max[1].max(v[1]);
-                        max[2] = max[2].max(v[2]);
+                        aabb.extend(*vertex);
                         has_any = true;
                     }
                 }
                 Transform3D::Affine(a) => {
                     if let Some(local) = local_aabb(mesh) {
-                        let (wmin, wmax) = arvo_world_aabb(local, a);
-                        let wmin = wmin.coords();
-                        let wmax = wmax.coords();
-                        min[0] = min[0].min(wmin[0]);
-                        min[1] = min[1].min(wmin[1]);
-                        min[2] = min[2].min(wmin[2]);
-                        max[0] = max[0].max(wmax[0]);
-                        max[1] = max[1].max(wmax[1]);
-                        max[2] = max[2].max(wmax[2]);
+                        aabb.union(&arvo_world_aabb(local, a));
                         has_any = true;
                     }
                 }
             }
         }
-        let min = Vertex::new(min);
-        let max = Vertex::new(max);
 
-        Ok(has_any.then_some((min, max)))
+        Ok(has_any.then_some(aabb))
     }
 
     /// Merges all meshes in the scene into a single [`IndexedMesh`],
@@ -651,6 +627,7 @@ mod scene_object_baked_mesh_tests {
 
 #[cfg(test)]
 mod merge_meshes_tests {
+    use crate::aabb::Aabb;
     use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
     use crate::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
@@ -711,9 +688,9 @@ mod merge_meshes_tests {
             resources: vec![resource],
             objects: vec![resource_object(0), inline_object(inline)],
         };
-        let (min, max) = scene.aabb().unwrap().unwrap();
-        assert_eq!(min.coords(), [-7.0, -2.0, -6.0]);
-        assert_eq!(max.coords(), [4.0, 8.0, 9.0]);
+        let aabb = scene.aabb().unwrap().unwrap();
+        assert_eq!(aabb.min().coords(), [-7.0, -2.0, -6.0]);
+        assert_eq!(aabb.max().coords(), [4.0, 8.0, 9.0]);
     }
 
     #[test]
@@ -853,11 +830,11 @@ mod merge_meshes_tests {
         }
     }
 
-    fn assert_aabb_approx(actual: (Vertex, Vertex), expected: ([f32; 3], [f32; 3]), eps: f32) {
-        for (a, e) in actual.0.iter().zip(expected.0.iter()) {
+    fn assert_aabb_approx(actual: Aabb, expected: ([f32; 3], [f32; 3]), eps: f32) {
+        for (a, e) in actual.min().iter().zip(expected.0.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
-        for (a, e) in actual.1.iter().zip(expected.1.iter()) {
+        for (a, e) in actual.max().iter().zip(expected.1.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
@@ -867,10 +844,10 @@ mod merge_meshes_tests {
     /// formula compresses into closed form; for a unit cube whose
     /// vertices are exactly the corners, it gives the tight world-space
     /// AABB of the transformed vertex set.
-    fn corner_aabb(mesh: &IndexedMesh, t: &AffineTransform3D) -> (Vertex, Vertex) {
-        let (lmin, lmax) = super::local_aabb(mesh).unwrap();
-        let lmin = lmin.coords();
-        let lmax = lmax.coords();
+    fn corner_aabb(mesh: &IndexedMesh, t: &AffineTransform3D) -> Aabb {
+        let local = super::local_aabb(mesh).unwrap();
+        let lmin = local.min().coords();
+        let lmax = local.max().coords();
         let corners = [
             Vertex::new([lmin[0], lmin[1], lmin[2]]),
             Vertex::new([lmax[0], lmin[1], lmin[2]]),
@@ -881,16 +858,11 @@ mod merge_meshes_tests {
             Vertex::new([lmin[0], lmax[1], lmax[2]]),
             Vertex::new([lmax[0], lmax[1], lmax[2]]),
         ];
-        let mut min = [f32::INFINITY; 3];
-        let mut max = [f32::NEG_INFINITY; 3];
+        let mut aabb = Aabb::empty();
         for c in corners.iter() {
-            let w = t.apply_to_vertex(*c).coords();
-            for i in 0..3 {
-                min[i] = min[i].min(w[i]);
-                max[i] = max[i].max(w[i]);
-            }
+            aabb.extend(t.apply_to_vertex(*c));
         }
-        (Vertex::new(min), Vertex::new(max))
+        aabb
     }
 
     #[test]
@@ -904,9 +876,9 @@ mod merge_meshes_tests {
             resources: vec![],
             objects: vec![inline_object(mesh)],
         };
-        let (min, max) = scene.aabb().unwrap().unwrap();
-        assert_eq!(min.coords(), [0.0, 0.0, 0.0]);
-        assert_eq!(max.coords(), [1.0, 1.0, 1.0]);
+        let aabb = scene.aabb().unwrap().unwrap();
+        assert_eq!(aabb.min().coords(), [0.0, 0.0, 0.0]);
+        assert_eq!(aabb.max().coords(), [1.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -974,7 +946,7 @@ mod merge_meshes_tests {
         };
         let arvo = scene.aabb().unwrap().unwrap();
         let corners = corner_aabb(&mesh, &t);
-        assert_aabb_approx(arvo, (corners.0.coords(), corners.1.coords()), 1e-4);
+        assert_aabb_approx(arvo, (corners.min().coords(), corners.max().coords()), 1e-4);
     }
 
     #[test]
@@ -1019,7 +991,7 @@ mod merge_meshes_tests {
             resources: vec![],
             objects: vec![affine_object(tetra.clone(), t)],
         };
-        let (amin, amax) = scene.aabb().unwrap().unwrap();
+        let arvo = scene.aabb().unwrap().unwrap();
 
         // Per-vertex transformed AABB.
         let mut pmin = [f32::INFINITY; 3];
@@ -1031,8 +1003,8 @@ mod merge_meshes_tests {
                 pmax[i] = pmax[i].max(w[i]);
             }
         }
-        let amin = amin.coords();
-        let amax = amax.coords();
+        let amin = arvo.min().coords();
+        let amax = arvo.max().coords();
         for i in 0..3 {
             assert!(
                 amin[i] <= pmin[i] + 1e-5,

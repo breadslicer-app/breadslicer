@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+pub mod aabb;
 pub mod errors;
 pub mod geometry;
 pub mod indexed_mesh;
@@ -15,6 +16,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 // Re-exporting "core" symbols for ease of use
+pub use crate::aabb::Aabb;
 pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 

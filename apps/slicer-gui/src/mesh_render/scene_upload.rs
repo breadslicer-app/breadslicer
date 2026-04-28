@@ -260,7 +260,10 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
     // (the renderer's diagonal-clamp `.max(1e-3)` keeps the projection
     // matrix well-defined).
     let (aabb_min, aabb_max) = match scene.aabb()? {
-        Some((min, max)) => (Vec3::from(min.coords()), Vec3::from(max.coords())),
+        Some(aabb) => (
+            Vec3::from(aabb.min().coords()),
+            Vec3::from(aabb.max().coords()),
+        ),
         None => (Vec3::ZERO, Vec3::ZERO),
     };
 
