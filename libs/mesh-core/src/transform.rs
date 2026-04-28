@@ -5,7 +5,7 @@
 
 use anyhow::{Result, anyhow};
 
-use crate::geometry::gt_strict;
+use crate::geometry::{SINGULARITY_THRESHOLD, gt_strict};
 use crate::primitives::{Normal, Vector3D, Vertex};
 
 /// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
@@ -82,10 +82,7 @@ impl AffineTransform3D {
     /// (or near-zero) axis returns an error.
     pub fn from_axis_angle(axis: [f64; 3], angle: f64) -> Result<Self> {
         let norm_sq = axis[0].mul_add(axis[0], axis[1].mul_add(axis[1], axis[2] * axis[2]));
-        // Threshold matches the f64 working precision of the rest of the crate;
-        // a near-zero axis cannot be normalised without catastrophic loss.
-        // `gt_strict` rejects NaN (treated as not-strictly-greater) too.
-        if !gt_strict(norm_sq, f64::EPSILON) {
+        if !gt_strict(norm_sq, SINGULARITY_THRESHOLD) {
             return Err(anyhow!("Rotation axis must be non-zero"));
         }
         let inv_norm = 1.0 / norm_sq.sqrt();
@@ -189,11 +186,11 @@ impl AffineTransform3D {
     /// perpendicular to the transformed surface.
     ///
     /// Returns an error if the linear part is singular (determinant zero
-    /// to within `f64::EPSILON`) or if the resulting normal has zero
+    /// to within [`SINGULARITY_THRESHOLD`]) or if the resulting normal has zero
     /// magnitude (which can happen for pathological inputs).
     pub fn apply_to_normal(&self, n: Normal) -> Result<Normal> {
         let det = self.determinant();
-        if !gt_strict(det.abs(), f64::EPSILON) {
+        if !gt_strict(det.abs(), SINGULARITY_THRESHOLD) {
             return Err(anyhow!("Cannot transform normal: singular linear part"));
         }
 
@@ -237,7 +234,7 @@ impl AffineTransform3D {
         }
 
         let mag_sq = out[0].mul_add(out[0], out[1].mul_add(out[1], out[2] * out[2]));
-        if !gt_strict(mag_sq, f64::EPSILON) {
+        if !gt_strict(mag_sq, SINGULARITY_THRESHOLD) {
             return Err(anyhow!("Cannot transform normal: zero-magnitude result"));
         }
         let inv_mag = 1.0 / mag_sq.sqrt();
@@ -286,10 +283,10 @@ impl AffineTransform3D {
     /// `self.inverse()?.compose(self).apply_to_vertex(v) == v`.
     ///
     /// Returns an error if the linear part is singular (determinant
-    /// magnitude below `f64::EPSILON`).
+    /// magnitude below [`SINGULARITY_THRESHOLD`]).
     pub fn inverse(&self) -> Result<Self> {
         let det = self.determinant();
-        if !gt_strict(det.abs(), f64::EPSILON) {
+        if !gt_strict(det.abs(), SINGULARITY_THRESHOLD) {
             return Err(anyhow!("Cannot invert: singular linear part"));
         }
         let inv_det = 1.0 / det;

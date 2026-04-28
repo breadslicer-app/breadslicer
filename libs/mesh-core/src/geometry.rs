@@ -10,6 +10,41 @@ use anyhow::{Result, anyhow};
 
 use crate::primitives::{Normal, Vector3D, Vertex};
 
+/// Squared-area threshold below which a triangle is treated as degenerate.
+///
+/// Compared against `‖e1 × e2‖²` in f64 — twice the (squared) triangle
+/// area. The numeric value matches the original `f32::EPSILON as f64`
+/// guard so behaviour is preserved across the rename.
+pub(crate) const DEGENERATE_AREA_SQUARED: f64 = f32::EPSILON as f64;
+
+/// Tolerance for "is this f64 magnitude squared close enough to 1?" in
+/// the unit-norm check on stored f32 normals widened to f64.
+///
+/// f32 unit normals widened to f64 can have squared magnitude deviating
+/// from 1.0 by up to ~3·2⁻²³ ≈ 3.6e-7 due to f32 quantisation of each
+/// component. 1e-6 leaves headroom above that.
+pub(crate) const UNIT_NORM_TOLERANCE: f64 = 1e-6;
+
+/// Cosine of the maximum tolerated angle (5°) between a stored normal
+/// and the normal recomputed from the triangle's vertices.
+///
+/// Per-component epsilon comparisons are too sensitive: small triangles
+/// and high-aspect-ratio triangles accumulate enough floating-point
+/// error that their normals diverge by a few degrees from the stored
+/// value. 5° filters numerical noise while still catching meaningfully
+/// wrong normals. Stored as the precomputed cosine because the check is
+/// against the dot product of two unit vectors.
+pub(crate) const NORMAL_ANGLE_TOLERANCE_COS: f64 = 0.9961946980917455;
+
+/// Threshold used to reject near-singular linear parts of an
+/// `AffineTransform3D` (zero-magnitude rotation axis, near-zero
+/// determinant, or zero-magnitude transformed normal).
+///
+/// `f64::EPSILON` is relative to 1.0 and may be too tight for
+/// millimetre-scale matrices whose legitimate determinants can sit
+/// around 1e-9. TODO: revisit and consider scaling by the matrix entries.
+pub(crate) const SINGULARITY_THRESHOLD: f64 = f64::EPSILON;
+
 /// Strict ordered comparison that returns `false` for NaN inputs.
 ///
 /// Equivalent to `value > threshold` for ordered finite inputs, with one
@@ -48,7 +83,7 @@ pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f6
     let cross_mag_sq = cross.squared_norm();
 
     // degenerate (zero-area) triangles; also handles NaN coordinates.
-    if !gt_strict(cross_mag_sq, f32::EPSILON as f64) {
+    if !gt_strict(cross_mag_sq, DEGENERATE_AREA_SQUARED) {
         return Err(anyhow!("Degenerate (near-zero area) triangle found"));
     }
 

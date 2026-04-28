@@ -13,7 +13,10 @@ use crate::errors::{
     CoordAxis, FaceIndex, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError,
     MeshVertexError, TriVertexSlot, VertexIndex,
 };
-use crate::geometry::{compute_normal_from_triangle_vertices, gt_strict};
+use crate::geometry::{
+    DEGENERATE_AREA_SQUARED, NORMAL_ANGLE_TOLERANCE_COS, UNIT_NORM_TOLERANCE,
+    compute_normal_from_triangle_vertices, gt_strict,
+};
 use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -120,7 +123,7 @@ impl IndexedMesh {
             let cross_mag_sq = cross.squared_norm();
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
-            if !gt_strict(cross_mag_sq, f32::EPSILON as f64) {
+            if !gt_strict(cross_mag_sq, DEGENERATE_AREA_SQUARED) {
                 errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx });
                 continue; // We don't continue processing this face
             }
@@ -128,9 +131,7 @@ impl IndexedMesh {
             let n = Vector3D::<f64>::from(face.normal);
             let n_mag_sq = n.squared_norm();
 
-            // f32 unit normals widened to f64 can have squared magnitude deviating from
-            // 1.0 by up to ~3 × 2⁻²³ ≈ 3.6e-7 due to f32 quantization of each component.
-            if !approx_eq!(f64, n_mag_sq, 1.0, epsilon = 1e-6) {
+            if !approx_eq!(f64, n_mag_sq, 1.0, epsilon = UNIT_NORM_TOLERANCE) {
                 errors.push(MeshNormalVectorError::NonUnitNorm {
                     face_idx,
                     norm: n_mag_sq.sqrt() as f32,
@@ -146,15 +147,8 @@ impl IndexedMesh {
                 cross[2] / cross_mag,
             ]);
 
-            // Compare orientation via the dot product of the two unit vectors.
-            // A per-component epsilon comparison is too sensitive: small triangles and
-            // high-aspect-ratio triangles accumulate enough floating-point error that
-            // their normals can diverge by a few degrees from the stored value. A 5°
-            // threshold filters out this numerical noise while still catching normals
-            // that are meaningfully wrong (for the most part).
-            const COS_MAX_DEVIATION: f64 = 0.9961946980917455; // cos(5°)
             let dot = cross.dot_product(&n);
-            if dot < COS_MAX_DEVIATION {
+            if dot < NORMAL_ANGLE_TOLERANCE_COS {
                 errors.push(MeshNormalVectorError::ExpectationMismatch { face_idx });
                 continue;
             }
