@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use newtypes::{newtype_from_only, newtype_struct};
+use newtypes::newtype_array;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub [F; 3]);
@@ -82,44 +82,35 @@ impl<F: Copy + PartialEq + PartialOrd> std::ops::Index<usize> for Vector3D<F> {
     }
 }
 
-// Distinct newtypes around `Vector3D<f32>` so a `Normal` cannot silently
-// flow through `apply_to_vertex` and vice versa. `newtype_struct!` emits
-// `#[repr(transparent)]` plus Debug/Clone/PartialEq/Into<Vector3D<f32>>;
-// `; Copy` extends with Copy; `newtype_from_only!` adds From<Vector3D<f32>>
-// (no FromStr) so construction from the inner type stays ergonomic.
-newtype_struct!(Vertex, Vector3D<f32>; Copy);
-newtype_from_only!(Vertex, Vector3D<f32>);
-
-newtype_struct!(Normal, Vector3D<f32>; Copy);
-newtype_from_only!(Normal, Vector3D<f32>);
+// Distinct newtypes around `[f32; 3]` so a `Normal` cannot silently
+// flow through `apply_to_vertex` and vice versa. `newtype_array!` emits
+// `pub struct $name([f32; 3])` `#[repr(transparent)]`, plus Debug, Clone,
+// Copy, PartialEq, Index<I> (single index + ranges), AsRef<[f32]>,
+// AsMut<[f32]>, IntoIterator for `Self` / `&Self` / `&mut Self`,
+// From<Self> for [f32; 3], and inherent `len`, `is_empty`, `iter`,
+// `iter_mut`, `as_array`, `as_array_mut`. We add only the constructors
+// and the few math accessors below.
+newtype_array!(Vertex, f32, 3);
+newtype_array!(Normal, f32, 3);
 
 impl Vertex {
     /// Construct from the three coordinates.
     #[inline]
     pub const fn new(coords: [f32; 3]) -> Self {
-        Self(Vector3D::new(coords))
+        Self(coords)
     }
 
-    /// Coordinates as a fixed-size array.
+    /// Coordinates as a fixed-size array, by value.
     #[inline]
     pub fn coords(self) -> [f32; 3] {
-        let v: Vector3D<f32> = self.into();
-        v.into()
+        self.into()
     }
 
     /// Widen to f64 for cancellation-safe math (used in geometry/transform
     /// hot paths where f32 differences lose precision).
     #[inline]
     pub fn to_f64(self) -> Vector3D<f64> {
-        let v: Vector3D<f32> = self.into();
-        v.into()
-    }
-}
-
-impl std::ops::Index<usize> for Vertex {
-    type Output = f32;
-    fn index(&self, i: usize) -> &f32 {
-        &self.0[i]
+        Vector3D::new(self.coords()).into()
     }
 }
 
@@ -127,21 +118,19 @@ impl Normal {
     /// Construct from the three components.
     #[inline]
     pub const fn new(components: [f32; 3]) -> Self {
-        Self(Vector3D::new(components))
+        Self(components)
     }
 
-    /// Components as a fixed-size array.
+    /// Components as a fixed-size array, by value.
     #[inline]
     pub fn coords(self) -> [f32; 3] {
-        let v: Vector3D<f32> = self.into();
-        v.into()
+        self.into()
     }
 
     /// Widen to f64 for cancellation-safe math.
     #[inline]
     pub fn to_f64(self) -> Vector3D<f64> {
-        let v: Vector3D<f32> = self.into();
-        v.into()
+        Vector3D::new(self.coords()).into()
     }
 
     /// Reverse direction (component-wise negation). Used when a face's
@@ -157,15 +146,7 @@ impl Normal {
     /// flagged by `validate_normal_vectors`.
     #[inline]
     pub fn norm(self) -> f32 {
-        let v: Vector3D<f32> = self.into();
-        v.norm()
-    }
-}
-
-impl std::ops::Index<usize> for Normal {
-    type Output = f32;
-    fn index(&self, i: usize) -> &f32 {
-        &self.0[i]
+        self.iter().map(|c| c * c).sum::<f32>().sqrt()
     }
 }
 

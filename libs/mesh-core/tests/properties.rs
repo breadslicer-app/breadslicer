@@ -256,12 +256,10 @@ proptest! {
         let sequential = a.apply_to_vertex(b.apply_to_vertex(v));
         // The two routes accumulate slightly different f32 rounding, so
         // the tolerance is loose relative to the bounded coord range.
-        for i in 0..3 {
+        for (i, (c, s)) in composed.iter().zip(sequential.iter()).enumerate() {
             prop_assert!(
-                approx_eq!(f32, composed[i], sequential[i], epsilon = 1e-1),
-                "axis {i}: composed={}, sequential={}",
-                composed[i],
-                sequential[i]
+                approx_eq!(f32, *c, *s, epsilon = 1e-1),
+                "axis {i}: composed={c}, sequential={s}",
             );
         }
     }
@@ -276,12 +274,10 @@ proptest! {
         let round_trip = inv.apply_to_vertex(t.apply_to_vertex(v));
         // Loose tolerance: f64 internals lose precision when we round-
         // trip through f32 once and then once more.
-        for i in 0..3 {
+        for (i, (r, x)) in round_trip.iter().zip(v.iter()).enumerate() {
             prop_assert!(
-                approx_eq!(f32, round_trip[i], v[i], epsilon = 5e-2),
-                "axis {i}: round_trip={}, v={}",
-                round_trip[i],
-                v[i]
+                approx_eq!(f32, *r, *x, epsilon = 5e-2),
+                "axis {i}: round_trip={r}, v={x}",
             );
         }
     }

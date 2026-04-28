@@ -854,10 +854,10 @@ mod merge_meshes_tests {
     }
 
     fn assert_aabb_approx(actual: (Vertex, Vertex), expected: ([f32; 3], [f32; 3]), eps: f32) {
-        for (a, e) in actual.0.coords().iter().zip(expected.0.iter()) {
+        for (a, e) in actual.0.iter().zip(expected.0.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
-        for (a, e) in actual.1.coords().iter().zip(expected.1.iter()) {
+        for (a, e) in actual.1.iter().zip(expected.1.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }

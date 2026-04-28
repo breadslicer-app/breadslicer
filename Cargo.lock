@@ -3112,9 +3112,9 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "newtypes"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a087a0902741d529738dfedf4ca9197a12b318f7b951be3eb3f4cd44e1e423ef"
+checksum = "7097066024aac31335abe1fd88ff8a9bded5de2c82085bf3e723a359656fbd4d"
 
 [[package]]
 name = "nix"

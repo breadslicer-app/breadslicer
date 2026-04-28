@@ -1145,6 +1145,15 @@ mod indexed_mesh_fix_faces_orientation_tests {
     use crate::geometry::compute_normal_from_triangle_vertices;
     use crate::primitives::Normal;
 
+    fn assert_normal_close(actual: Normal, expected: Normal, eps: f32) {
+        for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (a - e).abs() < eps,
+                "normal component {i}: got {a}, expected {e}"
+            );
+        }
+    }
+
     /// Builds a tetrahedron with consistent winding and correct normals.
     ///
     /// Vertices:
@@ -1213,16 +1222,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         assert_eq!(mesh.faces[0].vertices, expected.faces[0].vertices);
 
         // Normal should match the correct normal
-        let n = mesh.faces[0].normal.coords();
-        let en = expected.faces[0].normal.coords();
-        for i in 0..3 {
-            assert!(
-                (n[i] - en[i]).abs() < 1e-5,
-                "normal component {i}: got {}, expected {}",
-                n[i],
-                en[i],
-            );
-        }
+        assert_normal_close(mesh.faces[0].normal, expected.faces[0].normal, 1e-5);
     }
 
     #[test]
@@ -1240,16 +1240,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, true)
             .unwrap();
 
-        let n = mesh.faces[0].normal.coords();
-        let en = expected.faces[0].normal.coords();
-        for i in 0..3 {
-            assert!(
-                (n[i] - en[i]).abs() < 1e-5,
-                "normal component {i}: got {}, expected {}",
-                n[i],
-                en[i],
-            );
-        }
+        assert_normal_close(mesh.faces[0].normal, expected.faces[0].normal, 1e-5);
     }
 
     #[test]
@@ -1266,16 +1257,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
-        let n = mesh.faces[0].normal.coords();
-        let en = expected.faces[0].normal.coords();
-        for i in 0..3 {
-            assert!(
-                (n[i] - en[i]).abs() < 1e-5,
-                "normal component {i}: got {}, expected {}",
-                n[i],
-                en[i],
-            );
-        }
+        assert_normal_close(mesh.faces[0].normal, expected.faces[0].normal, 1e-5);
     }
 
     #[test]
@@ -1293,16 +1275,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
-        let n = mesh.faces[1].normal.coords();
-        let en = expected.faces[1].normal.coords();
-        for i in 0..3 {
-            assert!(
-                (n[i] - en[i]).abs() < 1e-5,
-                "normal component {i}: got {}, expected {}",
-                n[i],
-                en[i],
-            );
-        }
+        assert_normal_close(mesh.faces[1].normal, expected.faces[1].normal, 1e-5);
     }
 
     #[test]
@@ -1326,18 +1299,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
                 "face {} vertices changed unexpectedly",
                 i
             );
-            let n = mesh.faces[i].normal.coords();
-            let en = expected.faces[i].normal.coords();
-            for j in 0..3 {
-                assert!(
-                    (n[j] - en[j]).abs() < 1e-5,
-                    "face {} normal component {}: got {}, expected {}",
-                    i,
-                    j,
-                    n[j],
-                    en[j],
-                );
-            }
+            assert_normal_close(mesh.faces[i].normal, expected.faces[i].normal, 1e-5);
         }
     }
 

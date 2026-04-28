@@ -352,7 +352,7 @@ mod affine_transform_3d_tests {
     }
 
     fn assert_vertex_approx(actual: Vertex, expected: [f32; 3], eps: f32) {
-        for (a, e) in actual.coords().iter().zip(expected.iter()) {
+        for (a, e) in actual.iter().zip(expected.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
@@ -364,7 +364,7 @@ mod affine_transform_3d_tests {
     }
 
     fn assert_normal_approx(actual: Normal, expected: [f32; 3], eps: f32) {
-        for (a, e) in actual.coords().iter().zip(expected.iter()) {
+        for (a, e) in actual.iter().zip(expected.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
@@ -733,7 +733,7 @@ mod affine_transform_3d_tests {
             1.0 / 3.0_f32.sqrt(),
         ]);
         let result = t.apply_to_normal(n).unwrap();
-        let mag = result.coords().iter().map(|c| c * c).sum::<f32>().sqrt();
+        let mag = result.iter().map(|c| c * c).sum::<f32>().sqrt();
         assert_approx_eq!(f32, mag, 1.0, epsilon = 1e-6);
     }
 
