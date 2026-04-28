@@ -239,7 +239,9 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
         let vertices: Vec<GpuVertex> = mesh
             .vertices
             .iter()
-            .map(|v| GpuVertex { position: v.0 })
+            .map(|v| GpuVertex {
+                position: v.coords(),
+            })
             .collect();
 
         let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces.len() * 3);
@@ -258,7 +260,7 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
     // (the renderer's diagonal-clamp `.max(1e-3)` keeps the projection
     // matrix well-defined).
     let (aabb_min, aabb_max) = match scene.aabb()? {
-        Some((min, max)) => (Vec3::from(min.0), Vec3::from(max.0)),
+        Some((min, max)) => (Vec3::from(min.coords()), Vec3::from(max.coords())),
         None => (Vec3::ZERO, Vec3::ZERO),
     };
 
@@ -556,9 +558,9 @@ mod transform_to_mat4_tests {
         for v in [[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
             let by_matrix = m.transform_point3(Vec3::from(v));
             let by_apply = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new(v));
-            assert_approx_eq!(f32, by_matrix.x, by_apply.0[0], epsilon = 1e-5);
-            assert_approx_eq!(f32, by_matrix.y, by_apply.0[1], epsilon = 1e-5);
-            assert_approx_eq!(f32, by_matrix.z, by_apply.0[2], epsilon = 1e-5);
+            assert_approx_eq!(f32, by_matrix.x, by_apply[0], epsilon = 1e-5);
+            assert_approx_eq!(f32, by_matrix.y, by_apply[1], epsilon = 1e-5);
+            assert_approx_eq!(f32, by_matrix.z, by_apply[2], epsilon = 1e-5);
         }
     }
 

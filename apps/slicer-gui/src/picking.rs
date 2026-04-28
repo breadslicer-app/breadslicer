@@ -229,7 +229,7 @@ pub(crate) fn ray_hits_object(ray: &Ray, scene: &Scene, idx: usize) -> Option<f3
 
 fn world_vertex(mesh: &IndexedMesh, vidx: u32, to_world: &Mat4) -> Option<Vec3> {
     let v = mesh.vertices.get(vidx as usize)?;
-    Some(to_world.transform_point3(Vec3::from(v.0)))
+    Some(to_world.transform_point3(Vec3::from(v.coords())))
 }
 
 fn world_aabb_for_object(scene: &Scene, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -247,11 +247,11 @@ fn world_aabb_for_object(scene: &Scene, idx: usize) -> Option<(Vec3, Vec3)> {
 
 fn local_aabb(mesh: &IndexedMesh) -> Option<(Vec3, Vec3)> {
     let mut iter = mesh.vertices.iter();
-    let first = Vec3::from(iter.next()?.0);
+    let first = Vec3::from(iter.next()?.coords());
     let mut min = first;
     let mut max = first;
     for v in iter {
-        let v = Vec3::from(v.0);
+        let v = Vec3::from(v.coords());
         min = min.min(v);
         max = max.max(v);
     }

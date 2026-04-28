@@ -135,7 +135,8 @@ impl AffineTransform3D {
     /// Math is performed in `f64`; the result is downcast to `f32` to fit
     /// the mesh's storage type.
     pub fn apply_to_vertex(&self, v: Vertex) -> Vertex {
-        let v = [v.0[0] as f64, v.0[1] as f64, v.0[2] as f64];
+        let v = v.coords();
+        let v = [v[0] as f64, v[1] as f64, v[2] as f64];
         let m = &self.linear;
         let t = &self.translation;
         let x = m[0][0].mul_add(v[0], m[0][1].mul_add(v[1], m[0][2].mul_add(v[2], t[0])));
@@ -150,7 +151,8 @@ impl AffineTransform3D {
     /// surface normals see `apply_to_normal`, which uses the
     /// inverse-transpose.
     pub fn apply_to_vector(&self, v: Vector3D<f32>) -> Vector3D<f32> {
-        let v = [v.0[0] as f64, v.0[1] as f64, v.0[2] as f64];
+        let v: [f32; 3] = v.into();
+        let v = [v[0] as f64, v[1] as f64, v[2] as f64];
         let m = &self.linear;
         let x = m[0][0].mul_add(v[0], m[0][1].mul_add(v[1], m[0][2] * v[2]));
         let y = m[1][0].mul_add(v[0], m[1][1].mul_add(v[1], m[1][2] * v[2]));
@@ -218,7 +220,8 @@ impl AffineTransform3D {
             ],
         ];
 
-        let n64 = [n.0[0] as f64, n.0[1] as f64, n.0[2] as f64];
+        let nc = n.coords();
+        let n64 = [nc[0] as f64, nc[1] as f64, nc[2] as f64];
         // (M⁻ᵀ)ᵢⱼ = cof(M)ᵢⱼ / det(M); (M⁻ᵀ · n)ᵢ = Σⱼ cof(M)ᵢⱼ · nⱼ / det.
         let mut out = [
             cof[0][0].mul_add(n64[0], cof[0][1].mul_add(n64[1], cof[0][2] * n64[2])),
@@ -349,7 +352,7 @@ mod affine_transform_3d_tests {
     }
 
     fn assert_vertex_approx(actual: Vertex, expected: [f32; 3], eps: f32) {
-        for (a, e) in actual.0.iter().zip(expected.iter()) {
+        for (a, e) in actual.coords().iter().zip(expected.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
@@ -361,7 +364,7 @@ mod affine_transform_3d_tests {
     }
 
     fn assert_normal_approx(actual: Normal, expected: [f32; 3], eps: f32) {
-        for (a, e) in actual.0.iter().zip(expected.iter()) {
+        for (a, e) in actual.coords().iter().zip(expected.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
@@ -627,9 +630,9 @@ mod affine_transform_3d_tests {
         let near_rot = t.apply_to_vertex(near);
         let far_rot = t.apply_to_vertex(far);
         // The image should still be a unit-length displacement along +Y.
-        assert_approx_eq!(f32, far_rot.0[0] - near_rot.0[0], 0.0, epsilon = 1e-3);
-        assert_approx_eq!(f32, far_rot.0[1] - near_rot.0[1], 1.0, epsilon = 1e-3);
-        assert_approx_eq!(f32, far_rot.0[2] - near_rot.0[2], 0.0, epsilon = 1e-3);
+        assert_approx_eq!(f32, far_rot[0] - near_rot[0], 0.0, epsilon = 1e-3);
+        assert_approx_eq!(f32, far_rot[1] - near_rot[1], 1.0, epsilon = 1e-3);
+        assert_approx_eq!(f32, far_rot[2] - near_rot[2], 0.0, epsilon = 1e-3);
     }
 
     #[test]
@@ -730,7 +733,7 @@ mod affine_transform_3d_tests {
             1.0 / 3.0_f32.sqrt(),
         ]);
         let result = t.apply_to_normal(n).unwrap();
-        let mag = result.0.iter().map(|c| c * c).sum::<f32>().sqrt();
+        let mag = result.coords().iter().map(|c| c * c).sum::<f32>().sqrt();
         assert_approx_eq!(f32, mag, 1.0, epsilon = 1e-6);
     }
 
@@ -858,7 +861,7 @@ mod affine_transform_3d_tests {
         let v = Vertex::new([4.0, -5.0, 6.0]);
         let composed = a.compose(&b).apply_to_vertex(v);
         let sequential = a.apply_to_vertex(b.apply_to_vertex(v));
-        assert_vertex_approx(composed, sequential.0, 1e-5);
+        assert_vertex_approx(composed, sequential.coords(), 1e-5);
     }
 
     #[test]
@@ -943,7 +946,7 @@ mod affine_transform_3d_tests {
         let inv = t.inverse().unwrap();
         let v = Vertex::new([1.5, -0.5, 3.25]);
         let round_trip = inv.apply_to_vertex(t.apply_to_vertex(v));
-        assert_vertex_approx(round_trip, v.0, 1e-4);
+        assert_vertex_approx(round_trip, v.coords(), 1e-4);
     }
 
     #[test]

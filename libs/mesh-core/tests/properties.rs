@@ -258,10 +258,10 @@ proptest! {
         // the tolerance is loose relative to the bounded coord range.
         for i in 0..3 {
             prop_assert!(
-                approx_eq!(f32, composed.0[i], sequential.0[i], epsilon = 1e-1),
+                approx_eq!(f32, composed[i], sequential[i], epsilon = 1e-1),
                 "axis {i}: composed={}, sequential={}",
-                composed.0[i],
-                sequential.0[i]
+                composed[i],
+                sequential[i]
             );
         }
     }
@@ -278,10 +278,10 @@ proptest! {
         // trip through f32 once and then once more.
         for i in 0..3 {
             prop_assert!(
-                approx_eq!(f32, round_trip.0[i], v.0[i], epsilon = 5e-2),
+                approx_eq!(f32, round_trip[i], v[i], epsilon = 5e-2),
                 "axis {i}: round_trip={}, v={}",
-                round_trip.0[i],
-                v.0[i]
+                round_trip[i],
+                v[i]
             );
         }
     }

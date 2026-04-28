@@ -33,7 +33,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
                 // f32 has no Eq and no Hash, but comparing the bits will do.
                 // This has the effect that if any coordinate is NaN (which does not make sense
                 // anyway), its NaN payload bits will be used as the identity of the vertex.
-                let bitpattern = vertex.0.map(|f| {
+                let bitpattern = vertex.coords().map(|f| {
                     if f == -0.0 {
                         0.0_f32.to_bits()
                     } else {

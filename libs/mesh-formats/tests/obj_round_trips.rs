@@ -69,10 +69,10 @@ fn assert_mesh_vertices_eq(a: &IndexedMesh, b: &IndexedMesh) {
     for (i, (va, vb)) in a.vertices.iter().zip(b.vertices.iter()).enumerate() {
         for c in 0..3 {
             assert!(
-                approx_eq!(f32, va.0[c], vb.0[c], ulps = 2),
+                approx_eq!(f32, va[c], vb[c], ulps = 2),
                 "vertex {i} coord {c}: {} != {}",
-                va.0[c],
-                vb.0[c],
+                va[c],
+                vb[c],
             );
         }
     }
@@ -84,10 +84,10 @@ fn assert_mesh_faces_eq(a: &IndexedMesh, b: &IndexedMesh) {
         assert_eq!(fa.vertices, fb.vertices, "face {i} vertex indices differ");
         for c in 0..3 {
             assert!(
-                approx_eq!(f32, fa.normal.0[c], fb.normal.0[c], ulps = 4),
+                approx_eq!(f32, fa.normal[c], fb.normal[c], ulps = 4),
                 "face {i} normal coord {c}: {} != {}",
-                fa.normal.0[c],
-                fb.normal.0[c],
+                fa.normal[c],
+                fb.normal[c],
             );
         }
     }

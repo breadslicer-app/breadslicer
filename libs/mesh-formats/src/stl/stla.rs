@@ -141,14 +141,14 @@ impl<'a> AsciiStlReader<'a> {
             .into());
         }
 
-        let mut normal = Normal::default();
-
-        AsciiStlReader::tokens_to_f32(&face_header[2..5], &mut normal.0[0..3])?;
+        let mut normal_components = [0.0_f32; 3];
+        AsciiStlReader::tokens_to_f32(&face_header[2..5], &mut normal_components)?;
+        let mut normal = Normal::new(normal_components);
 
         self.expect_static(&["outer", "loop"])?;
 
-        let mut vertices = [Vertex::default(); 3];
-        for vertex_result in &mut vertices {
+        let mut vertices = [Vertex::new([0.0; 3]); 3];
+        for vertex_slot in &mut vertices {
             let Some(line) = self.lines.next() else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
@@ -166,7 +166,9 @@ impl<'a> AsciiStlReader<'a> {
                 )
                 .into());
             }
-            AsciiStlReader::tokens_to_f32(&line[1..4], &mut vertex_result.0[0..3])?;
+            let mut coords = [0.0_f32; 3];
+            AsciiStlReader::tokens_to_f32(&line[1..4], &mut coords)?;
+            *vertex_slot = Vertex::new(coords);
         }
 
         self.expect_static(&["endloop"])?;

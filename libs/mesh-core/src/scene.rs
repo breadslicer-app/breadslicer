@@ -177,18 +177,18 @@ pub struct Scene {
 fn local_aabb(mesh: &IndexedMesh) -> Option<(Vertex, Vertex)> {
     let mut iter = mesh.vertices.iter();
     let first = iter.next()?;
-    let mut min = *first;
-    let mut max = *first;
+    let mut min = first.coords();
+    let mut max = first.coords();
     for vertex in iter {
-        let v = vertex.0;
-        min.0[0] = min.0[0].min(v[0]);
-        min.0[1] = min.0[1].min(v[1]);
-        min.0[2] = min.0[2].min(v[2]);
-        max.0[0] = max.0[0].max(v[0]);
-        max.0[1] = max.0[1].max(v[1]);
-        max.0[2] = max.0[2].max(v[2]);
+        let v = vertex.coords();
+        min[0] = min[0].min(v[0]);
+        min[1] = min[1].min(v[1]);
+        min[2] = min[2].min(v[2]);
+        max[0] = max[0].max(v[0]);
+        max[1] = max[1].max(v[1]);
+        max[2] = max[2].max(v[2]);
     }
-    Some((min, max))
+    Some((Vertex::new(min), Vertex::new(max)))
 }
 
 /// World-space AABB of an object-local AABB after applying an
@@ -205,14 +205,16 @@ fn local_aabb(mesh: &IndexedMesh) -> Option<(Vertex, Vertex)> {
 /// axis-aligned scaling and translation.
 fn arvo_world_aabb(local: (Vertex, Vertex), a: &AffineTransform3D) -> (Vertex, Vertex) {
     let (lmin, lmax) = local;
+    let lmin = lmin.coords();
+    let lmax = lmax.coords();
     // Promote to f64 so the matrix-vector products match the precision of
     // the rest of the transform module.
-    let cx = (lmin.0[0] as f64 + lmax.0[0] as f64) * 0.5;
-    let cy = (lmin.0[1] as f64 + lmax.0[1] as f64) * 0.5;
-    let cz = (lmin.0[2] as f64 + lmax.0[2] as f64) * 0.5;
-    let hx = (lmax.0[0] as f64 - lmin.0[0] as f64) * 0.5;
-    let hy = (lmax.0[1] as f64 - lmin.0[1] as f64) * 0.5;
-    let hz = (lmax.0[2] as f64 - lmin.0[2] as f64) * 0.5;
+    let cx = (lmin[0] as f64 + lmax[0] as f64) * 0.5;
+    let cy = (lmin[1] as f64 + lmax[1] as f64) * 0.5;
+    let cz = (lmin[2] as f64 + lmax[2] as f64) * 0.5;
+    let hx = (lmax[0] as f64 - lmin[0] as f64) * 0.5;
+    let hy = (lmax[1] as f64 - lmin[1] as f64) * 0.5;
+    let hz = (lmax[2] as f64 - lmin[2] as f64) * 0.5;
 
     let m = &a.linear;
     let t = &a.translation;
@@ -261,8 +263,8 @@ impl Scene {
     /// becomes a measured cost — it depends only on the mesh, not on
     /// the transform.
     pub fn aabb(&self) -> Result<Option<(Vertex, Vertex)>> {
-        let mut min = Vertex::new([f32::INFINITY; 3]);
-        let mut max = Vertex::new([f32::NEG_INFINITY; 3]);
+        let mut min = [f32::INFINITY; 3];
+        let mut max = [f32::NEG_INFINITY; 3];
         let mut has_any = false;
 
         for obj in &self.objects {
@@ -277,30 +279,34 @@ impl Scene {
             match &obj.transform {
                 Transform3D::Identity => {
                     for vertex in &mesh.vertices {
-                        let v = vertex.0;
-                        min.0[0] = min.0[0].min(v[0]);
-                        min.0[1] = min.0[1].min(v[1]);
-                        min.0[2] = min.0[2].min(v[2]);
-                        max.0[0] = max.0[0].max(v[0]);
-                        max.0[1] = max.0[1].max(v[1]);
-                        max.0[2] = max.0[2].max(v[2]);
+                        let v = vertex.coords();
+                        min[0] = min[0].min(v[0]);
+                        min[1] = min[1].min(v[1]);
+                        min[2] = min[2].min(v[2]);
+                        max[0] = max[0].max(v[0]);
+                        max[1] = max[1].max(v[1]);
+                        max[2] = max[2].max(v[2]);
                         has_any = true;
                     }
                 }
                 Transform3D::Affine(a) => {
                     if let Some(local) = local_aabb(mesh) {
                         let (wmin, wmax) = arvo_world_aabb(local, a);
-                        min.0[0] = min.0[0].min(wmin.0[0]);
-                        min.0[1] = min.0[1].min(wmin.0[1]);
-                        min.0[2] = min.0[2].min(wmin.0[2]);
-                        max.0[0] = max.0[0].max(wmax.0[0]);
-                        max.0[1] = max.0[1].max(wmax.0[1]);
-                        max.0[2] = max.0[2].max(wmax.0[2]);
+                        let wmin = wmin.coords();
+                        let wmax = wmax.coords();
+                        min[0] = min[0].min(wmin[0]);
+                        min[1] = min[1].min(wmin[1]);
+                        min[2] = min[2].min(wmin[2]);
+                        max[0] = max[0].max(wmax[0]);
+                        max[1] = max[1].max(wmax[1]);
+                        max[2] = max[2].max(wmax[2]);
                         has_any = true;
                     }
                 }
             }
         }
+        let min = Vertex::new(min);
+        let max = Vertex::new(max);
 
         Ok(has_any.then_some((min, max)))
     }
@@ -404,9 +410,9 @@ mod transform_3d_tests {
         let n = Normal::new([1.0, 0.0, 0.0]);
         let result = t.apply_to_normal(n).unwrap();
         // π/2 rotation about Z sends +X to +Y.
-        assert_approx_eq!(f32, result.0[0], 0.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.0[1], 1.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.0[2], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result[0], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result[1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result[2], 0.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -452,9 +458,9 @@ mod transform_3d_tests {
         // Affine` back to `Identity`. Check the action on a point.
         let v = Vertex::new([5.0, 7.0, -1.0]);
         let round_trip = composed.apply_to_vertex(v);
-        assert_approx_eq!(f32, round_trip.0[0], v.0[0], epsilon = 1e-5);
-        assert_approx_eq!(f32, round_trip.0[1], v.0[1], epsilon = 1e-5);
-        assert_approx_eq!(f32, round_trip.0[2], v.0[2], epsilon = 1e-5);
+        assert_approx_eq!(f32, round_trip[0], v[0], epsilon = 1e-5);
+        assert_approx_eq!(f32, round_trip[1], v[1], epsilon = 1e-5);
+        assert_approx_eq!(f32, round_trip[2], v[2], epsilon = 1e-5);
     }
 
     #[test]
@@ -555,9 +561,9 @@ mod scene_object_baked_mesh_tests {
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0])),
         );
         let baked = obj.baked_mesh(&[]).unwrap();
-        assert_eq!(baked.vertices[0].0, [10.0, -5.0, 2.0]);
-        assert_eq!(baked.vertices[1].0, [11.0, -5.0, 2.0]);
-        assert_eq!(baked.vertices[2].0, [10.0, -4.0, 2.0]);
+        assert_eq!(baked.vertices[0].coords(), [10.0, -5.0, 2.0]);
+        assert_eq!(baked.vertices[1].coords(), [11.0, -5.0, 2.0]);
+        assert_eq!(baked.vertices[2].coords(), [10.0, -4.0, 2.0]);
     }
 
     #[test]
@@ -582,9 +588,9 @@ mod scene_object_baked_mesh_tests {
             Transform3D::Affine(AffineTransform3D::from_rotation_z(FRAC_PI_2)),
         );
         let baked = obj.baked_mesh(&[]).unwrap();
-        assert_approx_eq!(f32, baked.faces[0].normal.0[0], 0.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, baked.faces[0].normal.0[1], 1.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, baked.faces[0].normal.0[2], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.faces[0].normal[0], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.faces[0].normal[1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.faces[0].normal[2], 0.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -617,7 +623,7 @@ mod scene_object_baked_mesh_tests {
             content: SceneObjectContent::Resource(0),
         };
         let baked = obj.baked_mesh(std::slice::from_ref(&mesh)).unwrap();
-        assert_eq!(baked.vertices[0].0, [1.0, 2.0, 3.0]);
+        assert_eq!(baked.vertices[0].coords(), [1.0, 2.0, 3.0]);
     }
 
     #[test]
@@ -706,8 +712,8 @@ mod merge_meshes_tests {
             objects: vec![resource_object(0), inline_object(inline)],
         };
         let (min, max) = scene.aabb().unwrap().unwrap();
-        assert_eq!(min.0, [-7.0, -2.0, -6.0]);
-        assert_eq!(max.0, [4.0, 8.0, 9.0]);
+        assert_eq!(min.coords(), [-7.0, -2.0, -6.0]);
+        assert_eq!(max.coords(), [4.0, 8.0, 9.0]);
     }
 
     #[test]
@@ -848,10 +854,10 @@ mod merge_meshes_tests {
     }
 
     fn assert_aabb_approx(actual: (Vertex, Vertex), expected: ([f32; 3], [f32; 3]), eps: f32) {
-        for (a, e) in actual.0.0.iter().zip(expected.0.iter()) {
+        for (a, e) in actual.0.coords().iter().zip(expected.0.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
-        for (a, e) in actual.1.0.iter().zip(expected.1.iter()) {
+        for (a, e) in actual.1.coords().iter().zip(expected.1.iter()) {
             assert_approx_eq!(f32, *a, *e, epsilon = eps);
         }
     }
@@ -863,26 +869,28 @@ mod merge_meshes_tests {
     /// AABB of the transformed vertex set.
     fn corner_aabb(mesh: &IndexedMesh, t: &AffineTransform3D) -> (Vertex, Vertex) {
         let (lmin, lmax) = super::local_aabb(mesh).unwrap();
+        let lmin = lmin.coords();
+        let lmax = lmax.coords();
         let corners = [
-            Vertex::new([lmin.0[0], lmin.0[1], lmin.0[2]]),
-            Vertex::new([lmax.0[0], lmin.0[1], lmin.0[2]]),
-            Vertex::new([lmin.0[0], lmax.0[1], lmin.0[2]]),
-            Vertex::new([lmax.0[0], lmax.0[1], lmin.0[2]]),
-            Vertex::new([lmin.0[0], lmin.0[1], lmax.0[2]]),
-            Vertex::new([lmax.0[0], lmin.0[1], lmax.0[2]]),
-            Vertex::new([lmin.0[0], lmax.0[1], lmax.0[2]]),
-            Vertex::new([lmax.0[0], lmax.0[1], lmax.0[2]]),
+            Vertex::new([lmin[0], lmin[1], lmin[2]]),
+            Vertex::new([lmax[0], lmin[1], lmin[2]]),
+            Vertex::new([lmin[0], lmax[1], lmin[2]]),
+            Vertex::new([lmax[0], lmax[1], lmin[2]]),
+            Vertex::new([lmin[0], lmin[1], lmax[2]]),
+            Vertex::new([lmax[0], lmin[1], lmax[2]]),
+            Vertex::new([lmin[0], lmax[1], lmax[2]]),
+            Vertex::new([lmax[0], lmax[1], lmax[2]]),
         ];
-        let mut min = Vertex::new([f32::INFINITY; 3]);
-        let mut max = Vertex::new([f32::NEG_INFINITY; 3]);
+        let mut min = [f32::INFINITY; 3];
+        let mut max = [f32::NEG_INFINITY; 3];
         for c in corners.iter() {
-            let w = t.apply_to_vertex(*c);
+            let w = t.apply_to_vertex(*c).coords();
             for i in 0..3 {
-                min.0[i] = min.0[i].min(w.0[i]);
-                max.0[i] = max.0[i].max(w.0[i]);
+                min[i] = min[i].min(w[i]);
+                max[i] = max[i].max(w[i]);
             }
         }
-        (min, max)
+        (Vertex::new(min), Vertex::new(max))
     }
 
     #[test]
@@ -897,8 +905,8 @@ mod merge_meshes_tests {
             objects: vec![inline_object(mesh)],
         };
         let (min, max) = scene.aabb().unwrap().unwrap();
-        assert_eq!(min.0, [0.0, 0.0, 0.0]);
-        assert_eq!(max.0, [1.0, 1.0, 1.0]);
+        assert_eq!(min.coords(), [0.0, 0.0, 0.0]);
+        assert_eq!(max.coords(), [1.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -966,7 +974,7 @@ mod merge_meshes_tests {
         };
         let arvo = scene.aabb().unwrap().unwrap();
         let corners = corner_aabb(&mesh, &t);
-        assert_aabb_approx(arvo, (corners.0.0, corners.1.0), 1e-4);
+        assert_aabb_approx(arvo, (corners.0.coords(), corners.1.coords()), 1e-4);
     }
 
     #[test]
@@ -1014,27 +1022,29 @@ mod merge_meshes_tests {
         let (amin, amax) = scene.aabb().unwrap().unwrap();
 
         // Per-vertex transformed AABB.
-        let mut pmin = Vertex::new([f32::INFINITY; 3]);
-        let mut pmax = Vertex::new([f32::NEG_INFINITY; 3]);
+        let mut pmin = [f32::INFINITY; 3];
+        let mut pmax = [f32::NEG_INFINITY; 3];
         for v in tetra.vertices.iter() {
-            let w = t.apply_to_vertex(*v);
+            let w = t.apply_to_vertex(*v).coords();
             for i in 0..3 {
-                pmin.0[i] = pmin.0[i].min(w.0[i]);
-                pmax.0[i] = pmax.0[i].max(w.0[i]);
+                pmin[i] = pmin[i].min(w[i]);
+                pmax[i] = pmax[i].max(w[i]);
             }
         }
+        let amin = amin.coords();
+        let amax = amax.coords();
         for i in 0..3 {
             assert!(
-                amin.0[i] <= pmin.0[i] + 1e-5,
+                amin[i] <= pmin[i] + 1e-5,
                 "Arvo min[{i}] = {} is not <= per-vertex min = {}",
-                amin.0[i],
-                pmin.0[i]
+                amin[i],
+                pmin[i]
             );
             assert!(
-                amax.0[i] >= pmax.0[i] - 1e-5,
+                amax[i] >= pmax[i] - 1e-5,
                 "Arvo max[{i}] = {} is not >= per-vertex max = {}",
-                amax.0[i],
-                pmax.0[i]
+                amax[i],
+                pmax[i]
             );
         }
     }
@@ -1093,9 +1103,9 @@ mod merge_meshes_tests {
             )],
         };
         let result = scene.merge_meshes().unwrap().unwrap();
-        assert_eq!(result.vertices[0].0, [11.0, -5.0, 2.0]);
-        assert_eq!(result.vertices[1].0, [10.0, -4.0, 2.0]);
-        assert_eq!(result.vertices[2].0, [10.0, -5.0, 3.0]);
+        assert_eq!(result.vertices[0].coords(), [11.0, -5.0, 2.0]);
+        assert_eq!(result.vertices[1].coords(), [10.0, -4.0, 2.0]);
+        assert_eq!(result.vertices[2].coords(), [10.0, -5.0, 3.0]);
     }
 
     #[test]
@@ -1122,9 +1132,9 @@ mod merge_meshes_tests {
             )],
         };
         let result = scene.merge_meshes().unwrap().unwrap();
-        assert_approx_eq!(f32, result.faces[0].normal.0[0], 0.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.faces[0].normal.0[1], 1.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.faces[0].normal.0[2], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.faces[0].normal[0], 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.faces[0].normal[1], 1.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.faces[0].normal[2], 0.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -1192,9 +1202,9 @@ mod merge_meshes_tests {
         assert_eq!(result.faces[0].vertices, [0, 1, 2]);
         assert_eq!(result.faces[1].vertices, [3, 4, 5]);
         // Second object's vertices were translated by (10, 0, 0).
-        assert_approx_eq!(f32, result.vertices[3].0[0], 10.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.vertices[4].0[0], 11.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.vertices[5].0[0], 10.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[3][0], 10.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[4][0], 11.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[5][0], 10.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -1222,10 +1232,10 @@ mod merge_meshes_tests {
         };
         let result = scene.merge_meshes().unwrap().unwrap();
         // Identity object's vertices are unchanged.
-        assert_eq!(result.vertices[0].0, [0.0, 0.0, 0.0]);
-        assert_eq!(result.vertices[1].0, [1.0, 0.0, 0.0]);
+        assert_eq!(result.vertices[0].coords(), [0.0, 0.0, 0.0]);
+        assert_eq!(result.vertices[1].coords(), [1.0, 0.0, 0.0]);
         // Affine object's vertices are translated.
-        assert_approx_eq!(f32, result.vertices[3].0[0], 100.0, epsilon = 1e-6);
-        assert_approx_eq!(f32, result.vertices[4].0[0], 101.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[3][0], 100.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, result.vertices[4][0], 101.0, epsilon = 1e-6);
     }
 }

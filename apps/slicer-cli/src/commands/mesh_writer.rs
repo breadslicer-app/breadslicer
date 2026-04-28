@@ -165,9 +165,9 @@ mod flatten_scene_to_mesh_tests {
         let scene = scene_with_object(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
         let result = flatten_scene_to_mesh(&scene).unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.mesh.vertices[0].0, [1.0, 0.0, 0.0]);
-        assert_eq!(result.mesh.vertices[1].0, [0.0, 1.0, 0.0]);
-        assert_eq!(result.mesh.vertices[2].0, [0.0, 0.0, 1.0]);
+        assert_eq!(result.mesh.vertices[0].coords(), [1.0, 0.0, 0.0]);
+        assert_eq!(result.mesh.vertices[1].coords(), [0.0, 1.0, 0.0]);
+        assert_eq!(result.mesh.vertices[2].coords(), [0.0, 0.0, 1.0]);
         assert_eq!(
             result.mesh.meta.as_ref().and_then(|m| m.name.as_deref()),
             Some("MyMesh")
@@ -180,9 +180,9 @@ mod flatten_scene_to_mesh_tests {
         let scene = scene_with_object(unit_triangle_mesh(None), t);
         let result = flatten_scene_to_mesh(&scene).unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.mesh.vertices[0].0, [11.0, -5.0, 2.0]);
-        assert_eq!(result.mesh.vertices[1].0, [10.0, -4.0, 2.0]);
-        assert_eq!(result.mesh.vertices[2].0, [10.0, -5.0, 3.0]);
+        assert_eq!(result.mesh.vertices[0].coords(), [11.0, -5.0, 2.0]);
+        assert_eq!(result.mesh.vertices[1].coords(), [10.0, -4.0, 2.0]);
+        assert_eq!(result.mesh.vertices[2].coords(), [10.0, -5.0, 3.0]);
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod flatten_scene_to_mesh_tests {
         let result = flatten_scene_to_mesh(&scene).unwrap();
         // Both objects' vertices are present; the second is translated.
         assert_eq!(result.mesh.vertices.len(), 6);
-        assert_eq!(result.mesh.vertices[3].0, [11.0, 0.0, 0.0]);
+        assert_eq!(result.mesh.vertices[3].coords(), [11.0, 0.0, 0.0]);
         // Multi-object merge has no single name to keep.
         assert!(result.mesh.meta.is_none());
         // The caller is told that names/boundaries were dropped.

@@ -38,7 +38,7 @@ impl IndexedMesh {
 
         for (idx, v) in self.vertices.iter().enumerate() {
             for &coord in &CoordAxis::ALL {
-                let value = v.0[coord.as_index()];
+                let value = v[coord.as_index()];
                 if value.is_infinite() {
                     errors.push(MeshVertexError::InfiniteCoordinate {
                         vertex_idx: idx,
@@ -112,9 +112,9 @@ impl IndexedMesh {
             // Indices are guaranteed to be correct (we check them in `validate_faces`)
             let [i0, i1, i2] = face.vertices.map(|i| i as usize);
 
-            let v0 = Vector3D::<f64>::from(self.vertices[i0]);
-            let v1 = Vector3D::<f64>::from(self.vertices[i1]);
-            let v2 = Vector3D::<f64>::from(self.vertices[i2]);
+            let v0 = self.vertices[i0].to_f64();
+            let v1 = self.vertices[i1].to_f64();
+            let v2 = self.vertices[i2].to_f64();
 
             let e1 = v1.diff(&v0);
             let e2 = v2.diff(&v0);
@@ -128,7 +128,7 @@ impl IndexedMesh {
                 continue; // We don't continue processing this face
             }
 
-            let n = Vector3D::<f64>::from(face.normal);
+            let n = face.normal.to_f64();
             let n_mag_sq = n.squared_norm();
 
             if !approx_eq!(f64, n_mag_sq, 1.0, epsilon = UNIT_NORM_TOLERANCE) {
@@ -317,7 +317,7 @@ impl IndexedMesh {
                         });
                     } else {
                         // Simple fix
-                        face.normal.0 = face.normal.0.map(|c| -c);
+                        face.normal = face.normal.negate();
                     }
                 }
             }
@@ -1213,8 +1213,8 @@ mod indexed_mesh_fix_faces_orientation_tests {
         assert_eq!(mesh.faces[0].vertices, expected.faces[0].vertices);
 
         // Normal should match the correct normal
-        let n = mesh.faces[0].normal.0;
-        let en = expected.faces[0].normal.0;
+        let n = mesh.faces[0].normal.coords();
+        let en = expected.faces[0].normal.coords();
         for i in 0..3 {
             assert!(
                 (n[i] - en[i]).abs() < 1e-5,
@@ -1240,8 +1240,8 @@ mod indexed_mesh_fix_faces_orientation_tests {
         mesh.fix_faces_orientation(&manifold_errors, &normal_errors, true, true)
             .unwrap();
 
-        let n = mesh.faces[0].normal.0;
-        let en = expected.faces[0].normal.0;
+        let n = mesh.faces[0].normal.coords();
+        let en = expected.faces[0].normal.coords();
         for i in 0..3 {
             assert!(
                 (n[i] - en[i]).abs() < 1e-5,
@@ -1266,8 +1266,8 @@ mod indexed_mesh_fix_faces_orientation_tests {
         mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
-        let n = mesh.faces[0].normal.0;
-        let en = expected.faces[0].normal.0;
+        let n = mesh.faces[0].normal.coords();
+        let en = expected.faces[0].normal.coords();
         for i in 0..3 {
             assert!(
                 (n[i] - en[i]).abs() < 1e-5,
@@ -1283,7 +1283,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let mut mesh = tetrahedron();
 
         // Scale the normal to non-unit length
-        let correct = mesh.faces[1].normal.0;
+        let correct = mesh.faces[1].normal.coords();
         mesh.faces[1].normal = Normal::new([correct[0] * 2.0, correct[1] * 2.0, correct[2] * 2.0]);
 
         let manifold_errors: Vec<MeshManifoldError> = vec![];
@@ -1293,8 +1293,8 @@ mod indexed_mesh_fix_faces_orientation_tests {
         mesh.fix_faces_orientation(&manifold_errors, &normal_errors, false, true)
             .unwrap();
 
-        let n = mesh.faces[1].normal.0;
-        let en = expected.faces[1].normal.0;
+        let n = mesh.faces[1].normal.coords();
+        let en = expected.faces[1].normal.coords();
         for i in 0..3 {
             assert!(
                 (n[i] - en[i]).abs() < 1e-5,
@@ -1326,8 +1326,8 @@ mod indexed_mesh_fix_faces_orientation_tests {
                 "face {} vertices changed unexpectedly",
                 i
             );
-            let n = mesh.faces[i].normal.0;
-            let en = expected.faces[i].normal.0;
+            let n = mesh.faces[i].normal.coords();
+            let en = expected.faces[i].normal.coords();
             for j in 0..3 {
                 assert!(
                     (n[j] - en[j]).abs() < 1e-5,

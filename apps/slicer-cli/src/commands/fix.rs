@@ -141,9 +141,9 @@ fn show_applied_fixes(fixes: &[MeshFix]) {
                 println!(
                     "\t- Recomputed normal vector for face with ID '{}', from {:?} (with norm {}) to {:?} (with norm {})",
                     face_idx,
-                    old_normal.0,
+                    old_normal.coords(),
                     old_normal.norm(),
-                    new_normal.0,
+                    new_normal.coords(),
                     new_normal.norm()
                 );
             }

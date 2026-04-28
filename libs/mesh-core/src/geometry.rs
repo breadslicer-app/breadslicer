@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 
 use anyhow::{Result, anyhow};
 
-use crate::primitives::{Normal, Vector3D, Vertex};
+use crate::primitives::{Normal, Vertex};
 
 /// Squared-area threshold below which a triangle is treated as degenerate.
 ///
@@ -71,9 +71,9 @@ pub(crate) fn gt_strict(value: f64, threshold: f64) -> bool {
 /// The result is returned as an f64 array so callers that want to compare it
 /// against a stored f32 normal can do so at f64 precision.
 pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f64; 3]> {
-    let v0 = Vector3D::<f64>::from(vertices[0]);
-    let v1 = Vector3D::<f64>::from(vertices[1]);
-    let v2 = Vector3D::<f64>::from(vertices[2]);
+    let v0 = vertices[0].to_f64();
+    let v1 = vertices[1].to_f64();
+    let v2 = vertices[2].to_f64();
 
     let e1 = v1.diff(&v0);
     let e2 = v2.diff(&v0);
@@ -114,7 +114,7 @@ mod geometry_tests {
     }
 
     fn assert_normal_approx(result: &Normal, expected: [f32; 3]) {
-        let n = result.0;
+        let n = result.coords();
         for i in 0..3 {
             assert!(
                 (n[i] - expected[i]).abs() < 1e-5,
@@ -164,7 +164,7 @@ mod geometry_tests {
     fn result_is_unit_length() {
         let verts = [v(0.0, 0.0, 0.0), v(3.0, 0.0, 0.0), v(0.0, 4.0, 0.0)];
         let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
-        let n = normal.0;
+        let n = normal.coords();
         let mag = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         assert!((mag - 1.0).abs() < 1e-5, "magnitude was {mag}");
     }
@@ -197,7 +197,7 @@ mod geometry_tests {
     fn diagonal_triangle_normal_is_normalized() {
         let verts = [v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0), v(0.0, 0.0, 1.0)];
         let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
-        let n = normal.0;
+        let n = normal.coords();
         let expected = 1.0 / 3.0_f32.sqrt();
         assert_normal_approx(&normal, [expected, expected, expected]);
         let mag = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();

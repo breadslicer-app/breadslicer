@@ -85,9 +85,9 @@ fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
             // them bit-for-bit (binary directly, ASCII via `{:e}`
             // shortest round-trip).
             [
-                v0.0.map(f32::to_bits),
-                v1.0.map(f32::to_bits),
-                v2.0.map(f32::to_bits),
+                v0.coords().map(f32::to_bits),
+                v1.coords().map(f32::to_bits),
+                v2.coords().map(f32::to_bits),
             ]
         })
         .collect();
@@ -146,7 +146,7 @@ proptest! {
         let distinct_input: std::collections::HashSet<[u32; 3]> = mesh
             .vertices
             .iter()
-            .map(|v| v.0.map(f32::to_bits))
+            .map(|v| v.coords().map(f32::to_bits))
             .collect();
         prop_assert!(recovered.vertices.len() <= distinct_input.len());
     }
@@ -162,7 +162,7 @@ proptest! {
         let recovered = unwrap_single_mesh(&scene);
 
         for face in &recovered.faces {
-            prop_assert_eq!(face.normal.0, NORMAL.0);
+            prop_assert_eq!(face.normal, NORMAL);
         }
     }
 }
