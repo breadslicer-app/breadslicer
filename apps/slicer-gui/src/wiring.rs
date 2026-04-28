@@ -17,7 +17,7 @@ use crate::MainWindow;
 use crate::i18n::ctr;
 use crate::mesh_loader;
 use crate::scene_loader::{LoadTicket, SceneLoader};
-use crate::viewport_controller::{RESIZE_SETTLE, ViewportController};
+use crate::viewport::{RESIZE_SETTLE, ViewportController};
 
 /// Installs every per-window Slint callback (rendering notifier, input
 /// handlers, file open/close, resize debounce). Called once per

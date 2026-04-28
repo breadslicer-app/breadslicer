@@ -17,7 +17,7 @@ use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
-use crate::viewport_controller::ViewportController;
+use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
 /// A main window paired with its preference-bus subscription. Drop of

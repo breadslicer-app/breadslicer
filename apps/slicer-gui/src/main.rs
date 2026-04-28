@@ -24,7 +24,7 @@ mod picking;
 mod preferences_bus;
 mod preferences_window;
 mod scene_loader;
-mod viewport_controller;
+mod viewport;
 mod window_prefs;
 mod wiring;
 
