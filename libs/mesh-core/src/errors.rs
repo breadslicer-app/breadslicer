@@ -133,24 +133,24 @@ impl Edge {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshVertexError {
     InfiniteCoordinate { vertex_idx: usize, coord: CoordAxis },
     NaNCoordinate { vertex_idx: usize, coord: CoordAxis },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MeshNormalVectorError {
-    ZeroAreaTriangle { face_idx: usize },
-    NonUnitNorm { face_idx: usize, norm: f32 },
-    ExpectationMismatch { face_idx: usize },
+    ZeroAreaTriangle { face_idx: FaceIndex },
+    NonUnitNorm { face_idx: FaceIndex, norm: f32 },
+    ExpectationMismatch { face_idx: FaceIndex },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshFaceError {
     OutOfRangeVertexIndex {
         /// Index for the problematic face
-        face_idx: usize,
+        face_idx: FaceIndex,
         /// Which corner of the triangle holds the offending index.
         vertex_pos: TriVertexSlot,
         /// Value of the problematic vertex index, as found in the face.
@@ -158,7 +158,7 @@ pub enum MeshFaceError {
     },
     ZeroLengthEdge {
         /// Index for the problematic face
-        face_idx: usize,
+        face_idx: FaceIndex,
         /// One of the two corners that share the same vertex.
         vertex_pos_a: TriVertexSlot,
         /// The other corner that shares the same vertex.
@@ -168,37 +168,37 @@ pub enum MeshFaceError {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MeshFix {
     /// A face was removed because it had a zero-length edge
-    RemovedZeroLengthEdgeFace { face_idx: usize },
+    RemovedZeroLengthEdgeFace { face_idx: FaceIndex },
     /// A face's winding order was flipped (vertices reversed)
-    FlippedFaceOrientation { face_idx: usize },
+    FlippedFaceOrientation { face_idx: FaceIndex },
     /// A face's normal vector was recomputed from its vertices
     RecomputedNormal {
-        face_idx: usize,
+        face_idx: FaceIndex,
         old_normal: Normal,
         new_normal: Normal,
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshManifoldError {
     EmptyMesh,
     /// An edge that belongs to only one face (the mesh has a boundary).
     BoundaryEdge {
         edge: (u32, u32),
-        face_idx: usize,
+        face_idx: FaceIndex,
     },
     /// An edge shared by more than two faces.
     NonManifoldEdge {
         edge: (u32, u32),
-        face_indices: Vec<usize>,
+        face_indices: Vec<FaceIndex>,
     },
     /// Two faces share an edge but traverse it in the same direction,
     /// meaning their normals are inconsistently oriented.
     InconsistentWindingOrder {
         edge: (u32, u32),
-        face_indices: [usize; 2],
+        face_indices: [FaceIndex; 2],
     },
 }

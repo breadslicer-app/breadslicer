@@ -10,8 +10,8 @@ use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 
 use crate::errors::{
-    CoordAxis, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
-    TriVertexSlot, VertexIndex,
+    CoordAxis, FaceIndex, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError,
+    MeshVertexError, TriVertexSlot, VertexIndex,
 };
 use crate::geometry::{compute_normal_from_triangle_vertices, gt_strict};
 use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
@@ -62,12 +62,13 @@ impl IndexedMesh {
         let mut errors: Vec<MeshFaceError> = vec![];
 
         for (idx, f) in self.faces.iter().enumerate() {
+            let face_idx = FaceIndex::from(idx);
             // Checking out of range indices
             for &vertex_pos in &TriVertexSlot::ALL {
                 let vertex_idx = f.vertices[vertex_pos.as_index()];
                 if vertex_idx as usize >= num_vertices {
                     errors.push(MeshFaceError::OutOfRangeVertexIndex {
-                        face_idx: idx,
+                        face_idx,
                         vertex_pos,
                         vertex_idx: VertexIndex::from(vertex_idx),
                     });
@@ -84,7 +85,7 @@ impl IndexedMesh {
                 let b = f.vertices[pos_b.as_index()];
                 if a == b {
                     errors.push(MeshFaceError::ZeroLengthEdge {
-                        face_idx: idx,
+                        face_idx,
                         vertex_pos_a: pos_a,
                         vertex_pos_b: pos_b,
                         vertex_idx: VertexIndex::from(a),
@@ -104,6 +105,7 @@ impl IndexedMesh {
         let mut errors: Vec<MeshNormalVectorError> = vec![];
 
         for (idx, face) in self.faces.iter().enumerate() {
+            let face_idx = FaceIndex::from(idx);
             // Indices are guaranteed to be correct (we check them in `validate_faces`)
             let [i0, i1, i2] = face.vertices.map(|i| i as usize);
 
@@ -119,7 +121,7 @@ impl IndexedMesh {
 
             // degenerate (zero-area) triangles; also handles NaN coordinates.
             if !gt_strict(cross_mag_sq, f32::EPSILON as f64) {
-                errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx: idx });
+                errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx });
                 continue; // We don't continue processing this face
             }
 
@@ -130,7 +132,7 @@ impl IndexedMesh {
             // 1.0 by up to ~3 × 2⁻²³ ≈ 3.6e-7 due to f32 quantization of each component.
             if !approx_eq!(f64, n_mag_sq, 1.0, epsilon = 1e-6) {
                 errors.push(MeshNormalVectorError::NonUnitNorm {
-                    face_idx: idx,
+                    face_idx,
                     norm: n_mag_sq.sqrt() as f32,
                 });
                 continue; // We don't continue processing this face
@@ -153,7 +155,7 @@ impl IndexedMesh {
             const COS_MAX_DEVIATION: f64 = 0.9961946980917455; // cos(5°)
             let dot = cross.dot_product(&n);
             if dot < COS_MAX_DEVIATION {
-                errors.push(MeshNormalVectorError::ExpectationMismatch { face_idx: idx });
+                errors.push(MeshNormalVectorError::ExpectationMismatch { face_idx });
                 continue;
             }
         }
@@ -169,14 +171,15 @@ impl IndexedMesh {
         let mut errors: Vec<MeshManifoldError> = vec![];
 
         // Map each directed half-edge (a, b) to the list of face indices that contain it.
-        let mut half_edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        let mut half_edges: HashMap<(u32, u32), Vec<FaceIndex>> = HashMap::new();
 
         if self.faces.is_empty() {
             errors.push(MeshManifoldError::EmptyMesh);
             return Err(errors);
         }
 
-        for (face_idx, face) in self.faces.iter().enumerate() {
+        for (idx, face) in self.faces.iter().enumerate() {
+            let face_idx = FaceIndex::from(idx);
             let [v0, v1, v2] = face.vertices;
             for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
                 half_edges.entry((a, b)).or_default().push(face_idx);
@@ -249,7 +252,7 @@ impl IndexedMesh {
     ) -> Result<Vec<MeshFix>> {
         let mut fixes: Vec<MeshFix> = Vec::new();
 
-        let mut possibly_flipped_faces: HashMap<usize, u8> = std::collections::HashMap::new();
+        let mut possibly_flipped_faces: HashMap<FaceIndex, u8> = HashMap::new();
 
         if fix_flipped_faces {
             for error in manifold_errors {
@@ -264,7 +267,7 @@ impl IndexedMesh {
             }
         }
 
-        let mut faces_with_wrong_normals: HashSet<usize> = std::collections::HashSet::new();
+        let mut faces_with_wrong_normals: HashSet<FaceIndex> = HashSet::new();
         for error in normal_vector_errors {
             match error {
                 MeshNormalVectorError::ExpectationMismatch { face_idx }
@@ -297,7 +300,7 @@ impl IndexedMesh {
 
             for (face_idx, n_errors) in &possibly_flipped_faces {
                 if *n_errors == 3 || *n_errors == 2 {
-                    let face = &mut self.faces[*face_idx];
+                    let face = &mut self.faces[face_idx.get()];
                     face.vertices.reverse();
                     fixes.push(MeshFix::FlippedFaceOrientation {
                         face_idx: *face_idx,
@@ -329,7 +332,7 @@ impl IndexedMesh {
         if fix_face_normals {
             // We fix remaining normal vectors after having flipped faces
             for face_idx in &faces_with_wrong_normals {
-                let face = &mut self.faces[*face_idx];
+                let face = &mut self.faces[face_idx.get()];
                 let old_normal = face.normal;
                 face.normal = compute_normal_from_triangle_vertices(&[
                     self.vertices[face.vertices[0] as usize],
@@ -348,7 +351,7 @@ impl IndexedMesh {
     }
 
     pub fn fix_zero_length_edges(&mut self, face_errors: &[MeshFaceError]) -> Vec<MeshFix> {
-        let mut faces_to_remove: Vec<usize> = face_errors
+        let mut faces_to_remove: Vec<FaceIndex> = face_errors
             .iter()
             .filter_map(|e| {
                 if let MeshFaceError::ZeroLengthEdge {
@@ -376,7 +379,7 @@ impl IndexedMesh {
         for face_idx in faces_to_remove.iter().rev() {
             // Note: `remove` is O(n), we could use `remove_swap` (O(1)), but
             //       it can mess up the ordering of our faces.
-            self.faces.remove(*face_idx);
+            self.faces.remove(face_idx.get());
         }
 
         fixes
@@ -415,84 +418,78 @@ mod indexed_mesh_validate_vertices_tests {
     fn detects_infinite_x() {
         let mesh = make_mesh(vec![Vertex::new([f32::INFINITY, 0.0, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::InfiniteCoordinate {
+        assert_eq!(
+            errors,
+            vec![MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
                 coord: CoordAxis::X,
-            }
-        ));
+            }]
+        );
     }
 
     #[test]
     fn detects_infinite_y() {
         let mesh = make_mesh(vec![Vertex::new([0.0, f32::NEG_INFINITY, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::InfiniteCoordinate {
+        assert_eq!(
+            errors,
+            vec![MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
                 coord: CoordAxis::Y,
-            }
-        ));
+            }]
+        );
     }
 
     #[test]
     fn detects_infinite_z() {
         let mesh = make_mesh(vec![Vertex::new([0.0, 0.0, f32::INFINITY])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::InfiniteCoordinate {
+        assert_eq!(
+            errors,
+            vec![MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
                 coord: CoordAxis::Z,
-            }
-        ));
+            }]
+        );
     }
 
     #[test]
     fn detects_nan_x() {
         let mesh = make_mesh(vec![Vertex::new([f32::NAN, 0.0, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::NaNCoordinate {
+        assert_eq!(
+            errors,
+            vec![MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
                 coord: CoordAxis::X,
-            }
-        ));
+            }]
+        );
     }
 
     #[test]
     fn detects_nan_y() {
         let mesh = make_mesh(vec![Vertex::new([0.0, f32::NAN, 0.0])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::NaNCoordinate {
+        assert_eq!(
+            errors,
+            vec![MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
                 coord: CoordAxis::Y,
-            }
-        ));
+            }]
+        );
     }
 
     #[test]
     fn detects_nan_z() {
         let mesh = make_mesh(vec![Vertex::new([0.0, 0.0, f32::NAN])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::NaNCoordinate {
+        assert_eq!(
+            errors,
+            vec![MeshVertexError::NaNCoordinate {
                 vertex_idx: 0,
                 coord: CoordAxis::Z,
-            }
-        ));
+            }]
+        );
     }
 
     #[test]
@@ -503,28 +500,23 @@ mod indexed_mesh_validate_vertices_tests {
             f32::NEG_INFINITY,
         ])]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 3);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::InfiniteCoordinate {
-                vertex_idx: 0,
-                coord: CoordAxis::X,
-            }
-        ));
-        assert!(matches!(
-            errors[1],
-            MeshVertexError::NaNCoordinate {
-                vertex_idx: 0,
-                coord: CoordAxis::Y,
-            }
-        ));
-        assert!(matches!(
-            errors[2],
-            MeshVertexError::InfiniteCoordinate {
-                vertex_idx: 0,
-                coord: CoordAxis::Z,
-            }
-        ));
+        assert_eq!(
+            errors,
+            vec![
+                MeshVertexError::InfiniteCoordinate {
+                    vertex_idx: 0,
+                    coord: CoordAxis::X,
+                },
+                MeshVertexError::NaNCoordinate {
+                    vertex_idx: 0,
+                    coord: CoordAxis::Y,
+                },
+                MeshVertexError::InfiniteCoordinate {
+                    vertex_idx: 0,
+                    coord: CoordAxis::Z,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -535,28 +527,26 @@ mod indexed_mesh_validate_vertices_tests {
             Vertex::new([0.0, f32::INFINITY, 0.0]),
         ]);
         let errors = mesh.validate_vertices().unwrap_err();
-        assert_eq!(errors.len(), 2);
-        assert!(matches!(
-            errors[0],
-            MeshVertexError::NaNCoordinate {
-                vertex_idx: 0,
-                coord: CoordAxis::X,
-            }
-        ));
-        assert!(matches!(
-            errors[1],
-            MeshVertexError::InfiniteCoordinate {
-                vertex_idx: 2,
-                coord: CoordAxis::Y,
-            }
-        ));
+        assert_eq!(
+            errors,
+            vec![
+                MeshVertexError::NaNCoordinate {
+                    vertex_idx: 0,
+                    coord: CoordAxis::X,
+                },
+                MeshVertexError::InfiniteCoordinate {
+                    vertex_idx: 2,
+                    coord: CoordAxis::Y,
+                },
+            ]
+        );
     }
 }
 
 #[cfg(test)]
 mod indexed_mesh_validate_faces_tests {
     use super::*;
-    use crate::errors::{MeshFaceError, TriVertexSlot, VertexIndex};
+    use crate::errors::{MeshFaceError, TriVertexSlot};
     use crate::primitives::Normal;
 
     fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
@@ -586,93 +576,91 @@ mod indexed_mesh_validate_faces_tests {
         assert!(mesh.validate_faces().is_ok());
     }
 
-    fn assert_out_of_range(
-        error: &MeshFaceError,
-        expected_face_idx: usize,
-        expected_pos: TriVertexSlot,
-        expected_idx: u32,
-    ) {
-        let MeshFaceError::OutOfRangeVertexIndex {
-            face_idx,
-            vertex_pos,
-            vertex_idx,
-        } = error
-        else {
-            panic!("expected OutOfRangeVertexIndex, got {error:?}");
-        };
-        assert_eq!(*face_idx, expected_face_idx);
-        assert_eq!(*vertex_pos, expected_pos);
-        assert_eq!(*vertex_idx, VertexIndex::from(expected_idx));
-    }
-
-    fn assert_zero_length_edge(
-        error: &MeshFaceError,
-        expected_face_idx: usize,
-        expected_pos_a: TriVertexSlot,
-        expected_pos_b: TriVertexSlot,
-        expected_idx: u32,
-    ) {
-        let MeshFaceError::ZeroLengthEdge {
-            face_idx,
-            vertex_pos_a,
-            vertex_pos_b,
-            vertex_idx,
-        } = error
-        else {
-            panic!("expected ZeroLengthEdge, got {error:?}");
-        };
-        assert_eq!(*face_idx, expected_face_idx);
-        assert_eq!(*vertex_pos_a, expected_pos_a);
-        assert_eq!(*vertex_pos_b, expected_pos_b);
-        assert_eq!(*vertex_idx, VertexIndex::from(expected_idx));
-    }
-
     #[test]
     fn detects_out_of_range_vertex_pos_0() {
         let mesh = make_mesh_with_faces(3, vec![make_face(5, 0, 1)]);
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_out_of_range(&errors[0], 0, TriVertexSlot::V0, 5);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0_usize.into(),
+                vertex_pos: TriVertexSlot::V0,
+                vertex_idx: 5_u32.into(),
+            }]
+        );
     }
 
     #[test]
     fn detects_out_of_range_vertex_pos_1() {
         let mesh = make_mesh_with_faces(3, vec![make_face(0, 10, 1)]);
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_out_of_range(&errors[0], 0, TriVertexSlot::V1, 10);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0_usize.into(),
+                vertex_pos: TriVertexSlot::V1,
+                vertex_idx: 10_u32.into(),
+            }]
+        );
     }
 
     #[test]
     fn detects_out_of_range_vertex_pos_2() {
         let mesh = make_mesh_with_faces(3, vec![make_face(0, 1, 99)]);
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_out_of_range(&errors[0], 0, TriVertexSlot::V2, 99);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 0_usize.into(),
+                vertex_pos: TriVertexSlot::V2,
+                vertex_idx: 99_u32.into(),
+            }]
+        );
     }
 
     #[test]
     fn detects_collapsed_edge_01() {
         let mesh = make_mesh_with_faces(3, vec![make_face(1, 1, 2)]);
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_zero_length_edge(&errors[0], 0, TriVertexSlot::V0, TriVertexSlot::V1, 1);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::ZeroLengthEdge {
+                face_idx: 0_usize.into(),
+                vertex_pos_a: TriVertexSlot::V0,
+                vertex_pos_b: TriVertexSlot::V1,
+                vertex_idx: 1_u32.into(),
+            }]
+        );
     }
 
     #[test]
     fn detects_collapsed_edge_12() {
         let mesh = make_mesh_with_faces(3, vec![make_face(0, 2, 2)]);
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_zero_length_edge(&errors[0], 0, TriVertexSlot::V1, TriVertexSlot::V2, 2);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::ZeroLengthEdge {
+                face_idx: 0_usize.into(),
+                vertex_pos_a: TriVertexSlot::V1,
+                vertex_pos_b: TriVertexSlot::V2,
+                vertex_idx: 2_u32.into(),
+            }]
+        );
     }
 
     #[test]
     fn detects_collapsed_edge_20() {
         let mesh = make_mesh_with_faces(3, vec![make_face(0, 1, 0)]);
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_zero_length_edge(&errors[0], 0, TriVertexSlot::V2, TriVertexSlot::V0, 0);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::ZeroLengthEdge {
+                face_idx: 0_usize.into(),
+                vertex_pos_a: TriVertexSlot::V2,
+                vertex_pos_b: TriVertexSlot::V0,
+                vertex_idx: 0_u32.into(),
+            }]
+        );
     }
 
     #[test]
@@ -734,8 +722,15 @@ mod indexed_mesh_validate_faces_tests {
             ],
         );
         let errors = mesh.validate_faces().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_zero_length_edge(&errors[0], 1, TriVertexSlot::V0, TriVertexSlot::V1, 0);
+        assert_eq!(
+            errors,
+            vec![MeshFaceError::ZeroLengthEdge {
+                face_idx: 1_usize.into(),
+                vertex_pos_a: TriVertexSlot::V0,
+                vertex_pos_b: TriVertexSlot::V1,
+                vertex_idx: 0_u32.into(),
+            }]
+        );
     }
 }
 
@@ -794,11 +789,12 @@ mod indexed_mesh_validate_normal_vectors_tests {
         ];
         let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
         let errors = mesh.validate_normal_vectors().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }
-        ));
+        assert_eq!(
+            errors,
+            vec![MeshNormalVectorError::ZeroAreaTriangle {
+                face_idx: 0_usize.into()
+            }]
+        );
     }
 
     #[test]
@@ -810,11 +806,12 @@ mod indexed_mesh_validate_normal_vectors_tests {
         ];
         let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
         let errors = mesh.validate_normal_vectors().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }
-        ));
+        assert_eq!(
+            errors,
+            vec![MeshNormalVectorError::ZeroAreaTriangle {
+                face_idx: 0_usize.into()
+            }]
+        );
     }
 
     #[test]
@@ -828,7 +825,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
         assert_eq!(errors.len(), 1);
         match &errors[0] {
             MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
-                assert_eq!(*face_idx, 0);
+                assert_eq!(*face_idx, 0_usize.into());
                 assert!((*norm - 2.0).abs() < 1e-6);
             }
             other => panic!("expected NonUnitNorm, got {:?}", other),
@@ -846,7 +843,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
         assert_eq!(errors.len(), 1);
         match &errors[0] {
             MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
-                assert_eq!(*face_idx, 0);
+                assert_eq!(*face_idx, 0_usize.into());
                 assert!((*norm - 0.5).abs() < 1e-6);
             }
             other => panic!("expected NonUnitNorm, got {:?}", other),
@@ -861,10 +858,12 @@ mod indexed_mesh_validate_normal_vectors_tests {
         );
         let errors = mesh.validate_normal_vectors().unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::NonUnitNorm { face_idx: 0, .. }
-        ));
+        match &errors[0] {
+            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
+                assert_eq!(*face_idx, 0_usize.into());
+            }
+            other => panic!("expected NonUnitNorm, got {:?}", other),
+        }
     }
 
     #[test]
@@ -875,11 +874,12 @@ mod indexed_mesh_validate_normal_vectors_tests {
             vec![face([0.0, 0.0, -1.0], [0, 1, 2])],
         );
         let errors = mesh.validate_normal_vectors().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::ExpectationMismatch { face_idx: 0 }
-        ));
+        assert_eq!(
+            errors,
+            vec![MeshNormalVectorError::ExpectationMismatch {
+                face_idx: 0_usize.into()
+            }]
+        );
     }
 
     #[test]
@@ -890,11 +890,12 @@ mod indexed_mesh_validate_normal_vectors_tests {
             vec![face([1.0, 0.0, 0.0], [0, 1, 2])],
         );
         let errors = mesh.validate_normal_vectors().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::ExpectationMismatch { face_idx: 0 }
-        ));
+        assert_eq!(
+            errors,
+            vec![MeshNormalVectorError::ExpectationMismatch {
+                face_idx: 0_usize.into()
+            }]
+        );
     }
 
     #[test]
@@ -917,11 +918,12 @@ mod indexed_mesh_validate_normal_vectors_tests {
             ],
         );
         let errors = mesh.validate_normal_vectors().unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::ExpectationMismatch { face_idx: 1 }
-        ));
+        assert_eq!(
+            errors,
+            vec![MeshNormalVectorError::ExpectationMismatch {
+                face_idx: 1_usize.into()
+            }]
+        );
     }
 
     #[test]
@@ -940,15 +942,17 @@ mod indexed_mesh_validate_normal_vectors_tests {
             ],
         );
         let errors = mesh.validate_normal_vectors().unwrap_err();
-        assert_eq!(errors.len(), 2);
-        assert!(matches!(
-            errors[0],
-            MeshNormalVectorError::ExpectationMismatch { face_idx: 0 }
-        ));
-        assert!(matches!(
-            errors[1],
-            MeshNormalVectorError::ZeroAreaTriangle { face_idx: 1 }
-        ));
+        assert_eq!(
+            errors,
+            vec![
+                MeshNormalVectorError::ExpectationMismatch {
+                    face_idx: 0_usize.into()
+                },
+                MeshNormalVectorError::ZeroAreaTriangle {
+                    face_idx: 1_usize.into()
+                },
+            ]
+        );
     }
 
     #[test]
@@ -969,7 +973,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
 #[cfg(test)]
 mod indexed_mesh_validate_manifold_tests {
     use super::*;
-    use crate::errors::MeshManifoldError;
+    use crate::errors::{FaceIndex, MeshManifoldError};
     use crate::primitives::Normal;
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
@@ -1072,7 +1076,9 @@ mod indexed_mesh_validate_manifold_tests {
         match &winding_errors[0] {
             MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
                 assert_eq!(*edge, (0, 1));
-                assert!(face_indices.contains(&0) && face_indices.contains(&1));
+                let zero: FaceIndex = 0_usize.into();
+                let one: FaceIndex = 1_usize.into();
+                assert!(face_indices.contains(&zero) && face_indices.contains(&one));
             }
             other => panic!("expected InconsistentWindingOrder, got {:?}", other),
         }
@@ -1349,19 +1355,19 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = vec![
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (0, 1),
-                face_indices: [0, 1],
+                face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (1, 2),
-                face_indices: [0, 2],
+                face_indices: [0_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (2, 0),
-                face_indices: [0, 3],
+                face_indices: [0_usize.into(), 3_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (0, 3),
-                face_indices: [0, 1],
+                face_indices: [0_usize.into(), 1_usize.into()],
             },
         ];
 
@@ -1385,29 +1391,29 @@ mod indexed_mesh_fix_faces_orientation_tests {
             // Face 0: 3 errors
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (0, 1),
-                face_indices: [0, 1],
+                face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (1, 2),
-                face_indices: [0, 2],
+                face_indices: [0_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (2, 0),
-                face_indices: [0, 3],
+                face_indices: [0_usize.into(), 3_usize.into()],
             },
             // Face 1: 2 more errors (already has 1 from above)
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (0, 3),
-                face_indices: [1, 2],
+                face_indices: [1_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (3, 1),
-                face_indices: [1, 3],
+                face_indices: [1_usize.into(), 3_usize.into()],
             },
             // Face 2: 1 more error (already has 2 from above)
             MeshManifoldError::InconsistentWindingOrder {
                 edge: (2, 3),
-                face_indices: [2, 3],
+                face_indices: [2_usize.into(), 3_usize.into()],
             },
         ];
 
@@ -1429,11 +1435,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = vec![
             MeshManifoldError::BoundaryEdge {
                 edge: (0, 1),
-                face_idx: 0,
+                face_idx: 0_usize.into(),
             },
             MeshManifoldError::NonManifoldEdge {
                 edge: (1, 2),
-                face_indices: vec![0, 1, 2],
+                face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into()],
             },
         ];
 
@@ -1447,7 +1453,9 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let mut mesh = tetrahedron();
         let original = mesh.clone();
 
-        let normal_errors = vec![MeshNormalVectorError::ZeroAreaTriangle { face_idx: 0 }];
+        let normal_errors = vec![MeshNormalVectorError::ZeroAreaTriangle {
+            face_idx: 0_usize.into(),
+        }];
 
         mesh.fix_faces_orientation(&[], &normal_errors, false, false)
             .unwrap();
@@ -1462,7 +1470,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // Only 1 winding error for face 0 — below threshold of 2
         let manifold_errors = vec![MeshManifoldError::InconsistentWindingOrder {
             edge: (0, 1),
-            face_indices: [0, 1],
+            face_indices: [0_usize.into(), 1_usize.into()],
         }];
 
         mesh.fix_faces_orientation(&manifold_errors, &[], true, true)
@@ -1589,7 +1597,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
         // should ignore them and leave the mesh untouched.
         let mut mesh = make_mesh(3, vec![face(0, 1, 2)]);
         let errors = vec![MeshFaceError::OutOfRangeVertexIndex {
-            face_idx: 0,
+            face_idx: 0_usize.into(),
             vertex_pos: TriVertexSlot::V0,
             vertex_idx: VertexIndex::from(99_u32),
         }];
@@ -1606,11 +1614,12 @@ mod indexed_mesh_fix_zero_length_edges_tests {
         let fixes = mesh.fix_zero_length_edges(&errors);
 
         assert_eq!(mesh.faces.len(), 0);
-        assert_eq!(fixes.len(), 1);
-        assert!(matches!(
-            fixes[0],
-            MeshFix::RemovedZeroLengthEdgeFace { face_idx: 0 }
-        ));
+        assert_eq!(
+            fixes,
+            vec![MeshFix::RemovedZeroLengthEdgeFace {
+                face_idx: 0_usize.into()
+            }]
+        );
     }
 
     #[test]
@@ -1628,12 +1637,10 @@ mod indexed_mesh_fix_zero_length_edges_tests {
         assert_eq!(mesh.faces.len(), 0);
         // One face was removed, but the fix log still mirrors the original
         // error list — caller can choose to deduplicate the report.
-        assert_eq!(fixes.len(), 3);
-        assert!(
-            fixes
-                .iter()
-                .all(|f| matches!(f, MeshFix::RemovedZeroLengthEdgeFace { face_idx: 0 }))
-        );
+        let zero = MeshFix::RemovedZeroLengthEdgeFace {
+            face_idx: 0_usize.into(),
+        };
+        assert_eq!(fixes, vec![zero.clone(), zero.clone(), zero]);
     }
 
     #[test]
@@ -1655,7 +1662,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
     fn mixed_error_kinds_only_remove_collapsed_faces() {
         let mut mesh = make_mesh(3, vec![face(0, 1, 2), face(0, 1, 1)]);
         let mut errors = vec![MeshFaceError::OutOfRangeVertexIndex {
-            face_idx: 0,
+            face_idx: 0_usize.into(),
             vertex_pos: TriVertexSlot::V0,
             vertex_idx: VertexIndex::from(99_u32),
         }];
