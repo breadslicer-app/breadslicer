@@ -53,7 +53,6 @@ pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Vec3 {
 /// lock-out (`arc_pickable`) is what keeps `denom` away from zero
 /// in the steady state; the small floor here is a defensive guard
 /// for callers that bypass the lock-out (e.g. tests).
-#[allow(dead_code)]
 fn ray_hits_axis_plane(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
     let a = axis.world_dir();
     let denom = ray.direction.dot(a);
@@ -71,7 +70,6 @@ fn ray_hits_axis_plane(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
 /// `axis` using the right-handed basis from `axis_basis`. A point on
 /// `pivot + u` returns 0; on `pivot + v` returns `π/2`; on
 /// `pivot - u` returns ±π.
-#[allow(dead_code)]
 pub fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
     let (u, v) = axis_basis(axis);
     let p = point - pivot;
@@ -88,7 +86,6 @@ pub fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
 /// Returns `None` only for the degenerate cases that
 /// [`super::arc_pickable`] is supposed to forbid; the controller is
 /// expected to gate this call on that lock-out at gesture start.
-#[allow(dead_code)]
 pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
     let hit = ray_hits_axis_plane(ray, pivot, axis)?;
     Some(axis_plane_angle(hit, pivot, axis))
@@ -106,7 +103,6 @@ pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
 /// with the pivot along the axis: the ratio is undefined there
 /// and the drag should not move the object until the cursor leaves
 /// the pivot's neighbourhood.
-#[allow(dead_code)]
 pub fn scale_factor_along_axis(
     start_anchor: Vec3,
     current_anchor: Vec3,
@@ -135,7 +131,6 @@ pub fn scale_factor_along_axis(
 ///
 /// Returns `1.0` when the press lands within `1e-6` pixels of the
 /// projected pivot — the ratio is undefined there.
-#[allow(dead_code)]
 pub fn uniform_scale_factor(
     pivot_screen_x: f32,
     pivot_screen_y: f32,

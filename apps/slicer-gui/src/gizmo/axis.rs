@@ -32,7 +32,6 @@ pub const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 /// grows CCW about `+axis` (right-hand rule). Caller code that wants
 /// the user's "screen clockwise = +rotation" convention flips the
 /// sign at composition time, where the camera direction is also known.
-#[allow(dead_code)]
 pub(super) fn axis_basis(axis: Axis) -> (Vec3, Vec3) {
     match axis {
         Axis::X => (Vec3::Y, Vec3::Z),

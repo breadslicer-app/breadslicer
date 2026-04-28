@@ -34,5 +34,4 @@ pub(super) const ROTATE_LOCKOUT_COS: f32 = 0.139_173_1;
 /// clamped down. Mirroring (negative scale) is disallowed through
 /// the gizmo, so the bound also rejects sign flips. The user sees
 /// the gizmo "stick" at the limit.
-#[allow(dead_code)]
 pub(super) const EPS_SCALE: f32 = 1e-3;
