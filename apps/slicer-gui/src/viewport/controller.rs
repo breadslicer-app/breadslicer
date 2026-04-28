@@ -755,7 +755,7 @@ impl ViewportController {
 
         let op = match winner {
             HandleHit::Translate(axis) => {
-                let anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+                let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
                 DragOp::Translate { axis, anchor }
             }
             HandleHit::Rotate(axis) => {
@@ -763,7 +763,8 @@ impl ViewportController {
                 // arc lock-out, which `rotate_hit_test` already
                 // rejected — but bail defensively if it slips
                 // through, leaving the press as a click candidate.
-                let Some(start_angle) = gizmo::rotate_drag_angle(&ray, pivot, axis) else {
+                let Some(start_angle) = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)
+                else {
                     return;
                 };
                 DragOp::Rotate {
@@ -774,7 +775,7 @@ impl ViewportController {
                 }
             }
             HandleHit::ScaleAxis(axis) => {
-                let start_anchor = gizmo::closest_point_on_axis(&ray, pivot, axis);
+                let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
                 // The uniform-branch anchors are captured at press as
                 // well, even when `proportional` starts false — that
                 // way a mid-drag Shift press flips the formula
@@ -1803,8 +1804,9 @@ mod viewport_click_tests {
         let fov_y = default_fov_y();
         let press_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1);
         let release_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1);
-        let press_anchor = gizmo::closest_point_on_axis(&press_ray, Vec3::ZERO, Axis::X);
-        let release_anchor = gizmo::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
+        let press_anchor = gizmo::drag_math::closest_point_on_axis(&press_ray, Vec3::ZERO, Axis::X);
+        let release_anchor =
+            gizmo::drag_math::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
         let expected = release_anchor - press_anchor;
 
         ctrl.on_pointer_down(press.0, press.1, no_mods());
@@ -1835,12 +1837,12 @@ mod viewport_click_tests {
         let (vw, vh) = GIZMO_TEST_VIEWPORT;
         let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
         let fov_y = default_fov_y();
-        let press_anchor = gizmo::closest_point_on_axis(
+        let press_anchor = gizmo::drag_math::closest_point_on_axis(
             &picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1),
             Vec3::ZERO,
             Axis::X,
         );
-        let release_anchor = gizmo::closest_point_on_axis(
+        let release_anchor = gizmo::drag_math::closest_point_on_axis(
             &picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1),
             Vec3::ZERO,
             Axis::X,

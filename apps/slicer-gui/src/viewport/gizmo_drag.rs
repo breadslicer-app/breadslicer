@@ -130,7 +130,7 @@ pub(super) fn apply_drag_move(
 ) -> Option<(Transform3D, DragOp)> {
     match op {
         DragOp::Translate { axis, anchor } => {
-            let new_anchor = gizmo::closest_point_on_axis(ray, pivot, axis);
+            let new_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis);
             let delta = new_anchor - anchor;
             let translation = AffineTransform3D::from_translation([
                 delta.x as f64,
@@ -145,7 +145,7 @@ pub(super) fn apply_drag_move(
             last_raw,
             current_unwrapped,
         } => {
-            let raw = gizmo::rotate_drag_angle(ray, pivot, axis)?;
+            let raw = gizmo::drag_math::rotate_drag_angle(ray, pivot, axis)?;
             let new_unwrapped = unwrap_angle(last_raw, current_unwrapped, raw);
             let delta_angle = new_unwrapped - start_angle;
             let new_op = DragOp::Rotate {
@@ -168,7 +168,7 @@ pub(super) fn apply_drag_move(
             pivot_screen,
         } => {
             let scale_mat = if proportional {
-                let factor = gizmo::uniform_scale_factor(
+                let factor = gizmo::drag_math::uniform_scale_factor(
                     pivot_screen.0,
                     pivot_screen.1,
                     press_screen.0,
@@ -178,9 +178,13 @@ pub(super) fn apply_drag_move(
                 );
                 AffineTransform3D::from_uniform_scale(factor as f64)
             } else {
-                let current_anchor = gizmo::closest_point_on_axis(ray, pivot, axis);
-                let factor =
-                    gizmo::scale_factor_along_axis(start_anchor, current_anchor, pivot, axis);
+                let current_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis);
+                let factor = gizmo::drag_math::scale_factor_along_axis(
+                    start_anchor,
+                    current_anchor,
+                    pivot,
+                    axis,
+                );
                 scale_along_axis(axis, factor)
             };
             Some((compose_about_pivot(&scale_mat, pivot, original), op))
@@ -189,7 +193,7 @@ pub(super) fn apply_drag_move(
             press_screen,
             pivot_screen,
         } => {
-            let factor = gizmo::uniform_scale_factor(
+            let factor = gizmo::drag_math::uniform_scale_factor(
                 pivot_screen.0,
                 pivot_screen.1,
                 press_screen.0,
@@ -231,7 +235,7 @@ pub(super) fn re_anchor_scale_axis(
     let ray = picking::ray_from_pixel(
         ctx.camera, ctx.fov_y, viewport_w, viewport_h, cursor_x, cursor_y,
     );
-    let start_anchor = gizmo::closest_point_on_axis(&ray, ctx.pivot, axis);
+    let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, ctx.pivot, axis);
     let new_op = DragOp::ScaleAxis {
         axis,
         start_anchor,
