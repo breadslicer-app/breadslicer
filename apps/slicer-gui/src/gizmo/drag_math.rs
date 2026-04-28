@@ -70,7 +70,7 @@ fn ray_hits_axis_plane(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
 /// `axis` using the right-handed basis from `axis_basis`. A point on
 /// `pivot + u` returns 0; on `pivot + v` returns `π/2`; on
 /// `pivot - u` returns ±π.
-pub fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
+fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
     let (u, v) = axis_basis(axis);
     let p = point - pivot;
     p.dot(v).atan2(p.dot(u))
@@ -84,7 +84,7 @@ pub fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
 /// `R(axis, delta_angle)` about the world-space pivot.
 ///
 /// Returns `None` only for the degenerate cases that
-/// [`super::arc_pickable`] is supposed to forbid; the controller is
+/// [`super::hit_test::arc_pickable`] is supposed to forbid; the controller is
 /// expected to gate this call on that lock-out at gesture start.
 pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
     let hit = ray_hits_axis_plane(ray, pivot, axis)?;

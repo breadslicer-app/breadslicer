@@ -259,7 +259,7 @@ pub fn rotate_hit_test(
 /// `pivot + axis_dir * shaft_length_world * MIDPOINT_FRACTION`,
 /// with side length `cube_world`. Returns the entry parameter `t`
 /// when the ray hits, or `None`.
-pub fn ray_hits_axis_cube(
+fn ray_hits_axis_cube(
     ray: &Ray,
     pivot: Vec3,
     axis: Axis,
@@ -274,7 +274,7 @@ pub fn ray_hits_axis_cube(
 /// Ray-vs-AABB for the centre (uniform-scale) cube. The cube is
 /// axis-aligned in world space, centred at `pivot`, with side
 /// length `cube_world`.
-pub fn ray_hits_centre_cube(ray: &Ray, pivot: Vec3, cube_world: f32) -> Option<f32> {
+fn ray_hits_centre_cube(ray: &Ray, pivot: Vec3, cube_world: f32) -> Option<f32> {
     let half = Vec3::splat(cube_world * 0.5);
     ray_hits_aabb_t(ray, pivot - half, pivot + half)
 }
