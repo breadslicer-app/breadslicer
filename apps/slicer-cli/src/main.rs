@@ -13,7 +13,7 @@ use anyhow::Result;
 
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
-use crate::commands::fix::fix;
+use crate::commands::fix::{FixOptions, fix};
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
 
 fn main() -> Result<()> {
@@ -43,9 +43,11 @@ fn main() -> Result<()> {
             source_format,
             target,
             target_format,
-            fix_zero_length_edges,
-            fix_flipped_faces,
-            fix_face_normals,
+            FixOptions {
+                zero_length_edges: fix_zero_length_edges,
+                flipped_faces: fix_flipped_faces,
+                face_normals: fix_face_normals,
+            },
         ),
         CmdOptions::Help => {
             let help_text = get_cmd_options()

@@ -173,6 +173,32 @@ pub struct Scene {
     pub objects: Vec<SceneObject>,
 }
 
+impl Scene {
+    pub fn new(
+        meta: Option<SceneMetadata>,
+        resources: Vec<IndexedMesh>,
+        objects: Vec<SceneObject>,
+    ) -> Self {
+        Self {
+            meta,
+            resources,
+            objects,
+        }
+    }
+
+    pub fn meta(&self) -> &Option<SceneMetadata> {
+        &self.meta
+    }
+
+    pub fn resources(&self) -> &[IndexedMesh] {
+        &self.resources
+    }
+
+    pub fn objects(&self) -> &[SceneObject] {
+        &self.objects
+    }
+}
+
 /// Computes the local (object-space) AABB of a mesh's vertices. Returns
 /// `None` if the mesh has no vertices.
 fn local_aabb(mesh: &IndexedMesh) -> Option<Aabb> {
