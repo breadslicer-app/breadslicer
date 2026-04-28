@@ -5,5 +5,6 @@
 
 mod controller;
 mod gizmo_drag;
+mod keyboard_drive;
 
 pub(crate) use controller::{RESIZE_SETTLE, ViewportController};
