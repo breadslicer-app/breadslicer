@@ -5,6 +5,7 @@
 
 mod controller;
 mod gizmo_drag;
+mod input_state;
 mod keyboard_drive;
 mod object_list;
 mod selection_state;
