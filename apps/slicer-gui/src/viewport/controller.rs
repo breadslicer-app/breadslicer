@@ -19,7 +19,7 @@ use super::keyboard_drive::{
     ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS, ArrowDrive,
     KBD_MAX_DT, KbdFocus, keyboard_step,
 };
-use super::types::{InputPhase, ObjectIdx, ScreenPoint, Selection};
+use super::types::{FrameState, InputPhase, ObjectIdx, ScreenPoint, Selection};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
@@ -39,22 +39,13 @@ pub struct ViewportController {
     // be manipulated without a GPU present.
     camera: RefCell<Option<OrbitCamera>>,
     viewport: Cell<(f32, f32)>,
-    // "Redraw owed": something that affects the rendered image
-    // changed (camera, selection, gizmo state, scene transform, …)
-    // and the next `handle_before_rendering` should produce a new
-    // frame. Cleared after the renderer hands back a texture.
-    dirty: Cell<bool>,
-    // "GPU upload owed": the CPU-side scene differs from the buffers
-    // the renderer holds (fresh load, post-teardown re-init, …) and
-    // `handle_before_rendering` must call `upload_scene` before
-    // rendering. Cleared on successful upload; left set on upload
-    // failure so the next setup or scene reload retries.
-    //
-    // Independent of `dirty`: a successful upload also sets `dirty`
-    // so the just-uploaded scene is rendered, and `dirty` can be set
-    // alone (e.g. camera moved without a scene change). Both flags
-    // can legitimately be true at once.
-    needs_upload: Cell<bool>,
+    // Per-frame work owed: a redraw (something visual changed) and/or
+    // a GPU upload (CPU-side scene differs from the renderer's
+    // buffers). Both can be set independently — a successful upload
+    // also sets the redraw flag so the just-uploaded scene is shown,
+    // and a redraw can be flagged alone (e.g. camera moved without a
+    // scene change).
+    frame: Cell<FrameState>,
     // Index into `scene.objects` of the single currently-selected
     // object, or `None` if nothing is selected. The renderer reads
     // this when writing per-frame model entries (driving the
@@ -120,8 +111,7 @@ impl ViewportController {
             scene: RefCell::new(None),
             camera: RefCell::new(None),
             viewport: Cell::new((0.0, 0.0)),
-            dirty: Cell::new(false),
-            needs_upload: Cell::new(false),
+            frame: Cell::new(FrameState::default()),
             selection: Cell::new(Selection::None),
             input_phase: Cell::new(InputPhase::Idle),
             gizmo: Cell::new(GizmoState::Idle),
@@ -149,8 +139,7 @@ impl ViewportController {
             scene: RefCell::new(None),
             camera: RefCell::new(None),
             viewport: Cell::new((0.0, 0.0)),
-            dirty: Cell::new(false),
-            needs_upload: Cell::new(false),
+            frame: Cell::new(FrameState::default()),
             selection: Cell::new(Selection::None),
             input_phase: Cell::new(InputPhase::Idle),
             gizmo: Cell::new(GizmoState::Idle),
@@ -168,6 +157,16 @@ impl ViewportController {
         *self.scene.borrow_mut() = Some(scene);
     }
 
+    #[cfg(test)]
+    pub(crate) fn clear_frame_state_for_test(&self) {
+        self.frame.set(FrameState::default());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn redraw_owed_for_test(&self) -> bool {
+        self.frame.get().redraw_owed()
+    }
+
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
     /// handshake (begin/end, stamp, slot) against the loader directly
     /// rather than through delegating methods on the controller.
@@ -182,7 +181,7 @@ impl ViewportController {
     }
 
     fn mark_dirty(&self) {
-        self.dirty.set(true);
+        self.frame.update(FrameState::with_redraw_owed);
         self.request_redraw();
     }
 
@@ -251,8 +250,7 @@ impl ViewportController {
         self.loader.invalidate_and_clear();
         *self.scene.borrow_mut() = None;
         *self.camera.borrow_mut() = None;
-        self.needs_upload.set(false);
-        self.dirty.set(false);
+        self.frame.set(FrameState::default());
         self.selection.set(Selection::None);
         // The drag's captured `object_idx` becomes meaningless once
         // the scene is gone; clear FSM state without trying to
@@ -306,8 +304,6 @@ impl ViewportController {
         self.selection.set(Selection::None);
         // If install succeeded, the buffers are already on the GPU; no
         // upload owed. Otherwise, defer to the recovery upload path.
-        self.needs_upload.set(!scene_installed);
-
         if scene_installed {
             self.loader.note_upload_success();
             // Frame the camera off the AABB the worker computed.
@@ -321,7 +317,9 @@ impl ViewportController {
                 let radius = ((max - min).length() * 0.5).max(1e-3);
                 *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
             }
-            self.dirty.set(true);
+            self.frame.update(FrameState::with_redraw_owed);
+        } else {
+            self.frame.update(FrameState::with_upload_owed);
         }
 
         if let Some(ui) = self.ui.upgrade() {
@@ -940,7 +938,7 @@ impl ViewportController {
         *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
         self.loader.reset_upload_failures();
         if self.scene.borrow().is_some() {
-            self.needs_upload.set(true);
+            self.frame.update(FrameState::with_upload_owed);
             self.request_redraw();
         }
     }
@@ -948,15 +946,15 @@ impl ViewportController {
     // Release GPU-owning state before the graphics context goes away. The
     // scene (CPU-side) and the camera stay in the controller, so the next
     // `RenderingSetup` can re-upload without losing the user's view —
-    // `handle_rendering_setup` flips `needs_upload` on its own when a scene
-    // is present, so we don't set it here. The loader's gpu slot is
-    // cleared too, so a click on Open between teardown and the next
+    // `handle_rendering_setup` flips the upload flag on its own when a
+    // scene is present, so we don't set it here. The loader's gpu slot
+    // is cleared too, so a click on Open between teardown and the next
     // setup is bounced by `begin_load` instead of leaving a worker to
     // build buffers against an unowned device.
     pub fn handle_rendering_teardown(&self) {
         self.loader.clear_gpu();
         *self.renderer.borrow_mut() = None;
-        self.dirty.set(false);
+        self.frame.update(FrameState::after_render);
     }
 
     pub fn handle_before_rendering(&self) {
@@ -971,13 +969,12 @@ impl ViewportController {
             return;
         };
 
-        if self.needs_upload.get() {
+        if self.frame.get().upload_owed() {
             if let Some(scene_ref) = self.scene.borrow().as_ref() {
                 match renderer.upload_scene(scene_ref) {
                     Ok(()) => {
-                        self.needs_upload.set(false);
+                        self.frame.update(FrameState::after_upload_success);
                         self.loader.note_upload_success();
-                        self.dirty.set(true);
                         // Frame the camera off the AABB the upload just
                         // computed. Skipped if a camera already exists
                         // (e.g. this was a re-upload across a
@@ -992,8 +989,8 @@ impl ViewportController {
                         }
                     }
                     Err(err) => {
-                        // Leave `needs_upload = true` so the flag continues
-                        // to represent "upload owed" — a subsequent renderer
+                        // Leave the upload flag set so it continues to
+                        // represent "upload owed" — a subsequent renderer
                         // setup or scene reload (both of which reset the
                         // loader's failure counter) will drive a retry
                         // without relying on coincidental side effects.
@@ -1003,11 +1000,11 @@ impl ViewportController {
                 }
             } else {
                 // Flag set but the scene was cleared before we got to it.
-                self.needs_upload.set(false);
+                self.frame.update(FrameState::upload_cleared);
             }
         }
 
-        if !self.dirty.get() {
+        if !self.frame.get().redraw_owed() {
             return;
         }
 
@@ -1056,7 +1053,7 @@ impl ViewportController {
         ) else {
             return;
         };
-        self.dirty.set(false);
+        self.frame.update(FrameState::after_render);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
             Err(err) => self.dialogs.show_error_deferred(
@@ -1397,10 +1394,10 @@ mod selection_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(scene_with_n_objects(2));
         ctrl.on_select_by_index(0);
-        ctrl.dirty.set(false);
+        ctrl.clear_frame_state_for_test();
         ctrl.on_select_by_index(0);
         assert!(
-            !ctrl.dirty.get(),
+            !ctrl.redraw_owed_for_test(),
             "re-selecting the current index should not re-mark the controller dirty"
         );
     }
