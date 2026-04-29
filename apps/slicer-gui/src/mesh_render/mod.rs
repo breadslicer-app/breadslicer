@@ -10,25 +10,25 @@ use anyhow::Result;
 use glam::Vec3;
 use sc_mesh_core::scene::Scene;
 use slint::wgpu_28::wgpu;
-use wgpu::util::DeviceExt;
 
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
-use crate::gizmo_geometry::{self, GizmoVertex};
+use crate::gizmo_geometry::GizmoVertex;
 
 mod frame;
+mod gizmo_buffers;
 mod gizmo_entries;
 mod scene_upload;
 mod targets;
 
 use frame::Uniforms;
+use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
-    GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GIZMO_SLOTS, GizmoDrawEntry, GizmoUniformsGpu,
-    build_rotate_entries, build_scale_axis_entries, build_scale_centre_entry,
-    build_translate_entries,
+    GIZMO_DRAW_ENTRY_SIZE, GIZMO_SLOTS, GizmoUniformsGpu, build_rotate_entries,
+    build_scale_axis_entries, build_scale_centre_entry, build_translate_entries,
 };
 pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
 pub(crate) use scene_upload::GpuScene;
-use scene_upload::{GpuVertex, MODEL_ENTRY_SIZE, align_up, build_model_entries};
+use scene_upload::{GpuVertex, MODEL_ENTRY_SIZE, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
 
 const MESH_SHADER_SOURCE: &str = include_str!("shaders/mesh_render.wgsl");
@@ -114,44 +114,7 @@ pub struct Renderer {
     uniforms_bind_group: wgpu::BindGroup,
     models_bind_group_layout: wgpu::BindGroupLayout,
     gizmo_pipeline: wgpu::RenderPipeline,
-    /// Axis geometry: shaft prism + cone tip + per-axis midpoint
-    /// cube, all in handle-local space (axis = +X). The renderer
-    /// draws the shaft+cone subrange as the translate handle and
-    /// the midpoint-cube subrange as the scale-axis handle.
-    gizmo_axis_vertex_buffer: wgpu::Buffer,
-    gizmo_axis_index_buffer: wgpu::Buffer,
-    /// Number of indices in the translate (shaft + cone) subrange,
-    /// from `[0, gizmo_axis_shaft_tip_index_count)`. The remaining
-    /// indices `[gizmo_axis_shaft_tip_index_count, end)` belong to
-    /// the per-axis midpoint cube.
-    gizmo_axis_shaft_tip_index_count: u32,
-    gizmo_axis_total_index_count: u32,
-    /// Rotate-arc geometry: a 90° torus segment around +X in
-    /// handle-local space, centred on +Y. The per-frame X-roll
-    /// (baked into `axis_rotation`) swings the arc to face the
-    /// camera before the world-axis rotation maps it onto X/Y/Z.
-    /// Decorative — the click target is the cone spindle below.
-    gizmo_arc_vertex_buffer: wgpu::Buffer,
-    gizmo_arc_index_buffer: wgpu::Buffer,
-    gizmo_arc_index_count: u32,
-    /// Rotate-handle two-cone spindle: bases touching at the arc's
-    /// camera-facing midpoint, tips along ±axis. The active rotate
-    /// handle (mirrors `gizmo::ray_hits_rotate_cones` on the picker
-    /// side).
-    gizmo_rotate_cones_vertex_buffer: wgpu::Buffer,
-    gizmo_rotate_cones_index_buffer: wgpu::Buffer,
-    gizmo_rotate_cones_index_count: u32,
-    /// Centre cube geometry for the uniform-scale handle.
-    gizmo_centre_vertex_buffer: wgpu::Buffer,
-    gizmo_centre_index_buffer: wgpu::Buffer,
-    gizmo_centre_index_count: u32,
-    gizmo_uniforms_buffer: wgpu::Buffer,
-    /// Per-frame draw-entry buffer with `GIZMO_ENTRY_SLOTS` slots.
-    /// Each pass binds a window of one entry via a dynamic offset:
-    /// translate occupies `[0, 3)`, rotate `[3, 6)`, scale-axis
-    /// `[6, 9)`, scale-uniform / centre `[9, 10)`.
-    gizmo_entries_buffer: wgpu::Buffer,
-    gizmo_entry_stride: u64,
+    gizmo_buffers: GizmoBuffers,
     gizmo_uniforms_bind_group: wgpu::BindGroup,
     gizmo_entries_bind_group: wgpu::BindGroup,
     scene: Option<InstalledScene>,
@@ -390,66 +353,7 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(GIZMO_SHADER_SOURCE)),
         });
 
-        let (axis_vertices, axis_indices, axis_shaft_tip_index_count) =
-            gizmo_geometry::build_axis_geometry();
-        let gizmo_axis_total_index_count = axis_indices.len() as u32;
-        let gizmo_axis_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo axis vbo"),
-                contents: bytemuck::cast_slice(&axis_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let gizmo_axis_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo axis ibo"),
-                contents: bytemuck::cast_slice(&axis_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-
-        let (arc_vertices, arc_indices) = gizmo_geometry::build_rotate_arc_geometry();
-        let gizmo_arc_index_count = arc_indices.len() as u32;
-        let gizmo_arc_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo arc vbo"),
-                contents: bytemuck::cast_slice(&arc_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let gizmo_arc_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo arc ibo"),
-            contents: bytemuck::cast_slice(&arc_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let (rotate_cones_vertices, rotate_cones_indices) =
-            gizmo_geometry::build_rotate_cones_geometry();
-        let gizmo_rotate_cones_index_count = rotate_cones_indices.len() as u32;
-        let gizmo_rotate_cones_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo rotate cones vbo"),
-                contents: bytemuck::cast_slice(&rotate_cones_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let gizmo_rotate_cones_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo rotate cones ibo"),
-                contents: bytemuck::cast_slice(&rotate_cones_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-
-        let (centre_vertices, centre_indices) = gizmo_geometry::build_centre_cube_geometry();
-        let gizmo_centre_index_count = centre_indices.len() as u32;
-        let gizmo_centre_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo centre vbo"),
-                contents: bytemuck::cast_slice(&centre_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let gizmo_centre_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo centre ibo"),
-                contents: bytemuck::cast_slice(&centre_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let gizmo_buffers = GizmoBuffers::create(&device);
 
         let gizmo_uniforms_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -543,28 +447,12 @@ impl Renderer {
             cache: None,
         });
 
-        let gizmo_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer gizmo uniforms"),
-            size: std::mem::size_of::<GizmoUniformsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
-        let gizmo_entry_stride = align_up(GIZMO_DRAW_ENTRY_SIZE, alignment);
-        let gizmo_entries_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer gizmo entries"),
-            size: gizmo_entry_stride * GIZMO_ENTRY_SLOTS,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let gizmo_uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh-viewer gizmo uniforms bg"),
             layout: &gizmo_uniforms_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: gizmo_uniforms_buffer.as_entire_binding(),
+                resource: gizmo_buffers.uniforms_buffer.as_entire_binding(),
             }],
         });
         let gizmo_entries_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -572,11 +460,7 @@ impl Renderer {
             layout: &gizmo_entries_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &gizmo_entries_buffer,
-                    offset: 0,
-                    size: NonZeroU64::new(GIZMO_DRAW_ENTRY_SIZE),
-                }),
+                resource: gizmo_buffers.entries_binding_window(),
             }],
         });
 
@@ -590,22 +474,7 @@ impl Renderer {
             uniforms_bind_group,
             models_bind_group_layout,
             gizmo_pipeline,
-            gizmo_axis_vertex_buffer,
-            gizmo_axis_index_buffer,
-            gizmo_axis_shaft_tip_index_count: axis_shaft_tip_index_count,
-            gizmo_axis_total_index_count,
-            gizmo_arc_vertex_buffer,
-            gizmo_arc_index_buffer,
-            gizmo_arc_index_count,
-            gizmo_rotate_cones_vertex_buffer,
-            gizmo_rotate_cones_index_buffer,
-            gizmo_rotate_cones_index_count,
-            gizmo_centre_vertex_buffer,
-            gizmo_centre_index_buffer,
-            gizmo_centre_index_count,
-            gizmo_uniforms_buffer,
-            gizmo_entries_buffer,
-            gizmo_entry_stride,
+            gizmo_buffers,
             gizmo_uniforms_bind_group,
             gizmo_entries_bind_group,
             scene: None,
@@ -704,17 +573,6 @@ impl Renderer {
             return;
         }
         self.targets = Some(TargetPool::create(&self.device, width, height));
-    }
-
-    fn write_gizmo_entries(&self, slot_base: u64, entries: &[GizmoDrawEntry]) {
-        for (i, entry) in entries.iter().enumerate() {
-            let offset = (slot_base + i as u64) * self.gizmo_entry_stride;
-            self.queue.write_buffer(
-                &self.gizmo_entries_buffer,
-                offset,
-                bytemuck::bytes_of(entry),
-            );
-        }
     }
 
     pub fn render(
@@ -882,7 +740,7 @@ impl Renderer {
                 pivot_and_scale: [frame.pivot.x, frame.pivot.y, frame.pivot.z, frame.scale],
             };
             self.queue.write_buffer(
-                &self.gizmo_uniforms_buffer,
+                &self.gizmo_buffers.uniforms_buffer,
                 0,
                 bytemuck::bytes_of(&uniforms),
             );
@@ -908,17 +766,27 @@ impl Renderer {
 
             if render_translate {
                 let entries = build_translate_entries(&frame);
-                self.write_gizmo_entries(GIZMO_SLOTS.translate.start(), &entries);
+                self.gizmo_buffers.write_entries(
+                    &self.queue,
+                    GIZMO_SLOTS.translate.start(),
+                    &entries,
+                );
             }
             if render_rotate {
                 let entries = build_rotate_entries(&frame, camera);
-                self.write_gizmo_entries(GIZMO_SLOTS.rotate.start(), &entries);
+                self.gizmo_buffers
+                    .write_entries(&self.queue, GIZMO_SLOTS.rotate.start(), &entries);
             }
             if render_scale {
                 let axis_entries = build_scale_axis_entries(&frame);
-                self.write_gizmo_entries(GIZMO_SLOTS.scale_axis.start(), &axis_entries);
+                self.gizmo_buffers.write_entries(
+                    &self.queue,
+                    GIZMO_SLOTS.scale_axis.start(),
+                    &axis_entries,
+                );
                 let centre_entry = build_scale_centre_entry(&frame);
-                self.write_gizmo_entries(GIZMO_SLOTS.centre, &[centre_entry]);
+                self.gizmo_buffers
+                    .write_entries(&self.queue, GIZMO_SLOTS.centre, &[centre_entry]);
             }
 
             let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -952,68 +820,77 @@ impl Renderer {
             );
 
             if render_translate {
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_axis_vertex_buffer.slice(..));
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.axis_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_axis_index_buffer.slice(..),
+                    self.gizmo_buffers.axis_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for i in 0..3u32 {
-                    let offset =
-                        (GIZMO_SLOTS.translate.slot(i as u64) * self.gizmo_entry_stride) as u32;
+                    let offset = (GIZMO_SLOTS.translate.slot(i as u64)
+                        * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
                         &[offset],
                     );
                     // Translate handle = shaft + cone subrange.
-                    gizmo_pass.draw_indexed(0..self.gizmo_axis_shaft_tip_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(
+                        0..self.gizmo_buffers.axis_shaft_tip_index_count,
+                        0,
+                        0..1,
+                    );
                 }
             }
             if render_rotate {
                 // Decorative torus arc.
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_arc_vertex_buffer.slice(..));
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.arc_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_arc_index_buffer.slice(..),
+                    self.gizmo_buffers.arc_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for i in 0..3u32 {
-                    let offset =
-                        (GIZMO_SLOTS.rotate.slot(i as u64) * self.gizmo_entry_stride) as u32;
+                    let offset = (GIZMO_SLOTS.rotate.slot(i as u64)
+                        * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_arc_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.arc_index_count, 0, 0..1);
                 }
                 // Active two-cone spindle at the arc's midpoint —
                 // shares the per-axis camera-rolled `axis_rotation`
                 // so it lands at the visual centre of the arc.
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_rotate_cones_vertex_buffer.slice(..));
+                gizmo_pass
+                    .set_vertex_buffer(0, self.gizmo_buffers.rotate_cones_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_rotate_cones_index_buffer.slice(..),
+                    self.gizmo_buffers.rotate_cones_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for i in 0..3u32 {
-                    let offset =
-                        (GIZMO_SLOTS.rotate.slot(i as u64) * self.gizmo_entry_stride) as u32;
+                    let offset = (GIZMO_SLOTS.rotate.slot(i as u64)
+                        * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_rotate_cones_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(
+                        0..self.gizmo_buffers.rotate_cones_index_count,
+                        0,
+                        0..1,
+                    );
                 }
             }
             if render_scale {
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_axis_vertex_buffer.slice(..));
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.axis_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_axis_index_buffer.slice(..),
+                    self.gizmo_buffers.axis_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for i in 0..3u32 {
-                    let offset =
-                        (GIZMO_SLOTS.scale_axis.slot(i as u64) * self.gizmo_entry_stride) as u32;
+                    let offset = (GIZMO_SLOTS.scale_axis.slot(i as u64)
+                        * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
                         &self.gizmo_entries_bind_group,
@@ -1021,24 +898,25 @@ impl Renderer {
                     );
                     // Scale-axis handle = midpoint-cube subrange.
                     gizmo_pass.draw_indexed(
-                        self.gizmo_axis_shaft_tip_index_count..self.gizmo_axis_total_index_count,
+                        self.gizmo_buffers.axis_shaft_tip_index_count
+                            ..self.gizmo_buffers.axis_total_index_count,
                         0,
                         0..1,
                     );
                 }
 
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_centre_vertex_buffer.slice(..));
+                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.centre_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_centre_index_buffer.slice(..),
+                    self.gizmo_buffers.centre_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                let offset = (GIZMO_SLOTS.centre * self.gizmo_entry_stride) as u32;
+                let offset = (GIZMO_SLOTS.centre * self.gizmo_buffers.entry_stride) as u32;
                 gizmo_pass.set_bind_group(
                     GizmoBindGroup::Entries.idx(),
                     &self.gizmo_entries_bind_group,
                     &[offset],
                 );
-                gizmo_pass.draw_indexed(0..self.gizmo_centre_index_count, 0, 0..1);
+                gizmo_pass.draw_indexed(0..self.gizmo_buffers.centre_index_count, 0, 0..1);
             }
         }
         self.queue.submit(std::iter::once(encoder.finish()));
