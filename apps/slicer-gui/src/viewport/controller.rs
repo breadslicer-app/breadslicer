@@ -5,7 +5,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Instant;
 
 use sc_mesh_core::scene::{Scene, Transform3D};
 use slint::ComponentHandle;
@@ -15,10 +14,11 @@ use super::gizmo_drag::{
     DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
 };
 use super::input_state::{ClickOrDrag, InputState};
+#[cfg(test)]
 use super::keyboard_drive::{
-    ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS, ArrowDrive,
-    KBD_MAX_DT, KbdFocus, keyboard_step,
+    ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS,
 };
+use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::selection_state::SelectionState;
 use super::types::{FrameState, ObjectIdx, ScreenPoint, Selection, ViewportSize};
@@ -66,21 +66,11 @@ pub struct ViewportController {
     input_state: InputState,
     // Translate-gizmo drag state. Idle when no drag is in progress.
     gizmo: Cell<GizmoState>,
-    // Keyboard gizmo focus. `None` when the viewport's keyboard input
-    // routes to camera (rotate/pan/zoom). Set to one of Translate /
-    // Rotate / Scale by `T`/`R`/`S` keypresses while a selection
-    // exists; cleared by Esc, by losing the selection, or by
-    // explicitly switching to a different focus type.
-    keyboard_focus: Cell<KbdFocus>,
-    // Held-arrow-key bitset. Driven by `gizmo-arrow-pressed/released`
-    // callbacks while a keyboard focus is active. Sampled by the
-    // per-frame integrator in `handle_before_rendering`.
-    arrow_drive: Cell<ArrowDrive>,
-    // Wall-clock timestamp of the previous integrator tick. `Some`
-    // while the integrator is actively driving frames; reset to
-    // `None` when no arrow keys are held so the next press starts a
-    // fresh dt instead of accumulating idle time.
-    last_arrow_tick: Cell<Option<Instant>>,
+    // Keyboard-driven gizmo state: focus (`T`/`R`/`S` modes), held-
+    // arrow bitset (driven by `gizmo-arrow-pressed/released`), and
+    // the per-frame integrator's tick clock. Sampled in
+    // `handle_before_rendering`.
+    kbd_drive: KeyboardDriveState,
     loader: Rc<SceneLoader>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
@@ -114,9 +104,7 @@ impl ViewportController {
             selection: SelectionState::new(),
             input_state: InputState::new(),
             gizmo: Cell::new(GizmoState::Idle),
-            keyboard_focus: Cell::new(KbdFocus::None),
-            arrow_drive: Cell::new(ArrowDrive::default()),
-            last_arrow_tick: Cell::new(None),
+            kbd_drive: KeyboardDriveState::new(),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -142,9 +130,7 @@ impl ViewportController {
             selection: SelectionState::new(),
             input_state: InputState::new(),
             gizmo: Cell::new(GizmoState::Idle),
-            keyboard_focus: Cell::new(KbdFocus::None),
-            arrow_drive: Cell::new(ArrowDrive::default()),
-            last_arrow_tick: Cell::new(None),
+            kbd_drive: KeyboardDriveState::new(),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
@@ -279,9 +265,7 @@ impl ViewportController {
         // Keyboard focus is anchored on the (now-missing) selection;
         // reset it together with the held-arrow bitset so a stuck
         // key can't drive a phantom integrator after scene close.
-        self.keyboard_focus.set(KbdFocus::None);
-        self.arrow_drive.set(ArrowDrive::default());
-        self.last_arrow_tick.set(None);
+        self.kbd_drive.reset();
         if let Some(r) = self.renderer.borrow_mut().as_mut() {
             r.clear_scene();
         }
@@ -446,7 +430,7 @@ impl ViewportController {
             self.abort_gizmo_drag();
             return;
         }
-        if self.keyboard_focus.get() != KbdFocus::None {
+        if self.kbd_drive.current_focus() != KbdFocus::None {
             self.set_keyboard_focus(KbdFocus::None);
             return;
         }
@@ -479,15 +463,10 @@ impl ViewportController {
     /// and resets the held-arrow bitset on focus change so a held key
     /// from one mode doesn't bleed into another.
     fn set_keyboard_focus(&self, focus: KbdFocus) {
-        if focus != KbdFocus::None && matches!(self.selection.current(), Selection::None) {
+        let has_selection = !matches!(self.selection.current(), Selection::None);
+        if !self.kbd_drive.try_set_focus(focus, has_selection) {
             return;
         }
-        if self.keyboard_focus.get() == focus {
-            return;
-        }
-        self.keyboard_focus.set(focus);
-        self.arrow_drive.set(ArrowDrive::default());
-        self.last_arrow_tick.set(None);
         if let Some(ui) = self.ui.upgrade() {
             ui.set_gizmo_keyboard_focus_active(focus != KbdFocus::None);
         }
@@ -500,10 +479,12 @@ impl ViewportController {
     /// ignored. Marks the controller dirty so the next render-tick
     /// runs the integrator.
     pub fn on_gizmo_arrow_pressed(&self, code: i32) {
-        if self.keyboard_focus.get() == KbdFocus::None {
+        if self.kbd_drive.current_focus() == KbdFocus::None {
             return;
         }
-        self.update_arrow_drive(code, true);
+        if self.kbd_drive.update_arrow(code, true) {
+            self.mark_dirty();
+        }
     }
 
     /// Counterpart to `on_gizmo_arrow_pressed`. Released codes are
@@ -512,25 +493,9 @@ impl ViewportController {
     /// → focus drop) still has to clear its bit so the bitset
     /// doesn't accumulate stuck flags.
     pub fn on_gizmo_arrow_released(&self, code: i32) {
-        self.update_arrow_drive(code, false);
-    }
-
-    fn update_arrow_drive(&self, code: i32, pressed: bool) {
-        let mut d = self.arrow_drive.get();
-        match code {
-            ARROW_X_POS => d.x_pos = pressed,
-            ARROW_X_NEG => d.x_neg = pressed,
-            ARROW_Y_POS => d.y_pos = pressed,
-            ARROW_Y_NEG => d.y_neg = pressed,
-            ARROW_Z_POS => d.z_pos = pressed,
-            ARROW_Z_NEG => d.z_neg = pressed,
-            _ => return,
+        if self.kbd_drive.update_arrow(code, false) {
+            self.mark_dirty();
         }
-        self.arrow_drive.set(d);
-        if pressed && self.last_arrow_tick.get().is_none() {
-            self.last_arrow_tick.set(Some(Instant::now()));
-        }
-        self.mark_dirty();
     }
 
     /// Left button pressed at logical coords `(x, y)`. Records the
@@ -839,69 +804,15 @@ impl ViewportController {
     /// self-pumps as long as the user holds keys, and quiesces when
     /// they release.
     fn integrate_keyboard_arrows(&self) {
-        let focus = self.keyboard_focus.get();
-        if focus == KbdFocus::None {
-            return;
-        }
-        let arrows = self.arrow_drive.get();
-        if !arrows.any_held() {
-            self.last_arrow_tick.set(None);
-            return;
-        }
-        let Some(idx) = self.selection.primary_idx() else {
-            return;
+        let ctx = IntegrationCtx {
+            scene: &self.scene,
+            camera: &self.camera,
+            viewport: self.viewport.get(),
+            selection_idx: self.selection.primary_idx(),
         };
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-        let h = vp.height();
-
-        let now = Instant::now();
-        let last = self.last_arrow_tick.get().unwrap_or(now);
-        let dt = (now - last).as_secs_f32().min(KBD_MAX_DT);
-        self.last_arrow_tick.set(Some(now));
-        if dt <= 0.0 {
-            return;
+        if self.kbd_drive.integrate(ctx) {
+            self.mark_dirty();
         }
-
-        // Pull the running transform + pivot + camera out of the
-        // RefCells before re-borrowing mut to write the new transform.
-        let (pivot, running, world_per_pixel) = {
-            let scene_slot = self.scene.borrow();
-            let Some(scene) = scene_slot.as_ref() else {
-                return;
-            };
-            let Some(pivot) = gizmo::pivot_for_object(scene, idx) else {
-                return;
-            };
-            let Some(obj) = scene.objects.get(idx) else {
-                return;
-            };
-            let camera_slot = self.camera.borrow();
-            let Some(camera) = camera_slot.as_ref() else {
-                return;
-            };
-            (
-                pivot,
-                obj.transform,
-                camera.world_per_pixel(default_fov_y(), h),
-            )
-        };
-
-        let Some(new_transform) =
-            keyboard_step(focus, arrows, dt, pivot, &running, world_per_pixel)
-        else {
-            return;
-        };
-
-        let mut scene_slot = self.scene.borrow_mut();
-        if let Some(scene) = scene_slot.as_mut()
-            && let Some(obj) = scene.objects.get_mut(idx)
-        {
-            obj.transform = new_transform;
-        }
-        drop(scene_slot);
-        self.mark_dirty();
     }
 
     /// Picker dispatch: build the ray at `(x, y)`, run `pick_object`,
@@ -1944,7 +1855,7 @@ mod keyboard_focus_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(one_object_scene());
         ctrl.on_gizmo_focus_translate();
-        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::None);
+        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::None);
     }
 
     #[test]
@@ -1953,11 +1864,11 @@ mod keyboard_focus_tests {
         ctrl.install_scene_for_test(one_object_scene());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
-        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Translate);
+        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Translate);
         ctrl.on_gizmo_focus_rotate();
-        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Rotate);
+        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Rotate);
         ctrl.on_gizmo_focus_scale();
-        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Scale);
+        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Scale);
     }
 
     #[test]
@@ -1970,11 +1881,11 @@ mod keyboard_focus_tests {
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        assert!(ctrl.arrow_drive.get().any_held());
+        assert!(ctrl.kbd_drive.current_arrows().any_held());
 
         ctrl.on_gizmo_focus_rotate();
         assert!(
-            !ctrl.arrow_drive.get().any_held(),
+            !ctrl.kbd_drive.current_arrows().any_held(),
             "switching focus must clear held arrows so a held key from one mode \
              doesn't leak into another"
         );
@@ -1990,7 +1901,7 @@ mod keyboard_focus_tests {
         ctrl.install_scene_for_test(one_object_scene());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        assert!(!ctrl.arrow_drive.get().any_held());
+        assert!(!ctrl.kbd_drive.current_arrows().any_held());
     }
 
     #[test]
@@ -2007,7 +1918,7 @@ mod keyboard_focus_tests {
         ctrl.on_clear_selection();
         // Stale release arrives.
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
-        assert!(!ctrl.arrow_drive.get().any_held());
+        assert!(!ctrl.kbd_drive.current_arrows().any_held());
     }
 
     #[test]
@@ -2032,12 +1943,12 @@ mod keyboard_focus_tests {
         // Level 1 → drag aborts; focus and selection survive.
         ctrl.on_clear_selection();
         assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
-        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::Translate);
+        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Translate);
         assert_eq!(ctrl.selection(), Some(0));
 
         // Level 2 → focus drops; selection survives.
         ctrl.on_clear_selection();
-        assert_eq!(ctrl.keyboard_focus.get(), KbdFocus::None);
+        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::None);
         assert_eq!(ctrl.selection(), Some(0));
 
         // Level 3 → selection clears.

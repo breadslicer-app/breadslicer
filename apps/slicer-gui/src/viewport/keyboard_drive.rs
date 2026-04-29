@@ -3,19 +3,24 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Keyboard-driven gizmo integrator: data types (`KbdFocus`,
-//! `ArrowDrive`) plus the per-tick pure function `keyboard_step` that
-//! turns a held-arrow bitset into a transform delta. The
-//! `ViewportController` owns the `Cell`s that the Slint callbacks
-//! read and write; this module hosts only the controller-agnostic
-//! pieces.
+//! Keyboard-driven gizmo integrator. Data types (`KbdFocus`,
+//! `ArrowDrive`), the per-tick pure function `keyboard_step`, and the
+//! `KeyboardDriveState` struct that owns the controller's three
+//! keyboard cells (focus, arrow bitset, last integrator tick) and
+//! drives them through the Slint callbacks.
+
+use std::cell::{Cell, RefCell};
+use std::time::Instant;
 
 use glam::Vec3;
-use sc_mesh_core::scene::Transform3D;
+use sc_mesh_core::scene::{Scene, Transform3D};
 use sc_mesh_core::transform::AffineTransform3D;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
+use super::types::ViewportSize;
+use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
+use crate::mesh_render::default_fov_y;
 
 /// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through
 /// the three operation types; Esc returns to `None`. While focus is
@@ -160,6 +165,162 @@ pub(super) fn keyboard_step(
             ]);
             Some(compose_about_pivot(&scale_mat, pivot, running))
         }
+    }
+}
+
+/// Per-frame inputs the keyboard integrator pulls off the controller.
+/// Bundling them avoids a five-arg method while keeping ownership
+/// where it lives (scene/camera in `RefCell`s on the controller).
+pub(super) struct IntegrationCtx<'a> {
+    pub(super) scene: &'a RefCell<Option<Scene>>,
+    pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
+    pub(super) viewport: Option<ViewportSize>,
+    pub(super) selection_idx: Option<usize>,
+}
+
+/// Owns the controller's three keyboard cells and the methods that
+/// mutate them. Used by `ViewportController` through composition.
+pub(super) struct KeyboardDriveState {
+    focus: Cell<KbdFocus>,
+    arrows: Cell<ArrowDrive>,
+    last_tick: Cell<Option<Instant>>,
+}
+
+impl KeyboardDriveState {
+    pub(super) fn new() -> Self {
+        Self {
+            focus: Cell::new(KbdFocus::None),
+            arrows: Cell::new(ArrowDrive::default()),
+            last_tick: Cell::new(None),
+        }
+    }
+
+    pub(super) fn current_focus(&self) -> KbdFocus {
+        self.focus.get()
+    }
+
+    /// Visible to sibling tests for asserting bitset state.
+    #[cfg(test)]
+    pub(super) fn current_arrows(&self) -> ArrowDrive {
+        self.arrows.get()
+    }
+
+    /// Force-clear focus + bitset + tick. Used on scene close, where
+    /// the regular `try_set_focus` early-returns aren't appropriate
+    /// (no selection guard, no equality short-circuit).
+    pub(super) fn reset(&self) {
+        self.focus.set(KbdFocus::None);
+        self.arrows.set(ArrowDrive::default());
+        self.last_tick.set(None);
+    }
+
+    /// Sets `focus` if the move is legal. Returns `true` when the cell
+    /// changed; the caller should mark the controller dirty and update
+    /// the `gizmo-keyboard-focus-active` UI property accordingly.
+    /// Refuses non-`None` focus when nothing is selected, and is a
+    /// no-op when the focus is already `focus`.
+    pub(super) fn try_set_focus(&self, focus: KbdFocus, has_selection: bool) -> bool {
+        if focus != KbdFocus::None && !has_selection {
+            return false;
+        }
+        if self.focus.get() == focus {
+            return false;
+        }
+        self.focus.set(focus);
+        self.arrows.set(ArrowDrive::default());
+        self.last_tick.set(None);
+        true
+    }
+
+    /// Held-arrow bitset update. `code` is one of `ARROW_*`. Returns
+    /// `true` if the bitset changed (caller marks dirty), `false` for
+    /// out-of-range codes.
+    pub(super) fn update_arrow(&self, code: i32, pressed: bool) -> bool {
+        let mut d = self.arrows.get();
+        match code {
+            ARROW_X_POS => d.x_pos = pressed,
+            ARROW_X_NEG => d.x_neg = pressed,
+            ARROW_Y_POS => d.y_pos = pressed,
+            ARROW_Y_NEG => d.y_neg = pressed,
+            ARROW_Z_POS => d.z_pos = pressed,
+            ARROW_Z_NEG => d.z_neg = pressed,
+            _ => return false,
+        }
+        self.arrows.set(d);
+        if pressed && self.last_tick.get().is_none() {
+            self.last_tick.set(Some(Instant::now()));
+        }
+        true
+    }
+
+    /// Per-frame integration. If the focus is active, axes are held,
+    /// the selection has a pivot-attachable object, and the camera +
+    /// viewport are present, applies one tick of `keyboard_step` to
+    /// the selected object's transform and returns `true`. The caller
+    /// marks dirty on `true`.
+    pub(super) fn integrate(&self, ctx: IntegrationCtx) -> bool {
+        let focus = self.focus.get();
+        if focus == KbdFocus::None {
+            return false;
+        }
+        let arrows = self.arrows.get();
+        if !arrows.any_held() {
+            self.last_tick.set(None);
+            return false;
+        }
+        let Some(idx) = ctx.selection_idx else {
+            return false;
+        };
+        let Some(vp) = ctx.viewport else {
+            return false;
+        };
+        let h = vp.height();
+
+        let now = Instant::now();
+        let last = self.last_tick.get().unwrap_or(now);
+        let dt = (now - last).as_secs_f32().min(KBD_MAX_DT);
+        self.last_tick.set(Some(now));
+        if dt <= 0.0 {
+            return false;
+        }
+
+        // Pull the running transform + pivot + camera out of the
+        // RefCells before re-borrowing mut to write the new transform.
+        let (pivot, running, world_per_pixel) = {
+            let scene_slot = ctx.scene.borrow();
+            let Some(scene) = scene_slot.as_ref() else {
+                return false;
+            };
+            let Some(pivot) = crate::gizmo::pivot_for_object(scene, idx) else {
+                return false;
+            };
+            let Some(obj) = scene.objects.get(idx) else {
+                return false;
+            };
+            let camera_slot = ctx.camera.borrow();
+            let Some(camera) = camera_slot.as_ref() else {
+                return false;
+            };
+            (
+                pivot,
+                obj.transform,
+                camera.world_per_pixel(default_fov_y(), h),
+            )
+        };
+
+        let Some(new_transform) =
+            keyboard_step(focus, arrows, dt, pivot, &running, world_per_pixel)
+        else {
+            return false;
+        };
+
+        let mut scene_slot = ctx.scene.borrow_mut();
+        if let Some(scene) = scene_slot.as_mut()
+            && let Some(obj) = scene.objects.get_mut(idx)
+        {
+            obj.transform = new_transform;
+        }
+        true
     }
 }
 
