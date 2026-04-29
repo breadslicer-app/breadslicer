@@ -11,6 +11,7 @@ use sc_mesh_core::scene::Scene;
 use slint::wgpu_28::wgpu;
 
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
+use crate::gizmo::axis::ALL_AXES;
 
 mod frame;
 mod gizmo_buffers;
@@ -441,8 +442,8 @@ impl Renderer {
                     self.gizmo_buffers.axis_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                for i in 0..3u32 {
-                    let offset = (GIZMO_SLOTS.translate.slot(i as u64)
+                for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
+                    let offset = (GIZMO_SLOTS.translate.slot(axis_idx as u64)
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
@@ -464,8 +465,8 @@ impl Renderer {
                     self.gizmo_buffers.arc_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                for i in 0..3u32 {
-                    let offset = (GIZMO_SLOTS.rotate.slot(i as u64)
+                for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
+                    let offset = (GIZMO_SLOTS.rotate.slot(axis_idx as u64)
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
@@ -483,8 +484,8 @@ impl Renderer {
                     self.gizmo_buffers.rotate_cones_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                for i in 0..3u32 {
-                    let offset = (GIZMO_SLOTS.rotate.slot(i as u64)
+                for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
+                    let offset = (GIZMO_SLOTS.rotate.slot(axis_idx as u64)
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
@@ -504,8 +505,8 @@ impl Renderer {
                     self.gizmo_buffers.axis_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                for i in 0..3u32 {
-                    let offset = (GIZMO_SLOTS.scale_axis.slot(i as u64)
+                for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
+                    let offset = (GIZMO_SLOTS.scale_axis.slot(axis_idx as u64)
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
