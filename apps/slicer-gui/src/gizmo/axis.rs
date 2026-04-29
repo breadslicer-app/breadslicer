@@ -28,7 +28,7 @@ pub const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 
 /// In-plane orthonormal basis around `axis`, right-handed about the
 /// axis (`axis × u = v`). Used by every rotate primitive so the
-/// angular position returned by [`super::drag_math::axis_plane_angle`]
+/// angular position returned by `drag_math::axis_plane_angle`
 /// grows CCW about `+axis` (right-hand rule). Caller code that wants
 /// the user's "screen clockwise = +rotation" convention flips the
 /// sign at composition time, where the camera direction is also known.
