@@ -18,6 +18,7 @@ use crate::gizmo_geometry::{self, GizmoVertex};
 
 mod gizmo_entries;
 mod scene_upload;
+mod targets;
 
 use gizmo_entries::{
     GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GIZMO_SLOTS, GizmoDrawEntry, GizmoUniformsGpu,
@@ -27,6 +28,7 @@ use gizmo_entries::{
 pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{GpuVertex, MODEL_ENTRY_SIZE, align_up, build_model_entries};
+use targets::{MsaaTargets, TargetPool};
 
 const MESH_SHADER_SOURCE: &str = include_str!("shaders/mesh_render.wgsl");
 const OUTLINE_SHADER_SOURCE: &str = include_str!("shaders/outline.wgsl");
@@ -97,37 +99,6 @@ impl GizmoBindGroup {
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     light_dir: [f32; 4],
-}
-
-struct MsaaTargets {
-    width: u32,
-    height: u32,
-    color_view: wgpu::TextureView,
-    depth_view: wgpu::TextureView,
-    /// Stencil-aspect view of the depth-stencil texture, bound by the
-    /// outline post-pass as a multisampled u32 texture. Recreated
-    /// alongside `depth_view` since they share the underlying texture.
-    outline_bind_group: wgpu::BindGroup,
-    /// Private depth attachment for the gizmo pass. The gizmo
-    /// renders to the resolved (non-MSAA) target with depth cleared
-    /// at pass start so it sits on top of the mesh, but the gizmo
-    /// pipeline still runs depth-test-on internally so the three
-    /// axes order correctly where they overlap near the pivot. We
-    /// can't reuse the main MSAA depth — its sample count (4)
-    /// doesn't match the gizmo pipeline's count (1).
-    gizmo_depth_view: wgpu::TextureView,
-}
-
-// Double-buffered ring of destination color textures. `render` writes to one
-// texture while the `slint::Image` returned last frame (which wraps the
-// *other* texture) is still being sampled by Slint. Retaining both across
-// frames avoids the per-frame GPU-allocator churn of freshly creating a
-// RENDER_ATTACHMENT | TEXTURE_BINDING texture on every orbit tick.
-struct TargetPool {
-    width: u32,
-    height: u32,
-    textures: [wgpu::Texture; 2],
-    next: usize,
 }
 
 /// A `GpuScene` paired with its models bind group. The bind group
@@ -719,105 +690,26 @@ impl Renderer {
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) {
-        let same = self
-            .msaa
-            .as_ref()
-            .is_some_and(|m| m.width == width && m.height == height);
-        if same {
+        if self.msaa.as_ref().is_some_and(|m| m.matches(width, height)) {
             return;
         }
-
-        let color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer msaa color"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: SAMPLE_COUNT,
-            dimension: wgpu::TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer msaa depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: SAMPLE_COUNT,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            // TEXTURE_BINDING lets the outline post-pass sample the
-            // stencil aspect after the main pass writes it.
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let stencil_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("mesh-viewer msaa stencil view"),
-            aspect: wgpu::TextureAspect::StencilOnly,
-            ..Default::default()
-        });
-
-        let outline_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh-viewer outline bg"),
-            layout: &self.outline_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&stencil_view),
-            }],
-        });
-
-        let gizmo_depth = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer gizmo depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: GIZMO_DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let gizmo_depth_view = gizmo_depth.create_view(&wgpu::TextureViewDescriptor::default());
-
-        self.msaa = Some(MsaaTargets {
+        self.msaa = Some(MsaaTargets::create(
+            &self.device,
+            &self.outline_bind_group_layout,
             width,
             height,
-            color_view,
-            depth_view,
-            outline_bind_group,
-            gizmo_depth_view,
-        });
+        ));
     }
 
     fn ensure_targets(&mut self, width: u32, height: u32) {
-        let same = self
+        if self
             .targets
             .as_ref()
-            .is_some_and(|t| t.width == width && t.height == height);
-        if same {
+            .is_some_and(|t| t.matches(width, height))
+        {
             return;
         }
-
-        let a = create_color_target(&self.device, width, height);
-        let b = create_color_target(&self.device, width, height);
-        self.targets = Some(TargetPool {
-            width,
-            height,
-            textures: [a, b],
-            next: 0,
-        });
+        self.targets = Some(TargetPool::create(&self.device, width, height));
     }
 
     fn write_gizmo_entries(&self, slot_base: u64, entries: &[GizmoDrawEntry]) {
@@ -893,15 +785,11 @@ impl Renderer {
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let target = {
-            let pool = self
-                .targets
-                .as_mut()
-                .expect("ensure_targets populated the pool");
-            let idx = pool.next;
-            pool.next = (idx + 1) % pool.textures.len();
-            pool.textures[idx].clone()
-        };
+        let target = self
+            .targets
+            .as_mut()
+            .expect("ensure_targets populated the pool")
+            .acquire();
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = self
@@ -1173,23 +1061,6 @@ impl Renderer {
 
         Some(target)
     }
-}
-
-fn create_color_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("mesh-viewer color"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: TEXTURE_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    })
 }
 
 /// End-to-end GPU tests. They construct a fresh wgpu device with the
