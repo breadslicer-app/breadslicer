@@ -6,13 +6,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use sc_mesh_core::scene::{Scene, Transform3D};
+use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
-use super::gizmo_drag::{
-    DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
-};
+use super::gizmo_drag::{DragOp, GizmoState};
+use super::gizmo_fsm::{GizmoFsm, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx};
 use super::input_state::{ClickOrDrag, InputState};
 #[cfg(test)]
 use super::keyboard_drive::{
@@ -20,21 +19,21 @@ use super::keyboard_drive::{
 };
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::object_list::{build_object_list_names, push_object_list};
+use super::render_scheduler;
 use super::selection_state::SelectionState;
 use super::types::{FrameState, ObjectIdx, ScreenPoint, Selection, ViewportSize};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
-use crate::gizmo::hit_test::ScaleHandle;
-use crate::gizmo::{self};
+use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_render::{GizmoVisibility, Renderer, default_fov_y};
+use crate::picking;
+use crate::scene_loader::{PreparedScene, SceneLoader};
 
 #[cfg(test)]
 use crate::gizmo::axis::Axis;
-use crate::picking;
-use crate::scene_loader::{PreparedScene, SceneLoader};
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -65,7 +64,7 @@ pub struct ViewportController {
     // either consumed by the gizmo FSM or dropped on the floor).
     input_state: InputState,
     // Translate-gizmo drag state. Idle when no drag is in progress.
-    gizmo: Cell<GizmoState>,
+    gizmo_fsm: GizmoFsm,
     // Keyboard-driven gizmo state: focus (`T`/`R`/`S` modes), held-
     // arrow bitset (driven by `gizmo-arrow-pressed/released`), and
     // the per-frame integrator's tick clock. Sampled in
@@ -80,17 +79,6 @@ pub struct ViewportController {
     dialogs: Rc<DialogManager>,
 }
 
-// Granularity for the allocation bucketing applied during active resize.
-// A smaller value reduces the aspect distortion that `image-fit: fill` would
-// apply while dragging (texture sized at bucket, stretched to logical); a
-// larger value reduces reallocation rate. 64 px keeps the worst-case stretch
-// under ~3% on a 1080p window, which is barely perceptible during a drag.
-const RESIZE_BUCKET: u32 = 64;
-
-// How long `viewport-resized` must stay quiet before we snap back to exact
-// pixel sizing.
-pub(crate) const RESIZE_SETTLE: core::time::Duration = core::time::Duration::from_millis(200);
-
 impl ViewportController {
     pub fn new(ui: &MainWindow) -> Self {
         let dialogs = DialogManager::new();
@@ -103,7 +91,7 @@ impl ViewportController {
             frame: Cell::new(FrameState::default()),
             selection: SelectionState::new(),
             input_state: InputState::new(),
-            gizmo: Cell::new(GizmoState::Idle),
+            gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
@@ -129,7 +117,7 @@ impl ViewportController {
             frame: Cell::new(FrameState::default()),
             selection: SelectionState::new(),
             input_state: InputState::new(),
-            gizmo: Cell::new(GizmoState::Idle),
+            gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             resizing: Cell::new(false),
@@ -170,20 +158,22 @@ impl ViewportController {
     }
 
     fn request_redraw(&self) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.window().request_redraw();
-        }
+        render_scheduler::request_redraw(&self.ui);
     }
 
     fn mark_dirty(&self) {
-        self.frame.update(FrameState::with_redraw_owed);
-        self.request_redraw();
+        render_scheduler::mark_dirty(&self.frame, &self.ui);
     }
 
     pub fn on_viewport_resized(&self, w: f32, h: f32) {
-        self.viewport.set(ViewportSize::new(w, h));
-        self.resizing.set(true);
-        self.mark_dirty();
+        render_scheduler::on_viewport_resized(
+            &self.viewport,
+            &self.resizing,
+            &self.frame,
+            &self.ui,
+            w,
+            h,
+        );
     }
 
     /// Called once `viewport-resized` has stayed quiet for `RESIZE_SETTLE`.
@@ -191,11 +181,11 @@ impl ViewportController {
     /// reallocates at the exact logical size, eliminating the `image-fit:
     /// fill` stretch that persisted during the drag.
     pub fn on_resize_settled(&self) {
-        self.resizing.set(false);
-        if let Some(r) = self.renderer.borrow_mut().as_mut() {
-            r.invalidate_sizing();
-        }
-        self.mark_dirty();
+        render_scheduler::on_resize_settled(&self.resizing, &self.frame, &self.ui, || {
+            if let Some(r) = self.renderer.borrow_mut().as_mut() {
+                r.invalidate_sizing();
+            }
+        });
     }
 
     pub fn on_rotate(&self, dx: f32, dy: f32) {
@@ -260,7 +250,7 @@ impl ViewportController {
         // The drag's captured `object_idx` becomes meaningless once
         // the scene is gone; clear FSM state without trying to
         // revert (the object no longer exists).
-        self.gizmo.set(GizmoState::Idle);
+        self.gizmo_fsm.set_idle();
         self.input_state.set_idle();
         // Keyboard focus is anchored on the (now-missing) selection;
         // reset it together with the held-arrow bitset so a stuck
@@ -426,7 +416,7 @@ impl ViewportController {
     /// no object was hit); Esc enters at level 1 and naturally
     /// cascades through repeated presses.
     pub fn on_clear_selection(&self) {
-        if matches!(self.gizmo.get(), GizmoState::Drag { .. }) {
+        if matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. }) {
             self.abort_gizmo_drag();
             return;
         }
@@ -521,82 +511,16 @@ impl ViewportController {
     /// new anchors) so the per-axis ↔ uniform formula switch is
     /// visually snap-free.
     pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        let GizmoState::Drag {
-            mut op,
-            mut original,
-            pivot,
-            object_idx,
-        } = self.gizmo.get()
-        else {
-            return;
+        let ctx = GizmoMoveCtx {
+            scene: &self.scene,
+            camera: &self.camera,
+            viewport: self.viewport.get(),
+            cursor: ScreenPoint { x, y },
+            modifiers,
         };
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-
-        // Compute the new transform and the (possibly mutated) op
-        // state inside a borrow scope, then drop the camera borrow
-        // before mutating the scene.
-        let result: Option<(Transform3D, DragOp)> = {
-            let camera_slot = self.camera.borrow();
-            let Some(camera) = camera_slot.as_ref() else {
-                return;
-            };
-            let scene_slot = self.scene.borrow();
-            let scene = scene_slot.as_ref();
-            // Live Shift toggle on a `ScaleAxis` drag re-anchors before
-            // the move's delta is computed — the running transform
-            // becomes the new `original`, the current cursor becomes
-            // the new press, so the per-axis ↔ uniform formula switch
-            // does not snap the object.
-            if let DragOp::ScaleAxis { proportional, .. } = op
-                && proportional != modifiers.shift
-                && let Some(scene_ref) = scene
-                && let Some(obj) = scene_ref.objects.get(object_idx)
-            {
-                let ctx = ReanchorCtx {
-                    camera,
-                    pivot,
-                    fov_y: default_fov_y(),
-                    viewport: (vp.width(), vp.height()),
-                    cursor: (x, y),
-                };
-                if let Some(re_anchored) =
-                    re_anchor_scale_axis(op, obj.transform, &ctx, modifiers.shift)
-                {
-                    op = re_anchored.0;
-                    original = re_anchored.1;
-                }
-            }
-            let ray =
-                picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
-            apply_drag_move(op, &ray, pivot, &original, x, y)
-        };
-
-        let Some((new_transform, new_op)) = result else {
-            return;
-        };
-
-        // Persist the (possibly updated) drag state — Rotate's
-        // unwrap counter mutates per move; the others' state is
-        // captured at press and stays put. `original` may also have
-        // been reset by a Shift re-anchor on this frame.
-        self.gizmo.set(GizmoState::Drag {
-            op: new_op,
-            original,
-            pivot,
-            object_idx,
-        });
-
-        let mut scene_slot = self.scene.borrow_mut();
-        let Some(scene) = scene_slot.as_mut() else {
-            return;
-        };
-        if let Some(obj) = scene.objects.get_mut(object_idx) {
-            obj.transform = new_transform;
+        if self.gizmo_fsm.on_move(ctx) {
+            self.mark_dirty();
         }
-        drop(scene_slot);
-        self.mark_dirty();
     }
 
     /// Left button released at logical coords `(x, y)`. If a drag was
@@ -609,8 +533,8 @@ impl ViewportController {
     /// (snapping, etc.) can read it without another signature change.
     pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
         let outcome = self.input_state.click_or_drag(ScreenPoint { x, y });
-        if matches!(self.gizmo.get(), GizmoState::Drag { .. }) {
-            self.gizmo.set(GizmoState::Idle);
+        if matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. }) {
+            self.gizmo_fsm.set_idle();
             self.mark_dirty();
             return;
         }
@@ -632,140 +556,15 @@ impl ViewportController {
     /// with Shift held starts uniformly; subsequent toggles
     /// re-anchor through the move path.
     fn try_start_gizmo_drag(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        let Some(sel) = self.selection.primary() else {
-            return;
+        let ctx = GizmoStartCtx {
+            scene: &self.scene,
+            camera: &self.camera,
+            viewport: self.viewport.get(),
+            selection_idx: self.selection.primary_idx(),
+            press: ScreenPoint { x, y },
+            modifiers,
         };
-        let sel_idx = sel.as_usize();
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-        let (w, h) = (vp.width(), vp.height());
-
-        let camera_slot = self.camera.borrow();
-        let Some(camera) = camera_slot.as_ref() else {
-            return;
-        };
-        let scene_slot = self.scene.borrow();
-        let Some(scene) = scene_slot.as_ref() else {
-            return;
-        };
-        let Some(pivot) = gizmo::pivot_for_object(scene, sel_idx) else {
-            return;
-        };
-        let fov_y = default_fov_y();
-        let scale = gizmo::gizmo_scale(camera, fov_y, h);
-        let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
-        let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
-        // Both rotate cones and scale cubes scale with the gizmo —
-        // their handle-local sizes (in `gizmo` constants) become
-        // world-space sizes via the per-frame shaft length.
-        let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
-        let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
-        let world_per_pixel = camera.world_per_pixel(fov_y, h);
-        let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
-        let centre_cube_world = world_per_pixel * gizmo::dimensions::CENTRE_CUBE_PIXELS;
-
-        let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
-
-        // Front-most across the four hit tests. Each candidate is
-        // tagged with its category so the dispatch below knows which
-        // `DragOp` variant to construct.
-        let mut best: Option<(HandleHit, f32)> = None;
-        let mut consider = |hit: HandleHit, t: f32| match best {
-            Some((_, prev_t)) if prev_t <= t => {}
-            _ => best = Some((hit, t)),
-        };
-        if let Some((axis, t)) = gizmo::hit_test::hit_test(&ray, pivot, scale, cyl_radius) {
-            consider(HandleHit::Translate(axis), t);
-        }
-        if let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
-            &ray,
-            pivot,
-            arc_radius_world,
-            rotate_cone_length_world,
-            rotate_cone_radius_world,
-        ) {
-            consider(HandleHit::Rotate(axis), t);
-        }
-        if let Some((handle, t)) =
-            gizmo::hit_test::scale_hit_test(&ray, pivot, scale, axis_cube_world, centre_cube_world)
-        {
-            match handle {
-                ScaleHandle::Axis(axis) => consider(HandleHit::ScaleAxis(axis), t),
-                ScaleHandle::Centre => consider(HandleHit::ScaleCentre, t),
-            }
-        }
-        let Some((winner, _)) = best else {
-            return;
-        };
-
-        let Some(obj) = scene.objects.get(sel_idx) else {
-            return;
-        };
-        let original = obj.transform;
-
-        let op = match winner {
-            HandleHit::Translate(axis) => {
-                let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
-                DragOp::Translate { axis, anchor }
-            }
-            HandleHit::Rotate(axis) => {
-                // `rotate_drag_angle` returns `None` only inside the
-                // arc lock-out, which `rotate_hit_test` already
-                // rejected — but bail defensively if it slips
-                // through, leaving the press as a click candidate.
-                let Some(start_angle) = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)
-                else {
-                    return;
-                };
-                DragOp::Rotate {
-                    axis,
-                    start_angle,
-                    last_raw: start_angle,
-                    current_unwrapped: start_angle,
-                }
-            }
-            HandleHit::ScaleAxis(axis) => {
-                let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
-                // The uniform-branch anchors are captured at press as
-                // well, even when `proportional` starts false — that
-                // way a mid-drag Shift press flips the formula
-                // through the same `re_anchor_scale_axis` path
-                // either direction without needing a "first-toggle"
-                // special case.
-                let Some(pivot_screen) =
-                    picking::project_world_to_screen(camera, fov_y, w, h, pivot)
-                else {
-                    return;
-                };
-                DragOp::ScaleAxis {
-                    axis,
-                    start_anchor,
-                    proportional: modifiers.shift,
-                    press_screen: (x, y),
-                    pivot_screen,
-                }
-            }
-            HandleHit::ScaleCentre => {
-                let Some(pivot_screen) =
-                    picking::project_world_to_screen(camera, fov_y, w, h, pivot)
-                else {
-                    return;
-                };
-                DragOp::ScaleUniform {
-                    press_screen: (x, y),
-                    pivot_screen,
-                }
-            }
-        };
-        drop(scene_slot);
-        drop(camera_slot);
-        self.gizmo.set(GizmoState::Drag {
-            op,
-            original,
-            pivot,
-            object_idx: sel_idx,
-        });
+        self.gizmo_fsm.try_start_drag(ctx);
     }
 
     /// Aborts any in-progress drag and reverts the affected object's
@@ -773,24 +572,10 @@ impl ViewportController {
     /// `on_clear_selection` and `on_close_scene` so a drag never
     /// outlives its valid context.
     fn abort_gizmo_drag(&self) {
-        let GizmoState::Drag {
-            original,
-            object_idx,
-            ..
-        } = self.gizmo.get()
-        else {
-            return;
-        };
-        self.gizmo.set(GizmoState::Idle);
-        self.input_state.set_idle();
-        let mut scene_slot = self.scene.borrow_mut();
-        if let Some(scene) = scene_slot.as_mut()
-            && let Some(obj) = scene.objects.get_mut(object_idx)
-        {
-            obj.transform = original;
+        if self.gizmo_fsm.abort(&self.scene) {
+            self.input_state.set_idle();
+            self.mark_dirty();
         }
-        drop(scene_slot);
-        self.mark_dirty();
     }
 
     /// Per-frame integrator: if a keyboard gizmo focus is active and
@@ -941,14 +726,7 @@ impl ViewportController {
             return;
         }
 
-        let (eff_w, eff_h) = if self.resizing.get() {
-            (
-                width.div_ceil(RESIZE_BUCKET) * RESIZE_BUCKET,
-                height.div_ceil(RESIZE_BUCKET) * RESIZE_BUCKET,
-            )
-        } else {
-            (width, height)
-        };
+        let (eff_w, eff_h) = render_scheduler::bucketed_size(width, height, self.resizing.get());
 
         let camera_slot = self.camera.borrow();
         let Some(camera) = camera_slot.as_ref() else {
@@ -961,7 +739,7 @@ impl ViewportController {
         };
 
         let selection_idx = self.selection.primary_idx();
-        let visibility = match self.gizmo.get() {
+        let visibility = match self.gizmo_fsm.current() {
             GizmoState::Drag { op, .. } => match op {
                 DragOp::Translate { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
                 DragOp::Rotate { axis, .. } => GizmoVisibility::DraggingRotate { axis },
@@ -1466,7 +1244,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        match ctrl.gizmo.get() {
+        match ctrl.gizmo_fsm.current() {
             GizmoState::Drag {
                 op: DragOp::Translate { axis, .. },
                 ..
@@ -1482,7 +1260,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(0.0, 0.0, no_mods());
-        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
     }
 
     #[test]
@@ -1507,7 +1285,7 @@ mod viewport_click_tests {
 
         ctrl.on_pointer_down(press.0, press.1, no_mods());
         // Drag must have started — otherwise the move is a no-op.
-        assert!(matches!(ctrl.gizmo.get(), GizmoState::Drag { .. }));
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Drag { .. }));
         ctrl.on_pointer_move(release.0, release.1, no_mods());
 
         let actual = read_translation(&ctrl);
@@ -1564,7 +1342,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
 
         // Drag state cleared.
-        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
         // Translation persists — the user committed the drag.
         let after = read_translation(&ctrl);
         assert_approx_eq!(f32, after.x, mid_drag.x, epsilon = 1e-6);
@@ -1588,7 +1366,7 @@ mod viewport_click_tests {
         assert_approx_eq!(f32, reverted.x, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, reverted.y, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, reverted.z, 0.0, epsilon = 1e-6);
-        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
         assert_eq!(
             ctrl.selection(),
             Some(0),
@@ -1613,7 +1391,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_close_scene();
 
-        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1646,7 +1424,7 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
         ctrl.on_pointer_down(press.0, press.1, shift_held());
-        match ctrl.gizmo.get() {
+        match ctrl.gizmo_fsm.current() {
             GizmoState::Drag {
                 op: DragOp::ScaleAxis {
                     axis, proportional, ..
@@ -1672,7 +1450,7 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
         ctrl.on_pointer_down(press.0, press.1, no_mods());
-        match ctrl.gizmo.get() {
+        match ctrl.gizmo_fsm.current() {
             GizmoState::Drag {
                 op: DragOp::ScaleAxis { proportional, .. },
                 ..
@@ -1930,7 +1708,7 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
         // No drag is possible without a camera; simulate the
         // mid-cascade state by directly writing the gizmo cell.
-        ctrl.gizmo.set(GizmoState::Drag {
+        ctrl.gizmo_fsm.force_set(GizmoState::Drag {
             op: DragOp::Translate {
                 axis: Axis::X,
                 anchor: Vec3::ZERO,
@@ -1942,7 +1720,7 @@ mod keyboard_focus_tests {
 
         // Level 1 → drag aborts; focus and selection survive.
         ctrl.on_clear_selection();
-        assert!(matches!(ctrl.gizmo.get(), GizmoState::Idle));
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
         assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Translate);
         assert_eq!(ctrl.selection(), Some(0));
 

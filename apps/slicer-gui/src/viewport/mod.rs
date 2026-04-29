@@ -5,10 +5,13 @@
 
 mod controller;
 mod gizmo_drag;
+mod gizmo_fsm;
 mod input_state;
 mod keyboard_drive;
 mod object_list;
+mod render_scheduler;
 mod selection_state;
 mod types;
 
-pub(crate) use controller::{RESIZE_SETTLE, ViewportController};
+pub(crate) use controller::ViewportController;
+pub(crate) use render_scheduler::RESIZE_SETTLE;

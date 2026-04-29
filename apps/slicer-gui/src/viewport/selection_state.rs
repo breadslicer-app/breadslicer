@@ -30,12 +30,6 @@ impl SelectionState {
         self.cell.set(sel);
     }
 
-    /// Currently-selected object's index, or `None` when nothing is
-    /// selected. Equivalent to `current().primary()`.
-    pub(super) fn primary(&self) -> Option<ObjectIdx> {
-        self.cell.get().primary()
-    }
-
     /// Currently-selected object's index as a plain `usize`. Convenience
     /// for the (very common) call sites that only want to look up
     /// `scene.objects[idx]`.
