@@ -29,11 +29,11 @@ use gizmo_entries::{
 };
 pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
+use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{MODEL_ENTRY_SIZE, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
 
-const OUTLINE_SHADER_SOURCE: &str = include_str!("shaders/outline.wgsl");
 const GIZMO_SHADER_SOURCE: &str = include_str!("shaders/gizmo.wgsl");
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -49,20 +49,6 @@ const GIZMO_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Floa
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
-
-/// Bind-group indices for the outline post-pass pipeline. Variant order
-/// must match `shaders/outline.wgsl`.
-#[repr(u32)]
-#[derive(Clone, Copy)]
-enum OutlineBindGroup {
-    Stencil = 0,
-}
-
-impl OutlineBindGroup {
-    fn idx(self) -> u32 {
-        self as u32
-    }
-}
 
 /// Bind-group indices for the gizmo pipeline. Variant order must match
 /// `shaders/gizmo.wgsl`.
@@ -92,8 +78,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     mesh: MeshPipeline,
-    outline_pipeline: wgpu::RenderPipeline,
-    outline_bind_group_layout: wgpu::BindGroupLayout,
+    outline: OutlinePipeline,
     gizmo_pipeline: wgpu::RenderPipeline,
     gizmo_buffers: GizmoBuffers,
     gizmo_uniforms_bind_group: wgpu::BindGroup,
@@ -117,82 +102,7 @@ pub fn default_fov_y() -> f32 {
 impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let mesh = MeshPipeline::create(&device);
-
-        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh-viewer outline shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(OUTLINE_SHADER_SOURCE)),
-        });
-
-        let outline_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("mesh-viewer outline bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        // Stencil reads as Uint. The depth-stencil
-                        // texture is bound via a StencilOnly aspect
-                        // view; the fragment shader sees a u32 sample.
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
-                    },
-                    count: None,
-                }],
-            });
-
-        debug_assert_eq!(OutlineBindGroup::Stencil.idx(), 0);
-        let outline_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("mesh-viewer outline pll"),
-                bind_group_layouts: &[&outline_bind_group_layout],
-                immediate_size: 0,
-            });
-
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer outline pipeline"),
-            layout: Some(&outline_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            // The post-pass renders to the resolved (non-MSAA) target
-            // and samples the still-MSAA stencil as input — colour and
-            // attachment sample counts agree at 1, while the texture
-            // binding is multisampled.
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    // Outline fragments are opaque; non-edge fragments
-                    // `discard` so the underlying main-pass colour
-                    // stays put without needing alpha blending.
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let outline = OutlinePipeline::create(&device);
 
         // ---- gizmo pipeline + static buffers --------------------------------
         let gizmo_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -315,8 +225,7 @@ impl Renderer {
             device,
             queue,
             mesh,
-            outline_pipeline,
-            outline_bind_group_layout,
+            outline,
             gizmo_pipeline,
             gizmo_buffers,
             gizmo_uniforms_bind_group,
@@ -402,7 +311,7 @@ impl Renderer {
         }
         self.msaa = Some(MsaaTargets::create(
             &self.device,
-            &self.outline_bind_group_layout,
+            &self.outline.bind_group_layout,
             width,
             height,
         ));
@@ -565,7 +474,7 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            outline_pass.set_pipeline(&self.outline_pipeline);
+            outline_pass.set_pipeline(&self.outline.pipeline);
             outline_pass.set_bind_group(
                 OutlineBindGroup::Stencil.idx(),
                 &msaa.outline_bind_group,
@@ -1161,12 +1070,6 @@ mod gpu_integration_tests {
 #[cfg(test)]
 mod bind_group_index_tests {
     use super::*;
-
-    #[test]
-    fn outline_bind_group_indices_match_wgsl() {
-        // shaders/outline.wgsl: @group(0) → stencil texture.
-        assert_eq!(OutlineBindGroup::Stencil.idx(), 0);
-    }
 
     #[test]
     fn gizmo_bind_group_indices_match_wgsl() {

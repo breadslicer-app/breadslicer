@@ -10,3 +10,4 @@
 //! ordering.
 
 pub(super) mod mesh;
+pub(super) mod outline;
