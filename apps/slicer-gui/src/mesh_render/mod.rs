@@ -7,8 +7,7 @@ use std::borrow::Cow;
 use std::num::NonZeroU64;
 
 use anyhow::Result;
-use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use sc_mesh_core::scene::Scene;
 use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
@@ -16,10 +15,12 @@ use wgpu::util::DeviceExt;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::gizmo_geometry::{self, GizmoVertex};
 
+mod frame;
 mod gizmo_entries;
 mod scene_upload;
 mod targets;
 
+use frame::Uniforms;
 use gizmo_entries::{
     GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GIZMO_SLOTS, GizmoDrawEntry, GizmoUniformsGpu,
     build_rotate_entries, build_scale_axis_entries, build_scale_centre_entry,
@@ -92,13 +93,6 @@ impl GizmoBindGroup {
     fn idx(self) -> u32 {
         self as u32
     }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct Uniforms {
-    view_proj: [[f32; 4]; 4],
-    light_dir: [f32; 4],
 }
 
 /// A `GpuScene` paired with its models bind group. The bind group
@@ -770,17 +764,12 @@ impl Renderer {
         }
 
         let (aabb_min, aabb_max) = installed.gpu.aabb();
-        let diagonal = (aabb_max - aabb_min).length().max(1e-3);
-
-        let aspect = width as f32 / height as f32;
-        let fov_y = default_fov_y();
-        let view_mat = camera.view_matrix();
-        let proj = Mat4::perspective_rh(fov_y, aspect, 0.01 * diagonal, 100.0 * diagonal);
-        let view_proj = proj * view_mat;
+        let view_proj =
+            frame::compute_view_proj(camera, aabb_min, aabb_max, width, height, default_fov_y());
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
-            light_dir: [0.5, 0.7, 1.0, 0.0],
+            light_dir: frame::LIGHT_DIR,
         };
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -804,12 +793,7 @@ impl Renderer {
                     view: &msaa.color_view,
                     resolve_target: Some(&target_view),
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.12,
-                            g: 0.12,
-                            b: 0.13,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(frame::CLEAR_COLOR),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
