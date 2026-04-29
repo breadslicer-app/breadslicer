@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::borrow::Cow;
 use std::num::NonZeroU64;
 
 use anyhow::Result;
@@ -12,7 +11,6 @@ use sc_mesh_core::scene::Scene;
 use slint::wgpu_28::wgpu;
 
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
-use crate::gizmo_geometry::GizmoVertex;
 
 mod frame;
 mod gizmo_buffers;
@@ -24,17 +22,16 @@ mod targets;
 use frame::Uniforms;
 use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
-    GIZMO_DRAW_ENTRY_SIZE, GIZMO_SLOTS, GizmoUniformsGpu, build_rotate_entries,
-    build_scale_axis_entries, build_scale_centre_entry, build_translate_entries,
+    GIZMO_SLOTS, GizmoUniformsGpu, build_rotate_entries, build_scale_axis_entries,
+    build_scale_centre_entry, build_translate_entries,
 };
 pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
+use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{MODEL_ENTRY_SIZE, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
-
-const GIZMO_SHADER_SOURCE: &str = include_str!("shaders/gizmo.wgsl");
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// Format for the gizmo pass's private depth attachment. Stencil is
@@ -50,21 +47,6 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStenci
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
-/// Bind-group indices for the gizmo pipeline. Variant order must match
-/// `shaders/gizmo.wgsl`.
-#[repr(u32)]
-#[derive(Clone, Copy)]
-enum GizmoBindGroup {
-    Uniforms = 0,
-    Entries = 1,
-}
-
-impl GizmoBindGroup {
-    fn idx(self) -> u32 {
-        self as u32
-    }
-}
-
 /// A `GpuScene` paired with its models bind group. The bind group
 /// references the scene's storage buffer by handle, so it must be
 /// rebuilt every time the storage buffer is recreated (i.e. on every
@@ -79,10 +61,8 @@ pub struct Renderer {
     queue: wgpu::Queue,
     mesh: MeshPipeline,
     outline: OutlinePipeline,
-    gizmo_pipeline: wgpu::RenderPipeline,
+    gizmo: GizmoPipeline,
     gizmo_buffers: GizmoBuffers,
-    gizmo_uniforms_bind_group: wgpu::BindGroup,
-    gizmo_entries_bind_group: wgpu::BindGroup,
     scene: Option<InstalledScene>,
     msaa: Option<MsaaTargets>,
     targets: Option<TargetPool>,
@@ -103,133 +83,16 @@ impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let mesh = MeshPipeline::create(&device);
         let outline = OutlinePipeline::create(&device);
-
-        // ---- gizmo pipeline + static buffers --------------------------------
-        let gizmo_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh-viewer gizmo shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(GIZMO_SHADER_SOURCE)),
-        });
-
         let gizmo_buffers = GizmoBuffers::create(&device);
-
-        let gizmo_uniforms_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("mesh-viewer gizmo uniforms bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(
-                            std::mem::size_of::<GizmoUniformsGpu>() as u64
-                        ),
-                    },
-                    count: None,
-                }],
-            });
-
-        let gizmo_entries_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mesh-viewer gizmo entries bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                // Same dynamic-offset uniform pattern as the main
-                // pipeline's models bgl: one entry-sized window, the
-                // bind group is rebound with the per-axis offset.
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: NonZeroU64::new(GIZMO_DRAW_ENTRY_SIZE),
-                },
-                count: None,
-            }],
-        });
-
-        debug_assert_eq!(GizmoBindGroup::Uniforms.idx(), 0);
-        debug_assert_eq!(GizmoBindGroup::Entries.idx(), 1);
-        let gizmo_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("mesh-viewer gizmo pll"),
-                bind_group_layouts: &[&gizmo_uniforms_bgl, &gizmo_entries_bgl],
-                immediate_size: 0,
-            });
-
-        let gizmo_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer gizmo pipeline"),
-            layout: Some(&gizmo_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &gizmo_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<GizmoVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                }],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: GIZMO_DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            // Resolved (non-MSAA) target → 1-sample pipeline.
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &gizmo_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let gizmo_uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh-viewer gizmo uniforms bg"),
-            layout: &gizmo_uniforms_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: gizmo_buffers.uniforms_buffer.as_entire_binding(),
-            }],
-        });
-        let gizmo_entries_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh-viewer gizmo entries bg"),
-            layout: &gizmo_entries_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: gizmo_buffers.entries_binding_window(),
-            }],
-        });
+        let gizmo = GizmoPipeline::create(&device, &gizmo_buffers);
 
         Self {
             device,
             queue,
             mesh,
             outline,
-            gizmo_pipeline,
+            gizmo,
             gizmo_buffers,
-            gizmo_uniforms_bind_group,
-            gizmo_entries_bind_group,
             scene: None,
             msaa: None,
             targets: None,
@@ -565,10 +428,10 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            gizmo_pass.set_pipeline(&self.gizmo_pipeline);
+            gizmo_pass.set_pipeline(&self.gizmo.pipeline);
             gizmo_pass.set_bind_group(
                 GizmoBindGroup::Uniforms.idx(),
-                &self.gizmo_uniforms_bind_group,
+                &self.gizmo.uniforms_bind_group,
                 &[],
             );
 
@@ -583,7 +446,7 @@ impl Renderer {
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo_entries_bind_group,
+                        &self.gizmo.entries_bind_group,
                         &[offset],
                     );
                     // Translate handle = shaft + cone subrange.
@@ -606,7 +469,7 @@ impl Renderer {
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo_entries_bind_group,
+                        &self.gizmo.entries_bind_group,
                         &[offset],
                     );
                     gizmo_pass.draw_indexed(0..self.gizmo_buffers.arc_index_count, 0, 0..1);
@@ -625,7 +488,7 @@ impl Renderer {
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo_entries_bind_group,
+                        &self.gizmo.entries_bind_group,
                         &[offset],
                     );
                     gizmo_pass.draw_indexed(
@@ -646,7 +509,7 @@ impl Renderer {
                         * self.gizmo_buffers.entry_stride) as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo_entries_bind_group,
+                        &self.gizmo.entries_bind_group,
                         &[offset],
                     );
                     // Scale-axis handle = midpoint-cube subrange.
@@ -666,7 +529,7 @@ impl Renderer {
                 let offset = (GIZMO_SLOTS.centre * self.gizmo_buffers.entry_stride) as u32;
                 gizmo_pass.set_bind_group(
                     GizmoBindGroup::Entries.idx(),
-                    &self.gizmo_entries_bind_group,
+                    &self.gizmo.entries_bind_group,
                     &[offset],
                 );
                 gizmo_pass.draw_indexed(0..self.gizmo_buffers.centre_index_count, 0, 0..1);
@@ -1064,17 +927,5 @@ mod gpu_integration_tests {
         let _texture = renderer
             .render(&scene, &camera, None, None, 64, 64)
             .expect("render multi-object");
-    }
-}
-
-#[cfg(test)]
-mod bind_group_index_tests {
-    use super::*;
-
-    #[test]
-    fn gizmo_bind_group_indices_match_wgsl() {
-        // shaders/gizmo.wgsl: @group(0) → uniforms, @group(1) → entry.
-        assert_eq!(GizmoBindGroup::Uniforms.idx(), 0);
-        assert_eq!(GizmoBindGroup::Entries.idx(), 1);
     }
 }
