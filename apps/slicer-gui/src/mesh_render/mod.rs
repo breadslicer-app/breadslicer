@@ -17,6 +17,7 @@ use crate::gizmo_geometry::GizmoVertex;
 mod frame;
 mod gizmo_buffers;
 mod gizmo_entries;
+mod pipelines;
 mod scene_upload;
 mod targets;
 
@@ -27,11 +28,11 @@ use gizmo_entries::{
     build_scale_axis_entries, build_scale_centre_entry, build_translate_entries,
 };
 pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
+use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 pub(crate) use scene_upload::GpuScene;
-use scene_upload::{GpuVertex, MODEL_ENTRY_SIZE, build_model_entries};
+use scene_upload::{MODEL_ENTRY_SIZE, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
 
-const MESH_SHADER_SOURCE: &str = include_str!("shaders/mesh_render.wgsl");
 const OUTLINE_SHADER_SOURCE: &str = include_str!("shaders/outline.wgsl");
 const GIZMO_SHADER_SOURCE: &str = include_str!("shaders/gizmo.wgsl");
 
@@ -48,23 +49,6 @@ const GIZMO_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Floa
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
-
-/// Bind-group indices for the mesh pipeline. Variant order must match
-/// the `bind_group_layouts: &[…]` ordering passed to
-/// `create_pipeline_layout` and the `@group(N)` decls in
-/// `shaders/mesh_render.wgsl`.
-#[repr(u32)]
-#[derive(Clone, Copy)]
-enum MeshBindGroup {
-    Uniforms = 0,
-    Models = 1,
-}
-
-impl MeshBindGroup {
-    fn idx(self) -> u32 {
-        self as u32
-    }
-}
 
 /// Bind-group indices for the outline post-pass pipeline. Variant order
 /// must match `shaders/outline.wgsl`.
@@ -107,12 +91,9 @@ struct InstalledScene {
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipeline: wgpu::RenderPipeline,
+    mesh: MeshPipeline,
     outline_pipeline: wgpu::RenderPipeline,
     outline_bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
-    uniforms_bind_group: wgpu::BindGroup,
-    models_bind_group_layout: wgpu::BindGroupLayout,
     gizmo_pipeline: wgpu::RenderPipeline,
     gizmo_buffers: GizmoBuffers,
     gizmo_uniforms_bind_group: wgpu::BindGroup,
@@ -135,129 +116,11 @@ pub fn default_fov_y() -> f32 {
 
 impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh-viewer shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(MESH_SHADER_SOURCE)),
-        });
+        let mesh = MeshPipeline::create(&device);
+
         let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer outline shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(OUTLINE_SHADER_SOURCE)),
-        });
-
-        let uniforms_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("mesh-viewer uniforms bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
-                    },
-                    count: None,
-                }],
-            });
-
-        let models_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("mesh-viewer models bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        // One ModelEntry per draw call, addressed by a
-                        // dynamic offset. Uniform-buffers-with-dynamic-
-                        // offset are available under default-limits on
-                        // every wgpu backend; storage buffers in the
-                        // vertex stage are not (they are gated by
-                        // `max_storage_buffers_per_shader_stage`, which
-                        // is 0 in the downlevel default profile Slint
-                        // currently uses).
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(MODEL_ENTRY_SIZE),
-                    },
-                    count: None,
-                }],
-            });
-
-        debug_assert_eq!(MeshBindGroup::Uniforms.idx(), 0);
-        debug_assert_eq!(MeshBindGroup::Models.idx(), 1);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mesh-viewer pll"),
-            bind_group_layouts: &[&uniforms_bind_group_layout, &models_bind_group_layout],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                }],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                // Every fragment that passes depth replaces the stencil
-                // with the per-draw `stencil_reference` value (set by
-                // the render loop to 1 for the selected object and 0
-                // otherwise). This means after the main pass the
-                // stencil holds 1 only over the selected object's
-                // visible silhouette — exactly what the outline
-                // post-pass dilates.
-                stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    back: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    read_mask: 0xFF,
-                    write_mask: 0xFF,
-                },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLE_COUNT,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
         });
 
         let outline_bind_group_layout =
@@ -329,22 +192,6 @@ impl Renderer {
             }),
             multiview_mask: None,
             cache: None,
-        });
-
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh-viewer uniforms bg"),
-            layout: &uniforms_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
         });
 
         // ---- gizmo pipeline + static buffers --------------------------------
@@ -467,12 +314,9 @@ impl Renderer {
         Self {
             device,
             queue,
-            pipeline,
+            mesh,
             outline_pipeline,
             outline_bind_group_layout,
-            uniform_buffer,
-            uniforms_bind_group,
-            models_bind_group_layout,
             gizmo_pipeline,
             gizmo_buffers,
             gizmo_uniforms_bind_group,
@@ -536,7 +380,7 @@ impl Renderer {
         // match `min_binding_size` declared in the layout.
         let models_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh-viewer models bg"),
-            layout: &self.models_bind_group_layout,
+            layout: &self.mesh.models_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -630,7 +474,7 @@ impl Renderer {
             light_dir: frame::LIGHT_DIR,
         };
         self.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+            .write_buffer(&self.mesh.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let target = self
             .targets
@@ -671,10 +515,10 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&self.mesh.pipeline);
             pass.set_bind_group(
                 MeshBindGroup::Uniforms.idx(),
-                &self.uniforms_bind_group,
+                &self.mesh.uniforms_bind_group,
                 &[],
             );
             // One draw call per object. The models bind group is rebound
@@ -1317,13 +1161,6 @@ mod gpu_integration_tests {
 #[cfg(test)]
 mod bind_group_index_tests {
     use super::*;
-
-    #[test]
-    fn mesh_bind_group_indices_match_wgsl() {
-        // shaders/mesh_render.wgsl: @group(0) → uniforms, @group(1) → model_entry.
-        assert_eq!(MeshBindGroup::Uniforms.idx(), 0);
-        assert_eq!(MeshBindGroup::Models.idx(), 1);
-    }
 
     #[test]
     fn outline_bind_group_indices_match_wgsl() {
