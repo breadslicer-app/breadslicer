@@ -4,7 +4,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-27 16:01+0000\n"
 "PO-Revision-Date: 2026-05-01 06:44+0000\n"
-"Last-Translator: Cheesus42 <cheesus42@noreply.codeberg.org>\n"
+"Last-Translator: Colamann <colamann@noreply.codeberg.org>\n"
 "Language-Team: German <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/de/>\n"
 "Language: de\n"
@@ -254,7 +254,7 @@ msgstr "Lizenzinformation anzeigen"
 #: ui/main-window.slint:235
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
-msgstr "Öffne ein 3D-Model um es hier anzuzeigen"
+msgstr "3D-Modell öffnen und anzeigen"
 
 #: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
