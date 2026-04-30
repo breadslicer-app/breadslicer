@@ -120,14 +120,26 @@ pub enum GizmoVisibility {
     DraggingScaleAxis { axis: Axis },
 }
 
-/// Per-axis colours (full saturation). The renderer modulates these
-/// with a brightness factor that depends on the axis's active/locked
-/// state for the current handle category.
+/// Translate / scale per-axis colours (full saturation). The renderer
+/// modulates these with a brightness factor that depends on the axis's
+/// active/locked state for the current handle category.
 const fn axis_base_color(axis: Axis) -> [f32; 3] {
     match axis {
         Axis::X => [1.0, 0.25, 0.25],
         Axis::Y => [0.25, 1.0, 0.25],
         Axis::Z => [0.35, 0.45, 1.0],
+    }
+}
+
+/// Rotation per-axis colours: complementaries of the translate
+/// palette so the rotate arcs and their cone spindles read as a
+/// distinct family from the translate shafts and the scale cubes.
+/// X-rotate / cyan, Y-rotate / magenta, Z-rotate / yellow-orange.
+const fn rotate_base_color(axis: Axis) -> [f32; 3] {
+    match axis {
+        Axis::X => [0.25, 0.85, 1.0],
+        Axis::Y => [1.0, 0.35, 0.85],
+        Axis::Z => [1.0, 0.85, 0.25],
     }
 }
 
@@ -139,13 +151,21 @@ const TINT_ACTIVE: f32 = 1.0;
 const TINT_INACTIVE: f32 = 0.65;
 const TINT_LOCKED: f32 = 0.35;
 
-fn tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
+fn tint_with(base: [f32; 3], active: bool, locked: bool) -> [f32; 4] {
     if locked {
         return [TINT_LOCKED, TINT_LOCKED, TINT_LOCKED, 1.0];
     }
     let brightness = if active { TINT_ACTIVE } else { TINT_INACTIVE };
-    let [r, g, b] = axis_base_color(axis);
+    let [r, g, b] = base;
     [r * brightness, g * brightness, b * brightness, 1.0]
+}
+
+fn tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
+    tint_with(axis_base_color(axis), active, locked)
+}
+
+fn rotate_tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
+    tint_with(rotate_base_color(axis), active, locked)
 }
 
 /// Rotation that maps handle-local +X onto each world axis. Indexed
@@ -235,7 +255,7 @@ pub(super) fn build_rotate_entries(
         let active = active_axis == Some(axis);
         out[i] = GizmoDrawEntry {
             axis_rotation: composed.to_cols_array_2d(),
-            tint: tint_for(axis, active, frame.locked_rotate[i]),
+            tint: rotate_tint_for(axis, active, frame.locked_rotate[i]),
         };
     }
     out
@@ -406,6 +426,24 @@ mod gizmo_entry_tests {
         let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
         let entries = build_rotate_entries(&frame, &camera);
         assert_approx_eq!(f32, entries[0].tint[0], 0.35, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn rotate_palette_is_distinct_from_translate_palette() {
+        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        let translate = build_translate_entries(&idle_frame());
+        let rotate = build_rotate_entries(&idle_frame(), &camera);
+        // For each axis, at least one channel must differ — the
+        // rotate arcs and cones must not visually share a colour
+        // with the translate shafts/cones for the same axis.
+        for i in 0..3 {
+            let t = translate[i].tint;
+            let r = rotate[i].tint;
+            let differs = (t[0] - r[0]).abs() > 1e-3
+                || (t[1] - r[1]).abs() > 1e-3
+                || (t[2] - r[2]).abs() > 1e-3;
+            assert!(differs, "axis {i} shares its translate tint with rotate");
+        }
     }
 }
 
