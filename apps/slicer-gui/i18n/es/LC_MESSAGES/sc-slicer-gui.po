@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-27 16:01+0000\n"
-"PO-Revision-Date: 2026-04-27 08:55+0000\n"
+"PO-Revision-Date: 2026-05-01 06:44+0000\n"
 "Last-Translator: gallegonovato <gallegonovato@noreply.codeberg.org>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/es/>\n"
@@ -134,17 +134,17 @@ msgstr "Cerrar"
 #: ui/object-list-panel.slint:18
 msgctxt "ObjectList"
 msgid "Scene objects"
-msgstr ""
+msgstr "Objetos de escena"
 
 #: ui/object-list-panel.slint:38
 msgctxt "ObjectList"
 msgid "Scene Objects"
-msgstr ""
+msgstr "Objetos de escena"
 
 #: ui/object-list-panel.slint:59
 msgctxt "ObjectList"
 msgid "No objects to display"
-msgstr ""
+msgstr "No hay elementos que mostrar"
 
 #: ui/main-window.slint:60
 msgctxt "MainWindow"
@@ -202,22 +202,19 @@ msgid "Preferences"
 msgstr "Ajustes"
 
 #: ui/main-window.slint:173
-#, fuzzy
-#| msgctxt "PreferencesMenu"
-#| msgid "3D View"
 msgctxt "MenuBar"
 msgid "View"
-msgstr "Vista en 3D"
+msgstr "Vista"
 
 #: ui/main-window.slint:177
 msgctxt "MenuBar"
 msgid "Hide Object List"
-msgstr ""
+msgstr "Ocultar la lista de objetos"
 
 #: ui/main-window.slint:178
 msgctxt "MenuBar"
 msgid "Show Object List"
-msgstr ""
+msgstr "Mostrar lista de objetos"
 
 #: ui/main-window.slint:188
 msgctxt "MenuBar"
@@ -298,7 +295,7 @@ msgstr "No se ha podido pasar la textura renderizada a la interfaz gráfica."
 #: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
-msgstr ""
+msgstr "Objeto {}"
 
 #: src/wiring.rs:207
 msgctxt "FileDialog"
