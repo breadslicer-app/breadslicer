@@ -280,6 +280,55 @@ impl CoverageStats {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Field {
+    None,
+    Msgid,
+    Msgstr,
+}
+
+/// Per-entry parser state for `po_coverage`.
+struct EntryState {
+    field: Field,
+    started: bool,
+    fuzzy: bool,
+    msgid_empty: bool,
+    /// `true` until we've seen a non-empty msgstr/msgstr[N] payload.
+    all_msgstr_empty: bool,
+    translated: u32,
+    total: u32,
+}
+
+impl EntryState {
+    fn new() -> Self {
+        Self {
+            field: Field::None,
+            started: false,
+            fuzzy: false,
+            msgid_empty: true,
+            all_msgstr_empty: true,
+            translated: 0,
+            total: 0,
+        }
+    }
+
+    /// Tally the entry currently being accumulated and reset for the next one.
+    fn flush(&mut self) {
+        if self.started && !self.msgid_empty {
+            // Skip the header (msgid "" entry).
+            self.total += 1;
+            if !self.all_msgstr_empty && !self.fuzzy {
+                self.translated += 1;
+            }
+        }
+        self.started = false;
+        self.fuzzy = false;
+        self.msgid_empty = true;
+        self.all_msgstr_empty = true;
+        self.field = Field::None;
+    }
+}
+
 /// Counts translated vs. total messages in a gettext `.po` file. Mirrors
 /// the rule `msgfmt --statistics` uses: header entry (empty `msgid`) is
 /// excluded; an entry counts as translated iff every `msgstr`/`msgstr[N]`
@@ -292,58 +341,12 @@ fn po_coverage(po_path: &Path) -> CoverageStats {
     let raw = fs::read_to_string(po_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", po_path.display()));
 
-    #[derive(Clone, Copy)]
-    enum Field {
-        None,
-        Msgid,
-        Msgstr,
-    }
-
-    // Per-entry accumulators.
-    let mut field = Field::None;
-    let mut started = false;
-    let mut fuzzy = false;
-    let mut msgid_empty = true;
-    // `true` until we've seen a non-empty msgstr/msgstr[N] payload.
-    let mut all_msgstr_empty = true;
-    let mut translated = 0u32;
-    let mut total = 0u32;
-
-    let flush = |started: &mut bool,
-                 fuzzy: &mut bool,
-                 msgid_empty: &mut bool,
-                 all_msgstr_empty: &mut bool,
-                 field: &mut Field,
-                 translated: &mut u32,
-                 total: &mut u32| {
-        if *started {
-            // Skip the header (msgid "" entry).
-            if !*msgid_empty {
-                *total += 1;
-                if !*all_msgstr_empty && !*fuzzy {
-                    *translated += 1;
-                }
-            }
-        }
-        *started = false;
-        *fuzzy = false;
-        *msgid_empty = true;
-        *all_msgstr_empty = true;
-        *field = Field::None;
-    };
+    let mut state = EntryState::new();
 
     for line in raw.lines() {
         let trimmed = line.trim_start();
         if trimmed.is_empty() {
-            flush(
-                &mut started,
-                &mut fuzzy,
-                &mut msgid_empty,
-                &mut all_msgstr_empty,
-                &mut field,
-                &mut translated,
-                &mut total,
-            );
+            state.flush();
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix('#') {
@@ -351,49 +354,49 @@ fn po_coverage(po_path: &Path) -> CoverageStats {
             if let Some(flags) = rest.strip_prefix(',')
                 && flags.split(',').any(|f| f.trim() == "fuzzy")
             {
-                fuzzy = true;
+                state.fuzzy = true;
             }
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("msgctxt ") {
-            started = true;
-            field = Field::None;
+            state.started = true;
+            state.field = Field::None;
             // Context isn't part of the translated/total count; ignore payload.
             let _ = rest;
         } else if let Some(rest) = trimmed.strip_prefix("msgid_plural ") {
-            field = Field::Msgid;
+            state.field = Field::Msgid;
             if !is_empty_quoted(rest) {
-                msgid_empty = false;
+                state.msgid_empty = false;
             }
         } else if let Some(rest) = trimmed.strip_prefix("msgid ") {
-            started = true;
-            field = Field::Msgid;
+            state.started = true;
+            state.field = Field::Msgid;
             if !is_empty_quoted(rest) {
-                msgid_empty = false;
+                state.msgid_empty = false;
             }
         } else if let Some(rest) = trimmed.strip_prefix("msgstr ") {
-            field = Field::Msgstr;
+            state.field = Field::Msgstr;
             if !is_empty_quoted(rest) {
-                all_msgstr_empty = false;
+                state.all_msgstr_empty = false;
             }
         } else if let Some(rest) = trimmed.strip_prefix("msgstr[") {
             // `msgstr[N] "…"` — strip past the `]`.
-            field = Field::Msgstr;
+            state.field = Field::Msgstr;
             let payload = rest.split_once(']').map(|(_, r)| r.trim()).unwrap_or("");
             if !is_empty_quoted(payload) {
-                all_msgstr_empty = false;
+                state.all_msgstr_empty = false;
             }
         } else if trimmed.starts_with('"') {
             // Continuation of the previous `msgid` / `msgstr`.
-            match field {
+            match state.field {
                 Field::Msgid => {
                     if !is_empty_quoted(trimmed) {
-                        msgid_empty = false;
+                        state.msgid_empty = false;
                     }
                 }
                 Field::Msgstr => {
                     if !is_empty_quoted(trimmed) {
-                        all_msgstr_empty = false;
+                        state.all_msgstr_empty = false;
                     }
                 }
                 Field::None => {}
@@ -401,17 +404,12 @@ fn po_coverage(po_path: &Path) -> CoverageStats {
         }
     }
     // Flush trailing entry (file may not end with a blank line).
-    flush(
-        &mut started,
-        &mut fuzzy,
-        &mut msgid_empty,
-        &mut all_msgstr_empty,
-        &mut field,
-        &mut translated,
-        &mut total,
-    );
+    state.flush();
 
-    CoverageStats { translated, total }
+    CoverageStats {
+        translated: state.translated,
+        total: state.total,
+    }
 }
 
 fn is_empty_quoted(s: &str) -> bool {
