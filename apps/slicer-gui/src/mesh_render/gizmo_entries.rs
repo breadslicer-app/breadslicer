@@ -322,6 +322,23 @@ pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3
 /// import path through the `gizmo` module.
 const MIDPOINT_FRACTION_LOCAL: f32 = crate::gizmo::dimensions::MIDPOINT_FRACTION;
 
+/// Per-axis offset between the rotate-drag angle frame and the X-roll
+/// frame (CCW about the rotation axis):
+/// - **X** — drag frame's 0° = world +Y; arc midpoint's 0° (after
+///   `axis_world_rotations[X]` = identity) = world +Y → offset 0.
+/// - **Y** — drag frame's 0° = world +Z; arc midpoint's 0° (after
+///   `Rz(+π/2)`) = world -X → offset +π/2.
+/// - **Z** — drag frame's 0° = world +X; arc midpoint's 0° (after
+///   `Ry(-π/2)`) = world +Y → offset −π/2.
+fn arc_drag_to_roll_offset(axis: Axis) -> f32 {
+    use std::f32::consts::FRAC_PI_2;
+    match axis {
+        Axis::X => 0.0,
+        Axis::Y => FRAC_PI_2,
+        Axis::Z => -FRAC_PI_2,
+    }
+}
+
 /// Three rotate-pass entries (X/Y/Z arcs). Each axis bakes a
 /// per-frame X-roll into its `axis_rotation` so the 90° arc faces
 /// the camera in handle-local space *before* the world-axis rotation
@@ -353,8 +370,17 @@ pub(super) fn build_rotate_entries(
         // roll to the live cursor angle instead so the cone-spindle
         // (anchored at the arc midpoint, handle-local +Y) tracks
         // the cursor and the arc sweeps with the gesture.
+        //
+        // `rotate_drag_angle` measures the cursor angle in a
+        // *world-frame* basis whose 0° reference depends on the
+        // axis (`axis_basis`: X→+Y, Y→+Z, Z→+X). The handle-local
+        // arc midpoint, by contrast, is at handle-local +Y, which
+        // `axis_world_rotations` maps to world +Y / -X / +Y for
+        // X / Y / Z. Subtracting the handle midpoint's drag-frame
+        // angle from `last_raw` aligns the two reference frames so
+        // the cones land under the cursor on every axis.
         let roll = match drag {
-            Some((dragged, angle)) if dragged == axis => angle,
+            Some((dragged, angle)) if dragged == axis => angle + arc_drag_to_roll_offset(axis),
             _ => arc_camera_roll(camera, frame.pivot, axis),
         };
         // Compose: world_axis_rotation × X-roll. The arc is laid out
@@ -631,33 +657,42 @@ mod gizmo_entry_tests {
     }
 
     #[test]
-    fn rotate_drag_overrides_camera_roll_with_cursor_angle() {
-        // Idle camera-roll vs drag roll = π/3: the dragged axis's
-        // matrix should differ by exactly `Rx(π/3 - camera_roll)`,
-        // which is enough to confirm the override fires at all.
+    fn rotate_drag_places_cone_spindle_under_cursor_on_every_axis() {
+        // For every axis, the cone-spindle midpoint (handle-local
+        // (0, R, 0)) must land in the rotation plane at the cursor's
+        // drag-frame angle. `rotate_drag_angle` reads angle in the
+        // world-frame `axis_basis` (X→+Y/+Z, Y→+Z/+X, Z→+X/+Y); the
+        // expected world position is `pivot + R*(cos(θ)*u + sin(θ)*v)`.
         let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
-        let mut frame = frame_with(
-            GizmoVisibility::DraggingRotate { axis: Axis::X },
-            [false; 3],
-        );
-        let cursor_angle = std::f32::consts::FRAC_PI_3;
-        frame.drag_visual = Some(GizmoDragVisual::Rotate {
-            axis: Axis::X,
-            angle: cursor_angle,
-        });
-        let entries = build_rotate_entries(&frame, &camera);
-        // Compute expected: world_axis_rot(X) * Rx(cursor_angle).
-        let expected = Mat4::from_rotation_x(cursor_angle);
-        let actual = Mat4::from_cols_array_2d(&entries[0].axis_rotation);
-        // Compare by mapping the cone-spindle midpoint (0, R, 0)
-        // through both: both should land at the same world point.
         let r = 0.85; // ROTATE_ARC_RADIUS_FRACTION
-        let p = glam::Vec4::new(0.0, r, 0.0, 1.0);
-        let pe = expected * p;
-        let pa = actual * p;
-        assert_approx_eq!(f32, pe.x, pa.x, epsilon = 1e-5);
-        assert_approx_eq!(f32, pe.y, pa.y, epsilon = 1e-5);
-        assert_approx_eq!(f32, pe.z, pa.z, epsilon = 1e-5);
+        let cursor_angle = std::f32::consts::FRAC_PI_3;
+        let basis = |axis: Axis| -> (Vec3, Vec3) {
+            match axis {
+                Axis::X => (Vec3::Y, Vec3::Z),
+                Axis::Y => (Vec3::Z, Vec3::X),
+                Axis::Z => (Vec3::X, Vec3::Y),
+            }
+        };
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let mut frame = frame_with(GizmoVisibility::DraggingRotate { axis }, [false; 3]);
+            frame.drag_visual = Some(GizmoDragVisual::Rotate {
+                axis,
+                angle: cursor_angle,
+            });
+            let entries = build_rotate_entries(&frame, &camera);
+            let i = match axis {
+                Axis::X => 0,
+                Axis::Y => 1,
+                Axis::Z => 2,
+            };
+            let m = Mat4::from_cols_array_2d(&entries[i].axis_rotation);
+            let p = m * glam::Vec4::new(0.0, r, 0.0, 1.0);
+            let (u, v) = basis(axis);
+            let expected = u * (r * cursor_angle.cos()) + v * (r * cursor_angle.sin());
+            assert_approx_eq!(f32, p.x, expected.x, epsilon = 1e-5);
+            assert_approx_eq!(f32, p.y, expected.y, epsilon = 1e-5);
+            assert_approx_eq!(f32, p.z, expected.z, epsilon = 1e-5);
+        }
     }
 
     #[test]
