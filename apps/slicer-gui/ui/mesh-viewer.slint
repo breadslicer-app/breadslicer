@@ -321,15 +321,19 @@ export component MeshViewer inherits Rectangle {
                     } else if (event.button == PointerEventButton.right || event.button == PointerEventButton.middle) {
                         root.active-gesture = 0;
                     }
-                } else if (event.kind == PointerEventKind.move && root.left-pressed && root.active-gesture == 0) {
+                } else if (event.kind == PointerEventKind.move && root.active-gesture == 0) {
                     // Camera gestures (right/middle drag) take priority
-                    // over a left-press, so the pointer-move stream is
-                    // suppressed while the camera is moving even if
-                    // both buttons are held simultaneously. The Move
-                    // case lives in `pointer-event` (not `moved`)
-                    // because only `pointer-event` carries the
-                    // `event.modifiers` snapshot the controller's drag
-                    // FSM needs to read the Shift state inline.
+                    // over the move stream — when one is active we
+                    // suppress moves entirely so the gizmo drag FSM
+                    // doesn't fight the camera. Otherwise the same
+                    // callback drives both the left-pressed drag-update
+                    // path and the no-button hover-tint path, so the
+                    // controller can hit-test the gizmo handles in
+                    // both states. The Move case lives in
+                    // `pointer-event` (not `moved`) because only
+                    // `pointer-event` carries the `event.modifiers`
+                    // snapshot the drag FSM needs to read the Shift
+                    // state inline.
                     root.viewport-pointer-move(ta.mouse-x, ta.mouse-y, {
                         shift: event.modifiers.shift,
                         control: event.modifiers.control,

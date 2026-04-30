@@ -19,7 +19,7 @@ use sc_mesh_core::scene::{Scene, Transform3D};
 use crate::PointerModifiers;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
-use crate::mesh_render::default_fov_y;
+use crate::mesh_render::{GizmoHover, default_fov_y};
 use crate::picking;
 
 use super::gizmo_drag::{
@@ -46,19 +46,35 @@ pub(super) struct MoveCtx<'a> {
     pub(super) modifiers: PointerModifiers,
 }
 
+/// Per-hover inputs carried into [`GizmoFsm::update_hover`]. Same
+/// shape as `StartCtx` minus the modifier (hover doesn't need it).
+pub(super) struct HoverCtx<'a> {
+    pub(super) scene: &'a RefCell<Option<Scene>>,
+    pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
+    pub(super) viewport: Option<ViewportSize>,
+    pub(super) selection_idx: Option<usize>,
+    pub(super) cursor: ScreenPoint,
+}
+
 pub(super) struct GizmoFsm {
     state: Cell<GizmoState>,
+    hover: Cell<Option<GizmoHover>>,
 }
 
 impl GizmoFsm {
     pub(super) fn new() -> Self {
         Self {
             state: Cell::new(GizmoState::Idle),
+            hover: Cell::new(None),
         }
     }
 
     pub(super) fn current(&self) -> GizmoState {
         self.state.get()
+    }
+
+    pub(super) fn current_hover(&self) -> Option<GizmoHover> {
+        self.hover.get()
     }
 
     /// Force the FSM back to `Idle` without reverting any in-flight
@@ -67,6 +83,12 @@ impl GizmoFsm {
     /// object is gone, so reversion is moot).
     pub(super) fn set_idle(&self) {
         self.state.set(GizmoState::Idle);
+    }
+
+    /// Drop any cached hover. Returns `true` if the cell was set.
+    /// Used when the pointer leaves the viewport or selection clears.
+    pub(super) fn clear_hover(&self) -> bool {
+        self.hover.replace(None).is_some()
     }
 
     /// Test-only setter used by the integration tests in `controller.rs`
@@ -110,47 +132,11 @@ impl GizmoFsm {
             return;
         };
         let fov_y = default_fov_y();
-        let scale = gizmo::gizmo_scale(camera, fov_y, h);
-        let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
-        let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
-        // Both rotate cones and scale cubes scale with the gizmo —
-        // their handle-local sizes (in `gizmo` constants) become
-        // world-space sizes via the per-frame shaft length.
-        let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
-        let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
-        let world_per_pixel = camera.world_per_pixel(fov_y, h);
-        let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
-
         let x = ctx.press.x;
         let y = ctx.press.y;
         let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
 
-        // Front-most across the four hit tests. Each candidate is
-        // tagged with its category so the dispatch below knows which
-        // `DragOp` variant to construct.
-        let mut best: Option<(HandleHit, f32)> = None;
-        let mut consider = |hit: HandleHit, t: f32| match best {
-            Some((_, prev_t)) if prev_t <= t => {}
-            _ => best = Some((hit, t)),
-        };
-        if let Some((axis, t)) = gizmo::hit_test::hit_test(&ray, pivot, scale, cyl_radius) {
-            consider(HandleHit::Translate(axis), t);
-        }
-        if let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
-            &ray,
-            pivot,
-            arc_radius_world,
-            rotate_cone_length_world,
-            rotate_cone_radius_world,
-        ) {
-            consider(HandleHit::Rotate(axis), t);
-        }
-        if let Some((axis, t)) =
-            gizmo::hit_test::scale_hit_test(&ray, pivot, scale, axis_cube_world)
-        {
-            consider(HandleHit::ScaleAxis(axis), t);
-        }
-        let Some((winner, _)) = best else {
+        let Some((winner, _)) = front_most_handle(&ray, camera, pivot, fov_y, h) else {
             return;
         };
 
@@ -323,5 +309,96 @@ impl GizmoFsm {
             obj.transform = original;
         }
         true
+    }
+
+    /// Recomputes the hover-handle under the cursor and stores it on
+    /// the FSM. No-op while a drag is in progress (the dragged handle
+    /// is already at full brightness, and hover would just race with
+    /// the drag state). Returns `true` if the cached hover changed —
+    /// the caller marks the renderer dirty so the new tint takes
+    /// effect on the next frame.
+    pub(super) fn update_hover(&self, ctx: HoverCtx<'_>) -> bool {
+        if matches!(self.state.get(), GizmoState::Drag { .. }) {
+            return false;
+        }
+        let new_hover = compute_hover(&ctx);
+        if self.hover.get() == new_hover {
+            return false;
+        }
+        self.hover.set(new_hover);
+        true
+    }
+}
+
+/// Runs the three gizmo hit-tests (translate cones, rotate cones,
+/// scale midpoint cubes) against `ray` and returns the front-most
+/// candidate. Shared by `try_start_drag` (which converts the winner
+/// to a `DragOp`) and the hover path (which converts it to a
+/// `GizmoHover`).
+fn front_most_handle(
+    ray: &picking::Ray,
+    camera: &OrbitCamera,
+    pivot: glam::Vec3,
+    fov_y: f32,
+    h: f32,
+) -> Option<(HandleHit, f32)> {
+    let scale = gizmo::gizmo_scale(camera, fov_y, h);
+    let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
+    let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
+    // Rotate cones and scale cubes scale with the gizmo — handle-local
+    // sizes (in `gizmo` constants) map to world space via the
+    // per-frame shaft length.
+    let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
+    let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
+    let world_per_pixel = camera.world_per_pixel(fov_y, h);
+    let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
+
+    let mut best: Option<(HandleHit, f32)> = None;
+    let mut consider = |hit: HandleHit, t: f32| match best {
+        Some((_, prev_t)) if prev_t <= t => {}
+        _ => best = Some((hit, t)),
+    };
+    if let Some((axis, t)) = gizmo::hit_test::hit_test(ray, pivot, scale, cyl_radius) {
+        consider(HandleHit::Translate(axis), t);
+    }
+    if let Some((axis, t)) = gizmo::hit_test::rotate_hit_test(
+        ray,
+        pivot,
+        arc_radius_world,
+        rotate_cone_length_world,
+        rotate_cone_radius_world,
+    ) {
+        consider(HandleHit::Rotate(axis), t);
+    }
+    if let Some((axis, t)) = gizmo::hit_test::scale_hit_test(ray, pivot, scale, axis_cube_world) {
+        consider(HandleHit::ScaleAxis(axis), t);
+    }
+    best
+}
+
+/// Pure-data hover computation: derives the front-most handle under
+/// the cursor without touching FSM state. `None` whenever the prereqs
+/// (selection / scene / camera / viewport / pivot) are missing or
+/// the cursor isn't over any handle.
+fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
+    let sel_idx = ctx.selection_idx?;
+    let vp = ctx.viewport?;
+    let (w, h) = (vp.width(), vp.height());
+    let camera_slot = ctx.camera.borrow();
+    let camera = camera_slot.as_ref()?;
+    let scene_slot = ctx.scene.borrow();
+    let scene = scene_slot.as_ref()?;
+    let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
+    let fov_y = default_fov_y();
+    let ray = picking::ray_from_pixel(camera, fov_y, w, h, ctx.cursor.x, ctx.cursor.y);
+    let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+    Some(handle_hit_to_hover(hit))
+}
+
+fn handle_hit_to_hover(hit: HandleHit) -> GizmoHover {
+    match hit {
+        HandleHit::Translate(axis) => GizmoHover::Translate(axis),
+        HandleHit::Rotate(axis) => GizmoHover::Rotate(axis),
+        HandleHit::ScaleAxis(axis) => GizmoHover::ScaleAxis(axis),
     }
 }

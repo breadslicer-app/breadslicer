@@ -26,7 +26,7 @@ use gizmo_entries::{
     GIZMO_SLOTS, GizmoUniformsGpu, build_rotate_entries, build_scale_axis_entries,
     build_translate_entries,
 };
-pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
+pub use gizmo_entries::{GizmoFrame, GizmoHover, GizmoVisibility};
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
@@ -757,6 +757,7 @@ mod gpu_integration_tests {
             visibility: GizmoVisibility::DraggingTranslate { axis: Axis::X },
             locked_translate: [false, false, true],
             locked_rotate: [false; 3],
+            hover: None,
         };
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(frame), 64, 64)
@@ -791,6 +792,7 @@ mod gpu_integration_tests {
             visibility: GizmoVisibility::Idle,
             locked_translate: [false; 3],
             locked_rotate: [false; 3],
+            hover: None,
         };
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(frame), 64, 64)
@@ -822,6 +824,7 @@ mod gpu_integration_tests {
             visibility: GizmoVisibility::DraggingRotate { axis: Axis::X },
             locked_translate: [false; 3],
             locked_rotate: [false, false, false],
+            hover: None,
         };
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(frame), 64, 64)
@@ -852,6 +855,7 @@ mod gpu_integration_tests {
             visibility: GizmoVisibility::DraggingScaleAxis { axis: Axis::Y },
             locked_translate: [false; 3],
             locked_rotate: [false; 3],
+            hover: None,
         };
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(scale_axis), 64, 64)

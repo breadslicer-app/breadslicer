@@ -77,9 +77,11 @@ pub(super) enum DragOp {
     },
 }
 
-/// Categorised winner of the press-time gizmo hit-test. Used by
-/// the controller to map across-category arbitration into the
-/// matching `DragOp` variant.
+/// Categorised winner of the press-time (or hover-time) gizmo
+/// hit-test. Used by the controller to map across-category arbitration
+/// into the matching `DragOp` variant on press, and into the renderer's
+/// hover-tint mask on hover.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum HandleHit {
     Translate(Axis),
     Rotate(Axis),

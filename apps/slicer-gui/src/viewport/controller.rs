@@ -11,7 +11,9 @@ use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
 use super::gizmo_drag::{DragOp, GizmoState};
-use super::gizmo_fsm::{GizmoFsm, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx};
+use super::gizmo_fsm::{
+    GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
+};
 use super::input_state::{ClickOrDrag, InputState};
 #[cfg(test)]
 use super::keyboard_drive::ARROW_X_POS;
@@ -249,6 +251,7 @@ impl ViewportController {
         // the scene is gone; clear FSM state without trying to
         // revert (the object no longer exists).
         self.gizmo_fsm.set_idle();
+        self.gizmo_fsm.clear_hover();
         self.input_state.set_idle();
         // Keyboard focus is anchored on the (now-missing) selection;
         // reset it together with the held-arrow bitset so a stuck
@@ -426,6 +429,9 @@ impl ViewportController {
             return;
         }
         self.selection.set(Selection::None);
+        // Selection going away kills the gizmo, so any cached hover
+        // tint targets a handle that no longer renders.
+        self.gizmo_fsm.clear_hover();
         self.mirror_selection_to_ui();
         self.mark_dirty();
     }
@@ -516,7 +522,19 @@ impl ViewportController {
             cursor: ScreenPoint { x, y },
             modifiers,
         };
-        if self.gizmo_fsm.on_move(ctx) {
+        let mut dirty = self.gizmo_fsm.on_move(ctx);
+        // No-op while a drag is in progress (the FSM short-circuits
+        // hover updates internally), so this just covers the hover-
+        // tint update on idle pointer moves.
+        let hover_ctx = GizmoHoverCtx {
+            scene: &self.scene,
+            camera: &self.camera,
+            viewport: self.viewport.get(),
+            selection_idx: self.selection.primary_idx(),
+            cursor: ScreenPoint { x, y },
+        };
+        dirty |= self.gizmo_fsm.update_hover(hover_ctx);
+        if dirty {
             self.mark_dirty();
         }
     }
@@ -745,8 +763,16 @@ impl ViewportController {
             },
             GizmoState::Idle => GizmoVisibility::Idle,
         };
+        let hover = self.gizmo_fsm.current_hover();
         let gizmo_frame = selection_idx.and_then(|sel| {
-            gizmo::frame::build_gizmo_frame(scene_for_render, camera, sel, h_logical, visibility)
+            gizmo::frame::build_gizmo_frame(
+                scene_for_render,
+                camera,
+                sel,
+                h_logical,
+                visibility,
+                hover,
+            )
         });
 
         let Some(texture) = renderer.render(

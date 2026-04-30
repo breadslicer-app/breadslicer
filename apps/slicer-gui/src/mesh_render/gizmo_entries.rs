@@ -97,6 +97,22 @@ pub struct GizmoFrame {
     pub locked_translate: [bool; 3],
     /// Indexed [X, Y, Z]. Greys the rotate arc for that axis.
     pub locked_rotate: [bool; 3],
+    /// Handle the cursor is currently hovering over (no button held),
+    /// or `None` when the cursor is off any handle. Renders that
+    /// handle at hover brightness — between inactive and active.
+    /// Ignored while `visibility` is `Dragging*` (the dragged handle
+    /// is already at full brightness).
+    pub hover: Option<GizmoHover>,
+}
+
+/// Which handle the pointer is currently over, in `Idle` visibility.
+/// Used by the renderer to apply the hover-tint level on the matching
+/// axis without disturbing the active/inactive layout.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GizmoHover {
+    Translate(Axis),
+    Rotate(Axis),
+    ScaleAxis(Axis),
 }
 
 /// Which gizmo handle category is currently visible (and which axis,
@@ -143,29 +159,37 @@ const fn rotate_base_color(axis: Axis) -> [f32; 3] {
     }
 }
 
-/// Brightness multipliers for the three handle states. Active is
-/// the drag-target axis (or hover-target, conceptually identical);
-/// inactive axes still render visibly so the user can see the
-/// gizmo, just at reduced contrast.
+/// Brightness multipliers for the four handle states. Active is the
+/// drag-target axis at full brightness; hover is the cursor-target axis
+/// at midway between inactive and active; inactive axes still render
+/// visibly so the user can see the gizmo at reduced contrast; locked
+/// axes render in a fixed grey.
 const TINT_ACTIVE: f32 = 1.0;
+const TINT_HOVER: f32 = (TINT_ACTIVE + TINT_INACTIVE) * 0.5;
 const TINT_INACTIVE: f32 = 0.65;
 const TINT_LOCKED: f32 = 0.35;
 
-fn tint_with(base: [f32; 3], active: bool, locked: bool) -> [f32; 4] {
+fn tint_with(base: [f32; 3], active: bool, hover: bool, locked: bool) -> [f32; 4] {
     if locked {
         return [TINT_LOCKED, TINT_LOCKED, TINT_LOCKED, 1.0];
     }
-    let brightness = if active { TINT_ACTIVE } else { TINT_INACTIVE };
+    let brightness = if active {
+        TINT_ACTIVE
+    } else if hover {
+        TINT_HOVER
+    } else {
+        TINT_INACTIVE
+    };
     let [r, g, b] = base;
     [r * brightness, g * brightness, b * brightness, 1.0]
 }
 
-fn tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
-    tint_with(axis_base_color(axis), active, locked)
+fn tint_for(axis: Axis, active: bool, hover: bool, locked: bool) -> [f32; 4] {
+    tint_with(axis_base_color(axis), active, hover, locked)
 }
 
-fn rotate_tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
-    tint_with(rotate_base_color(axis), active, locked)
+fn rotate_tint_for(axis: Axis, active: bool, hover: bool, locked: bool) -> [f32; 4] {
+    tint_with(rotate_base_color(axis), active, hover, locked)
 }
 
 /// Rotation that maps handle-local +X onto each world axis. Indexed
@@ -187,15 +211,20 @@ pub(super) fn build_translate_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3]
         GizmoVisibility::DraggingTranslate { axis } => Some(axis),
         _ => None,
     };
+    let hover_axis = match frame.hover {
+        Some(GizmoHover::Translate(axis)) => Some(axis),
+        _ => None,
+    };
     let mut out = [GizmoDrawEntry {
         axis_rotation: [[0.0; 4]; 4],
         tint: [0.0; 4],
     }; 3];
     for (i, axis) in axes.into_iter().enumerate() {
         let active = active_axis == Some(axis);
+        let hover = hover_axis == Some(axis);
         out[i] = GizmoDrawEntry {
             axis_rotation: rotations[i].to_cols_array_2d(),
-            tint: tint_for(axis, active, frame.locked_translate[i]),
+            tint: tint_for(axis, active, hover, frame.locked_translate[i]),
         };
     }
     out
@@ -213,15 +242,20 @@ pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3
         GizmoVisibility::DraggingScaleAxis { axis } => Some(axis),
         _ => None,
     };
+    let hover_axis = match frame.hover {
+        Some(GizmoHover::ScaleAxis(axis)) => Some(axis),
+        _ => None,
+    };
     let mut out = [GizmoDrawEntry {
         axis_rotation: [[0.0; 4]; 4],
         tint: [0.0; 4],
     }; 3];
     for (i, axis) in axes.into_iter().enumerate() {
         let active = active_axis == Some(axis);
+        let hover = hover_axis == Some(axis);
         out[i] = GizmoDrawEntry {
             axis_rotation: rotations[i].to_cols_array_2d(),
-            tint: tint_for(axis, active, frame.locked_translate[i]),
+            tint: tint_for(axis, active, hover, frame.locked_translate[i]),
         };
     }
     out
@@ -241,6 +275,10 @@ pub(super) fn build_rotate_entries(
         GizmoVisibility::DraggingRotate { axis } => Some(axis),
         _ => None,
     };
+    let hover_axis = match frame.hover {
+        Some(GizmoHover::Rotate(axis)) => Some(axis),
+        _ => None,
+    };
     let mut out = [GizmoDrawEntry {
         axis_rotation: [[0.0; 4]; 4],
         tint: [0.0; 4],
@@ -253,9 +291,10 @@ pub(super) fn build_rotate_entries(
         // before the world-axis rotation lifts it onto X/Y/Z.
         let composed = rotations[i] * Mat4::from_rotation_x(roll);
         let active = active_axis == Some(axis);
+        let hover = hover_axis == Some(axis);
         out[i] = GizmoDrawEntry {
             axis_rotation: composed.to_cols_array_2d(),
-            tint: rotate_tint_for(axis, active, frame.locked_rotate[i]),
+            tint: rotate_tint_for(axis, active, hover, frame.locked_rotate[i]),
         };
     }
     out
@@ -317,6 +356,7 @@ mod gizmo_entry_tests {
             visibility,
             locked_translate,
             locked_rotate: [false; 3],
+            hover: None,
         }
     }
 
@@ -444,6 +484,61 @@ mod gizmo_entry_tests {
                 || (t[2] - r[2]).abs() > 1e-3;
             assert!(differs, "axis {i} shares its translate tint with rotate");
         }
+    }
+
+    #[test]
+    fn hover_brightness_sits_between_inactive_and_active() {
+        // X translate base = (1.0, 0.25, 0.25). At hover brightness
+        // the red channel = TINT_HOVER (0.825).
+        let mut frame = idle_frame();
+        frame.hover = Some(GizmoHover::Translate(Axis::X));
+        let entries = build_translate_entries(&frame);
+        assert_approx_eq!(f32, entries[0].tint[0], TINT_HOVER, epsilon = 1e-5);
+        // Y stays inactive — hover is per-axis.
+        assert_approx_eq!(f32, entries[1].tint[1], TINT_INACTIVE, epsilon = 1e-5);
+        // Hover sits strictly between inactive and active.
+        const _: () = {
+            assert!(TINT_INACTIVE < TINT_HOVER);
+            assert!(TINT_HOVER < TINT_ACTIVE);
+        };
+    }
+
+    #[test]
+    fn hover_does_not_brighten_handle_in_a_different_category() {
+        // Hover marks a translate axis; rotate / scale-axis entries
+        // for the same axis must stay inactive.
+        let mut frame = idle_frame();
+        frame.hover = Some(GizmoHover::Translate(Axis::X));
+        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        let rotate = build_rotate_entries(&frame, &camera);
+        let scale = build_scale_axis_entries(&frame);
+        // Rotate X (cyan: 0.25, 0.85, 1.0). Inactive blue channel = 0.65.
+        assert_approx_eq!(f32, rotate[0].tint[2], 1.0 * TINT_INACTIVE, epsilon = 1e-5);
+        // Scale X red channel inactive = 0.65.
+        assert_approx_eq!(f32, scale[0].tint[0], 1.0 * TINT_INACTIVE, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn locked_axis_ignores_hover() {
+        let mut frame = idle_frame();
+        frame.locked_translate = [true, false, false];
+        frame.hover = Some(GizmoHover::Translate(Axis::X));
+        let entries = build_translate_entries(&frame);
+        // Locked grey overrides hover.
+        assert_approx_eq!(f32, entries[0].tint[0], TINT_LOCKED, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn active_axis_ignores_hover() {
+        // Dragging an axis pins it at TINT_ACTIVE; the hover field
+        // for the same axis should not pull it back down to hover.
+        let mut frame = frame_with(
+            GizmoVisibility::DraggingTranslate { axis: Axis::X },
+            [false; 3],
+        );
+        frame.hover = Some(GizmoHover::Translate(Axis::X));
+        let entries = build_translate_entries(&frame);
+        assert_approx_eq!(f32, entries[0].tint[0], TINT_ACTIVE, epsilon = 1e-5);
     }
 }
 
