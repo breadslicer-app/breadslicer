@@ -56,13 +56,6 @@ pub(super) enum GizmoState {
 ///   uniform branch. Both anchor sets are captured at press *and*
 ///   re-captured on every Shift toggle so the formula switch is
 ///   visually snap-free (see `re_anchor_scale_axis`).
-/// - `ScaleUniform` composes a uniform scale about the pivot. Started
-///   only by pressing the centre cube — the per-axis-cube-with-Shift
-///   path goes through `ScaleAxis { proportional: true }` instead, so
-///   releasing Shift can revert it without losing the originating
-///   axis. `press_screen` is the cursor position at press;
-///   `pivot_screen` is the projected pivot in pixel coords (also
-///   captured at press, so subsequent moves use a stable reference).
 #[derive(Copy, Clone, Debug)]
 pub(super) enum DragOp {
     Translate {
@@ -82,10 +75,6 @@ pub(super) enum DragOp {
         press_screen: (f32, f32),
         pivot_screen: (f32, f32),
     },
-    ScaleUniform {
-        press_screen: (f32, f32),
-        pivot_screen: (f32, f32),
-    },
 }
 
 /// Categorised winner of the press-time gizmo hit-test. Used by
@@ -95,7 +84,6 @@ pub(super) enum HandleHit {
     Translate(Axis),
     Rotate(Axis),
     ScaleAxis(Axis),
-    ScaleCentre,
 }
 
 /// Bundled inputs for `re_anchor_scale_axis`. The single call site
@@ -187,21 +175,6 @@ pub(super) fn apply_drag_move(
                 );
                 scale_along_axis(axis, factor)
             };
-            Some((compose_about_pivot(&scale_mat, pivot, original), op))
-        }
-        DragOp::ScaleUniform {
-            press_screen,
-            pivot_screen,
-        } => {
-            let factor = gizmo::drag_math::uniform_scale_factor(
-                pivot_screen.0,
-                pivot_screen.1,
-                press_screen.0,
-                press_screen.1,
-                cursor_x,
-                cursor_y,
-            );
-            let scale_mat = AffineTransform3D::from_uniform_scale(factor as f64);
             Some((compose_about_pivot(&scale_mat, pivot, original), op))
         }
     }
@@ -463,26 +436,6 @@ mod apply_drag_move_tests {
             press_screen: (150.0, 100.0),
             pivot_screen: (100.0, 100.0),
         };
-        let ray = ray_from(Vec3::new(0.0, -3.0, 0.0), Vec3::ZERO);
-        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 200.0, 100.0).unwrap();
-        let m = read_linear(&new_t);
-        assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
-        assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
-        assert_approx_eq!(f64, m[2][2], 2.0, epsilon = 1e-4);
-    }
-
-    #[test]
-    fn scale_uniform_op_composes_a_uniform_diagonal_about_pivot() {
-        // Press at distance 50 px from projected pivot, current at
-        // 100 px → factor 2.
-        let pivot = pivot_origin();
-        let original = Transform3D::Identity;
-        let op = DragOp::ScaleUniform {
-            press_screen: (150.0, 100.0), // 50 px right of pivot
-            pivot_screen: (100.0, 100.0),
-        };
-        // The ray itself doesn't enter the formula for ScaleUniform —
-        // factor is purely from screen distances. Use any ray.
         let ray = ray_from(Vec3::new(0.0, -3.0, 0.0), Vec3::ZERO);
         let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 200.0, 100.0).unwrap();
         let m = read_linear(&new_t);

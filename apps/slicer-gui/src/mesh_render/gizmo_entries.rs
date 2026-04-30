@@ -33,7 +33,7 @@ pub(super) const GIZMO_DRAW_ENTRY_SIZE: u64 = std::mem::size_of::<GizmoDrawEntry
 /// Total number of per-frame draw entries reserved in
 /// `gizmo_entries_buffer`. See `GIZMO_SLOTS` for the per-category
 /// layout that fills it.
-pub(super) const GIZMO_ENTRY_SLOTS: u64 = 10;
+pub(super) const GIZMO_ENTRY_SLOTS: u64 = 9;
 
 /// Range of `gizmo_entries_buffer` slots reserved for one handle
 /// category. `start` is the first slot index, `count` is how many
@@ -69,14 +69,12 @@ pub(super) struct GizmoSlots {
     pub(super) translate: GizmoSlotRange,
     pub(super) rotate: GizmoSlotRange,
     pub(super) scale_axis: GizmoSlotRange,
-    pub(super) centre: u64,
 }
 
 pub(super) const GIZMO_SLOTS: GizmoSlots = GizmoSlots {
     translate: GizmoSlotRange::new(0, 3),
     rotate: GizmoSlotRange::new(3, 3),
     scale_axis: GizmoSlotRange::new(6, 3),
-    centre: 9,
 };
 
 /// Per-frame data the renderer needs to draw the gizmo. `pivot` is
@@ -103,20 +101,16 @@ pub struct GizmoFrame {
 
 /// Which gizmo handle category is currently visible (and which axis,
 /// if any, is the active drag target). The rule:
-/// - `Idle`: render all four handle categories (translate cones,
-///   midpoint scale cubes, rotate arcs, centre cube). No axis is
-///   highlighted as "active".
+/// - `Idle`: render all three handle categories (translate cones,
+///   rotate arcs, midpoint scale cubes). No axis is highlighted as
+///   "active".
 /// - `Dragging*`: render only the *category* the drag belongs to.
 ///   The named axis is the active drag target and renders bright;
 ///   other axes in the same category render dim.
-///
-/// `DraggingScaleAxis` and `DraggingScaleUniform` both render the
-/// same category (the scale group: 3 midpoint cubes + the centre
-/// cube). They differ only in which sub-handle is highlighted.
 //
-// `DraggingRotate` / `DraggingScaleAxis` / `DraggingScaleUniform`
-// have no controller-side producer until the FSM extension lands;
-// they're consumed by tests today.
+// `DraggingRotate` / `DraggingScaleAxis` have no controller-side
+// producer until the FSM extension lands; they're consumed by tests
+// today.
 #[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoVisibility {
@@ -124,7 +118,6 @@ pub enum GizmoVisibility {
     DraggingTranslate { axis: Axis },
     DraggingRotate { axis: Axis },
     DraggingScaleAxis { axis: Axis },
-    DraggingScaleUniform,
 }
 
 /// Per-axis colours (full saturation). The renderer modulates these
@@ -153,15 +146,6 @@ fn tint_for(axis: Axis, active: bool, locked: bool) -> [f32; 4] {
     let brightness = if active { TINT_ACTIVE } else { TINT_INACTIVE };
     let [r, g, b] = axis_base_color(axis);
     [r * brightness, g * brightness, b * brightness, 1.0]
-}
-
-/// Locked grey for the centre cube — it has no per-axis lock-out
-/// concept so this function returns a fixed greyscale palette,
-/// dim/bright following the visibility's "uniform-scale active"
-/// flag.
-fn centre_tint(active: bool) -> [f32; 4] {
-    let g = if active { TINT_ACTIVE } else { TINT_INACTIVE };
-    [g, g, g, 1.0]
 }
 
 /// Rotation that maps handle-local +X onto each world axis. Indexed
@@ -221,17 +205,6 @@ pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3
         };
     }
     out
-}
-
-/// Centre-cube entry. Identity rotation (the cube is axis-aligned
-/// at the pivot) and a greyscale tint so the centre handle reads as
-/// a single "uniform-scale" target rather than a fourth axis.
-pub(super) fn build_scale_centre_entry(frame: &GizmoFrame) -> GizmoDrawEntry {
-    let active = matches!(frame.visibility, GizmoVisibility::DraggingScaleUniform);
-    GizmoDrawEntry {
-        axis_rotation: Mat4::IDENTITY.to_cols_array_2d(),
-        tint: centre_tint(active),
-    }
 }
 
 /// Three rotate-pass entries (X/Y/Z arcs). Each axis bakes a
@@ -410,22 +383,6 @@ mod gizmo_entry_tests {
     }
 
     #[test]
-    fn centre_cube_is_grey_and_active_only_under_uniform_scale() {
-        let idle = build_scale_centre_entry(&idle_frame());
-        // All three RGB channels equal under greyscale tint.
-        assert_approx_eq!(f32, idle.tint[0], idle.tint[1], epsilon = 1e-6);
-        assert_approx_eq!(f32, idle.tint[1], idle.tint[2], epsilon = 1e-6);
-        // Inactive brightness 0.65.
-        assert_approx_eq!(f32, idle.tint[0], 0.65, epsilon = 1e-5);
-
-        let active = build_scale_centre_entry(&frame_with(
-            GizmoVisibility::DraggingScaleUniform,
-            [false; 3],
-        ));
-        assert_approx_eq!(f32, active.tint[0], 1.0, epsilon = 1e-5);
-    }
-
-    #[test]
     fn rotate_arc_roll_aligns_with_camera_in_handle_local_yz_plane() {
         // Camera at +Z above the pivot. For the X-axis arc (axis = +X
         // in handle-local space), the camera-facing direction projects
@@ -468,9 +425,8 @@ mod gizmo_slots_tests {
         );
         assert_eq!(
             GIZMO_SLOTS.scale_axis.start() + GIZMO_SLOTS.scale_axis.count(),
-            GIZMO_SLOTS.centre
+            GIZMO_ENTRY_SLOTS
         );
-        assert_eq!(GIZMO_SLOTS.centre + 1, GIZMO_ENTRY_SLOTS);
     }
 
     #[test]

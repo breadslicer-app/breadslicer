@@ -15,15 +15,6 @@ use super::axis::{ALL_AXES, Axis};
 use super::dimensions::{MIDPOINT_FRACTION, TRANSLATE_HIT_S_MAX, TRANSLATE_HIT_S_MIN};
 use super::tolerances::{LOCKOUT_COS, ROTATE_LOCKOUT_COS};
 
-/// Which scale handle a ray hit. The centre cube drives uniform
-/// scaling around the pivot; an axis cube drives per-axis scaling
-/// (with the proportional-scale modifier promoting it to uniform).
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ScaleHandle {
-    Centre,
-    Axis(Axis),
-}
-
 /// Whether an axis is grabbable. Returns false when the camera is
 /// looking too closely along the axis (see `LOCKOUT_COS`). The
 /// renderer should also grey the axis tint when this returns false
@@ -40,8 +31,8 @@ pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
 /// shaft line below the cone is decorative.
 ///
 /// The returned `t` is exposed so the controller can arbitrate
-/// front-most across the four hit-test categories (translate cones,
-/// rotate cones, scale midpoint cubes, scale centre cube).
+/// front-most across the three hit-test categories (translate cones,
+/// rotate cones, scale midpoint cubes).
 pub fn hit_test(
     ray: &Ray,
     pivot: Vec3,
@@ -271,44 +262,22 @@ fn ray_hits_axis_cube(
     ray_hits_aabb_t(ray, centre - half, centre + half)
 }
 
-/// Ray-vs-AABB for the centre (uniform-scale) cube. The cube is
-/// axis-aligned in world space, centred at `pivot`, with side
-/// length `cube_world`.
-fn ray_hits_centre_cube(ray: &Ray, pivot: Vec3, cube_world: f32) -> Option<f32> {
-    let half = Vec3::splat(cube_world * 0.5);
-    ray_hits_aabb_t(ray, pivot - half, pivot + half)
-}
-
-/// Hit-test the four scale handles (three midpoint cubes + the
-/// centre cube) against `ray`. Returns the front-most-`t` candidate
-/// classified as a [`ScaleHandle`], or `None` if the ray misses
-/// every cube.
-///
-/// The per-axis cubes inherit the translate lock-out (the closest-
-/// point-on-axis drag math has the same instability as translate
-/// near the camera-parallel-to-axis configuration); the centre cube
-/// has no per-axis lock-out since its drag uses screen-space
-/// distance.
+/// Hit-test the three per-axis scale midpoint cubes against `ray`.
+/// Returns the front-most pickable axis (smallest positive `t`) whose
+/// midpoint cube the ray intersects, or `None`. The per-axis cubes
+/// inherit the translate lock-out (the closest-point-on-axis drag
+/// math has the same instability as translate near the camera-
+/// parallel-to-axis configuration).
 pub fn scale_hit_test(
     ray: &Ray,
     pivot: Vec3,
     shaft_length_world: f32,
     axis_cube_world: f32,
-    centre_cube_world: f32,
-) -> Option<(ScaleHandle, f32)> {
-    let centre =
-        ray_hits_centre_cube(ray, pivot, centre_cube_world).map(|t| (ScaleHandle::Centre, t));
-    let axis_hit = front_most_axis(
+) -> Option<(Axis, f32)> {
+    front_most_axis(
         |a| axis_pickable(ray, a),
         |a| ray_hits_axis_cube(ray, pivot, a, shaft_length_world, axis_cube_world),
     )
-    .map(|(a, t)| (ScaleHandle::Axis(a), t));
-
-    match (centre, axis_hit) {
-        (Some((_, ct)), Some((handle, at))) if at < ct => Some((handle, at)),
-        (Some(c), _) => Some(c),
-        (None, axis) => axis,
-    }
 }
 
 #[cfg(test)]
@@ -714,43 +683,8 @@ mod ray_hits_axis_cube_tests {
 }
 
 #[cfg(test)]
-mod ray_hits_centre_cube_tests {
-    use super::*;
-
-    #[test]
-    fn ray_through_pivot_hits() {
-        let ray = Ray {
-            origin: Vec3::new(0.0, 0.0, 5.0),
-            direction: -Vec3::Z,
-        };
-        assert!(ray_hits_centre_cube(&ray, Vec3::ZERO, 0.2).is_some());
-    }
-
-    #[test]
-    fn ray_outside_cube_misses() {
-        let ray = Ray {
-            origin: Vec3::new(1.0, 0.0, 5.0),
-            direction: -Vec3::Z,
-        };
-        assert!(ray_hits_centre_cube(&ray, Vec3::ZERO, 0.2).is_none());
-    }
-}
-
-#[cfg(test)]
 mod scale_hit_test_tests {
     use super::*;
-
-    #[test]
-    fn ray_through_centre_returns_centre() {
-        let ray = Ray {
-            origin: Vec3::new(0.0, 0.0, 5.0),
-            direction: -Vec3::Z,
-        };
-        assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(h, _)| h),
-            Some(ScaleHandle::Centre)
-        );
-    }
 
     #[test]
     fn ray_through_x_midpoint_returns_x_axis_handle() {
@@ -759,8 +693,8 @@ mod scale_hit_test_tests {
             direction: -Vec3::Z,
         };
         assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(h, _)| h),
-            Some(ScaleHandle::Axis(Axis::X))
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).map(|(a, _)| a),
+            Some(Axis::X)
         );
     }
 
@@ -770,7 +704,7 @@ mod scale_hit_test_tests {
             origin: Vec3::new(100.0, 100.0, 100.0),
             direction: -Vec3::Z,
         };
-        assert!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).is_none());
+        assert!(scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).is_none());
     }
 
     #[test]
@@ -786,8 +720,8 @@ mod scale_hit_test_tests {
             direction: dir,
         };
         assert_eq!(
-            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(h, _)| h),
-            Some(ScaleHandle::Axis(Axis::Y))
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).map(|(a, _)| a),
+            Some(Axis::Y)
         );
     }
 
@@ -801,7 +735,9 @@ mod scale_hit_test_tests {
             origin: Vec3::new(-5.0, 0.0, 0.0),
             direction: dir,
         };
-        let hit = scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1, 0.2).map(|(h, _)| h);
-        assert_ne!(hit, Some(ScaleHandle::Axis(Axis::X)));
+        assert_ne!(
+            scale_hit_test(&ray, Vec3::ZERO, 2.0, 0.1).map(|(a, _)| a),
+            Some(Axis::X)
+        );
     }
 }

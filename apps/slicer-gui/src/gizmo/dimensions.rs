@@ -33,21 +33,11 @@ pub const ROTATE_CONE_RADIUS: f32 = 0.07;
 /// and is small enough to leave the cone tip clearly distinct.
 pub const AXIS_SCALE_CUBE_PIXELS: f32 = 10.0;
 
-/// Side length, in screen pixels, of the centre cube driving the
-/// uniform-scale gesture. Sized larger than the per-axis cube so the
-/// pivot's handle reads as a single distinct target rather than a
-/// fourth axis.
-pub const CENTRE_CUBE_PIXELS: f32 = 14.0;
-
 /// Fraction of the translate shaft length at which the scale-axis
 /// midpoint cube sits (`pivot + axis * scale * MIDPOINT_FRACTION`).
 /// Pinned at the *midpoint* — not the tip — so per-axis scale doesn't
 /// collide with the translate cone.
 pub const MIDPOINT_FRACTION: f32 = 0.5;
-
-/// Tube (minor) radius of the rotate arc, in screen pixels. The
-/// matching world radius is derived per-frame from `gizmo_scale`.
-pub const ROTATE_ARC_TUBE_PIXELS: f32 = 3.0;
 
 /// Major (circle) radius of the rotate arc, expressed as a fraction
 /// of the translate shaft length. 0.85 keeps the arc inside the

@@ -4,10 +4,16 @@
  */
 
 //! Static gizmo VBO/IBO geometry plus the per-frame entry-buffer
-//! allocation. All four gizmo geometries (axis shaft+cone+midpoint,
-//! rotate arc, rotate cones, centre cube) are uploaded once at
-//! renderer construction and reused every frame; only the
-//! per-axis/per-handle draw-entry slots are written per frame, via
+//! allocation. Five geometries are uploaded once at renderer
+//! construction and reused every frame:
+//!
+//! - shaft line (LineList)
+//! - cone tip (TriangleList)
+//! - per-axis scale cube (TriangleList)
+//! - rotate arc polyline (LineList)
+//! - rotate-drag two-cone spindle (TriangleList)
+//!
+//! Only the per-axis draw-entry slots are written per frame, via
 //! `write_entries`.
 
 use std::num::NonZeroU64;
@@ -21,71 +27,95 @@ use super::gizmo_entries::{GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GizmoDrawEn
 use super::scene_upload::align_up;
 
 pub(super) struct GizmoBuffers {
-    /// Axis geometry: shaft prism + cone tip + per-axis midpoint
-    /// cube, all in handle-local space (axis = +X). The renderer
-    /// draws the shaft+cone subrange as the translate handle and
-    /// the midpoint-cube subrange as the scale-axis handle.
-    pub(super) axis_vertex_buffer: wgpu::Buffer,
-    pub(super) axis_index_buffer: wgpu::Buffer,
-    /// Number of indices in the translate (shaft + cone) subrange,
-    /// from `[0, axis_shaft_tip_index_count)`. The remaining
-    /// indices `[axis_shaft_tip_index_count, end)` belong to the
-    /// per-axis midpoint cube.
-    pub(super) axis_shaft_tip_index_count: u32,
-    pub(super) axis_total_index_count: u32,
-    /// Rotate-arc geometry: a 90° torus segment around +X in
-    /// handle-local space, centred on +Y. The per-frame X-roll
-    /// (baked into `axis_rotation`) swings the arc to face the
-    /// camera before the world-axis rotation maps it onto X/Y/Z.
-    /// Decorative — the click target is the cone spindle below.
-    pub(super) arc_vertex_buffer: wgpu::Buffer,
-    pub(super) arc_index_buffer: wgpu::Buffer,
-    pub(super) arc_index_count: u32,
-    /// Rotate-handle two-cone spindle: bases touching at the arc's
-    /// camera-facing midpoint, tips along ±axis. The active rotate
-    /// handle (mirrors `gizmo::ray_hits_rotate_cones` on the picker
-    /// side).
+    /// Axis shaft as a 1-pixel `LineList` segment from pivot to cone
+    /// base, in handle-local space.
+    pub(super) shaft_line_vertex_buffer: wgpu::Buffer,
+    pub(super) shaft_line_index_buffer: wgpu::Buffer,
+    pub(super) shaft_line_index_count: u32,
+    /// Translate cone tip (12-side solid cone). The active translate
+    /// click target.
+    pub(super) cone_tip_vertex_buffer: wgpu::Buffer,
+    pub(super) cone_tip_index_buffer: wgpu::Buffer,
+    pub(super) cone_tip_index_count: u32,
+    /// Per-axis scale midpoint cube.
+    pub(super) scale_cube_vertex_buffer: wgpu::Buffer,
+    pub(super) scale_cube_index_buffer: wgpu::Buffer,
+    pub(super) scale_cube_index_count: u32,
+    /// Rotate arc polyline (`LineList`) approximating a 90° sweep
+    /// around handle-local +X, centred on +Y. The per-frame X-roll
+    /// (baked into `axis_rotation`) swings the arc to face the camera
+    /// before the world-axis rotation maps it onto X/Y/Z. Decorative —
+    /// the click target is the cone spindle below.
+    pub(super) arc_line_vertex_buffer: wgpu::Buffer,
+    pub(super) arc_line_index_buffer: wgpu::Buffer,
+    pub(super) arc_line_index_count: u32,
+    /// Rotate-drag two-cone spindle.
     pub(super) rotate_cones_vertex_buffer: wgpu::Buffer,
     pub(super) rotate_cones_index_buffer: wgpu::Buffer,
     pub(super) rotate_cones_index_count: u32,
-    /// Centre cube geometry for the uniform-scale handle.
-    pub(super) centre_vertex_buffer: wgpu::Buffer,
-    pub(super) centre_index_buffer: wgpu::Buffer,
-    pub(super) centre_index_count: u32,
     pub(super) uniforms_buffer: wgpu::Buffer,
     /// Per-frame draw-entry buffer with `GIZMO_ENTRY_SLOTS` slots.
     /// Each pass binds a window of one entry via a dynamic offset:
     /// translate occupies `[0, 3)`, rotate `[3, 6)`, scale-axis
-    /// `[6, 9)`, scale-uniform / centre `[9, 10)`.
+    /// `[6, 9)`.
     pub(super) entries_buffer: wgpu::Buffer,
     pub(super) entry_stride: u64,
 }
 
 impl GizmoBuffers {
     pub(super) fn create(device: &wgpu::Device) -> Self {
-        let (axis_vertices, axis_indices, axis_shaft_tip_index_count) =
-            gizmo_geometry::build_axis_geometry();
-        let axis_total_index_count = axis_indices.len() as u32;
-        let axis_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo axis vbo"),
-            contents: bytemuck::cast_slice(&axis_vertices),
+        let (shaft_vertices, shaft_indices) = gizmo_geometry::build_axis_shaft_line_geometry();
+        let shaft_line_index_count = shaft_indices.len() as u32;
+        let shaft_line_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo shaft line vbo"),
+                contents: bytemuck::cast_slice(&shaft_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let shaft_line_index_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo shaft line ibo"),
+                contents: bytemuck::cast_slice(&shaft_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        let (cone_vertices, cone_indices) = gizmo_geometry::build_axis_cone_tip_geometry();
+        let cone_tip_index_count = cone_indices.len() as u32;
+        let cone_tip_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo cone tip vbo"),
+            contents: bytemuck::cast_slice(&cone_vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let axis_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo axis ibo"),
-            contents: bytemuck::cast_slice(&axis_indices),
+        let cone_tip_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo cone tip ibo"),
+            contents: bytemuck::cast_slice(&cone_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let (arc_vertices, arc_indices) = gizmo_geometry::build_rotate_arc_geometry();
-        let arc_index_count = arc_indices.len() as u32;
-        let arc_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo arc vbo"),
+        let (cube_vertices, cube_indices) = gizmo_geometry::build_axis_scale_cube_geometry();
+        let scale_cube_index_count = cube_indices.len() as u32;
+        let scale_cube_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo scale cube vbo"),
+                contents: bytemuck::cast_slice(&cube_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let scale_cube_index_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh-viewer gizmo scale cube ibo"),
+                contents: bytemuck::cast_slice(&cube_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        let (arc_vertices, arc_indices) = gizmo_geometry::build_rotate_arc_line_geometry();
+        let arc_line_index_count = arc_indices.len() as u32;
+        let arc_line_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo arc line vbo"),
             contents: bytemuck::cast_slice(&arc_vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let arc_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo arc ibo"),
+        let arc_line_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer gizmo arc line ibo"),
             contents: bytemuck::cast_slice(&arc_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
@@ -106,19 +136,6 @@ impl GizmoBuffers {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let (centre_vertices, centre_indices) = gizmo_geometry::build_centre_cube_geometry();
-        let centre_index_count = centre_indices.len() as u32;
-        let centre_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo centre vbo"),
-            contents: bytemuck::cast_slice(&centre_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let centre_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo centre ibo"),
-            contents: bytemuck::cast_slice(&centre_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
         let uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mesh-viewer gizmo uniforms"),
             size: std::mem::size_of::<super::gizmo_entries::GizmoUniformsGpu>() as u64,
@@ -136,19 +153,21 @@ impl GizmoBuffers {
         });
 
         Self {
-            axis_vertex_buffer,
-            axis_index_buffer,
-            axis_shaft_tip_index_count,
-            axis_total_index_count,
-            arc_vertex_buffer,
-            arc_index_buffer,
-            arc_index_count,
+            shaft_line_vertex_buffer,
+            shaft_line_index_buffer,
+            shaft_line_index_count,
+            cone_tip_vertex_buffer,
+            cone_tip_index_buffer,
+            cone_tip_index_count,
+            scale_cube_vertex_buffer,
+            scale_cube_index_buffer,
+            scale_cube_index_count,
+            arc_line_vertex_buffer,
+            arc_line_index_buffer,
+            arc_line_index_count,
             rotate_cones_vertex_buffer,
             rotate_cones_index_buffer,
             rotate_cones_index_count,
-            centre_vertex_buffer,
-            centre_index_buffer,
-            centre_index_count,
             uniforms_buffer,
             entries_buffer,
             entry_stride,

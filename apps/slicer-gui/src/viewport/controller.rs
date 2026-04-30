@@ -14,9 +14,7 @@ use super::gizmo_drag::{DragOp, GizmoState};
 use super::gizmo_fsm::{GizmoFsm, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx};
 use super::input_state::{ClickOrDrag, InputState};
 #[cfg(test)]
-use super::keyboard_drive::{
-    ARROW_X_NEG, ARROW_X_POS, ARROW_Y_NEG, ARROW_Y_POS, ARROW_Z_NEG, ARROW_Z_POS,
-};
+use super::keyboard_drive::ARROW_X_POS;
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_scheduler;
@@ -744,7 +742,6 @@ impl ViewportController {
                 DragOp::Translate { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
                 DragOp::Rotate { axis, .. } => GizmoVisibility::DraggingRotate { axis },
                 DragOp::ScaleAxis { axis, .. } => GizmoVisibility::DraggingScaleAxis { axis },
-                DragOp::ScaleUniform { .. } => GizmoVisibility::DraggingScaleUniform,
             },
             GizmoState::Idle => GizmoVisibility::Idle,
         };

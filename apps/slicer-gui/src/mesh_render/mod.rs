@@ -24,7 +24,7 @@ use frame::Uniforms;
 use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
     GIZMO_SLOTS, GizmoUniformsGpu, build_rotate_entries, build_scale_axis_entries,
-    build_scale_centre_entry, build_translate_entries,
+    build_translate_entries,
 };
 pub use gizmo_entries::{GizmoFrame, GizmoVisibility};
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
@@ -376,9 +376,7 @@ impl Renderer {
             );
             let render_scale = matches!(
                 frame.visibility,
-                GizmoVisibility::Idle
-                    | GizmoVisibility::DraggingScaleAxis { .. }
-                    | GizmoVisibility::DraggingScaleUniform
+                GizmoVisibility::Idle | GizmoVisibility::DraggingScaleAxis { .. }
             );
 
             if render_translate {
@@ -401,9 +399,6 @@ impl Renderer {
                     GIZMO_SLOTS.scale_axis.start(),
                     &axis_entries,
                 );
-                let centre_entry = build_scale_centre_entry(&frame);
-                self.gizmo_buffers
-                    .write_entries(&self.queue, GIZMO_SLOTS.centre, &[centre_entry]);
             }
 
             let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -429,7 +424,6 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            gizmo_pass.set_pipeline(&self.gizmo.pipeline);
             gizmo_pass.set_bind_group(
                 GizmoBindGroup::Uniforms.idx(),
                 &self.gizmo.uniforms_bind_group,
@@ -437,9 +431,12 @@ impl Renderer {
             );
 
             if render_translate {
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.axis_vertex_buffer.slice(..));
+                // 1-pixel shaft line, three axes.
+                gizmo_pass.set_pipeline(&self.gizmo.line_pipeline);
+                gizmo_pass
+                    .set_vertex_buffer(0, self.gizmo_buffers.shaft_line_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.axis_index_buffer.slice(..),
+                    self.gizmo_buffers.shaft_line_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
@@ -450,19 +447,34 @@ impl Renderer {
                         &self.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    // Translate handle = shaft + cone subrange.
-                    gizmo_pass.draw_indexed(
-                        0..self.gizmo_buffers.axis_shaft_tip_index_count,
-                        0,
-                        0..1,
+                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.shaft_line_index_count, 0, 0..1);
+                }
+                // Solid cone tip — the active translate handle.
+                gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
+                gizmo_pass
+                    .set_vertex_buffer(0, self.gizmo_buffers.cone_tip_vertex_buffer.slice(..));
+                gizmo_pass.set_index_buffer(
+                    self.gizmo_buffers.cone_tip_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
+                    let offset = (GIZMO_SLOTS.translate.slot(axis_idx as u64)
+                        * self.gizmo_buffers.entry_stride) as u32;
+                    gizmo_pass.set_bind_group(
+                        GizmoBindGroup::Entries.idx(),
+                        &self.gizmo.entries_bind_group,
+                        &[offset],
                     );
+                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.cone_tip_index_count, 0, 0..1);
                 }
             }
             if render_rotate {
-                // Decorative torus arc.
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.arc_vertex_buffer.slice(..));
+                // 1-pixel arc polyline.
+                gizmo_pass.set_pipeline(&self.gizmo.line_pipeline);
+                gizmo_pass
+                    .set_vertex_buffer(0, self.gizmo_buffers.arc_line_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.arc_index_buffer.slice(..),
+                    self.gizmo_buffers.arc_line_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
@@ -473,11 +485,13 @@ impl Renderer {
                         &self.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.arc_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.arc_line_index_count, 0, 0..1);
                 }
-                // Active two-cone spindle at the arc's midpoint —
-                // shares the per-axis camera-rolled `axis_rotation`
-                // so it lands at the visual centre of the arc.
+                // Two-cone spindle at the arc's midpoint — the active
+                // rotate handle. Shares the per-axis camera-rolled
+                // `axis_rotation` so it lands at the visual centre of
+                // the arc.
+                gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
                 gizmo_pass
                     .set_vertex_buffer(0, self.gizmo_buffers.rotate_cones_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
@@ -500,9 +514,11 @@ impl Renderer {
                 }
             }
             if render_scale {
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.axis_vertex_buffer.slice(..));
+                gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
+                gizmo_pass
+                    .set_vertex_buffer(0, self.gizmo_buffers.scale_cube_vertex_buffer.slice(..));
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.axis_index_buffer.slice(..),
+                    self.gizmo_buffers.scale_cube_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
@@ -513,27 +529,8 @@ impl Renderer {
                         &self.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    // Scale-axis handle = midpoint-cube subrange.
-                    gizmo_pass.draw_indexed(
-                        self.gizmo_buffers.axis_shaft_tip_index_count
-                            ..self.gizmo_buffers.axis_total_index_count,
-                        0,
-                        0..1,
-                    );
+                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.scale_cube_index_count, 0, 0..1);
                 }
-
-                gizmo_pass.set_vertex_buffer(0, self.gizmo_buffers.centre_vertex_buffer.slice(..));
-                gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.centre_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                let offset = (GIZMO_SLOTS.centre * self.gizmo_buffers.entry_stride) as u32;
-                gizmo_pass.set_bind_group(
-                    GizmoBindGroup::Entries.idx(),
-                    &self.gizmo.entries_bind_group,
-                    &[offset],
-                );
-                gizmo_pass.draw_indexed(0..self.gizmo_buffers.centre_index_count, 0, 0..1);
             }
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -769,9 +766,9 @@ mod gpu_integration_tests {
             .expect("cached gizmo resources survive a second frame");
     }
 
-    /// Idle visibility renders all four handle categories
+    /// Idle visibility renders all three handle categories
     /// simultaneously — exercises the translate, rotate, and scale
-    /// draws plus the centre cube in a single frame.
+    /// draws in a single frame.
     #[test]
     fn render_with_idle_gizmo_under_default_limits() {
         let Some((device, queue)) = make_test_device() else {
@@ -831,9 +828,8 @@ mod gpu_integration_tests {
             .expect("rotate gizmo render should succeed");
     }
 
-    /// Scale-axis and uniform-scale variants both render the same
-    /// pair of geometries (axis midpoint cubes + centre cube) — pins
-    /// the scale-pass wiring and the centre-cube VBO/IBO.
+    /// Scale-axis renders the three midpoint cubes — pins the
+    /// scale-pass wiring under default-limits.
     #[test]
     fn render_with_scale_gizmo_under_default_limits() {
         let Some((device, queue)) = make_test_device() else {
@@ -860,16 +856,6 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(&scene, &camera, Some(0), Some(scale_axis), 64, 64)
             .expect("scale-axis gizmo render should succeed");
-        let scale_uniform = GizmoFrame {
-            pivot: center,
-            scale: 0.5,
-            visibility: GizmoVisibility::DraggingScaleUniform,
-            locked_translate: [false; 3],
-            locked_rotate: [false; 3],
-        };
-        let _ = renderer
-            .render(&scene, &camera, Some(0), Some(scale_uniform), 64, 64)
-            .expect("scale-uniform gizmo render should succeed");
     }
 
     /// Multi-object scene drives one draw call per object; the

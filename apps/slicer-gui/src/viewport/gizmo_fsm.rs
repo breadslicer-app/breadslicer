@@ -19,7 +19,6 @@ use sc_mesh_core::scene::{Scene, Transform3D};
 use crate::PointerModifiers;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
-use crate::gizmo::hit_test::ScaleHandle;
 use crate::mesh_render::default_fov_y;
 use crate::picking;
 
@@ -78,13 +77,13 @@ impl GizmoFsm {
         self.state.set(state);
     }
 
-    /// Runs the four gizmo hit tests against the current camera +
+    /// Runs the three gizmo hit tests against the current camera +
     /// cursor ray and, if a handle is grabbed, transitions the FSM
     /// into `Drag`. The front-most candidate (smallest positive `t`
-    /// along the press ray) wins across translate cones, rotate
-    /// arcs, scale midpoint cubes, and the centre cube. Bails on
-    /// missing camera / scene / no selection / zero viewport, in
-    /// which case the press behaves like a plain click candidate.
+    /// along the press ray) wins across translate cones, rotate arcs,
+    /// and scale midpoint cubes. Bails on missing camera / scene /
+    /// no selection / zero viewport, in which case the press behaves
+    /// like a plain click candidate.
     ///
     /// `modifiers.shift` at press time captures into the resulting
     /// `ScaleAxis.proportional` flag — a press on the per-axis cube
@@ -121,7 +120,6 @@ impl GizmoFsm {
         let rotate_cone_radius_world = scale * gizmo::dimensions::ROTATE_CONE_RADIUS;
         let world_per_pixel = camera.world_per_pixel(fov_y, h);
         let axis_cube_world = world_per_pixel * gizmo::dimensions::AXIS_SCALE_CUBE_PIXELS;
-        let centre_cube_world = world_per_pixel * gizmo::dimensions::CENTRE_CUBE_PIXELS;
 
         let x = ctx.press.x;
         let y = ctx.press.y;
@@ -147,13 +145,10 @@ impl GizmoFsm {
         ) {
             consider(HandleHit::Rotate(axis), t);
         }
-        if let Some((handle, t)) =
-            gizmo::hit_test::scale_hit_test(&ray, pivot, scale, axis_cube_world, centre_cube_world)
+        if let Some((axis, t)) =
+            gizmo::hit_test::scale_hit_test(&ray, pivot, scale, axis_cube_world)
         {
-            match handle {
-                ScaleHandle::Axis(axis) => consider(HandleHit::ScaleAxis(axis), t),
-                ScaleHandle::Centre => consider(HandleHit::ScaleCentre, t),
-            }
+            consider(HandleHit::ScaleAxis(axis), t);
         }
         let Some((winner, _)) = best else {
             return;
@@ -202,17 +197,6 @@ impl GizmoFsm {
                     axis,
                     start_anchor,
                     proportional: ctx.modifiers.shift,
-                    press_screen: (x, y),
-                    pivot_screen,
-                }
-            }
-            HandleHit::ScaleCentre => {
-                let Some(pivot_screen) =
-                    picking::project_world_to_screen(camera, fov_y, w, h, pivot)
-                else {
-                    return;
-                };
-                DragOp::ScaleUniform {
                     press_screen: (x, y),
                     pivot_screen,
                 }
