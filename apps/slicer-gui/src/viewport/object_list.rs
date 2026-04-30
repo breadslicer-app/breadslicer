@@ -13,12 +13,14 @@ use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 use crate::MainWindow;
 use crate::i18n::ctr;
 
-/// Display names for the object-list panel. Falls back to a localised
-/// `Object N` (1-indexed) when an object has no `SceneMetadata.name`,
-/// then disambiguates duplicates with a `(2)` / `(3)` suffix on every
-/// repeat (the first occurrence stays bare). O(N²) on object count;
-/// fine for slicer-typical scenes (tens of objects). Pure helper so it
-/// can be unit-tested without a `MainWindow`.
+/// Display names for the object-list panel. Prefers
+/// `SceneObject.meta.name`; falls back to the resolved mesh's
+/// `MeshMetadata.name` (where format readers like OBJ/STL store the
+/// on-disk name); finally falls back to a localised `Object N`
+/// (1-indexed). Duplicates get a `(2)` / `(3)` suffix on every repeat
+/// (the first occurrence stays bare). O(N²) on object count; fine for
+/// slicer-typical scenes (tens of objects). Pure helper so it can be
+/// unit-tested without a `MainWindow`.
 pub(super) fn build_object_list_names(scene: &Scene) -> Vec<String> {
     let raw: Vec<String> = scene
         .objects
@@ -28,6 +30,12 @@ pub(super) fn build_object_list_names(scene: &Scene) -> Vec<String> {
             obj.meta
                 .as_ref()
                 .and_then(|m| m.name.clone())
+                .or_else(|| {
+                    obj.resolve_mesh(&scene.resources)
+                        .ok()
+                        .and_then(|mesh| mesh.meta().as_ref())
+                        .and_then(|m| m.name.clone())
+                })
                 .unwrap_or_else(|| ctr!("ObjectList", "Object {}", i + 1).to_string())
         })
         .collect();
@@ -69,9 +77,9 @@ pub(super) fn push_object_list(ui: &MainWindow, names: Vec<String>) {
 #[cfg(test)]
 mod build_object_list_names_tests {
     use super::*;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::{IndexedMesh, MeshMetadata};
 
     fn empty_mesh() -> IndexedMesh {
         IndexedMesh {
@@ -97,6 +105,21 @@ mod build_object_list_names_tests {
             meta: None,
             transform: Transform3D::Identity,
             content: SceneObjectContent::Mesh(empty_mesh()),
+        }
+    }
+
+    fn mesh_named(name: &str) -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Mesh(IndexedMesh {
+                meta: Some(MeshMetadata {
+                    name: Some(name.to_string()),
+                    ..Default::default()
+                }),
+                vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+                faces: vec![],
+            }),
         }
     }
 
@@ -169,5 +192,38 @@ mod build_object_list_names_tests {
         let scene = Scene::default();
         let names = build_object_list_names(&scene);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn mesh_meta_name_is_used_when_scene_object_meta_is_absent() {
+        // OBJ/STL readers store the on-disk object name on
+        // `IndexedMesh.meta.name` and leave `SceneObject.meta` as None;
+        // the panel must surface the mesh name rather than the
+        // "Object N" fallback.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![mesh_named("Icosahedron"), mesh_named("Dodecahedron")],
+        };
+        let names = build_object_list_names(&scene);
+        assert_eq!(names, vec!["Icosahedron", "Dodecahedron"]);
+    }
+
+    #[test]
+    fn scene_object_meta_name_takes_priority_over_mesh_meta_name() {
+        // If a future UI ever sets `SceneObject.meta.name` to override
+        // the on-disk mesh name, that override must win.
+        let mut obj = mesh_named("OnDiskName");
+        obj.meta = Some(SceneMetadata {
+            name: Some("UserRenamed".to_string()),
+            comment: None,
+        });
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![obj],
+        };
+        let names = build_object_list_names(&scene);
+        assert_eq!(names, vec!["UserRenamed"]);
     }
 }
