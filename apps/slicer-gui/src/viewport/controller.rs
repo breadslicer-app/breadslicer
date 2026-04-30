@@ -28,7 +28,7 @@ use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::gizmo;
 use crate::i18n::ctr;
-use crate::mesh_render::{GizmoVisibility, Renderer, default_fov_y};
+use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov_y};
 use crate::picking;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 
@@ -755,13 +755,41 @@ impl ViewportController {
         };
 
         let selection_idx = self.selection.primary_idx();
-        let visibility = match self.gizmo_fsm.current() {
-            GizmoState::Drag { op, .. } => match op {
-                DragOp::Translate { axis, .. } => GizmoVisibility::DraggingTranslate { axis },
-                DragOp::Rotate { axis, .. } => GizmoVisibility::DraggingRotate { axis },
-                DragOp::ScaleAxis { axis, .. } => GizmoVisibility::DraggingScaleAxis { axis },
+        let drag_state = self.gizmo_fsm.current();
+        let (visibility, drag_visual) = match drag_state {
+            GizmoState::Drag { op, pivot, .. } => match op {
+                DragOp::Translate { axis, .. } => {
+                    (GizmoVisibility::DraggingTranslate { axis }, None)
+                }
+                DragOp::Rotate { axis, last_raw, .. } => (
+                    GizmoVisibility::DraggingRotate { axis },
+                    Some(GizmoDragVisual::Rotate {
+                        axis,
+                        angle: last_raw,
+                    }),
+                ),
+                DragOp::ScaleAxis {
+                    axis,
+                    current_anchor,
+                    proportional,
+                    ..
+                } => {
+                    // Proportional (Shift) is a uniform scale that
+                    // doesn't have a per-axis cursor projection — the
+                    // cube stays put and the object grows uniformly.
+                    let drag_visual = if proportional {
+                        None
+                    } else {
+                        let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
+                        Some(GizmoDragVisual::ScaleAxis {
+                            axis,
+                            axial_distance,
+                        })
+                    };
+                    (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
+                }
             },
-            GizmoState::Idle => GizmoVisibility::Idle,
+            GizmoState::Idle => (GizmoVisibility::Idle, None),
         };
         let hover = self.gizmo_fsm.current_hover();
         let gizmo_frame = selection_idx.and_then(|sel| {
@@ -772,6 +800,7 @@ impl ViewportController {
                 h_logical,
                 visibility,
                 hover,
+                drag_visual,
             )
         });
 

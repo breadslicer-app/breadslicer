@@ -10,7 +10,7 @@
 use sc_mesh_core::scene::Scene;
 
 use crate::camera::OrbitCamera;
-use crate::mesh_render::{GizmoFrame, GizmoHover, GizmoVisibility, default_fov_y};
+use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility, default_fov_y};
 use crate::picking;
 
 use super::axis::ALL_AXES;
@@ -32,6 +32,7 @@ pub fn build_gizmo_frame(
     viewport_h_logical: f32,
     visibility: GizmoVisibility,
     hover: Option<GizmoHover>,
+    drag_visual: Option<GizmoDragVisual>,
 ) -> Option<GizmoFrame> {
     let pivot = pivot_for_object(scene, selection)?;
     let fov_y = default_fov_y();
@@ -50,5 +51,6 @@ pub fn build_gizmo_frame(
         locked_translate,
         locked_rotate,
         hover,
+        drag_visual,
     })
 }

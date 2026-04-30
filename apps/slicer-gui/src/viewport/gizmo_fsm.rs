@@ -182,6 +182,7 @@ impl GizmoFsm {
                 DragOp::ScaleAxis {
                     axis,
                     start_anchor,
+                    current_anchor: start_anchor,
                     proportional: ctx.modifiers.shift,
                     press_screen: (x, y),
                     pivot_screen,

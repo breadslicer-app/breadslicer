@@ -71,6 +71,11 @@ pub(super) enum DragOp {
     ScaleAxis {
         axis: Axis,
         start_anchor: Vec3,
+        /// Latest closest-point-on-axis under the cursor. Captured at
+        /// press (= `start_anchor`) and refreshed each move so the
+        /// renderer can slide the per-axis cube along the axis to
+        /// follow the cursor as visual feedback for the live scale.
+        current_anchor: Vec3,
         proportional: bool,
         press_screen: (f32, f32),
         pivot_screen: (f32, f32),
@@ -153,10 +158,18 @@ pub(super) fn apply_drag_move(
         DragOp::ScaleAxis {
             axis,
             start_anchor,
+            current_anchor: _,
             proportional,
             press_screen,
             pivot_screen,
         } => {
+            // Recompute the cursor's closest-point-on-axis on every
+            // move so the renderer can slide the cube along the axis,
+            // even when `proportional` is on (the uniform branch
+            // doesn't use the anchor for its own math, but we still
+            // refresh it so a Shift-toggle back to per-axis re-uses a
+            // current anchor instead of the stale press one).
+            let current_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis);
             let scale_mat = if proportional {
                 let factor = gizmo::drag_math::uniform_scale_factor(
                     pivot_screen.0,
@@ -168,7 +181,6 @@ pub(super) fn apply_drag_move(
                 );
                 AffineTransform3D::from_uniform_scale(factor as f64)
             } else {
-                let current_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis);
                 let factor = gizmo::drag_math::scale_factor_along_axis(
                     start_anchor,
                     current_anchor,
@@ -177,7 +189,15 @@ pub(super) fn apply_drag_move(
                 );
                 scale_along_axis(axis, factor)
             };
-            Some((compose_about_pivot(&scale_mat, pivot, original), op))
+            let new_op = DragOp::ScaleAxis {
+                axis,
+                start_anchor,
+                current_anchor,
+                proportional,
+                press_screen,
+                pivot_screen,
+            };
+            Some((compose_about_pivot(&scale_mat, pivot, original), new_op))
         }
     }
 }
@@ -214,6 +234,7 @@ pub(super) fn re_anchor_scale_axis(
     let new_op = DragOp::ScaleAxis {
         axis,
         start_anchor,
+        current_anchor: start_anchor,
         proportional: new_proportional,
         press_screen: (cursor_x, cursor_y),
         pivot_screen,
@@ -404,6 +425,7 @@ mod apply_drag_move_tests {
         let op = DragOp::ScaleAxis {
             axis: Axis::X,
             start_anchor: Vec3::new(1.0, 0.0, 0.0),
+            current_anchor: Vec3::new(1.0, 0.0, 0.0),
             proportional: false,
             // Unused in the per-axis branch — supply zeros.
             press_screen: (0.0, 0.0),
@@ -434,6 +456,7 @@ mod apply_drag_move_tests {
             // contrast visible if a regression flips the dispatch
             // back to the per-axis formula.
             start_anchor: Vec3::new(99.0, 0.0, 0.0),
+            current_anchor: Vec3::new(99.0, 0.0, 0.0),
             proportional: true,
             press_screen: (150.0, 100.0),
             pivot_screen: (100.0, 100.0),

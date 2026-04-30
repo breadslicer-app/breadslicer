@@ -103,6 +103,30 @@ pub struct GizmoFrame {
     /// Ignored while `visibility` is `Dragging*` (the dragged handle
     /// is already at full brightness).
     pub hover: Option<GizmoHover>,
+    /// Live drag visual. Drives the per-frame override that slides
+    /// the active scale cube along its axis (so the cube tracks the
+    /// cursor) or rolls the active rotate arc to the cursor angle
+    /// (so the cones at the arc midpoint follow the cursor). `None`
+    /// when no drag is in progress; carries the dragged axis plus
+    /// the live cursor-driven value when a drag is active.
+    pub drag_visual: Option<GizmoDragVisual>,
+}
+
+/// Live cursor-driven drag state, used by the renderer to override
+/// the per-axis transform of the active handle so the gizmo provides
+/// real-time visual feedback during a drag.
+#[derive(Copy, Clone, Debug)]
+pub enum GizmoDragVisual {
+    /// Per-axis scale: signed distance from the pivot to the cursor's
+    /// closest-point-on-axis, in world units. The renderer slides the
+    /// `axis` cube along the axis to that distance.
+    ScaleAxis { axis: Axis, axial_distance: f32 },
+    /// Rotate: signed angle of the cursor in the axis-perpendicular
+    /// plane, measured from the handle-local +Y reference (matches
+    /// `gizmo::drag_math::rotate_drag_angle`). The renderer rolls
+    /// the `axis` arc + cone-spindle to that angle so the cones
+    /// follow the cursor.
+    Rotate { axis: Axis, angle: f32 },
 }
 
 /// Which handle the pointer is currently over, in `Idle` visibility.
@@ -235,6 +259,11 @@ pub(super) fn build_translate_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3]
 /// of the axis IBO carries the geometry; only the tint differs from
 /// the translate entry. The scale-axis lock-out is the same as
 /// translate's (closest-point-on-axis math).
+///
+/// When a `ScaleAxis` drag is live, the dragged axis's matrix bakes
+/// in an additional handle-local +X translation that slides the cube
+/// from its default mid-shaft position to the cursor's projection on
+/// the axis, so the cube tracks the cursor as visual feedback.
 pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3] {
     let rotations = axis_world_rotations();
     let axes = [Axis::X, Axis::Y, Axis::Z];
@@ -246,6 +275,13 @@ pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3
         Some(GizmoHover::ScaleAxis(axis)) => Some(axis),
         _ => None,
     };
+    let drag = match frame.drag_visual {
+        Some(GizmoDragVisual::ScaleAxis {
+            axis,
+            axial_distance,
+        }) => Some((axis, axial_distance)),
+        _ => None,
+    };
     let mut out = [GizmoDrawEntry {
         axis_rotation: [[0.0; 4]; 4],
         tint: [0.0; 4],
@@ -253,13 +289,38 @@ pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3
     for (i, axis) in axes.into_iter().enumerate() {
         let active = active_axis == Some(axis);
         let hover = hover_axis == Some(axis);
+        // World-units offset along the handle-local +X direction.
+        // The cube's default vertex sits at handle-local
+        // `(MIDPOINT_FRACTION, 0, 0)` and is then scaled by
+        // `pivot_and_scale.w` (= world shaft length); to put the
+        // cube centre at world signed distance `d` from the pivot,
+        // shift by `(d - MIDPOINT_FRACTION * scale)` in the post-
+        // scale, pre-rotation handle-local frame. The per-frame
+        // shaft length is in `frame.scale` so we can compute the
+        // shift CPU-side and bake it into the matrix.
+        let translation_x = match drag {
+            Some((dragged, distance)) if dragged == axis => {
+                distance - frame.scale * MIDPOINT_FRACTION_LOCAL
+            }
+            _ => 0.0,
+        };
+        let translated = if translation_x.abs() > 0.0 {
+            rotations[i] * Mat4::from_translation(Vec3::new(translation_x, 0.0, 0.0))
+        } else {
+            rotations[i]
+        };
         out[i] = GizmoDrawEntry {
-            axis_rotation: rotations[i].to_cols_array_2d(),
+            axis_rotation: translated.to_cols_array_2d(),
             tint: tint_for(axis, active, hover, frame.locked_translate[i]),
         };
     }
     out
 }
+
+/// Mirror of `gizmo::dimensions::MIDPOINT_FRACTION` — kept here as a
+/// private const so `build_scale_axis_entries` doesn't need a fresh
+/// import path through the `gizmo` module.
+const MIDPOINT_FRACTION_LOCAL: f32 = crate::gizmo::dimensions::MIDPOINT_FRACTION;
 
 /// Three rotate-pass entries (X/Y/Z arcs). Each axis bakes a
 /// per-frame X-roll into its `axis_rotation` so the 90° arc faces
@@ -279,12 +340,23 @@ pub(super) fn build_rotate_entries(
         Some(GizmoHover::Rotate(axis)) => Some(axis),
         _ => None,
     };
+    let drag = match frame.drag_visual {
+        Some(GizmoDragVisual::Rotate { axis, angle }) => Some((axis, angle)),
+        _ => None,
+    };
     let mut out = [GizmoDrawEntry {
         axis_rotation: [[0.0; 4]; 4],
         tint: [0.0; 4],
     }; 3];
     for (i, axis) in axes.into_iter().enumerate() {
-        let roll = arc_camera_roll(camera, frame.pivot, axis);
+        // Default roll faces the camera; for the dragged axis,
+        // roll to the live cursor angle instead so the cone-spindle
+        // (anchored at the arc midpoint, handle-local +Y) tracks
+        // the cursor and the arc sweeps with the gesture.
+        let roll = match drag {
+            Some((dragged, angle)) if dragged == axis => angle,
+            _ => arc_camera_roll(camera, frame.pivot, axis),
+        };
         // Compose: world_axis_rotation × X-roll. The arc is laid out
         // around handle-local +X, centred on +Y; rolling it around
         // +X swings the centre onto the camera-facing direction
@@ -357,6 +429,7 @@ mod gizmo_entry_tests {
             locked_translate,
             locked_rotate: [false; 3],
             hover: None,
+            drag_visual: None,
         }
     }
 
@@ -526,6 +599,65 @@ mod gizmo_entry_tests {
         let entries = build_translate_entries(&frame);
         // Locked grey overrides hover.
         assert_approx_eq!(f32, entries[0].tint[0], TINT_LOCKED, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn scale_axis_drag_slides_cube_along_axis() {
+        // Frame.scale = 1.0; default cube centre sits at handle-local
+        // x = MIDPOINT_FRACTION (0.5), so the entry's matrix should
+        // bake `axial_distance - 0.5` into a +X translation when the
+        // dragged axis matches.
+        let mut frame = frame_with(
+            GizmoVisibility::DraggingScaleAxis { axis: Axis::X },
+            [false; 3],
+        );
+        frame.drag_visual = Some(GizmoDragVisual::ScaleAxis {
+            axis: Axis::X,
+            axial_distance: 1.5,
+        });
+        let entries = build_scale_axis_entries(&frame);
+        let m = Mat4::from_cols_array_2d(&entries[0].axis_rotation);
+        // Translation column for handle-local +X axis: m * (0, 0, 0, 1)
+        // = m's translation = the column-major last column.
+        let t = m.col(3);
+        // 1.5 - 0.5 = 1.0.
+        assert_approx_eq!(f32, t.x, 1.0, epsilon = 1e-5);
+        // Y / Z untouched: translation column (xyz) stays zero.
+        let m_y = Mat4::from_cols_array_2d(&entries[1].axis_rotation);
+        let ty = m_y.col(3);
+        assert_approx_eq!(f32, ty.x, 0.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, ty.y, 0.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, ty.z, 0.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn rotate_drag_overrides_camera_roll_with_cursor_angle() {
+        // Idle camera-roll vs drag roll = π/3: the dragged axis's
+        // matrix should differ by exactly `Rx(π/3 - camera_roll)`,
+        // which is enough to confirm the override fires at all.
+        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        let mut frame = frame_with(
+            GizmoVisibility::DraggingRotate { axis: Axis::X },
+            [false; 3],
+        );
+        let cursor_angle = std::f32::consts::FRAC_PI_3;
+        frame.drag_visual = Some(GizmoDragVisual::Rotate {
+            axis: Axis::X,
+            angle: cursor_angle,
+        });
+        let entries = build_rotate_entries(&frame, &camera);
+        // Compute expected: world_axis_rot(X) * Rx(cursor_angle).
+        let expected = Mat4::from_rotation_x(cursor_angle);
+        let actual = Mat4::from_cols_array_2d(&entries[0].axis_rotation);
+        // Compare by mapping the cone-spindle midpoint (0, R, 0)
+        // through both: both should land at the same world point.
+        let r = 0.85; // ROTATE_ARC_RADIUS_FRACTION
+        let p = glam::Vec4::new(0.0, r, 0.0, 1.0);
+        let pe = expected * p;
+        let pa = actual * p;
+        assert_approx_eq!(f32, pe.x, pa.x, epsilon = 1e-5);
+        assert_approx_eq!(f32, pe.y, pa.y, epsilon = 1e-5);
+        assert_approx_eq!(f32, pe.z, pa.z, epsilon = 1e-5);
     }
 
     #[test]
