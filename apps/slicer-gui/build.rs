@@ -29,6 +29,18 @@ const COVERAGE_THRESHOLD_PERCENT: u32 = 50;
 const SOURCE_LANGUAGE_CODE: &str = "en";
 
 fn main() {
+    // The Slint resolver recurses through the component graph; on Windows
+    // the default 1 MiB thread stack overflows, so run the build on a
+    // worker thread with a generous stack. Cheap on every platform.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run_build)
+        .expect("failed to spawn build thread")
+        .join()
+        .expect("build thread panicked");
+}
+
+fn run_build() {
     generate_language_table();
 
     let config = CompilerConfiguration::new().with_bundled_translations(I18N_DIR);
