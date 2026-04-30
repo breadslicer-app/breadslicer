@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-27 16:01+0000\n"
-"PO-Revision-Date: 2026-04-27 08:55+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-05-01 06:44+0000\n"
+"Last-Translator: Cheesus42 <cheesus42@noreply.codeberg.org>\n"
 "Language-Team: German <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/de/>\n"
 "Language: de\n"
@@ -52,7 +52,7 @@ msgstr "Einstellungen"
 #: ui/preferences/preferences-window.slint:49
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
-msgstr ""
+msgstr "Einstellungskategorien"
 
 #: ui/preferences/preferences-window.slint:51
 msgctxt "PreferencesMenu"
@@ -134,17 +134,17 @@ msgstr "Schließen"
 #: ui/object-list-panel.slint:18
 msgctxt "ObjectList"
 msgid "Scene objects"
-msgstr ""
+msgstr "Objekte der Szene"
 
 #: ui/object-list-panel.slint:38
 msgctxt "ObjectList"
 msgid "Scene Objects"
-msgstr ""
+msgstr "Objekte in der Szene"
 
 #: ui/object-list-panel.slint:59
 msgctxt "ObjectList"
 msgid "No objects to display"
-msgstr ""
+msgstr "Keine Objekte zum Anzeigen"
 
 #: ui/main-window.slint:60
 msgctxt "MainWindow"
@@ -202,22 +202,19 @@ msgid "Preferences"
 msgstr "Einstellungen"
 
 #: ui/main-window.slint:173
-#, fuzzy
-#| msgctxt "PreferencesMenu"
-#| msgid "3D View"
 msgctxt "MenuBar"
 msgid "View"
-msgstr "3D Ansicht"
+msgstr "Ansicht"
 
 #: ui/main-window.slint:177
 msgctxt "MenuBar"
 msgid "Hide Object List"
-msgstr ""
+msgstr "Verstecke Objektliste"
 
 #: ui/main-window.slint:178
 msgctxt "MenuBar"
 msgid "Show Object List"
-msgstr ""
+msgstr "Zeige Objektliste"
 
 #: ui/main-window.slint:188
 msgctxt "MenuBar"
@@ -257,7 +254,7 @@ msgstr "Lizenzinformation anzeigen"
 #: ui/main-window.slint:235
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
-msgstr ""
+msgstr "Öffne ein 3D-Model um es hier anzuzeigen"
 
 #: ui/mesh-viewer.slint:37
 msgctxt "MeshViewer"
@@ -277,21 +274,27 @@ msgid ""
 "Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 "
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
+"Mit Rechtsklick ziehen oder Pfeiltasten nutzen zum Rotieren. Mit "
+"Umschalttaste und Rechtsklick ziehen, mit mittlerer Maustaste ziehen oder "
+"Umschalttaste und Pfeiltasten nutzen zum Schwenken. Scrollrad, Plus/Minus "
+"oder Bild-hoch/Bild-runter zum Zoomen. F oder Pos1 drücken um das Modell "
+"einzurahmen. 1, 3 oder 7 für Ansicht von Vorne, Rechts oder Oben; Strg "
+"gedrückt halten für Hinten, Links oder Unten."
 
 #: src/viewport/controller.rs:1178
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
-msgstr ""
+msgstr "Fehler beim Anzeigen des 3D-Modells"
 
 #: src/viewport/controller.rs:1182
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
-msgstr ""
+msgstr "Die gerenderte Textur konnte nicht an die UI übergeben werden."
 
 #: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
-msgstr ""
+msgstr "Objekt {}"
 
 #: src/wiring.rs:207
 msgctxt "FileDialog"
@@ -316,24 +319,24 @@ msgstr "Alle Dateien"
 #: src/scene_loader.rs:286
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
-msgstr ""
+msgstr "Fehler beim Laden des 3D-Modells"
 
 #: src/scene_loader.rs:290
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
-msgstr ""
+msgstr "Das Mesh konnte nicht zum Rendern vorbereitet werden."
 
 #: src/scene_loader.rs:320
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
-msgstr ""
+msgstr "Fehler beim Öffnen des 3D-Modells"
 
 #: src/scene_loader.rs:321
 msgctxt "ErrorDialog"
 msgid "File: {}"
-msgstr ""
+msgstr "Datei: {}"
 
 #: src/mesh_loader.rs:51
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
-msgstr ""
+msgstr "Datei ist {} MiB groß. Das übersteigt das Limit von {} MiB."
