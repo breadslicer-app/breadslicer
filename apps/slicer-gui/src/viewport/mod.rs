@@ -10,7 +10,6 @@ mod input_state;
 mod keyboard_drive;
 mod object_list;
 mod render_scheduler;
-mod selection_state;
 mod types;
 
 pub(crate) use controller::ViewportController;

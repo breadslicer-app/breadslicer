@@ -61,6 +61,10 @@ pub(crate) struct PreparedScene {
     pub gpu_scene: GpuScene,
     pub device: wgpu::Device,
     pub warnings: Vec<LoadMeshWarning>,
+    /// The filesystem path the scene was loaded from. Threaded into
+    /// the document at install time so callers can derive default
+    /// export filenames, surface the source in window titles, etc.
+    pub source_path: PathBuf,
 }
 
 type LoadSlot = Arc<Mutex<Option<(LoadTicket, PathBuf, anyhow::Result<PreparedScene>)>>>;

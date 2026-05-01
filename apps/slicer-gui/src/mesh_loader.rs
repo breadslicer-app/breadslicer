@@ -89,6 +89,7 @@ pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf, device: wgpu::Device
                 gpu_scene,
                 device: device.clone(),
                 warnings,
+                source_path: path.clone(),
             })
         });
         ticket.deposit(path, result);

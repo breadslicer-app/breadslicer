@@ -21,8 +21,7 @@ use super::keyboard_drive::ARROW_X_POS;
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_scheduler;
-use super::selection_state::SelectionState;
-use super::types::{FrameState, ObjectIdx, ScreenPoint, Selection, ViewportSize};
+use super::types::{FrameState, ScreenPoint, ViewportSize};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::camera::{AxisView, OrbitCamera};
@@ -33,6 +32,7 @@ use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov
 use crate::picking;
 use crate::scene_document::SceneDocument;
 use crate::scene_loader::{PreparedScene, SceneLoader};
+use crate::selection::{ObjectIdx, Selection, SelectionState};
 
 #[cfg(test)]
 use crate::gizmo::axis::Axis;
@@ -131,7 +131,12 @@ impl ViewportController {
 
     #[cfg(test)]
     pub(crate) fn install_scene_for_test(&self, scene: Scene) {
-        self.document.install_scene(scene);
+        // Tests don't care about the source path; populate the slot
+        // with a sentinel so the document's invariant ("scene present
+        // ⇔ path present") holds and any future test assertion on
+        // `source_path` is explicit about its synthetic origin.
+        self.document
+            .install_scene(scene, std::path::PathBuf::from("<test>"));
     }
 
     #[cfg(test)]
@@ -282,6 +287,7 @@ impl ViewportController {
             gpu_scene,
             device: built_with,
             warnings: _,
+            source_path,
         } = prepared;
 
         // Try to install the worker-built buffers directly. Falls
@@ -296,7 +302,7 @@ impl ViewportController {
             .unwrap_or(false);
 
         *self.camera.borrow_mut() = None;
-        self.document.install_scene(scene);
+        self.document.install_scene(scene, source_path);
         // A new scene has its own object indices; any prior selection
         // referred to the previous scene and is no longer meaningful.
         self.selection.set(Selection::None);
