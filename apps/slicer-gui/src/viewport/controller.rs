@@ -30,6 +30,7 @@ use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov_y};
 use crate::picking;
+use crate::scene_document::SceneDocument;
 use crate::scene_loader::{PreparedScene, SceneLoader};
 
 #[cfg(test)]
@@ -37,6 +38,11 @@ use crate::gizmo::axis::Axis;
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
+    // Document-level model. The controller mirrors its own `scene` cell
+    // here on every install / clear so consumers that observe the
+    // document already see live state. A subsequent checkpoint
+    // migrates reads to the document and drops the local cell.
+    document: Rc<SceneDocument>,
     renderer: RefCell<Option<Renderer>>,
     scene: RefCell<Option<Scene>>,
     // The camera lives next to the scene (not inside the GPU renderer), so it
@@ -80,10 +86,11 @@ pub struct ViewportController {
 }
 
 impl ViewportController {
-    pub fn new(ui: &MainWindow) -> Self {
+    pub fn new(ui: &MainWindow, document: Rc<SceneDocument>) -> Self {
         let dialogs = DialogManager::new();
         Self {
             ui: ui.as_weak(),
+            document,
             renderer: RefCell::new(None),
             scene: RefCell::new(None),
             camera: RefCell::new(None),
@@ -110,6 +117,7 @@ impl ViewportController {
         let dialogs = DialogManager::new();
         Self {
             ui: slint::Weak::default(),
+            document: SceneDocument::new(),
             renderer: RefCell::new(None),
             scene: RefCell::new(None),
             camera: RefCell::new(None),
@@ -125,9 +133,23 @@ impl ViewportController {
         }
     }
 
+    /// Asserts the controller's `scene` cell and the document's `scene`
+    /// cell agree on presence. Catches a missed mirror at any other
+    /// scene-touching method's entry. Compiled out in release builds.
+    fn debug_assert_scene_mirror_consistent(&self) {
+        debug_assert_eq!(
+            self.scene.borrow().is_some(),
+            self.document.is_loaded(),
+            "controller and document scene presence must agree"
+        );
+    }
+
     #[cfg(test)]
     pub(crate) fn install_scene_for_test(&self, scene: Scene) {
+        self.debug_assert_scene_mirror_consistent();
+        self.document.install_scene(scene.clone());
         *self.scene.borrow_mut() = Some(scene);
+        self.debug_assert_scene_mirror_consistent();
     }
 
     #[cfg(test)]
@@ -242,7 +264,9 @@ impl ViewportController {
     }
 
     pub fn on_close_scene(&self) {
+        self.debug_assert_scene_mirror_consistent();
         self.loader.invalidate_and_clear();
+        self.document.clear_scene();
         *self.scene.borrow_mut() = None;
         *self.camera.borrow_mut() = None;
         self.frame.set(FrameState::default());
@@ -270,6 +294,7 @@ impl ViewportController {
     }
 
     pub fn on_scene_load_finished(&self) {
+        self.debug_assert_scene_mirror_consistent();
         let Some(prepared) = self.loader.take_finished_load() else {
             return;
         };
@@ -279,6 +304,7 @@ impl ViewportController {
             device: built_with,
             warnings: _,
         } = prepared;
+        self.document.install_scene(scene.clone());
 
         // Try to install the worker-built buffers directly. Falls
         // through to the UI-thread upload path if the renderer is

@@ -16,7 +16,6 @@ use slint::ComponentHandle;
 use crate::MainWindow;
 use crate::i18n::ctr;
 use crate::mesh_loader;
-use crate::scene_document::SceneDocument;
 use crate::scene_loader::{LoadTicket, SceneLoader};
 use crate::viewport::{RESIZE_SETTLE, ViewportController};
 
@@ -27,7 +26,6 @@ pub(crate) fn wire_main_window(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
-    let _doc = SceneDocument::new();
     install_rendering_notifier(ui, ctrl.clone())?;
     wire_close_scene(ui, ctrl.clone());
     wire_open_file(ui, ctrl.clone());

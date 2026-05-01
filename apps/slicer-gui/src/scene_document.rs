@@ -25,13 +25,7 @@ impl SceneDocument {
             scene: RefCell::new(None),
         })
     }
-}
 
-// The scene-cell API is exercised by the unit tests below; non-test
-// call sites land in the next checkpoint, when the loader / close
-// paths start mirroring writes here. Lifted once those callers exist.
-#[allow(dead_code)]
-impl SceneDocument {
     pub fn install_scene(&self, scene: Scene) {
         *self.scene.borrow_mut() = Some(scene);
     }
@@ -43,6 +37,10 @@ impl SceneDocument {
     /// Runs `f` against the loaded scene, if any. Returns `None` when
     /// no scene is installed. Callers must keep the closure short — the
     /// internal borrow is held for its duration.
+    // Tests exercise this method; production callers land in the next
+    // checkpoint, which migrates the controller's scene reads onto the
+    // document. The allow lifts then.
+    #[allow(dead_code)]
     pub fn with_scene<R>(&self, f: impl FnOnce(&Scene) -> R) -> Option<R> {
         self.scene.borrow().as_ref().map(f)
     }

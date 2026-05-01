@@ -17,6 +17,7 @@ use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
+use crate::scene_document::SceneDocument;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
@@ -129,7 +130,8 @@ impl AppState {
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<(), Box<dyn Error>> {
         let ui = MainWindow::new()?;
         ui.apply_preferences(&self.prefs.snapshot());
-        let ctrl = Rc::new(ViewportController::new(&ui));
+        let document = SceneDocument::new();
+        let ctrl = Rc::new(ViewportController::new(&ui, document));
 
         crate::wiring::wire_main_window(&ui, ctrl)?;
         self.wire_app_level_menus(&ui);
