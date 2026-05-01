@@ -10,10 +10,11 @@
 //! drives them through the Slint callbacks.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::time::Instant;
 
 use glam::Vec3;
-use sc_mesh_core::scene::{Scene, Transform3D};
+use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
@@ -21,6 +22,7 @@ use super::types::ViewportSize;
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
 use crate::mesh_render::default_fov_y;
+use crate::scene_document::SceneDocument;
 
 /// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through
 /// the three operation types; Esc returns to `None`. While focus is
@@ -170,9 +172,10 @@ pub(super) fn keyboard_step(
 
 /// Per-frame inputs the keyboard integrator pulls off the controller.
 /// Bundling them avoids a five-arg method while keeping ownership
-/// where it lives (scene/camera in `RefCell`s on the controller).
+/// where it lives (scene on the document, camera in a `RefCell` on the
+/// controller).
 pub(super) struct IntegrationCtx<'a> {
-    pub(super) scene: &'a RefCell<Option<Scene>>,
+    pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_idx: Option<usize>,
@@ -284,28 +287,25 @@ impl KeyboardDriveState {
             return false;
         }
 
-        // Pull the running transform + pivot + camera out of the
-        // RefCells before re-borrowing mut to write the new transform.
-        let (pivot, running, world_per_pixel) = {
-            let scene_slot = ctx.scene.borrow();
-            let Some(scene) = scene_slot.as_ref() else {
-                return false;
-            };
-            let Some(pivot) = crate::gizmo::pivot_for_object(scene, idx) else {
-                return false;
-            };
-            let Some(obj) = scene.objects.get(idx) else {
-                return false;
-            };
-            let camera_slot = ctx.camera.borrow();
-            let Some(camera) = camera_slot.as_ref() else {
-                return false;
-            };
-            (
-                pivot,
-                obj.transform,
-                camera.world_per_pixel(default_fov_y(), h),
-            )
+        // Pull the running transform + pivot + camera through the
+        // document's read borrow + camera borrow; both drop at the
+        // closure's end before the scene write below.
+        let prepared: Option<(Vec3, Transform3D, f32)> = ctx
+            .document
+            .with_scene(|scene| {
+                let pivot = crate::gizmo::pivot_for_object(scene, idx)?;
+                let obj = scene.objects.get(idx)?;
+                let camera_slot = ctx.camera.borrow();
+                let camera = camera_slot.as_ref()?;
+                Some((
+                    pivot,
+                    obj.transform,
+                    camera.world_per_pixel(default_fov_y(), h),
+                ))
+            })
+            .flatten();
+        let Some((pivot, running, world_per_pixel)) = prepared else {
+            return false;
         };
 
         let Some(new_transform) =
@@ -314,13 +314,13 @@ impl KeyboardDriveState {
             return false;
         };
 
-        let mut scene_slot = ctx.scene.borrow_mut();
-        if let Some(scene) = scene_slot.as_mut()
-            && let Some(obj) = scene.objects.get_mut(idx)
-        {
-            obj.transform = new_transform;
-        }
-        true
+        ctx.document
+            .with_scene_mut(|scene| {
+                if let Some(obj) = scene.objects.get_mut(idx) {
+                    obj.transform = new_transform;
+                }
+            })
+            .is_some()
     }
 }
 

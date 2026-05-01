@@ -13,14 +13,16 @@
 //! controller-side coordination glue.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
-use sc_mesh_core::scene::{Scene, Transform3D};
+use sc_mesh_core::scene::Transform3D;
 
 use crate::PointerModifiers;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
 use crate::mesh_render::{GizmoHover, default_fov_y};
 use crate::picking;
+use crate::scene_document::SceneDocument;
 
 use super::gizmo_drag::{
     DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
@@ -29,7 +31,7 @@ use super::types::{ScreenPoint, ViewportSize};
 
 /// Per-press inputs carried into [`GizmoFsm::try_start_drag`].
 pub(super) struct StartCtx<'a> {
-    pub(super) scene: &'a RefCell<Option<Scene>>,
+    pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_idx: Option<usize>,
@@ -39,7 +41,7 @@ pub(super) struct StartCtx<'a> {
 
 /// Per-move inputs carried into [`GizmoFsm::on_move`].
 pub(super) struct MoveCtx<'a> {
-    pub(super) scene: &'a RefCell<Option<Scene>>,
+    pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) cursor: ScreenPoint,
@@ -49,7 +51,7 @@ pub(super) struct MoveCtx<'a> {
 /// Per-hover inputs carried into [`GizmoFsm::update_hover`]. Same
 /// shape as `StartCtx` minus the modifier (hover doesn't need it).
 pub(super) struct HoverCtx<'a> {
-    pub(super) scene: &'a RefCell<Option<Scene>>,
+    pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_idx: Option<usize>,
@@ -119,78 +121,69 @@ impl GizmoFsm {
             return;
         };
         let (w, h) = (vp.width(), vp.height());
-
-        let camera_slot = ctx.camera.borrow();
-        let Some(camera) = camera_slot.as_ref() else {
-            return;
-        };
-        let scene_slot = ctx.scene.borrow();
-        let Some(scene) = scene_slot.as_ref() else {
-            return;
-        };
-        let Some(pivot) = gizmo::pivot_for_object(scene, sel_idx) else {
-            return;
-        };
         let fov_y = default_fov_y();
         let x = ctx.press.x;
         let y = ctx.press.y;
-        let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
 
-        let Some((winner, _)) = front_most_handle(&ray, camera, pivot, fov_y, h) else {
+        // Compute the drag-start under both borrows; both drop at the
+        // closure's end, so `state.set` below can run without overlap.
+        let computed: Option<(DragOp, Transform3D, glam::Vec3)> = ctx
+            .document
+            .with_scene(|scene| {
+                let camera_slot = ctx.camera.borrow();
+                let camera = camera_slot.as_ref()?;
+                let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
+                let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
+                let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+                let obj = scene.objects.get(sel_idx)?;
+                let original = obj.transform;
+
+                let op = match winner {
+                    HandleHit::Translate(axis) => {
+                        let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
+                        DragOp::Translate { axis, anchor }
+                    }
+                    HandleHit::Rotate(axis) => {
+                        // `rotate_drag_angle` returns `None` only inside the
+                        // arc lock-out, which `rotate_hit_test` already
+                        // rejected — but bail defensively if it slips
+                        // through, leaving the press as a click candidate.
+                        let start_angle = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)?;
+                        DragOp::Rotate {
+                            axis,
+                            start_angle,
+                            last_raw: start_angle,
+                            current_unwrapped: start_angle,
+                        }
+                    }
+                    HandleHit::ScaleAxis(axis) => {
+                        let start_anchor =
+                            gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
+                        // The uniform-branch anchors are captured at press as
+                        // well, even when `proportional` starts false — that
+                        // way a mid-drag Shift press flips the formula
+                        // through the same `re_anchor_scale_axis` path
+                        // either direction without needing a "first-toggle"
+                        // special case.
+                        let pivot_screen =
+                            picking::project_world_to_screen(camera, fov_y, w, h, pivot)?;
+                        DragOp::ScaleAxis {
+                            axis,
+                            start_anchor,
+                            current_anchor: start_anchor,
+                            proportional: ctx.modifiers.shift,
+                            press_screen: (x, y),
+                            pivot_screen,
+                        }
+                    }
+                };
+                Some((op, original, pivot))
+            })
+            .flatten();
+
+        let Some((op, original, pivot)) = computed else {
             return;
         };
-
-        let Some(obj) = scene.objects.get(sel_idx) else {
-            return;
-        };
-        let original = obj.transform;
-
-        let op = match winner {
-            HandleHit::Translate(axis) => {
-                let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
-                DragOp::Translate { axis, anchor }
-            }
-            HandleHit::Rotate(axis) => {
-                // `rotate_drag_angle` returns `None` only inside the
-                // arc lock-out, which `rotate_hit_test` already
-                // rejected — but bail defensively if it slips
-                // through, leaving the press as a click candidate.
-                let Some(start_angle) = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)
-                else {
-                    return;
-                };
-                DragOp::Rotate {
-                    axis,
-                    start_angle,
-                    last_raw: start_angle,
-                    current_unwrapped: start_angle,
-                }
-            }
-            HandleHit::ScaleAxis(axis) => {
-                let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
-                // The uniform-branch anchors are captured at press as
-                // well, even when `proportional` starts false — that
-                // way a mid-drag Shift press flips the formula
-                // through the same `re_anchor_scale_axis` path
-                // either direction without needing a "first-toggle"
-                // special case.
-                let Some(pivot_screen) =
-                    picking::project_world_to_screen(camera, fov_y, w, h, pivot)
-                else {
-                    return;
-                };
-                DragOp::ScaleAxis {
-                    axis,
-                    start_anchor,
-                    current_anchor: start_anchor,
-                    proportional: ctx.modifiers.shift,
-                    press_screen: (x, y),
-                    pivot_screen,
-                }
-            }
-        };
-        drop(scene_slot);
-        drop(camera_slot);
         self.state.set(GizmoState::Drag {
             op,
             original,
@@ -227,43 +220,41 @@ impl GizmoFsm {
         let y = ctx.cursor.y;
 
         // Compute the new transform and the (possibly mutated) op
-        // state inside a borrow scope, then drop the camera borrow
-        // before mutating the scene.
-        let result: Option<(Transform3D, DragOp)> = {
-            let camera_slot = ctx.camera.borrow();
-            let Some(camera) = camera_slot.as_ref() else {
-                return false;
-            };
-            let scene_slot = ctx.scene.borrow();
-            let scene = scene_slot.as_ref();
-            // Live Shift toggle on a `ScaleAxis` drag re-anchors before
-            // the move's delta is computed — the running transform
-            // becomes the new `original`, the current cursor becomes
-            // the new press, so the per-axis ↔ uniform formula switch
-            // does not snap the object.
-            if let DragOp::ScaleAxis { proportional, .. } = op
-                && proportional != ctx.modifiers.shift
-                && let Some(scene_ref) = scene
-                && let Some(obj) = scene_ref.objects.get(object_idx)
-            {
-                let reanchor_ctx = ReanchorCtx {
-                    camera,
-                    pivot,
-                    fov_y: default_fov_y(),
-                    viewport: (vp.width(), vp.height()),
-                    cursor: (x, y),
-                };
-                if let Some(re_anchored) =
-                    re_anchor_scale_axis(op, obj.transform, &reanchor_ctx, ctx.modifiers.shift)
+        // state inside the document's read borrow + camera borrow.
+        // Both drop at the closure's end before the scene write below.
+        let result: Option<(Transform3D, DragOp)> = ctx
+            .document
+            .with_scene(|scene| {
+                let camera_slot = ctx.camera.borrow();
+                let camera = camera_slot.as_ref()?;
+                // Live Shift toggle on a `ScaleAxis` drag re-anchors before
+                // the move's delta is computed — the running transform
+                // becomes the new `original`, the current cursor becomes
+                // the new press, so the per-axis ↔ uniform formula switch
+                // does not snap the object.
+                if let DragOp::ScaleAxis { proportional, .. } = op
+                    && proportional != ctx.modifiers.shift
+                    && let Some(obj) = scene.objects.get(object_idx)
                 {
-                    op = re_anchored.0;
-                    original = re_anchored.1;
+                    let reanchor_ctx = ReanchorCtx {
+                        camera,
+                        pivot,
+                        fov_y: default_fov_y(),
+                        viewport: (vp.width(), vp.height()),
+                        cursor: (x, y),
+                    };
+                    if let Some(re_anchored) =
+                        re_anchor_scale_axis(op, obj.transform, &reanchor_ctx, ctx.modifiers.shift)
+                    {
+                        op = re_anchored.0;
+                        original = re_anchored.1;
+                    }
                 }
-            }
-            let ray =
-                picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
-            apply_drag_move(op, &ray, pivot, &original, x, y)
-        };
+                let ray =
+                    picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
+                apply_drag_move(op, &ray, pivot, &original, x, y)
+            })
+            .flatten();
 
         let Some((new_transform, new_op)) = result else {
             return false;
@@ -280,20 +271,19 @@ impl GizmoFsm {
             object_idx,
         });
 
-        let mut scene_slot = ctx.scene.borrow_mut();
-        let Some(scene) = scene_slot.as_mut() else {
-            return false;
-        };
-        if let Some(obj) = scene.objects.get_mut(object_idx) {
-            obj.transform = new_transform;
-        }
-        true
+        ctx.document
+            .with_scene_mut(|scene| {
+                if let Some(obj) = scene.objects.get_mut(object_idx) {
+                    obj.transform = new_transform;
+                }
+            })
+            .is_some()
     }
 
     /// Aborts any in-progress drag and reverts the affected object's
     /// transform to its captured original. Returns `true` if a drag
     /// was in flight (caller marks dirty + clears input phase).
-    pub(super) fn abort(&self, scene: &RefCell<Option<Scene>>) -> bool {
+    pub(super) fn abort(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
             original,
             object_idx,
@@ -303,12 +293,11 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        let mut scene_slot = scene.borrow_mut();
-        if let Some(scene) = scene_slot.as_mut()
-            && let Some(obj) = scene.objects.get_mut(object_idx)
-        {
-            obj.transform = original;
-        }
+        document.with_scene_mut(|scene| {
+            if let Some(obj) = scene.objects.get_mut(object_idx) {
+                obj.transform = original;
+            }
+        });
         true
     }
 
@@ -385,15 +374,17 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
     let sel_idx = ctx.selection_idx?;
     let vp = ctx.viewport?;
     let (w, h) = (vp.width(), vp.height());
-    let camera_slot = ctx.camera.borrow();
-    let camera = camera_slot.as_ref()?;
-    let scene_slot = ctx.scene.borrow();
-    let scene = scene_slot.as_ref()?;
-    let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
     let fov_y = default_fov_y();
-    let ray = picking::ray_from_pixel(camera, fov_y, w, h, ctx.cursor.x, ctx.cursor.y);
-    let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
-    Some(handle_hit_to_hover(hit))
+    ctx.document
+        .with_scene(|scene| {
+            let camera_slot = ctx.camera.borrow();
+            let camera = camera_slot.as_ref()?;
+            let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
+            let ray = picking::ray_from_pixel(camera, fov_y, w, h, ctx.cursor.x, ctx.cursor.y);
+            let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
+            Some(handle_hit_to_hover(hit))
+        })
+        .flatten()
 }
 
 fn handle_hit_to_hover(hit: HandleHit) -> GizmoHover {

@@ -345,10 +345,8 @@ impl ViewportController {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
             let names = self
-                .scene
-                .borrow()
-                .as_ref()
-                .map(build_object_list_names)
+                .document
+                .with_scene(build_object_list_names)
                 .unwrap_or_default();
             push_object_list(&ui, names);
             ui.set_selected_object_index(-1);
@@ -542,7 +540,7 @@ impl ViewportController {
     /// visually snap-free.
     pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         let ctx = GizmoMoveCtx {
-            scene: &self.scene,
+            document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
             cursor: ScreenPoint { x, y },
@@ -553,7 +551,7 @@ impl ViewportController {
         // hover updates internally), so this just covers the hover-
         // tint update on idle pointer moves.
         let hover_ctx = GizmoHoverCtx {
-            scene: &self.scene,
+            document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
             selection_idx: self.selection.primary_idx(),
@@ -599,7 +597,7 @@ impl ViewportController {
     /// re-anchor through the move path.
     fn try_start_gizmo_drag(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         let ctx = GizmoStartCtx {
-            scene: &self.scene,
+            document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
             selection_idx: self.selection.primary_idx(),
@@ -614,7 +612,7 @@ impl ViewportController {
     /// `on_clear_selection` and `on_close_scene` so a drag never
     /// outlives its valid context.
     fn abort_gizmo_drag(&self) {
-        if self.gizmo_fsm.abort(&self.scene) {
+        if self.gizmo_fsm.abort(&self.document) {
             self.input_state.set_idle();
             self.mark_dirty();
         }
@@ -632,7 +630,7 @@ impl ViewportController {
     /// they release.
     fn integrate_keyboard_arrows(&self) {
         let ctx = IntegrationCtx {
-            scene: &self.scene,
+            document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
             selection_idx: self.selection.primary_idx(),
@@ -654,18 +652,18 @@ impl ViewportController {
             let Some(camera) = camera_slot.as_ref() else {
                 return;
             };
-            let scene_slot = self.scene.borrow();
-            let Some(scene) = scene_slot.as_ref() else {
-                return;
-            };
             let ray =
                 picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
-            picking::pick_object(&ray, scene)
-            // borrows drop here so the selection setters can re-borrow
+            // Both borrows (camera_slot here, document scene inside
+            // `with_scene`) drop at this expression's end, so the
+            // selection setters below can re-borrow without overlap.
+            self.document
+                .with_scene(|scene| picking::pick_object(&ray, scene))
         };
         match pick {
-            Some(idx) => self.on_select_by_index(idx),
-            None => self.on_clear_selection(),
+            None => (),
+            Some(Some(idx)) => self.on_select_by_index(idx),
+            Some(None) => self.on_clear_selection(),
         }
     }
 
@@ -683,7 +681,7 @@ impl ViewportController {
         self.loader.set_gpu(device.clone(), queue.clone());
         *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
         self.loader.reset_upload_failures();
-        if self.scene.borrow().is_some() {
+        if self.document.is_loaded() {
             self.frame.update(FrameState::with_upload_owed);
             self.request_redraw();
         }
@@ -716,37 +714,39 @@ impl ViewportController {
         };
 
         if self.frame.get().upload_owed() {
-            if let Some(scene_ref) = self.scene.borrow().as_ref() {
-                match renderer.upload_scene(scene_ref) {
-                    Ok(()) => {
-                        self.frame.update(FrameState::after_upload_success);
-                        self.loader.note_upload_success();
-                        // Frame the camera off the AABB the upload just
-                        // computed. Skipped if a camera already exists
-                        // (e.g. this was a re-upload across a
-                        // RenderingTeardown→Setup cycle, and the user's
-                        // view should persist).
-                        if self.camera.borrow().is_none()
-                            && let Some((min, max)) = renderer.scene_bounds()
-                        {
-                            let center = (min + max) * 0.5;
-                            let radius = ((max - min).length() * 0.5).max(1e-3);
-                            *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
-                        }
-                    }
-                    Err(err) => {
-                        // Leave the upload flag set so it continues to
-                        // represent "upload owed" — a subsequent renderer
-                        // setup or scene reload (both of which reset the
-                        // loader's failure counter) will drive a retry
-                        // without relying on coincidental side effects.
-                        self.loader.note_upload_failure(&err);
-                        return;
+            let upload = self
+                .document
+                .with_scene(|scene| renderer.upload_scene(scene));
+            match upload {
+                Some(Ok(())) => {
+                    self.frame.update(FrameState::after_upload_success);
+                    self.loader.note_upload_success();
+                    // Frame the camera off the AABB the upload just
+                    // computed. Skipped if a camera already exists
+                    // (e.g. this was a re-upload across a
+                    // RenderingTeardown→Setup cycle, and the user's
+                    // view should persist).
+                    if self.camera.borrow().is_none()
+                        && let Some((min, max)) = renderer.scene_bounds()
+                    {
+                        let center = (min + max) * 0.5;
+                        let radius = ((max - min).length() * 0.5).max(1e-3);
+                        *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
                     }
                 }
-            } else {
-                // Flag set but the scene was cleared before we got to it.
-                self.frame.update(FrameState::upload_cleared);
+                Some(Err(err)) => {
+                    // Leave the upload flag set so it continues to
+                    // represent "upload owed" — a subsequent renderer
+                    // setup or scene reload (both of which reset the
+                    // loader's failure counter) will drive a retry
+                    // without relying on coincidental side effects.
+                    self.loader.note_upload_failure(&err);
+                    return;
+                }
+                None => {
+                    // Flag set but the scene was cleared before we got to it.
+                    self.frame.update(FrameState::upload_cleared);
+                }
             }
         }
 
@@ -774,88 +774,89 @@ impl ViewportController {
         let Some(camera) = camera_slot.as_ref() else {
             return;
         };
-        let scene_slot = self.scene.borrow();
-        let Some(scene_for_render) = scene_slot.as_ref() else {
-            // Scene was cleared between the upload check and now.
-            return;
-        };
 
-        let selection_idx = self.selection.primary_idx();
-        let drag_state = self.gizmo_fsm.current();
-        let (visibility, drag_visual) = match drag_state {
-            GizmoState::Drag { op, pivot, .. } => match op {
-                DragOp::Translate { axis, .. } => {
-                    (GizmoVisibility::DraggingTranslate { axis }, None)
-                }
-                DragOp::Rotate { axis, last_raw, .. } => (
-                    GizmoVisibility::DraggingRotate { axis },
-                    Some(GizmoDragVisual::Rotate {
-                        axis,
-                        angle: last_raw,
-                    }),
-                ),
-                DragOp::ScaleAxis {
-                    axis,
-                    current_anchor,
-                    proportional,
-                    ..
-                } => {
-                    // Proportional (Shift) is a uniform scale that
-                    // doesn't have a per-axis cursor projection — the
-                    // cube stays put and the object grows uniformly.
-                    let drag_visual = if proportional {
-                        None
-                    } else {
-                        let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
-                        Some(GizmoDragVisual::ScaleAxis {
+        // The trailing render path holds the document's scene borrow
+        // for as long as the closure runs. `None` means the scene was
+        // cleared between the upload check and now; the function
+        // returns without further work.
+        self.document.with_scene(|scene_for_render| {
+            let selection_idx = self.selection.primary_idx();
+            let drag_state = self.gizmo_fsm.current();
+            let (visibility, drag_visual) = match drag_state {
+                GizmoState::Drag { op, pivot, .. } => match op {
+                    DragOp::Translate { axis, .. } => {
+                        (GizmoVisibility::DraggingTranslate { axis }, None)
+                    }
+                    DragOp::Rotate { axis, last_raw, .. } => (
+                        GizmoVisibility::DraggingRotate { axis },
+                        Some(GizmoDragVisual::Rotate {
                             axis,
-                            axial_distance,
-                        })
-                    };
-                    (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
-                }
-            },
-            GizmoState::Idle => (GizmoVisibility::Idle, None),
-        };
-        let hover = self.gizmo_fsm.current_hover();
-        let gizmo_frame = selection_idx.and_then(|sel| {
-            gizmo::frame::build_gizmo_frame(
+                            angle: last_raw,
+                        }),
+                    ),
+                    DragOp::ScaleAxis {
+                        axis,
+                        current_anchor,
+                        proportional,
+                        ..
+                    } => {
+                        // Proportional (Shift) is a uniform scale that
+                        // doesn't have a per-axis cursor projection — the
+                        // cube stays put and the object grows uniformly.
+                        let drag_visual = if proportional {
+                            None
+                        } else {
+                            let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
+                            Some(GizmoDragVisual::ScaleAxis {
+                                axis,
+                                axial_distance,
+                            })
+                        };
+                        (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
+                    }
+                },
+                GizmoState::Idle => (GizmoVisibility::Idle, None),
+            };
+            let hover = self.gizmo_fsm.current_hover();
+            let gizmo_frame = selection_idx.and_then(|sel| {
+                gizmo::frame::build_gizmo_frame(
+                    scene_for_render,
+                    camera,
+                    sel,
+                    h_logical,
+                    visibility,
+                    hover,
+                    drag_visual,
+                )
+            });
+
+            let Some(texture) = renderer.render(
                 scene_for_render,
                 camera,
-                sel,
-                h_logical,
-                visibility,
-                hover,
-                drag_visual,
-            )
-        });
-
-        let Some(texture) = renderer.render(
-            scene_for_render,
-            camera,
-            selection_idx,
-            gizmo_frame,
-            eff_w,
-            eff_h,
-        ) else {
-            return;
-        };
-        self.frame.update(FrameState::after_render);
-        match slint::Image::try_from(texture) {
-            Ok(image) => ui.set_mesh_rendering(image),
-            Err(err) => self.dialogs.show_error_deferred(
-                ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
-                Some(
-                    ctr!(
-                        "ErrorDialog",
-                        "The rendered texture could not be handed to the UI."
-                    )
-                    .to_string(),
+                selection_idx,
+                gizmo_frame,
+                eff_w,
+                eff_h,
+            ) else {
+                return;
+            };
+            self.frame.update(FrameState::after_render);
+            match slint::Image::try_from(texture) {
+                Ok(image) => ui.set_mesh_rendering(image),
+                Err(err) => self.dialogs.show_error_deferred(
+                    ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
+                    Some(
+                        ctr!(
+                            "ErrorDialog",
+                            "The rendered texture could not be handed to the UI."
+                        )
+                        .to_string(),
+                    ),
+                    err.to_string(),
+                    format!("{err:?}"),
                 ),
-                err.to_string(),
-                format!("{err:?}"),
-            ),
-        }
+            }
+        });
     }
 }
 
@@ -1279,25 +1280,25 @@ mod viewport_click_tests {
     const X_CONE_PRESS: (f32, f32) = (335.0, 100.0);
 
     fn read_translation(ctrl: &ViewportController) -> Vec3 {
-        let scene_slot = ctrl.scene.borrow();
-        let scene = scene_slot.as_ref().unwrap();
-        match scene.objects[0].transform {
-            Transform3D::Identity => Vec3::ZERO,
-            Transform3D::Affine(a) => Vec3::new(
-                a.translation()[0] as f32,
-                a.translation()[1] as f32,
-                a.translation()[2] as f32,
-            ),
-        }
+        ctrl.document
+            .with_scene(|scene| match scene.objects[0].transform {
+                Transform3D::Identity => Vec3::ZERO,
+                Transform3D::Affine(a) => Vec3::new(
+                    a.translation()[0] as f32,
+                    a.translation()[1] as f32,
+                    a.translation()[2] as f32,
+                ),
+            })
+            .unwrap()
     }
 
     fn read_linear(ctrl: &ViewportController) -> [[f64; 3]; 3] {
-        let scene_slot = ctrl.scene.borrow();
-        let scene = scene_slot.as_ref().unwrap();
-        match scene.objects[0].transform {
-            Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            Transform3D::Affine(a) => *a.linear(),
-        }
+        ctrl.document
+            .with_scene(|scene| match scene.objects[0].transform {
+                Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                Transform3D::Affine(a) => *a.linear(),
+            })
+            .unwrap()
     }
 
     /// Project the X-axis midpoint cube's centre to logical-pixel
