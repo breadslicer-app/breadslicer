@@ -10,13 +10,31 @@
 //! and the object-list panel observe the document instead of holding
 //! their own copies of this state.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use sc_mesh_core::scene::Scene;
 
 use crate::selection::{Selection, SelectionState};
+
+/// Coarse-grained dispatch hint for document listeners. Each public
+/// mutation on `SceneDocument` fires exactly one event variant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SceneEvent {
+    /// A scene has just been installed (replacing whatever was there).
+    /// Selection has been reset to `None` and `source_path` is set.
+    Installed,
+    /// The scene has been removed; no scene is currently loaded.
+    Cleared,
+    /// Selection has changed without the scene itself changing.
+    SelectionChanged,
+    /// The scene's contents were mutated through `apply_command`.
+    /// Reserved for the upcoming command/undo plumbing.
+    Mutated,
+}
+
+type Listener = Rc<dyn Fn(SceneEvent)>;
 
 pub(crate) struct SceneDocument {
     scene: RefCell<Option<Scene>>,
@@ -28,6 +46,10 @@ pub(crate) struct SceneDocument {
     /// the scene is installed or cleared — a new scene has its own
     /// object indices, so a prior selection is no longer meaningful.
     selection: SelectionState,
+    /// Registered listeners. Cloned out of the cell before dispatch so
+    /// a listener can re-enter `subscribe` without re-borrowing.
+    listeners: RefCell<Vec<(u64, Listener)>>,
+    next_listener_id: Cell<u64>,
 }
 
 impl SceneDocument {
@@ -36,6 +58,8 @@ impl SceneDocument {
             scene: RefCell::new(None),
             source_path: RefCell::new(None),
             selection: SelectionState::new(),
+            listeners: RefCell::new(Vec::new()),
+            next_listener_id: Cell::new(0),
         })
     }
 
@@ -43,12 +67,14 @@ impl SceneDocument {
         *self.scene.borrow_mut() = Some(scene);
         *self.source_path.borrow_mut() = Some(source_path);
         self.selection.set(Selection::None);
+        self.notify(SceneEvent::Installed);
     }
 
     pub fn clear_scene(&self) {
         *self.scene.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
         self.selection.set(Selection::None);
+        self.notify(SceneEvent::Cleared);
     }
 
     pub fn selection(&self) -> Selection {
@@ -56,7 +82,11 @@ impl SceneDocument {
     }
 
     pub fn set_selection(&self, sel: Selection) {
+        if self.selection.current() == sel {
+            return;
+        }
         self.selection.set(sel);
+        self.notify(SceneEvent::SelectionChanged);
     }
 
     /// Currently-selected object's index as a plain `usize`. Convenience
@@ -64,6 +94,49 @@ impl SceneDocument {
     /// `scene.objects[idx]`.
     pub fn selection_primary_idx(&self) -> Option<usize> {
         self.selection.primary_idx()
+    }
+
+    /// Mutation chokepoint for command-pattern writes. Today the body
+    /// is a thin shim over `with_scene_mut` that fires `Mutated` on
+    /// success; the upcoming undo stack will hook in here to record
+    /// the inverse and mark the document dirty before notifying.
+    /// Returns `Some(R)` when a scene was loaded, `None` otherwise.
+    #[allow(dead_code)]
+    pub fn apply_command<R, F: FnOnce(&mut Scene) -> R>(&self, cmd: F) -> Option<R> {
+        let result = self.with_scene_mut(cmd)?;
+        self.notify(SceneEvent::Mutated);
+        Some(result)
+    }
+
+    /// Registers a listener. Returns a handle whose `Drop` removes the
+    /// listener. Listeners fire in registration order.
+    pub fn subscribe<F>(self: &Rc<Self>, listener: F) -> SceneSubscription
+    where
+        F: Fn(SceneEvent) + 'static,
+    {
+        let id = self.next_listener_id.get();
+        self.next_listener_id.set(id.wrapping_add(1));
+        self.listeners
+            .borrow_mut()
+            .push((id, Rc::new(listener) as Listener));
+        SceneSubscription {
+            id,
+            document: Rc::downgrade(self),
+        }
+    }
+
+    fn notify(&self, event: SceneEvent) {
+        // Snapshot listeners so a listener body can re-enter
+        // `subscribe` / `unsubscribe` without re-borrowing the cell.
+        let snapshot: Vec<Listener> = self
+            .listeners
+            .borrow()
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect();
+        for listener in snapshot {
+            listener(event);
+        }
     }
 
     /// Path the current scene was loaded from. `None` when no scene is
@@ -98,6 +171,21 @@ impl SceneDocument {
 
     pub fn is_loaded(&self) -> bool {
         self.scene.borrow().is_some()
+    }
+}
+
+/// RAII handle to a `SceneDocument` subscription. Drop to unsubscribe.
+pub(crate) struct SceneSubscription {
+    id: u64,
+    document: Weak<SceneDocument>,
+}
+
+impl Drop for SceneSubscription {
+    fn drop(&mut self) {
+        let Some(doc) = self.document.upgrade() else {
+            return;
+        };
+        doc.listeners.borrow_mut().retain(|(id, _)| *id != self.id);
     }
 }
 
@@ -225,5 +313,86 @@ mod scene_document_tests {
         doc.set_selection(Selection::One(ObjectIdx(0)));
         doc.clear_scene();
         assert_eq!(doc.selection(), Selection::None);
+    }
+
+    fn capture_events() -> (Rc<RefCell<Vec<SceneEvent>>>, impl Fn(SceneEvent) + 'static) {
+        let log: Rc<RefCell<Vec<SceneEvent>>> = Rc::new(RefCell::new(Vec::new()));
+        let log_for_listener = log.clone();
+        let listener = move |event: SceneEvent| log_for_listener.borrow_mut().push(event);
+        (log, listener)
+    }
+
+    #[test]
+    fn install_clear_round_trip_fires_installed_then_cleared() {
+        let doc = SceneDocument::new();
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+
+        doc.install_scene(empty_scene(), fixture_path());
+        doc.clear_scene();
+
+        assert_eq!(
+            *log.borrow(),
+            vec![SceneEvent::Installed, SceneEvent::Cleared]
+        );
+    }
+
+    #[test]
+    fn set_selection_only_fires_on_actual_change() {
+        use crate::selection::ObjectIdx;
+        let doc = SceneDocument::new();
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+
+        doc.set_selection(Selection::None); // no change from initial
+        doc.set_selection(Selection::One(ObjectIdx(0))); // changes
+        doc.set_selection(Selection::One(ObjectIdx(0))); // no change
+        doc.set_selection(Selection::None); // changes back
+
+        assert_eq!(
+            *log.borrow(),
+            vec![SceneEvent::SelectionChanged, SceneEvent::SelectionChanged]
+        );
+    }
+
+    #[test]
+    fn apply_command_fires_mutated_when_a_scene_is_loaded() {
+        let doc = SceneDocument::new();
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+
+        // No scene loaded → command is a no-op and no event fires.
+        let pre = doc.apply_command(|s| s.objects.len());
+        assert_eq!(pre, None);
+
+        doc.install_scene(empty_scene(), fixture_path());
+        let post = doc.apply_command(|s| {
+            s.objects.push(SceneObject {
+                meta: None,
+                transform: Default::default(),
+                content: SceneObjectContent::Resource(0),
+            });
+            s.objects.len()
+        });
+        assert_eq!(post, Some(1));
+
+        // Installed (from install_scene), then Mutated (from apply_command).
+        assert_eq!(
+            *log.borrow(),
+            vec![SceneEvent::Installed, SceneEvent::Mutated]
+        );
+    }
+
+    #[test]
+    fn dropping_subscription_removes_the_listener() {
+        let doc = SceneDocument::new();
+        let (log, listener) = capture_events();
+        {
+            let _sub = doc.subscribe(listener);
+            doc.install_scene(empty_scene(), fixture_path());
+        } // subscription drops here
+        doc.clear_scene();
+
+        assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
     }
 }

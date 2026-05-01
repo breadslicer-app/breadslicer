@@ -132,6 +132,7 @@ impl AppState {
         ui.apply_preferences(&self.prefs.snapshot());
         let document = SceneDocument::new();
         let ctrl = Rc::new(ViewportController::new(&ui, document));
+        ctrl.register_document_listener();
 
         crate::wiring::wire_main_window(&ui, ctrl)?;
         self.wire_app_level_menus(&ui);

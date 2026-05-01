@@ -30,7 +30,7 @@ use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov_y};
 use crate::picking;
-use crate::scene_document::SceneDocument;
+use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{ObjectIdx, Selection};
 
@@ -75,6 +75,10 @@ pub struct ViewportController {
     // resizes don't churn the MSAA/target allocations on every pointer move.
     resizing: Cell<bool>,
     dialogs: Rc<DialogManager>,
+    // Document subscription. Held by the controller so it's dropped
+    // alongside the controller; populated by `register_document_listener`
+    // after the controller is wrapped in `Rc`.
+    document_subscription: RefCell<Option<SceneSubscription>>,
 }
 
 impl ViewportController {
@@ -93,6 +97,7 @@ impl ViewportController {
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
+            document_subscription: RefCell::new(None),
         }
     }
 
@@ -118,6 +123,7 @@ impl ViewportController {
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             resizing: Cell::new(false),
             dialogs,
+            document_subscription: RefCell::new(None),
         }
     }
 
@@ -156,6 +162,84 @@ impl ViewportController {
     /// rather than through delegating methods on the controller.
     pub fn loader(&self) -> Rc<SceneLoader> {
         self.loader.clone()
+    }
+
+    /// Subscribes the controller to its document. Called from
+    /// `app_state` once the controller is wrapped in `Rc`. The
+    /// listener captures a `Weak<Self>` to avoid an `Rc` cycle through
+    /// the document.
+    pub fn register_document_listener(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        let sub = self.document.subscribe(move |event| {
+            if let Some(strong) = weak.upgrade() {
+                strong.handle_scene_event(event);
+            }
+        });
+        *self.document_subscription.borrow_mut() = Some(sub);
+    }
+
+    /// Translates a `SceneEvent` into the viewport-state reset that
+    /// used to live inline in the lifecycle methods. Intended only as
+    /// a listener body — public callers should drive the document
+    /// directly and let the listener react.
+    fn handle_scene_event(&self, event: SceneEvent) {
+        match event {
+            SceneEvent::Installed => self.on_scene_installed(),
+            SceneEvent::Cleared => self.on_scene_cleared(),
+            SceneEvent::SelectionChanged => {
+                self.mirror_selection_to_ui();
+                self.mark_dirty();
+            }
+            SceneEvent::Mutated => {
+                // Stub. The upcoming undo plumbing will invalidate
+                // caches and mark the document dirty here.
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Reset that follows a fresh scene install. Camera reset to
+    /// `None` so the renderer-bounds framing branch in
+    /// `on_scene_load_finished` can populate it; UI mirrors the new
+    /// scene's object list and the freshly-cleared selection.
+    fn on_scene_installed(&self) {
+        *self.camera.borrow_mut() = None;
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_has_scene(true);
+            let names = self
+                .document
+                .with_scene(build_object_list_names)
+                .unwrap_or_default();
+            push_object_list(&ui, names);
+            ui.set_selected_object_index(-1);
+            ui.set_gizmo_keyboard_focus_active(false);
+        }
+        self.mark_dirty();
+    }
+
+    /// Full viewport reset on scene close. Mirror of the inline body
+    /// the close path used to carry. The drag's captured `object_idx`
+    /// becomes meaningless once the scene is gone, so the FSM is
+    /// reset without trying to revert the (now-missing) object's
+    /// transform; same for the keyboard integrator's focus and
+    /// held-arrow bitset.
+    fn on_scene_cleared(&self) {
+        *self.camera.borrow_mut() = None;
+        self.frame.set(FrameState::default());
+        self.gizmo_fsm.set_idle();
+        self.gizmo_fsm.clear_hover();
+        self.input_state.set_idle();
+        self.kbd_drive.reset();
+        if let Some(r) = self.renderer.borrow_mut().as_mut() {
+            r.clear_scene();
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_mesh_rendering(slint::Image::default());
+            ui.set_has_scene(false);
+            push_object_list(&ui, Vec::new());
+            ui.set_selected_object_index(-1);
+            ui.set_gizmo_keyboard_focus_active(false);
+        }
     }
 
     fn request_redraw(&self) {
@@ -243,32 +327,14 @@ impl ViewportController {
     }
 
     pub fn on_close_scene(&self) {
+        // Loader-side invalidation is not driven by the document's
+        // listener — it's coupled to the close *gesture*, not to the
+        // scene state itself. The `clear_scene` call below fires
+        // `SceneEvent::Cleared`, and the controller's listener
+        // handles the full viewport-state reset (camera, frame,
+        // gizmo, kbd, renderer, UI).
         self.loader.invalidate_and_clear();
-        // `clear_scene` also resets the document's selection to `None`,
-        // so the controller doesn't need a paired write here.
         self.document.clear_scene();
-        *self.camera.borrow_mut() = None;
-        self.frame.set(FrameState::default());
-        // The drag's captured `object_idx` becomes meaningless once
-        // the scene is gone; clear FSM state without trying to
-        // revert (the object no longer exists).
-        self.gizmo_fsm.set_idle();
-        self.gizmo_fsm.clear_hover();
-        self.input_state.set_idle();
-        // Keyboard focus is anchored on the (now-missing) selection;
-        // reset it together with the held-arrow bitset so a stuck
-        // key can't drive a phantom integrator after scene close.
-        self.kbd_drive.reset();
-        if let Some(r) = self.renderer.borrow_mut().as_mut() {
-            r.clear_scene();
-        }
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_mesh_rendering(slint::Image::default());
-            ui.set_has_scene(false);
-            push_object_list(&ui, Vec::new());
-            ui.set_selected_object_index(-1);
-            ui.set_gizmo_keyboard_focus_active(false);
-        }
     }
 
     pub fn on_scene_load_finished(&self) {
@@ -294,13 +360,12 @@ impl ViewportController {
             .map(|r| r.install_scene(gpu_scene, &built_with))
             .unwrap_or(false);
 
-        *self.camera.borrow_mut() = None;
-        // `install_scene` also resets the document's selection to
-        // `None` — a new scene has its own object indices, so any
-        // prior selection is no longer meaningful.
+        // Fires `SceneEvent::Installed`; the listener resets the
+        // camera to `None` (so the bounds-based framing below sees a
+        // fresh slot), pushes the new object list, and rearms the UI
+        // mirror.
         self.document.install_scene(scene, source_path);
-        // If install succeeded, the buffers are already on the GPU; no
-        // upload owed. Otherwise, defer to the recovery upload path.
+
         if scene_installed {
             self.loader.note_upload_success();
             // Frame the camera off the AABB the worker computed.
@@ -318,17 +383,6 @@ impl ViewportController {
         } else {
             self.frame.update(FrameState::with_upload_owed);
         }
-
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_has_scene(true);
-            let names = self
-                .document
-                .with_scene(build_object_list_names)
-                .unwrap_or_default();
-            push_object_list(&ui, names);
-            ui.set_selected_object_index(-1);
-        }
-        self.mark_dirty();
     }
 
     /// Selection, in the document's authoritative form. Tests use
@@ -350,12 +404,10 @@ impl ViewportController {
         } else {
             Selection::None
         };
-        if self.document.selection() == new_sel {
-            return;
-        }
+        // `set_selection` short-circuits on no-change and fires
+        // `SceneEvent::SelectionChanged` only on actual transitions;
+        // the listener takes care of mirror-to-UI + mark-dirty.
         self.document.set_selection(new_sel);
-        self.mirror_selection_to_ui();
-        self.mark_dirty();
     }
 
     /// Tab / Shift+Tab selection cycling.
@@ -419,12 +471,13 @@ impl ViewportController {
         if matches!(self.document.selection(), Selection::None) {
             return;
         }
-        self.document.set_selection(Selection::None);
         // Selection going away kills the gizmo, so any cached hover
-        // tint targets a handle that no longer renders.
+        // tint targets a handle that no longer renders. Clearing
+        // before the document mutation keeps the order matching the
+        // pre-listener implementation; `set_selection` then fires
+        // `SelectionChanged` and the listener mirrors UI + dirty.
         self.gizmo_fsm.clear_hover();
-        self.mirror_selection_to_ui();
-        self.mark_dirty();
+        self.document.set_selection(Selection::None);
     }
 
     /// `T`/`R`/`S` keyboard handlers. Each requires a selection to
@@ -1430,7 +1483,11 @@ mod viewport_click_tests {
         // The drag captures `object_idx`, which becomes invalid when
         // the scene is dropped. `on_close_scene` must clear FSM
         // state without trying to revert through the missing scene.
-        let ctrl = ViewportController::new_for_test();
+        // Wrap in `Rc` and register the document listener so the
+        // close-driven viewport reset (which now lives in the
+        // listener body) actually runs in the test.
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.register_document_listener();
         install_single_object_at_origin(&ctrl);
 
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
