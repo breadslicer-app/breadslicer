@@ -402,7 +402,7 @@ mod parse_f32_tests {
 
     #[test]
     fn parses_positive_decimal() {
-        assert_eq!(parse_f32("3.14", 0).unwrap(), 3.14);
+        assert_eq!(parse_f32("4.23", 0).unwrap(), 4.23);
     }
 
     #[test]

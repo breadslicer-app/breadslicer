@@ -10,12 +10,12 @@ fn get_mesh_without_meta() -> IndexedMesh {
     IndexedMesh {
         meta: None,
         vertices: vec![
-            Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
-            Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
-            Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+            Vertex::new([0.0, 100.0, 100.0]),
+            Vertex::new([0.0, 100.0, 0.0]),
+            Vertex::new([0.0, 0.0, 100.0]),
         ],
         faces: vec![IndexedTriangle {
-            normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+            normal: Normal::new([-1.0, 0.0, 0.0]),
             vertices: [0, 1, 2],
         }],
     }
@@ -25,12 +25,12 @@ fn get_unnamed_mesh() -> IndexedMesh {
     IndexedMesh {
         meta: Some(MeshMetadata::default()),
         vertices: vec![
-            Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
-            Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
-            Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+            Vertex::new([0.0, 100.0, 100.0]),
+            Vertex::new([0.0, 100.0, 0.0]),
+            Vertex::new([0.0, 0.0, 100.0]),
         ],
         faces: vec![IndexedTriangle {
-            normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+            normal: Normal::new([-1.0, 0.0, 0.0]),
             vertices: [0, 1, 2],
         }],
     }
@@ -43,12 +43,12 @@ fn get_named_mesh() -> IndexedMesh {
             ..Default::default()
         }),
         vertices: vec![
-            Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
-            Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
-            Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+            Vertex::new([0.0, 100.0, 100.0]),
+            Vertex::new([0.0, 100.0, 0.0]),
+            Vertex::new([0.0, 0.0, 100.0]),
         ],
         faces: vec![IndexedTriangle {
-            normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+            normal: Normal::new([-1.0, 0.0, 0.0]),
             vertices: [0, 1, 2],
         }],
     }
@@ -68,9 +68,7 @@ mod stla_tests {
 
         let recovered_mesh = read_stla(&mut reader);
         if recovered_mesh.is_err() {
-            eprintln!("Error: {:?}", recovered_mesh.err().unwrap());
-            assert!(false);
-            return;
+            panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
@@ -90,9 +88,7 @@ mod stla_tests {
 
         let recovered_mesh = read_stla(&mut reader);
         if recovered_mesh.is_err() {
-            eprintln!("Error: {:?}", recovered_mesh.err().unwrap());
-            assert!(false);
-            return;
+            panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
@@ -110,9 +106,7 @@ mod stla_tests {
 
         let recovered_mesh = read_stla(&mut reader);
         if recovered_mesh.is_err() {
-            eprintln!("Error: {:?}", recovered_mesh.err().unwrap());
-            assert!(false);
-            return;
+            panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
@@ -134,9 +128,7 @@ mod stlb_tests {
 
         let recovered_mesh = read_stlb(&mut reader);
         if recovered_mesh.is_err() {
-            eprintln!("Error: {:?}", recovered_mesh.err().unwrap());
-            assert!(false);
-            return;
+            panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
@@ -156,9 +148,7 @@ mod stlb_tests {
 
         let recovered_mesh = read_stlb(&mut reader);
         if recovered_mesh.is_err() {
-            eprintln!("Error: {:?}", recovered_mesh.err().unwrap());
-            assert!(false);
-            return;
+            panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
         let recovered_mesh = recovered_mesh.unwrap();
 
@@ -176,9 +166,7 @@ mod stlb_tests {
 
         let recovered_mesh = read_stlb(&mut reader);
         if recovered_mesh.is_err() {
-            eprintln!("Error: {:?}", recovered_mesh.err().unwrap());
-            assert!(false);
-            return;
+            panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
         let recovered_mesh = recovered_mesh.unwrap();
 

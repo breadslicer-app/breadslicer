@@ -235,7 +235,7 @@ mod test_ascii_stl_reader {
 
     use super::AsciiStlReader;
 
-    static STL_1: &'static [u8; 304] = b"solid foobar
+    static STL_1: &[u8; 304] = b"solid foobar
    facet normal -1.000000e+000 0.000000e+000 0.000000e+000
       outer loop
          vertex 0.000000e+000 1.000000e+002 1.000000e+002
@@ -245,8 +245,7 @@ mod test_ascii_stl_reader {
    endfacet
 endsolid foobar";
 
-    static STL_2: &'static [u8; 291] = b"solid 
-   facet normal -1.000000e+000 0.000000e+000 0.000000e+000
+    static STL_2: &[u8; 291] = b"solid \n   facet normal -1.000000e+000 0.000000e+000 0.000000e+000
       outer loop
          vertex 0.000000e+000 1.000000e+002 1.000000e+002
          vertex 0.000000e+000 1.000000e+002 0.000000e+000
@@ -257,10 +256,10 @@ endsolid";
 
     #[test]
     fn test_probe() {
-        let mut reader_1 = std::io::Cursor::new(STL_1.clone());
+        let mut reader_1 = std::io::Cursor::new(*STL_1);
         assert!(AsciiStlReader::probe(&mut reader_1).unwrap());
 
-        let mut reader_2 = std::io::Cursor::new(STL_2.clone());
+        let mut reader_2 = std::io::Cursor::new(*STL_2);
         assert!(AsciiStlReader::probe(&mut reader_2).unwrap());
 
         let mut reader_3 = std::io::Cursor::new(
@@ -272,7 +271,7 @@ endsolid";
 
     #[test]
     fn test_extract_metadata() {
-        let mut reader_1 = std::io::Cursor::new(STL_1.clone());
+        let mut reader_1 = std::io::Cursor::new(*STL_1);
         let metadata_1 = AsciiStlReader::extract_metadata(&mut reader_1).unwrap();
         assert_eq!(
             MeshMetadata {
@@ -282,14 +281,14 @@ endsolid";
             metadata_1
         );
 
-        let mut reader_2 = std::io::Cursor::new(STL_2.clone());
+        let mut reader_2 = std::io::Cursor::new(*STL_2);
         let metadata_2 = AsciiStlReader::extract_metadata(&mut reader_2).unwrap();
         assert_eq!(MeshMetadata::default(), metadata_2);
     }
 
     #[test]
     fn test_as_indexed_mesh() {
-        let mut reader_1 = std::io::Cursor::new(STL_1.clone());
+        let mut reader_1 = std::io::Cursor::new(*STL_1);
         let mesh = AsciiStlReader::create_triangles_iterator(&mut reader_1)
             .unwrap()
             .as_indexed_mesh(None)
@@ -299,12 +298,12 @@ endsolid";
             IndexedMesh {
                 meta: None,
                 vertices: vec![
-                    Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
-                    Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
-                    Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+                    Vertex::new([0.0, 100.0, 100.0]),
+                    Vertex::new([0.0, 100.0, 0.0]),
+                    Vertex::new([0.0, 0.0, 100.0]),
                 ],
                 faces: vec![IndexedTriangle {
-                    normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+                    normal: Normal::new([-1.0, 0.0, 0.0]),
                     vertices: [0, 1, 2],
                 }],
             },

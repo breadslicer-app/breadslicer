@@ -110,24 +110,19 @@ mod test_write_stla {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
-                Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
-                Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
-                Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+                Vertex::new([0.0, 100.0, 100.0]),
+                Vertex::new([0.0, 100.0, 0.0]),
+                Vertex::new([0.0, 0.0, 100.0]),
             ],
             faces: vec![IndexedTriangle {
-                normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+                normal: Normal::new([-1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
         };
 
         let mut result_vec: Vec<u8> = vec![];
-        match write_stla(&mesh, &mut result_vec) {
-            Ok(_) => {}
-            Err(err) => {
-                eprintln!("Error calling write_stla: {:?}", err);
-                assert!(false)
-            }
-        };
+        write_stla(&mesh, &mut result_vec)
+            .unwrap_or_else(|err| panic!("Error calling write_stla: {err:?}"));
 
         let result_str = str::from_utf8(&result_vec).unwrap();
 
@@ -153,24 +148,19 @@ endsolid",
                 ..Default::default()
             }),
             vertices: vec![
-                Vertex::new([0.000000e+000, 1.000000e+002, 1.000000e+002]),
-                Vertex::new([0.000000e+000, 1.000000e+002, 0.000000e+000]),
-                Vertex::new([0.000000e+000, 0.000000e+000, 1.000000e+002]),
+                Vertex::new([0.0, 100.0, 100.0]),
+                Vertex::new([0.0, 100.0, 0.0]),
+                Vertex::new([0.0, 0.0, 100.0]),
             ],
             faces: vec![IndexedTriangle {
-                normal: Normal::new([-1.000000e+000, 0.000000e+000, 0.000000e+000]),
+                normal: Normal::new([-1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
         };
 
         let mut result_vec: Vec<u8> = vec![];
-        match write_stla(&mesh, &mut result_vec) {
-            Ok(_) => {}
-            Err(err) => {
-                eprintln!("Error calling write_stla: {:?}", err);
-                assert!(false)
-            }
-        };
+        write_stla(&mesh, &mut result_vec)
+            .unwrap_or_else(|err| panic!("Error calling write_stla: {err:?}"));
 
         let result_str = str::from_utf8(&result_vec).unwrap();
 
