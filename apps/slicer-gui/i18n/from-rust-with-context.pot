@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-28 11:01+0200\n"
+"POT-Creation-Date: 2026-05-01 15:59+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,61 +17,76 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/viewport/controller.rs:1178
+#: src/viewport/controller.rs:882
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1182
+#: src/viewport/controller.rs:886
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
 
-#: src/viewport/controller.rs:1536
+#: src/viewport/object_list.rs:39
 #, rust-format
 msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
 
-#: src/wiring.rs:207
+#: src/wiring.rs:212
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:210
+#: src/wiring.rs:215 src/wiring.rs:287
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:212
+#: src/wiring.rs:217
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:215
+#: src/wiring.rs:220
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/scene_loader.rs:286
+#: src/wiring.rs:256 src/wiring.rs:273
 msgctxt "ErrorDialog"
-msgid "Failed to load the 3D model"
+msgid "Failed to export"
+msgstr ""
+
+#: src/wiring.rs:257 src/wiring.rs:274 src/scene_loader.rs:325
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "File: {}"
+msgstr ""
+
+#: src/wiring.rs:285
+msgctxt "FileDialog"
+msgid "STL (binary)"
+msgstr ""
+
+#: src/wiring.rs:286
+msgctxt "FileDialog"
+msgid "STL (ASCII)"
 msgstr ""
 
 #: src/scene_loader.rs:290
 msgctxt "ErrorDialog"
+msgid "Failed to load the 3D model"
+msgstr ""
+
+#: src/scene_loader.rs:294
+msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr ""
 
-#: src/scene_loader.rs:320
+#: src/scene_loader.rs:324
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
-msgstr ""
-
-#: src/scene_loader.rs:321
-#, rust-format
-msgctxt "ErrorDialog"
-msgid "File: {}"
 msgstr ""
 
 #: src/language.rs:79

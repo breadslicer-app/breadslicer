@@ -14,7 +14,14 @@ where
     if let Some(meta) = &scene.meta
         && let Some(comment) = &meta.comment
     {
-        writeln!(writer, "# {comment}")?;
+        // The reader joins multi-line headers with `\n`, so each
+        // segment must be re-prefixed on write. Without this, an
+        // imported file's continuation lines round-trip back as
+        // bare `Coordinates use ...` lines and the next reader
+        // rejects them as unrecognised directives.
+        for line in comment.split('\n') {
+            writeln!(writer, "# {line}")?;
+        }
     }
 
     let write_object_markers = scene.objects.len() > 1;
@@ -147,6 +154,21 @@ mod tests {
         });
         let out = write_to_string(&scene);
         assert!(out.starts_with("# exported by test\n"));
+    }
+
+    #[test]
+    fn multi_line_scene_comment_prefixes_every_line() {
+        // The reader joins consecutive `#` header lines with `\n`.
+        // The writer must re-prefix each segment so the output stays
+        // a valid OBJ file — bare continuation lines fail the next
+        // load with `unrecognized directive`.
+        let mut scene = scene_with_mesh(make_triangle_mesh(None));
+        scene.meta = Some(SceneMetadata {
+            name: None,
+            comment: Some("first line\nsecond line\nthird line".to_string()),
+        });
+        let out = write_to_string(&scene);
+        assert!(out.starts_with("# first line\n# second line\n# third line\n"));
     }
 
     #[test]

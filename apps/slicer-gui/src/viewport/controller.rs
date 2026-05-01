@@ -164,6 +164,21 @@ impl ViewportController {
         self.loader.clone()
     }
 
+    /// Access to the document. Used by `wiring.rs` to drive the
+    /// `Export As` flow (read scene + source path) without going
+    /// through delegating methods on the controller.
+    pub fn document(&self) -> Rc<SceneDocument> {
+        self.document.clone()
+    }
+
+    /// Access to the dialog manager. Used by `wiring.rs` to surface
+    /// errors that don't originate from a controller call (e.g. an
+    /// async file-save dialog flow whose result needs an error
+    /// dialog).
+    pub fn dialogs(&self) -> Rc<DialogManager> {
+        self.dialogs.clone()
+    }
+
     /// Subscribes the controller to its document. Called from
     /// `app_state` once the controller is wrapped in `Rc`. The
     /// listener captures a `Weak<Self>` to avoid an `Rc` cycle through

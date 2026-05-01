@@ -83,6 +83,7 @@ export component MainWindow inherits Window {
 
     callback open-file-requested();
     callback close-current-scene();
+    callback export-as-requested();
     callback scene-load-finished();
     callback show-about-requested();
     callback show-preferences-requested();
@@ -154,6 +155,17 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Save As…");
                 shortcut: @keys(Control + Shift + S);
                 enabled: false;
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Export As…");
+                shortcut: @keys(Control + Shift + E);
+                enabled: root.has-scene && !root.loading;
+                activated => {
+                    root.export-as-requested();
+                }
             }
         }
 

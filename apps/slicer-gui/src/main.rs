@@ -24,6 +24,7 @@ mod picking;
 mod preferences_bus;
 mod preferences_window;
 mod scene_document;
+mod scene_export;
 mod scene_loader;
 mod selection;
 mod viewport;

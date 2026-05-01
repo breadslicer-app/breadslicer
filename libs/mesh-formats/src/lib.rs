@@ -10,6 +10,7 @@ pub mod filetypes;
 pub mod loader;
 pub mod messages;
 pub mod obj;
+pub mod scene_writer;
 pub mod stl;
 
 pub use loader::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};

@@ -11,11 +11,15 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
+use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_loader;
+use crate::scene_document::SceneDocument;
+use crate::scene_export;
 use crate::scene_loader::{LoadTicket, SceneLoader};
 use crate::viewport::{RESIZE_SETTLE, ViewportController};
 
@@ -29,6 +33,7 @@ pub(crate) fn wire_main_window(
     install_rendering_notifier(ui, ctrl.clone())?;
     wire_close_scene(ui, ctrl.clone());
     wire_open_file(ui, ctrl.clone());
+    wire_export_as(ui, ctrl.clone());
     wire_viewport_resized(ui, ctrl.clone());
     wire_viewport_input(ui, ctrl);
     Ok(())
@@ -214,4 +219,74 @@ async fn pick_mesh_file() -> Option<PathBuf> {
         )
         .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
     dialog.pick_file().await.map(|h| h.path().to_path_buf())
+}
+
+fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+    ui.on_export_as_requested(move || {
+        let doc = ctrl.document();
+        let dialogs = ctrl.dialogs();
+        let default_stem = scene_export::default_export_stem(&doc);
+        if let Err(err) = slint::spawn_local(run_export_as_flow(doc, dialogs, default_stem)) {
+            eprintln!("Failed to spawn export dialog task: {err}");
+        }
+    });
+}
+
+/// Orchestrates one "Export As" command: show the file-save dialog,
+/// infer the format from the chosen extension, and call into
+/// `scene_export`. Cancellations and unknown extensions both bail
+/// gracefully.
+async fn run_export_as_flow(
+    doc: Rc<SceneDocument>,
+    dialogs: Rc<DialogManager>,
+    default_stem: Option<String>,
+) {
+    let Some(target) = pick_export_target(default_stem).await else {
+        // User cancelled the dialog.
+        return;
+    };
+
+    // The chosen filter only adds the matching extension on most
+    // platforms; the path's extension is the portable source of truth
+    // for the format. `.stl` → binary, `.stla` → ASCII, `.obj` → OBJ.
+    let format = match infer_mesh_file_format_from_extension(&target) {
+        Ok(f) => f,
+        Err(err) => {
+            dialogs.show_error(
+                ctr!("ErrorDialog", "Failed to export").as_str(),
+                Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
+                err.to_string(),
+                format_anyhow_chain(&err),
+            );
+            return;
+        }
+    };
+
+    match scene_export::export_scene_as(&doc, &target, format) {
+        Ok(warnings) => {
+            for w in &warnings {
+                eprintln!("WARNING [{}]: {}", target.display(), w.user_message());
+            }
+        }
+        Err(err) => {
+            dialogs.show_error(
+                ctr!("ErrorDialog", "Failed to export").as_str(),
+                Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
+                err.to_string(),
+                format_anyhow_chain(&err),
+            );
+        }
+    }
+}
+
+async fn pick_export_target(default_stem: Option<String>) -> Option<PathBuf> {
+    let mut dialog = rfd::AsyncFileDialog::new()
+        // STL binary first → it's the default format.
+        .add_filter(ctr!("FileDialog", "STL (binary)").to_string(), &["stl"])
+        .add_filter(ctr!("FileDialog", "STL (ASCII)").to_string(), &["stla"])
+        .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"]);
+    if let Some(stem) = default_stem {
+        dialog = dialog.set_file_name(format!("{stem}.stl"));
+    }
+    dialog.save_file().await.map(|h| h.path().to_path_buf())
 }
