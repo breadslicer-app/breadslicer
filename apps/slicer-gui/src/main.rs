@@ -23,6 +23,7 @@ mod mesh_render;
 mod picking;
 mod preferences_bus;
 mod preferences_window;
+mod scene_document;
 mod scene_loader;
 mod viewport;
 mod window_prefs;
