@@ -6,6 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+#[cfg(test)]
 use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
@@ -38,13 +39,10 @@ use crate::gizmo::axis::Axis;
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
-    // Document-level model. The controller mirrors its own `scene` cell
-    // here on every install / clear so consumers that observe the
-    // document already see live state. A subsequent checkpoint
-    // migrates reads to the document and drops the local cell.
+    // Document-level model. Owns the loaded scene + selection (and,
+    // ahead, the undo stack). The controller observes it.
     document: Rc<SceneDocument>,
     renderer: RefCell<Option<Renderer>>,
-    scene: RefCell<Option<Scene>>,
     // The camera lives next to the scene (not inside the GPU renderer), so it
     // survives device-loss / RenderingTeardown→Setup cycles for free and can
     // be manipulated without a GPU present.
@@ -92,7 +90,6 @@ impl ViewportController {
             ui: ui.as_weak(),
             document,
             renderer: RefCell::new(None),
-            scene: RefCell::new(None),
             camera: RefCell::new(None),
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
@@ -110,8 +107,8 @@ impl ViewportController {
     /// dangling, so every `ui.upgrade()` returns `None` and the
     /// UI-mirroring side effects (`set_selected_object_index`,
     /// `set_object_list`, `request_redraw`) silently skip — leaving the
-    /// in-Rust selection cell, scene cell, and dirty flag as the only
-    /// observable state. This matches `SceneLoader::new_for_test`.
+    /// in-Rust selection cell and dirty flag as the only observable
+    /// state. This matches `SceneLoader::new_for_test`.
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
         let dialogs = DialogManager::new();
@@ -119,7 +116,6 @@ impl ViewportController {
             ui: slint::Weak::default(),
             document: SceneDocument::new(),
             renderer: RefCell::new(None),
-            scene: RefCell::new(None),
             camera: RefCell::new(None),
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
@@ -133,23 +129,9 @@ impl ViewportController {
         }
     }
 
-    /// Asserts the controller's `scene` cell and the document's `scene`
-    /// cell agree on presence. Catches a missed mirror at any other
-    /// scene-touching method's entry. Compiled out in release builds.
-    fn debug_assert_scene_mirror_consistent(&self) {
-        debug_assert_eq!(
-            self.scene.borrow().is_some(),
-            self.document.is_loaded(),
-            "controller and document scene presence must agree"
-        );
-    }
-
     #[cfg(test)]
     pub(crate) fn install_scene_for_test(&self, scene: Scene) {
-        self.debug_assert_scene_mirror_consistent();
-        self.document.install_scene(scene.clone());
-        *self.scene.borrow_mut() = Some(scene);
-        self.debug_assert_scene_mirror_consistent();
+        self.document.install_scene(scene);
     }
 
     #[cfg(test)]
@@ -264,10 +246,8 @@ impl ViewportController {
     }
 
     pub fn on_close_scene(&self) {
-        self.debug_assert_scene_mirror_consistent();
         self.loader.invalidate_and_clear();
         self.document.clear_scene();
-        *self.scene.borrow_mut() = None;
         *self.camera.borrow_mut() = None;
         self.frame.set(FrameState::default());
         self.selection.set(Selection::None);
@@ -294,7 +274,6 @@ impl ViewportController {
     }
 
     pub fn on_scene_load_finished(&self) {
-        self.debug_assert_scene_mirror_consistent();
         let Some(prepared) = self.loader.take_finished_load() else {
             return;
         };
@@ -304,7 +283,6 @@ impl ViewportController {
             device: built_with,
             warnings: _,
         } = prepared;
-        self.document.install_scene(scene.clone());
 
         // Try to install the worker-built buffers directly. Falls
         // through to the UI-thread upload path if the renderer is
@@ -318,7 +296,7 @@ impl ViewportController {
             .unwrap_or(false);
 
         *self.camera.borrow_mut() = None;
-        *self.scene.borrow_mut() = Some(scene);
+        self.document.install_scene(scene);
         // A new scene has its own object indices; any prior selection
         // referred to the previous scene and is no longer meaningful.
         self.selection.set(Selection::None);
@@ -367,12 +345,7 @@ impl ViewportController {
     /// guard short-circuits the round-trip so the mirror-back to the UI
     /// doesn't fire `selection-changed` again.
     pub fn on_select_by_index(&self, idx: usize) {
-        let scene_len = self
-            .scene
-            .borrow()
-            .as_ref()
-            .map(|s| s.objects.len())
-            .unwrap_or(0);
+        let scene_len = self.document.with_scene(|s| s.objects.len()).unwrap_or(0);
         let new_sel = if idx < scene_len {
             Selection::One(ObjectIdx(idx))
         } else {
@@ -406,12 +379,7 @@ impl ViewportController {
     /// in-progress drag on Tab; if that turns out to be wrong, the
     /// fix is to call `abort_gizmo_drag` here.
     pub fn on_selection_cycle(&self, delta: i32) {
-        let scene_len = self
-            .scene
-            .borrow()
-            .as_ref()
-            .map(|s| s.objects.len())
-            .unwrap_or(0);
+        let scene_len = self.document.with_scene(|s| s.objects.len()).unwrap_or(0);
         if scene_len == 0 {
             return;
         }
