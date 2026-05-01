@@ -15,12 +15,42 @@ use sc_mesh_formats::scene_writer::{self, FlattenWarning};
 
 use crate::scene_document::SceneDocument;
 
+/// Fallback extension used when we can't infer a better one from the
+/// source path. STL binary is the project's default export format.
+const DEFAULT_EXPORT_EXTENSION: &str = "stl";
+
 /// Default filename stem to seed the file-save dialog with: the
 /// original load path's stem (e.g. `gear.obj` → `gear`). `None` when
 /// no scene is loaded or the source path has no recognisable stem.
 pub(crate) fn default_export_stem(doc: &SceneDocument) -> Option<String> {
     doc.with_source_path(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_owned()))
         .flatten()
+}
+
+/// Default extension to seed the dialog with. Matches the source
+/// path's extension when it's one of the formats this app can write
+/// back out (`.obj`, `.stl`, `.stla`); otherwise falls back to the
+/// project default of binary STL.
+///
+/// rfd 0.17 does not expose which filter the user actually picked, so
+/// the seeded extension is the only signal that tells the user which
+/// format they're about to write. Matching the source preserves the
+/// "Export As" sensible default of "same format unless I change it".
+pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
+    let from_source = doc
+        .with_source_path(|p| {
+            p.extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+        })
+        .flatten();
+    match from_source.as_deref() {
+        Some("obj") => "obj",
+        Some("stla") => "stla",
+        // `.stl` and `.stlb` both round-trip via binary STL.
+        Some("stl") | Some("stlb") => "stl",
+        _ => DEFAULT_EXPORT_EXTENSION,
+    }
 }
 
 /// Writes the document's current scene out to `target` in `format`.
@@ -122,6 +152,46 @@ mod scene_export_tests {
         let doc = SceneDocument::new();
         doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget"));
         assert_eq!(default_export_stem(&doc).as_deref(), Some("widget"));
+    }
+
+    #[test]
+    fn default_export_extension_falls_back_without_a_scene() {
+        let doc = SceneDocument::new();
+        assert_eq!(default_export_extension(&doc), "stl");
+    }
+
+    #[test]
+    fn default_export_extension_keeps_obj_source() {
+        let doc = SceneDocument::new();
+        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.obj"));
+        assert_eq!(default_export_extension(&doc), "obj");
+    }
+
+    #[test]
+    fn default_export_extension_keeps_ascii_stl_source() {
+        let doc = SceneDocument::new();
+        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.stla"));
+        assert_eq!(default_export_extension(&doc), "stla");
+    }
+
+    #[test]
+    fn default_export_extension_normalises_stl_variants_to_binary() {
+        let doc = SceneDocument::new();
+        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.stlb"));
+        assert_eq!(default_export_extension(&doc), "stl");
+
+        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.STL"));
+        assert_eq!(default_export_extension(&doc), "stl");
+    }
+
+    #[test]
+    fn default_export_extension_falls_back_for_unknown_or_missing_extension() {
+        let doc = SceneDocument::new();
+        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.ply"));
+        assert_eq!(default_export_extension(&doc), "stl");
+
+        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget"));
+        assert_eq!(default_export_extension(&doc), "stl");
     }
 
     #[test]

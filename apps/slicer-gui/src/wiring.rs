@@ -226,7 +226,13 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let doc = ctrl.document();
         let dialogs = ctrl.dialogs();
         let default_stem = scene_export::default_export_stem(&doc);
-        if let Err(err) = slint::spawn_local(run_export_as_flow(doc, dialogs, default_stem)) {
+        let default_extension = scene_export::default_export_extension(&doc);
+        if let Err(err) = slint::spawn_local(run_export_as_flow(
+            doc,
+            dialogs,
+            default_stem,
+            default_extension,
+        )) {
             eprintln!("Failed to spawn export dialog task: {err}");
         }
     });
@@ -240,18 +246,25 @@ async fn run_export_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     default_stem: Option<String>,
+    default_extension: &'static str,
 ) {
-    let Some(target) = pick_export_target(default_stem).await else {
+    let Some(target) = pick_export_target(default_stem, default_extension).await else {
         // User cancelled the dialog.
         return;
     };
 
-    // The chosen filter only adds the matching extension on most
-    // platforms; the path's extension is the portable source of truth
-    // for the format. `.stl` → binary, `.stla` → ASCII, `.obj` → OBJ.
+    // rfd 0.17 doesn't expose the filter the user actually picked, so
+    // the path's extension is the portable source of truth for the
+    // format. `.stl` → binary, `.stla` → ASCII, `.obj` → OBJ. The
+    // dialog seeds the active filter's extension into the filename so
+    // the user gets the format they implicitly chose.
     let format = match infer_mesh_file_format_from_extension(&target) {
         Ok(f) => f,
-        Err(err) => {
+        Err(_) => {
+            let err = anyhow::anyhow!(
+                "Unable to infer file format from filename. Use one of: \
+                 .stl (binary STL), .stla (ASCII STL), or .obj."
+            );
             dialogs.show_error(
                 ctr!("ErrorDialog", "Failed to export").as_str(),
                 Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
@@ -279,14 +292,38 @@ async fn run_export_as_flow(
     }
 }
 
-async fn pick_export_target(default_stem: Option<String>) -> Option<PathBuf> {
-    let mut dialog = rfd::AsyncFileDialog::new()
-        // STL binary first → it's the default format.
-        .add_filter(ctr!("FileDialog", "STL (binary)").to_string(), &["stl"])
-        .add_filter(ctr!("FileDialog", "STL (ASCII)").to_string(), &["stla"])
-        .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"]);
+async fn pick_export_target(
+    default_stem: Option<String>,
+    default_extension: &'static str,
+) -> Option<PathBuf> {
+    // Filters in source-format-first order. Most rfd backends pick
+    // the first filter as the active one, which is also the
+    // extension we seed the filename with — so the dialog opens on a
+    // consistent format pair.
+    let stl_bin = (
+        ctr!("FileDialog", "STL (binary)").to_string(),
+        ["stl"].as_slice(),
+    );
+    let stl_ascii = (
+        ctr!("FileDialog", "STL (ASCII)").to_string(),
+        ["stla"].as_slice(),
+    );
+    let obj = (
+        ctr!("FileDialog", "OBJ files").to_string(),
+        ["obj"].as_slice(),
+    );
+    let ordered: [&(String, &[&str]); 3] = match default_extension {
+        "obj" => [&obj, &stl_bin, &stl_ascii],
+        "stla" => [&stl_ascii, &stl_bin, &obj],
+        // "stl" or fallback.
+        _ => [&stl_bin, &stl_ascii, &obj],
+    };
+    let mut dialog = rfd::AsyncFileDialog::new();
+    for (name, exts) in ordered {
+        dialog = dialog.add_filter(name.clone(), exts);
+    }
     if let Some(stem) = default_stem {
-        dialog = dialog.set_file_name(format!("{stem}.stl"));
+        dialog = dialog.set_file_name(format!("{stem}.{default_extension}"));
     }
     dialog.save_file().await.map(|h| h.path().to_path_buf())
 }
