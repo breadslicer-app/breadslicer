@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-27 16:01+0000\n"
-"PO-Revision-Date: 2026-04-27 08:55+0000\n"
+"PO-Revision-Date: 2026-05-01 06:44+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Catalan <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/ca/>\n"
@@ -134,17 +134,17 @@ msgstr "Tancar"
 #: ui/object-list-panel.slint:18
 msgctxt "ObjectList"
 msgid "Scene objects"
-msgstr ""
+msgstr "Objectes de l'escena"
 
 #: ui/object-list-panel.slint:38
 msgctxt "ObjectList"
 msgid "Scene Objects"
-msgstr ""
+msgstr "Objectes de l'escena"
 
 #: ui/object-list-panel.slint:59
 msgctxt "ObjectList"
 msgid "No objects to display"
-msgstr ""
+msgstr "No hi ha objectes per a mostrar"
 
 #: ui/main-window.slint:60
 msgctxt "MainWindow"
@@ -202,22 +202,19 @@ msgid "Preferences"
 msgstr "Preferències"
 
 #: ui/main-window.slint:173
-#, fuzzy
-#| msgctxt "PreferencesMenu"
-#| msgid "3D View"
 msgctxt "MenuBar"
 msgid "View"
-msgstr "Vista 3D"
+msgstr "Vista"
 
 #: ui/main-window.slint:177
 msgctxt "MenuBar"
 msgid "Hide Object List"
-msgstr ""
+msgstr "Amaga la llista d'objectes"
 
 #: ui/main-window.slint:178
 msgctxt "MenuBar"
 msgid "Show Object List"
-msgstr ""
+msgstr "Mostra la llista d'objectes"
 
 #: ui/main-window.slint:188
 msgctxt "MenuBar"
@@ -297,7 +294,7 @@ msgstr "La textura renderitzada no s'ha pogut passar a la interfície gràfica."
 #: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
-msgstr ""
+msgstr "Objecte {}"
 
 #: src/wiring.rs:207
 msgctxt "FileDialog"
