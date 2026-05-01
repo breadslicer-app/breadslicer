@@ -32,7 +32,7 @@ use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov
 use crate::picking;
 use crate::scene_document::SceneDocument;
 use crate::scene_loader::{PreparedScene, SceneLoader};
-use crate::selection::{ObjectIdx, Selection, SelectionState};
+use crate::selection::{ObjectIdx, Selection};
 
 #[cfg(test)]
 use crate::gizmo::axis::Axis;
@@ -55,12 +55,6 @@ pub struct ViewportController {
     // and a redraw can be flagged alone (e.g. camera moved without a
     // scene change).
     frame: Cell<FrameState>,
-    // Index into `scene.objects` of the single currently-selected
-    // object, or `None` if nothing is selected. The renderer reads
-    // this when writing per-frame model entries (driving the
-    // selection tint and the outline pass); the translate gizmo will
-    // attach to it once wired.
-    selection: SelectionState,
     // Logical-pixel position at which the left button was last
     // pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
     // `on_pointer_up` reads it to decide whether the gesture was a
@@ -93,7 +87,6 @@ impl ViewportController {
             camera: RefCell::new(None),
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
-            selection: SelectionState::new(),
             input_state: InputState::new(),
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
@@ -119,7 +112,6 @@ impl ViewportController {
             camera: RefCell::new(None),
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
-            selection: SelectionState::new(),
             input_state: InputState::new(),
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
@@ -252,10 +244,11 @@ impl ViewportController {
 
     pub fn on_close_scene(&self) {
         self.loader.invalidate_and_clear();
+        // `clear_scene` also resets the document's selection to `None`,
+        // so the controller doesn't need a paired write here.
         self.document.clear_scene();
         *self.camera.borrow_mut() = None;
         self.frame.set(FrameState::default());
-        self.selection.set(Selection::None);
         // The drag's captured `object_idx` becomes meaningless once
         // the scene is gone; clear FSM state without trying to
         // revert (the object no longer exists).
@@ -302,10 +295,10 @@ impl ViewportController {
             .unwrap_or(false);
 
         *self.camera.borrow_mut() = None;
+        // `install_scene` also resets the document's selection to
+        // `None` — a new scene has its own object indices, so any
+        // prior selection is no longer meaningful.
         self.document.install_scene(scene, source_path);
-        // A new scene has its own object indices; any prior selection
-        // referred to the previous scene and is no longer meaningful.
-        self.selection.set(Selection::None);
         // If install succeeded, the buffers are already on the GPU; no
         // upload owed. Otherwise, defer to the recovery upload path.
         if scene_installed {
@@ -338,11 +331,11 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Selection, in the controller's authoritative form. Tests use
+    /// Selection, in the document's authoritative form. Tests use
     /// this to assert FSM transitions.
     #[cfg(test)]
     pub(crate) fn selection(&self) -> Option<usize> {
-        self.selection.primary_idx()
+        self.document.selection_primary_idx()
     }
 
     /// Slint-side selection-changed callback. Out-of-bounds indices map
@@ -357,10 +350,10 @@ impl ViewportController {
         } else {
             Selection::None
         };
-        if self.selection.current() == new_sel {
+        if self.document.selection() == new_sel {
             return;
         }
-        self.selection.set(new_sel);
+        self.document.set_selection(new_sel);
         self.mirror_selection_to_ui();
         self.mark_dirty();
     }
@@ -390,7 +383,7 @@ impl ViewportController {
             return;
         }
         let step = delta.signum();
-        let next = match self.selection.current() {
+        let next = match self.document.selection() {
             Selection::None => 0,
             Selection::One(i) => {
                 let len_i = scene_len as i32;
@@ -423,10 +416,10 @@ impl ViewportController {
             self.set_keyboard_focus(KbdFocus::None);
             return;
         }
-        if matches!(self.selection.current(), Selection::None) {
+        if matches!(self.document.selection(), Selection::None) {
             return;
         }
-        self.selection.set(Selection::None);
+        self.document.set_selection(Selection::None);
         // Selection going away kills the gizmo, so any cached hover
         // tint targets a handle that no longer renders.
         self.gizmo_fsm.clear_hover();
@@ -455,7 +448,7 @@ impl ViewportController {
     /// and resets the held-arrow bitset on focus change so a held key
     /// from one mode doesn't bleed into another.
     fn set_keyboard_focus(&self, focus: KbdFocus) {
-        let has_selection = !matches!(self.selection.current(), Selection::None);
+        let has_selection = !matches!(self.document.selection(), Selection::None);
         if !self.kbd_drive.try_set_focus(focus, has_selection) {
             return;
         }
@@ -528,7 +521,7 @@ impl ViewportController {
             document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
-            selection_idx: self.selection.primary_idx(),
+            selection_idx: self.document.selection_primary_idx(),
             cursor: ScreenPoint { x, y },
         };
         dirty |= self.gizmo_fsm.update_hover(hover_ctx);
@@ -574,7 +567,7 @@ impl ViewportController {
             document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
-            selection_idx: self.selection.primary_idx(),
+            selection_idx: self.document.selection_primary_idx(),
             press: ScreenPoint { x, y },
             modifiers,
         };
@@ -607,7 +600,7 @@ impl ViewportController {
             document: &self.document,
             camera: &self.camera,
             viewport: self.viewport.get(),
-            selection_idx: self.selection.primary_idx(),
+            selection_idx: self.document.selection_primary_idx(),
         };
         if self.kbd_drive.integrate(ctx) {
             self.mark_dirty();
@@ -643,7 +636,7 @@ impl ViewportController {
 
     fn mirror_selection_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            let idx = match self.selection.current() {
+            let idx = match self.document.selection() {
                 Selection::One(i) => i.as_usize() as i32,
                 Selection::None => -1,
             };
@@ -754,7 +747,7 @@ impl ViewportController {
         // cleared between the upload check and now; the function
         // returns without further work.
         self.document.with_scene(|scene_for_render| {
-            let selection_idx = self.selection.primary_idx();
+            let selection_idx = self.document.selection_primary_idx();
             let drag_state = self.gizmo_fsm.current();
             let (visibility, drag_visual) = match drag_state {
                 GizmoState::Drag { op, pivot, .. } => match op {
