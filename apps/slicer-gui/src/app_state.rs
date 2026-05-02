@@ -6,6 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use slint::{CloseRequestResponse, ComponentHandle};
@@ -20,18 +21,26 @@ use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window
 use crate::scene_document::SceneDocument;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
+use crate::wiring::start_load_with_ticket;
 
-/// A main window paired with its preference-bus subscription. Drop of
-/// this struct drops the subscription, unregistering the window's
-/// preference-apply listener. Held by value in `AppState::main_windows`
-/// so closing a window via `on_close_requested` cleans up both halves
-/// in one step. The `window` field is load-bearing — holding the Slint
-/// handle by value keeps the component alive — even though the only
-/// accesses to the live window happen through the `Weak<MainWindow>`
-/// captured in the subscription's listener.
+/// A main window paired with its viewport controller and preference-
+/// bus subscription. Drop of this struct drops the subscription,
+/// unregistering the window's preference-apply listener. Held by value
+/// in `AppState::main_windows` so closing a window via
+/// `on_close_requested` cleans up all three halves in one step. The
+/// `window` field is load-bearing — holding the Slint handle by value
+/// keeps the component alive — even though the only accesses to the
+/// live window happen through the `Weak<MainWindow>` captured in the
+/// subscription's listener. The `controller` is held so external entry
+/// points (path-driven loads from argv / drag-and-drop) can resolve
+/// the window's `SceneLoader` from the window id.
 struct WiredMainWindow {
     #[allow(dead_code)]
     window: MainWindow,
+    // Read by `AppState::open_path_in_window`, which has no caller
+    // until argv-driven and drag-and-drop entries are wired up.
+    #[allow(dead_code)]
+    controller: Rc<ViewportController>,
     _subscription: Subscription,
 }
 
@@ -134,7 +143,7 @@ impl AppState {
         let ctrl = Rc::new(ViewportController::new(&ui, document));
         ctrl.register_document_listener();
 
-        crate::wiring::wire_main_window(&ui, ctrl)?;
+        crate::wiring::wire_main_window(&ui, ctrl.clone())?;
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
@@ -164,10 +173,34 @@ impl AppState {
             id,
             WiredMainWindow {
                 window: ui,
+                controller: ctrl,
                 _subscription: subscription,
             },
         );
         Ok(())
+    }
+
+    /// Begins a load for `path` on the loader of the main window with
+    /// the given `window_id`. Routes external (non-menu) entry points —
+    /// argv at startup, drag-and-drop, future macOS `openURLs` — into
+    /// the same post-pick pipeline the menu flow uses. Silently does
+    /// nothing if the window has been closed or its loader is busy
+    /// (decision: drops onto a busy window are ignored). Bailout paths
+    /// in `start_load_with_ticket` deposit a synthetic error so the UI
+    /// still sees a load completion.
+    #[allow(dead_code)]
+    pub(crate) fn open_path_in_window(&self, window_id: u64, path: PathBuf) {
+        let loader = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.loader()
+        };
+        let Some(ticket) = loader.begin_load() else {
+            return;
+        };
+        start_load_with_ticket(ticket, path, &loader);
     }
 
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {

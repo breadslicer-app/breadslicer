@@ -188,24 +188,35 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     });
 }
 
-/// Orchestrates one "Open…" command: show the dialog, precheck the
-/// file, hand the load off to the background pipeline. Each step
-/// drops the ticket on its bailout path and the gate releases itself.
+/// Orchestrates one "Open…" command: show the dialog, hand the picked
+/// path to the shared post-pick pipeline. The ticket has already been
+/// acquired before the dialog so `loading` flips immediately rather
+/// than after the await; if the user cancels, the ticket drops here
+/// and the gate releases.
 async fn run_open_file_flow(ticket: LoadTicket, loader: Rc<SceneLoader>) {
     let Some(path) = pick_mesh_file().await else {
         // User cancelled the dialog.
         return;
     };
+    start_load_with_ticket(ticket, path, &loader);
+}
+
+/// Shared post-pick pipeline: file-size precheck, gpu-snapshot fetch,
+/// hand-off to the background loader. Both the menu flow (which
+/// acquires the ticket before the file dialog) and path-driven entries
+/// like `AppState::open_path_in_window` (which acquire the ticket once
+/// the path is known) converge here. Each bailout deposits an error
+/// against the ticket so the UI sees a single load completion event.
+pub(crate) fn start_load_with_ticket(ticket: LoadTicket, path: PathBuf, loader: &SceneLoader) {
     if let Err(err) = mesh_loader::check_file_size(&path) {
         ticket.deposit(path, Err(err));
         return;
     }
     let Some((device, _queue)) = loader.gpu_snapshot() else {
         // RenderingSetup hasn't fired (or a teardown cleared the
-        // slot between begin_load and now). `begin_load` already
-        // gates on this in the steady state, so this only catches a
-        // narrow race; bail with a synthetic error so the user sees
-        // *something* rather than a stuck `loading=true`.
+        // slot between ticket acquisition and now). `begin_load` does
+        // not gate on this; bail with a synthetic error so the user
+        // sees *something* rather than a stuck `loading=true`.
         ticket.deposit(
             path,
             Err(anyhow::anyhow!("Graphics device is not available yet")),
@@ -219,7 +230,7 @@ async fn pick_mesh_file() -> Option<PathBuf> {
     let dialog = rfd::AsyncFileDialog::new()
         .add_filter(
             ctr!("FileDialog", "All supported files").to_string(),
-            &["obj", "stl", "stla", "stlb"],
+            mesh_loader::SUPPORTED_MESH_EXTENSIONS,
         )
         .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
         .add_filter(

@@ -32,6 +32,30 @@ use crate::scene_loader::{LoadTicket, PreparedScene};
 pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = 2048;
 const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
 
+/// Lower-case file extensions the GUI's mesh loader can currently
+/// read. Single source of truth: the file dialog's "All supported
+/// files" filter is derived from this list, and path-driven entries
+/// (argv, drag-and-drop) reject paths whose extension isn't in it.
+/// Per-format dialog sub-filters ("OBJ files", "STL files") are
+/// independent.
+pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = &["obj", "stl", "stla", "stlb"];
+
+/// Returns `true` if `path` has an extension matching one of
+/// `SUPPORTED_MESH_EXTENSIONS`. Matching is case-insensitive — Windows
+/// file systems are case-insensitive and `.STL` is common in the wild;
+/// Linux and macOS are usually case-sensitive but the user-facing
+/// convention is still lowercase.
+// Used by the argv and drag-and-drop entry points wired up in later
+// steps; tests cover it today.
+#[allow(dead_code)]
+pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let ext = ext.to_ascii_lowercase();
+    SUPPORTED_MESH_EXTENSIONS.iter().any(|&e| e == ext)
+}
+
 /// Precheck the file at `path` against the size ceiling. Returns
 /// `Err` if the file is over the limit; `Ok(())` otherwise. A
 /// `metadata()` failure falls through as `Ok(())` — the worker will
@@ -135,6 +159,56 @@ mod check_file_size_tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("missing.stl");
         assert!(check_file_size(&path).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod is_supported_mesh_extension_tests {
+    use super::*;
+
+    #[test]
+    fn supported_lowercase_extensions_are_accepted() {
+        for ext in SUPPORTED_MESH_EXTENSIONS {
+            let path = PathBuf::from(format!("/tmp/model.{ext}"));
+            assert!(
+                is_supported_mesh_extension(&path),
+                "{ext} should be supported"
+            );
+        }
+    }
+
+    #[test]
+    fn supported_uppercase_extensions_are_accepted() {
+        // Windows file systems are case-insensitive; `.STL` files are
+        // common in the wild.
+        let path = PathBuf::from("/tmp/model.STL");
+        assert!(is_supported_mesh_extension(&path));
+        let path = PathBuf::from("/tmp/model.Obj");
+        assert!(is_supported_mesh_extension(&path));
+    }
+
+    #[test]
+    fn unsupported_extensions_are_rejected() {
+        for ext in ["png", "txt", "ply", "amf", "3mf"] {
+            let path = PathBuf::from(format!("/tmp/model.{ext}"));
+            assert!(
+                !is_supported_mesh_extension(&path),
+                "{ext} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_extension_is_rejected() {
+        assert!(!is_supported_mesh_extension(Path::new("/tmp/no-extension")));
+    }
+
+    #[test]
+    fn directory_path_with_trailing_slash_is_rejected() {
+        // `Path::extension` returns `None` for paths whose final
+        // component has no dot — guards against accidentally treating
+        // a dropped directory as a loadable file.
+        assert!(!is_supported_mesh_extension(Path::new("/tmp/")));
     }
 }
 
