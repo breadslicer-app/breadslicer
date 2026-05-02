@@ -180,18 +180,35 @@ impl AppState {
 
         // Drag-and-drop: route the winit `DroppedFile` event for this
         // window's surface into the shared `open_path_in_window`
-        // entry. Wayland users won't see drops here until winit lands
-        // its Wayland DnD support upstream — see the open-with plan
-        // for context. `HoveredFile` / `HoveredFileCancelled` are not
-        // hooked yet; that's the optional drop-overlay step.
+        // entry, and toggle the `drop-hovering` overlay on hover
+        // events. Wayland users won't see any of this until winit
+        // lands its Wayland DnD support upstream — see the open-with
+        // plan for context.
         {
             use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
             let app_weak = Rc::downgrade(self);
+            let ui_weak = ui.as_weak();
             ui.window().on_winit_window_event(move |_window, event| {
-                if let winit::event::WindowEvent::DroppedFile(path) = event
-                    && let Some(app) = app_weak.upgrade()
-                {
-                    app.open_path_in_window(id, path.clone());
+                match event {
+                    winit::event::WindowEvent::HoveredFile(_) => {
+                        if let Some(w) = ui_weak.upgrade() {
+                            w.set_drop_hovering(true);
+                        }
+                    }
+                    winit::event::WindowEvent::HoveredFileCancelled => {
+                        if let Some(w) = ui_weak.upgrade() {
+                            w.set_drop_hovering(false);
+                        }
+                    }
+                    winit::event::WindowEvent::DroppedFile(path) => {
+                        if let Some(w) = ui_weak.upgrade() {
+                            w.set_drop_hovering(false);
+                        }
+                        if let Some(app) = app_weak.upgrade() {
+                            app.open_path_in_window(id, path.clone());
+                        }
+                    }
+                    _ => {}
                 }
                 EventResult::Propagate
             });

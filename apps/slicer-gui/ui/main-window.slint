@@ -71,6 +71,12 @@ export component MainWindow inherits Window {
     in property <bool> has-scene: false;
     in property <bool> can-undo: false;
     in property <bool> can-redo: false;
+    // True while the user is dragging a file over the window (between
+    // winit's `HoveredFile` and the matching `DroppedFile` /
+    // `HoveredFileCancelled`). Toggled from Rust; drives the
+    // translucent "Drop to open" overlay below. Wayland users won't
+    // see this until winit ships Wayland DnD support upstream.
+    in property <bool> drop-hovering: false;
     in property <ThemePreference> theme: ThemePreference.System;
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
@@ -340,6 +346,27 @@ export component MainWindow inherits Window {
             selection-changed(idx) => {
                 root.object-list-selection-changed(idx);
             }
+        }
+    }
+
+    // Drop-target overlay. Sibling of the main HorizontalLayout above,
+    // so it renders on top while drop-hovering is true and disappears
+    // otherwise. The Rectangle does not intercept pointer events, so
+    // OS-level drag events still reach the window underneath.
+    if root.drop-hovering: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Palette.background.transparentize(0.25);
+        border-color: Palette.accent-background;
+        border-width: 3px;
+
+        Text {
+            text: @tr("Drop to open");
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: Palette.foreground;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 }
