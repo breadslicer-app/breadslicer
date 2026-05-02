@@ -151,7 +151,6 @@ pub enum GizmoHover {
 // `DraggingRotate` / `DraggingScaleAxis` have no controller-side
 // producer until the FSM extension lands; they're consumed by tests
 // today.
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoVisibility {
     Idle,

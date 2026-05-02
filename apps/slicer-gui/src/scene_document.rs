@@ -142,14 +142,13 @@ impl SceneDocument {
     /// loaded; cloned out so the caller doesn't extend the borrow.
     // Tests exercise the field; the production caller (export-as
     // default-filename derivation) lands with the export feature.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn source_path(&self) -> Option<PathBuf> {
         self.source_path.borrow().clone()
     }
 
     /// Borrow form for callers that only need the path's lifetime
     /// inside a closure (avoids the clone in `source_path`).
-    #[allow(dead_code)]
     pub fn with_source_path<R>(&self, f: impl FnOnce(&Path) -> R) -> Option<R> {
         self.source_path.borrow().as_deref().map(f)
     }
