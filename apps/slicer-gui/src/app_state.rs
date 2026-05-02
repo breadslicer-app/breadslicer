@@ -14,13 +14,18 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
-use crate::mesh_loader::start_load_with_ticket;
+use crate::error_dialog::ReplaceSceneChoice;
+use crate::i18n::ctr;
+use crate::mesh_loader::{
+    SUPPORTED_MESH_EXTENSIONS, is_supported_mesh_extension, start_load_with_ticket,
+};
 use crate::pending_load::PendingLoad;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
 use crate::scene_document::SceneDocument;
+use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
@@ -38,9 +43,6 @@ use crate::window_prefs::WindowPreferences;
 struct WiredMainWindow {
     #[allow(dead_code)]
     window: MainWindow,
-    // Read by `AppState::open_path_in_window`, which has no caller
-    // until argv-driven and drag-and-drop entries are wired up.
-    #[allow(dead_code)]
     controller: Rc<ViewportController>,
     // Shared with the controller. Writer side: external entry points
     // park a path here when the GPU device isn't yet available. The
@@ -166,13 +168,34 @@ impl AppState {
         // `ViewportController`, `Renderer`, and scene — and the
         // preference subscription — can be released. Without this,
         // hidden windows accumulate for the whole session.
-        let app_weak = Rc::downgrade(self);
-        ui.window().on_close_requested(move || {
-            if let Some(app) = app_weak.upgrade() {
-                app.main_windows.borrow_mut().remove(&id);
-            }
-            CloseRequestResponse::HideWindow
-        });
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.window().on_close_requested(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.main_windows.borrow_mut().remove(&id);
+                }
+                CloseRequestResponse::HideWindow
+            });
+        }
+
+        // Drag-and-drop: route the winit `DroppedFile` event for this
+        // window's surface into the shared `open_path_in_window`
+        // entry. Wayland users won't see drops here until winit lands
+        // its Wayland DnD support upstream — see the open-with plan
+        // for context. `HoveredFile` / `HoveredFileCancelled` are not
+        // hooked yet; that's the optional drop-overlay step.
+        {
+            use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
+            let app_weak = Rc::downgrade(self);
+            ui.window().on_winit_window_event(move |_window, event| {
+                if let winit::event::WindowEvent::DroppedFile(path) = event
+                    && let Some(app) = app_weak.upgrade()
+                {
+                    app.open_path_in_window(id, path.clone());
+                }
+                EventResult::Propagate
+            });
+        }
 
         ui.show()?;
         self.main_windows.borrow_mut().insert(
@@ -187,21 +210,84 @@ impl AppState {
         Ok(id)
     }
 
-    /// Begins a load for `path` on the loader of the main window with
-    /// the given `window_id`. Routes external (non-menu) entry points —
-    /// argv at startup, drag-and-drop, future macOS `openURLs` — into
-    /// the same post-pick pipeline the menu flow uses. Silently does
-    /// nothing if the window has been closed or its loader is busy
-    /// (decision: drops onto a busy window are ignored).
+    /// Routes an external (non-menu) open request into the right
+    /// place. Used by argv at startup, drag-and-drop, future macOS
+    /// `openURLs`. Branches:
     ///
-    /// If the GPU device hasn't been published yet (no `RenderingSetup`
-    /// since the window opened), the path is parked on the window's
-    /// `PendingLoad` slot; the controller drains it in
-    /// `handle_rendering_setup` once the device is available. Bailout
-    /// paths in `start_load_with_ticket` deposit a synthetic error so
-    /// the UI still sees a load completion.
-    #[allow(dead_code)]
-    pub(crate) fn open_path_in_window(&self, window_id: u64, path: PathBuf) {
+    /// 1. Unrecognised window id (window closed since the request was
+    ///    queued): silently drop.
+    /// 2. Unsupported file extension: surface an error dialog
+    ///    (decision #3) and return.
+    /// 3. Window already has a loaded scene: surface the
+    ///    [`ReplaceSceneDialog`] (decision #4). On Discard, close and
+    ///    load the new path; on Export, run the existing "Export As…"
+    ///    flow and only on a successful save close + load; on Cancel,
+    ///    do nothing.
+    /// 4. Otherwise dispatch through [`Self::dispatch_path_to_loader`],
+    ///    which queues the path on the window's `PendingLoad` slot if
+    ///    the GPU device isn't ready yet, or starts the load
+    ///    immediately if it is.
+    pub(crate) fn open_path_in_window(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+
+        if !is_supported_mesh_extension(&path) {
+            controller.dialogs().show_error(
+                ctr!("ErrorDialog", "Unsupported file type").as_str(),
+                Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
+                ctr!(
+                    "ErrorDialog",
+                    "Only the following file types can be opened: {}",
+                    SUPPORTED_MESH_EXTENSIONS.join(", ")
+                )
+                .to_string(),
+                String::new(),
+            );
+            return;
+        }
+
+        if !controller.document().is_loaded() {
+            self.dispatch_path_to_loader(window_id, path);
+            return;
+        }
+
+        // Replace-confirm flow. The choice callback fires on the UI
+        // thread once the user picks a button. `Weak<AppState>` keeps
+        // the closure non-cyclic; if the app is gone by then, every
+        // branch silently drops.
+        let app_weak = Rc::downgrade(self);
+        let source_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        controller
+            .dialogs()
+            .show_replace_scene_confirm(source_name, move |choice| match choice {
+                ReplaceSceneChoice::Discard => {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.discard_then_open(window_id, path);
+                    }
+                }
+                ReplaceSceneChoice::Export => {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.export_then_open(window_id, path);
+                    }
+                }
+                ReplaceSceneChoice::Cancel => {}
+            });
+    }
+
+    /// Inner queue-or-load step. Called from `open_path_in_window`
+    /// after extension validation and the replace-confirm branch, and
+    /// from the post-Discard / post-Export callbacks below. Caller is
+    /// responsible for ensuring any prior scene has been closed.
+    fn dispatch_path_to_loader(&self, window_id: u64, path: PathBuf) {
         let (loader, pending) = {
             let main_windows = self.main_windows.borrow();
             let Some(wired) = main_windows.get(&window_id) else {
@@ -216,9 +302,55 @@ impl AppState {
             return;
         }
         let Some(ticket) = loader.begin_load() else {
+            // Decision #2: drop onto a busy window is silently ignored.
             return;
         };
         start_load_with_ticket(ticket, path, &loader);
+    }
+
+    /// Replace-confirm Discard branch: clear the current scene then
+    /// dispatch the new path. Runs synchronously on the UI thread.
+    fn discard_then_open(&self, window_id: u64, path: PathBuf) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+        controller.on_close_scene();
+        self.dispatch_path_to_loader(window_id, path);
+    }
+
+    /// Replace-confirm Export branch: run the existing "Export As…"
+    /// flow and, only on a successful save, close the current scene
+    /// and dispatch the new path. Cancellation of the export dialog
+    /// or a write failure leaves the current scene intact (the
+    /// failure dialog is surfaced by `run_export_as_flow` itself).
+    fn export_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+        let doc = controller.document();
+        let dialogs = controller.dialogs();
+        let stem = default_export_stem(&doc);
+        let ext = default_export_extension(&doc);
+        let app_weak = Rc::downgrade(self);
+        if let Err(err) = slint::spawn_local(async move {
+            let saved = crate::wiring::run_export_as_flow(doc, dialogs, stem, ext).await;
+            if !saved {
+                return;
+            }
+            if let Some(app) = app_weak.upgrade() {
+                app.discard_then_open(window_id, path);
+            }
+        }) {
+            eprintln!("Failed to spawn Export & Open task: {err}");
+        }
     }
 
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {

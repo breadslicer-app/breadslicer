@@ -45,9 +45,6 @@ pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = &["obj", "stl", "stla", "s
 /// file systems are case-insensitive and `.STL` is common in the wild;
 /// Linux and macOS are usually case-sensitive but the user-facing
 /// convention is still lowercase.
-// Used by the argv and drag-and-drop entry points wired up in later
-// steps; tests cover it today.
-#[allow(dead_code)]
 pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;

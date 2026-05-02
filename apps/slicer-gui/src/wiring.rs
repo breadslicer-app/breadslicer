@@ -222,12 +222,9 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let dialogs = ctrl.dialogs();
         let default_stem = scene_export::default_export_stem(&doc);
         let default_extension = scene_export::default_export_extension(&doc);
-        if let Err(err) = slint::spawn_local(run_export_as_flow(
-            doc,
-            dialogs,
-            default_stem,
-            default_extension,
-        )) {
+        if let Err(err) = slint::spawn_local(async move {
+            let _ = run_export_as_flow(doc, dialogs, default_stem, default_extension).await;
+        }) {
             eprintln!("Failed to spawn export dialog task: {err}");
         }
     });
@@ -235,17 +232,21 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 
 /// Orchestrates one "Export As" command: show the file-save dialog,
 /// infer the format from the chosen extension, and call into
-/// `scene_export`. Cancellations and unknown extensions both bail
-/// gracefully.
-async fn run_export_as_flow(
+/// `scene_export`. Returns `true` only when a file was actually
+/// written (so a chained "Export & Open" caller knows it's safe to
+/// discard the current scene); user cancellation, unknown extensions,
+/// and write failures all return `false`. Errors and unknown
+/// extensions surface dialogs from this function so callers don't
+/// have to.
+pub(crate) async fn run_export_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     default_stem: Option<String>,
     default_extension: &'static str,
-) {
+) -> bool {
     let Some(target) = pick_export_target(default_stem, default_extension).await else {
         // User cancelled the dialog.
-        return;
+        return false;
     };
 
     // rfd 0.17 doesn't expose the filter the user actually picked, so
@@ -269,7 +270,7 @@ async fn run_export_as_flow(
                 err.to_string(),
                 format_anyhow_chain(&err),
             );
-            return;
+            return false;
         }
     };
 
@@ -278,6 +279,7 @@ async fn run_export_as_flow(
             for w in &warnings {
                 eprintln!("WARNING [{}]: {}", target.display(), w.user_message());
             }
+            true
         }
         Err(err) => {
             dialogs.show_error(
@@ -286,6 +288,7 @@ async fn run_export_as_flow(
                 err.to_string(),
                 format_anyhow_chain(&err),
             );
+            false
         }
     }
 }

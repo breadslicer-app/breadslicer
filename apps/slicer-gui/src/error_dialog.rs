@@ -15,7 +15,6 @@ use crate::{ErrorDialog, ReplaceSceneDialog};
 /// outcomes; the caller decides what each means in context (typically
 /// "close current and load new" / "export current first, then load
 /// new on success" / "do nothing").
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReplaceSceneChoice {
     Discard,
@@ -121,7 +120,6 @@ impl DialogManager {
     /// as context; pass an empty string to omit it. Must run on the
     /// Slint UI thread. Logs and bails silently if the dialog can't be
     /// constructed or shown.
-    #[allow(dead_code)]
     pub fn show_replace_scene_confirm(
         self: &Rc<Self>,
         source_name: String,

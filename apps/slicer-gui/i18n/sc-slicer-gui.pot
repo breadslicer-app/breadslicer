@@ -316,12 +316,12 @@ msgid ""
 "for front, right, or top views; hold Control for back, left, or bottom."
 msgstr ""
 
-#: src/viewport/controller.rs:882
+#: src/viewport/controller.rs:944
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:886
+#: src/viewport/controller.rs:948
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -332,43 +332,44 @@ msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
 
-#: src/wiring.rs:212
+#: src/wiring.rs:207
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:215 src/wiring.rs:287
+#: src/wiring.rs:210 src/wiring.rs:313
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:217
+#: src/wiring.rs:212
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:220
+#: src/wiring.rs:215
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:256 src/wiring.rs:273
+#: src/wiring.rs:268 src/wiring.rs:286
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:257 src/wiring.rs:274 src/scene_loader.rs:325
+#: src/wiring.rs:269 src/wiring.rs:287 src/scene_loader.rs:325
+#: src/app_state.rs:242
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:285
+#: src/wiring.rs:305
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:286
+#: src/wiring.rs:309
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
@@ -388,7 +389,18 @@ msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/mesh_loader.rs:51
+#: src/app_state.rs:241
+msgctxt "ErrorDialog"
+msgid "Unsupported file type"
+msgstr ""
+
+#: src/app_state.rs:245
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "Only the following file types can be opened: {}"
+msgstr ""
+
+#: src/mesh_loader.rs:72
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
