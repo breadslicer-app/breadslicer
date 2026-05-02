@@ -20,6 +20,7 @@ mod i18n;
 mod language;
 mod mesh_loader;
 mod mesh_render;
+mod pending_load;
 mod picking;
 mod preferences_bus;
 mod preferences_window;
@@ -32,8 +33,10 @@ mod window_prefs;
 mod wiring;
 
 use std::error::Error;
+use std::path::PathBuf;
 
 use crate::app_state::AppState;
+use crate::mesh_loader::is_supported_mesh_extension;
 
 slint::include_modules!();
 
@@ -43,7 +46,69 @@ fn main() -> Result<(), Box<dyn Error>> {
         .select()?;
 
     let app = AppState::new();
-    app.spawn_main_window()?;
+
+    // OS "Open With…" / file-association support on Linux + Windows:
+    // every positional argument that names a supported mesh file gets
+    // its own window. Rejected paths (unsupported extension, missing
+    // file) are reported on stderr without aborting the launch — the
+    // user still sees the app come up. macOS file association doesn't
+    // go through argv (Finder posts an `application:openURLs:` event
+    // to the running NSApplication); see the open-with plan.
+    let accepted = collect_argv_paths();
+    if accepted.is_empty() {
+        // No paths supplied (or none were supported): preserve the
+        // current "launch with one empty window" behaviour.
+        app.spawn_main_window()?;
+    } else {
+        // Decision: N files → N windows. The path is parked on each
+        // window's `PendingLoad` slot and dispatched once
+        // `RenderingSetup` publishes its GPU device.
+        for path in accepted {
+            let window_id = app.spawn_main_window()?;
+            app.open_path_in_window(window_id, path);
+        }
+    }
+
     slint::run_event_loop()?;
     Ok(())
+}
+
+/// Walks `std::env::args()` and returns the positional paths whose
+/// extensions are recognised by the mesh loader. Anything else
+/// (unsupported extensions, options, missing files) is logged on
+/// stderr and skipped. The returned list preserves argv order so the
+/// per-window spawn order is deterministic.
+fn collect_argv_paths() -> Vec<PathBuf> {
+    let mut accepted = Vec::new();
+    // Skip argv[0] (the binary path).
+    for raw in std::env::args_os().skip(1) {
+        let path = PathBuf::from(&raw);
+        // Treat anything starting with `-` as an unrecognised option
+        // rather than a file. We don't (yet) parse flags, so a leading
+        // dash is far more likely to be a mistake than a real filename
+        // beginning with `-`.
+        if path
+            .to_str()
+            .is_some_and(|s| s.starts_with('-') && s != "-")
+        {
+            eprintln!("Ignoring unrecognised option: {}", path.display());
+            continue;
+        }
+        if !is_supported_mesh_extension(&path) {
+            eprintln!(
+                "Ignoring file with unsupported extension: {}",
+                path.display()
+            );
+            continue;
+        }
+        if !path.is_file() {
+            eprintln!(
+                "Ignoring path that is not a regular file: {}",
+                path.display()
+            );
+            continue;
+        }
+        accepted.push(path);
+    }
+    accepted
 }

@@ -23,7 +23,7 @@ use slint::wgpu_28::wgpu;
 
 use crate::i18n::ctr;
 use crate::mesh_render::GpuScene;
-use crate::scene_loader::{LoadTicket, PreparedScene};
+use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
 // Reject mesh files larger than this before spawning the loader
 // worker, so the UI doesn't sit in `loading=true` for hours (or OOM)
@@ -78,6 +78,31 @@ pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
         )
         .to_string(),
     ))
+}
+
+/// Shared post-pick pipeline: file-size precheck, gpu-snapshot fetch,
+/// hand-off to the background loader. Both the menu flow (which
+/// acquires the ticket before the file dialog) and path-driven entries
+/// like `AppState::open_path_in_window` (which acquire the ticket once
+/// the path is known) converge here. Each bailout deposits an error
+/// against the ticket so the UI sees a single load completion event.
+pub(crate) fn start_load_with_ticket(ticket: LoadTicket, path: PathBuf, loader: &SceneLoader) {
+    if let Err(err) = check_file_size(&path) {
+        ticket.deposit(path, Err(err));
+        return;
+    }
+    let Some((device, _queue)) = loader.gpu_snapshot() else {
+        // RenderingSetup hasn't fired (or a teardown cleared the
+        // slot between ticket acquisition and now). `begin_load` does
+        // not gate on this; bail with a synthetic error so the user
+        // sees *something* rather than a stuck `loading=true`.
+        ticket.deposit(
+            path,
+            Err(anyhow::anyhow!("Graphics device is not available yet")),
+        );
+        return;
+    };
+    spawn_load(ticket, path, device);
 }
 
 /// Spawns a worker thread that parses the mesh at `path`, uploads its

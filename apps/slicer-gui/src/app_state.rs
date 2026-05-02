@@ -14,6 +14,8 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
+use crate::mesh_loader::start_load_with_ticket;
+use crate::pending_load::PendingLoad;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
@@ -21,7 +23,6 @@ use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window
 use crate::scene_document::SceneDocument;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
-use crate::wiring::start_load_with_ticket;
 
 /// A main window paired with its viewport controller and preference-
 /// bus subscription. Drop of this struct drops the subscription,
@@ -41,6 +42,10 @@ struct WiredMainWindow {
     // until argv-driven and drag-and-drop entries are wired up.
     #[allow(dead_code)]
     controller: Rc<ViewportController>,
+    // Shared with the controller. Writer side: external entry points
+    // park a path here when the GPU device isn't yet available. The
+    // controller drains it from `handle_rendering_setup`.
+    pending_load: Rc<PendingLoad>,
     _subscription: Subscription,
 }
 
@@ -136,11 +141,12 @@ impl AppState {
     /// resize debounce) are installed by `crate::wiring::wire_main_window`;
     /// the app-level "About" and "New Window" menu items and the OS
     /// close-request handler are wired here.
-    pub fn spawn_main_window(self: &Rc<Self>) -> Result<(), Box<dyn Error>> {
+    pub fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
         ui.apply_preferences(&self.prefs.snapshot());
         let document = SceneDocument::new();
-        let ctrl = Rc::new(ViewportController::new(&ui, document));
+        let pending_load = Rc::new(PendingLoad::new());
+        let ctrl = Rc::new(ViewportController::new(&ui, document, pending_load.clone()));
         ctrl.register_document_listener();
 
         crate::wiring::wire_main_window(&ui, ctrl.clone())?;
@@ -174,10 +180,11 @@ impl AppState {
             WiredMainWindow {
                 window: ui,
                 controller: ctrl,
+                pending_load,
                 _subscription: subscription,
             },
         );
-        Ok(())
+        Ok(id)
     }
 
     /// Begins a load for `path` on the loader of the main window with
@@ -185,18 +192,29 @@ impl AppState {
     /// argv at startup, drag-and-drop, future macOS `openURLs` — into
     /// the same post-pick pipeline the menu flow uses. Silently does
     /// nothing if the window has been closed or its loader is busy
-    /// (decision: drops onto a busy window are ignored). Bailout paths
-    /// in `start_load_with_ticket` deposit a synthetic error so the UI
-    /// still sees a load completion.
+    /// (decision: drops onto a busy window are ignored).
+    ///
+    /// If the GPU device hasn't been published yet (no `RenderingSetup`
+    /// since the window opened), the path is parked on the window's
+    /// `PendingLoad` slot; the controller drains it in
+    /// `handle_rendering_setup` once the device is available. Bailout
+    /// paths in `start_load_with_ticket` deposit a synthetic error so
+    /// the UI still sees a load completion.
     #[allow(dead_code)]
     pub(crate) fn open_path_in_window(&self, window_id: u64, path: PathBuf) {
-        let loader = {
+        let (loader, pending) = {
             let main_windows = self.main_windows.borrow();
             let Some(wired) = main_windows.get(&window_id) else {
                 return;
             };
-            wired.controller.loader()
+            (wired.controller.loader(), wired.pending_load.clone())
         };
+        if loader.gpu_snapshot().is_none() {
+            // Pre-first-paint: the controller will dispatch this once
+            // `handle_rendering_setup` publishes the device.
+            pending.queue(path);
+            return;
+        }
         let Some(ticket) = loader.begin_load() else {
             return;
         };

@@ -198,32 +198,7 @@ async fn run_open_file_flow(ticket: LoadTicket, loader: Rc<SceneLoader>) {
         // User cancelled the dialog.
         return;
     };
-    start_load_with_ticket(ticket, path, &loader);
-}
-
-/// Shared post-pick pipeline: file-size precheck, gpu-snapshot fetch,
-/// hand-off to the background loader. Both the menu flow (which
-/// acquires the ticket before the file dialog) and path-driven entries
-/// like `AppState::open_path_in_window` (which acquire the ticket once
-/// the path is known) converge here. Each bailout deposits an error
-/// against the ticket so the UI sees a single load completion event.
-pub(crate) fn start_load_with_ticket(ticket: LoadTicket, path: PathBuf, loader: &SceneLoader) {
-    if let Err(err) = mesh_loader::check_file_size(&path) {
-        ticket.deposit(path, Err(err));
-        return;
-    }
-    let Some((device, _queue)) = loader.gpu_snapshot() else {
-        // RenderingSetup hasn't fired (or a teardown cleared the
-        // slot between ticket acquisition and now). `begin_load` does
-        // not gate on this; bail with a synthetic error so the user
-        // sees *something* rather than a stuck `loading=true`.
-        ticket.deposit(
-            path,
-            Err(anyhow::anyhow!("Graphics device is not available yet")),
-        );
-        return;
-    };
-    mesh_loader::spawn_load(ticket, path, device);
+    mesh_loader::start_load_with_ticket(ticket, path, &loader);
 }
 
 async fn pick_mesh_file() -> Option<PathBuf> {

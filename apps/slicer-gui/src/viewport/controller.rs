@@ -28,7 +28,9 @@ use crate::camera::{AxisView, OrbitCamera};
 use crate::error_dialog::DialogManager;
 use crate::gizmo;
 use crate::i18n::ctr;
+use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov_y};
+use crate::pending_load::PendingLoad;
 use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::scene_loader::{PreparedScene, SceneLoader};
@@ -69,6 +71,13 @@ pub struct ViewportController {
     // `handle_before_rendering`.
     kbd_drive: KeyboardDriveState,
     loader: Rc<SceneLoader>,
+    // Slot for a load request that arrived before the GPU device was
+    // available (typically argv at startup, or future macOS `openURLs`
+    // delivered before first paint). Shared with `WiredMainWindow`,
+    // which is the writer; the controller drains it in
+    // `handle_rendering_setup` once `set_gpu` makes the device
+    // snapshottable. See `pending_load.rs` for the full lifecycle.
+    pending_load: Rc<PendingLoad>,
     // True between a `viewport-resized` event and the debounce timer firing
     // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
     // render target size up to the next `RESIZE_BUCKET` multiple so drag
@@ -82,7 +91,11 @@ pub struct ViewportController {
 }
 
 impl ViewportController {
-    pub fn new(ui: &MainWindow, document: Rc<SceneDocument>) -> Self {
+    pub fn new(
+        ui: &MainWindow,
+        document: Rc<SceneDocument>,
+        pending_load: Rc<PendingLoad>,
+    ) -> Self {
         let dialogs = DialogManager::new();
         Self {
             ui: ui.as_weak(),
@@ -95,6 +108,7 @@ impl ViewportController {
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
+            pending_load,
             resizing: Cell::new(false),
             dialogs,
             document_subscription: RefCell::new(None),
@@ -121,6 +135,7 @@ impl ViewportController {
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
+            pending_load: Rc::new(PendingLoad::new()),
             resizing: Cell::new(false),
             dialogs,
             document_subscription: RefCell::new(None),
@@ -754,6 +769,18 @@ impl ViewportController {
         if self.document.is_loaded() {
             self.frame.update(FrameState::with_upload_owed);
             self.request_redraw();
+        }
+        // The device is now snapshottable; drain any path that was
+        // queued before this point (argv at startup, etc.).
+        // `begin_load` returning `None` means a load is somehow already
+        // in flight on this fresh setup — extremely unusual but
+        // possible after a teardown→setup cycle that races a click on
+        // Open; in that case the queued path is dropped, matching the
+        // "drop while busy" decision for drag-and-drop.
+        if let Some(path) = self.pending_load.take()
+            && let Some(ticket) = self.loader.begin_load()
+        {
+            start_load_with_ticket(ticket, path, &self.loader);
         }
     }
 
