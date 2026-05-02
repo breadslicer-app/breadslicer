@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-05-01 13:59+0000\n"
+"POT-Creation-Date: 2026-05-02 20:24+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -40,6 +40,44 @@ msgstr ""
 #: ui/about-window.slint:83
 msgctxt "About"
 msgid "Close"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:14
+msgctxt "ReplaceSceneDialog"
+msgid "Open new model"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:56
+msgctxt "ReplaceSceneDialog"
+msgid "Replace the current scene?"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:62
+msgctxt "ReplaceSceneDialog"
+msgid "Opening: {}"
+msgstr ""
+
+#. best the user can do to keep changes is export.
+#: ui/replace-scene-dialog.slint:71
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Export it first to keep any changes you've "
+"made."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:85
+msgctxt "ReplaceSceneDialog"
+msgid "Discard && Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:92
+msgctxt "ReplaceSceneDialog"
+msgid "Export && Open…"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:99
+msgctxt "ReplaceSceneDialog"
+msgid "Cancel"
 msgstr ""
 
 #: ui/preferences/preferences-window.slint:12
@@ -144,117 +182,117 @@ msgctxt "ObjectList"
 msgid "No objects to display"
 msgstr ""
 
-#: ui/main-window.slint:60
+#: ui/main-window.slint:61
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:116
+#: ui/main-window.slint:121
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:119
+#: ui/main-window.slint:124
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:129
+#: ui/main-window.slint:134
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:138
+#: ui/main-window.slint:143
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:149
+#: ui/main-window.slint:154
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:155
+#: ui/main-window.slint:160
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:163
+#: ui/main-window.slint:168
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:173
+#: ui/main-window.slint:178
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:175
+#: ui/main-window.slint:180
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:181
+#: ui/main-window.slint:189
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:189
+#: ui/main-window.slint:200
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:198
+#: ui/main-window.slint:209
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:202
+#: ui/main-window.slint:213
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:203
+#: ui/main-window.slint:214
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:213
+#: ui/main-window.slint:224
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:215
+#: ui/main-window.slint:226
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:220
+#: ui/main-window.slint:231
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:227
+#: ui/main-window.slint:238
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:234
+#: ui/main-window.slint:245
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:241
+#: ui/main-window.slint:252
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:248
+#: ui/main-window.slint:259
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:260
+#: ui/main-window.slint:271
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
