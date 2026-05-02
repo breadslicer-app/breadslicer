@@ -68,6 +68,8 @@ export component MainWindow inherits Window {
     in property <image> mesh-rendering;
     in property <bool> loading: false;
     in property <bool> has-scene: false;
+    in property <bool> can-undo: false;
+    in property <bool> can-redo: false;
     in property <ThemePreference> theme: ThemePreference.System;
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
@@ -99,6 +101,8 @@ export component MainWindow inherits Window {
     callback viewport-pointer-move(length, length, PointerModifiers);
     callback viewport-pointer-up(length, length, PointerModifiers);
     callback selection-cleared();
+    callback undo-requested();
+    callback redo-requested();
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
@@ -174,13 +178,19 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Undo");
                 shortcut: @keys(Control + Z);
-                enabled: false;
+                enabled: root.has-scene && !root.loading && root.can-undo;
+                activated => {
+                    root.undo-requested();
+                }
             }
 
             MenuItem {
                 title: @tr("MenuBar" => "Redo");
                 shortcut: @keys(Control + Shift + Z);
-                enabled: false;
+                enabled: root.has-scene && !root.loading && root.can-redo;
+                activated => {
+                    root.redo-requested();
+                }
             }
 
             MenuSeparator { }

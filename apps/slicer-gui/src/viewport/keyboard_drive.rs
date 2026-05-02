@@ -22,7 +22,7 @@ use super::types::ViewportSize;
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
 use crate::mesh_render::default_fov_y;
-use crate::scene_document::SceneDocument;
+use crate::scene_document::{SceneDocument, SceneEdit};
 
 /// Keyboard gizmo focus. `T`/`R`/`S` keypresses cycle this through
 /// the three operation types; Esc returns to `None`. While focus is
@@ -181,12 +181,59 @@ pub(super) struct IntegrationCtx<'a> {
     pub(super) selection_idx: Option<usize>,
 }
 
+/// Tracks the in-progress "keyboard burst": the user holds one or
+/// more arrow / page keys while a gizmo focus is active. The first
+/// held key arms the tracker with the object's transform at that
+/// moment; the burst ends when all keys are released, the focus
+/// changes, or `reset` is called.
+///
+/// `last_event_at` is currently unused but written on every event so a
+/// future coalesce window (one undo entry per ~Xms regardless of
+/// release/re-press) can gate the flush from inside `take` without
+/// touching the public API.
+struct BurstTracker {
+    armed: Cell<Option<(usize, Transform3D)>>,
+    last_event_at: Cell<Option<Instant>>,
+}
+
+impl BurstTracker {
+    fn new() -> Self {
+        Self {
+            armed: Cell::new(None),
+            last_event_at: Cell::new(None),
+        }
+    }
+
+    fn is_armed(&self) -> bool {
+        self.armed.get().is_some()
+    }
+
+    fn arm(&self, idx: usize, before: Transform3D) {
+        self.armed.set(Some((idx, before)));
+    }
+
+    /// Returns the captured pre-image and clears the tracker. Returns
+    /// `None` when nothing is armed.
+    fn take(&self) -> Option<(usize, Transform3D)> {
+        self.armed.take()
+    }
+
+    fn discard(&self) {
+        self.armed.set(None);
+    }
+
+    fn note_event(&self) {
+        self.last_event_at.set(Some(Instant::now()));
+    }
+}
+
 /// Owns the controller's three keyboard cells and the methods that
 /// mutate them. Used by `ViewportController` through composition.
 pub(super) struct KeyboardDriveState {
     focus: Cell<KbdFocus>,
     arrows: Cell<ArrowDrive>,
     last_tick: Cell<Option<Instant>>,
+    burst: BurstTracker,
 }
 
 impl KeyboardDriveState {
@@ -195,6 +242,7 @@ impl KeyboardDriveState {
             focus: Cell::new(KbdFocus::None),
             arrows: Cell::new(ArrowDrive::default()),
             last_tick: Cell::new(None),
+            burst: BurstTracker::new(),
         }
     }
 
@@ -208,13 +256,14 @@ impl KeyboardDriveState {
         self.arrows.get()
     }
 
-    /// Force-clear focus + bitset + tick. Used on scene close, where
-    /// the regular `try_set_focus` early-returns aren't appropriate
-    /// (no selection guard, no equality short-circuit).
+    /// Force-clear focus + bitset + tick. Used on scene close. Any
+    /// in-progress burst is dropped without flushing — the object
+    /// indices it referred to are about to become meaningless.
     pub(super) fn reset(&self) {
         self.focus.set(KbdFocus::None);
         self.arrows.set(ArrowDrive::default());
         self.last_tick.set(None);
+        self.burst.discard();
     }
 
     /// Sets `focus` if the move is legal. Returns `true` when the cell
@@ -222,13 +271,23 @@ impl KeyboardDriveState {
     /// the `gizmo-keyboard-focus-active` UI property accordingly.
     /// Refuses non-`None` focus when nothing is selected, and is a
     /// no-op when the focus is already `focus`.
-    pub(super) fn try_set_focus(&self, focus: KbdFocus, has_selection: bool) -> bool {
+    ///
+    /// Side effect: an in-progress burst is flushed before the focus
+    /// switch, so the user's key-presses-so-far land as one undo
+    /// entry instead of bleeding across modes.
+    pub(super) fn try_set_focus(
+        &self,
+        document: &Rc<SceneDocument>,
+        focus: KbdFocus,
+        has_selection: bool,
+    ) -> bool {
         if focus != KbdFocus::None && !has_selection {
             return false;
         }
         if self.focus.get() == focus {
             return false;
         }
+        self.flush_burst(document);
         self.focus.set(focus);
         self.arrows.set(ArrowDrive::default());
         self.last_tick.set(None);
@@ -238,7 +297,21 @@ impl KeyboardDriveState {
     /// Held-arrow bitset update. `code` is one of `ARROW_*`. Returns
     /// `true` if the bitset changed (caller marks dirty), `false` for
     /// out-of-range codes.
-    pub(super) fn update_arrow(&self, code: i32, pressed: bool) -> bool {
+    ///
+    /// Burst lifecycle: a press that flips the bitset from empty →
+    /// non-empty arms the burst tracker with the selected object's
+    /// current transform; a release that flips it back to empty
+    /// flushes the burst as one undo entry. Out-of-range codes
+    /// short-circuit before the bitset write, so they don't influence
+    /// the burst.
+    pub(super) fn update_arrow(
+        &self,
+        document: &Rc<SceneDocument>,
+        selection_idx: Option<usize>,
+        code: i32,
+        pressed: bool,
+    ) -> bool {
+        let prev_any_held = self.arrows.get().any_held();
         let mut d = self.arrows.get();
         match code {
             ARROW_X_POS => d.x_pos = pressed,
@@ -250,10 +323,60 @@ impl KeyboardDriveState {
             _ => return false,
         }
         self.arrows.set(d);
+        let now_any_held = d.any_held();
+        self.burst.note_event();
+
+        if !prev_any_held && now_any_held && pressed {
+            self.try_arm_burst(document, selection_idx);
+        } else if prev_any_held && !now_any_held {
+            self.flush_burst(document);
+        }
+
         if pressed && self.last_tick.get().is_none() {
             self.last_tick.set(Some(Instant::now()));
         }
         true
+    }
+
+    /// Captures the current transform of the selected object as the
+    /// burst's pre-image. No-op if the burst is already armed (a
+    /// second key press during an existing burst), the selection is
+    /// empty, or the scene isn't loaded.
+    fn try_arm_burst(&self, document: &Rc<SceneDocument>, selection_idx: Option<usize>) {
+        if self.burst.is_armed() {
+            return;
+        }
+        let Some(idx) = selection_idx else {
+            return;
+        };
+        let Some(before) = document
+            .with_scene(|s| s.objects.get(idx).map(|o| o.transform))
+            .flatten()
+        else {
+            return;
+        };
+        self.burst.arm(idx, before);
+    }
+
+    /// Pushes the in-progress burst as one undo entry, using the
+    /// scene's current transform of the captured object as `after`.
+    /// `push_edit` filters the no-op case (the user pressed and
+    /// released without an integration tick), so we don't gate it
+    /// here.
+    fn flush_burst(&self, document: &Rc<SceneDocument>) {
+        let Some((object_idx, before)) = self.burst.take() else {
+            return;
+        };
+        let after = document
+            .with_scene(|s| s.objects.get(object_idx).map(|o| o.transform))
+            .flatten();
+        if let Some(after) = after {
+            document.push_edit(SceneEdit::ObjectTransform {
+                object_idx,
+                before,
+                after,
+            });
+        }
     }
 
     /// Per-frame integration. If the focus is active, axes are held,

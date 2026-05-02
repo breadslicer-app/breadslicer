@@ -34,9 +34,18 @@ pub(crate) fn wire_main_window(
     wire_close_scene(ui, ctrl.clone());
     wire_open_file(ui, ctrl.clone());
     wire_export_as(ui, ctrl.clone());
+    wire_edit_menu(ui, ctrl.clone());
     wire_viewport_resized(ui, ctrl.clone());
     wire_viewport_input(ui, ctrl);
     Ok(())
+}
+
+fn wire_edit_menu(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+    {
+        let ctrl = ctrl.clone();
+        ui.on_undo_requested(move || ctrl.on_undo_requested());
+    }
+    ui.on_redo_requested(move || ctrl.on_redo_requested());
 }
 
 fn install_rendering_notifier(

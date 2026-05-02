@@ -11,12 +11,17 @@
 //! their own copies of this state.
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene::{Scene, Transform3D};
 
 use crate::selection::{Selection, SelectionState};
+
+/// Maximum number of entries kept on each of the undo and redo stacks.
+/// On overflow the oldest entry (front of the deque) is discarded.
+pub(crate) const UNDO_STACK_CAP: usize = 256;
 
 /// Coarse-grained dispatch hint for document listeners. Each public
 /// mutation on `SceneDocument` fires exactly one event variant.
@@ -30,8 +35,43 @@ pub(crate) enum SceneEvent {
     /// Selection has changed without the scene itself changing.
     SelectionChanged,
     /// The scene's contents were mutated through `apply_command`.
-    /// Reserved for the upcoming command/undo plumbing.
     Mutated,
+    /// The undo or redo stack changed (push, undo, redo, or
+    /// install/clear when the stacks were non-empty). Listeners that
+    /// only care about scene contents can ignore this; the controller
+    /// uses it to mirror `can-undo` / `can-redo` to the UI.
+    UndoStackChanged,
+}
+
+/// One reversible scene edit. Pushed onto the document's undo stack at
+/// gesture-end (drag release, keyboard-burst flush) and consumed by
+/// `undo` / `redo` to apply the corresponding state change.
+///
+/// Single variant for now — the entire current GUI only edits a
+/// single object's `transform`. Future commands (add / remove /
+/// reorder objects) slot in as additional variants without breaking
+/// callers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SceneEdit {
+    /// `objects[object_idx].transform` was changed from `before` to
+    /// `after`. Applying the edit forward writes `after`; undoing
+    /// writes `before`.
+    ObjectTransform {
+        object_idx: usize,
+        before: Transform3D,
+        after: Transform3D,
+    },
+}
+
+impl SceneEdit {
+    /// True if applying this edit would not change the scene. The
+    /// document filters such no-ops at `push_edit` time so a gesture
+    /// that ended exactly where it started doesn't waste a stack slot.
+    fn is_noop(&self) -> bool {
+        match self {
+            Self::ObjectTransform { before, after, .. } => before == after,
+        }
+    }
 }
 
 type Listener = Rc<dyn Fn(SceneEvent)>;
@@ -50,6 +90,13 @@ pub(crate) struct SceneDocument {
     /// a listener can re-enter `subscribe` without re-borrowing.
     listeners: RefCell<Vec<(u64, Listener)>>,
     next_listener_id: Cell<u64>,
+    /// Reversible edits the user can roll back via Edit → Undo. Most
+    /// recent edit at the back; capped at `UNDO_STACK_CAP`.
+    undo_stack: RefCell<VecDeque<SceneEdit>>,
+    /// Edits that were rolled back by `undo` and can be replayed by
+    /// `redo`. Cleared whenever a fresh edit lands via `push_edit` —
+    /// new history invalidates the redo trail.
+    redo_stack: RefCell<VecDeque<SceneEdit>>,
 }
 
 impl SceneDocument {
@@ -60,6 +107,8 @@ impl SceneDocument {
             selection: SelectionState::new(),
             listeners: RefCell::new(Vec::new()),
             next_listener_id: Cell::new(0),
+            undo_stack: RefCell::new(VecDeque::new()),
+            redo_stack: RefCell::new(VecDeque::new()),
         })
     }
 
@@ -67,14 +116,38 @@ impl SceneDocument {
         *self.scene.borrow_mut() = Some(scene);
         *self.source_path.borrow_mut() = Some(source_path);
         self.selection.set(Selection::None);
+        // Object indices in the new scene have no relationship to the
+        // outgoing one's, so any pending edits would target the wrong
+        // objects on replay.
+        let stacks_changed = self.clear_history();
         self.notify(SceneEvent::Installed);
+        if stacks_changed {
+            self.notify(SceneEvent::UndoStackChanged);
+        }
     }
 
     pub fn clear_scene(&self) {
         *self.scene.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
         self.selection.set(Selection::None);
+        let stacks_changed = self.clear_history();
         self.notify(SceneEvent::Cleared);
+        if stacks_changed {
+            self.notify(SceneEvent::UndoStackChanged);
+        }
+    }
+
+    /// Drops any pending undo/redo entries. Returns whether either
+    /// stack was non-empty before the call — callers that fire
+    /// `UndoStackChanged` only when an observable change happened use
+    /// this to gate the notification.
+    fn clear_history(&self) -> bool {
+        let mut undo = self.undo_stack.borrow_mut();
+        let mut redo = self.redo_stack.borrow_mut();
+        let had = !undo.is_empty() || !redo.is_empty();
+        undo.clear();
+        redo.clear();
+        had
     }
 
     pub fn selection(&self) -> Selection {
@@ -105,6 +178,86 @@ impl SceneDocument {
         let result = self.with_scene_mut(cmd)?;
         self.notify(SceneEvent::Mutated);
         Some(result)
+    }
+
+    /// Records a reversible edit on the undo stack. No-op edits
+    /// (`before == after`) are dropped silently so a gesture that
+    /// began and ended in the same place doesn't clutter the history.
+    /// A successful push clears the redo stack — a fresh edit
+    /// invalidates the previously-rolled-back trail.
+    pub(crate) fn push_edit(&self, edit: SceneEdit) {
+        if edit.is_noop() {
+            return;
+        }
+        {
+            let mut undo = self.undo_stack.borrow_mut();
+            if undo.len() == UNDO_STACK_CAP {
+                undo.pop_front();
+            }
+            undo.push_back(edit);
+        }
+        self.redo_stack.borrow_mut().clear();
+        self.notify(SceneEvent::UndoStackChanged);
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.borrow().is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.borrow().is_empty()
+    }
+
+    /// Pops the most recent edit, applies its inverse to the scene,
+    /// and moves the entry onto the redo stack. Returns `true` if an
+    /// edit was applied. The inverse is written through `apply_command`
+    /// so the existing `Mutated` listener schedules the redraw;
+    /// `UndoStackChanged` fires afterwards for the menu state.
+    pub fn undo(&self) -> bool {
+        let Some(edit) = self.undo_stack.borrow_mut().pop_back() else {
+            return false;
+        };
+        let applied = self
+            .apply_command(|scene| apply_edit_inverse(scene, edit))
+            .is_some();
+        if !applied {
+            // No scene loaded — restore the entry we just popped so
+            // the stack stays consistent with the user's history.
+            self.undo_stack.borrow_mut().push_back(edit);
+            return false;
+        }
+        let mut redo = self.redo_stack.borrow_mut();
+        if redo.len() == UNDO_STACK_CAP {
+            redo.pop_front();
+        }
+        redo.push_back(edit);
+        drop(redo);
+        self.notify(SceneEvent::UndoStackChanged);
+        true
+    }
+
+    /// Pops the most recent rolled-back edit, applies it forward, and
+    /// moves the entry back onto the undo stack. Returns `true` if an
+    /// edit was applied.
+    pub fn redo(&self) -> bool {
+        let Some(edit) = self.redo_stack.borrow_mut().pop_back() else {
+            return false;
+        };
+        let applied = self
+            .apply_command(|scene| apply_edit_forward(scene, edit))
+            .is_some();
+        if !applied {
+            self.redo_stack.borrow_mut().push_back(edit);
+            return false;
+        }
+        let mut undo = self.undo_stack.borrow_mut();
+        if undo.len() == UNDO_STACK_CAP {
+            undo.pop_front();
+        }
+        undo.push_back(edit);
+        drop(undo);
+        self.notify(SceneEvent::UndoStackChanged);
+        true
     }
 
     /// Registers a listener. Returns a handle whose `Drop` removes the
@@ -173,6 +326,35 @@ impl SceneDocument {
 
     pub fn is_loaded(&self) -> bool {
         self.scene.borrow().is_some()
+    }
+}
+
+/// Writes the `after` state of `edit` into `scene`. Out-of-range
+/// indices are silently ignored — the edit's target object may have
+/// been removed by a future command between the push and the replay.
+fn apply_edit_forward(scene: &mut Scene, edit: SceneEdit) {
+    match edit {
+        SceneEdit::ObjectTransform {
+            object_idx, after, ..
+        } => {
+            if let Some(obj) = scene.objects.get_mut(object_idx) {
+                obj.transform = after;
+            }
+        }
+    }
+}
+
+/// Writes the `before` state of `edit` into `scene` — the inverse of
+/// `apply_edit_forward`.
+fn apply_edit_inverse(scene: &mut Scene, edit: SceneEdit) {
+    match edit {
+        SceneEdit::ObjectTransform {
+            object_idx, before, ..
+        } => {
+            if let Some(obj) = scene.objects.get_mut(object_idx) {
+                obj.transform = before;
+            }
+        }
     }
 }
 
@@ -396,5 +578,246 @@ mod scene_document_tests {
         doc.clear_scene();
 
         assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
+    }
+
+    use sc_mesh_core::transform::AffineTransform3D;
+
+    fn translation(dx: f64) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
+    }
+
+    fn scene_with_one_object() -> Scene {
+        let mut s = empty_scene();
+        s.objects.push(SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Resource(0),
+        });
+        s
+    }
+
+    fn obj_transform(doc: &SceneDocument, idx: usize) -> Transform3D {
+        doc.with_scene(|s| s.objects[idx].transform).unwrap()
+    }
+
+    #[test]
+    fn fresh_document_has_no_history() {
+        let doc = SceneDocument::new();
+        assert!(!doc.can_undo());
+        assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn push_edit_makes_undo_available() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        assert!(doc.can_undo());
+        assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn push_edit_skips_no_op() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: Transform3D::Identity,
+        });
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn undo_restores_before_and_enables_redo() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        // Simulate a gesture: write `after`, then record the edit.
+        let after = translation(5.0);
+        doc.apply_command(|s| s.objects[0].transform = after);
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
+
+        assert!(doc.undo());
+        assert_eq!(obj_transform(&doc, 0), Transform3D::Identity);
+        assert!(!doc.can_undo());
+        assert!(doc.can_redo());
+    }
+
+    #[test]
+    fn redo_replays_after_and_re_enables_undo() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let after = translation(5.0);
+        doc.apply_command(|s| s.objects[0].transform = after);
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
+
+        doc.undo();
+        assert!(doc.redo());
+        assert_eq!(obj_transform(&doc, 0), after);
+        assert!(doc.can_undo());
+        assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn fresh_push_clears_redo_trail() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let a = translation(1.0);
+        doc.apply_command(|s| s.objects[0].transform = a);
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: a,
+        });
+        doc.undo();
+        assert!(doc.can_redo());
+
+        // A new branch of history invalidates the redo trail.
+        let b = translation(2.0);
+        doc.apply_command(|s| s.objects[0].transform = b);
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: b,
+        });
+        assert!(doc.can_undo());
+        assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn undo_and_redo_are_no_ops_when_stacks_are_empty() {
+        let doc = SceneDocument::new();
+        assert!(!doc.undo());
+        assert!(!doc.redo());
+        doc.install_scene(empty_scene(), fixture_path());
+        assert!(!doc.undo());
+        assert!(!doc.redo());
+    }
+
+    #[test]
+    fn stack_caps_at_undo_stack_cap() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        // Push UNDO_STACK_CAP + 5 distinct edits; the oldest five
+        // should be silently dropped by `pop_front`.
+        for i in 0..(UNDO_STACK_CAP + 5) {
+            let dx = (i + 1) as f64;
+            doc.push_edit(SceneEdit::ObjectTransform {
+                object_idx: 0,
+                before: translation(dx - 1.0),
+                after: translation(dx),
+            });
+        }
+        assert_eq!(doc.undo_stack.borrow().len(), UNDO_STACK_CAP);
+        // Front of the deque is the oldest surviving entry; with
+        // five entries dropped it should start at i = 5 (after = 6.0).
+        let oldest = doc.undo_stack.borrow().front().copied().unwrap();
+        match oldest {
+            SceneEdit::ObjectTransform { after, .. } => {
+                assert_eq!(after, translation(6.0));
+            }
+        }
+    }
+
+    #[test]
+    fn install_scene_clears_undo_history() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        assert!(doc.can_undo());
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        assert!(!doc.can_undo());
+        assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn clear_scene_clears_undo_history() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        doc.clear_scene();
+        assert!(!doc.can_undo());
+        assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn push_edit_fires_undo_stack_changed() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        assert_eq!(*log.borrow(), vec![SceneEvent::UndoStackChanged]);
+    }
+
+    #[test]
+    fn undo_fires_mutated_then_undo_stack_changed() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let after = translation(1.0);
+        doc.apply_command(|s| s.objects[0].transform = after);
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+
+        doc.undo();
+        assert_eq!(
+            *log.borrow(),
+            vec![SceneEvent::Mutated, SceneEvent::UndoStackChanged]
+        );
+    }
+
+    #[test]
+    fn install_scene_emits_undo_stack_changed_only_when_history_was_non_empty() {
+        let doc = SceneDocument::new();
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+
+        // Empty → empty: only `Installed`.
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
+
+        // Push an edit, then install again — the second install must
+        // also report the history clear.
+        doc.push_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        log.borrow_mut().clear();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        assert_eq!(
+            *log.borrow(),
+            vec![SceneEvent::Installed, SceneEvent::UndoStackChanged]
+        );
     }
 }

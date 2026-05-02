@@ -22,7 +22,7 @@ use crate::camera::OrbitCamera;
 use crate::gizmo;
 use crate::mesh_render::{GizmoHover, default_fov_y};
 use crate::picking;
-use crate::scene_document::SceneDocument;
+use crate::scene_document::{SceneDocument, SceneEdit};
 
 use super::gizmo_drag::{
     DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
@@ -80,11 +80,39 @@ impl GizmoFsm {
     }
 
     /// Force the FSM back to `Idle` without reverting any in-flight
-    /// transform. Used by the drag-end path in `on_pointer_up` (the
-    /// composed transform stays) and by the scene-close path (the
-    /// object is gone, so reversion is moot).
+    /// transform. Used by the scene-close path (the object is gone,
+    /// so reversion is moot). The drag-end path goes through
+    /// `commit_drag` so the gesture lands on the undo stack.
     pub(super) fn set_idle(&self) {
         self.state.set(GizmoState::Idle);
+    }
+
+    /// Drag-end commit: if a drag is in flight, push the
+    /// `before → after` pair onto the document's undo stack and
+    /// transition to `Idle`. No-op edits (object's transform unchanged
+    /// since press, or the object got removed mid-drag) are filtered
+    /// inside `SceneDocument::push_edit`. Returns `true` if a drag was
+    /// in flight when called.
+    pub(super) fn commit_drag(&self, document: &Rc<SceneDocument>) -> bool {
+        let GizmoState::Drag {
+            original,
+            object_idx,
+            ..
+        } = self.state.get()
+        else {
+            return false;
+        };
+        self.state.set(GizmoState::Idle);
+        let after =
+            document.with_scene(|scene| scene.objects.get(object_idx).map(|obj| obj.transform));
+        if let Some(Some(after)) = after {
+            document.push_edit(SceneEdit::ObjectTransform {
+                object_idx,
+                before: original,
+                after,
+            });
+        }
+        true
     }
 
     /// Drop any cached hover. Returns `true` if the cell was set.

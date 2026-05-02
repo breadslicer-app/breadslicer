@@ -17,7 +17,7 @@ use super::gizmo_fsm::{
 };
 use super::input_state::{ClickOrDrag, InputState};
 #[cfg(test)]
-use super::keyboard_drive::ARROW_X_POS;
+use super::keyboard_drive::{ARROW_X_POS, ARROW_Y_POS};
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_scheduler;
@@ -208,10 +208,17 @@ impl ViewportController {
             SceneEvent::Mutated => {
                 // Every scene mutation routes through `apply_command`,
                 // so this is the single place that schedules a redraw
-                // for them. The future undo stack will hook in here
-                // alongside the dirty mark.
+                // for them.
                 self.mark_dirty();
             }
+            SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),
+        }
+    }
+
+    fn mirror_undo_state_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_can_undo(self.document.can_undo());
+            ui.set_can_redo(self.document.can_redo());
         }
     }
 
@@ -231,6 +238,7 @@ impl ViewportController {
             ui.set_selected_object_index(-1);
             ui.set_gizmo_keyboard_focus_active(false);
         }
+        self.mirror_undo_state_to_ui();
         self.mark_dirty();
     }
 
@@ -257,6 +265,7 @@ impl ViewportController {
             ui.set_selected_object_index(-1);
             ui.set_gizmo_keyboard_focus_active(false);
         }
+        self.mirror_undo_state_to_ui();
     }
 
     fn request_redraw(&self) {
@@ -476,6 +485,19 @@ impl ViewportController {
     /// already dispatched here from `on_pointer_up` after determining
     /// no object was hit); Esc enters at level 1 and naturally
     /// cascades through repeated presses.
+    /// Edit → Undo handler. Bounced if no edit is on the stack
+    /// (which is what `can-undo` already gates in the menu, but the
+    /// shortcut can race a freshly-emptied stack — the document's
+    /// own check is the source of truth).
+    pub fn on_undo_requested(&self) {
+        self.document.undo();
+    }
+
+    /// Edit → Redo handler.
+    pub fn on_redo_requested(&self) {
+        self.document.redo();
+    }
+
     pub fn on_clear_selection(&self) {
         if matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. }) {
             self.abort_gizmo_drag();
@@ -519,7 +541,10 @@ impl ViewportController {
     /// from one mode doesn't bleed into another.
     fn set_keyboard_focus(&self, focus: KbdFocus) {
         let has_selection = !matches!(self.document.selection(), Selection::None);
-        if !self.kbd_drive.try_set_focus(focus, has_selection) {
+        if !self
+            .kbd_drive
+            .try_set_focus(&self.document, focus, has_selection)
+        {
             return;
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -537,7 +562,8 @@ impl ViewportController {
         if self.kbd_drive.current_focus() == KbdFocus::None {
             return;
         }
-        if self.kbd_drive.update_arrow(code, true) {
+        let sel = self.document.selection_primary_idx();
+        if self.kbd_drive.update_arrow(&self.document, sel, code, true) {
             self.mark_dirty();
         }
     }
@@ -548,7 +574,11 @@ impl ViewportController {
     /// → focus drop) still has to clear its bit so the bitset
     /// doesn't accumulate stuck flags.
     pub fn on_gizmo_arrow_released(&self, code: i32) {
-        if self.kbd_drive.update_arrow(code, false) {
+        let sel = self.document.selection_primary_idx();
+        if self
+            .kbd_drive
+            .update_arrow(&self.document, sel, code, false)
+        {
             self.mark_dirty();
         }
     }
@@ -613,8 +643,7 @@ impl ViewportController {
     /// (snapping, etc.) can read it without another signature change.
     pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
         let outcome = self.input_state.click_or_drag(ScreenPoint { x, y });
-        if matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. }) {
-            self.gizmo_fsm.set_idle();
+        if self.gizmo_fsm.commit_drag(&self.document) {
             self.mark_dirty();
             return;
         }
@@ -1469,6 +1498,64 @@ mod viewport_click_tests {
     }
 
     #[test]
+    fn pointer_up_after_drag_pushes_one_undo_entry() {
+        // A complete press → move → release gesture lands as one
+        // entry on the document's undo stack, with the pre-press
+        // transform as the `before`. A subsequent undo restores it.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+
+        assert!(ctrl.document.can_undo());
+        assert!(!ctrl.document.can_redo());
+
+        let after_drag = read_translation(&ctrl);
+        assert!(after_drag.x.abs() > 1e-4);
+
+        assert!(ctrl.document.undo());
+        let after_undo = read_translation(&ctrl);
+        assert_approx_eq!(f32, after_undo.x, 0.0, epsilon = 1e-6);
+        assert!(!ctrl.document.can_undo());
+        assert!(ctrl.document.can_redo());
+
+        assert!(ctrl.document.redo());
+        let after_redo = read_translation(&ctrl);
+        assert_approx_eq!(f32, after_redo.x, after_drag.x, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn pointer_up_with_no_movement_pushes_no_undo_entry() {
+        // Press → release without a move tick: the transform is
+        // unchanged, `push_edit` filters the no-op, the stack stays
+        // empty.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_up(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+
+        assert!(!ctrl.document.can_undo());
+    }
+
+    #[test]
+    fn esc_mid_drag_pushes_no_undo_entry() {
+        // Esc-to-cancel is not undoable — the user explicitly
+        // cancelled the gesture, so nothing should land on the
+        // history stack.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_clear_selection();
+
+        assert!(!ctrl.document.can_undo());
+    }
+
+    #[test]
     fn esc_mid_drag_reverts_transform() {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
@@ -1915,6 +2002,118 @@ mod keyboard_focus_tests {
         // Stale release arrives.
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
         assert!(!ctrl.kbd_drive.current_arrows().any_held());
+    }
+
+    fn translation_x(dx: f64) -> Transform3D {
+        Transform3D::Affine(
+            sc_mesh_core::transform::AffineTransform3D::from_translation([dx, 0.0, 0.0]),
+        )
+    }
+
+    #[test]
+    fn keyboard_burst_release_pushes_one_undo_entry() {
+        // First arrow arms the burst; intervening transform mutation
+        // simulates one or more integrator ticks; release flushes
+        // the burst as a single undo entry.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        ctrl.document
+            .apply_command(|s| s.objects[0].transform = translation_x(2.0));
+        ctrl.on_gizmo_arrow_released(ARROW_X_POS);
+
+        assert!(ctrl.document.can_undo());
+        assert!(ctrl.document.undo());
+        let after_undo = ctrl
+            .document
+            .with_scene(|s| s.objects[0].transform)
+            .unwrap();
+        assert_eq!(after_undo, Transform3D::Identity);
+    }
+
+    #[test]
+    fn keyboard_burst_with_no_motion_pushes_no_entry() {
+        // Press → release without any integration tick: scene
+        // transform never changed, push_edit's no-op filter drops
+        // the entry.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        ctrl.on_gizmo_arrow_released(ARROW_X_POS);
+
+        assert!(!ctrl.document.can_undo());
+    }
+
+    #[test]
+    fn keyboard_burst_focus_change_flushes_pending_burst() {
+        // Switching from translate to rotate mid-burst commits the
+        // current run as one undo entry rather than discarding it
+        // — the user's translate work is preserved.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        ctrl.document
+            .apply_command(|s| s.objects[0].transform = translation_x(3.0));
+        // User switches mode without releasing the key.
+        ctrl.on_gizmo_focus_rotate();
+
+        assert!(ctrl.document.can_undo());
+        ctrl.document.undo();
+        let after_undo = ctrl
+            .document
+            .with_scene(|s| s.objects[0].transform)
+            .unwrap();
+        assert_eq!(after_undo, Transform3D::Identity);
+    }
+
+    #[test]
+    fn keyboard_burst_two_keys_held_is_a_single_undo_entry() {
+        // Two arrows pressed then released independently is still
+        // one burst — only the first-press transition arms the
+        // tracker, only the all-released transition flushes it.
+        let ctrl = ViewportController::new_for_test();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        ctrl.on_gizmo_arrow_pressed(ARROW_Y_POS);
+        ctrl.document
+            .apply_command(|s| s.objects[0].transform = translation_x(1.0));
+        ctrl.on_gizmo_arrow_released(ARROW_X_POS);
+        // Bitset still has Y_POS held — must not flush yet.
+        assert!(!ctrl.document.can_undo());
+        ctrl.on_gizmo_arrow_released(ARROW_Y_POS);
+        assert!(ctrl.document.can_undo());
+        // Exactly one entry: a second undo is rejected.
+        assert!(ctrl.document.undo());
+        assert!(!ctrl.document.can_undo());
+    }
+
+    #[test]
+    fn keyboard_burst_dropped_on_scene_close() {
+        // Scene close drops the burst without flushing — the object
+        // index it captured is about to become meaningless.
+        let ctrl = std::rc::Rc::new(ViewportController::new_for_test());
+        ctrl.register_document_listener();
+        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.on_select_by_index(0);
+        ctrl.on_gizmo_focus_translate();
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        ctrl.document
+            .apply_command(|s| s.objects[0].transform = translation_x(1.0));
+
+        ctrl.on_close_scene();
+        assert!(!ctrl.document.can_undo());
     }
 
     #[test]
