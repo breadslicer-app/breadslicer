@@ -272,7 +272,7 @@ impl GizmoFsm {
         });
 
         ctx.document
-            .with_scene_mut(|scene| {
+            .apply_command(|scene| {
                 if let Some(obj) = scene.objects.get_mut(object_idx) {
                     obj.transform = new_transform;
                 }
@@ -282,7 +282,8 @@ impl GizmoFsm {
 
     /// Aborts any in-progress drag and reverts the affected object's
     /// transform to its captured original. Returns `true` if a drag
-    /// was in flight (caller marks dirty + clears input phase).
+    /// was in flight (caller clears the input phase; the `Mutated`
+    /// event from `apply_command` drives the redraw).
     pub(super) fn abort(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
             original,
@@ -293,7 +294,7 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        document.with_scene_mut(|scene| {
+        document.apply_command(|scene| {
             if let Some(obj) = scene.objects.get_mut(object_idx) {
                 obj.transform = original;
             }

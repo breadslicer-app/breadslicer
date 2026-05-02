@@ -206,8 +206,10 @@ impl ViewportController {
                 self.mark_dirty();
             }
             SceneEvent::Mutated => {
-                // Stub. The upcoming undo plumbing will invalidate
-                // caches and mark the document dirty here.
+                // Every scene mutation routes through `apply_command`,
+                // so this is the single place that schedules a redraw
+                // for them. The future undo stack will hook in here
+                // alongside the dirty mark.
                 self.mark_dirty();
             }
         }
@@ -581,10 +583,14 @@ impl ViewportController {
             cursor: ScreenPoint { x, y },
             modifiers,
         };
-        let mut dirty = self.gizmo_fsm.on_move(ctx);
+        // A successful drag move routes through `apply_command`, which
+        // fires `Mutated` and schedules the redraw via the listener;
+        // the bool return is intentionally discarded here.
+        self.gizmo_fsm.on_move(ctx);
         // No-op while a drag is in progress (the FSM short-circuits
         // hover updates internally), so this just covers the hover-
-        // tint update on idle pointer moves.
+        // tint update on idle pointer moves. Hover state is not a
+        // scene mutation, so it stays on the manual dirty path.
         let hover_ctx = GizmoHoverCtx {
             document: &self.document,
             camera: &self.camera,
@@ -592,8 +598,7 @@ impl ViewportController {
             selection_idx: self.document.selection_primary_idx(),
             cursor: ScreenPoint { x, y },
         };
-        dirty |= self.gizmo_fsm.update_hover(hover_ctx);
-        if dirty {
+        if self.gizmo_fsm.update_hover(hover_ctx) {
             self.mark_dirty();
         }
     }
@@ -647,9 +652,11 @@ impl ViewportController {
     /// `on_clear_selection` and `on_close_scene` so a drag never
     /// outlives its valid context.
     fn abort_gizmo_drag(&self) {
+        // The revert routes through `apply_command` and the `Mutated`
+        // listener schedules the redraw; only the input-phase reset
+        // is the controller's job.
         if self.gizmo_fsm.abort(&self.document) {
             self.input_state.set_idle();
-            self.mark_dirty();
         }
     }
 
@@ -659,7 +666,8 @@ impl ViewportController {
     /// missing camera / scene / selection / zero viewport so a hot
     /// re-init doesn't hand back time the user didn't drive.
     ///
-    /// Marks the controller dirty when a tick fires so the next
+    /// A successful tick routes through `apply_command` and the
+    /// `Mutated` listener marks the controller dirty so the next
     /// `handle_before_rendering` runs again — the integrator
     /// self-pumps as long as the user holds keys, and quiesces when
     /// they release.
@@ -670,9 +678,7 @@ impl ViewportController {
             viewport: self.viewport.get(),
             selection_idx: self.document.selection_primary_idx(),
         };
-        if self.kbd_drive.integrate(ctx) {
-            self.mark_dirty();
-        }
+        self.kbd_drive.integrate(ctx);
     }
 
     /// Picker dispatch: build the ray at `(x, y)`, run `pick_object`,
@@ -1716,6 +1722,100 @@ mod viewport_click_tests {
         );
         assert_approx_eq!(f64, after[1][1], frozen[1][1], epsilon = 1e-4);
         assert_approx_eq!(f64, after[2][2], frozen[2][2], epsilon = 1e-4);
+    }
+
+    /// Subscribes to the document and counts only `Mutated` events.
+    /// Used by the routing tests below to filter out the
+    /// `Installed`/`Cleared`/`SelectionChanged` traffic that
+    /// `install_single_object_at_origin` and friends generate.
+    fn subscribe_mutated_counter(doc: &Rc<SceneDocument>) -> (Rc<Cell<usize>>, SceneSubscription) {
+        let count = Rc::new(Cell::new(0_usize));
+        let count_for_listener = count.clone();
+        let sub = doc.subscribe(move |event| {
+            if matches!(event, SceneEvent::Mutated) {
+                count_for_listener.set(count_for_listener.get() + 1);
+            }
+        });
+        (count, sub)
+    }
+
+    #[test]
+    fn drag_move_fires_one_mutated_event_per_pointer_move() {
+        // Press the X cone to enter Drag, then a single move tick
+        // that mutates the object's transform must fire exactly one
+        // Mutated. Subscribing after the press skips the
+        // SelectionChanged from `install_single_object_at_origin`.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+
+        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        assert_eq!(count.get(), 1);
+    }
+
+    #[test]
+    fn pointer_hover_without_drag_fires_no_mutated_event() {
+        // No press, no drag — just pointer moves. Hover state can
+        // change but the scene is not mutated, so no Mutated must
+        // fire. Regression test for the `on_pointer_move`
+        // simplification that split the gizmo and hover dirty
+        // paths.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+
+        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
+        ctrl.on_pointer_move(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1, no_mods());
+        assert_eq!(count.get(), 0);
+    }
+
+    #[test]
+    fn gizmo_abort_with_drag_in_flight_fires_one_mutated_event() {
+        // Press into Drag, subscribe, then abort the drag. The
+        // revert routes through `apply_command`, which fires
+        // Mutated exactly once.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Drag { .. }));
+
+        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
+        let aborted = ctrl.gizmo_fsm.abort(&ctrl.document);
+        assert!(aborted);
+        assert_eq!(count.get(), 1);
+    }
+
+    #[test]
+    fn gizmo_abort_with_no_drag_fires_no_mutated_event() {
+        // No drag in flight — abort short-circuits before touching
+        // the document, so no Mutated must fire.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
+
+        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
+        let aborted = ctrl.gizmo_fsm.abort(&ctrl.document);
+        assert!(!aborted);
+        assert_eq!(count.get(), 0);
+    }
+
+    #[test]
+    fn drag_move_marks_redraw_owed_via_mutated_listener() {
+        // End-to-end: with `register_document_listener` installed,
+        // a drag move fires Mutated and the controller's listener
+        // marks the controller dirty. This is the chain that
+        // replaced the manual `mark_dirty` calls under each former
+        // `with_scene_mut`.
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        ctrl.register_document_listener();
+        install_single_object_at_origin(&ctrl);
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.clear_frame_state_for_test();
+        assert!(!ctrl.redraw_owed_for_test());
+
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        assert!(ctrl.redraw_owed_for_test());
     }
 }
 

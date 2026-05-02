@@ -96,12 +96,11 @@ impl SceneDocument {
         self.selection.primary_idx()
     }
 
-    /// Mutation chokepoint for command-pattern writes. Today the body
-    /// is a thin shim over `with_scene_mut` that fires `Mutated` on
-    /// success; the upcoming undo stack will hook in here to record
-    /// the inverse and mark the document dirty before notifying.
-    /// Returns `Some(R)` when a scene was loaded, `None` otherwise.
-    #[allow(dead_code)]
+    /// Mutation chokepoint for command-pattern writes. Wraps the
+    /// closure's run in a `Mutated` notification so the controller's
+    /// listener (and any future undo stack) sees every mutation in a
+    /// single place. Returns `Some(R)` when a scene was loaded,
+    /// `None` otherwise.
     pub fn apply_command<R, F: FnOnce(&mut Scene) -> R>(&self, cmd: F) -> Option<R> {
         let result = self.with_scene_mut(cmd)?;
         self.notify(SceneEvent::Mutated);
@@ -165,7 +164,11 @@ impl SceneDocument {
     /// Mutable counterpart to `with_scene`. Same borrow-scope rules
     /// apply; nesting another scene access (read or write) inside `f`
     /// will panic on the inner borrow.
-    pub fn with_scene_mut<R>(&self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
+    ///
+    /// Production mutations should go through `apply_command` so the
+    /// `Mutated` event fires; this method is the bypass exception
+    /// (currently only the unit tests use it directly).
+    pub(crate) fn with_scene_mut<R>(&self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
         self.scene.borrow_mut().as_mut().map(f)
     }
 

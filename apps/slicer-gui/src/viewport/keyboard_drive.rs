@@ -315,7 +315,7 @@ impl KeyboardDriveState {
         };
 
         ctx.document
-            .with_scene_mut(|scene| {
+            .apply_command(|scene| {
                 if let Some(obj) = scene.objects.get_mut(idx) {
                     obj.transform = new_transform;
                 }
