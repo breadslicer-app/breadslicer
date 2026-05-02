@@ -1,54 +1,64 @@
 # sc-mesh-core
 
 A [SoulCrafted](https://codeberg.org/SoulCrafted/) library with core types for
-handling 3D mesh data. Part of the
+3D meshes and scenes. Part of the
 [Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md)
 project.
 
-## Overview
+## What this crate is for
 
-This crate defines fundamental data structures used across the SoulCrafted
-slicer libraries. Other crates (e.g. `sc-mesh-formats`) depend on these types
-to represent and exchange mesh data.
+`sc-mesh-core` is the shared vocabulary of the SoulCrafted slicer stack: the
+data structures that the format readers (`sc-mesh-formats`), the future
+slicer engine (`sl1cer`), the support generator, and the GUI all speak.
+Anything that needs to describe a 3D mesh, group meshes into a scene, place
+them in the world, or check that they're well-formed enough to print lives
+here.
 
-## Public API
+It is intentionally narrow:
 
-### `IndexedMesh`
+- No file I/O (that's `sc-mesh-formats`).
+- No rendering, no GPU types (that's the GUI).
+- No slicing or supports.
 
-**Fields:**
-- `meta: Option<MeshMetadata>`: optional metadata.
-- `vertices: Vec<Vertex>`: the vertex buffer.
-- `faces: Vec<IndexedTriangle>`: triangle faces with indexed vertices and a
-  normal vector each.
+## Conventions
 
-**Validation methods:**
+- **Coordinate frame:** right-handed, **Z up**. The XY plane is the build
+  platform; +Z points away from it.
+- **Units:** every coordinate, length, and translation is in **millimetres**.
+  Vertex positions are stored as `f32`; transform matrices are `f64`. Both
+  share the same millimetre scale — there is no unit type yet.
 
-We have validation methods to ensure that a given mesh is "correct" in the
-context of 3D printing (which has stronger constraints than general 3D
-applications).
+## Modules at a glance
 
-All validators return `Ok(())` on success, or a `Err(Vec)` of specific error
-enums describing every issue found:
+- `primitives` — `Vertex`, `Normal`, `Vector3D`, `Triangle`, `IndexedTriangle`.
+- `indexed_mesh` — `IndexedMesh` (vertex buffer + indexed face buffer + optional
+  metadata), plus mesh validation and repair routines.
+- `aabb` — `Aabb` axis-aligned bounding boxes.
+- `transform` — `AffineTransform3D` 3×4 affine transforms in `f64`, with
+  composition, inversion, and a normal-aware apply.
+- `scene` — `Scene`, `SceneObject`, `Transform3D` (`Identity` /
+  `Affine`-tagged) for placing meshes in world space, plus `Scene::aabb` and
+  `Scene::merge_meshes` (transform baking).
+- `errors` — typed error enums returned by validators and transform routines:
+  `MeshVertexError`, `MeshFaceError`, `MeshNormalVectorError`,
+  `MeshManifoldError`, `MeshFix`, `TransformError`, plus `Edge`,
+  `VertexIndex`, `FaceIndex` and friends.
+- `geometry` — small numeric helpers used across the crate (singularity
+  threshold, strict comparisons).
 
-- `validate_vertices()`: detects `NaN` and `Infinity` coordinates.
-- `validate_faces()`: detects out-of-range vertex indices and zero-length edges.
-- `validate_normal_vectors()`: detects zero-area triangles, non-unit normals,
-  and normals that don't match the vertex winding order.
-- `validate_manifold()`: detects boundary edges, non-manifold edges,
-  inconsistent winding order, and empty meshes.
+For the actual API — types, methods, signatures, and example-based docs —
+see [docs.rs](https://docs.rs/sc-mesh-core).
 
-**Fix methods:**
+## Validation, in one paragraph
 
-- `fix_faces_orientation(&mut self, manifold_errors, normal_vector_errors)`:
-  flips winding order for incorrectly oriented faces and recomputes their
-  normals.
-  Accepts error slices returned by `validate_manifold` and
-  `validate_normal_vectors`.
-- `fix_zero_length_edges(&mut self, face_errors)`: removes faces that have
-  zero-length edges. Accepts the error slice returned by `validate_faces`.
-
-Both return a `Vec<MeshFix>` listing every repair applied.
+Mesh validation is split by concern: vertices, face indices, normal vectors,
+and manifoldness each have a dedicated `validate_*` method on `IndexedMesh`,
+and each returns `Result<(), Vec<…Error>>` listing every issue it found
+rather than bailing on the first. Repair routines (`fix_faces_orientation`,
+`fix_zero_length_edges`) consume those error vectors and return a
+`Vec<MeshFix>` describing what was actually changed.
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE.txt) or the SPDX headers in each source file.
+Apache-2.0 — see [LICENSE](./LICENSE.txt) or the SPDX headers in each source
+file.
