@@ -33,7 +33,7 @@ pub struct FixFacesOptions {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
     pub meta: Option<MeshMetadata>,
-    pub vertices: Vec<Vertex>, // TODO: Make it generic (don't rush it)
+    pub vertices: Vec<Vertex>,
     pub faces: Vec<IndexedTriangle>,
 }
 
