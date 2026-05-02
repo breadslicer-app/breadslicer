@@ -10,7 +10,7 @@
 //! - [`flatten_scene_to_mesh`] bakes per-object transforms into a
 //!   single `IndexedMesh`, returning the merged mesh plus any
 //!   non-fatal warnings (currently only [`FlattenWarning::MultiObjectMerge`]).
-//! - [`write_scene`] dispatches on [`MeshFileType`] and writes the
+//! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
 //!   appropriate format. OBJ goes through `write_obj(&Scene, …)` —
 //!   it preserves per-object boundaries — while the STL variants
 //!   route through `flatten_scene_to_mesh` first.
@@ -24,7 +24,7 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::Scene;
 
-use crate::filetypes::MeshFileType;
+use crate::filetypes::WriteFormat;
 use crate::obj::write_obj;
 use crate::stl::{write_stla, write_stlb};
 
@@ -102,32 +102,26 @@ pub fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
 pub fn write_scene(
     scene: &Scene,
     target_path: &Path,
-    target_format: MeshFileType,
+    target_format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
     match target_format {
-        MeshFileType::Obj => {
+        WriteFormat::Obj => {
             let mut output_file = std::fs::File::create(target_path)?;
             write_obj(scene, &mut output_file)?;
             Ok(Vec::new())
         }
-        MeshFileType::Stl | MeshFileType::StlAscii | MeshFileType::StlBin => {
+        WriteFormat::StlBin => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            match target_format {
-                MeshFileType::Stl | MeshFileType::StlBin => {
-                    let mut output_file = std::fs::File::create(target_path)?;
-                    write_stlb(&flattened.mesh, &mut output_file)?;
-                }
-                MeshFileType::StlAscii => {
-                    let mut output_file = std::fs::File::create(target_path)?;
-                    write_stla(&flattened.mesh, &mut output_file)?;
-                }
-                _ => unreachable!(),
-            }
+            let mut output_file = std::fs::File::create(target_path)?;
+            write_stlb(&flattened.mesh, &mut output_file)?;
             Ok(flattened.warnings)
         }
-        MeshFileType::Ply | MeshFileType::Amf | MeshFileType::_3mf => Err(anyhow!(
-            "Writing {target_format:?} files is not implemented yet"
-        )),
+        WriteFormat::StlAscii => {
+            let flattened = flatten_scene_to_mesh(scene)?;
+            let mut output_file = std::fs::File::create(target_path)?;
+            write_stla(&flattened.mesh, &mut output_file)?;
+            Ok(flattened.warnings)
+        }
     }
 }
 

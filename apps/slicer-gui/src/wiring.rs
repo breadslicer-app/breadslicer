@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
+use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
@@ -258,9 +258,12 @@ async fn run_export_as_flow(
     // format. `.stl` → binary, `.stla` → ASCII, `.obj` → OBJ. The
     // dialog seeds the active filter's extension into the filename so
     // the user gets the format they implicitly chose.
-    let format = match infer_mesh_file_format_from_extension(&target) {
-        Ok(f) => f,
-        Err(_) => {
+    let format = match infer_mesh_file_format_from_extension(&target)
+        .ok()
+        .and_then(|f| WriteFormat::try_from(f).ok())
+    {
+        Some(f) => f,
+        None => {
             let err = anyhow::anyhow!(
                 "Unable to infer file format from filename. Use one of: \
                  .stl (binary STL), .stla (ASCII STL), or .obj."

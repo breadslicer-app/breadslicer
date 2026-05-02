@@ -48,6 +48,50 @@ impl FromStr for MeshFileType {
     }
 }
 
+/// Formats `scene_writer::write_scene` can produce. Distinct from
+/// [`MeshFileType`] because the read side carries variants — `Stl`
+/// (auto-detect ASCII vs binary at parse time), `Ply`, `Amf`, `_3mf` —
+/// that are either ambiguous or unimplemented on the write side. Going
+/// through this enum makes the writer's domain a compile-time invariant
+/// instead of a runtime `unreachable!` / "not implemented" arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteFormat {
+    StlAscii,
+    StlBin,
+    Obj,
+}
+
+/// Returned by `WriteFormat::try_from(MeshFileType)` when the source
+/// format has no write-side counterpart (e.g. `Ply`, `Amf`, `_3mf`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsupportedWriteFormat(pub MeshFileType);
+
+impl Display for UnsupportedWriteFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Writing {:?} files is not implemented yet", self.0)
+    }
+}
+
+impl std::error::Error for UnsupportedWriteFormat {}
+
+impl TryFrom<MeshFileType> for WriteFormat {
+    type Error = UnsupportedWriteFormat;
+
+    fn try_from(value: MeshFileType) -> Result<Self, Self::Error> {
+        match value {
+            // `.stl` (no ASCII/binary hint) writes as binary by
+            // long-standing project convention; the GUI's
+            // `default_export_extension` matches.
+            MeshFileType::Stl | MeshFileType::StlBin => Ok(Self::StlBin),
+            MeshFileType::StlAscii => Ok(Self::StlAscii),
+            MeshFileType::Obj => Ok(Self::Obj),
+            MeshFileType::Ply | MeshFileType::Amf | MeshFileType::_3mf => {
+                Err(UnsupportedWriteFormat(value))
+            }
+        }
+    }
+}
+
 pub fn infer_mesh_file_format_from_extension(path: &Path) -> Result<MeshFileType> {
     let extension = match path.extension() {
         Some(ext) => ext.to_str().unwrap_or(""),
@@ -139,6 +183,47 @@ mod from_str_tests {
         assert!(MeshFileType::from_str("").is_err());
         // Whitespace is not trimmed.
         assert!(MeshFileType::from_str("STL ").is_err());
+    }
+}
+
+#[cfg(test)]
+mod write_format_tests {
+    use super::{MeshFileType, UnsupportedWriteFormat, WriteFormat};
+
+    #[test]
+    fn stl_auto_writes_as_binary_by_convention() {
+        assert_eq!(
+            WriteFormat::try_from(MeshFileType::Stl).unwrap(),
+            WriteFormat::StlBin
+        );
+    }
+
+    #[test]
+    fn explicit_writeable_variants_round_trip() {
+        let cases = [
+            (MeshFileType::StlBin, WriteFormat::StlBin),
+            (MeshFileType::StlAscii, WriteFormat::StlAscii),
+            (MeshFileType::Obj, WriteFormat::Obj),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(WriteFormat::try_from(input).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn unwriteable_variants_carry_their_input_in_the_error() {
+        for input in [MeshFileType::Ply, MeshFileType::Amf, MeshFileType::_3mf] {
+            assert_eq!(
+                WriteFormat::try_from(input).unwrap_err(),
+                UnsupportedWriteFormat(input)
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_write_format_displays_human_readable_message() {
+        let err = UnsupportedWriteFormat(MeshFileType::Ply);
+        assert_eq!(err.to_string(), "Writing Ply files is not implemented yet");
     }
 }
 

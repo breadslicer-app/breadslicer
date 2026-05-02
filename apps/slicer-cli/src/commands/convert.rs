@@ -10,7 +10,9 @@ use std::fs::copy;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::filetypes::{
+    MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
+};
 use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::mesh_loader::display_warnings;
@@ -50,8 +52,10 @@ pub(crate) fn convert(
         };
     }
 
+    let target_write_format = WriteFormat::try_from(target_format)?;
+
     let loaded = load_mesh_from_path(&source_path, Some(source_format))?;
     display_warnings(&loaded.warnings);
 
-    write_scene(&loaded.scene, &target_path, target_format)
+    write_scene(&loaded.scene, &target_path, target_write_format)
 }

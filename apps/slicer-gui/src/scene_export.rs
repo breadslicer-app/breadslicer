@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_formats::filetypes::MeshFileType;
+use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::{self, FlattenWarning};
 
 use crate::scene_document::SceneDocument;
@@ -61,7 +61,7 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
 pub(crate) fn export_scene_as(
     doc: &SceneDocument,
     target: &Path,
-    format: MeshFileType,
+    format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
     doc.with_scene(|scene| scene_writer::write_scene(scene, target, format))
         .ok_or_else(|| anyhow!("No scene loaded"))?
@@ -198,7 +198,7 @@ mod scene_export_tests {
     fn export_without_a_scene_errors() {
         let doc = SceneDocument::new();
         let target = tmp_path("no_scene");
-        let result = export_scene_as(&doc, &target, MeshFileType::StlBin);
+        let result = export_scene_as(&doc, &target, WriteFormat::StlBin);
         assert!(result.is_err());
     }
 
@@ -208,7 +208,7 @@ mod scene_export_tests {
         doc.install_scene(one_object_scene(), PathBuf::from("/tmp/single.obj"));
         let target = tmp_path("single_stlb");
         let warnings =
-            export_scene_as(&doc, &target, MeshFileType::StlBin).expect("write should succeed");
+            export_scene_as(&doc, &target, WriteFormat::StlBin).expect("write should succeed");
         assert!(warnings.is_empty(), "single-object export emits no warning");
         let bytes = std::fs::read(&target).expect("file should exist");
         // Binary STL: 80-byte header + 4-byte triangle count + n*50.
@@ -222,7 +222,7 @@ mod scene_export_tests {
         doc.install_scene(one_object_scene(), PathBuf::from("/tmp/single.obj"));
         let target = tmp_path("single_stla");
         let warnings =
-            export_scene_as(&doc, &target, MeshFileType::StlAscii).expect("write should succeed");
+            export_scene_as(&doc, &target, WriteFormat::StlAscii).expect("write should succeed");
         assert!(warnings.is_empty());
         let text = std::fs::read_to_string(&target).expect("file should exist");
         assert!(text.starts_with("solid"));
@@ -235,7 +235,7 @@ mod scene_export_tests {
         doc.install_scene(one_object_scene(), PathBuf::from("/tmp/single.obj"));
         let target = tmp_path("single_obj");
         let warnings =
-            export_scene_as(&doc, &target, MeshFileType::Obj).expect("write should succeed");
+            export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");
         assert!(warnings.is_empty());
         let text = std::fs::read_to_string(&target).expect("file should exist");
         assert!(text.contains("v "), "OBJ file must contain vertex lines");
@@ -249,7 +249,7 @@ mod scene_export_tests {
         doc.install_scene(two_object_scene(), PathBuf::from("/tmp/multi.obj"));
         let target = tmp_path("multi_stlb");
         let warnings =
-            export_scene_as(&doc, &target, MeshFileType::StlBin).expect("write should succeed");
+            export_scene_as(&doc, &target, WriteFormat::StlBin).expect("write should succeed");
         assert_eq!(
             warnings,
             vec![FlattenWarning::MultiObjectMerge { object_count: 2 }]
@@ -266,7 +266,7 @@ mod scene_export_tests {
         doc.install_scene(two_object_scene(), PathBuf::from("/tmp/multi.obj"));
         let target = tmp_path("multi_obj");
         let warnings =
-            export_scene_as(&doc, &target, MeshFileType::Obj).expect("write should succeed");
+            export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");
         assert!(warnings.is_empty());
         let _ = std::fs::remove_file(&target);
     }

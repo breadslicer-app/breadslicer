@@ -49,7 +49,7 @@ It is intentionally narrow:
 For the actual API — types, methods, signatures, and example-based docs —
 see [docs.rs](https://docs.rs/sc-mesh-core).
 
-## Validation, in one paragraph
+## Validation
 
 Mesh validation is split by concern: vertices, face indices, normal vectors,
 and manifoldness each have a dedicated `validate_*` method on `IndexedMesh`,

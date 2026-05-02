@@ -12,7 +12,9 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::errors::MeshFix;
 use sc_mesh_core::indexed_mesh::FixFacesOptions;
 use sc_mesh_core::scene::SceneObjectContent;
-use sc_mesh_formats::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::filetypes::{
+    MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
+};
 use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::diagnose::show_vertex_errors;
@@ -46,10 +48,10 @@ pub(crate) fn fix(
         ));
     }
 
-    let target_format = match target_format {
+    let target_format = WriteFormat::try_from(match target_format {
         Some(f) => f,
         None => infer_mesh_file_format_from_extension(&target_path)?,
-    };
+    })?;
 
     let loaded = load_mesh_from_path(&source_path, source_format)?;
     display_warnings(&loaded.warnings);
