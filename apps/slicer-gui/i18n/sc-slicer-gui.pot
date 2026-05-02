@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-05-02 21:19+0000\n"
+"POT-Creation-Date: 2026-05-02 21:31+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -47,35 +47,39 @@ msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:56
+#: ui/replace-scene-dialog.slint:61
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:62
+#: ui/replace-scene-dialog.slint:67
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
 msgstr ""
 
-#. best the user can do to keep changes is export.
-#: ui/replace-scene-dialog.slint:71
+#: ui/replace-scene-dialog.slint:80
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Export it first to keep any changes you've "
 "made."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:85
+#: ui/replace-scene-dialog.slint:84
 msgctxt "ReplaceSceneDialog"
-msgid "Discard && Open"
+msgid "The current scene will be closed."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:92
+#: ui/replace-scene-dialog.slint:98
 msgctxt "ReplaceSceneDialog"
-msgid "Export && Open…"
+msgid "Discard & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:99
+#: ui/replace-scene-dialog.slint:105
+msgctxt "ReplaceSceneDialog"
+msgid "Export & Open…"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:112
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""

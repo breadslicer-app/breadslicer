@@ -283,9 +283,15 @@ impl AppState {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
+        // `can_undo` is true iff the user has applied at least one
+        // command on the loaded scene that hasn't been undone — our
+        // proxy for "this scene has unsaved changes". If they haven't
+        // touched it, exporting would just write a copy of the source
+        // file they already have, so the Export button is hidden.
+        let can_export = controller.document().can_undo();
         controller
             .dialogs()
-            .show_replace_scene_confirm(source_name, move |choice| match choice {
+            .show_replace_scene_confirm(source_name, can_export, move |choice| match choice {
                 ReplaceSceneChoice::Discard => {
                     if let Some(app) = app_weak.upgrade() {
                         app.discard_then_open(window_id, path);

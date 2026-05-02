@@ -15,6 +15,11 @@ export component ReplaceSceneDialog inherits Window {
     icon: @image-url("../assets/images/soulcrafted.svg");
 
     in property <string> source-name;
+    // True when the loaded scene has unsaved changes (i.e. at least
+    // one applied command is still on the undo stack). Hides the
+    // Export button when false: there's nothing to export that the
+    // user couldn't reproduce by reloading the source file.
+    in property <bool> can-export: true;
 
     callback discard-requested();
     callback export-requested();
@@ -66,12 +71,20 @@ export component ReplaceSceneDialog inherits Window {
                 }
 
                 Text {
-                    // No project files yet, so there is no "save" — the
-                    // best the user can do to keep changes is export.
-                    text: @tr(
-                        "ReplaceSceneDialog"
-                        => "The current scene will be closed. Export it first to keep any changes you've made."
-                    );
+                    // No project files yet, so there is no "save".
+                    // When the user has applied changes, the only way
+                    // to keep them is to export; when nothing has
+                    // changed there's nothing to lose. The body text
+                    // adapts to match what the buttons offer.
+                    text: root.can-export
+                        ? @tr(
+                            "ReplaceSceneDialog"
+                            => "The current scene will be closed. Export it first to keep any changes you've made."
+                        )
+                        : @tr(
+                            "ReplaceSceneDialog"
+                            => "The current scene will be closed."
+                        );
                     font-size: root.font-secondary;
                     wrap: word-wrap;
                 }
@@ -82,14 +95,14 @@ export component ReplaceSceneDialog inherits Window {
                 spacing: 8px;
 
                 Button {
-                    text: @tr("ReplaceSceneDialog" => "Discard && Open");
+                    text: @tr("ReplaceSceneDialog" => "Discard & Open");
                     clicked => {
                         root.discard-requested();
                     }
                 }
 
-                Button {
-                    text: @tr("ReplaceSceneDialog" => "Export && Open…");
+                if root.can-export: Button {
+                    text: @tr("ReplaceSceneDialog" => "Export & Open…");
                     clicked => {
                         root.export-requested();
                     }

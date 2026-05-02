@@ -117,12 +117,16 @@ impl DialogManager {
     /// Shows the "replace current scene?" confirmation. Calls `on_choice`
     /// once with the user's choice, then hides the dialog and drops it
     /// from the manager. `source_name` (e.g. a file basename) is shown
-    /// as context; pass an empty string to omit it. Must run on the
-    /// Slint UI thread. Logs and bails silently if the dialog can't be
-    /// constructed or shown.
+    /// as context; pass an empty string to omit it. `can_export`
+    /// controls whether the Export button is offered: pass `true` only
+    /// when the scene has unsaved changes worth exporting (otherwise
+    /// the user would be exporting a copy of the loaded source file).
+    /// Must run on the Slint UI thread. Logs and bails silently if the
+    /// dialog can't be constructed or shown.
     pub fn show_replace_scene_confirm(
         self: &Rc<Self>,
         source_name: String,
+        can_export: bool,
         on_choice: impl FnOnce(ReplaceSceneChoice) + 'static,
     ) {
         let dialog = match ReplaceSceneDialog::new() {
@@ -137,6 +141,7 @@ impl DialogManager {
             }
         };
         dialog.set_source_name(source_name.into());
+        dialog.set_can_export(can_export);
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
