@@ -4,6 +4,7 @@
  */
 
 use crate::aabb::Aabb;
+use crate::errors::TransformError;
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Normal, Vertex};
 use crate::transform::AffineTransform3D;
@@ -39,7 +40,7 @@ impl Transform3D {
     /// `AffineTransform3D::apply_to_normal` for the precise semantics
     /// (inverse-transpose with sign-flip on negative determinant, so that
     /// the result matches a winding-reversed triangle).
-    pub fn apply_to_normal(&self, n: Normal) -> Result<Normal> {
+    pub fn apply_to_normal(&self, n: Normal) -> Result<Normal, TransformError> {
         match self {
             Self::Identity => Ok(n),
             Self::Affine(a) => a.apply_to_normal(n),

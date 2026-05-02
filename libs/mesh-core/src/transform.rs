@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use anyhow::{Result, anyhow};
-
+use crate::errors::TransformError;
 use crate::geometry::{SINGULARITY_THRESHOLD, gt_strict};
 use crate::primitives::{Normal, Vector3D, Vertex};
 
@@ -89,11 +88,11 @@ impl AffineTransform3D {
 
     /// Rodrigues rotation about an arbitrary axis by `angle` radians,
     /// right-handed. The axis is normalised internally; passing a zero
-    /// (or near-zero) axis returns an error.
-    pub fn from_axis_angle(axis: [f64; 3], angle: f64) -> Result<Self> {
+    /// (or near-zero) axis returns [`TransformError::ZeroAxis`].
+    pub fn from_axis_angle(axis: [f64; 3], angle: f64) -> Result<Self, TransformError> {
         let norm_sq = axis[0].mul_add(axis[0], axis[1].mul_add(axis[1], axis[2] * axis[2]));
         if !gt_strict(norm_sq, SINGULARITY_THRESHOLD) {
-            return Err(anyhow!("Rotation axis must be non-zero"));
+            return Err(TransformError::ZeroAxis);
         }
         let inv_norm = 1.0 / norm_sq.sqrt();
         let (x, y, z) = (axis[0] * inv_norm, axis[1] * inv_norm, axis[2] * inv_norm);
@@ -197,13 +196,15 @@ impl AffineTransform3D {
     /// linear part directly would yield a normal that is no longer
     /// perpendicular to the transformed surface.
     ///
-    /// Returns an error if the linear part is singular (determinant zero
-    /// to within [`SINGULARITY_THRESHOLD`]) or if the resulting normal has zero
-    /// magnitude (which can happen for pathological inputs).
-    pub fn apply_to_normal(&self, n: Normal) -> Result<Normal> {
+    /// Returns [`TransformError::SingularLinear`] if the linear part is
+    /// singular (determinant zero to within [`SINGULARITY_THRESHOLD`]),
+    /// or [`TransformError::ZeroMagnitudeNormal`] if the resulting
+    /// normal has zero magnitude (which can happen for pathological
+    /// inputs).
+    pub fn apply_to_normal(&self, n: Normal) -> Result<Normal, TransformError> {
         let det = self.determinant();
         if !gt_strict(det.abs(), SINGULARITY_THRESHOLD) {
-            return Err(anyhow!("Cannot transform normal: singular linear part"));
+            return Err(TransformError::SingularLinear);
         }
 
         // The (i, j) entry of M⁻ᵀ is the (j, i) cofactor of M divided by
@@ -248,7 +249,7 @@ impl AffineTransform3D {
 
         let mag_sq = out[0].mul_add(out[0], out[1].mul_add(out[1], out[2] * out[2]));
         if !gt_strict(mag_sq, SINGULARITY_THRESHOLD) {
-            return Err(anyhow!("Cannot transform normal: zero-magnitude result"));
+            return Err(TransformError::ZeroMagnitudeNormal);
         }
         let inv_mag = 1.0 / mag_sq.sqrt();
         Ok(Normal::new([
@@ -295,12 +296,12 @@ impl AffineTransform3D {
     /// `self.compose(&self.inverse()?).apply_to_vertex(v) == v` and
     /// `self.inverse()?.compose(self).apply_to_vertex(v) == v`.
     ///
-    /// Returns an error if the linear part is singular (determinant
-    /// magnitude below [`SINGULARITY_THRESHOLD`]).
-    pub fn inverse(&self) -> Result<Self> {
+    /// Returns [`TransformError::SingularLinear`] if the linear part is
+    /// singular (determinant magnitude below [`SINGULARITY_THRESHOLD`]).
+    pub fn inverse(&self) -> Result<Self, TransformError> {
         let det = self.determinant();
         if !gt_strict(det.abs(), SINGULARITY_THRESHOLD) {
-            return Err(anyhow!("Cannot invert: singular linear part"));
+            return Err(TransformError::SingularLinear);
         }
         let inv_det = 1.0 / det;
 
@@ -553,7 +554,7 @@ mod affine_transform_3d_tests {
     #[test]
     fn from_axis_angle_zero_axis_errors() {
         let result = AffineTransform3D::from_axis_angle([0.0, 0.0, 0.0], FRAC_PI_4);
-        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), TransformError::ZeroAxis);
     }
 
     #[test]
@@ -780,7 +781,10 @@ mod affine_transform_3d_tests {
             [0.0, 0.0, 0.0],
         );
         let n = Normal::new([0.0, 0.0, 1.0]);
-        assert!(t.apply_to_normal(n).is_err());
+        assert_eq!(
+            t.apply_to_normal(n).unwrap_err(),
+            TransformError::SingularLinear
+        );
     }
 
     #[test]
@@ -788,7 +792,10 @@ mod affine_transform_3d_tests {
         // A zero-length normal cannot be normalised after multiplication.
         let t = AffineTransform3D::from_uniform_scale(2.0);
         let n = Normal::new([0.0, 0.0, 0.0]);
-        assert!(t.apply_to_normal(n).is_err());
+        assert_eq!(
+            t.apply_to_normal(n).unwrap_err(),
+            TransformError::ZeroMagnitudeNormal
+        );
     }
 
     #[test]
@@ -965,7 +972,7 @@ mod affine_transform_3d_tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        assert!(t.inverse().is_err());
+        assert_eq!(t.inverse().unwrap_err(), TransformError::SingularLinear);
     }
 
     #[test]

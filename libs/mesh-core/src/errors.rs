@@ -182,6 +182,34 @@ pub enum MeshFix {
     },
 }
 
+/// Failure modes of `AffineTransform3D` / `Transform3D` operations that
+/// can encounter degenerate inputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransformError {
+    /// The linear part has a determinant whose magnitude is below the
+    /// singularity threshold, so it has no inverse and no
+    /// inverse-transpose.
+    SingularLinear,
+    /// A rotation axis was given with magnitude at or below the
+    /// singularity threshold, so it cannot be normalised.
+    ZeroAxis,
+    /// Applying the inverse-transpose to a unit normal produced a
+    /// zero-magnitude vector, so no direction can be recovered.
+    ZeroMagnitudeNormal,
+}
+
+impl fmt::Display for TransformError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::SingularLinear => "linear part of the transform is singular",
+            Self::ZeroAxis => "rotation axis must be non-zero",
+            Self::ZeroMagnitudeNormal => "transformed normal has zero magnitude",
+        })
+    }
+}
+
+impl std::error::Error for TransformError {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MeshManifoldError {
     EmptyMesh,
