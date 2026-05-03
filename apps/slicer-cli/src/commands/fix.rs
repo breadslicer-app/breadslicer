@@ -87,25 +87,44 @@ fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, options: FixOptions) -> Result
 
     let mut fixes: Vec<MeshFix> = Vec::new();
 
-    if options.zero_length_edges
-        && let Err(errors) = mesh.validate_faces()
-    {
-        let edge_fixes = mesh.fix_zero_length_edges(&errors);
-        // TODO: Fix other cases
-
-        if edge_fixes.len() < errors.len() {
-            return Err(anyhow!(
-                "Unable to fix mesh. Face errors correction is not implemented (yet)."
-            ));
+    // Try to obtain the witness directly. If the mesh's faces
+    // already validate, no further face-level repair is necessary
+    // and we move straight on to normal/winding fixes — paying for
+    // `validate_faces` exactly once. Otherwise, fall back to
+    // repairing the zero-length-edge cases (when enabled) and then
+    // re-mint the witness from the post-removal mesh; the helper
+    // skips a second `validate_faces` whenever the only input
+    // errors were `ZeroLengthEdge`.
+    let mut validated = match mesh.validated_faces_mut() {
+        Ok(v) => v,
+        Err(face_errors) => {
+            if !options.zero_length_edges {
+                return Err(anyhow!(
+                    "Unable to fix mesh. Face errors correction is not implemented (yet)."
+                ));
+            }
+            let (edge_fixes, witness) = mesh.fix_zero_length_edges_into_validated(&face_errors);
+            // TODO: Fix other cases
+            if edge_fixes.len() < face_errors.len() {
+                return Err(anyhow!(
+                    "Unable to fix mesh. Face errors correction is not implemented (yet)."
+                ));
+            }
+            fixes.extend(edge_fixes);
+            witness.map_err(|_| {
+                anyhow!("Unable to fix mesh. Face errors correction is not implemented (yet).")
+            })?
         }
-        fixes.extend(edge_fixes);
-    }
+    };
 
-    let normal_vector_errors = mesh.validate_normal_vectors().err().unwrap_or_default();
-    let manifold_errors = mesh.validate_manifold().err().unwrap_or_default();
+    let normal_vector_errors = validated
+        .validate_normal_vectors()
+        .err()
+        .unwrap_or_default();
+    let manifold_errors = validated.validate_manifold().err().unwrap_or_default();
 
     if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
-        fixes.extend(mesh.fix_faces_orientation(
+        fixes.extend(validated.fix_faces_orientation(
             &manifold_errors,
             &normal_vector_errors,
             FixFacesOptions {

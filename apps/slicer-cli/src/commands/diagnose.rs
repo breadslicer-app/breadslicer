@@ -55,32 +55,35 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) ->
 /// Returns `true` if any problems were detected.
 fn diagnose_mesh(mesh: &IndexedMesh) -> bool {
     let mut detected_problems = false;
-    let mut mesh_critical = false;
 
     // TODO: warn on "subnormal" vertex coordinates?
     if let Err(vertex_errors) = mesh.validate_vertices() {
         detected_problems = true;
-        mesh_critical = true;
         show_vertex_errors(&vertex_errors);
     }
 
-    if let Err(face_errors) = mesh.validate_faces() {
+    // `validated_faces` is the gate that produces the witness needed
+    // by `validate_normal_vectors` and `validate_manifold`. If it
+    // fails, vertex indices are out of range or edges are
+    // collapsed — neither downstream check is meaningful in that
+    // state, so the function returns early after surfacing the
+    // face errors.
+    let validated = match mesh.validated_faces() {
+        Ok(v) => v,
+        Err(face_errors) => {
+            show_face_errors(&face_errors);
+            return true;
+        }
+    };
+
+    if let Err(vector_errors) = validated.validate_normal_vectors() {
         detected_problems = true;
-        mesh_critical = true;
-        show_face_errors(&face_errors);
+        show_normal_vector_errors(&vector_errors);
     }
 
-    // If vertices or triangles are broken, it makes no sense to keep checking.
-    if !mesh_critical {
-        if let Err(vector_errors) = mesh.validate_normal_vectors() {
-            detected_problems = true;
-            show_normal_vector_errors(&vector_errors);
-        }
-
-        if let Err(manifold_errors) = mesh.validate_manifold() {
-            detected_problems = true;
-            show_manifold_errors(&manifold_errors);
-        }
+    if let Err(manifold_errors) = validated.validate_manifold() {
+        detected_problems = true;
+        show_manifold_errors(&manifold_errors);
     }
 
     detected_problems
