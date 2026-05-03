@@ -16,7 +16,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 use tempfile::TempDir;
 
@@ -87,6 +87,70 @@ fn write_clean_stlb(path: &Path) {
     let file = fs::File::create(path).expect("create stlb");
     let mut writer = std::io::BufWriter::new(file);
     write_stlb(&tetrahedron_mesh(None), &mut writer).expect("write_stlb");
+}
+
+/// Tetrahedron with face 0's winding reversed. The other three faces
+/// keep their original winding, so the result is internally
+/// inconsistent: `validate_manifold` flags every edge of face 0 with
+/// `InconsistentWindingOrder`. The stored normal is left as-is so
+/// `validate_normal_vectors` flags `ExpectationMismatch` on the same
+/// face. All vertex indices remain in range.
+fn flipped_winding_tetrahedron_mesh() -> IndexedMesh {
+    let mut mesh = tetrahedron_mesh(None);
+    mesh.faces[0].vertices.reverse();
+    mesh
+}
+
+/// Tetrahedron whose face 1 carries a non-unit-magnitude normal
+/// (scaled by 2). `validate_normal_vectors` flags `NonUnitNorm`. All
+/// vertex indices remain in range.
+fn nonunit_normal_tetrahedron_mesh() -> IndexedMesh {
+    let mut mesh = tetrahedron_mesh(None);
+    let n = mesh.faces[1].normal.coords();
+    mesh.faces[1].normal = Normal::new([n[0] * 2.0, n[1] * 2.0, n[2] * 2.0]);
+    mesh
+}
+
+/// Tetrahedron with three extra collinear vertices appended and an
+/// extra face built from them. The face is degenerate — its computed
+/// normal is `Err(Degenerate triangle)` — but every face index in the
+/// mesh is in range. This is the worst-case input the CLI's `fix`
+/// pipeline can encounter through the bundled loaders.
+fn tetrahedron_with_extra_collinear_face() -> IndexedMesh {
+    let mut mesh = tetrahedron_mesh(None);
+    let base = mesh.vertices.len() as u32;
+    mesh.vertices.push(Vertex::new([0.0, 0.0, 0.0]));
+    mesh.vertices.push(Vertex::new([1.0, 0.0, 0.0]));
+    mesh.vertices.push(Vertex::new([2.0, 0.0, 0.0]));
+    mesh.faces.push(IndexedTriangle {
+        normal: Normal::new([1.0, 0.0, 0.0]),
+        vertices: [base, base + 1, base + 2],
+    });
+    mesh
+}
+
+/// Writes the given mesh to `path` as ASCII STL.
+fn write_stla_to(path: &Path, mesh: &IndexedMesh) {
+    let file = fs::File::create(path).expect("create stla");
+    let mut writer = std::io::BufWriter::new(file);
+    write_stla(mesh, &mut writer).expect("write_stla");
+}
+
+/// `assert_cmd` predicate that fails if stderr contains the textual
+/// signature of a Rust panic. A Rust panic in a `#[panic = "unwind"]`
+/// build prints `thread '…' panicked at …` and exits with code 101 by
+/// default; in `#[panic = "abort"]` builds it still emits the same
+/// header before aborting. Either way, the substring is reliable.
+///
+/// Use this in addition to `.success()` / `.failure()` whenever the
+/// property we care about is "the binary did not crash" — a Rust
+/// panic propagating to the CLI is *always* a bug, regardless of what
+/// the user typed.
+fn no_panic_in_stderr() -> predicates::str::ContainsPredicate {
+    // `predicate::str::contains("panicked at")` is what we'll negate
+    // at the call site via `.not()`. Returning the bare predicate
+    // keeps the call sites self-documenting.
+    predicate::str::contains("panicked at")
 }
 
 /// Writes a multi-object scene as ASCII STL by going through `Scene`
@@ -457,6 +521,220 @@ mod fix_tests {
             ])
             .assert()
             .failure();
+    }
+}
+
+/// CLI-level no-panic contract for the `fix` subcommand.
+///
+/// `IndexedMesh::validate_normal_vectors` and
+/// `IndexedMesh::fix_faces_orientation` both index into
+/// `self.vertices` / `self.faces` without bounds checks, on the
+/// assumption that an earlier `validate_faces` has guaranteed the
+/// indices are in range. In `slicer-cli fix`, that earlier
+/// `validate_faces` only runs when `--fix-zero-length-edges=true`
+/// (the default). With `--fix-zero-length-edges=false` the gate is
+/// bypassed: any mesh produced by the bundled loaders flows directly
+/// into `validate_normal_vectors` and then into
+/// `fix_faces_orientation`.
+///
+/// These are **contract tests**, not regression tests. The bundled
+/// STL/OBJ loaders dedupe vertices densely, so no file-driven input
+/// the CLI accepts today can carry out-of-range face indices, and
+/// the unchecked-index assumption holds — the tests are expected to
+/// pass against the unmodified library. They serve two purposes:
+///
+/// 1. Lock the property "the CLI does not panic on any
+///    loader-acceptable mesh under any `--fix-*` flag combination",
+///    end-to-end through the binary, for clean inputs and for inputs
+///    that exercise each fix sub-path (winding flip, normal
+///    recompute, degenerate face). A regression in any layer
+///    (loader, validate, fix, writer) that lets a panic escape will
+///    fail one of these tests.
+///
+/// 2. Future-proof the unchecked-index assumption: if a new file
+///    format, a custom binary loader, or a library refactor ever
+///    produces an `IndexedMesh` with out-of-range indices, these
+///    tests will surface the resulting library-level panic as a
+///    CI-visible CLI abort rather than a silent data crash.
+///
+/// Tests labelled "_does_not_panic_on_*" assert *only* the absence
+/// of a Rust panic in stderr; the exit code (success vs. graceful
+/// failure) is left unconstrained where the answer depends on
+/// library-level decisions outside this binary's contract.
+#[cfg(test)]
+mod fix_no_panic_contract_tests {
+    use super::*;
+
+    #[test]
+    fn fix_with_validate_faces_skipped_does_not_panic_on_clean_input() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("clean.stla");
+        let target = tmp.path().join("out.stla");
+        write_clean_stla(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
+            ])
+            .assert()
+            .success()
+            .stderr(no_panic_in_stderr().not());
+    }
+
+    #[test]
+    fn fix_with_all_fix_passes_disabled_is_a_clean_no_op() {
+        // All three `--fix-*` flags off — `fix_mesh` skips every
+        // validate/fix sub-pass. The pipeline must still succeed
+        // (the writer runs unconditionally) and must not panic.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("clean.stla");
+        let target = tmp.path().join("out.stla");
+        write_clean_stla(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
+                "--fix-flipped-faces=false",
+                "--fix-face-normals=false",
+            ])
+            .assert()
+            .success()
+            .stderr(no_panic_in_stderr().not());
+        assert!(target.exists());
+    }
+
+    #[test]
+    fn fix_with_validate_faces_skipped_does_not_panic_on_winding_errors() {
+        // Face 0 is wound backwards relative to its neighbours, so
+        // `validate_manifold` returns `InconsistentWindingOrder`
+        // errors and `validate_normal_vectors` returns an
+        // `ExpectationMismatch` for face 0. With `--fix-zero-length-edges=false`,
+        // `validate_faces` is skipped — the fix routine receives
+        // these errors and exercises the flip + normal-recompute
+        // branch end-to-end through the binary.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("flipped.stla");
+        let target = tmp.path().join("out.stla");
+        write_stla_to(&source, &flipped_winding_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
+                "--fix-flipped-faces=true",
+                "--fix-face-normals=true",
+            ])
+            .assert()
+            .success()
+            .stderr(no_panic_in_stderr().not());
+        assert!(target.exists());
+    }
+
+    #[test]
+    fn fix_with_validate_faces_skipped_does_not_panic_on_nonunit_normal() {
+        // Face 1's normal is stretched to magnitude 2.
+        // `validate_normal_vectors` returns a `NonUnitNorm` error;
+        // `fix_faces_orientation` puts the face in the second-pass
+        // (normals-only) loop and recomputes the normal. With
+        // `validate_faces` skipped, this drives the second-pass path
+        // end-to-end through the binary.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("nonunit.stla");
+        let target = tmp.path().join("out.stla");
+        write_stla_to(&source, &nonunit_normal_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
+                "--fix-flipped-faces=false",
+                "--fix-face-normals=true",
+            ])
+            .assert()
+            .success()
+            .stderr(no_panic_in_stderr().not());
+        assert!(target.exists());
+    }
+
+    #[test]
+    fn fix_with_validate_faces_skipped_does_not_panic_on_degenerate_face() {
+        // The hardest input the bundled loaders can hand to the fix
+        // routine: a mesh where one face is geometrically degenerate
+        // (collinear vertices). `validate_normal_vectors` emits
+        // `ZeroAreaTriangle`; if `fix_faces_orientation` later tries
+        // to recompute that face's normal, the recompute fails. The
+        // pipeline must surface that as a clean exit, not a panic.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("degenerate.stla");
+        let target = tmp.path().join("out.stla");
+        write_stla_to(&source, &tetrahedron_with_extra_collinear_face());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
+                "--fix-flipped-faces=true",
+                "--fix-face-normals=true",
+            ])
+            .assert()
+            // Either a graceful non-zero exit (the fix routine
+            // refuses to recompute the degenerate face's normal) or
+            // a success (the routine chose to skip it). Both are
+            // acceptable; only a Rust panic is a regression.
+            .stderr(no_panic_in_stderr().not());
+    }
+
+    #[test]
+    fn fix_with_validate_faces_skipped_does_not_panic_on_malformed_input() {
+        // Loader rejects the input — the validate/fix pipeline is
+        // never reached. Pin that skipping `--fix-zero-length-edges`
+        // does not change the failure shape: the binary still exits
+        // non-zero with no Rust panic in stderr.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("garbage.stl");
+        let target = tmp.path().join("out.stla");
+        fs::write(&source, b"This is not an STL file").unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+                "--fix-zero-length-edges=false",
+            ])
+            .assert()
+            .failure()
+            .stderr(no_panic_in_stderr().not());
     }
 }
 
