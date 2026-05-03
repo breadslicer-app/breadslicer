@@ -313,4 +313,117 @@ mod binary_stl_malformed_tests {
         assert!((n[1]).abs() < 1e-6);
         assert!((n[2] - 1.0).abs() < 1e-6);
     }
+
+    /// Helpers for the non-finite-input regression tests.
+    fn well_formed_triangle_bytes() -> Vec<u8> {
+        // CCW triangle in the XY plane with a unit +Z normal — the
+        // happy-path input the next few tests perturb, one f32 at a
+        // time.
+        let mut t = Vec::with_capacity(50);
+        t.extend(&0.0_f32.to_le_bytes()); // normal.x
+        t.extend(&0.0_f32.to_le_bytes()); // normal.y
+        t.extend(&1.0_f32.to_le_bytes()); // normal.z
+        t.extend(&0.0_f32.to_le_bytes()); // v0.x
+        t.extend(&0.0_f32.to_le_bytes()); // v0.y
+        t.extend(&0.0_f32.to_le_bytes()); // v0.z
+        t.extend(&1.0_f32.to_le_bytes()); // v1.x
+        t.extend(&0.0_f32.to_le_bytes()); // v1.y
+        t.extend(&0.0_f32.to_le_bytes()); // v1.z
+        t.extend(&0.0_f32.to_le_bytes()); // v2.x
+        t.extend(&1.0_f32.to_le_bytes()); // v2.y
+        t.extend(&0.0_f32.to_le_bytes()); // v2.z
+        t.extend(&[0u8, 0u8]); // attribute byte count
+        debug_assert_eq!(t.len(), 50);
+        t
+    }
+
+    fn write_f32(triangle: &mut [u8], offset: usize, value: f32) {
+        triangle[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    /// MF-C-1 regression: NaN bit-patterns in any f32 of a binary STL
+    /// triangle record must be rejected, mirroring the ASCII reader's
+    /// `tokens_to_f32` finite-only guard. Each offset corresponds to a
+    /// distinct field (normal.x/y/z, v0.x/y/z, v1.x/y/z, v2.x/y/z) so
+    /// that any future regression is localised to a specific field.
+    #[test]
+    fn nan_in_any_triangle_field_is_an_error() {
+        for offset in [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44] {
+            let mut triangle = well_formed_triangle_bytes();
+            write_f32(&mut triangle, offset, f32::NAN);
+            let buf = make_binary_stl_with_count(1, &triangle);
+            let mut reader = Cursor::new(buf);
+            assert!(
+                read_stlb(&mut reader).is_err(),
+                "binary STL with NaN at offset {offset} must be rejected",
+            );
+        }
+    }
+
+    /// MF-C-1 regression: positive and negative infinity in any f32
+    /// field of a binary STL triangle record must be rejected.
+    #[test]
+    fn infinity_in_any_triangle_field_is_an_error() {
+        for offset in [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44] {
+            for infinity in [f32::INFINITY, f32::NEG_INFINITY] {
+                let mut triangle = well_formed_triangle_bytes();
+                write_f32(&mut triangle, offset, infinity);
+                let buf = make_binary_stl_with_count(1, &triangle);
+                let mut reader = Cursor::new(buf);
+                assert!(
+                    read_stlb(&mut reader).is_err(),
+                    "binary STL with {infinity} at offset {offset} must be rejected",
+                );
+            }
+        }
+    }
+
+    /// MF-C-1 regression: a triangle whose stored normal is all-zero
+    /// (the "recompute me" sentinel) but whose vertex coordinates are
+    /// non-finite must still be rejected. Before the fix, the
+    /// `normal == Normal::new([0,0,0])` shortcut would short-circuit
+    /// the comparison while the NaN/Inf vertices propagated through
+    /// `compute_normal_from_triangle_vertices` and into the mesh.
+    #[test]
+    fn zero_normal_with_nan_vertex_is_an_error() {
+        let mut triangle = well_formed_triangle_bytes();
+        write_f32(&mut triangle, 0, 0.0); // normal.x
+        write_f32(&mut triangle, 4, 0.0); // normal.y
+        write_f32(&mut triangle, 8, 0.0); // normal.z
+        write_f32(&mut triangle, 16, f32::NAN); // v0.y
+        let buf = make_binary_stl_with_count(1, &triangle);
+        let mut reader = Cursor::new(buf);
+        assert!(read_stlb(&mut reader).is_err());
+    }
+
+    /// MF-C-1 regression: a representative NaN bit-pattern that is
+    /// *not* the canonical `f32::NAN` (different payload bits) must
+    /// also be rejected. Guards against a fix that compares the bit
+    /// pattern against a single NaN encoding instead of using
+    /// `is_finite`.
+    #[test]
+    fn non_canonical_nan_bit_pattern_in_normal_is_an_error() {
+        // Quiet NaN with a non-zero payload — distinct from the bit
+        // pattern produced by `f32::NAN`.
+        let weird_nan = f32::from_bits(0x7FC0_1234);
+        debug_assert!(weird_nan.is_nan());
+        let mut triangle = well_formed_triangle_bytes();
+        write_f32(&mut triangle, 0, weird_nan); // normal.x
+        let buf = make_binary_stl_with_count(1, &triangle);
+        let mut reader = Cursor::new(buf);
+        assert!(read_stlb(&mut reader).is_err());
+    }
+
+    /// MF-C-1 regression: subnormal (denormalised) f32 values are
+    /// finite per IEEE-754 and must continue to be accepted, even
+    /// after the finite-only guard is in place.
+    #[test]
+    fn subnormal_components_are_accepted() {
+        let mut triangle = well_formed_triangle_bytes();
+        // Subnormal — very small, but finite.
+        write_f32(&mut triangle, 12, f32::from_bits(1)); // v0.x
+        let buf = make_binary_stl_with_count(1, &triangle);
+        let mut reader = Cursor::new(buf);
+        assert!(read_stlb(&mut reader).is_ok());
+    }
 }

@@ -87,20 +87,27 @@ impl<'a> BinaryStlReader<'a> {
         let mut buf = [0u8; 50];
         read_exact_section(&mut self.reader, &mut buf, "a triangle record")?;
 
-        let f = |offset: usize| -> f32 {
-            f32::from_le_bytes([
+        let f = |offset: usize, what: &str| -> Result<f32> {
+            let value = f32::from_le_bytes([
                 buf[offset],
                 buf[offset + 1],
                 buf[offset + 2],
                 buf[offset + 3],
-            ])
+            ]);
+            if !value.is_finite() {
+                return Err(anyhow!(
+                    "expected finite f32 for {what}, got {value} which is {:?}",
+                    value.classify()
+                ));
+            }
+            Ok(value)
         };
 
-        let mut normal = Normal::new([f(0), f(4), f(8)]);
+        let mut normal = Normal::new([f(0, "normal.x")?, f(4, "normal.y")?, f(8, "normal.z")?]);
         let vertices = [
-            Vertex::new([f(12), f(16), f(20)]),
-            Vertex::new([f(24), f(28), f(32)]),
-            Vertex::new([f(36), f(40), f(44)]),
+            Vertex::new([f(12, "v0.x")?, f(16, "v0.y")?, f(20, "v0.z")?]),
+            Vertex::new([f(24, "v1.x")?, f(28, "v1.y")?, f(32, "v1.z")?]),
+            Vertex::new([f(36, "v2.x")?, f(40, "v2.y")?, f(44, "v2.z")?]),
         ];
         // buf[48..50] is the attribute byte count, ignored. TODO: check
 
