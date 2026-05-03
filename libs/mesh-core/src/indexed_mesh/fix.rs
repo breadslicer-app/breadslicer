@@ -9,11 +9,32 @@ use anyhow::{Result, anyhow};
 
 use crate::errors::{FaceIndex, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError};
 use crate::geometry::compute_normal_from_triangle_vertices;
+use crate::primitives::Normal;
 
 use super::{FixFacesOptions, IndexedMesh};
 
 #[cfg(test)]
 use crate::primitives::{IndexedTriangle, Vertex};
+
+/// One planned mutation of a face. The fix routine builds a `Vec` of
+/// these and only applies them once every fallible step has succeeded,
+/// so a mid-loop `Err` never leaves the mesh half-mutated.
+struct PlannedFaceFix {
+    face_idx: FaceIndex,
+    /// `Some` if the face's winding should be reversed.
+    new_vertices: Option<[u32; 3]>,
+    /// `Some` if the face's normal should be replaced.
+    new_normal: Option<Normal>,
+    /// Pre-existing normal, captured before any mutation, so the
+    /// recorded `MeshFix::RecomputedNormal::old_normal` matches the
+    /// state the caller observed.
+    old_normal: Normal,
+    /// Whether to record a `FlippedFaceOrientation` fix.
+    record_flip: bool,
+    /// Whether to record a `RecomputedNormal` fix (vs. just a silent
+    /// negate).
+    record_recompute: bool,
+}
 
 impl IndexedMesh {
     pub fn fix_faces_orientation(
@@ -52,6 +73,13 @@ impl IndexedMesh {
 
         let mut num_flipped_faces: u32 = 0;
 
+        // Plan-then-apply: collect every intended mutation in `plan`
+        // first. Only after every fallible step (notably the
+        // `compute_normal_from_triangle_vertices` calls) has succeeded
+        // do we touch `self.faces`. This guarantees that on any `Err`,
+        // the mesh is byte-for-byte identical to its pre-call state.
+        let mut plan: Vec<PlannedFaceFix> = Vec::new();
+
         if options.flipped {
             // We do a first counting round
             for (face_idx, n_errors) in &possibly_flipped_faces {
@@ -72,49 +100,83 @@ impl IndexedMesh {
 
             for (face_idx, n_errors) in &possibly_flipped_faces {
                 if *n_errors == 3 || *n_errors == 2 {
-                    let face = &mut self.faces[face_idx.get()];
-                    face.vertices.reverse();
-                    fixes.push(MeshFix::FlippedFaceOrientation {
-                        face_idx: *face_idx,
-                    });
+                    let face = &self.faces[face_idx.get()];
+                    let old_normal = face.normal;
+                    let mut reversed_vertices = face.vertices;
+                    reversed_vertices.reverse();
 
-                    if faces_with_wrong_normals.contains(face_idx) && options.normals {
-                        // We apply a more aggressive fix
-                        let old_normal = face.normal;
-
-                        face.normal = compute_normal_from_triangle_vertices(&[
-                            self.vertices[face.vertices[0] as usize],
-                            self.vertices[face.vertices[1] as usize],
-                            self.vertices[face.vertices[2] as usize],
-                        ])?;
-                        faces_with_wrong_normals.remove(face_idx);
-                        fixes.push(MeshFix::RecomputedNormal {
-                            face_idx: *face_idx,
-                            old_normal,
-                            new_normal: face.normal,
-                        });
+                    let aggressive = faces_with_wrong_normals.contains(face_idx) && options.normals;
+                    let new_normal = if aggressive {
+                        // Recompute the normal from the *reversed*
+                        // winding. This is the fallible step; if it
+                        // returns Err nothing has been mutated yet.
+                        compute_normal_from_triangle_vertices(&[
+                            self.vertices[reversed_vertices[0] as usize],
+                            self.vertices[reversed_vertices[1] as usize],
+                            self.vertices[reversed_vertices[2] as usize],
+                        ])?
                     } else {
-                        // Simple fix
-                        face.normal = face.normal.negate();
+                        // Simple fix: just negate the stored normal.
+                        old_normal.negate()
+                    };
+
+                    if aggressive {
+                        faces_with_wrong_normals.remove(face_idx);
                     }
+
+                    plan.push(PlannedFaceFix {
+                        face_idx: *face_idx,
+                        new_vertices: Some(reversed_vertices),
+                        new_normal: Some(new_normal),
+                        old_normal,
+                        record_flip: true,
+                        record_recompute: aggressive,
+                    });
                 }
             }
         }
 
         if options.normals {
-            // We fix remaining normal vectors after having flipped faces
+            // Plan the remaining normal-only fixes (faces that need a
+            // new normal but no winding flip).
             for face_idx in &faces_with_wrong_normals {
-                let face = &mut self.faces[face_idx.get()];
+                let face = &self.faces[face_idx.get()];
                 let old_normal = face.normal;
-                face.normal = compute_normal_from_triangle_vertices(&[
+                let new_normal = compute_normal_from_triangle_vertices(&[
                     self.vertices[face.vertices[0] as usize],
                     self.vertices[face.vertices[1] as usize],
                     self.vertices[face.vertices[2] as usize],
                 ])?;
-                fixes.push(MeshFix::RecomputedNormal {
+                plan.push(PlannedFaceFix {
                     face_idx: *face_idx,
+                    new_vertices: None,
+                    new_normal: Some(new_normal),
                     old_normal,
-                    new_normal: face.normal,
+                    record_flip: false,
+                    record_recompute: true,
+                });
+            }
+        }
+
+        // Every fallible step has succeeded — commit the plan.
+        for entry in plan {
+            let face = &mut self.faces[entry.face_idx.get()];
+            if let Some(verts) = entry.new_vertices {
+                face.vertices = verts;
+            }
+            if let Some(normal) = entry.new_normal {
+                face.normal = normal;
+            }
+            if entry.record_flip {
+                fixes.push(MeshFix::FlippedFaceOrientation {
+                    face_idx: entry.face_idx,
+                });
+            }
+            if entry.record_recompute {
+                fixes.push(MeshFix::RecomputedNormal {
+                    face_idx: entry.face_idx,
+                    old_normal: entry.old_normal,
+                    new_normal: entry.new_normal.unwrap_or(entry.old_normal),
                 });
             }
         }
@@ -641,6 +703,257 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // After fix, the mesh should pass all validations
         assert!(mesh.validate_manifold().is_ok());
         assert!(mesh.validate_normal_vectors().is_ok());
+    }
+
+    // -------------------------------------------------------------------
+    // Atomicity regression — `fix_faces_orientation`.
+    //
+    // The fix routine must be transactional: on any error path, the mesh
+    // must be byte-for-byte identical to its pre-call state. Previously,
+    // `face.vertices.reverse()` and the per-face normal recompute were
+    // interleaved, so a `compute_normal_from_triangle_vertices?` mid-loop
+    // returned `Err` after some faces had already been mutated, leaving
+    // the mesh in a state that was neither "before" nor "after".
+    //
+    // The tests in this section:
+    //   * pin the atomicity invariant for the flip pass;
+    //   * pin the atomicity invariant for the second normals-only pass;
+    //   * check that the existing early-return error paths
+    //     ("more than 3 winding errors", "Too many flipped faces") are
+    //     also atomic (they were before the fix, but a future refactor
+    //     could regress them).
+    // -------------------------------------------------------------------
+
+    /// Appends three collinear vertices to `mesh.vertices` and returns
+    /// the indices of the three (so that a face built from them is
+    /// degenerate, and `compute_normal_from_triangle_vertices` returns
+    /// `Err`).
+    fn push_collinear_triangle(mesh: &mut IndexedMesh) -> [u32; 3] {
+        let base = mesh.vertices.len() as u32;
+        mesh.vertices.push(Vertex::new([0.0, 0.0, 0.0]));
+        mesh.vertices.push(Vertex::new([1.0, 0.0, 0.0]));
+        mesh.vertices.push(Vertex::new([2.0, 0.0, 0.0]));
+        [base, base + 1, base + 2]
+    }
+
+    /// The flip pass must not leave a face's vertices reversed when
+    /// the subsequent normal recompute fails.
+    ///
+    /// Construction:
+    /// - A tetrahedron with 3 extra vertices appended so that face 0
+    ///   becomes degenerate (collinear).
+    /// - Crafted manifold errors give face 0 exactly 2 winding-order
+    ///   errors so it enters the flip branch (and stays under the
+    ///   "too many flipped faces" threshold).
+    /// - A crafted normal-vector error puts face 0 in
+    ///   `faces_with_wrong_normals`, so the flip branch tries to
+    ///   recompute the normal — which fails because the triangle is
+    ///   degenerate.
+    ///
+    /// Pre-fix: face 0's vertices were reversed before the recompute
+    /// was attempted, so on `Err` the mesh observably differed from
+    /// `original`.
+    ///
+    /// Post-fix: the function returns `Err` and the mesh equals
+    /// `original`.
+    #[test]
+    fn fix_faces_orientation_is_atomic_when_recompute_fails_in_flip_pass() {
+        let mut mesh = tetrahedron();
+        let collinear = push_collinear_triangle(&mut mesh);
+        // Replace face 0 with the degenerate (collinear) triangle.
+        mesh.faces[0].vertices = collinear;
+
+        let original = mesh.clone();
+
+        // 2 errors mention face 0 → it crosses the n_errors >= 2
+        // threshold and enters the flip branch.
+        let manifold_errors = vec![
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (collinear[0], collinear[1]),
+                face_indices: [0_usize.into(), 1_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (collinear[1], collinear[2]),
+                face_indices: [0_usize.into(), 2_usize.into()],
+            },
+        ];
+        // Putting face 0 in `faces_with_wrong_normals` forces the
+        // aggressive (recompute) branch instead of the simple negate.
+        let normal_errors = vec![MeshNormalVectorError::ExpectationMismatch {
+            face_idx: 0_usize.into(),
+        }];
+
+        let result = mesh.fix_faces_orientation(
+            &manifold_errors,
+            &normal_errors,
+            FixFacesOptions {
+                flipped: true,
+                normals: true,
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "the recompute on a degenerate triangle must return Err",
+        );
+        assert_eq!(
+            mesh, original,
+            "on Err, the mesh must equal its pre-call state",
+        );
+    }
+
+    /// The second (normals-only) pass must not leave already-recomputed
+    /// normals in place when a later face's recompute fails.
+    ///
+    /// Construction:
+    /// - A tetrahedron whose face 1 has a deliberately wrong (but
+    ///   recomputable) normal.
+    /// - 3 extra collinear vertices appended; a 5th face built from
+    ///   them is added to the mesh and given a wrong normal as well.
+    /// - Crafted normal-vector errors flag both face 1 and face 4 as
+    ///   `ExpectationMismatch`, so both enter the second-pass loop.
+    /// - `options.flipped = false` skips the first pass entirely.
+    ///
+    /// The second pass iterates a `HashSet` whose order is randomised
+    /// per call. If face 1 is iterated before face 4: face 1's normal
+    /// is mutated, then face 4's recompute fails, leaving face 1's
+    /// normal observably changed under the pre-fix code. Because the
+    /// order is non-deterministic, the test runs many trials and
+    /// asserts atomicity on every one.
+    ///
+    /// Post-fix: the function returns `Err` and the mesh equals
+    /// `original` on every trial.
+    #[test]
+    fn fix_faces_orientation_is_atomic_when_recompute_fails_in_normals_pass() {
+        // 64 trials gives ≈ (1/2)^64 ≈ 0 probability of a false pass on
+        // the buggy code under the worst-case "degenerate face is always
+        // iterated first" assumption.
+        for trial in 0..64 {
+            let mut mesh = tetrahedron();
+            let collinear = push_collinear_triangle(&mut mesh);
+            // Add a 5th face built from the collinear vertices, with an
+            // arbitrary wrong normal.
+            mesh.faces.push(IndexedTriangle {
+                normal: Normal::new([1.0, 0.0, 0.0]),
+                vertices: collinear,
+            });
+            // Face 1: keep the correct winding but stamp on a wrong normal.
+            mesh.faces[1].normal = Normal::new([1.0, 0.0, 0.0]);
+
+            let original = mesh.clone();
+
+            let normal_errors = vec![
+                MeshNormalVectorError::ExpectationMismatch {
+                    face_idx: 1_usize.into(),
+                },
+                MeshNormalVectorError::ExpectationMismatch {
+                    face_idx: 4_usize.into(),
+                },
+            ];
+
+            let result = mesh.fix_faces_orientation(
+                &[],
+                &normal_errors,
+                FixFacesOptions {
+                    flipped: false,
+                    normals: true,
+                },
+            );
+
+            assert!(
+                result.is_err(),
+                "trial {trial}: the recompute on the collinear face must return Err",
+            );
+            assert_eq!(
+                mesh, original,
+                "trial {trial}: on Err, the mesh must equal its pre-call state",
+            );
+        }
+    }
+
+    /// The "more than 3 winding errors" early return is already
+    /// atomic (the check happens before any mutation), but pin that
+    /// property so a future refactor can't regress it.
+    #[test]
+    fn fix_faces_orientation_is_atomic_when_face_has_more_than_3_winding_errors() {
+        let mut mesh = tetrahedron();
+        let original = mesh.clone();
+
+        let manifold_errors = vec![
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 1),
+                face_indices: [0_usize.into(), 1_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (1, 2),
+                face_indices: [0_usize.into(), 2_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (2, 0),
+                face_indices: [0_usize.into(), 3_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 3),
+                face_indices: [0_usize.into(), 1_usize.into()],
+            },
+        ];
+
+        let result = mesh.fix_faces_orientation(
+            &manifold_errors,
+            &[],
+            FixFacesOptions {
+                flipped: true,
+                normals: true,
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(mesh, original);
+    }
+
+    /// The "Too many flipped faces" early return is already atomic;
+    /// pin that.
+    #[test]
+    fn fix_faces_orientation_is_atomic_when_too_many_faces_need_flipping() {
+        let mut mesh = tetrahedron();
+        let original = mesh.clone();
+
+        let manifold_errors = vec![
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 1),
+                face_indices: [0_usize.into(), 1_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (1, 2),
+                face_indices: [0_usize.into(), 2_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (2, 0),
+                face_indices: [0_usize.into(), 3_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (0, 3),
+                face_indices: [1_usize.into(), 2_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (3, 1),
+                face_indices: [1_usize.into(), 3_usize.into()],
+            },
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (2, 3),
+                face_indices: [2_usize.into(), 3_usize.into()],
+            },
+        ];
+
+        let result = mesh.fix_faces_orientation(
+            &manifold_errors,
+            &[],
+            FixFacesOptions {
+                flipped: true,
+                normals: true,
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(mesh, original);
     }
 }
 
