@@ -41,8 +41,32 @@ use crate::mesh_loader::is_supported_mesh_extension;
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Build the wgpu Instance/Adapter/Device/Queue once up front and
+    // hand them to Slint via `WGPUConfiguration::Manual` so every
+    // top-level Window shares the same Device. Letting Slint pick
+    // `Automatic` triggers a full Vulkan ICD re-enumeration per
+    // window (4-5 stalls of ~225 ms each on NVIDIA — measured), which
+    // makes "New Window" feel like it hangs.
+    use slint::wgpu_28::wgpu;
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("slicer shared device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::default(),
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+        trace: wgpu::Trace::Off,
+    }))?;
+
     slint::BackendSelector::new()
-        .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::default())
+        .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::Manual {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
         .select()?;
 
     let app = AppState::new();

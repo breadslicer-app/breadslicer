@@ -20,6 +20,7 @@ slint = { version = "1.16.1", features = [
     "unstable-winit-030",
 ] }
 directories = "6.0.0"
+pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"
 toml = "1.1.2"
@@ -31,5 +32,4 @@ toml = "1.1.2"
 
 [dev-dependencies]
 float-cmp = { workspace = true }
-pollster = "0.4"
 tempfile = "3.23.0"
