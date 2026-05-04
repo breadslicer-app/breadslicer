@@ -67,56 +67,34 @@ pub(crate) struct PreparedScene {
     pub source_path: PathBuf,
 }
 
-type LoadSlot = Arc<Mutex<Option<(LoadTicket, PathBuf, anyhow::Result<PreparedScene>)>>>;
+type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<PreparedScene>)>>>;
 
-/// RAII handle to an in-flight load. Holding a ticket means the inflight
-/// counter is >= 1 and the UI's `loading` property is `true`; dropping
-/// the ticket decrements the counter and flips `loading` to `false`
-/// when the count hits zero.
+/// Inflight-counter RAII guard. Stored inside `LoadSlot` after a deposit
+/// so the counter is decremented (and the UI's `loading` property is
+/// flipped) when the slot is drained or freed.
 ///
-/// A ticket is created by [`SceneLoader::begin_load`] and consumed by
-/// [`LoadTicket::deposit`]. Dropping a ticket without calling `deposit`
-/// (user-cancelled dialog, worker thread panic, closed-scene
-/// invalidation) is safe: the gate just reopens.
-pub struct LoadTicket {
+/// Holds no strong reference to the slot it lives in. That separation
+/// is what prevents the slot from forming a self-referential `Arc`
+/// cycle once a ticket is deposited: nothing inside the `Mutex<Option…>>`
+/// points back at the `Arc` that owns it, so dropping the loader without
+/// a drain frees the slot and everything in it.
+struct TicketGuard {
     stamp: u64,
     inflight: Arc<AtomicU32>,
-    slot: LoadSlot,
     ui: slint::Weak<MainWindow>,
 }
 
-impl LoadTicket {
-    /// Stamp issued at ticket creation. `take_finished_load` compares
-    /// this against the loader's current generation to drop stale
-    /// deposits.
-    pub fn stamp(&self) -> u64 {
-        self.stamp
-    }
-
-    /// Publishes the load result and notifies the UI thread. Consumes
-    /// the ticket; the ticket drops later, when the UI handler drains
-    /// the slot via `take_finished_load`.
-    pub fn deposit(self, path: PathBuf, result: anyhow::Result<PreparedScene>) {
-        let ui = self.ui.clone();
-        let slot = self.slot.clone();
-        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((self, path, result));
-        let _ = ui.upgrade_in_event_loop(|ui| {
-            ui.invoke_scene_load_finished();
-        });
-    }
-}
-
-impl Drop for LoadTicket {
+impl Drop for TicketGuard {
     fn drop(&mut self) {
         let prior = self.inflight.fetch_sub(1, Ordering::AcqRel);
-        // `prior` is at least 1 by construction: a ticket exists only
+        // `prior` is at least 1 by construction: a guard exists only
         // while inflight is non-zero.
         if prior != 1 {
             return;
         }
         // Inflight hit zero. Flip the UI's `loading` property.
         // `Weak::upgrade` only returns `Some` on the UI thread with the
-        // window still alive — the common case, since tickets usually
+        // window still alive — the common case, since guards usually
         // drop inside `take_finished_load` or in the file-dialog
         // closure. From the worker thread (e.g. a panic that didn't
         // reach `deposit`) or when the window has closed, fall back to
@@ -131,15 +109,66 @@ impl Drop for LoadTicket {
     }
 }
 
+/// RAII handle to an in-flight load. Holding a ticket means the inflight
+/// counter is >= 1 and the UI's `loading` property is `true`; dropping
+/// the ticket decrements the counter and flips `loading` to `false`
+/// when the count hits zero.
+///
+/// A ticket is created by [`SceneLoader::begin_load`] and consumed by
+/// [`LoadTicket::deposit`]. Dropping a ticket without calling `deposit`
+/// (user-cancelled dialog, worker thread panic, closed-scene
+/// invalidation) is safe: the gate just reopens.
+///
+/// The strong slot reference lives on the ticket rather than on the
+/// internal guard so it gets released the moment the ticket is consumed
+/// (deposit destructures `self` and the local slot ref drops at the end
+/// of `deposit`'s body) or cancelled (the field drops with the ticket).
+/// Crucially, the slot ref does NOT travel into the slot itself — only
+/// the guard does — so there is no path that forms a self-cycle.
+pub struct LoadTicket {
+    guard: TicketGuard,
+    slot: LoadSlot,
+}
+
+impl LoadTicket {
+    /// Stamp issued at ticket creation. `drain_matching_deposit`
+    /// compares the deposited guard's stamp against the loader's
+    /// current generation to drop stale deposits; tests use this
+    /// accessor to assert the gating-and-bumping invariants.
+    #[cfg(test)]
+    pub(crate) fn stamp(&self) -> u64 {
+        self.guard.stamp
+    }
+
+    /// Publishes the load result and notifies the UI thread. Consumes
+    /// the ticket; the inflight commitment is transferred to the guard
+    /// inside the slot, which drops later when the UI handler drains
+    /// the slot via `take_finished_load` (or when the slot itself is
+    /// freed because the loader was dropped without a drain).
+    pub fn deposit(self, path: PathBuf, result: anyhow::Result<PreparedScene>) {
+        let LoadTicket { guard, slot } = self;
+        let ui = guard.ui.clone();
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((guard, path, result));
+        let _ = ui.upgrade_in_event_loop(|ui| {
+            ui.invoke_scene_load_finished();
+        });
+        // `slot` (the local strong Arc clone) drops here, releasing the
+        // ticket's strong ref to the slot. Only the guard remains
+        // inside the `Mutex<Option…>>`, and the guard holds no slot
+        // reference.
+    }
+}
+
 pub struct SceneLoader {
     ui: slint::Weak<MainWindow>,
     dialogs: Rc<DialogManager>,
     load_gen: Cell<u64>,
     load_slot: LoadSlot,
-    // Shared with each live `LoadTicket`. 0 means "no load in flight";
+    // Shared with each live `LoadTicket` and with any guard that has
+    // been deposited into `load_slot`. 0 means "no load in flight";
     // 1 means "exactly one ticket exists" (either held by a pending
-    // async closure / worker thread, or deposited into `load_slot`
-    // awaiting drain).
+    // async closure / worker thread, or transferred to a guard sitting
+    // in `load_slot` awaiting drain).
     inflight: Arc<AtomicU32>,
     // Consecutive upload failures for the currently-loaded scene. The
     // renderer drives the count via `note_upload_success` /
@@ -215,10 +244,12 @@ impl SceneLoader {
         }
 
         Some(LoadTicket {
-            stamp,
-            inflight: self.inflight.clone(),
+            guard: TicketGuard {
+                stamp,
+                inflight: self.inflight.clone(),
+                ui: self.ui.clone(),
+            },
             slot: self.load_slot.clone(),
-            ui: self.ui.clone(),
         })
     }
 
@@ -346,11 +377,11 @@ impl SceneLoader {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        let (ticket, path, result) = taken?;
-        if ticket.stamp() != self.load_gen.get() {
+        let (guard, path, result) = taken?;
+        if guard.stamp != self.load_gen.get() {
             // The user cancelled (Close) or something else bumped the
             // generation while this worker was parsing. Drop the
-            // ticket (and the result along with it).
+            // guard (and the result along with it).
             return None;
         }
         Some((path, result))
@@ -553,6 +584,46 @@ mod scene_loader_tests {
         // Ticket is alive but nothing is in the slot yet.
         assert!(loader.drain_matching_deposit().is_none());
         drop(ticket);
+    }
+
+    #[test]
+    fn deposit_after_loader_drop_frees_the_slot() {
+        // Window-close-mid-load, scenario A: the worker holds the
+        // ticket, the user closes the window (loader is dropped), then
+        // the worker finishes parsing and calls `deposit`. With the
+        // self-cycle bug, the deposited guard would keep the slot
+        // alive forever; with this fix the slot Arc must reach
+        // strong_count == 0 by the time `deposit` returns.
+        let loader = loader();
+        let ticket = loader.begin_load().expect("begin");
+        let slot_weak = Arc::downgrade(&loader.load_slot);
+        drop(loader);
+        ticket.deposit(PathBuf::from("/tmp/fake.obj"), stub_err());
+        assert!(
+            slot_weak.upgrade().is_none(),
+            "the slot Arc must have been freed once the only remaining \
+             owner (the local `slot` clone in `deposit`) drops"
+        );
+    }
+
+    #[test]
+    fn loader_drop_after_deposit_frees_the_slot() {
+        // Window-close-mid-load, scenario B: the worker has already
+        // deposited but the UI hasn't drained yet, then the user
+        // closes the window. With the self-cycle bug, the deposited
+        // guard would keep the slot alive forever; with this fix the
+        // slot Arc must reach strong_count == 0 once the loader is
+        // dropped.
+        let loader = loader();
+        let ticket = loader.begin_load().expect("begin");
+        let slot_weak = Arc::downgrade(&loader.load_slot);
+        ticket.deposit(PathBuf::from("/tmp/fake.obj"), stub_err());
+        drop(loader);
+        assert!(
+            slot_weak.upgrade().is_none(),
+            "the slot Arc must have been freed once the loader (its \
+             only remaining strong owner) drops"
+        );
     }
 
     #[test]
