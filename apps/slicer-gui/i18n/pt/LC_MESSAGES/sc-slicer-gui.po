@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-04-27 16:01+0000\n"
-"PO-Revision-Date: 2026-04-27 22:42+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-05-07 20:58+0000\n"
+"Last-Translator: Viriato <viriato@noreply.codeberg.org>\n"
 "Language-Team: Portuguese <https://translate.codeberg.org/projects/"
 "soulcrafted-slicer/slicer-gui/pt/>\n"
 "Language: pt\n"
@@ -12,7 +12,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
-"X-Generator: Weblate 5.17\n"
+"X-Generator: Weblate 5.17.1\n"
 
 #: ui/about-window.slint:10
 msgctxt "AboutWindow"
@@ -134,17 +134,17 @@ msgstr "Fechar"
 #: ui/object-list-panel.slint:18
 msgctxt "ObjectList"
 msgid "Scene objects"
-msgstr ""
+msgstr "Objetos da cena"
 
 #: ui/object-list-panel.slint:38
 msgctxt "ObjectList"
 msgid "Scene Objects"
-msgstr ""
+msgstr "Objetos da Cena"
 
 #: ui/object-list-panel.slint:59
 msgctxt "ObjectList"
 msgid "No objects to display"
-msgstr ""
+msgstr "Nenhum objeto para mostrar"
 
 #: ui/main-window.slint:60
 msgctxt "MainWindow"
@@ -202,22 +202,19 @@ msgid "Preferences"
 msgstr "Preferências"
 
 #: ui/main-window.slint:173
-#, fuzzy
-#| msgctxt "PreferencesMenu"
-#| msgid "3D View"
 msgctxt "MenuBar"
 msgid "View"
-msgstr "Visualização 3D"
+msgstr "Vista"
 
 #: ui/main-window.slint:177
 msgctxt "MenuBar"
 msgid "Hide Object List"
-msgstr ""
+msgstr "Ocultar Lista de Objetos"
 
 #: ui/main-window.slint:178
 msgctxt "MenuBar"
 msgid "Show Object List"
-msgstr ""
+msgstr "Mostrar Lista de Objetos"
 
 #: ui/main-window.slint:188
 msgctxt "MenuBar"
@@ -297,7 +294,7 @@ msgstr "A textura renderizada não pôde ser entregue à interface gráfica."
 #: src/viewport/controller.rs:1536
 msgctxt "ObjectList"
 msgid "Object {}"
-msgstr ""
+msgstr "Objeto {}"
 
 #: src/wiring.rs:207
 msgctxt "FileDialog"
