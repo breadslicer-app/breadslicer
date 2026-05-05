@@ -24,26 +24,21 @@ where
     writer.write_all(b"\n")?;
 
     for face in mesh.faces() {
-        writer.write_all(
-            format!(
-                "  facet normal {:e} {:e} {:e}\n",
-                face.normal[0], face.normal[1], face.normal[2]
-            )
-            .as_bytes(),
+        writeln!(
+            writer,
+            "  facet normal {:e} {:e} {:e}",
+            face.normal[0], face.normal[1], face.normal[2]
         )?;
         writer.write_all(b"    outer loop\n")?;
 
         let v0 = mesh.vertices()[face.vertices[0] as usize];
-        writer
-            .write_all(format!("      vertex {:e} {:e} {:e}\n", v0[0], v0[1], v0[2]).as_bytes())?;
+        writeln!(writer, "      vertex {:e} {:e} {:e}", v0[0], v0[1], v0[2])?;
 
         let v1 = mesh.vertices()[face.vertices[1] as usize];
-        writer
-            .write_all(format!("      vertex {:e} {:e} {:e}\n", v1[0], v1[1], v1[2]).as_bytes())?;
+        writeln!(writer, "      vertex {:e} {:e} {:e}", v1[0], v1[1], v1[2])?;
 
         let v2 = mesh.vertices()[face.vertices[2] as usize];
-        writer
-            .write_all(format!("      vertex {:e} {:e} {:e}\n", v2[0], v2[1], v2[2]).as_bytes())?;
+        writeln!(writer, "      vertex {:e} {:e} {:e}", v2[0], v2[1], v2[2])?;
 
         writer.write_all(b"    endloop\n  endfacet\n")?;
     }
