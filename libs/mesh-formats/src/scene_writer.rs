@@ -106,20 +106,23 @@ pub fn write_scene(
 ) -> Result<Vec<FlattenWarning>> {
     match target_format {
         WriteFormat::Obj => {
-            let mut output_file = std::fs::File::create(target_path)?;
-            write_obj(scene, &mut output_file)?;
+            let output_file = std::fs::File::create(target_path)?;
+            let mut writer = std::io::BufWriter::new(output_file);
+            write_obj(scene, &mut writer)?;
             Ok(Vec::new())
         }
         WriteFormat::StlBin => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            let mut output_file = std::fs::File::create(target_path)?;
-            write_stlb(&flattened.mesh, &mut output_file)?;
+            let output_file = std::fs::File::create(target_path)?;
+            let mut writer = std::io::BufWriter::new(output_file);
+            write_stlb(&flattened.mesh, &mut writer)?;
             Ok(flattened.warnings)
         }
         WriteFormat::StlAscii => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            let mut output_file = std::fs::File::create(target_path)?;
-            write_stla(&flattened.mesh, &mut output_file)?;
+            let output_file = std::fs::File::create(target_path)?;
+            let mut writer = std::io::BufWriter::new(output_file);
+            write_stla(&flattened.mesh, &mut writer)?;
             Ok(flattened.warnings)
         }
     }
