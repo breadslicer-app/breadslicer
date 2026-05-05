@@ -409,6 +409,9 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
             let camera_slot = ctx.camera.borrow();
             let camera = camera_slot.as_ref()?;
             let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
+            if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor) {
+                return None;
+            }
             let ray = picking::ray_from_pixel(camera, fov_y, w, h, ctx.cursor.x, ctx.cursor.y);
             let (hit, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
             Some(handle_hit_to_hover(hit))
@@ -416,10 +419,142 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
         .flatten()
 }
 
+/// Returns `false` when the cursor is far enough from the gizmo's
+/// projected centre that no handle can be hit, allowing
+/// `compute_hover` to skip the three handle ray-tests. The radius
+/// covers the rotate arc (the outermost handle) plus
+/// `HANDLE_PIXEL_LENGTH` of slack so handles at the rim stay hit-able.
+/// Returns `true` when the projection fails (point behind camera) so
+/// the existing hit-test path runs and produces its own `None`.
+fn cursor_within_gizmo_screen_radius(
+    camera: &OrbitCamera,
+    fov_y: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+    pivot: glam::Vec3,
+    cursor: ScreenPoint,
+) -> bool {
+    let Some((px, py)) =
+        picking::project_world_to_screen(camera, fov_y, viewport_w, viewport_h, pivot)
+    else {
+        return true;
+    };
+    let scale = gizmo::gizmo_scale(camera, fov_y, viewport_h);
+    let world_per_pixel = camera.world_per_pixel(fov_y, viewport_h);
+    let radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
+    let radius_px = radius_world / world_per_pixel + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+    let dx = cursor.x - px;
+    let dy = cursor.y - py;
+    dx * dx + dy * dy <= radius_px * radius_px
+}
+
 fn handle_hit_to_hover(hit: HandleHit) -> GizmoHover {
     match hit {
         HandleHit::Translate(axis) => GizmoHover::Translate(axis),
         HandleHit::Rotate(axis) => GizmoHover::Rotate(axis),
         HandleHit::ScaleAxis(axis) => GizmoHover::ScaleAxis(axis),
+    }
+}
+
+#[cfg(test)]
+mod hover_pre_check_tests {
+    use super::*;
+    use glam::Vec3;
+
+    fn camera_at_origin(distance: f32) -> OrbitCamera {
+        let mut c = OrbitCamera::new(Vec3::ZERO, 1.0);
+        c.distance = distance;
+        c
+    }
+
+    fn pivot_screen(camera: &OrbitCamera, fov_y: f32, w: f32, h: f32) -> (f32, f32) {
+        picking::project_world_to_screen(camera, fov_y, w, h, Vec3::ZERO).unwrap()
+    }
+
+    #[test]
+    fn cursor_at_pivot_is_inside_radius() {
+        let camera = camera_at_origin(10.0);
+        let fov_y = default_fov_y();
+        let (w, h) = (1024.0, 768.0);
+        let (px, py) = pivot_screen(&camera, fov_y, w, h);
+        let cursor = ScreenPoint { x: px, y: py };
+        assert!(cursor_within_gizmo_screen_radius(
+            &camera,
+            fov_y,
+            w,
+            h,
+            Vec3::ZERO,
+            cursor,
+        ));
+    }
+
+    #[test]
+    fn cursor_far_outside_is_rejected() {
+        let camera = camera_at_origin(10.0);
+        let fov_y = default_fov_y();
+        let (w, h) = (1024.0, 768.0);
+        // A cursor in the corner of a 1024×768 viewport sits ~640 px from
+        // the centre — well outside the rotate-arc radius (≈ a few dozen
+        // px at this distance) plus the HANDLE_PIXEL_LENGTH slack
+        // (120 px).
+        let cursor = ScreenPoint { x: 0.0, y: 0.0 };
+        assert!(!cursor_within_gizmo_screen_radius(
+            &camera,
+            fov_y,
+            w,
+            h,
+            Vec3::ZERO,
+            cursor,
+        ));
+    }
+
+    #[test]
+    fn cursor_outside_radius_just_beyond_slack_is_rejected() {
+        let camera = camera_at_origin(10.0);
+        let fov_y = default_fov_y();
+        let (w, h) = (1024.0, 768.0);
+        let scale = gizmo::gizmo_scale(&camera, fov_y, h);
+        let world_per_pixel = camera.world_per_pixel(fov_y, h);
+        let radius_px = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION / world_per_pixel
+            + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+        let (px, py) = pivot_screen(&camera, fov_y, w, h);
+        // 1 pixel past the inflated radius along +x.
+        let cursor = ScreenPoint {
+            x: px + radius_px + 1.0,
+            y: py,
+        };
+        assert!(!cursor_within_gizmo_screen_radius(
+            &camera,
+            fov_y,
+            w,
+            h,
+            Vec3::ZERO,
+            cursor,
+        ));
+    }
+
+    #[test]
+    fn cursor_inside_radius_passes() {
+        let camera = camera_at_origin(10.0);
+        let fov_y = default_fov_y();
+        let (w, h) = (1024.0, 768.0);
+        let scale = gizmo::gizmo_scale(&camera, fov_y, h);
+        let world_per_pixel = camera.world_per_pixel(fov_y, h);
+        let radius_px = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION / world_per_pixel
+            + gizmo::dimensions::HANDLE_PIXEL_LENGTH;
+        let (px, py) = pivot_screen(&camera, fov_y, w, h);
+        // Halfway out along +x: comfortably inside the radius.
+        let cursor = ScreenPoint {
+            x: px + radius_px * 0.5,
+            y: py,
+        };
+        assert!(cursor_within_gizmo_screen_radius(
+            &camera,
+            fov_y,
+            w,
+            h,
+            Vec3::ZERO,
+            cursor,
+        ));
     }
 }

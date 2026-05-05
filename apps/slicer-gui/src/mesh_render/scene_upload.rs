@@ -290,6 +290,7 @@ mod build_gpu_scene_data_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: face_vertices,
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -470,6 +471,7 @@ mod build_gpu_scene_data_tests {
             meta: None,
             vertices: vec![],
             faces: vec![],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         };
         let nonempty = triangle_mesh(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -580,6 +582,7 @@ mod transform_to_mat4_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 0, 0],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         };
         let scene = Scene {
             meta: None,
@@ -622,6 +625,7 @@ mod transform_to_mat4_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 0, 0],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         };
         Scene {
             meta: None,

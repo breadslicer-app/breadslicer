@@ -82,6 +82,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
             meta,
             vertices,
             faces: triangles,
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         })
     }
 }

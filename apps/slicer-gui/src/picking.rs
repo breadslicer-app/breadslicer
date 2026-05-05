@@ -238,24 +238,13 @@ fn world_aabb_for_object(scene: &Scene, idx: usize) -> Option<(Vec3, Vec3)> {
         SceneObjectContent::Mesh(m) => m,
         SceneObjectContent::Resource(r) => scene.resources.get(*r)?,
     };
-    let (lmin, lmax) = local_aabb(mesh)?;
+    let aabb = mesh.local_aabb()?;
+    let lmin = Vec3::from(aabb.min().coords());
+    let lmax = Vec3::from(aabb.max().coords());
     Some(match &object.transform {
         Transform3D::Identity => (lmin, lmax),
         Transform3D::Affine(a) => arvo(lmin, lmax, a),
     })
-}
-
-fn local_aabb(mesh: &IndexedMesh) -> Option<(Vec3, Vec3)> {
-    let mut iter = mesh.vertices().iter();
-    let first = Vec3::from(iter.next()?.coords());
-    let mut min = first;
-    let mut max = first;
-    for v in iter {
-        let v = Vec3::from(v.coords());
-        min = min.min(v);
-        max = max.max(v);
-    }
-    Some((min, max))
 }
 
 /// Arvo's transformed-AABB formula in f32. Mirrors `scene::arvo_world_aabb`
@@ -523,6 +512,7 @@ mod pick_object_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         };
         SceneObject {
             meta: None,

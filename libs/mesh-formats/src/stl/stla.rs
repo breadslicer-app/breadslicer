@@ -306,6 +306,7 @@ endsolid";
                     normal: Normal::new([-1.0, 0.0, 0.0]),
                     vertices: [0, 1, 2],
                 }],
+                local_aabb_cache: ::std::sync::OnceLock::new(),
             },
             mesh
         );

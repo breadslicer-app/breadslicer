@@ -18,6 +18,7 @@ fn get_mesh_without_meta() -> IndexedMesh {
             normal: Normal::new([-1.0, 0.0, 0.0]),
             vertices: [0, 1, 2],
         }],
+        local_aabb_cache: ::std::sync::OnceLock::new(),
     }
 }
 
@@ -33,6 +34,7 @@ fn get_unnamed_mesh() -> IndexedMesh {
             normal: Normal::new([-1.0, 0.0, 0.0]),
             vertices: [0, 1, 2],
         }],
+        local_aabb_cache: ::std::sync::OnceLock::new(),
     }
 }
 
@@ -51,6 +53,7 @@ fn get_named_mesh() -> IndexedMesh {
             normal: Normal::new([-1.0, 0.0, 0.0]),
             vertices: [0, 1, 2],
         }],
+        local_aabb_cache: ::std::sync::OnceLock::new(),
     }
 }
 

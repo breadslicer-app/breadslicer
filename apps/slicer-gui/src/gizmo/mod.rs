@@ -16,7 +16,6 @@ pub mod hit_test;
 mod tolerances;
 
 use glam::Vec3;
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
 
 use crate::camera::OrbitCamera;
@@ -34,7 +33,9 @@ pub fn pivot_for_object(scene: &Scene, idx: usize) -> Option<Vec3> {
         SceneObjectContent::Mesh(m) => m,
         SceneObjectContent::Resource(r) => scene.resources.get(*r)?,
     };
-    let (lmin, lmax) = local_aabb_centre(mesh)?;
+    let aabb = mesh.local_aabb()?;
+    let lmin = Vec3::from(aabb.min().coords());
+    let lmax = Vec3::from(aabb.max().coords());
     let local_centre = (lmin + lmax) * 0.5;
     Some(match &object.transform {
         Transform3D::Identity => local_centre,
@@ -47,19 +48,6 @@ pub fn pivot_for_object(scene: &Scene, idx: usize) -> Option<Vec3> {
             Vec3::from(v.coords())
         }
     })
-}
-
-fn local_aabb_centre(mesh: &IndexedMesh) -> Option<(Vec3, Vec3)> {
-    let mut iter = mesh.vertices().iter();
-    let first = Vec3::from(iter.next()?.coords());
-    let mut min = first;
-    let mut max = first;
-    for v in iter {
-        let v = Vec3::from(v.coords());
-        min = min.min(v);
-        max = max.max(v);
-    }
-    Some((min, max))
 }
 
 /// World-units-per-pixel × the handle's screen-pixel length, so that
@@ -98,6 +86,7 @@ mod pivot_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -159,6 +148,7 @@ mod pivot_tests {
                     meta: None,
                     vertices: vec![],
                     faces: vec![],
+                    local_aabb_cache: ::std::sync::OnceLock::new(),
                 }),
             }],
         };

@@ -118,6 +118,7 @@ mod test_write_stla {
                 normal: Normal::new([-1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         };
 
         let mut result_vec: Vec<u8> = vec![];
@@ -156,6 +157,7 @@ endsolid",
                 normal: Normal::new([-1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         };
 
         let mut result_vec: Vec<u8> = vec![];
@@ -196,6 +198,7 @@ mod test_write_stlb {
                 normal: Normal::new([-1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
+            local_aabb_cache: ::std::sync::OnceLock::new(),
         }
     }
 

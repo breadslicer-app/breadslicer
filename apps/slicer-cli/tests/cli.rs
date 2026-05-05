@@ -72,6 +72,7 @@ fn tetrahedron_mesh(name: Option<&str>) -> IndexedMesh {
         }),
         vertices,
         faces,
+        local_aabb_cache: ::std::sync::OnceLock::new(),
     }
 }
 
