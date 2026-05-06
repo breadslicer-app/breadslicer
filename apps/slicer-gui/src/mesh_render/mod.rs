@@ -597,8 +597,6 @@ mod gpu_integration_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         };
         Scene {
             meta: None,
@@ -889,8 +887,6 @@ mod gpu_integration_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let scene = Scene {
             meta: None,

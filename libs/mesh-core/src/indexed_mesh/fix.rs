@@ -285,8 +285,6 @@ mod indexed_mesh_fix_faces_orientation_tests {
             meta: None,
             vertices,
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -1072,8 +1070,6 @@ mod indexed_mesh_fix_zero_length_edges_tests {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 

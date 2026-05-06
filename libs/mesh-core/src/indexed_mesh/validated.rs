@@ -262,8 +262,6 @@ mod indexed_mesh_validated_faces_tests {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 

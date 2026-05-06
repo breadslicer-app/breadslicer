@@ -136,8 +136,6 @@ impl SceneObject {
                 meta: None,
                 vertices: mesh.vertices.clone(),
                 faces: mesh.faces.clone(),
-                local_aabb_cache: ::std::sync::OnceLock::new(),
-                clusters_cache: ::std::sync::OnceLock::new(),
             }),
             Transform3D::Affine(a) => {
                 let vertices: Vec<Vertex> = mesh
@@ -163,8 +161,6 @@ impl SceneObject {
                     meta: None,
                     vertices,
                     faces,
-                    local_aabb_cache: ::std::sync::OnceLock::new(),
-                    clusters_cache: ::std::sync::OnceLock::new(),
                 })
             }
         }
@@ -202,6 +198,23 @@ impl Scene {
     pub fn objects(&self) -> &[SceneObject] {
         &self.objects
     }
+}
+
+/// Object-space AABB of `mesh.vertices`. Uncached — each call walks
+/// the vertex array. Callers that hammer this should hold a
+/// `SceneSpatial` from `sc-mesh-spatial` instead, which caches the
+/// result. Returns `None` for an empty mesh.
+fn mesh_local_aabb(mesh: &IndexedMesh) -> Option<Aabb> {
+    if mesh.vertices.is_empty() {
+        return None;
+    }
+    let mut iter = mesh.vertices.iter();
+    let first = *iter.next().expect("non-empty checked above");
+    let mut aabb = Aabb::from_min_max(first, first);
+    for vertex in iter {
+        aabb.extend(*vertex);
+    }
+    Some(aabb)
 }
 
 /// World-space AABB of an object-local AABB after applying an
@@ -286,7 +299,7 @@ impl Scene {
                     .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
             };
 
-            let Some(local) = mesh.local_aabb() else {
+            let Some(local) = mesh_local_aabb(mesh) else {
                 continue;
             };
             match &obj.transform {
@@ -331,8 +344,6 @@ impl Scene {
                 meta: None,
                 vertices,
                 faces,
-                local_aabb_cache: ::std::sync::OnceLock::new(),
-                clusters_cache: ::std::sync::OnceLock::new(),
             }))
         }
     }
@@ -492,8 +503,6 @@ mod scene_object_baked_mesh_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -574,8 +583,6 @@ mod scene_object_baked_mesh_tests {
                 normal: Normal::new([1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let obj = inline(
             mesh,
@@ -661,8 +668,6 @@ mod merge_meshes_tests {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: face_vertices,
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -839,8 +844,6 @@ mod merge_meshes_tests {
             meta: None,
             vertices: v,
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -867,7 +870,7 @@ mod merge_meshes_tests {
     /// vertices are exactly the corners, it gives the tight world-space
     /// AABB of the transformed vertex set.
     fn corner_aabb(mesh: &IndexedMesh, t: &AffineTransform3D) -> Aabb {
-        let local = mesh.local_aabb().unwrap();
+        let local = super::mesh_local_aabb(mesh).unwrap();
         let lmin = local.min().coords();
         let lmax = local.max().coords();
         let corners = [
@@ -1004,8 +1007,6 @@ mod merge_meshes_tests {
                     vertices: [1, 2, 3],
                 },
             ],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let t = AffineTransform3D::from_translation([5.0, -3.0, 1.0])
             .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
@@ -1072,8 +1073,6 @@ mod merge_meshes_tests {
             meta: None,
             vertices: vec![],
             faces: vec![],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let scene = Scene {
             meta: None,
@@ -1120,8 +1119,6 @@ mod merge_meshes_tests {
                 normal: Normal::new([1.0, 0.0, 0.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let scene = Scene {
             meta: None,

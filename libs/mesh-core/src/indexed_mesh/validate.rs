@@ -97,8 +97,6 @@ mod indexed_mesh_validate_vertices_tests {
             meta: None,
             vertices,
             faces: vec![],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -264,8 +262,6 @@ mod indexed_mesh_validate_faces_tests {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -450,8 +446,6 @@ mod indexed_mesh_validate_normal_vectors_tests {
             meta: None,
             vertices,
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -746,8 +740,6 @@ mod indexed_mesh_validate_manifold_tests {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0]); num_vertices],
             faces,
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -775,8 +767,6 @@ mod indexed_mesh_validate_manifold_tests {
                 face([0, 2, 3]), // edges: 0→2, 2→3, 3→0
                 face([1, 3, 2]), // edges: 1→3, 3→2, 2→1
             ],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
