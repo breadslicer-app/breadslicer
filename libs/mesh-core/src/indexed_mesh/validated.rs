@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use float_cmp::approx_eq;
 
-use crate::errors::{FaceIndex, MeshFix, MeshManifoldError, MeshNormalVectorError};
+use crate::errors::{FaceIndex, MeshFix, MeshManifoldError, MeshNormalVectorError, VertexIndex};
 use crate::geometry::{
     DEGENERATE_AREA_SQUARED, NORMAL_ANGLE_TOLERANCE_COS, UNIT_NORM_TOLERANCE, gt_strict,
 };
@@ -126,7 +126,7 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 
     for (idx, face) in mesh.faces.iter().enumerate() {
         let face_idx = FaceIndex::from(idx);
-        let [i0, i1, i2] = face.vertices.map(|i| i as usize);
+        let [i0, i1, i2] = face.vertices.map(usize::from);
 
         let v0 = mesh.vertices[i0].to_f64();
         let v1 = mesh.vertices[i1].to_f64();
@@ -177,13 +177,13 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 
 /// Body of `validate_manifold`. Strictly speaking this routine never
 /// indexes into `mesh.vertices` (it only uses `face.vertices` values
-/// as `u32` half-edge keys), so the in-range invariant is not a
-/// soundness requirement here — the witness gates this method only
-/// for API symmetry with `validate_normal_vectors`.
+/// as half-edge keys), so the in-range invariant is not a soundness
+/// requirement here — the witness gates this method only for API
+/// symmetry with `validate_normal_vectors`.
 fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldError>> {
     let mut errors: Vec<MeshManifoldError> = vec![];
 
-    let mut half_edges: HashMap<(u32, u32), Vec<FaceIndex>> = HashMap::new();
+    let mut half_edges: HashMap<(VertexIndex, VertexIndex), Vec<FaceIndex>> = HashMap::new();
 
     if mesh.faces.is_empty() {
         errors.push(MeshManifoldError::EmptyMesh);
@@ -198,7 +198,7 @@ fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldErro
         }
     }
 
-    let mut checked: HashSet<(u32, u32)> = HashSet::new();
+    let mut checked: HashSet<(VertexIndex, VertexIndex)> = HashSet::new();
 
     for &(a, b) in half_edges.keys() {
         let canonical = if a <= b { (a, b) } else { (b, a) };
@@ -251,10 +251,7 @@ mod indexed_mesh_validated_faces_tests {
     use crate::primitives::Normal;
 
     fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
-        IndexedTriangle {
-            normal: Normal::new([0.0, 0.0, 1.0]),
-            vertices: [v0, v1, v2],
-        }
+        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
     }
 
     fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -316,7 +313,7 @@ mod indexed_mesh_validated_faces_tests {
         assert_eq!(fixes.len(), face_errors.len());
         let witness = witness.expect("post-removal mesh validates");
         assert_eq!(witness.faces().len(), 1);
-        assert_eq!(witness.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(witness.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     /// Pin the slow path: when the input errors include a non-ZLE

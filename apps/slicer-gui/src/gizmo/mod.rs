@@ -79,10 +79,10 @@ mod pivot_tests {
         IndexedMesh::new(
             None,
             vec![Vertex::new(v0), Vertex::new(v1), Vertex::new(v2)],
-            vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: [0, 1, 2],
-            }],
+            vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
         )
     }
 

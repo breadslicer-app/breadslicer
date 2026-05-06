@@ -24,10 +24,7 @@ fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
             ..Default::default()
         }),
         vertices,
-        vec![IndexedTriangle {
-            normal,
-            vertices: [0, 1, 2],
-        }],
+        vec![IndexedTriangle::from_raw_indices(normal, [0, 1, 2])],
     )
 }
 
@@ -137,15 +134,15 @@ fn two_objects_round_trip() {
             Vertex::new([0.0, 2.0, 0.0]),
             Vertex::new([0.0, 0.0, 2.0]),
         ],
-        vec![IndexedTriangle {
-            normal: compute_normal_from_triangle_vertices(&[
+        vec![IndexedTriangle::from_raw_indices(
+            compute_normal_from_triangle_vertices(&[
                 Vertex::new([2.0, 0.0, 0.0]),
                 Vertex::new([0.0, 2.0, 0.0]),
                 Vertex::new([0.0, 0.0, 2.0]),
             ])
             .unwrap(),
-            vertices: [0, 1, 2],
-        }],
+            [0, 1, 2],
+        )],
     );
     let scene = make_scene(vec![mesh_a.clone(), mesh_b.clone()]);
     let (recovered, warnings) = round_trip(&scene);

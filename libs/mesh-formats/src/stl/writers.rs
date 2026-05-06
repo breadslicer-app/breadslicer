@@ -31,13 +31,13 @@ where
         )?;
         writer.write_all(b"    outer loop\n")?;
 
-        let v0 = mesh.vertices()[face.vertices[0] as usize];
+        let v0 = mesh.vertices()[usize::from(face.vertices[0])];
         writeln!(writer, "      vertex {:e} {:e} {:e}", v0[0], v0[1], v0[2])?;
 
-        let v1 = mesh.vertices()[face.vertices[1] as usize];
+        let v1 = mesh.vertices()[usize::from(face.vertices[1])];
         writeln!(writer, "      vertex {:e} {:e} {:e}", v1[0], v1[1], v1[2])?;
 
-        let v2 = mesh.vertices()[face.vertices[2] as usize];
+        let v2 = mesh.vertices()[usize::from(face.vertices[2])];
         writeln!(writer, "      vertex {:e} {:e} {:e}", v2[0], v2[1], v2[2])?;
 
         writer.write_all(b"    endloop\n  endfacet\n")?;
@@ -80,8 +80,8 @@ where
         writer.write_all(&face.normal[1].to_le_bytes())?;
         writer.write_all(&face.normal[2].to_le_bytes())?;
 
-        for &vi in &face.vertices {
-            let v = mesh.vertices()[vi as usize];
+        for vi in face.vertices {
+            let v = mesh.vertices()[usize::from(vi)];
             writer.write_all(&v[0].to_le_bytes())?;
             writer.write_all(&v[1].to_le_bytes())?;
             writer.write_all(&v[2].to_le_bytes())?;
@@ -109,10 +109,10 @@ mod test_write_stla {
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([-1.0, 0.0, 0.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([-1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
         };
 
         let mut result_vec: Vec<u8> = vec![];
@@ -147,10 +147,10 @@ endsolid",
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([-1.0, 0.0, 0.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([-1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
         };
 
         let mut result_vec: Vec<u8> = vec![];
@@ -187,10 +187,10 @@ mod test_write_stlb {
                 Vertex::new([0.0, 100.0, 0.0]),
                 Vertex::new([0.0, 0.0, 100.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([-1.0, 0.0, 0.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([-1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
         }
     }
 

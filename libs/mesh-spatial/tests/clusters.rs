@@ -13,10 +13,7 @@ fn vertex(x: f32, y: f32, z: f32) -> Vertex {
 }
 
 fn tri(a: u32, b: u32, c: u32) -> IndexedTriangle {
-    IndexedTriangle {
-        normal: Normal::new([0.0, 0.0, 1.0]),
-        vertices: [a, b, c],
-    }
+    IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [a, b, c])
 }
 
 #[test]

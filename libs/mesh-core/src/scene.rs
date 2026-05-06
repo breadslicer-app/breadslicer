@@ -329,9 +329,9 @@ impl Scene {
                 faces.push(IndexedTriangle {
                     normal: face.normal,
                     vertices: [
-                        face.vertices[0] + offset,
-                        face.vertices[1] + offset,
-                        face.vertices[2] + offset,
+                        face.vertices[0].offset(offset),
+                        face.vertices[1].offset(offset),
+                        face.vertices[2].offset(offset),
                     ],
                 });
             }
@@ -499,10 +499,10 @@ mod scene_object_baked_mesh_tests {
                 Vertex::new([1.0, 0.0, 0.0]),
                 Vertex::new([0.0, 1.0, 0.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
         }
     }
 
@@ -579,10 +579,10 @@ mod scene_object_baked_mesh_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([1.0, 0.0, 0.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
         };
         let obj = inline(
             mesh,
@@ -601,7 +601,7 @@ mod scene_object_baked_mesh_tests {
             Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
         );
         let baked = obj.baked_mesh(&[]).unwrap();
-        assert_eq!(baked.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(baked.faces[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -612,7 +612,7 @@ mod scene_object_baked_mesh_tests {
             Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0])),
         );
         let baked = obj.baked_mesh(&[]).unwrap();
-        assert_eq!(baked.faces[0].vertices, [0, 2, 1]);
+        assert_eq!(baked.faces[0].vertices.map(u32::from), [0, 2, 1]);
     }
 
     #[test]
@@ -664,10 +664,10 @@ mod merge_meshes_tests {
         IndexedMesh {
             meta: None,
             vertices: vertices.into_iter().map(Vertex::new).collect(),
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: face_vertices,
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                face_vertices,
+            )],
         }
     }
 
@@ -756,8 +756,8 @@ mod merge_meshes_tests {
         assert_eq!(result.vertices[3..], mesh_b.vertices[..]);
 
         assert_eq!(result.faces.len(), 2);
-        assert_eq!(result.faces[0].vertices, [0, 1, 2]);
-        assert_eq!(result.faces[1].vertices, [3, 4, 5]);
+        assert_eq!(result.faces[0].vertices.map(u32::from), [0, 1, 2]);
+        assert_eq!(result.faces[1].vertices.map(u32::from), [3, 4, 5]);
     }
 
     #[test]
@@ -822,10 +822,7 @@ mod merge_meshes_tests {
         // Faces are arbitrary; only their vertex references matter for
         // AABB. Normals are placeholders.
         let n = Normal::new([0.0, 0.0, 1.0]);
-        let face = |a, b, c| IndexedTriangle {
-            normal: n,
-            vertices: [a, b, c],
-        };
+        let face = |a, b, c| IndexedTriangle::from_raw_indices(n, [a, b, c]);
         let faces = vec![
             face(0, 1, 2),
             face(0, 2, 3), // -Z
@@ -990,22 +987,10 @@ mod merge_meshes_tests {
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
             faces: vec![
-                IndexedTriangle {
-                    normal: Normal::new([0.0, 0.0, 1.0]),
-                    vertices: [0, 2, 1],
-                },
-                IndexedTriangle {
-                    normal: Normal::new([0.0, -1.0, 0.0]),
-                    vertices: [0, 1, 3],
-                },
-                IndexedTriangle {
-                    normal: Normal::new([-1.0, 0.0, 0.0]),
-                    vertices: [0, 3, 2],
-                },
-                IndexedTriangle {
-                    normal: Normal::new([1.0, 1.0, 1.0]),
-                    vertices: [1, 2, 3],
-                },
+                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 2, 1]),
+                IndexedTriangle::from_raw_indices(Normal::new([0.0, -1.0, 0.0]), [0, 1, 3]),
+                IndexedTriangle::from_raw_indices(Normal::new([-1.0, 0.0, 0.0]), [0, 3, 2]),
+                IndexedTriangle::from_raw_indices(Normal::new([1.0, 1.0, 1.0]), [1, 2, 3]),
             ],
         };
         let t = AffineTransform3D::from_translation([5.0, -3.0, 1.0])
@@ -1115,10 +1100,10 @@ mod merge_meshes_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([1.0, 0.0, 0.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
         };
         let scene = Scene {
             meta: None,
@@ -1149,7 +1134,7 @@ mod merge_meshes_tests {
             )],
         };
         let result = scene.merge_meshes().unwrap().unwrap();
-        assert_eq!(result.faces[0].vertices, [0, 2, 1]);
+        assert_eq!(result.faces[0].vertices.map(u32::from), [0, 2, 1]);
     }
 
     #[test]
@@ -1196,8 +1181,8 @@ mod merge_meshes_tests {
         let result = scene.merge_meshes().unwrap().unwrap();
         assert_eq!(result.vertices.len(), 6);
         assert_eq!(result.faces.len(), 2);
-        assert_eq!(result.faces[0].vertices, [0, 1, 2]);
-        assert_eq!(result.faces[1].vertices, [3, 4, 5]);
+        assert_eq!(result.faces[0].vertices.map(u32::from), [0, 1, 2]);
+        assert_eq!(result.faces[1].vertices.map(u32::from), [3, 4, 5]);
         // Second object's vertices were translated by (10, 0, 0).
         assert_approx_eq!(f32, result.vertices[3][0], 10.0, epsilon = 1e-6);
         assert_approx_eq!(f32, result.vertices[4][0], 11.0, epsilon = 1e-6);

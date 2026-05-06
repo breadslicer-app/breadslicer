@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader};
 
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
+use sc_mesh_core::errors::VertexIndex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
@@ -28,16 +29,16 @@ fn flush_pending_object(
     }
 
     // Build a local vertex list in first-appearance order.
-    let mut global_to_local: HashMap<u32, u32> = HashMap::new();
+    let mut global_to_local: HashMap<VertexIndex, VertexIndex> = HashMap::new();
     let mut local_vertices: Vec<Vertex> = Vec::new();
 
     for face in current_faces.iter() {
-        for &global_idx in &face.vertices {
+        for global_idx in face.vertices {
             if let std::collections::hash_map::Entry::Vacant(e) = global_to_local.entry(global_idx)
             {
-                let local_idx = local_vertices.len() as u32;
+                let local_idx = VertexIndex::from(local_vertices.len() as u32);
                 e.insert(local_idx);
-                local_vertices.push(global_vertices[global_idx as usize]);
+                local_vertices.push(global_vertices[usize::from(global_idx)]);
             }
         }
     }
@@ -73,7 +74,7 @@ fn check_sharing_and_flush(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
-    used_global_indices: &mut HashSet<u32>,
+    used_global_indices: &mut HashSet<VertexIndex>,
     objects: &mut Vec<SceneObject>,
     warnings: &mut Vec<LoadMeshWarning>,
 ) {
@@ -81,21 +82,24 @@ fn check_sharing_and_flush(
         return;
     }
 
-    let face_global_indices: HashSet<u32> = current_faces
+    let face_global_indices: HashSet<VertexIndex> = current_faces
         .iter()
         .flat_map(|f| f.vertices.iter().copied())
         .collect();
 
-    let mut shared: Vec<u32> = face_global_indices
+    let mut shared: Vec<VertexIndex> = face_global_indices
         .intersection(used_global_indices)
         .copied()
         .collect();
 
     if !shared.is_empty() {
         shared.sort_unstable();
+        // The warning carries raw `u32`s for presentation. Convert
+        // at the boundary so the warning's wire shape stays
+        // unchanged for callers that print it (CLI / GUI).
         warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
             object_name: current_name.clone(),
-            shared_indices: shared,
+            shared_indices: shared.into_iter().map(u32::from).collect(),
         }));
     }
 
@@ -123,7 +127,7 @@ where
 
     // Global vertex indices consumed by already-flushed objects, used to detect
     // cross-object vertex sharing.
-    let mut used_global_indices: HashSet<u32> = HashSet::new();
+    let mut used_global_indices: HashSet<VertexIndex> = HashSet::new();
 
     // File-level header: leading `#` comments before the first non-comment line.
     let mut header_comment: Option<String> = None;
@@ -224,17 +228,17 @@ where
                 }
 
                 let vertex_count = global_vertices.len();
-                let indices: Vec<u32> = tokens
+                let indices: Vec<VertexIndex> = tokens
                     .iter()
                     .map(|token| parse_face_vertex_index(token, vertex_count, line_num))
-                    .collect::<Result<Vec<u32>>>()?;
+                    .collect::<Result<Vec<VertexIndex>>>()?;
 
                 // Fan triangulation for polygons with more than 3 vertices.
                 for i in 1..indices.len() - 1 {
                     let tri_vertices = [indices[0], indices[i], indices[i + 1]];
-                    let v0 = global_vertices[tri_vertices[0] as usize];
-                    let v1 = global_vertices[tri_vertices[1] as usize];
-                    let v2 = global_vertices[tri_vertices[2] as usize];
+                    let v0 = global_vertices[usize::from(tri_vertices[0])];
+                    let v1 = global_vertices[usize::from(tri_vertices[1])];
+                    let v2 = global_vertices[usize::from(tri_vertices[2])];
 
                     let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])?;
 
@@ -339,7 +343,11 @@ fn parse_f32(token: &str, line_num: usize) -> Result<f32> {
     Ok(f)
 }
 
-fn parse_face_vertex_index(token: &str, vertex_count: usize, line_num: usize) -> Result<u32> {
+fn parse_face_vertex_index(
+    token: &str,
+    vertex_count: usize,
+    line_num: usize,
+) -> Result<VertexIndex> {
     // OBJ face indices can be: v, v/vt, v/vt/vn, or v//vn
     // We only care about the vertex index (first component).
     let index_str = token.split('/').next().unwrap();
@@ -383,7 +391,7 @@ fn parse_face_vertex_index(token: &str, vertex_count: usize, line_num: usize) ->
         ));
     }
 
-    Ok(resolved as u32)
+    Ok(VertexIndex::from(resolved as u32))
 }
 
 #[cfg(test)]
@@ -466,51 +474,56 @@ mod parse_f32_tests {
 #[cfg(test)]
 mod parse_face_vertex_index_tests {
     use super::parse_face_vertex_index;
+    use sc_mesh_core::errors::VertexIndex;
+
+    fn vi(n: u32) -> VertexIndex {
+        VertexIndex::from(n)
+    }
 
     // --- Positive (1-based) indices ---
 
     #[test]
     fn first_vertex() {
-        assert_eq!(parse_face_vertex_index("1", 5, 0).unwrap(), 0);
+        assert_eq!(parse_face_vertex_index("1", 5, 0).unwrap(), vi(0));
     }
 
     #[test]
     fn last_vertex() {
-        assert_eq!(parse_face_vertex_index("5", 5, 0).unwrap(), 4);
+        assert_eq!(parse_face_vertex_index("5", 5, 0).unwrap(), vi(4));
     }
 
     // --- Negative (relative) indices ---
 
     #[test]
     fn negative_one_is_last_vertex() {
-        assert_eq!(parse_face_vertex_index("-1", 5, 0).unwrap(), 4);
+        assert_eq!(parse_face_vertex_index("-1", 5, 0).unwrap(), vi(4));
     }
 
     #[test]
     fn negative_equals_vertex_count_is_first() {
-        assert_eq!(parse_face_vertex_index("-5", 5, 0).unwrap(), 0);
+        assert_eq!(parse_face_vertex_index("-5", 5, 0).unwrap(), vi(0));
     }
 
     #[test]
     fn negative_middle() {
-        assert_eq!(parse_face_vertex_index("-3", 5, 0).unwrap(), 2);
+        assert_eq!(parse_face_vertex_index("-3", 5, 0).unwrap(), vi(2));
     }
 
     // --- Composite tokens (v/vt, v/vt/vn, v//vn) ---
 
     #[test]
     fn with_texture_index() {
-        assert_eq!(parse_face_vertex_index("3/2", 5, 0).unwrap(), 2);
+        assert_eq!(parse_face_vertex_index("3/2", 5, 0).unwrap(), vi(2));
     }
 
     #[test]
     fn with_texture_and_normal() {
-        assert_eq!(parse_face_vertex_index("2/1/1", 5, 0).unwrap(), 1);
+        assert_eq!(parse_face_vertex_index("2/1/1", 5, 0).unwrap(), vi(1));
     }
 
     #[test]
     fn with_double_slash_normal() {
-        assert_eq!(parse_face_vertex_index("4//1", 5, 0).unwrap(), 3);
+        assert_eq!(parse_face_vertex_index("4//1", 5, 0).unwrap(), vi(3));
     }
 
     // --- Error: zero index ---
@@ -601,7 +614,7 @@ f 1 2 3
         assert_eq!(mesh.vertices()[1], Vertex::new([1.0, 0.0, 0.0]));
         assert_eq!(mesh.vertices()[2], Vertex::new([0.0, 1.0, 0.0]));
 
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
         assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 1.0]));
     }
 
@@ -733,7 +746,7 @@ f 1/1 2/2 3/3
             ]
         );
         assert_eq!(mesh.faces().len(), 1);
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -756,7 +769,7 @@ f 1/1/1 2/1/1 3/1/1
             ]
         );
         assert_eq!(mesh.faces().len(), 1);
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -777,7 +790,7 @@ f 1//1 2//1 3//1
             })]
         );
         assert_eq!(mesh.faces().len(), 1);
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -797,9 +810,9 @@ f 1 2 3 4
         assert_eq!(mesh.faces().len(), 2);
 
         // First triangle: 0, 1, 2
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
         // Second triangle: 0, 2, 3
-        assert_eq!(mesh.faces()[1].vertices, [0, 2, 3]);
+        assert_eq!(mesh.faces()[1].vertices.map(u32::from), [0, 2, 3]);
     }
 
     #[test]
@@ -814,7 +827,7 @@ f -3 -2 -1
         let mesh = single_mesh(&scene);
         assert!(warnings.is_empty());
         assert_eq!(mesh.faces().len(), 1);
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -964,8 +977,8 @@ f 2 4 3
         assert!(warnings.is_empty());
         assert_eq!(mesh.vertices().len(), 4);
         assert_eq!(mesh.faces().len(), 2);
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
-        assert_eq!(mesh.faces()[1].vertices, [1, 3, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
+        assert_eq!(mesh.faces()[1].vertices.map(u32::from), [1, 3, 2]);
     }
 
     #[test]
@@ -1008,7 +1021,7 @@ f 4 5 6
         assert_eq!(mesh_a.meta().as_ref().unwrap().name, Some("TriA".into()));
         assert_eq!(mesh_a.vertices().len(), 3);
         assert_eq!(mesh_a.faces().len(), 1);
-        assert_eq!(mesh_a.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_a.faces()[0].vertices.map(u32::from), [0, 1, 2]);
 
         let mesh_b = match &scene.objects[1].content {
             SceneObjectContent::Mesh(m) => m,
@@ -1017,7 +1030,7 @@ f 4 5 6
         assert_eq!(mesh_b.meta().as_ref().unwrap().name, Some("TriB".into()));
         assert_eq!(mesh_b.vertices().len(), 3);
         assert_eq!(mesh_b.faces().len(), 1);
-        assert_eq!(mesh_b.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_b.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -1054,7 +1067,7 @@ f 1 3 4
         assert_eq!(mesh_a.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
         assert_eq!(mesh_a.vertices()[1], Vertex::new([1.0, 0.0, 0.0]));
         assert_eq!(mesh_a.vertices()[2], Vertex::new([0.0, 1.0, 0.0]));
-        assert_eq!(mesh_a.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_a.faces()[0].vertices.map(u32::from), [0, 1, 2]);
 
         let mesh_b = match &scene.objects[1].content {
             SceneObjectContent::Mesh(m) => m,
@@ -1065,7 +1078,7 @@ f 1 3 4
         assert_eq!(mesh_b.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
         assert_eq!(mesh_b.vertices()[1], Vertex::new([0.0, 1.0, 0.0]));
         assert_eq!(mesh_b.vertices()[2], Vertex::new([1.0, 1.0, 0.0]));
-        assert_eq!(mesh_b.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh_b.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]
@@ -1090,7 +1103,7 @@ f 2 3 1
         assert_eq!(mesh.meta().as_ref().unwrap().name, Some("Real".into()));
         // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
         assert_eq!(mesh.vertices().len(), 3);
-        assert_eq!(mesh.faces()[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
     }
 
     #[test]

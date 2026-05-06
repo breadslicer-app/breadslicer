@@ -69,10 +69,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
                 vertex_indices[i] = index as u32;
             }
 
-            triangles.push(IndexedTriangle {
-                normal: t.normal,
-                vertices: vertex_indices,
-            });
+            triangles.push(IndexedTriangle::from_raw_indices(t.normal, vertex_indices));
         }
 
         vertices.shrink_to_fit();

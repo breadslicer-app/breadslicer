@@ -27,10 +27,10 @@ fn triangle_mesh(scale: f32) -> IndexedMesh {
     IndexedMesh::new(
         None,
         vec![vertex(-s, -s, 0.0), vertex(s, -s, 0.0), vertex(0.0, s, 0.0)],
-        vec![IndexedTriangle {
-            normal: Normal::new([0.0, 0.0, 1.0]),
-            vertices: [0, 1, 2],
-        }],
+        vec![IndexedTriangle::from_raw_indices(
+            Normal::new([0.0, 0.0, 1.0]),
+            [0, 1, 2],
+        )],
     )
 }
 
@@ -263,6 +263,85 @@ mod scene_aabb_consistency {
         };
         let spatial = SceneSpatial::new(scene);
         assert!(scene_aabb(&spatial).is_none());
+    }
+
+    /// `Scene::aabb` (in `mesh-core`) and `scene_aabb` (in
+    /// `mesh-spatial`) implement the same Arvo loop at different
+    /// caching layers; review §3.4 flagged the duplication. These
+    /// cases pin the cross-layer equivalence on every transform
+    /// shape the renderer is likely to produce, so a drift between
+    /// the two surfaces fails CI rather than picker / framing.
+    fn assert_cached_matches_uncached(mut build: impl FnMut() -> Scene) {
+        let uncached = build().aabb().unwrap();
+        let spatial = SceneSpatial::primed(build());
+        let cached = scene_aabb(&spatial);
+        assert_eq!(uncached, cached);
+    }
+
+    #[test]
+    fn cached_form_agrees_under_pure_rotation() {
+        assert_cached_matches_uncached(|| Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(
+                triangle_mesh(1.0),
+                Transform3D::Affine(AffineTransform3D::from_rotation_z(
+                    std::f64::consts::FRAC_PI_4,
+                )),
+            )],
+        });
+    }
+
+    #[test]
+    fn cached_form_agrees_under_mirror() {
+        // Negative-determinant transform path; the renderer's
+        // winding-reversal logic depends on the cached AABB matching
+        // the uncached one bit-for-bit so the framing camera is
+        // identical.
+        assert_cached_matches_uncached(|| Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(
+                triangle_mesh(1.0),
+                Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0])),
+            )],
+        });
+    }
+
+    #[test]
+    fn cached_form_agrees_for_multi_object_scene() {
+        assert_cached_matches_uncached(|| Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                inline_object(triangle_mesh(1.0), Transform3D::Identity),
+                inline_object(
+                    triangle_mesh(0.5),
+                    Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
+                ),
+                inline_object(
+                    triangle_mesh(2.0),
+                    Transform3D::Affine(AffineTransform3D::from_rotation_z(0.7)),
+                ),
+            ],
+        });
+    }
+
+    #[test]
+    fn cached_form_agrees_with_resource_objects() {
+        // Two scene objects that share a single resource mesh;
+        // exercises the cache slot merging path.
+        assert_cached_matches_uncached(|| Scene {
+            meta: None,
+            resources: vec![triangle_mesh(2.0)],
+            objects: vec![
+                resource_object(0, Transform3D::Identity),
+                resource_object(
+                    0,
+                    Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+                ),
+            ],
+        });
     }
 }
 

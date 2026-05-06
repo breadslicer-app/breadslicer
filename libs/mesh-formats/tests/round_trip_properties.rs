@@ -54,9 +54,8 @@ fn indexed_mesh_strategy() -> impl Strategy<Value = IndexedMesh> {
         .prop_map(|(vertices, faces)| {
             let faces = faces
                 .into_iter()
-                .map(|(a, b, c)| IndexedTriangle {
-                    normal: NORMAL,
-                    vertices: [a as u32, b as u32, c as u32],
+                .map(|(a, b, c)| {
+                    IndexedTriangle::from_raw_indices(NORMAL, [a as u32, b as u32, c as u32])
                 })
                 .collect();
             IndexedMesh::new(None, vertices, faces)
@@ -73,9 +72,9 @@ fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
         .faces()
         .iter()
         .map(|face| {
-            let v0 = mesh.vertices()[face.vertices[0] as usize];
-            let v1 = mesh.vertices()[face.vertices[1] as usize];
-            let v2 = mesh.vertices()[face.vertices[2] as usize];
+            let v0 = mesh.vertices()[usize::from(face.vertices[0])];
+            let v1 = mesh.vertices()[usize::from(face.vertices[1])];
+            let v2 = mesh.vertices()[usize::from(face.vertices[2])];
             // Compare by exact f32 bit pattern: the on-grid values we
             // generate are exact, and the writers/readers preserve
             // them bit-for-bit (binary directly, ASCII via `{:e}`

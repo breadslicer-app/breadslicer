@@ -14,7 +14,9 @@
 
 use float_cmp::approx_eq;
 use proptest::prelude::*;
+use sc_mesh_core::Aabb;
 use sc_mesh_core::primitives::{Vector3D, Vertex};
+use sc_mesh_core::scene::arvo_world_aabb;
 use sc_mesh_core::transform::AffineTransform3D;
 
 // ---------------------------------------------------------------------
@@ -339,6 +341,137 @@ proptest! {
                 );
                 let _ = r; // r itself isn't compared here; kept to keep the test self-explanatory.
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// arvo_world_aabb properties
+// ---------------------------------------------------------------------
+
+/// Generator for a non-empty axis-aligned bounding box: picks two
+/// finite f32 corners and sorts them per-axis so `min[i] <= max[i]`.
+fn aabb_strategy() -> impl Strategy<Value = ([f32; 3], [f32; 3])> {
+    (
+        (
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+        ),
+        (
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+            -10.0_f32..10.0_f32,
+        ),
+    )
+        .prop_map(|((ax, ay, az), (bx, by, bz))| {
+            (
+                [ax.min(bx), ay.min(by), az.min(bz)],
+                [ax.max(bx), ay.max(by), az.max(bz)],
+            )
+        })
+}
+
+/// Generator for an affine transform with bounded entries. Builds a
+/// composition of translation × rotation × non-uniform scale so the
+/// linear part exercises non-trivial entries beyond the diagonal.
+fn affine_strategy() -> impl Strategy<Value = AffineTransform3D> {
+    (
+        (-5.0_f64..5.0_f64, -5.0_f64..5.0_f64, -5.0_f64..5.0_f64),
+        (0.25_f64..4.0_f64, 0.25_f64..4.0_f64, 0.25_f64..4.0_f64),
+        -std::f64::consts::PI..std::f64::consts::PI,
+        (0.1_f64..1.0_f64, 0.1_f64..1.0_f64, 0.1_f64..1.0_f64),
+        -std::f64::consts::PI..std::f64::consts::PI,
+    )
+        .prop_map(|(t, s, theta_z, axis, theta_axis)| {
+            let translation = AffineTransform3D::from_translation([t.0, t.1, t.2]);
+            let scale = AffineTransform3D::from_non_uniform_scale([s.0, s.1, s.2]);
+            let rot_z = AffineTransform3D::from_rotation_z(theta_z);
+            let rot_axis =
+                AffineTransform3D::from_axis_angle([axis.0, axis.1, axis.2], theta_axis).unwrap();
+            translation
+                .compose(&rot_z)
+                .compose(&rot_axis)
+                .compose(&scale)
+        })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// `arvo_world_aabb` must be a conservative enclosure of the
+    /// transformed AABB: every one of the eight transformed corners
+    /// of the local box must lie inside the returned world box.
+    /// This is the algorithm's defining contract — the closed-form
+    /// formula approximates the per-corner method by an outer
+    /// bound, never a tighter one.
+    #[test]
+    fn arvo_world_aabb_contains_every_transformed_corner(
+        (mn, mx) in aabb_strategy(),
+        a in affine_strategy(),
+    ) {
+        let local = Aabb::from_min_max(Vertex::new(mn), Vertex::new(mx));
+        let world = arvo_world_aabb(local, &a);
+
+        let corners = [
+            [mn[0], mn[1], mn[2]],
+            [mx[0], mn[1], mn[2]],
+            [mn[0], mx[1], mn[2]],
+            [mx[0], mx[1], mn[2]],
+            [mn[0], mn[1], mx[2]],
+            [mx[0], mn[1], mx[2]],
+            [mn[0], mx[1], mx[2]],
+            [mx[0], mx[1], mx[2]],
+        ];
+
+        let world_min = world.min().coords();
+        let world_max = world.max().coords();
+        // Tolerance scales with the world-AABB diagonal so f32
+        // round-off in the per-corner forward path doesn't cause
+        // spurious failures for large transformed boxes.
+        let diag = ((world_max[0] - world_min[0]).powi(2)
+            + (world_max[1] - world_min[1]).powi(2)
+            + (world_max[2] - world_min[2]).powi(2))
+        .sqrt();
+        let eps = (diag * 1e-4).max(1e-4);
+
+        for corner in corners {
+            let transformed = a.apply_to_vertex(Vertex::new(corner)).coords();
+            for axis in 0..3 {
+                prop_assert!(
+                    transformed[axis] >= world_min[axis] - eps,
+                    "corner {transformed:?} below world min {world_min:?} on axis {axis}",
+                );
+                prop_assert!(
+                    transformed[axis] <= world_max[axis] + eps,
+                    "corner {transformed:?} above world max {world_max:?} on axis {axis}",
+                );
+            }
+        }
+    }
+
+    /// `arvo_world_aabb` for a translation transform exactly equals
+    /// the local AABB shifted by the translation vector — translations
+    /// are tight, not just conservative, in Arvo's formula.
+    #[test]
+    fn arvo_world_aabb_is_tight_for_pure_translation(
+        (mn, mx) in aabb_strategy(),
+        t in (-5.0_f64..5.0_f64, -5.0_f64..5.0_f64, -5.0_f64..5.0_f64),
+    ) {
+        let local = Aabb::from_min_max(Vertex::new(mn), Vertex::new(mx));
+        let a = AffineTransform3D::from_translation([t.0, t.1, t.2]);
+        let world = arvo_world_aabb(local, &a);
+        let world_min = world.min().coords();
+        let world_max = world.max().coords();
+        let expected_min = [mn[0] + t.0 as f32, mn[1] + t.1 as f32, mn[2] + t.2 as f32];
+        let expected_max = [mx[0] + t.0 as f32, mx[1] + t.1 as f32, mx[2] + t.2 as f32];
+        for axis in 0..3 {
+            prop_assert!(
+                approx_eq!(f32, world_min[axis], expected_min[axis], epsilon = 1e-4),
+            );
+            prop_assert!(
+                approx_eq!(f32, world_max[axis], expected_max[axis], epsilon = 1e-4),
+            );
         }
     }
 }

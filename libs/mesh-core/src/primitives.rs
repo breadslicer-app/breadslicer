@@ -5,6 +5,8 @@
 
 use newtypes::newtype_array;
 
+use crate::errors::VertexIndex;
+
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub(crate) [F; 3]);
 
@@ -180,7 +182,26 @@ impl Triangle {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IndexedTriangle {
     pub normal: Normal,
-    pub vertices: [u32; 3],
+    pub vertices: [VertexIndex; 3],
+}
+
+impl IndexedTriangle {
+    /// Builds an `IndexedTriangle` from a normal and three raw `u32`
+    /// vertex indices. Used at format-loader and test boundaries where
+    /// the indices arrive as raw integers; production code that already
+    /// holds typed `VertexIndex` values should construct the struct
+    /// directly.
+    #[inline]
+    pub fn from_raw_indices(normal: Normal, vertices: [u32; 3]) -> Self {
+        Self {
+            normal,
+            vertices: [
+                VertexIndex::from(vertices[0]),
+                VertexIndex::from(vertices[1]),
+                VertexIndex::from(vertices[2]),
+            ],
+        }
+    }
 }
 
 #[cfg(test)]

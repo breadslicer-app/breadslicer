@@ -257,9 +257,9 @@ pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Optio
             continue;
         }
         for face in &faces[face_range.start as usize..face_range.end as usize] {
-            let v0 = Vec3::from(vertices.get(face.vertices[0] as usize)?.coords());
-            let v1 = Vec3::from(vertices.get(face.vertices[1] as usize)?.coords());
-            let v2 = Vec3::from(vertices.get(face.vertices[2] as usize)?.coords());
+            let v0 = Vec3::from(vertices.get(usize::from(face.vertices[0]))?.coords());
+            let v1 = Vec3::from(vertices.get(usize::from(face.vertices[1]))?.coords());
+            let v2 = Vec3::from(vertices.get(usize::from(face.vertices[2]))?.coords());
             if let Some(t_local) =
                 ray_hits_triangle_oriented(&local_ray, v0, v1, v2, local.det_sign)
             {
@@ -603,10 +603,10 @@ mod pick_object_tests {
                 Vertex::new([0.5, -0.5, 0.0]),
                 Vertex::new([0.0, 0.5, 0.0]),
             ],
-            vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: [0, 1, 2],
-            }],
+            vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
         );
         SceneObject {
             meta: None,
@@ -819,5 +819,127 @@ mod pick_object_tests {
             direction: Vec3::X,
         };
         assert!(pick_object(&ray, &spatial).is_none());
+    }
+}
+
+/// Cross-precision consistency between the picker's f32 `arvo` and
+/// `sc_mesh_core::scene::arvo_world_aabb` (f64). The two implement
+/// the same Arvo closed-form formula at different precisions; for
+/// the picker's use (gating a per-triangle f32 test) the f32 result
+/// must agree with the f64 reference within a precision bound that
+/// scales with the AABB diagonal.
+///
+/// Architectural review §3.6 flagged the duplication; until they
+/// share an implementation, this test pins the equivalence so a
+/// drift between the two surfaces immediately rather than at
+/// render time on a mirrored / non-axis-aligned scene.
+#[cfg(test)]
+mod arvo_consistency_tests {
+    use super::arvo;
+    use float_cmp::assert_approx_eq;
+    use glam::Vec3;
+    use sc_mesh_core::scene::arvo_world_aabb;
+    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::{Aabb, Vertex};
+
+    /// Per-axis tolerance scaled by the world-AABB diagonal.
+    /// f32 cancellation in the corner-by-corner half-extent
+    /// `mul_add` chain accumulates ~1e-5 relative; 1e-3 absolute
+    /// floor handles small AABBs near the origin.
+    fn assert_arvo_agrees(local: Aabb, t: AffineTransform3D) {
+        let f64_world = arvo_world_aabb(local, &t);
+        let lmin = Vec3::from(local.min().coords());
+        let lmax = Vec3::from(local.max().coords());
+        let (f32_min, f32_max) = arvo(lmin, lmax, &t);
+
+        let f64_min = f64_world.min().coords();
+        let f64_max = f64_world.max().coords();
+        let diag = ((f64_max[0] - f64_min[0]).powi(2)
+            + (f64_max[1] - f64_min[1]).powi(2)
+            + (f64_max[2] - f64_min[2]).powi(2))
+        .sqrt();
+        let eps = (diag * 1e-4).max(1e-3);
+
+        for axis in 0..3 {
+            assert_approx_eq!(f32, f32_min[axis], f64_min[axis], epsilon = eps);
+            assert_approx_eq!(f32, f32_max[axis], f64_max[axis], epsilon = eps);
+        }
+    }
+
+    fn unit_aabb() -> Aabb {
+        Aabb::from_min_max(
+            Vertex::new([-1.0, -1.0, -1.0]),
+            Vertex::new([1.0, 1.0, 1.0]),
+        )
+    }
+
+    #[test]
+    fn identity_translation_agrees() {
+        assert_arvo_agrees(unit_aabb(), AffineTransform3D::identity());
+    }
+
+    #[test]
+    fn pure_translation_agrees() {
+        assert_arvo_agrees(
+            unit_aabb(),
+            AffineTransform3D::from_translation([10.0, -5.0, 2.5]),
+        );
+    }
+
+    #[test]
+    fn axis_aligned_scale_agrees() {
+        assert_arvo_agrees(
+            unit_aabb(),
+            AffineTransform3D::from_non_uniform_scale([2.0, 0.5, 3.0]),
+        );
+    }
+
+    #[test]
+    fn rotation_z_quarter_turn_agrees() {
+        assert_arvo_agrees(
+            unit_aabb(),
+            AffineTransform3D::from_rotation_z(std::f64::consts::FRAC_PI_4),
+        );
+    }
+
+    #[test]
+    fn arbitrary_axis_rotation_agrees() {
+        assert_arvo_agrees(
+            unit_aabb(),
+            AffineTransform3D::from_axis_angle([1.0, 2.0, 3.0], 0.7).unwrap(),
+        );
+    }
+
+    #[test]
+    fn mirror_negative_determinant_agrees() {
+        // det = -1 path; both implementations apply the same |M[i][j]|
+        // step, so the mirror should be invisible to the AABB result.
+        assert_arvo_agrees(
+            unit_aabb(),
+            AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]),
+        );
+    }
+
+    #[test]
+    fn combined_translate_rotate_scale_agrees() {
+        let t = AffineTransform3D::from_translation([2.0, -1.0, 4.0])
+            .compose(&AffineTransform3D::from_rotation_z(0.6))
+            .compose(&AffineTransform3D::from_non_uniform_scale([1.5, 0.75, 2.0]));
+        assert_arvo_agrees(unit_aabb(), t);
+    }
+
+    #[test]
+    fn off_origin_aabb_agrees() {
+        // AABB whose corners are all positive — the centre is not at
+        // the origin, so the centre-and-half-extents formula has both
+        // a non-trivial centre transform and a non-trivial half-extent
+        // computation.
+        let off_origin = Aabb::from_min_max(
+            Vertex::new([10.0, 20.0, 30.0]),
+            Vertex::new([12.0, 25.0, 33.0]),
+        );
+        let t = AffineTransform3D::from_rotation_z(std::f64::consts::FRAC_PI_3)
+            .compose(&AffineTransform3D::from_non_uniform_scale([1.5, 1.5, 1.5]));
+        assert_arvo_agrees(off_origin, t);
     }
 }

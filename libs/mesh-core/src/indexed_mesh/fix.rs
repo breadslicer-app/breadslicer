@@ -7,7 +7,9 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
 
-use crate::errors::{FaceIndex, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError};
+use crate::errors::{
+    FaceIndex, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, VertexIndex,
+};
 use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::primitives::Normal;
 
@@ -22,7 +24,7 @@ use crate::primitives::{IndexedTriangle, Vertex};
 struct PlannedFaceFix {
     face_idx: FaceIndex,
     /// `Some` if the face's winding should be reversed.
-    new_vertices: Option<[u32; 3]>,
+    new_vertices: Option<[VertexIndex; 3]>,
     /// `Some` if the face's normal should be replaced.
     new_normal: Option<Normal>,
     /// Pre-existing normal, captured before any mutation, so the
@@ -115,9 +117,9 @@ pub(super) fn fix_faces_orientation_impl(
                     // winding. This is the fallible step; if it
                     // returns Err nothing has been mutated yet.
                     compute_normal_from_triangle_vertices(&[
-                        mesh.vertices[reversed_vertices[0] as usize],
-                        mesh.vertices[reversed_vertices[1] as usize],
-                        mesh.vertices[reversed_vertices[2] as usize],
+                        mesh.vertices[usize::from(reversed_vertices[0])],
+                        mesh.vertices[usize::from(reversed_vertices[1])],
+                        mesh.vertices[usize::from(reversed_vertices[2])],
                     ])?
                 } else {
                     // Simple fix: just negate the stored normal.
@@ -147,9 +149,9 @@ pub(super) fn fix_faces_orientation_impl(
             let face = &mesh.faces[face_idx.get()];
             let old_normal = face.normal;
             let new_normal = compute_normal_from_triangle_vertices(&[
-                mesh.vertices[face.vertices[0] as usize],
-                mesh.vertices[face.vertices[1] as usize],
-                mesh.vertices[face.vertices[2] as usize],
+                mesh.vertices[usize::from(face.vertices[0])],
+                mesh.vertices[usize::from(face.vertices[1])],
+                mesh.vertices[usize::from(face.vertices[2])],
             ])?;
             plan.push(PlannedFaceFix {
                 face_idx: *face_idx,
@@ -234,9 +236,15 @@ pub(super) fn fix_zero_length_edges_impl(
 #[cfg(test)]
 mod indexed_mesh_fix_faces_orientation_tests {
     use super::*;
-    use crate::errors::{MeshManifoldError, MeshNormalVectorError};
+    use crate::errors::{MeshManifoldError, MeshNormalVectorError, VertexIndex};
     use crate::geometry::compute_normal_from_triangle_vertices;
     use crate::primitives::Normal;
+
+    /// Test-local shorthand for `VertexIndex::from(n)`. Keeps the
+    /// dense `MeshManifoldError::*` literals readable.
+    fn vi(n: u32) -> VertexIndex {
+        VertexIndex::from(n)
+    }
 
     fn assert_normal_close(actual: Normal, expected: Normal, eps: f32) {
         for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
@@ -274,10 +282,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
                 ];
                 let normal =
                     compute_normal_from_triangle_vertices(&tri_verts).expect("valid triangle");
-                IndexedTriangle {
-                    normal,
-                    vertices: *indices,
-                }
+                IndexedTriangle::from_raw_indices(normal, *indices)
             })
             .collect();
 
@@ -490,19 +495,19 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // Craft manifold errors where face 0 appears in 4 InconsistentWindingOrder entries
         let manifold_errors = vec![
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 1),
+                edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (1, 2),
+                edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (2, 0),
+                edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 3),
+                edge: (vi(0), vi(3)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
         ];
@@ -533,29 +538,29 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = vec![
             // Face 0: 3 errors
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 1),
+                edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (1, 2),
+                edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (2, 0),
+                edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
             // Face 1: 2 more errors (already has 1 from above)
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 3),
+                edge: (vi(0), vi(3)),
                 face_indices: [1_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (3, 1),
+                edge: (vi(3), vi(1)),
                 face_indices: [1_usize.into(), 3_usize.into()],
             },
             // Face 2: 1 more error (already has 2 from above)
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (2, 3),
+                edge: (vi(2), vi(3)),
                 face_indices: [2_usize.into(), 3_usize.into()],
             },
         ];
@@ -584,11 +589,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let manifold_errors = vec![
             MeshManifoldError::BoundaryEdge {
-                edge: (0, 1),
+                edge: (vi(0), vi(1)),
                 face_idx: 0_usize.into(),
             },
             MeshManifoldError::NonManifoldEdge {
-                edge: (1, 2),
+                edge: (vi(1), vi(2)),
                 face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into()],
             },
         ];
@@ -637,7 +642,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         // Only 1 winding error for face 0 — below threshold of 2
         let manifold_errors = vec![MeshManifoldError::InconsistentWindingOrder {
-            edge: (0, 1),
+            edge: (vi(0), vi(1)),
             face_indices: [0_usize.into(), 1_usize.into()],
         }];
 
@@ -863,7 +868,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let mut mesh = tetrahedron();
         let collinear = push_collinear_triangle(&mut mesh);
         // Replace face 0 with the degenerate (collinear) triangle.
-        mesh.faces[0].vertices = collinear;
+        mesh.faces[0].vertices = collinear.map(VertexIndex::from);
 
         let original = mesh.clone();
 
@@ -871,11 +876,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // threshold and enters the flip branch.
         let manifold_errors = vec![
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (collinear[0], collinear[1]),
+                edge: (vi(collinear[0]), vi(collinear[1])),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (collinear[1], collinear[2]),
+                edge: (vi(collinear[1]), vi(collinear[2])),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
         ];
@@ -935,10 +940,10 @@ mod indexed_mesh_fix_faces_orientation_tests {
             let collinear = push_collinear_triangle(&mut mesh);
             // Add a 5th face built from the collinear vertices, with an
             // arbitrary wrong normal.
-            mesh.faces.push(IndexedTriangle {
-                normal: Normal::new([1.0, 0.0, 0.0]),
-                vertices: collinear,
-            });
+            mesh.faces.push(IndexedTriangle::from_raw_indices(
+                Normal::new([1.0, 0.0, 0.0]),
+                collinear,
+            ));
             // Face 1: keep the correct winding but stamp on a wrong normal.
             mesh.faces[1].normal = Normal::new([1.0, 0.0, 0.0]);
 
@@ -983,19 +988,19 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let manifold_errors = vec![
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 1),
+                edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (1, 2),
+                edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (2, 0),
+                edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 3),
+                edge: (vi(0), vi(3)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
         ];
@@ -1021,27 +1026,27 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let manifold_errors = vec![
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 1),
+                edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (1, 2),
+                edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (2, 0),
+                edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (0, 3),
+                edge: (vi(0), vi(3)),
                 face_indices: [1_usize.into(), 2_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (3, 1),
+                edge: (vi(3), vi(1)),
                 face_indices: [1_usize.into(), 3_usize.into()],
             },
             MeshManifoldError::InconsistentWindingOrder {
-                edge: (2, 3),
+                edge: (vi(2), vi(3)),
                 face_indices: [2_usize.into(), 3_usize.into()],
             },
         ];
@@ -1074,10 +1079,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
     }
 
     fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
-        IndexedTriangle {
-            normal: Normal::new([0.0, 0.0, 1.0]),
-            vertices: [v0, v1, v2],
-        }
+        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
     }
 
     #[test]
@@ -1151,7 +1153,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
         let (fixes, _) = mesh.fix_zero_length_edges_into_validated(&errors);
 
         assert_eq!(mesh.faces.len(), 1);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces[0].vertices.map(u32::from), [0, 1, 2]);
         assert_eq!(fixes.len(), 2);
     }
 
@@ -1170,7 +1172,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
         // Only the collapsed face (index 1) was removed; the OutOfRange
         // error is irrelevant to this fix routine.
         assert_eq!(mesh.faces.len(), 1);
-        assert_eq!(mesh.faces[0].vertices, [0, 1, 2]);
+        assert_eq!(mesh.faces[0].vertices.map(u32::from), [0, 1, 2]);
         assert!(
             fixes
                 .iter()

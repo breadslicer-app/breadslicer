@@ -77,9 +77,9 @@ where
     }
 
     for face in mesh.faces() {
-        let v0 = face.vertices[0] + *vertex_offset + 1;
-        let v1 = face.vertices[1] + *vertex_offset + 1;
-        let v2 = face.vertices[2] + *vertex_offset + 1;
+        let v0 = u32::from(face.vertices[0]) + *vertex_offset + 1;
+        let v1 = u32::from(face.vertices[1]) + *vertex_offset + 1;
+        let v2 = u32::from(face.vertices[2]) + *vertex_offset + 1;
         writeln!(writer, "f {v0} {v1} {v2}")?;
     }
 
@@ -106,10 +106,10 @@ mod tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([0.577, 0.577, 0.577]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.577, 0.577, 0.577]),
+                [0, 1, 2],
+            )],
         }
     }
 

@@ -146,10 +146,10 @@ mod flatten_scene_to_mesh_tests {
                 Vertex::new([0.0, 1.0, 0.0]),
                 Vertex::new([0.0, 0.0, 1.0]),
             ],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([1.0, 0.0, 0.0]),
-                vertices: [0, 1, 2],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
         }
     }
 

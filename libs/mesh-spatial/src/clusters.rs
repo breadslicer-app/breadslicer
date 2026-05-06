@@ -53,7 +53,7 @@ impl TriangleClusters {
             let mut aabb = Aabb::empty();
             for face in chunk {
                 for vidx in face.vertices {
-                    let v = vertices.get(vidx as usize)?;
+                    let v = vertices.get(usize::from(vidx))?;
                     aabb.extend(*v);
                 }
             }

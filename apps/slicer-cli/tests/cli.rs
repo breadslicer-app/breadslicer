@@ -58,10 +58,7 @@ fn tetrahedron_mesh(name: Option<&str>) -> IndexedMesh {
                 vertices[indices[2] as usize],
             ];
             let normal = compute_normal_from_triangle_vertices(&tri_verts).unwrap();
-            IndexedTriangle {
-                normal,
-                vertices: *indices,
-            }
+            IndexedTriangle::from_raw_indices(normal, *indices)
         })
         .collect();
 
@@ -122,10 +119,10 @@ fn tetrahedron_with_extra_collinear_face() -> IndexedMesh {
     mesh.vertices.push(Vertex::new([0.0, 0.0, 0.0]));
     mesh.vertices.push(Vertex::new([1.0, 0.0, 0.0]));
     mesh.vertices.push(Vertex::new([2.0, 0.0, 0.0]));
-    mesh.faces.push(IndexedTriangle {
-        normal: Normal::new([1.0, 0.0, 0.0]),
-        vertices: [base, base + 1, base + 2],
-    });
+    mesh.faces.push(IndexedTriangle::from_raw_indices(
+        Normal::new([1.0, 0.0, 0.0]),
+        [base, base + 1, base + 2],
+    ));
     mesh
 }
 

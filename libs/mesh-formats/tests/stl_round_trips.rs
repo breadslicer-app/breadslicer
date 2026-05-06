@@ -14,10 +14,10 @@ fn get_mesh_without_meta() -> IndexedMesh {
             Vertex::new([0.0, 100.0, 0.0]),
             Vertex::new([0.0, 0.0, 100.0]),
         ],
-        faces: vec![IndexedTriangle {
-            normal: Normal::new([-1.0, 0.0, 0.0]),
-            vertices: [0, 1, 2],
-        }],
+        faces: vec![IndexedTriangle::from_raw_indices(
+            Normal::new([-1.0, 0.0, 0.0]),
+            [0, 1, 2],
+        )],
     }
 }
 
@@ -29,10 +29,10 @@ fn get_unnamed_mesh() -> IndexedMesh {
             Vertex::new([0.0, 100.0, 0.0]),
             Vertex::new([0.0, 0.0, 100.0]),
         ],
-        faces: vec![IndexedTriangle {
-            normal: Normal::new([-1.0, 0.0, 0.0]),
-            vertices: [0, 1, 2],
-        }],
+        faces: vec![IndexedTriangle::from_raw_indices(
+            Normal::new([-1.0, 0.0, 0.0]),
+            [0, 1, 2],
+        )],
     }
 }
 
@@ -47,10 +47,10 @@ fn get_named_mesh() -> IndexedMesh {
             Vertex::new([0.0, 100.0, 0.0]),
             Vertex::new([0.0, 0.0, 100.0]),
         ],
-        faces: vec![IndexedTriangle {
-            normal: Normal::new([-1.0, 0.0, 0.0]),
-            vertices: [0, 1, 2],
-        }],
+        faces: vec![IndexedTriangle::from_raw_indices(
+            Normal::new([-1.0, 0.0, 0.0]),
+            [0, 1, 2],
+        )],
     }
 }
 

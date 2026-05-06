@@ -246,8 +246,8 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
 
         let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
         for face in mesh.faces() {
-            for &vidx in &face.vertices {
-                indices.push(vidx);
+            for vidx in face.vertices {
+                indices.push(u32::from(vidx));
             }
         }
 
@@ -286,10 +286,10 @@ mod build_gpu_scene_data_tests {
         IndexedMesh {
             meta: None,
             vertices: vertices.into_iter().map(Vertex::new).collect(),
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: face_vertices,
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                face_vertices,
+            )],
         }
     }
 
@@ -576,10 +576,10 @@ mod transform_to_mat4_tests {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: [0, 0, 0],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 0, 0],
+            )],
         };
         let scene = Scene {
             meta: None,
@@ -618,10 +618,10 @@ mod transform_to_mat4_tests {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-            faces: vec![IndexedTriangle {
-                normal: Normal::new([0.0, 0.0, 1.0]),
-                vertices: [0, 0, 0],
-            }],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 0, 0],
+            )],
         };
         Scene {
             meta: None,

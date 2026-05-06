@@ -5,9 +5,7 @@
 
 use anyhow::Result;
 
-use crate::errors::{
-    CoordAxis, FaceIndex, MeshFaceError, MeshVertexError, TriVertexSlot, VertexIndex,
-};
+use crate::errors::{CoordAxis, FaceIndex, MeshFaceError, MeshVertexError, TriVertexSlot};
 
 use super::IndexedMesh;
 
@@ -51,11 +49,11 @@ impl IndexedMesh {
             // Checking out of range indices
             for &vertex_pos in &TriVertexSlot::ALL {
                 let vertex_idx = f.vertices[vertex_pos.as_index()];
-                if vertex_idx as usize >= num_vertices {
+                if usize::from(vertex_idx) >= num_vertices {
                     errors.push(MeshFaceError::OutOfRangeVertexIndex {
                         face_idx,
                         vertex_pos,
-                        vertex_idx: VertexIndex::from(vertex_idx),
+                        vertex_idx,
                     });
                 }
             }
@@ -73,7 +71,7 @@ impl IndexedMesh {
                         face_idx,
                         vertex_pos_a: pos_a,
                         vertex_pos_b: pos_b,
-                        vertex_idx: VertexIndex::from(a),
+                        vertex_idx: a,
                     });
                 }
             }
@@ -251,10 +249,7 @@ mod indexed_mesh_validate_faces_tests {
     use crate::primitives::Normal;
 
     fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
-        IndexedTriangle {
-            normal: Normal::new([0.0, 0.0, 1.0]),
-            vertices: [v0, v1, v2],
-        }
+        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
     }
 
     fn make_mesh_with_faces(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -450,10 +445,7 @@ mod indexed_mesh_validate_normal_vectors_tests {
     }
 
     fn face(normal: [f32; 3], v: [u32; 3]) -> IndexedTriangle {
-        IndexedTriangle {
-            normal: Normal::new(normal),
-            vertices: v,
-        }
+        IndexedTriangle::from_raw_indices(Normal::new(normal), v)
     }
 
     // A right triangle in the XY plane: (0,0,0), (1,0,0), (0,1,0).
@@ -725,14 +717,11 @@ mod indexed_mesh_validate_normal_vectors_tests {
 #[cfg(test)]
 mod indexed_mesh_validate_manifold_tests {
     use super::*;
-    use crate::errors::{FaceIndex, MeshManifoldError};
+    use crate::errors::{FaceIndex, MeshManifoldError, VertexIndex};
     use crate::primitives::Normal;
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
-        IndexedTriangle {
-            normal: Normal::new([0.0, 0.0, 1.0]),
-            vertices: v,
-        }
+        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), v)
     }
 
     fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -849,7 +838,7 @@ mod indexed_mesh_validate_manifold_tests {
         assert_eq!(winding_errors.len(), 1);
         match &winding_errors[0] {
             MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
-                assert_eq!(*edge, (0, 1));
+                assert_eq!(*edge, (VertexIndex::from(0_u32), VertexIndex::from(1_u32)));
                 let zero: FaceIndex = 0_usize.into();
                 let one: FaceIndex = 1_usize.into();
                 assert!(face_indices.contains(&zero) && face_indices.contains(&one));
@@ -881,7 +870,8 @@ mod indexed_mesh_validate_manifold_tests {
         );
         let has_edge_01 = non_manifold_errors.iter().any(|e| match e {
             MeshManifoldError::NonManifoldEdge { edge, face_indices } => {
-                *edge == (0, 1) && face_indices.len() == 3
+                *edge == (VertexIndex::from(0_u32), VertexIndex::from(1_u32))
+                    && face_indices.len() == 3
             }
             _ => false,
         });
@@ -894,7 +884,7 @@ mod indexed_mesh_validate_manifold_tests {
         let mut mesh = tetrahedron();
         // Flip face 0: [0, 1, 2] → [0, 2, 1]
         // This reverses edges 0→1 to 0→2, 1→2 to 2→1, 2→0 to 1→0
-        mesh.faces[0].vertices = [0, 2, 1];
+        mesh.faces[0].vertices = [0, 2, 1].map(VertexIndex::from);
 
         let errors = mesh
             .validated_faces()

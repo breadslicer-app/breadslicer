@@ -77,6 +77,21 @@ impl VertexIndex {
     pub fn get(self) -> u32 {
         self.into()
     }
+
+    /// Adds an integer offset to the index. Used when re-basing a
+    /// face's vertex indices into a merged vertex array (see
+    /// `Scene::merge_meshes`).
+    #[inline]
+    pub fn offset(self, by: u32) -> Self {
+        Self::from(u32::from(self) + by)
+    }
+}
+
+impl From<VertexIndex> for usize {
+    #[inline]
+    fn from(v: VertexIndex) -> Self {
+        u32::from(v) as usize
+    }
 }
 
 impl fmt::Display for VertexIndex {
@@ -215,18 +230,18 @@ pub enum MeshManifoldError {
     EmptyMesh,
     /// An edge that belongs to only one face (the mesh has a boundary).
     BoundaryEdge {
-        edge: (u32, u32),
+        edge: (VertexIndex, VertexIndex),
         face_idx: FaceIndex,
     },
     /// An edge shared by more than two faces.
     NonManifoldEdge {
-        edge: (u32, u32),
+        edge: (VertexIndex, VertexIndex),
         face_indices: Vec<FaceIndex>,
     },
     /// Two faces share an edge but traverse it in the same direction,
     /// meaning their normals are inconsistently oriented.
     InconsistentWindingOrder {
-        edge: (u32, u32),
+        edge: (VertexIndex, VertexIndex),
         face_indices: [FaceIndex; 2],
     },
 }
