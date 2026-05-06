@@ -4506,6 +4506,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-mesh-spatial"
+version = "0.0.10"
+dependencies = [
+ "anyhow",
+ "sc-mesh-core",
+]
+
+[[package]]
 name = "sc-slicer-cli"
 version = "0.0.10"
 dependencies = [

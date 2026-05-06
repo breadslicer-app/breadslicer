@@ -216,7 +216,7 @@ impl Scene {
 /// *Real-Time Collision Detection*, §4.2.6. The output is conservative —
 /// it contains every transformed vertex and is exactly tight for
 /// axis-aligned scaling and translation.
-fn arvo_world_aabb(local: Aabb, a: &AffineTransform3D) -> Aabb {
+pub fn arvo_world_aabb(local: Aabb, a: &AffineTransform3D) -> Aabb {
     let lmin = local.min().coords();
     let lmax = local.max().coords();
     // Promote to f64 so the matrix-vector products match the precision of
