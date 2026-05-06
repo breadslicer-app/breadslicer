@@ -20,8 +20,10 @@ pub const HANDLE_PIXEL_RADIUS: f32 = 6.0;
 
 /// Length, in handle-local space, of each cone in the rotate
 /// "two-cone spindle" hit target. The two cones share their bases at
-/// the arc's camera-facing midpoint and point along ±axis with this
-/// length. Mirrors the translate cone's `1.18 - 1.0 = 0.18`.
+/// the arc's camera-facing midpoint and point along ±tangent (i.e.
+/// ±Z in handle-local space) with this length, so the tips run along
+/// the arc and the base disc is perpendicular to it. Mirrors the
+/// translate cone's `1.18 - 1.0 = 0.18`.
 pub const ROTATE_CONE_LENGTH: f32 = 0.18;
 
 /// Base radius, in handle-local space, of each rotate cone — same as

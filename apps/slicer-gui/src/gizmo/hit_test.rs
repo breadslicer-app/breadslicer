@@ -184,9 +184,12 @@ fn arc_midpoint_world(ray: &Ray, pivot: Vec3, axis: Axis, arc_radius_world: f32)
 
 /// Hit-test the rotate handle for one axis. The handle is two cones
 /// sharing their bases at the arc's camera-facing midpoint, tips
-/// pointing along ±axis. Approximated as a single finite cylinder
+/// pointing along ±tangent (the arc tangent at that midpoint, which
+/// is perpendicular to both the rotation axis and the radial
+/// direction from `pivot`). Approximated as a single finite cylinder
 /// bounding both cones (centre at the midpoint, oriented along the
-/// axis, extending ±`cone_length_world`, radius `cone_radius_world`).
+/// tangent, extending ±`cone_length_world`, radius
+/// `cone_radius_world`).
 ///
 /// Returns the entry parameter `t` if the ray crosses the bounding
 /// cylinder, or `None` if it misses. The torus *tube* itself is no
@@ -201,10 +204,12 @@ pub fn ray_hits_rotate_cones(
     cone_radius_world: f32,
 ) -> Option<f32> {
     let midpoint = arc_midpoint_world(ray, pivot, axis, arc_radius_world)?;
+    let radial = (midpoint - pivot).normalize();
+    let tangent = axis.world_dir().cross(radial);
     ray_hits_finite_cylinder(
         ray,
         midpoint,
-        axis.world_dir(),
+        tangent,
         -cone_length_world,
         cone_length_world,
         cone_radius_world,

@@ -1309,7 +1309,13 @@ mod viewport_click_tests {
         };
         ctrl.install_scene_for_test(scene);
         *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
-        ctrl.set_viewport_for_test(200.0, 100.0);
+        // A 200×100 viewport with the default gizmo size leaves no
+        // truly-empty pixel: HANDLE_PIXEL_LENGTH is 120 px, so the
+        // rotate-cone bounding volumes (perspective-projected close
+        // to the camera in Top view) span most of the screen. Use a
+        // larger viewport so the gizmo occupies its usual ~15% and
+        // the corner is unambiguously empty.
+        ctrl.set_viewport_for_test(800.0, 600.0);
 
         // Pre-seed a selection so we can observe the clear.
         ctrl.on_select_by_index(0);

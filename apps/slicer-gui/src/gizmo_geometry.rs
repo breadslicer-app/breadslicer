@@ -157,8 +157,9 @@ pub fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 /// Builds the rotate-handle two-cone spindle in handle-local space.
 /// Two cones share their bases at the arc's camera-facing midpoint
 /// `(0, R, 0)` (where `R = ROTATE_ARC_RADIUS_LOCAL`), tips at
-/// `(±ROTATE_CONE_LENGTH, R, 0)` along the rotation axis (handle-
-/// local +X).
+/// `(0, R, ±ROTATE_CONE_LENGTH)` — i.e. along ±Z, the arc tangent at
+/// the midpoint. The base disc therefore lies in the handle-local XY
+/// plane, perpendicular to the arc curve at that point.
 ///
 /// The renderer composes the same per-frame X-roll used for the arc
 /// polyline to swing the spindle onto the camera-facing direction
@@ -168,9 +169,9 @@ pub fn build_rotate_cones_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((CONE_SIDES * 2 + 2) as usize);
     let mut indices = Vec::with_capacity((CONE_SIDES * 6) as usize);
     let midpoint = Vec3::new(0.0, ROTATE_ARC_RADIUS_LOCAL, 0.0);
-    let axis = Vec3::X;
-    let basis_a = Vec3::Y;
-    let basis_b = Vec3::Z;
+    let axis = Vec3::Z;
+    let basis_a = Vec3::X;
+    let basis_b = Vec3::Y;
     append_cone(
         &mut vertices,
         &mut indices,
@@ -438,5 +439,71 @@ mod rotate_arc_line_tests {
         // Last vertex at θ = +π/4.
         assert_approx_eq!(f32, last.y, expected, epsilon = 1e-5);
         assert_approx_eq!(f32, last.z, expected, epsilon = 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod rotate_cones_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    #[test]
+    fn vertex_and_index_counts_are_pinned() {
+        let (v, i) = build_rotate_cones_geometry();
+        // Two cones, each with `CONE_SIDES` base ring vertices + 1 tip.
+        assert_eq!(v.len() as u32, CONE_SIDES * 2 + 2);
+        assert_eq!(i.len() as u32, CONE_SIDES * 6);
+    }
+
+    #[test]
+    fn every_index_is_in_bounds() {
+        let (v, indices) = build_rotate_cones_geometry();
+        let max = v.len() as u32;
+        for &idx in &indices {
+            assert!(idx < max);
+        }
+    }
+
+    #[test]
+    fn tips_extend_along_arc_tangent_at_midpoint() {
+        // Bases share the arc midpoint (0, R, 0); tips run along ±Z
+        // (the arc tangent at that point), not along ±X (the rotation
+        // axis). The two tips are the last vertex of each cone block.
+        let (v, _) = build_rotate_cones_geometry();
+        let r = ROTATE_ARC_RADIUS_LOCAL;
+        let l = ROTATE_CONE_LENGTH;
+
+        let tip_a = Vec3::from(v[CONE_SIDES as usize].position);
+        let tip_b = Vec3::from(v[(CONE_SIDES * 2 + 1) as usize].position);
+
+        assert_approx_eq!(f32, tip_a.x, 0.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, tip_a.y, r, epsilon = 1e-5);
+        assert_approx_eq!(f32, tip_a.z.abs(), l, epsilon = 1e-5);
+
+        assert_approx_eq!(f32, tip_b.x, 0.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, tip_b.y, r, epsilon = 1e-5);
+        assert_approx_eq!(f32, tip_b.z.abs(), l, epsilon = 1e-5);
+
+        // The two tips are on opposite sides of the midpoint along Z.
+        assert!(tip_a.z * tip_b.z < 0.0);
+    }
+
+    #[test]
+    fn base_ring_sits_in_xy_plane_through_midpoint() {
+        // Each cone block is `CONE_SIDES` base ring vertices followed
+        // by one tip vertex, so the second cone's ring starts at
+        // `CONE_SIDES + 1`. With axis = ±Z the ring lies in the plane
+        // z = 0, centred at (0, R, 0) with radius ROTATE_CONE_RADIUS.
+        let (v, _) = build_rotate_cones_geometry();
+        let r = ROTATE_ARC_RADIUS_LOCAL;
+        let cone_r = ROTATE_CONE_RADIUS;
+        for &start in &[0_usize, CONE_SIDES as usize + 1] {
+            for i in 0..CONE_SIDES as usize {
+                let p = Vec3::from(v[start + i].position);
+                assert_approx_eq!(f32, p.z, 0.0, epsilon = 1e-5);
+                let radial = (p - Vec3::new(0.0, r, 0.0)).length();
+                assert_approx_eq!(f32, radial, cone_r, epsilon = 1e-5);
+            }
+        }
     }
 }
