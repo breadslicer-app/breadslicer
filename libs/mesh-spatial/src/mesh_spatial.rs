@@ -35,18 +35,12 @@ impl MeshSpatial {
     /// care of that — this type is module-private precisely to keep
     /// the pairing inside the spatial layer.
     pub(crate) fn local_aabb(&self, mesh: &IndexedMesh) -> Option<Aabb> {
-        if mesh.vertices.is_empty() {
-            return None;
+        if let Some(cached) = self.local_aabb.get() {
+            return Some(*cached);
         }
-        Some(*self.local_aabb.get_or_init(|| {
-            let mut iter = mesh.vertices.iter();
-            let first = *iter.next().expect("non-empty checked above");
-            let mut aabb = Aabb::from_min_max(first, first);
-            for vertex in iter {
-                aabb.extend(*vertex);
-            }
-            aabb
-        }))
+        let computed = mesh.local_aabb()?;
+        let _ = self.local_aabb.set(computed);
+        Some(computed)
     }
 
     /// Object-space cluster AABBs over `mesh.faces`. Cached on first

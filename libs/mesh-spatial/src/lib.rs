@@ -22,7 +22,7 @@ pub use scene_spatial::{ObjectQuery, SceneEdit, SceneSpatial};
 
 use sc_mesh_core::{
     Aabb,
-    scene::{Scene, Transform3D, arvo_world_aabb},
+    scene::{Scene, Transform3D},
 };
 
 /// World-space AABB of a scene, computed through cached per-mesh
@@ -47,7 +47,7 @@ pub fn scene_aabb(spatial: &SceneSpatial) -> Option<Aabb> {
         };
         match &query.object().transform {
             Transform3D::Identity => aabb.union(&local),
-            Transform3D::Affine(a) => aabb.union(&arvo_world_aabb(local, a)),
+            Transform3D::Affine(a) => aabb.union(&local.transformed_arvo(a)),
         }
         has_any = true;
     }

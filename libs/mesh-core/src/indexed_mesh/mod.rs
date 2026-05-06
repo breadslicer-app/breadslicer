@@ -9,6 +9,7 @@ mod validated;
 
 pub use validated::{ValidatedFaces, ValidatedFacesMut};
 
+use crate::aabb::Aabb;
 use crate::errors::{MeshFaceError, MeshFix};
 use crate::primitives::{IndexedTriangle, Vertex};
 
@@ -73,6 +74,20 @@ impl IndexedMesh {
 
     pub fn set_meta(&mut self, meta: Option<MeshMetadata>) {
         self.meta = meta;
+    }
+
+    /// Object-space AABB of `self.vertices`. Uncached — each call
+    /// walks the vertex array. Callers that hammer this should hold
+    /// a `SceneSpatial` from `sc-mesh-spatial` instead, which caches
+    /// the result. Returns `None` for an empty mesh.
+    pub fn local_aabb(&self) -> Option<Aabb> {
+        let mut iter = self.vertices.iter();
+        let first = *iter.next()?;
+        let mut aabb = Aabb::from_min_max(first, first);
+        for vertex in iter {
+            aabb.extend(*vertex);
+        }
+        Some(aabb)
     }
 
     /// Validate face indices and, on success, return a witness whose

@@ -16,7 +16,6 @@ use float_cmp::approx_eq;
 use proptest::prelude::*;
 use sc_mesh_core::Aabb;
 use sc_mesh_core::primitives::{Vector3D, Vertex};
-use sc_mesh_core::scene::arvo_world_aabb;
 use sc_mesh_core::transform::AffineTransform3D;
 
 // ---------------------------------------------------------------------
@@ -346,7 +345,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------
-// arvo_world_aabb properties
+// Aabb::transformed_arvo properties
 // ---------------------------------------------------------------------
 
 /// Generator for a non-empty axis-aligned bounding box: picks two
@@ -399,19 +398,19 @@ fn affine_strategy() -> impl Strategy<Value = AffineTransform3D> {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
 
-    /// `arvo_world_aabb` must be a conservative enclosure of the
-    /// transformed AABB: every one of the eight transformed corners
-    /// of the local box must lie inside the returned world box.
-    /// This is the algorithm's defining contract — the closed-form
-    /// formula approximates the per-corner method by an outer
-    /// bound, never a tighter one.
+    /// `Aabb::transformed_arvo` must be a conservative enclosure of
+    /// the transformed AABB: every one of the eight transformed
+    /// corners of the local box must lie inside the returned world
+    /// box. This is the algorithm's defining contract — the
+    /// closed-form formula approximates the per-corner method by an
+    /// outer bound, never a tighter one.
     #[test]
-    fn arvo_world_aabb_contains_every_transformed_corner(
+    fn transformed_arvo_contains_every_transformed_corner(
         (mn, mx) in aabb_strategy(),
         a in affine_strategy(),
     ) {
         let local = Aabb::from_min_max(Vertex::new(mn), Vertex::new(mx));
-        let world = arvo_world_aabb(local, &a);
+        let world = local.transformed_arvo(&a);
 
         let corners = [
             [mn[0], mn[1], mn[2]],
@@ -450,17 +449,18 @@ proptest! {
         }
     }
 
-    /// `arvo_world_aabb` for a translation transform exactly equals
-    /// the local AABB shifted by the translation vector — translations
-    /// are tight, not just conservative, in Arvo's formula.
+    /// `Aabb::transformed_arvo` for a translation transform exactly
+    /// equals the local AABB shifted by the translation vector —
+    /// translations are tight, not just conservative, in Arvo's
+    /// formula.
     #[test]
-    fn arvo_world_aabb_is_tight_for_pure_translation(
+    fn transformed_arvo_is_tight_for_pure_translation(
         (mn, mx) in aabb_strategy(),
         t in (-5.0_f64..5.0_f64, -5.0_f64..5.0_f64, -5.0_f64..5.0_f64),
     ) {
         let local = Aabb::from_min_max(Vertex::new(mn), Vertex::new(mx));
         let a = AffineTransform3D::from_translation([t.0, t.1, t.2]);
-        let world = arvo_world_aabb(local, &a);
+        let world = local.transformed_arvo(&a);
         let world_min = world.min().coords();
         let world_max = world.max().coords();
         let expected_min = [mn[0] + t.0 as f32, mn[1] + t.1 as f32, mn[2] + t.2 as f32];

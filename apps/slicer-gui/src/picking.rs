@@ -361,7 +361,7 @@ fn world_aabb_from_local(local: Aabb, transform: &Transform3D) -> (Vec3, Vec3) {
     }
 }
 
-/// Arvo's transformed-AABB formula in f32. Mirrors `scene::arvo_world_aabb`
+/// Arvo's transformed-AABB formula in f32. Mirrors `Aabb::transformed_arvo`
 /// (which works in f64 for vertex-AABB precision); for picking, f32 is
 /// adequate — the AABB only gates the triangle test, which itself is
 /// f32 throughout.
@@ -823,22 +823,21 @@ mod pick_object_tests {
 }
 
 /// Cross-precision consistency between the picker's f32 `arvo` and
-/// `sc_mesh_core::scene::arvo_world_aabb` (f64). The two implement
-/// the same Arvo closed-form formula at different precisions; for
-/// the picker's use (gating a per-triangle f32 test) the f32 result
-/// must agree with the f64 reference within a precision bound that
-/// scales with the AABB diagonal.
+/// `Aabb::transformed_arvo` (f64). The two implement the same Arvo
+/// closed-form formula at different precisions; for the picker's
+/// use (gating a per-triangle f32 test) the f32 result must agree
+/// with the f64 reference within a precision bound that scales with
+/// the AABB diagonal.
 ///
-/// Architectural review §3.6 flagged the duplication; until they
-/// share an implementation, this test pins the equivalence so a
-/// drift between the two surfaces immediately rather than at
-/// render time on a mirrored / non-axis-aligned scene.
+/// Until they share an implementation, this test pins the
+/// equivalence so a drift between the two surfaces immediately
+/// rather than at render time on a mirrored / non-axis-aligned
+/// scene.
 #[cfg(test)]
 mod arvo_consistency_tests {
     use super::arvo;
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
-    use sc_mesh_core::scene::arvo_world_aabb;
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::{Aabb, Vertex};
 
@@ -847,7 +846,7 @@ mod arvo_consistency_tests {
     /// `mul_add` chain accumulates ~1e-5 relative; 1e-3 absolute
     /// floor handles small AABBs near the origin.
     fn assert_arvo_agrees(local: Aabb, t: AffineTransform3D) {
-        let f64_world = arvo_world_aabb(local, &t);
+        let f64_world = local.transformed_arvo(&t);
         let lmin = Vec3::from(local.min().coords());
         let lmax = Vec3::from(local.max().coords());
         let (f32_min, f32_max) = arvo(lmin, lmax, &t);

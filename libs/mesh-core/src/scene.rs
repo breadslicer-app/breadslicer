@@ -200,80 +200,6 @@ impl Scene {
     }
 }
 
-/// Object-space AABB of `mesh.vertices`. Uncached — each call walks
-/// the vertex array. Callers that hammer this should hold a
-/// `SceneSpatial` from `sc-mesh-spatial` instead, which caches the
-/// result. Returns `None` for an empty mesh.
-fn mesh_local_aabb(mesh: &IndexedMesh) -> Option<Aabb> {
-    if mesh.vertices.is_empty() {
-        return None;
-    }
-    let mut iter = mesh.vertices.iter();
-    let first = *iter.next().expect("non-empty checked above");
-    let mut aabb = Aabb::from_min_max(first, first);
-    for vertex in iter {
-        aabb.extend(*vertex);
-    }
-    Some(aabb)
-}
-
-/// World-space AABB of an object-local AABB after applying an
-/// `AffineTransform3D`, computed in `f64` via Arvo's method:
-///
-/// > For an AABB with centre `c` and half-extents `h`, the transformed
-/// > AABB has centre `M·c + t` and half-extents
-/// > `h'ᵢ = Σⱼ |Mᵢⱼ| · hⱼ`.
-///
-/// Source: Jim Arvo, "Transforming Axis-Aligned Bounding Boxes",
-/// *Graphics Gems I* (1990), pp. 548-550. See also Ericson,
-/// *Real-Time Collision Detection*, §4.2.6. The output is conservative —
-/// it contains every transformed vertex and is exactly tight for
-/// axis-aligned scaling and translation.
-pub fn arvo_world_aabb(local: Aabb, a: &AffineTransform3D) -> Aabb {
-    let lmin = local.min().coords();
-    let lmax = local.max().coords();
-    // Promote to f64 so the matrix-vector products match the precision of
-    // the rest of the transform module.
-    let cx = (lmin[0] as f64 + lmax[0] as f64) * 0.5;
-    let cy = (lmin[1] as f64 + lmax[1] as f64) * 0.5;
-    let cz = (lmin[2] as f64 + lmax[2] as f64) * 0.5;
-    let hx = (lmax[0] as f64 - lmin[0] as f64) * 0.5;
-    let hy = (lmax[1] as f64 - lmin[1] as f64) * 0.5;
-    let hz = (lmax[2] as f64 - lmin[2] as f64) * 0.5;
-
-    let m = &a.linear;
-    let t = &a.translation;
-
-    let center = [
-        m[0][0].mul_add(cx, m[0][1].mul_add(cy, m[0][2].mul_add(cz, t[0]))),
-        m[1][0].mul_add(cx, m[1][1].mul_add(cy, m[1][2].mul_add(cz, t[1]))),
-        m[2][0].mul_add(cx, m[2][1].mul_add(cy, m[2][2].mul_add(cz, t[2]))),
-    ];
-    let half = [
-        m[0][0]
-            .abs()
-            .mul_add(hx, m[0][1].abs().mul_add(hy, m[0][2].abs() * hz)),
-        m[1][0]
-            .abs()
-            .mul_add(hx, m[1][1].abs().mul_add(hy, m[1][2].abs() * hz)),
-        m[2][0]
-            .abs()
-            .mul_add(hx, m[2][1].abs().mul_add(hy, m[2][2].abs() * hz)),
-    ];
-
-    let min = Vertex::new([
-        (center[0] - half[0]) as f32,
-        (center[1] - half[1]) as f32,
-        (center[2] - half[2]) as f32,
-    ]);
-    let max = Vertex::new([
-        (center[0] + half[0]) as f32,
-        (center[1] + half[1]) as f32,
-        (center[2] + half[2]) as f32,
-    ]);
-    Aabb::from_min_max(min, max)
-}
-
 impl Scene {
     /// Axis-aligned bounding box over every object in the scene,
     /// resolving `Resource` references against `self.resources` and
@@ -299,12 +225,12 @@ impl Scene {
                     .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
             };
 
-            let Some(local) = mesh_local_aabb(mesh) else {
+            let Some(local) = mesh.local_aabb() else {
                 continue;
             };
             match &obj.transform {
                 Transform3D::Identity => aabb.union(&local),
-                Transform3D::Affine(a) => aabb.union(&arvo_world_aabb(local, a)),
+                Transform3D::Affine(a) => aabb.union(&local.transformed_arvo(a)),
             }
             has_any = true;
         }
@@ -867,7 +793,7 @@ mod merge_meshes_tests {
     /// vertices are exactly the corners, it gives the tight world-space
     /// AABB of the transformed vertex set.
     fn corner_aabb(mesh: &IndexedMesh, t: &AffineTransform3D) -> Aabb {
-        let local = super::mesh_local_aabb(mesh).unwrap();
+        let local = mesh.local_aabb().unwrap();
         let lmin = local.min().coords();
         let lmax = local.max().coords();
         let corners = [

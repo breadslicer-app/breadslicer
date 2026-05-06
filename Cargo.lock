@@ -4510,6 +4510,7 @@ name = "sc-mesh-spatial"
 version = "0.0.10"
 dependencies = [
  "anyhow",
+ "proptest",
  "sc-mesh-core",
 ]
 
