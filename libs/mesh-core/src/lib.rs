@@ -83,6 +83,7 @@ pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
             vertices,
             faces: triangles,
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         })
     }
 }

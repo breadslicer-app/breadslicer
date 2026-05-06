@@ -89,6 +89,7 @@ mod scene_export_tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 

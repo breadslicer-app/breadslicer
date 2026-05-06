@@ -19,6 +19,7 @@ fn get_mesh_without_meta() -> IndexedMesh {
             vertices: [0, 1, 2],
         }],
         local_aabb_cache: ::std::sync::OnceLock::new(),
+        clusters_cache: ::std::sync::OnceLock::new(),
     }
 }
 
@@ -35,6 +36,7 @@ fn get_unnamed_mesh() -> IndexedMesh {
             vertices: [0, 1, 2],
         }],
         local_aabb_cache: ::std::sync::OnceLock::new(),
+        clusters_cache: ::std::sync::OnceLock::new(),
     }
 }
 
@@ -54,6 +56,7 @@ fn get_named_mesh() -> IndexedMesh {
             vertices: [0, 1, 2],
         }],
         local_aabb_cache: ::std::sync::OnceLock::new(),
+        clusters_cache: ::std::sync::OnceLock::new(),
     }
 }
 

@@ -111,6 +111,7 @@ mod tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -259,6 +260,7 @@ mod tests {
             vertices: vec![],
             faces: vec![],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let scene = scene_with_mesh(empty);
         let out = write_to_string(&scene);

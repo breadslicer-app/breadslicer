@@ -5,32 +5,34 @@
 
 //! CPU ray-pick from a logical viewport pixel to a `Scene` object index.
 //!
-//! Two-stage strategy:
+//! Three-stage strategy:
 //!
-//! 1. **AABB pre-pass.** Each object's world-space AABB (Arvo's method
-//!    on the local AABB and the object's `Transform3D`) is slab-tested
-//!    against the ray. Objects whose AABB the ray misses are
-//!    eliminated without ever touching their triangles.
+//! 1. **World AABB pre-pass.** Each object's world-space AABB (Arvo's
+//!    method on the local AABB and the object's `Transform3D`) is
+//!    slab-tested against the ray. Objects whose AABB the ray misses
+//!    are eliminated without ever touching their triangles.
 //!
-//! 2. **Triangle test on survivors.** Each surviving object's faces
-//!    are walked; for each face the three vertices are transformed to
-//!    world space using the object's transform and run through
-//!    Möller–Trumbore. Back-face hits are rejected so the picker
-//!    matches the renderer's `cull_mode: Some(Face::Back)` (with
-//!    `front_face: FrontFace::Ccw`). The smallest positive `t` across
-//!    all survivors wins.
+//! 2. **Object-space cluster traversal.** Survivors invert the ray
+//!    once into object space, then slab-test each
+//!    [`TriangleClusters`](sc_mesh_core::IndexedMesh::triangle_clusters)
+//!    AABB against the local ray. Clusters the ray misses skip
+//!    the linear MT walk entirely.
 //!
-//! Triangles are iterated in world space rather than inverting the
-//! object's transform onto the ray. This costs two matrix-multiplies
-//! per triangle but avoids inverting per-object (and the
-//! singular-linear-part special case that comes with it). It also
-//! makes a transform with a negative determinant naturally agree with
-//! the renderer: the world-space winding flips, MT's `det > 0` check
-//! flips the front/back classification, and the picker rejects what
-//! the renderer culls.
+//! 3. **Sign-aware Möller–Trumbore on cluster survivors.** Faces in
+//!    surviving clusters are tested in object space. The renderer's
+//!    `cull_mode: Some(Face::Back)` with `front_face: FrontFace::Ccw`
+//!    is matched by accepting hits whose MT determinant has the same
+//!    sign as the linear part's determinant: a transform with
+//!    `det < 0` reverses world-space winding, so the object-space
+//!    front face is the world-space back face — and vice versa.
+//!
+//! Iterating in object space turns a per-triangle 3 × `Mat4 * Vec3`
+//! transform (the previous world-space variant) into a per-object
+//! single ray-inversion. The cluster slab-tests then prune the linear
+//! MT walk to roughly `O(F / cluster_size)` AABB tests plus
+//! `O(cluster_size)` MT tests on hit clusters.
 
 use glam::{Mat4, Vec3, Vec4};
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
 use sc_mesh_core::transform::AffineTransform3D;
 
@@ -41,6 +43,21 @@ use crate::camera::OrbitCamera;
 /// grazing / back-facing and rejected. f32 ulps near 1.0 are around
 /// 1.19e-7, so 1e-7 is a few ulps above noise.
 const EPSILON: f32 = 1e-7;
+
+/// Object-space ray plus the conversion factor needed to bring an MT
+/// `t` back to world space. `det_sign` is `+1.0` when the parent
+/// transform's linear part has positive determinant, `-1.0` when
+/// negative — used to flip the MT front-face filter for mirrored
+/// objects so the picker keeps agreeing with the renderer's CCW
+/// culling.
+struct LocalRay {
+    origin: Vec3,
+    direction: Vec3,
+    /// `t_world = t_local / world_to_local_scale`. `1.0` for the
+    /// identity transform.
+    world_to_local_scale: f32,
+    det_sign: f32,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Ray {
@@ -172,17 +189,28 @@ pub(crate) fn ray_hits_aabb_t(ray: &Ray, min: Vec3, max: Vec3) -> Option<f32> {
     Some(t_enter.max(0.0))
 }
 
-/// Möller–Trumbore intersection of a ray with a single triangle,
-/// front-face only. The CCW-winding-is-front convention matches the
-/// renderer's `front_face: FrontFace::Ccw, cull_mode: Some(Face::Back)`
-/// pipeline state — `det > EPSILON` corresponds to `D · n < 0`, i.e.
-/// the ray pointing into the surface from in front of it.
-pub(crate) fn ray_hits_triangle(ray: &Ray, v0: Vec3, v1: Vec3, v2: Vec3) -> Option<f32> {
+/// Sign-aware Möller–Trumbore intersection. `det_sign = +1.0` is the
+/// classic "front face = CCW winding" rule that matches the renderer's
+/// `front_face: FrontFace::Ccw, cull_mode: Some(Face::Back)` pipeline
+/// state. `det_sign = -1.0` flips the front-face filter, which is
+/// what the picker needs for objects whose `Transform3D` has a
+/// negative-determinant linear part: the world-space winding has been
+/// reversed, so the object-space triangle's *back* face is the
+/// renderer's *front* face. The barycentric and `t > EPSILON` checks
+/// are sign-symmetric, so only the determinant filter at the top
+/// changes.
+pub(crate) fn ray_hits_triangle_oriented(
+    ray: &Ray,
+    v0: Vec3,
+    v1: Vec3,
+    v2: Vec3,
+    det_sign: f32,
+) -> Option<f32> {
     let edge1 = v1 - v0;
     let edge2 = v2 - v0;
     let h = ray.direction.cross(edge2);
     let det = edge1.dot(h);
-    if det < EPSILON {
+    if det * det_sign < EPSILON {
         return None;
     }
     let inv_det = 1.0 / det;
@@ -200,36 +228,125 @@ pub(crate) fn ray_hits_triangle(ray: &Ray, v0: Vec3, v1: Vec3, v2: Vec3) -> Opti
     if t > EPSILON { Some(t) } else { None }
 }
 
-/// Closest front-face hit `t` for the object at `idx`, computed in
-/// world space. Resolves `Resource` references against
-/// `scene.resources`; returns `None` if the resource index is out of
-/// bounds (treated like an AABB miss — the picker doesn't surface
-/// errors for malformed scenes).
+/// Closest front-face hit `t` for the object at `idx`, in world-space
+/// ray parameters. Resolves `Resource` references against
+/// `scene.resources`; returns `None` for malformed scenes (out-of-
+/// range resource index, singular linear part on the object's
+/// transform, empty mesh, or out-of-range face vertex indices). The
+/// picker treats every such case as a clean miss rather than
+/// surfacing an error.
 pub(crate) fn ray_hits_object(ray: &Ray, scene: &Scene, idx: usize) -> Option<f32> {
     let object = scene.objects.get(idx)?;
     let mesh = match &object.content {
         SceneObjectContent::Mesh(m) => m,
         SceneObjectContent::Resource(r) => scene.resources.get(*r)?,
     };
-    let to_world = transform_to_mat4(&object.transform);
+    let local = local_ray_for_object(ray, &object.transform)?;
+    let local_ray = Ray {
+        origin: local.origin,
+        direction: local.direction,
+    };
+    let clusters = mesh.triangle_clusters()?;
+    let vertices = mesh.vertices();
+    let faces = mesh.faces();
     let mut best: Option<f32> = None;
-    for face in mesh.faces() {
-        let v0 = world_vertex(mesh, face.vertices[0], &to_world)?;
-        let v1 = world_vertex(mesh, face.vertices[1], &to_world)?;
-        let v2 = world_vertex(mesh, face.vertices[2], &to_world)?;
-        if let Some(t) = ray_hits_triangle(ray, v0, v1, v2) {
-            best = Some(match best {
-                Some(prev) if prev <= t => prev,
-                _ => t,
-            });
+    for (face_range, aabb) in clusters.iter() {
+        let aabb_min = Vec3::from(aabb.min().coords());
+        let aabb_max = Vec3::from(aabb.max().coords());
+        if !ray_hits_aabb(&local_ray, aabb_min, aabb_max) {
+            continue;
+        }
+        for face in &faces[face_range.start as usize..face_range.end as usize] {
+            let v0 = Vec3::from(vertices.get(face.vertices[0] as usize)?.coords());
+            let v1 = Vec3::from(vertices.get(face.vertices[1] as usize)?.coords());
+            let v2 = Vec3::from(vertices.get(face.vertices[2] as usize)?.coords());
+            if let Some(t_local) =
+                ray_hits_triangle_oriented(&local_ray, v0, v1, v2, local.det_sign)
+            {
+                let t = t_local / local.world_to_local_scale;
+                best = Some(match best {
+                    Some(prev) if prev <= t => prev,
+                    _ => t,
+                });
+            }
         }
     }
     best
 }
 
-fn world_vertex(mesh: &IndexedMesh, vidx: u32, to_world: &Mat4) -> Option<Vec3> {
-    let v = mesh.vertices().get(vidx as usize)?;
-    Some(to_world.transform_point3(Vec3::from(v.coords())))
+/// Build the object-space form of `ray` for `transform`. Returns
+/// `None` when the transform's linear part is singular — the picker
+/// treats that as a malformed object and skips it. For an identity
+/// transform the local ray equals the world ray, with
+/// `world_to_local_scale = 1` and `det_sign = +1`.
+fn local_ray_for_object(ray: &Ray, transform: &Transform3D) -> Option<LocalRay> {
+    match transform {
+        Transform3D::Identity => Some(LocalRay {
+            origin: ray.origin,
+            direction: ray.direction,
+            world_to_local_scale: 1.0,
+            det_sign: 1.0,
+        }),
+        Transform3D::Affine(a) => {
+            let inv = a.inverse().ok()?;
+            let inv_l = inv.linear();
+            let inv_t = inv.translation();
+            let apply = |p: Vec3, with_translation: bool| -> Vec3 {
+                let tx = if with_translation {
+                    inv_t[0] as f32
+                } else {
+                    0.0
+                };
+                let ty = if with_translation {
+                    inv_t[1] as f32
+                } else {
+                    0.0
+                };
+                let tz = if with_translation {
+                    inv_t[2] as f32
+                } else {
+                    0.0
+                };
+                Vec3::new(
+                    (inv_l[0][0] as f32) * p.x
+                        + (inv_l[0][1] as f32) * p.y
+                        + (inv_l[0][2] as f32) * p.z
+                        + tx,
+                    (inv_l[1][0] as f32) * p.x
+                        + (inv_l[1][1] as f32) * p.y
+                        + (inv_l[1][2] as f32) * p.z
+                        + ty,
+                    (inv_l[2][0] as f32) * p.x
+                        + (inv_l[2][1] as f32) * p.y
+                        + (inv_l[2][2] as f32) * p.z
+                        + tz,
+                )
+            };
+            let local_origin = apply(ray.origin, true);
+            let local_dir_unnorm = apply(ray.direction, false);
+            let scale = local_dir_unnorm.length();
+            // A finite, non-singular `inverse()` cannot produce a zero
+            // direction from a unit world direction, so `scale > 0`
+            // here; guard anyway to keep the division explicit.
+            if !scale.is_finite() || scale <= EPSILON {
+                return None;
+            }
+            let local_dir_unit = local_dir_unnorm / scale;
+            let l = a.linear();
+            let det = (l[0][0] * (l[1][1] * l[2][2] - l[1][2] * l[2][1])
+                - l[0][1] * (l[1][0] * l[2][2] - l[1][2] * l[2][0])
+                + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0])) as f32;
+            if det == 0.0 {
+                return None;
+            }
+            Some(LocalRay {
+                origin: local_origin,
+                direction: local_dir_unit,
+                world_to_local_scale: scale,
+                det_sign: det.signum(),
+            })
+        }
+    }
 }
 
 fn world_aabb_for_object(scene: &Scene, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -285,24 +402,6 @@ fn arvo(lmin: Vec3, lmax: Vec3, a: &AffineTransform3D) -> (Vec3, Vec3) {
     );
 
     (new_center - new_half, new_center + new_half)
-}
-
-fn transform_to_mat4(t: &Transform3D) -> Mat4 {
-    match t {
-        Transform3D::Identity => Mat4::IDENTITY,
-        Transform3D::Affine(a) => {
-            let l = a.linear();
-            let t = a.translation();
-            // Row-major → column-major (glam) at the f64 → f32 boundary,
-            // matching `mesh_render::affine_to_mat4`.
-            Mat4::from_cols(
-                Vec4::new(l[0][0] as f32, l[1][0] as f32, l[2][0] as f32, 0.0),
-                Vec4::new(l[0][1] as f32, l[1][1] as f32, l[2][1] as f32, 0.0),
-                Vec4::new(l[0][2] as f32, l[1][2] as f32, l[2][2] as f32, 0.0),
-                Vec4::new(t[0] as f32, t[1] as f32, t[2] as f32, 1.0),
-            )
-        }
-    }
 }
 
 #[cfg(test)]
@@ -421,7 +520,7 @@ mod ray_hits_aabb_tests {
 }
 
 #[cfg(test)]
-mod ray_hits_triangle_tests {
+mod ray_hits_triangle_oriented_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
 
@@ -441,7 +540,7 @@ mod ray_hits_triangle_tests {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        let t = ray_hits_triangle(&ray, v0, v1, v2).expect("ray should hit");
+        let t = ray_hits_triangle_oriented(&ray, v0, v1, v2, 1.0).expect("ray should hit");
         assert_approx_eq!(f32, t, 5.0, epsilon = 1e-5);
     }
 
@@ -454,7 +553,7 @@ mod ray_hits_triangle_tests {
             direction: Vec3::Z,
         };
         assert!(
-            ray_hits_triangle(&ray, v0, v1, v2).is_none(),
+            ray_hits_triangle_oriented(&ray, v0, v1, v2, 1.0).is_none(),
             "back-face hits must be rejected to match the renderer's cull mode"
         );
     }
@@ -466,7 +565,7 @@ mod ray_hits_triangle_tests {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: Vec3::Z, // away from triangle
         };
-        assert!(ray_hits_triangle(&ray, v0, v1, v2).is_none());
+        assert!(ray_hits_triangle_oriented(&ray, v0, v1, v2, 1.0).is_none());
     }
 
     #[test]
@@ -477,7 +576,7 @@ mod ray_hits_triangle_tests {
             origin: Vec3::new(0.0, 5.0, 5.0),
             direction: Vec3::X,
         };
-        assert!(ray_hits_triangle(&ray, v0, v1, v2).is_none());
+        assert!(ray_hits_triangle_oriented(&ray, v0, v1, v2, 1.0).is_none());
     }
 
     #[test]
@@ -487,7 +586,7 @@ mod ray_hits_triangle_tests {
             origin: Vec3::new(10.0, 10.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_triangle(&ray, v0, v1, v2).is_none());
+        assert!(ray_hits_triangle_oriented(&ray, v0, v1, v2, 1.0).is_none());
     }
 }
 
@@ -513,6 +612,7 @@ mod pick_object_tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         };
         SceneObject {
             meta: None,
@@ -653,6 +753,48 @@ mod pick_object_tests {
         assert!(
             pick_object(&ray, &scene).is_none(),
             "back-face hit must propagate as a no-pick"
+        );
+    }
+
+    #[test]
+    fn mirrored_object_keeps_picker_in_agreement_with_renderer() {
+        // The triangle is CCW when viewed from +Z in object space, so
+        // its object-space front face is +Z. A non-uniform scale of
+        // [-1, 1, 1] has det = -1 and reverses world-space winding —
+        // the *world-space* front face becomes -Z. The picker must
+        // pick that up: a ray from +Z hits the world-space back face
+        // and must be rejected; a ray from -Z hits the world-space
+        // front face and must succeed.
+        let mut object = unit_triangle_at([0.0, 0.0, 0.0]);
+        object.transform =
+            Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![object],
+        };
+        let from_above = Ray {
+            origin: Vec3::new(0.0, 0.0, 5.0),
+            direction: -Vec3::Z,
+        };
+        let from_below = Ray {
+            origin: Vec3::new(0.0, 0.0, -5.0),
+            direction: Vec3::Z,
+        };
+        let (min, max) = world_aabb_for_object(&scene, 0).unwrap();
+        assert!(
+            ray_hits_aabb(&from_above, min, max) && ray_hits_aabb(&from_below, min, max),
+            "both rays must intersect the world AABB; otherwise the test isn't \
+             exercising the sign-aware MT path"
+        );
+        assert!(
+            pick_object(&from_above, &scene).is_none(),
+            "world-space back face on a mirrored object must be culled"
+        );
+        assert_eq!(
+            pick_object(&from_below, &scene),
+            Some(0),
+            "world-space front face on a mirrored object must hit"
         );
     }
 

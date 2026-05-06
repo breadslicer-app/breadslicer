@@ -87,6 +87,7 @@ mod pivot_tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -149,6 +150,7 @@ mod pivot_tests {
                     vertices: vec![],
                     faces: vec![],
                     local_aabb_cache: ::std::sync::OnceLock::new(),
+                    clusters_cache: ::std::sync::OnceLock::new(),
                 }),
             }],
         };

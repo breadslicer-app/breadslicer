@@ -137,6 +137,7 @@ impl SceneObject {
                 vertices: mesh.vertices.clone(),
                 faces: mesh.faces.clone(),
                 local_aabb_cache: ::std::sync::OnceLock::new(),
+                clusters_cache: ::std::sync::OnceLock::new(),
             }),
             Transform3D::Affine(a) => {
                 let vertices: Vec<Vertex> = mesh
@@ -163,6 +164,7 @@ impl SceneObject {
                     vertices,
                     faces,
                     local_aabb_cache: ::std::sync::OnceLock::new(),
+                    clusters_cache: ::std::sync::OnceLock::new(),
                 })
             }
         }
@@ -330,6 +332,7 @@ impl Scene {
                 vertices,
                 faces,
                 local_aabb_cache: ::std::sync::OnceLock::new(),
+                clusters_cache: ::std::sync::OnceLock::new(),
             }))
         }
     }
@@ -490,6 +493,7 @@ mod scene_object_baked_mesh_tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -571,6 +575,7 @@ mod scene_object_baked_mesh_tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let obj = inline(
             mesh,
@@ -657,6 +662,7 @@ mod merge_meshes_tests {
                 vertices: face_vertices,
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -834,6 +840,7 @@ mod merge_meshes_tests {
             vertices: v,
             faces,
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -998,6 +1005,7 @@ mod merge_meshes_tests {
                 },
             ],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let t = AffineTransform3D::from_translation([5.0, -3.0, 1.0])
             .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
@@ -1065,6 +1073,7 @@ mod merge_meshes_tests {
             vertices: vec![],
             faces: vec![],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let scene = Scene {
             meta: None,
@@ -1112,6 +1121,7 @@ mod merge_meshes_tests {
                 vertices: [0, 1, 2],
             }],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         };
         let scene = Scene {
             meta: None,

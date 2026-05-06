@@ -87,6 +87,7 @@ mod build_object_list_names_tests {
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
             faces: vec![],
             local_aabb_cache: ::std::sync::OnceLock::new(),
+            clusters_cache: ::std::sync::OnceLock::new(),
         }
     }
 
@@ -121,6 +122,7 @@ mod build_object_list_names_tests {
                 vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
                 faces: vec![],
                 local_aabb_cache: ::std::sync::OnceLock::new(),
+                clusters_cache: ::std::sync::OnceLock::new(),
             }),
         }
     }

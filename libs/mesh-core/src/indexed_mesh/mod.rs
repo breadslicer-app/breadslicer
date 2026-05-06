@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+pub mod clusters;
 pub(crate) mod fix;
 mod validate;
 mod validated;
 
+pub use clusters::TriangleClusters;
 pub use validated::{ValidatedFaces, ValidatedFacesMut};
 
 use std::sync::OnceLock;
@@ -40,11 +42,19 @@ pub struct FixFacesOptions {
 pub struct IndexedMesh {
     pub meta: Option<MeshMetadata>,
     /// Mutating vertex positions in place invalidates
-    /// [`Self::local_aabb_cache`]. Callers that change positions
-    /// must call [`Self::invalidate_local_aabb`].
+    /// [`Self::local_aabb_cache`] and [`Self::clusters_cache`].
+    /// Callers that change positions must call
+    /// [`Self::invalidate_local_aabb`] and
+    /// [`Self::invalidate_clusters`].
     pub vertices: Vec<Vertex>,
+    /// Mutating the order of faces in place invalidates
+    /// [`Self::clusters_cache`] (cluster ranges index `faces` by
+    /// position). Witnessed mutations via [`ValidatedFacesMut`] only
+    /// flip winding / recompute normals, never change order, so they
+    /// leave the cache valid.
     pub faces: Vec<IndexedTriangle>,
     pub local_aabb_cache: OnceLock<Aabb>,
+    pub clusters_cache: OnceLock<TriangleClusters>,
 }
 
 impl Clone for IndexedMesh {
@@ -53,11 +63,16 @@ impl Clone for IndexedMesh {
         if let Some(cached) = self.local_aabb_cache.get() {
             let _ = local_aabb_cache.set(*cached);
         }
+        let clusters_cache = OnceLock::new();
+        if let Some(cached) = self.clusters_cache.get() {
+            let _ = clusters_cache.set(cached.clone());
+        }
         Self {
             meta: self.meta.clone(),
             vertices: self.vertices.clone(),
             faces: self.faces.clone(),
             local_aabb_cache,
+            clusters_cache,
         }
     }
 }
@@ -89,6 +104,7 @@ impl IndexedMesh {
             vertices,
             faces,
             local_aabb_cache: OnceLock::new(),
+            clusters_cache: OnceLock::new(),
         }
     }
 
@@ -137,6 +153,42 @@ impl IndexedMesh {
     #[cfg(test)]
     pub(crate) fn local_aabb_is_cached(&self) -> bool {
         self.local_aabb_cache.get().is_some()
+    }
+
+    /// Object-space cluster AABBs over the face array, used by spatial
+    /// query callers (the picker today) to skip linear walks. Cached
+    /// on first call; subsequent calls are `O(1)` until
+    /// [`Self::invalidate_clusters`] clears the cache. Returns `None`
+    /// for an empty mesh or one with out-of-range face indices —
+    /// callers treat that as "no spatial index available" and either
+    /// fall back to a linear walk or skip the object.
+    pub fn triangle_clusters(&self) -> Option<&TriangleClusters> {
+        if self.faces.is_empty() {
+            return None;
+        }
+        // `OnceLock::get_or_init` cannot return `Option<&T>`; build
+        // outside, then cache only on success. A failed build (corrupt
+        // mesh) leaves the cell empty so a later mutation that fixes
+        // the mesh can succeed without an explicit invalidation.
+        if let Some(cached) = self.clusters_cache.get() {
+            return Some(cached);
+        }
+        let built = TriangleClusters::build(&self.vertices, &self.faces)?;
+        let _ = self.clusters_cache.set(built);
+        self.clusters_cache.get()
+    }
+
+    /// Clears the cached cluster AABBs. Must be called by any code
+    /// that mutates vertex positions or face order in place. Witnessed
+    /// face mutations (winding flips, normal recomputes) preserve
+    /// order and leave the cache valid.
+    pub fn invalidate_clusters(&mut self) {
+        self.clusters_cache.take();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clusters_are_cached(&self) -> bool {
+        self.clusters_cache.get().is_some()
     }
 
     /// Validate face indices and, on success, return a witness whose
@@ -199,6 +251,7 @@ mod local_aabb_tests {
             vertices,
             faces: vec![],
             local_aabb_cache: OnceLock::new(),
+            clusters_cache: OnceLock::new(),
         }
     }
 
@@ -296,5 +349,91 @@ mod local_aabb_tests {
         assert!(primed.local_aabb_is_cached());
         assert!(!unprimed.local_aabb_is_cached());
         assert_eq!(primed, unprimed);
+    }
+}
+
+#[cfg(test)]
+mod triangle_clusters_tests {
+    use super::*;
+    use crate::primitives::{IndexedTriangle, Normal, Vertex};
+
+    fn unit_face_mesh(num_faces: usize) -> IndexedMesh {
+        // num_faces independent CCW triangles laid along +X. Each face
+        // consumes three fresh vertices, so out-of-range indices are
+        // impossible.
+        let mut vertices = Vec::with_capacity(num_faces * 3);
+        let mut faces = Vec::with_capacity(num_faces);
+        for i in 0..num_faces {
+            let base = vertices.len() as u32;
+            let x = i as f32;
+            vertices.push(Vertex::new([x, 0.0, 0.0]));
+            vertices.push(Vertex::new([x + 1.0, 0.0, 0.0]));
+            vertices.push(Vertex::new([x, 1.0, 0.0]));
+            faces.push(IndexedTriangle {
+                normal: Normal::new([0.0, 0.0, 1.0]),
+                vertices: [base, base + 1, base + 2],
+            });
+        }
+        IndexedMesh::new(None, vertices, faces)
+    }
+
+    #[test]
+    fn triangle_clusters_is_none_for_empty_face_set() {
+        let mesh = IndexedMesh::new(None, vec![Vertex::new([0.0, 0.0, 0.0])], vec![]);
+        assert!(mesh.triangle_clusters().is_none());
+        assert!(!mesh.clusters_are_cached());
+    }
+
+    #[test]
+    fn triangle_clusters_caches_on_first_call() {
+        let mesh = unit_face_mesh(3);
+        assert!(!mesh.clusters_are_cached());
+        let first = mesh.triangle_clusters().unwrap() as *const TriangleClusters;
+        assert!(mesh.clusters_are_cached());
+        let second = mesh.triangle_clusters().unwrap() as *const TriangleClusters;
+        assert_eq!(first, second, "second call must return cached reference");
+    }
+
+    #[test]
+    fn invalidate_clusters_clears_cache_and_recomputes() {
+        let mut mesh = unit_face_mesh(2);
+        let _ = mesh.triangle_clusters();
+        assert!(mesh.clusters_are_cached());
+        mesh.invalidate_clusters();
+        assert!(!mesh.clusters_are_cached());
+        let _ = mesh.triangle_clusters().unwrap();
+        assert!(mesh.clusters_are_cached());
+    }
+
+    #[test]
+    fn clone_propagates_cluster_cache() {
+        let mesh = unit_face_mesh(2);
+        let _ = mesh.triangle_clusters();
+        let cloned = mesh.clone();
+        assert!(cloned.clusters_are_cached());
+    }
+
+    #[test]
+    fn clone_of_unprimed_mesh_starts_unprimed() {
+        let mesh = unit_face_mesh(2);
+        let cloned = mesh.clone();
+        assert!(!cloned.clusters_are_cached());
+    }
+
+    #[test]
+    fn triangle_clusters_returns_none_on_out_of_range_indices() {
+        let mesh = IndexedMesh::new(
+            None,
+            vec![Vertex::new([0.0, 0.0, 0.0])],
+            vec![IndexedTriangle {
+                normal: Normal::new([0.0, 0.0, 1.0]),
+                vertices: [0, 1, 2],
+            }],
+        );
+        assert!(mesh.triangle_clusters().is_none());
+        assert!(
+            !mesh.clusters_are_cached(),
+            "failed builds must not poison the cache"
+        );
     }
 }
