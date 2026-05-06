@@ -17,6 +17,7 @@
 use sc_mesh_core::{
     Aabb, IndexedMesh,
     scene::{Scene, SceneObject, SceneObjectContent},
+    scene_edit::SceneEdit,
 };
 
 use crate::clusters::TriangleClusters;
@@ -195,62 +196,5 @@ impl<'a> ObjectQuery<'a> {
     /// `None` when the mesh has no faces or has corrupt face indices.
     pub fn clusters(&self) -> Option<&'a TriangleClusters> {
         self.cache.clusters(self.mesh)
-    }
-}
-
-/// Typed scene mutation. The only mutation entry point on
-/// [`SceneSpatial`] — see [`SceneSpatial::apply_edit`].
-///
-/// This mirrors the GUI's existing `SceneEdit` so the GUI can pass
-/// edits through the spatial layer without translation. Headless
-/// callers that don't go through `SceneSpatial` keep using the
-/// scene types directly.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SceneEdit {
-    /// `objects[object_idx].transform` was changed from `before` to
-    /// `after`. Applying writes `after`; `inverse()` produces the
-    /// undo edit.
-    ObjectTransform {
-        object_idx: usize,
-        before: sc_mesh_core::scene::Transform3D,
-        after: sc_mesh_core::scene::Transform3D,
-    },
-}
-
-impl SceneEdit {
-    /// True when applying this edit would not change the scene.
-    /// Useful for filtering no-op gestures from the undo stack.
-    pub fn is_noop(&self) -> bool {
-        match self {
-            Self::ObjectTransform { before, after, .. } => before == after,
-        }
-    }
-
-    /// Inverse edit: applying `self` then `self.inverse()` returns
-    /// the scene to its pre-edit state.
-    pub fn inverse(&self) -> Self {
-        match self {
-            Self::ObjectTransform {
-                object_idx,
-                before,
-                after,
-            } => Self::ObjectTransform {
-                object_idx: *object_idx,
-                before: *after,
-                after: *before,
-            },
-        }
-    }
-
-    fn apply_to_scene(&self, scene: &mut Scene) {
-        match self {
-            Self::ObjectTransform {
-                object_idx, after, ..
-            } => {
-                if let Some(obj) = scene.objects.get_mut(*object_idx) {
-                    obj.transform = *after;
-                }
-            }
-        }
     }
 }

@@ -18,7 +18,7 @@ mod mesh_spatial;
 mod scene_spatial;
 
 pub use clusters::TriangleClusters;
-pub use scene_spatial::{ObjectQuery, SceneEdit, SceneSpatial};
+pub use scene_spatial::{ObjectQuery, SceneSpatial};
 
 use sc_mesh_core::{
     Aabb,

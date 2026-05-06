@@ -9,13 +9,15 @@
 //! - `ObjectQuery` binding tests that prove the structural mesh ↔
 //!   cache pairing of §2 in the extraction plan.
 //! - `scene_aabb` consistency between cached and uncached forms.
-//! - Per-variant invalidation discipline for `SceneEdit`.
+//! - Per-variant invalidation discipline for `SceneEdit` (basic enum
+//!   behaviour — `is_noop`, `inverse` — is tested in `mesh-core`).
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
-use sc_mesh_spatial::{SceneEdit, SceneSpatial, scene_aabb};
+use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
 fn vertex(x: f32, y: f32, z: f32) -> Vertex {
     Vertex::new([x, y, z])
@@ -414,6 +416,51 @@ mod invalidation_discipline {
     }
 
     #[test]
+    fn apply_edit_matches_apply_to_scene() {
+        // The headless `SceneEdit::apply_to_scene` and the cache-aware
+        // `SceneSpatial::apply_edit` must produce equivalent scene
+        // states. Drift between the two would silently desync any
+        // future caller that mixes them.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                inline_object(triangle_mesh(1.0), Transform3D::Identity),
+                inline_object(
+                    triangle_mesh(2.0),
+                    Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
+                ),
+            ],
+        };
+        let edit = SceneEdit::ObjectTransform {
+            object_idx: 1,
+            before: Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
+            after: Transform3D::Affine(AffineTransform3D::from_translation([0.0, 7.0, -3.0])),
+        };
+
+        let mut headless_scene = scene.clone();
+        edit.apply_to_scene(&mut headless_scene);
+
+        let mut spatial = SceneSpatial::new(scene);
+        spatial.apply_edit(edit);
+        let cached_scene = spatial.into_scene();
+
+        assert_eq!(
+            headless_scene.objects.len(),
+            cached_scene.objects.len(),
+            "object counts must agree"
+        );
+        for (i, (h, c)) in headless_scene
+            .objects
+            .iter()
+            .zip(cached_scene.objects.iter())
+            .enumerate()
+        {
+            assert_eq!(h.transform, c.transform, "object {i} transform mismatch");
+        }
+    }
+
+    #[test]
     fn invalidate_object_on_resource_object_is_noop() {
         // Resource objects don't have inline cache slots; calling
         // `invalidate_object` on their idx must be a no-op rather
@@ -426,48 +473,5 @@ mod invalidation_discipline {
         let mut spatial = SceneSpatial::primed(scene);
         spatial.invalidate_object(0);
         assert!(spatial.object(0).unwrap().local_aabb().is_some());
-    }
-}
-
-mod scene_edit_basics {
-    use super::*;
-
-    #[test]
-    fn is_noop_detects_identical_before_after() {
-        let edit = SceneEdit::ObjectTransform {
-            object_idx: 0,
-            before: Transform3D::Identity,
-            after: Transform3D::Identity,
-        };
-        assert!(edit.is_noop());
-    }
-
-    #[test]
-    fn is_noop_false_when_transforms_differ() {
-        let edit = SceneEdit::ObjectTransform {
-            object_idx: 0,
-            before: Transform3D::Identity,
-            after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
-        };
-        assert!(!edit.is_noop());
-    }
-
-    #[test]
-    fn inverse_swaps_before_and_after() {
-        let after = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
-        let edit = SceneEdit::ObjectTransform {
-            object_idx: 7,
-            before: Transform3D::Identity,
-            after,
-        };
-        let inv = edit.inverse();
-        assert_eq!(
-            inv,
-            SceneEdit::ObjectTransform {
-                object_idx: 7,
-                before: after,
-                after: Transform3D::Identity,
-            }
-        );
     }
 }

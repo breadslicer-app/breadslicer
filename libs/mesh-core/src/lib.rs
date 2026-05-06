@@ -25,6 +25,7 @@ pub mod geometry;
 pub mod indexed_mesh;
 pub mod primitives;
 pub mod scene;
+pub mod scene_edit;
 pub mod transform;
 
 use std::collections::HashMap;

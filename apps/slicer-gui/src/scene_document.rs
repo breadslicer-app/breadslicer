@@ -12,8 +12,8 @@
 //! own copies.
 //!
 //! Mutation goes through one path: [`SceneDocument::apply_edit`].
-//! It accepts a typed [`SceneEdit`] (re-exported from
-//! [`sc_mesh_spatial`] for convenience) and routes through
+//! It accepts a typed [`SceneEdit`] from
+//! [`sc_mesh_core::scene_edit`] and routes through
 //! [`SceneSpatial::apply_edit`], which keeps spatial caches in sync
 //! with the scene state. There is no closure-based mutation entry
 //! point — the cache layer would not be able to inspect a closure to
@@ -28,7 +28,7 @@ use std::rc::{Rc, Weak};
 use sc_mesh_core::scene::Scene;
 use sc_mesh_spatial::SceneSpatial;
 
-pub(crate) use sc_mesh_spatial::SceneEdit;
+pub(crate) use sc_mesh_core::scene_edit::SceneEdit;
 
 use crate::selection::{Selection, SelectionState};
 

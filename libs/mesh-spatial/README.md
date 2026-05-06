@@ -95,8 +95,9 @@ whichever is cheaper — `new` for tests that don't exercise caches,
 ## Mutation contract
 
 `SceneSpatial::apply_edit(edit)` is the only mutation entry point.
-It accepts a typed `SceneEdit`; the exhaustive match on the edit
-shape ensures that any future variant must declare its
+It accepts a `SceneEdit` from `sc-mesh-core` (the edit vocabulary
+lives next to the `Scene` it mutates); the exhaustive match on the
+edit shape ensures that any future variant must declare its
 invalidation pattern at compile time. Adding a `SceneEdit` variant
 without a matching arm in `apply_edit` is a compile error.
 
