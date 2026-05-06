@@ -350,7 +350,7 @@ impl KeyboardDriveState {
             return;
         };
         let Some(before) = document
-            .with_scene(|s| s.objects.get(idx).map(|o| o.transform))
+            .with_scene(|s| s.scene().objects.get(idx).map(|o| o.transform))
             .flatten()
         else {
             return;
@@ -368,7 +368,7 @@ impl KeyboardDriveState {
             return;
         };
         let after = document
-            .with_scene(|s| s.objects.get(object_idx).map(|o| o.transform))
+            .with_scene(|s| s.scene().objects.get(object_idx).map(|o| o.transform))
             .flatten();
         if let Some(after) = after {
             document.push_edit(SceneEdit::ObjectTransform {
@@ -415,9 +415,9 @@ impl KeyboardDriveState {
         // closure's end before the scene write below.
         let prepared: Option<(Vec3, Transform3D, f32)> = ctx
             .document
-            .with_scene(|scene| {
-                let pivot = crate::gizmo::pivot_for_object(scene, idx)?;
-                let obj = scene.objects.get(idx)?;
+            .with_scene(|spatial| {
+                let pivot = crate::gizmo::pivot_for_object(spatial, idx)?;
+                let obj = spatial.scene().objects.get(idx)?;
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
                 Some((
@@ -437,13 +437,11 @@ impl KeyboardDriveState {
             return false;
         };
 
-        ctx.document
-            .apply_command(|scene| {
-                if let Some(obj) = scene.objects.get_mut(idx) {
-                    obj.transform = new_transform;
-                }
-            })
-            .is_some()
+        ctx.document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: idx,
+            before: running,
+            after: new_transform,
+        })
     }
 }
 

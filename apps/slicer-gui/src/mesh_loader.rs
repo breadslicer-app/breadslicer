@@ -19,6 +19,7 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_formats::LoadedMesh;
+use sc_mesh_spatial::SceneSpatial;
 use slint::wgpu_28::wgpu;
 
 use crate::i18n::ctr;
@@ -130,8 +131,13 @@ pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf, device: wgpu::Device
         });
         let result = parsed.and_then(|LoadedMesh { scene, warnings }| {
             let gpu_scene = GpuScene::build(&device, &scene)?;
+            // Eager priming: build the per-mesh spatial caches on this
+            // worker thread, so the UI thread receives a fully-primed
+            // `SceneSpatial` and the first picker click / gizmo
+            // attachment doesn't pay the build cost synchronously.
+            let spatial = SceneSpatial::primed(scene);
             Ok(PreparedScene {
-                scene,
+                spatial,
                 gpu_scene,
                 device: device.clone(),
                 warnings,

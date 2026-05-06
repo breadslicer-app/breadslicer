@@ -42,8 +42,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
+use sc_mesh_spatial::SceneSpatial;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
@@ -52,12 +52,14 @@ use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_render::GpuScene;
 
-/// Worker-built bundle handed to the UI thread. The `GpuScene` is pre-
-/// uploaded against `device`; the `Scene` is retained for device-loss
-/// recovery (a fresh `RenderingSetup` re-uploads via
-/// `Renderer::upload_scene`).
+/// Worker-built bundle handed to the UI thread. The `GpuScene` is
+/// pre-uploaded against `device`; the [`SceneSpatial`] owns the
+/// scene plus pre-primed spatial caches and is retained for
+/// device-loss recovery (a fresh `RenderingSetup` re-uploads via
+/// `Renderer::upload_scene`, which reads the scene through the
+/// document's `SceneSpatial`).
 pub(crate) struct PreparedScene {
-    pub scene: Scene,
+    pub spatial: SceneSpatial,
     pub gpu_scene: GpuScene,
     pub device: wgpu::Device,
     pub warnings: Vec<LoadMeshWarning>,

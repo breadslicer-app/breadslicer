@@ -5,22 +5,36 @@
 
 //! Document-level model for the loaded scene.
 //!
-//! Owns the scene and (eventually) its source path, the selection, and
-//! the undo/redo command stack. Consumers like the viewport controller
-//! and the object-list panel observe the document instead of holding
-//! their own copies of this state.
+//! Owns the [`SceneSpatial`] (which in turn owns the [`Scene`]),
+//! the source path, the selection, and the undo / redo command
+//! stacks. Consumers like the viewport controller and the
+//! object-list panel observe the document instead of holding their
+//! own copies.
+//!
+//! Mutation goes through one path: [`SceneDocument::apply_edit`].
+//! It accepts a typed [`SceneEdit`] (re-exported from
+//! [`sc_mesh_spatial`] for convenience) and routes through
+//! [`SceneSpatial::apply_edit`], which keeps spatial caches in sync
+//! with the scene state. There is no closure-based mutation entry
+//! point — the cache layer would not be able to inspect a closure to
+//! decide what to invalidate.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
-use sc_mesh_core::scene::{Scene, Transform3D};
+#[cfg(test)]
+use sc_mesh_core::scene::Scene;
+use sc_mesh_spatial::SceneSpatial;
+
+pub(crate) use sc_mesh_spatial::SceneEdit;
 
 use crate::selection::{Selection, SelectionState};
 
-/// Maximum number of entries kept on each of the undo and redo stacks.
-/// On overflow the oldest entry (front of the deque) is discarded.
+/// Maximum number of entries kept on each of the undo and redo
+/// stacks. On overflow the oldest entry (front of the deque) is
+/// discarded.
 pub(crate) const UNDO_STACK_CAP: usize = 256;
 
 /// Coarse-grained dispatch hint for document listeners. Each public
@@ -34,7 +48,9 @@ pub(crate) enum SceneEvent {
     Cleared,
     /// Selection has changed without the scene itself changing.
     SelectionChanged,
-    /// The scene's contents were mutated through `apply_command`.
+    /// The scene's contents were mutated through
+    /// [`SceneDocument::apply_edit`] (also the path used internally
+    /// by `undo` and `redo`).
     Mutated,
     /// The undo or redo stack changed (push, undo, redo, or
     /// install/clear when the stacks were non-empty). Listeners that
@@ -43,51 +59,20 @@ pub(crate) enum SceneEvent {
     UndoStackChanged,
 }
 
-/// One reversible scene edit. Pushed onto the document's undo stack at
-/// gesture-end (drag release, keyboard-burst flush) and consumed by
-/// `undo` / `redo` to apply the corresponding state change.
-///
-/// Single variant for now — the entire current GUI only edits a
-/// single object's `transform`. Future commands (add / remove /
-/// reorder objects) slot in as additional variants without breaking
-/// callers.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum SceneEdit {
-    /// `objects[object_idx].transform` was changed from `before` to
-    /// `after`. Applying the edit forward writes `after`; undoing
-    /// writes `before`.
-    ObjectTransform {
-        object_idx: usize,
-        before: Transform3D,
-        after: Transform3D,
-    },
-}
-
-impl SceneEdit {
-    /// True if applying this edit would not change the scene. The
-    /// document filters such no-ops at `push_edit` time so a gesture
-    /// that ended exactly where it started doesn't waste a stack slot.
-    fn is_noop(&self) -> bool {
-        match self {
-            Self::ObjectTransform { before, after, .. } => before == after,
-        }
-    }
-}
-
 type Listener = Rc<dyn Fn(SceneEvent)>;
 
 pub(crate) struct SceneDocument {
-    scene: RefCell<Option<Scene>>,
+    spatial: RefCell<Option<SceneSpatial>>,
     /// Filesystem path the loaded scene came from. Used today to
-    /// derive default export filenames; tomorrow for "Save" / "Reload".
-    /// Cleared in lockstep with `scene`.
+    /// derive default export filenames; tomorrow for "Save" /
+    /// "Reload". Cleared in lockstep with `spatial`.
     source_path: RefCell<Option<PathBuf>>,
     /// Currently-selected object. Reset to `Selection::None` whenever
     /// the scene is installed or cleared — a new scene has its own
     /// object indices, so a prior selection is no longer meaningful.
     selection: SelectionState,
-    /// Registered listeners. Cloned out of the cell before dispatch so
-    /// a listener can re-enter `subscribe` without re-borrowing.
+    /// Registered listeners. Cloned out of the cell before dispatch
+    /// so a listener can re-enter `subscribe` without re-borrowing.
     listeners: RefCell<Vec<(u64, Listener)>>,
     next_listener_id: Cell<u64>,
     /// Reversible edits the user can roll back via Edit → Undo. Most
@@ -102,7 +87,7 @@ pub(crate) struct SceneDocument {
 impl SceneDocument {
     pub fn new() -> Rc<Self> {
         Rc::new(Self {
-            scene: RefCell::new(None),
+            spatial: RefCell::new(None),
             source_path: RefCell::new(None),
             selection: SelectionState::new(),
             listeners: RefCell::new(Vec::new()),
@@ -112,8 +97,21 @@ impl SceneDocument {
         })
     }
 
+    /// Wrap a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and install
+    /// it. Convenience for callers that have a plain `Scene` —
+    /// primarily tests and future scripted construction. The
+    /// mesh-loader pipeline calls [`Self::install_spatial`] with a
+    /// `SceneSpatial::primed(...)` built off the UI thread.
+    #[cfg(test)]
     pub fn install_scene(&self, scene: Scene, source_path: PathBuf) {
-        *self.scene.borrow_mut() = Some(scene);
+        self.install_spatial(SceneSpatial::new(scene), source_path);
+    }
+
+    /// Install a [`SceneSpatial`] (typically pre-primed by the load
+    /// worker thread). Resets selection and clears history just like
+    /// [`Self::install_scene`].
+    pub fn install_spatial(&self, spatial: SceneSpatial, source_path: PathBuf) {
+        *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
         self.selection.set(Selection::None);
         // Object indices in the new scene have no relationship to the
@@ -127,7 +125,7 @@ impl SceneDocument {
     }
 
     pub fn clear_scene(&self) {
-        *self.scene.borrow_mut() = None;
+        *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
@@ -162,28 +160,39 @@ impl SceneDocument {
         self.notify(SceneEvent::SelectionChanged);
     }
 
-    /// Currently-selected object's index as a plain `usize`. Convenience
-    /// for the (very common) call sites that only want to look up
-    /// `scene.objects[idx]`.
+    /// Currently-selected object's index as a plain `usize`.
+    /// Convenience for the (very common) call sites that only want
+    /// to look up `scene.objects[idx]`.
     pub fn selection_primary_idx(&self) -> Option<usize> {
         self.selection.primary_idx()
     }
 
-    /// Mutation chokepoint for command-pattern writes. Wraps the
-    /// closure's run in a `Mutated` notification so the controller's
-    /// listener (and any future undo stack) sees every mutation in a
-    /// single place. Returns `Some(R)` when a scene was loaded,
-    /// `None` otherwise.
-    pub fn apply_command<R, F: FnOnce(&mut Scene) -> R>(&self, cmd: F) -> Option<R> {
-        let result = self.with_scene_mut(cmd)?;
+    /// Apply a typed scene edit. The single mutation choke-point on
+    /// `SceneDocument`: routes through [`SceneSpatial::apply_edit`]
+    /// (which keeps spatial caches in sync) and fires
+    /// [`SceneEvent::Mutated`]. Returns `true` when a scene was
+    /// loaded and the edit was applied, `false` when no scene is
+    /// loaded.
+    ///
+    /// Does **not** touch the undo stack — `push_edit` is a separate
+    /// concern so live-drag ticks can mutate the scene without
+    /// flooding the history. Callers that mean "apply and record"
+    /// invoke `apply_edit` followed by `push_edit` at gesture-end.
+    pub fn apply_edit(&self, edit: SceneEdit) -> bool {
+        let mut slot = self.spatial.borrow_mut();
+        let Some(spatial) = slot.as_mut() else {
+            return false;
+        };
+        spatial.apply_edit(edit);
+        drop(slot);
         self.notify(SceneEvent::Mutated);
-        Some(result)
+        true
     }
 
     /// Records a reversible edit on the undo stack. No-op edits
     /// (`before == after`) are dropped silently so a gesture that
-    /// began and ended in the same place doesn't clutter the history.
-    /// A successful push clears the redo stack — a fresh edit
+    /// began and ended in the same place doesn't clutter history. A
+    /// successful push clears the redo stack — a fresh edit
     /// invalidates the previously-rolled-back trail.
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
         if edit.is_noop() {
@@ -208,21 +217,16 @@ impl SceneDocument {
         !self.redo_stack.borrow().is_empty()
     }
 
-    /// Pops the most recent edit, applies its inverse to the scene,
-    /// and moves the entry onto the redo stack. Returns `true` if an
-    /// edit was applied. The inverse is written through `apply_command`
-    /// so the existing `Mutated` listener schedules the redraw;
-    /// `UndoStackChanged` fires afterwards for the menu state.
+    /// Pops the most recent edit, applies its inverse, and moves the
+    /// entry onto the redo stack. Returns `true` if an edit was
+    /// applied.
     pub fn undo(&self) -> bool {
         let Some(edit) = self.undo_stack.borrow_mut().pop_back() else {
             return false;
         };
-        let applied = self
-            .apply_command(|scene| apply_edit_inverse(scene, edit))
-            .is_some();
-        if !applied {
-            // No scene loaded — restore the entry we just popped so
-            // the stack stays consistent with the user's history.
+        if !self.apply_edit(edit.inverse()) {
+            // No scene loaded — restore the popped entry so the
+            // stack stays consistent with the user's history.
             self.undo_stack.borrow_mut().push_back(edit);
             return false;
         }
@@ -236,17 +240,14 @@ impl SceneDocument {
         true
     }
 
-    /// Pops the most recent rolled-back edit, applies it forward, and
-    /// moves the entry back onto the undo stack. Returns `true` if an
-    /// edit was applied.
+    /// Pops the most recent rolled-back edit, applies it forward,
+    /// and moves the entry back onto the undo stack. Returns `true`
+    /// if an edit was applied.
     pub fn redo(&self) -> bool {
         let Some(edit) = self.redo_stack.borrow_mut().pop_back() else {
             return false;
         };
-        let applied = self
-            .apply_command(|scene| apply_edit_forward(scene, edit))
-            .is_some();
-        if !applied {
+        if !self.apply_edit(edit) {
             self.redo_stack.borrow_mut().push_back(edit);
             return false;
         }
@@ -260,8 +261,8 @@ impl SceneDocument {
         true
     }
 
-    /// Registers a listener. Returns a handle whose `Drop` removes the
-    /// listener. Listeners fire in registration order.
+    /// Registers a listener. Returns a handle whose `Drop` removes
+    /// the listener. Listeners fire in registration order.
     pub fn subscribe<F>(self: &Rc<Self>, listener: F) -> SceneSubscription
     where
         F: Fn(SceneEvent) + 'static,
@@ -291,8 +292,8 @@ impl SceneDocument {
         }
     }
 
-    /// Path the current scene was loaded from. `None` when no scene is
-    /// loaded; cloned out so the caller doesn't extend the borrow.
+    /// Path the current scene was loaded from. `None` when no scene
+    /// is loaded; cloned out so the caller doesn't extend the borrow.
     // Tests exercise the field; the production caller (export-as
     // default-filename derivation) lands with the export feature.
     #[cfg(test)]
@@ -306,59 +307,22 @@ impl SceneDocument {
         self.source_path.borrow().as_deref().map(f)
     }
 
-    /// Runs `f` against the loaded scene, if any. Returns `None` when
-    /// no scene is installed. Callers must keep the closure short — the
-    /// internal borrow is held for its duration.
-    pub fn with_scene<R>(&self, f: impl FnOnce(&Scene) -> R) -> Option<R> {
-        self.scene.borrow().as_ref().map(f)
-    }
-
-    /// Mutable counterpart to `with_scene`. Same borrow-scope rules
-    /// apply; nesting another scene access (read or write) inside `f`
-    /// will panic on the inner borrow.
-    ///
-    /// Production mutations should go through `apply_command` so the
-    /// `Mutated` event fires; this method is the bypass exception
-    /// (currently only the unit tests use it directly).
-    pub(crate) fn with_scene_mut<R>(&self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
-        self.scene.borrow_mut().as_mut().map(f)
+    /// Runs `f` against the loaded [`SceneSpatial`], if any. Returns
+    /// `None` when no scene is installed. Callers must keep the
+    /// closure short — the internal borrow is held for its
+    /// duration. Use `spatial.scene()` inside the closure to access
+    /// the underlying [`Scene`] for read-only navigation.
+    pub fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
+        self.spatial.borrow().as_ref().map(f)
     }
 
     pub fn is_loaded(&self) -> bool {
-        self.scene.borrow().is_some()
+        self.spatial.borrow().is_some()
     }
 }
 
-/// Writes the `after` state of `edit` into `scene`. Out-of-range
-/// indices are silently ignored — the edit's target object may have
-/// been removed by a future command between the push and the replay.
-fn apply_edit_forward(scene: &mut Scene, edit: SceneEdit) {
-    match edit {
-        SceneEdit::ObjectTransform {
-            object_idx, after, ..
-        } => {
-            if let Some(obj) = scene.objects.get_mut(object_idx) {
-                obj.transform = after;
-            }
-        }
-    }
-}
-
-/// Writes the `before` state of `edit` into `scene` — the inverse of
-/// `apply_edit_forward`.
-fn apply_edit_inverse(scene: &mut Scene, edit: SceneEdit) {
-    match edit {
-        SceneEdit::ObjectTransform {
-            object_idx, before, ..
-        } => {
-            if let Some(obj) = scene.objects.get_mut(object_idx) {
-                obj.transform = before;
-            }
-        }
-    }
-}
-
-/// RAII handle to a `SceneDocument` subscription. Drop to unsubscribe.
+/// RAII handle to a `SceneDocument` subscription. Drop to
+/// unsubscribe.
 pub(crate) struct SceneSubscription {
     id: u64,
     document: Weak<SceneDocument>,
@@ -366,17 +330,17 @@ pub(crate) struct SceneSubscription {
 
 impl Drop for SceneSubscription {
     fn drop(&mut self) {
-        let Some(doc) = self.document.upgrade() else {
-            return;
-        };
-        doc.listeners.borrow_mut().retain(|(id, _)| *id != self.id);
+        if let Some(doc) = self.document.upgrade() {
+            doc.listeners.borrow_mut().retain(|(id, _)| *id != self.id);
+        }
     }
 }
 
 #[cfg(test)]
 mod scene_document_tests {
     use super::*;
-    use sc_mesh_core::scene::{SceneObject, SceneObjectContent};
+    use sc_mesh_core::scene::{SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::transform::AffineTransform3D;
 
     fn empty_scene() -> Scene {
         Scene::new(None, Vec::new(), Vec::new())
@@ -384,6 +348,25 @@ mod scene_document_tests {
 
     fn fixture_path() -> PathBuf {
         PathBuf::from("/tmp/scene_document_fixture.obj")
+    }
+
+    fn translation(dx: f64) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
+    }
+
+    fn scene_with_one_object() -> Scene {
+        let mut s = empty_scene();
+        s.objects.push(SceneObject {
+            meta: None,
+            transform: Transform3D::Identity,
+            content: SceneObjectContent::Resource(0),
+        });
+        s
+    }
+
+    fn obj_transform(doc: &SceneDocument, idx: usize) -> Transform3D {
+        doc.with_scene(|spatial| spatial.scene().objects[idx].transform)
+            .unwrap()
     }
 
     #[test]
@@ -404,7 +387,7 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(empty_scene(), fixture_path());
         assert!(doc.is_loaded());
-        let object_count = doc.with_scene(|s| s.objects().len());
+        let object_count = doc.with_scene(|s| s.scene().objects.len());
         assert_eq!(object_count, Some(0));
         assert_eq!(doc.source_path(), Some(fixture_path()));
     }
@@ -429,27 +412,11 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn with_scene_mut_observes_writes_through_with_scene() {
+    fn install_spatial_uses_the_provided_spatial() {
         let doc = SceneDocument::new();
-        doc.install_scene(empty_scene(), fixture_path());
-        let added = doc.with_scene_mut(|s| {
-            s.objects.push(SceneObject {
-                meta: None,
-                transform: Default::default(),
-                content: SceneObjectContent::Resource(0),
-            });
-            s.objects.len()
-        });
-        assert_eq!(added, Some(1));
-        let observed = doc.with_scene(|s| s.objects.len());
-        assert_eq!(observed, Some(1));
-    }
-
-    #[test]
-    fn with_scene_mut_on_empty_returns_none() {
-        let doc = SceneDocument::new();
-        let result = doc.with_scene_mut(|s| s.objects.len());
-        assert!(result.is_none());
+        doc.install_spatial(SceneSpatial::primed(empty_scene()), fixture_path());
+        assert!(doc.is_loaded());
+        assert_eq!(doc.source_path(), Some(fixture_path()));
     }
 
     #[test]
@@ -483,8 +450,8 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(empty_scene(), fixture_path());
         doc.set_selection(Selection::One(ObjectIdx(7)));
-        // Loading another scene drops the prior selection — its index
-        // referred to the previous scene's objects.
+        // Loading another scene drops the prior selection — its
+        // index referred to the previous scene's objects.
         doc.install_scene(empty_scene(), fixture_path());
         assert_eq!(doc.selection(), Selection::None);
     }
@@ -540,31 +507,47 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn apply_command_fires_mutated_when_a_scene_is_loaded() {
+    fn apply_edit_returns_false_with_no_scene_loaded() {
+        let doc = SceneDocument::new();
+        let result = doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        assert!(!result);
+    }
+
+    #[test]
+    fn apply_edit_fires_mutated_when_a_scene_is_loaded() {
         let doc = SceneDocument::new();
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
-        // No scene loaded → command is a no-op and no event fires.
-        let pre = doc.apply_command(|s| s.objects.len());
-        assert_eq!(pre, None);
-
-        doc.install_scene(empty_scene(), fixture_path());
-        let post = doc.apply_command(|s| {
-            s.objects.push(SceneObject {
-                meta: None,
-                transform: Default::default(),
-                content: SceneObjectContent::Resource(0),
-            });
-            s.objects.len()
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let applied = doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation(1.0),
         });
-        assert_eq!(post, Some(1));
-
-        // Installed (from install_scene), then Mutated (from apply_command).
+        assert!(applied);
+        // Installed (from install_scene), then Mutated (from apply_edit).
         assert_eq!(
             *log.borrow(),
             vec![SceneEvent::Installed, SceneEvent::Mutated]
         );
+    }
+
+    #[test]
+    fn apply_edit_writes_after_into_the_scene() {
+        let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let after = translation(5.0);
+        doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
+        assert_eq!(obj_transform(&doc, 0), after);
     }
 
     #[test]
@@ -578,26 +561,6 @@ mod scene_document_tests {
         doc.clear_scene();
 
         assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
-    }
-
-    use sc_mesh_core::transform::AffineTransform3D;
-
-    fn translation(dx: f64) -> Transform3D {
-        Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
-    }
-
-    fn scene_with_one_object() -> Scene {
-        let mut s = empty_scene();
-        s.objects.push(SceneObject {
-            meta: None,
-            transform: Transform3D::Identity,
-            content: SceneObjectContent::Resource(0),
-        });
-        s
-    }
-
-    fn obj_transform(doc: &SceneDocument, idx: usize) -> Transform3D {
-        doc.with_scene(|s| s.objects[idx].transform).unwrap()
     }
 
     #[test]
@@ -638,7 +601,11 @@ mod scene_document_tests {
         doc.install_scene(scene_with_one_object(), fixture_path());
         // Simulate a gesture: write `after`, then record the edit.
         let after = translation(5.0);
-        doc.apply_command(|s| s.objects[0].transform = after);
+        doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
         doc.push_edit(SceneEdit::ObjectTransform {
             object_idx: 0,
             before: Transform3D::Identity,
@@ -656,7 +623,11 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
         let after = translation(5.0);
-        doc.apply_command(|s| s.objects[0].transform = after);
+        doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
         doc.push_edit(SceneEdit::ObjectTransform {
             object_idx: 0,
             before: Transform3D::Identity,
@@ -675,7 +646,11 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
         let a = translation(1.0);
-        doc.apply_command(|s| s.objects[0].transform = a);
+        doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: a,
+        });
         doc.push_edit(SceneEdit::ObjectTransform {
             object_idx: 0,
             before: Transform3D::Identity,
@@ -686,7 +661,11 @@ mod scene_document_tests {
 
         // A new branch of history invalidates the redo trail.
         let b = translation(2.0);
-        doc.apply_command(|s| s.objects[0].transform = b);
+        doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: b,
+        });
         doc.push_edit(SceneEdit::ObjectTransform {
             object_idx: 0,
             before: Transform3D::Identity,
@@ -780,7 +759,11 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
         let after = translation(1.0);
-        doc.apply_command(|s| s.objects[0].transform = after);
+        doc.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after,
+        });
         doc.push_edit(SceneEdit::ObjectTransform {
             object_idx: 0,
             before: Transform3D::Identity,

@@ -16,7 +16,8 @@ pub mod hit_test;
 mod tolerances;
 
 use glam::Vec3;
-use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
+use sc_mesh_core::scene::Transform3D;
+use sc_mesh_spatial::SceneSpatial;
 
 use crate::camera::OrbitCamera;
 
@@ -27,17 +28,13 @@ use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 /// when the object has no vertices, an out-of-bounds resource
 /// reference, or `idx` is out of range — all of which render the
 /// gizmo unattachable.
-pub fn pivot_for_object(scene: &Scene, idx: usize) -> Option<Vec3> {
-    let object = scene.objects.get(idx)?;
-    let mesh = match &object.content {
-        SceneObjectContent::Mesh(m) => m,
-        SceneObjectContent::Resource(r) => scene.resources.get(*r)?,
-    };
-    let aabb = mesh.local_aabb()?;
+pub fn pivot_for_object(spatial: &SceneSpatial, idx: usize) -> Option<Vec3> {
+    let query = spatial.object(idx)?;
+    let aabb = query.local_aabb()?;
     let lmin = Vec3::from(aabb.min().coords());
     let lmax = Vec3::from(aabb.max().coords());
     let local_centre = (lmin + lmax) * 0.5;
-    Some(match &object.transform {
+    Some(match &query.object().transform {
         Transform3D::Identity => local_centre,
         Transform3D::Affine(a) => {
             let v = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new([
@@ -75,25 +72,27 @@ mod pivot_tests {
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
     use sc_mesh_core::transform::AffineTransform3D;
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
-        IndexedMesh {
-            meta: None,
-            vertices: vec![Vertex::new(v0), Vertex::new(v1), Vertex::new(v2)],
-            faces: vec![IndexedTriangle {
+        IndexedMesh::new(
+            None,
+            vec![Vertex::new(v0), Vertex::new(v1), Vertex::new(v2)],
+            vec![IndexedTriangle {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
-        }
+        )
+    }
+
+    fn spatial_for(scene: Scene) -> SceneSpatial {
+        SceneSpatial::new(scene)
     }
 
     #[test]
     fn pivot_under_identity_is_local_aabb_centre() {
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -105,8 +104,8 @@ mod pivot_tests {
                     [-1.0, 4.0, 5.0],
                 )),
             }],
-        };
-        let p = pivot_for_object(&scene, 0).unwrap();
+        });
+        let p = pivot_for_object(&spatial, 0).unwrap();
         // local AABB = ([-1, -2, -3], [3, 4, 5]) → centre (1, 1, 1)
         assert_approx_eq!(f32, p.x, 1.0);
         assert_approx_eq!(f32, p.y, 1.0);
@@ -115,7 +114,7 @@ mod pivot_tests {
 
     #[test]
     fn pivot_under_translation_shifts_with_object() {
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -129,8 +128,8 @@ mod pivot_tests {
                     [-1.0, 4.0, 5.0],
                 )),
             }],
-        };
-        let p = pivot_for_object(&scene, 0).unwrap();
+        });
+        let p = pivot_for_object(&spatial, 0).unwrap();
         // Local centre (1, 1, 1) translated by (10, 20, 30).
         assert_approx_eq!(f32, p.x, 11.0, epsilon = 1e-5);
         assert_approx_eq!(f32, p.y, 21.0, epsilon = 1e-5);
@@ -139,33 +138,27 @@ mod pivot_tests {
 
     #[test]
     fn pivot_for_empty_mesh_is_none() {
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
                 meta: None,
                 transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(IndexedMesh {
-                    meta: None,
-                    vertices: vec![],
-                    faces: vec![],
-                    local_aabb_cache: ::std::sync::OnceLock::new(),
-                    clusters_cache: ::std::sync::OnceLock::new(),
-                }),
+                content: SceneObjectContent::Mesh(IndexedMesh::new(None, vec![], vec![])),
             }],
-        };
-        assert!(pivot_for_object(&scene, 0).is_none());
+        });
+        assert!(pivot_for_object(&spatial, 0).is_none());
     }
 
     #[test]
     fn pivot_for_out_of_range_index_is_none() {
-        let scene = Scene::default();
-        assert!(pivot_for_object(&scene, 99).is_none());
+        let spatial = spatial_for(Scene::default());
+        assert!(pivot_for_object(&spatial, 99).is_none());
     }
 
     #[test]
     fn pivot_for_dangling_resource_is_none() {
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -173,8 +166,8 @@ mod pivot_tests {
                 transform: Transform3D::Identity,
                 content: SceneObjectContent::Resource(7),
             }],
-        };
-        assert!(pivot_for_object(&scene, 0).is_none());
+        });
+        assert!(pivot_for_object(&spatial, 0).is_none());
     }
 }
 

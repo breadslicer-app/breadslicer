@@ -7,7 +7,7 @@
 //! controller's per-frame state (pivot, scale, visibility,
 //! lock-out mask) into the renderer's struct.
 
-use sc_mesh_core::scene::Scene;
+use sc_mesh_spatial::SceneSpatial;
 
 use crate::camera::OrbitCamera;
 use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility, default_fov_y};
@@ -26,7 +26,7 @@ use super::{gizmo_scale, pivot_for_object};
 /// "is this axis grabbable from this view" check is uniform across
 /// the handle.
 pub fn build_gizmo_frame(
-    scene: &Scene,
+    spatial: &SceneSpatial,
     camera: &OrbitCamera,
     selection: usize,
     viewport_h_logical: f32,
@@ -34,7 +34,7 @@ pub fn build_gizmo_frame(
     hover: Option<GizmoHover>,
     drag_visual: Option<GizmoDragVisual>,
 ) -> Option<GizmoFrame> {
-    let pivot = pivot_for_object(scene, selection)?;
+    let pivot = pivot_for_object(spatial, selection)?;
     let fov_y = default_fov_y();
     let scale = gizmo_scale(camera, fov_y, viewport_h_logical);
     let forward = (camera.target - camera.eye()).normalize_or_zero();

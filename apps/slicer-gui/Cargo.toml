@@ -9,6 +9,7 @@ name = "sc-slicer-gui"
 [dependencies]
 sc-mesh-core = { workspace = true }
 sc-mesh-formats = { workspace = true }
+sc-mesh-spatial = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }

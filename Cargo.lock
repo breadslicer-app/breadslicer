@@ -4539,6 +4539,7 @@ dependencies = [
  "rfd",
  "sc-mesh-core",
  "sc-mesh-formats",
+ "sc-mesh-spatial",
  "serde",
  "slint",
  "slint-build",

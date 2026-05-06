@@ -63,7 +63,7 @@ pub(crate) fn export_scene_as(
     target: &Path,
     format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
-    doc.with_scene(|scene| scene_writer::write_scene(scene, target, format))
+    doc.with_scene(|spatial| scene_writer::write_scene(spatial.scene(), target, format))
         .ok_or_else(|| anyhow!("No scene loaded"))?
 }
 

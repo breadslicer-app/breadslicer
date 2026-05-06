@@ -33,8 +33,10 @@
 //! `O(cluster_size)` MT tests on hit clusters.
 
 use glam::{Mat4, Vec3, Vec4};
-use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
+use sc_mesh_core::Aabb;
+use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
 
 use crate::camera::OrbitCamera;
 
@@ -138,18 +140,22 @@ pub fn project_world_to_screen(
 }
 
 /// Picks the closest object the ray hits, by index into
-/// `scene.objects`. Returns `None` if every object misses (whether by
-/// AABB pre-pass or triangle test).
-pub fn pick_object(ray: &Ray, scene: &Scene) -> Option<usize> {
+/// `spatial.scene().objects`. Returns `None` if every object misses
+/// (whether by AABB pre-pass or triangle test).
+pub fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
-    for (idx, _) in scene.objects.iter().enumerate() {
-        let Some((min, max)) = world_aabb_for_object(scene, idx) else {
+    for idx in 0..spatial.scene().objects.len() {
+        let Some(query) = spatial.object(idx) else {
             continue;
         };
+        let Some(local) = query.local_aabb() else {
+            continue;
+        };
+        let (min, max) = world_aabb_from_local(local, &query.object().transform);
         if !ray_hits_aabb(ray, min, max) {
             continue;
         }
-        if let Some(t) = ray_hits_object(ray, scene, idx) {
+        if let Some(t) = ray_hits_object_query(ray, &query) {
             match best {
                 Some((_, prev_t)) if prev_t <= t => {}
                 _ => best = Some((idx, t)),
@@ -228,25 +234,19 @@ pub(crate) fn ray_hits_triangle_oriented(
     if t > EPSILON { Some(t) } else { None }
 }
 
-/// Closest front-face hit `t` for the object at `idx`, in world-space
-/// ray parameters. Resolves `Resource` references against
-/// `scene.resources`; returns `None` for malformed scenes (out-of-
-/// range resource index, singular linear part on the object's
-/// transform, empty mesh, or out-of-range face vertex indices). The
-/// picker treats every such case as a clean miss rather than
-/// surfacing an error.
-pub(crate) fn ray_hits_object(ray: &Ray, scene: &Scene, idx: usize) -> Option<f32> {
-    let object = scene.objects.get(idx)?;
-    let mesh = match &object.content {
-        SceneObjectContent::Mesh(m) => m,
-        SceneObjectContent::Resource(r) => scene.resources.get(*r)?,
-    };
-    let local = local_ray_for_object(ray, &object.transform)?;
+/// Closest front-face hit `t` for the object behind `query`, in
+/// world-space ray parameters. Returns `None` for malformed scenes
+/// (singular linear part on the object's transform, empty mesh, or
+/// out-of-range face vertex indices). The picker treats every such
+/// case as a clean miss rather than surfacing an error.
+pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Option<f32> {
+    let local = local_ray_for_object(ray, &query.object().transform)?;
     let local_ray = Ray {
         origin: local.origin,
         direction: local.direction,
     };
-    let clusters = mesh.triangle_clusters()?;
+    let clusters = query.clusters()?;
+    let mesh = query.mesh();
     let vertices = mesh.vertices();
     let faces = mesh.faces();
     let mut best: Option<f32> = None;
@@ -349,19 +349,16 @@ fn local_ray_for_object(ray: &Ray, transform: &Transform3D) -> Option<LocalRay> 
     }
 }
 
-fn world_aabb_for_object(scene: &Scene, idx: usize) -> Option<(Vec3, Vec3)> {
-    let object = scene.objects.get(idx)?;
-    let mesh = match &object.content {
-        SceneObjectContent::Mesh(m) => m,
-        SceneObjectContent::Resource(r) => scene.resources.get(*r)?,
-    };
-    let aabb = mesh.local_aabb()?;
-    let lmin = Vec3::from(aabb.min().coords());
-    let lmax = Vec3::from(aabb.max().coords());
-    Some(match &object.transform {
+/// Apply Arvo's transformed-AABB formula to a cached object-space
+/// AABB and the object's transform. Used by [`pick_object`]'s pre-pass
+/// to slab-test world-space AABBs without re-walking vertex data.
+fn world_aabb_from_local(local: Aabb, transform: &Transform3D) -> (Vec3, Vec3) {
+    let lmin = Vec3::from(local.min().coords());
+    let lmax = Vec3::from(local.max().coords());
+    match transform {
         Transform3D::Identity => (lmin, lmax),
         Transform3D::Affine(a) => arvo(lmin, lmax, a),
-    })
+    }
 }
 
 /// Arvo's transformed-AABB formula in f32. Mirrors `scene::arvo_world_aabb`
@@ -595,25 +592,22 @@ mod pick_object_tests {
     use super::*;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
-    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
     fn unit_triangle_at(translation: [f32; 3]) -> SceneObject {
         // CCW when viewed from +Z, ~unit-sized.
-        let mesh = IndexedMesh {
-            meta: None,
-            vertices: vec![
+        let mesh = IndexedMesh::new(
+            None,
+            vec![
                 Vertex::new([-0.5, -0.5, 0.0]),
                 Vertex::new([0.5, -0.5, 0.0]),
                 Vertex::new([0.0, 0.5, 0.0]),
             ],
-            faces: vec![IndexedTriangle {
+            vec![IndexedTriangle {
                 normal: Normal::new([0.0, 0.0, 1.0]),
                 vertices: [0, 1, 2],
             }],
-            local_aabb_cache: ::std::sync::OnceLock::new(),
-            clusters_cache: ::std::sync::OnceLock::new(),
-        };
+        );
         SceneObject {
             meta: None,
             transform: Transform3D::Affine(AffineTransform3D::from_translation([
@@ -625,12 +619,16 @@ mod pick_object_tests {
         }
     }
 
+    fn spatial_for(scene: Scene) -> SceneSpatial {
+        SceneSpatial::new(scene)
+    }
+
     #[test]
     fn ray_hits_object_uses_object_transform() {
         // Same triangle, two scenes — one identity, one translated by
         // +X. Ray points at the +X position; only the translated copy
         // should be hit.
-        let id_scene = Scene {
+        let id_spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -638,53 +636,53 @@ mod pick_object_tests {
                 transform: Transform3D::Identity,
                 content: unit_triangle_at([0.0, 0.0, 0.0]).content,
             }],
-        };
-        let shifted_scene = Scene {
+        });
+        let shifted_spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![unit_triangle_at([10.0, 0.0, 0.0])],
-        };
+        });
         // Ray goes through (10, 0, 0) toward -Z.
         let ray = Ray {
             origin: Vec3::new(10.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_object(&ray, &id_scene, 0).is_none());
-        assert!(ray_hits_object(&ray, &shifted_scene, 0).is_some());
+        assert!(ray_hits_object_query(&ray, &id_spatial.object(0).unwrap()).is_none());
+        assert!(ray_hits_object_query(&ray, &shifted_spatial.object(0).unwrap()).is_some());
     }
 
     #[test]
     fn empty_scene_picks_nothing() {
-        let scene = Scene::default();
+        let spatial = spatial_for(Scene::default());
         let ray = Ray {
             origin: Vec3::ZERO,
             direction: Vec3::X,
         };
-        assert!(pick_object(&ray, &scene).is_none());
+        assert!(pick_object(&ray, &spatial).is_none());
     }
 
     #[test]
     fn returns_none_when_ray_misses_every_object() {
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![
                 unit_triangle_at([0.0, 0.0, 0.0]),
                 unit_triangle_at([10.0, 0.0, 0.0]),
             ],
-        };
+        });
         // Ray points to +Y from far above; no triangle is in its path.
         let ray = Ray {
             origin: Vec3::new(0.0, 100.0, 5.0),
             direction: Vec3::Y,
         };
-        assert!(pick_object(&ray, &scene).is_none());
+        assert!(pick_object(&ray, &spatial).is_none());
     }
 
     #[test]
     fn closest_hit_wins_among_overlapping_along_ray() {
         // Three triangles along -Z at z = 0, z = -2, z = -4.
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![
@@ -692,13 +690,13 @@ mod pick_object_tests {
                 unit_triangle_at([0.0, 0.0, -2.0]),
                 unit_triangle_at([0.0, 0.0, -4.0]),
             ],
-        };
+        });
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
         // The z = 0 triangle is closest.
-        assert_eq!(pick_object(&ray, &scene), Some(0));
+        assert_eq!(pick_object(&ray, &spatial), Some(0));
     }
 
     #[test]
@@ -710,20 +708,21 @@ mod pick_object_tests {
         // index is the on-axis one.
         let on_axis = unit_triangle_at([0.0, 0.0, 0.0]);
         let off_axis = unit_triangle_at([0.0, 50.0, 0.0]);
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![off_axis, on_axis],
-        };
+        });
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert_eq!(pick_object(&ray, &scene), Some(1));
+        assert_eq!(pick_object(&ray, &spatial), Some(1));
 
         // Confirm the AABB rejector specifically rules out the
         // off-axis object — its world-space AABB should miss the ray.
-        let (min, max) = world_aabb_for_object(&scene, 0).unwrap();
+        let q = spatial.object(0).unwrap();
+        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
         assert!(
             !ray_hits_aabb(&ray, min, max),
             "off-axis object's world AABB must miss the on-axis ray"
@@ -736,22 +735,23 @@ mod pick_object_tests {
         // ray approaching from the back side. The triangle test
         // rejects this, so the pick should return None even though
         // the AABB is intersected.
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![unit_triangle_at([0.0, 0.0, 0.0])],
-        };
+        });
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, -5.0),
             direction: Vec3::Z,
         };
-        let (min, max) = world_aabb_for_object(&scene, 0).unwrap();
+        let q = spatial.object(0).unwrap();
+        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
         assert!(
             ray_hits_aabb(&ray, min, max),
             "AABB should be intersected — that's the whole point of this test"
         );
         assert!(
-            pick_object(&ray, &scene).is_none(),
+            pick_object(&ray, &spatial).is_none(),
             "back-face hit must propagate as a no-pick"
         );
     }
@@ -768,11 +768,11 @@ mod pick_object_tests {
         let mut object = unit_triangle_at([0.0, 0.0, 0.0]);
         object.transform =
             Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![object],
-        };
+        });
         let from_above = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
@@ -781,18 +781,19 @@ mod pick_object_tests {
             origin: Vec3::new(0.0, 0.0, -5.0),
             direction: Vec3::Z,
         };
-        let (min, max) = world_aabb_for_object(&scene, 0).unwrap();
+        let q = spatial.object(0).unwrap();
+        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
         assert!(
             ray_hits_aabb(&from_above, min, max) && ray_hits_aabb(&from_below, min, max),
             "both rays must intersect the world AABB; otherwise the test isn't \
              exercising the sign-aware MT path"
         );
         assert!(
-            pick_object(&from_above, &scene).is_none(),
+            pick_object(&from_above, &spatial).is_none(),
             "world-space back face on a mirrored object must be culled"
         );
         assert_eq!(
-            pick_object(&from_below, &scene),
+            pick_object(&from_below, &spatial),
             Some(0),
             "world-space front face on a mirrored object must hit"
         );
@@ -804,7 +805,7 @@ mod pick_object_tests {
         // it just skips the object. The renderer's scene-build path
         // already errors on dangling indices, so the picker only sees
         // such scenes if something else has gone wrong upstream.
-        let scene = Scene {
+        let spatial = spatial_for(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -812,11 +813,11 @@ mod pick_object_tests {
                 transform: Transform3D::Identity,
                 content: SceneObjectContent::Resource(99),
             }],
-        };
+        });
         let ray = Ray {
             origin: Vec3::ZERO,
             direction: Vec3::X,
         };
-        assert!(pick_object(&ray, &scene).is_none());
+        assert!(pick_object(&ray, &spatial).is_none());
     }
 }

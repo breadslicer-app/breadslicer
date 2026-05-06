@@ -32,6 +32,8 @@ use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov_y};
 use crate::pending_load::PendingLoad;
 use crate::picking;
+#[cfg(test)]
+use crate::scene_document::SceneEdit;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{ObjectIdx, Selection};
@@ -247,7 +249,7 @@ impl ViewportController {
             ui.set_has_scene(true);
             let names = self
                 .document
-                .with_scene(build_object_list_names)
+                .with_scene(|spatial| build_object_list_names(spatial.scene()))
                 .unwrap_or_default();
             push_object_list(&ui, names);
             ui.set_selected_object_index(-1);
@@ -383,7 +385,7 @@ impl ViewportController {
             return;
         };
         let PreparedScene {
-            scene,
+            spatial,
             gpu_scene,
             device: built_with,
             warnings: _,
@@ -405,7 +407,7 @@ impl ViewportController {
         // camera to `None` (so the bounds-based framing below sees a
         // fresh slot), pushes the new object list, and rearms the UI
         // mirror.
-        self.document.install_scene(scene, source_path);
+        self.document.install_spatial(spatial, source_path);
 
         if scene_installed {
             self.loader.note_upload_success();
@@ -439,7 +441,10 @@ impl ViewportController {
     /// guard short-circuits the round-trip so the mirror-back to the UI
     /// doesn't fire `selection-changed` again.
     pub fn on_select_by_index(&self, idx: usize) {
-        let scene_len = self.document.with_scene(|s| s.objects.len()).unwrap_or(0);
+        let scene_len = self
+            .document
+            .with_scene(|s| s.scene().objects.len())
+            .unwrap_or(0);
         let new_sel = if idx < scene_len {
             Selection::One(ObjectIdx(idx))
         } else {
@@ -471,7 +476,10 @@ impl ViewportController {
     /// in-progress drag on Tab; if that turns out to be wrong, the
     /// fix is to call `abort_gizmo_drag` here.
     pub fn on_selection_cycle(&self, delta: i32) {
-        let scene_len = self.document.with_scene(|s| s.objects.len()).unwrap_or(0);
+        let scene_len = self
+            .document
+            .with_scene(|s| s.scene().objects.len())
+            .unwrap_or(0);
         if scene_len == 0 {
             return;
         }
@@ -813,7 +821,7 @@ impl ViewportController {
         if self.frame.get().upload_owed() {
             let upload = self
                 .document
-                .with_scene(|scene| renderer.upload_scene(scene));
+                .with_scene(|spatial| renderer.upload_scene(spatial.scene()));
             match upload {
                 Some(Ok(())) => {
                     self.frame.update(FrameState::after_upload_success);
@@ -876,7 +884,7 @@ impl ViewportController {
         // for as long as the closure runs. `None` means the scene was
         // cleared between the upload check and now; the function
         // returns without further work.
-        self.document.with_scene(|scene_for_render| {
+        self.document.with_scene(|spatial_for_render| {
             let selection_idx = self.document.selection_primary_idx();
             let drag_state = self.gizmo_fsm.current();
             let (visibility, drag_visual) = match drag_state {
@@ -917,7 +925,7 @@ impl ViewportController {
             let hover = self.gizmo_fsm.current_hover();
             let gizmo_frame = selection_idx.and_then(|sel| {
                 gizmo::frame::build_gizmo_frame(
-                    scene_for_render,
+                    spatial_for_render,
                     camera,
                     sel,
                     h_logical,
@@ -928,7 +936,7 @@ impl ViewportController {
             });
 
             let Some(texture) = renderer.render(
-                scene_for_render,
+                spatial_for_render.scene(),
                 camera,
                 selection_idx,
                 gizmo_frame,
@@ -1382,7 +1390,7 @@ mod viewport_click_tests {
 
     fn read_translation(ctrl: &ViewportController) -> Vec3 {
         ctrl.document
-            .with_scene(|scene| match scene.objects[0].transform {
+            .with_scene(|spatial| match spatial.scene().objects[0].transform {
                 Transform3D::Identity => Vec3::ZERO,
                 Transform3D::Affine(a) => Vec3::new(
                     a.translation()[0] as f32,
@@ -1395,7 +1403,7 @@ mod viewport_click_tests {
 
     fn read_linear(ctrl: &ViewportController) -> [[f64; 3]; 3] {
         ctrl.document
-            .with_scene(|scene| match scene.objects[0].transform {
+            .with_scene(|spatial| match spatial.scene().objects[0].transform {
                 Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                 Transform3D::Affine(a) => *a.linear(),
             })
@@ -2054,15 +2062,18 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        ctrl.document
-            .apply_command(|s| s.objects[0].transform = translation_x(2.0));
+        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation_x(2.0),
+        });
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
 
         assert!(ctrl.document.can_undo());
         assert!(ctrl.document.undo());
         let after_undo = ctrl
             .document
-            .with_scene(|s| s.objects[0].transform)
+            .with_scene(|s| s.scene().objects[0].transform)
             .unwrap();
         assert_eq!(after_undo, Transform3D::Identity);
     }
@@ -2094,8 +2105,11 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        ctrl.document
-            .apply_command(|s| s.objects[0].transform = translation_x(3.0));
+        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation_x(3.0),
+        });
         // User switches mode without releasing the key.
         ctrl.on_gizmo_focus_rotate();
 
@@ -2103,7 +2117,7 @@ mod keyboard_focus_tests {
         ctrl.document.undo();
         let after_undo = ctrl
             .document
-            .with_scene(|s| s.objects[0].transform)
+            .with_scene(|s| s.scene().objects[0].transform)
             .unwrap();
         assert_eq!(after_undo, Transform3D::Identity);
     }
@@ -2120,8 +2134,11 @@ mod keyboard_focus_tests {
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         ctrl.on_gizmo_arrow_pressed(ARROW_Y_POS);
-        ctrl.document
-            .apply_command(|s| s.objects[0].transform = translation_x(1.0));
+        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation_x(1.0),
+        });
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
         // Bitset still has Y_POS held — must not flush yet.
         assert!(!ctrl.document.can_undo());
@@ -2142,8 +2159,11 @@ mod keyboard_focus_tests {
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        ctrl.document
-            .apply_command(|s| s.objects[0].transform = translation_x(1.0));
+        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx: 0,
+            before: Transform3D::Identity,
+            after: translation_x(1.0),
+        });
 
         ctrl.on_close_scene();
         assert!(!ctrl.document.can_undo());

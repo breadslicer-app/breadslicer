@@ -103,8 +103,13 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        let after =
-            document.with_scene(|scene| scene.objects.get(object_idx).map(|obj| obj.transform));
+        let after = document.with_scene(|spatial| {
+            spatial
+                .scene()
+                .objects
+                .get(object_idx)
+                .map(|obj| obj.transform)
+        });
         if let Some(Some(after)) = after {
             document.push_edit(SceneEdit::ObjectTransform {
                 object_idx,
@@ -157,13 +162,13 @@ impl GizmoFsm {
         // closure's end, so `state.set` below can run without overlap.
         let computed: Option<(DragOp, Transform3D, glam::Vec3)> = ctx
             .document
-            .with_scene(|scene| {
+            .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
+                let pivot = gizmo::pivot_for_object(spatial, sel_idx)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
                 let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
-                let obj = scene.objects.get(sel_idx)?;
+                let obj = spatial.scene().objects.get(sel_idx)?;
                 let original = obj.transform;
 
                 let op = match winner {
@@ -252,7 +257,7 @@ impl GizmoFsm {
         // Both drop at the closure's end before the scene write below.
         let result: Option<(Transform3D, DragOp)> = ctx
             .document
-            .with_scene(|scene| {
+            .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
                 // Live Shift toggle on a `ScaleAxis` drag re-anchors before
@@ -262,7 +267,7 @@ impl GizmoFsm {
                 // does not snap the object.
                 if let DragOp::ScaleAxis { proportional, .. } = op
                     && proportional != ctx.modifiers.shift
-                    && let Some(obj) = scene.objects.get(object_idx)
+                    && let Some(obj) = spatial.scene().objects.get(object_idx)
                 {
                     let reanchor_ctx = ReanchorCtx {
                         camera,
@@ -299,19 +304,17 @@ impl GizmoFsm {
             object_idx,
         });
 
-        ctx.document
-            .apply_command(|scene| {
-                if let Some(obj) = scene.objects.get_mut(object_idx) {
-                    obj.transform = new_transform;
-                }
-            })
-            .is_some()
+        ctx.document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx,
+            before: original,
+            after: new_transform,
+        })
     }
 
     /// Aborts any in-progress drag and reverts the affected object's
     /// transform to its captured original. Returns `true` if a drag
     /// was in flight (caller clears the input phase; the `Mutated`
-    /// event from `apply_command` drives the redraw).
+    /// event from `apply_edit` drives the redraw).
     pub(super) fn abort(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
             original,
@@ -322,10 +325,17 @@ impl GizmoFsm {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        document.apply_command(|scene| {
-            if let Some(obj) = scene.objects.get_mut(object_idx) {
-                obj.transform = original;
-            }
+        // The current transform on the object is whatever the last
+        // drag tick wrote; we need it as the `before` so the edit
+        // describes "from current → back to original."
+        let current = document
+            .with_scene(|spatial| spatial.scene().objects.get(object_idx).map(|o| o.transform))
+            .flatten()
+            .unwrap_or(original);
+        document.apply_edit(SceneEdit::ObjectTransform {
+            object_idx,
+            before: current,
+            after: original,
         });
         true
     }
@@ -405,10 +415,10 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
     let (w, h) = (vp.width(), vp.height());
     let fov_y = default_fov_y();
     ctx.document
-        .with_scene(|scene| {
+        .with_scene(|spatial| {
             let camera_slot = ctx.camera.borrow();
             let camera = camera_slot.as_ref()?;
-            let pivot = gizmo::pivot_for_object(scene, sel_idx)?;
+            let pivot = gizmo::pivot_for_object(spatial, sel_idx)?;
             if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor) {
                 return None;
             }
