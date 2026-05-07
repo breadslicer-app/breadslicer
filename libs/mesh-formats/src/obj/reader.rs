@@ -11,7 +11,7 @@ use float_cmp::approx_eq;
 use sc_mesh_core::errors::VertexIndex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
 use crate::messages::{LoadMeshWarning, LoadObjWarning};
 
@@ -240,7 +240,14 @@ where
                     let v1 = global_vertices[usize::from(tri_vertices[1])];
                     let v2 = global_vertices[usize::from(tri_vertices[2])];
 
-                    let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])?;
+                    // OBJ has no on-disk face normal; we recompute from the
+                    // vertices. If the triangle is truly degenerate (collinear
+                    // or coincident vertices), no direction is recoverable.
+                    // Keep the face with a zero-normal sentinel so the user's
+                    // geometry is not silently dropped; `validate_normal_vectors`
+                    // flags the face as `ZeroAreaTriangle`.
+                    let normal = compute_normal_from_triangle_vertices(&[v0, v1, v2])
+                        .unwrap_or_else(|_| Normal::new([0.0, 0.0, 0.0]));
 
                     current_faces.push(IndexedTriangle {
                         normal,
@@ -991,6 +998,83 @@ foo bar
 f 1 2 3
 ";
         assert!(read_obj_from_str(obj).is_err());
+    }
+
+    // --- Degenerate-face tolerance ---
+
+    #[test]
+    fn collinear_face_is_preserved_with_zero_normal_for_validation() {
+        // A face whose three vertices are collinear: the normal recompute
+        // can't produce a meaningful direction. The reader keeps the face
+        // with a zero normal so `validate_normal_vectors` flags it later
+        // rather than failing the whole file at parse time.
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 2.0 0.0 0.0
+f 1 2 3
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
+        assert!(warnings.is_empty());
+        assert_eq!(mesh.faces().len(), 1);
+        assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 0.0]));
+
+        let errors = mesh
+            .validated_faces()
+            .expect("face indices in range")
+            .validate_normal_vectors()
+            .expect_err("collinear face is degenerate");
+        assert_eq!(
+            errors,
+            vec![
+                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                    face_idx: 0_usize.into(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn reader_continues_past_a_degenerate_face() {
+        // Three faces in order: valid, degenerate (collinear), valid. The
+        // reader must keep going past the degenerate face so an isolated
+        // bad face in a multi-face file doesn't fail the whole load.
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+v 2.0 0.0 0.0
+v 0.0 0.0 1.0
+f 1 2 3
+f 1 2 4
+f 1 3 5
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
+        assert!(warnings.is_empty());
+
+        // All three faces survive; only the middle one carries a zero
+        // normal (the recompute couldn't produce a direction).
+        assert_eq!(mesh.faces().len(), 3);
+        assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 1.0]));
+        assert_eq!(mesh.faces()[1].normal, Normal::new([0.0, 0.0, 0.0]));
+        assert_eq!(mesh.faces()[2].normal, Normal::new([1.0, 0.0, 0.0]));
+
+        // The validator flags exactly the middle face.
+        let errors = mesh
+            .validated_faces()
+            .expect("face indices in range")
+            .validate_normal_vectors()
+            .expect_err("middle face is degenerate");
+        assert_eq!(
+            errors,
+            vec![
+                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                    face_idx: 1_usize.into(),
+                }
+            ]
+        );
     }
 
     // --- Multi-object tests ---
