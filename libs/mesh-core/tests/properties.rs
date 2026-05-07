@@ -15,6 +15,7 @@
 use float_cmp::approx_eq;
 use proptest::prelude::*;
 use sc_mesh_core::Aabb;
+use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::{Vector3D, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 
@@ -73,7 +74,7 @@ proptest! {
 
     #[test]
     fn cross_product_is_anti_commutative_f64(a in vector3d_f64(), b in vector3d_f64()) {
-        // cross(a, b) == -cross(b, a) — exact under reorder of the same
+        // cross(a, b) == -cross(b, a) , exact under reorder of the same
         // arithmetic, but `mul_add` rounding can cause 1-ulp differences,
         // so we still use approx_eq.
         let ab = a.cross_product(&b);
@@ -149,6 +150,78 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------
+// Triangle-normal properties
+// ---------------------------------------------------------------------
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// `compute_normal_from_triangle_vertices` is scale-invariant:
+    /// scaling all three vertices by a positive factor must produce
+    /// the same unit normal as the unscaled triangle. The threshold
+    /// in the function is dimensionless (sin²(θ) of the edges), so
+    /// the property holds for any scale.
+    ///
+    /// `prop_assume!` skips near-degenerate inputs whose accept/reject
+    /// outcome can flip across scale due to f32 quantisation, that is
+    /// expected and orthogonal to the property under test.
+    #[test]
+    fn compute_normal_is_scale_invariant(
+        v0 in vector3d_f32(),
+        v1 in vector3d_f32(),
+        v2 in vector3d_f32(),
+        scale in 1.0e-2_f32..1.0e2_f32,
+    ) {
+        let p0 = Vertex::new(v0.coords());
+        let p1 = Vertex::new(v1.coords());
+        let p2 = Vertex::new(v2.coords());
+
+        // Skip near-degenerate triangles (sin² safely above the 1e-12
+        // function threshold). Computed in f64 to mirror the function.
+        let v0d = p0.to_f64();
+        let v1d = p1.to_f64();
+        let v2d = p2.to_f64();
+        let e1 = v1d.diff(&v0d);
+        let e2 = v2d.diff(&v0d);
+        let cross_mag_sq = e1.cross_product(&e2).squared_norm();
+        let edges_mag_sq_product = e1.squared_norm() * e2.squared_norm();
+        prop_assume!(edges_mag_sq_product > 0.0);
+        prop_assume!(cross_mag_sq / edges_mag_sq_product > 1.0e-6);
+
+        let n_unscaled = compute_normal_from_triangle_vertices(&[p0, p1, p2]).unwrap();
+        let scaled = [
+            Vertex::new([
+                v0.coords()[0] * scale,
+                v0.coords()[1] * scale,
+                v0.coords()[2] * scale,
+            ]),
+            Vertex::new([
+                v1.coords()[0] * scale,
+                v1.coords()[1] * scale,
+                v1.coords()[2] * scale,
+            ]),
+            Vertex::new([
+                v2.coords()[0] * scale,
+                v2.coords()[1] * scale,
+                v2.coords()[2] * scale,
+            ]),
+        ];
+        let n_scaled = compute_normal_from_triangle_vertices(&scaled).unwrap();
+
+        let nu = n_unscaled.coords();
+        let ns = n_scaled.coords();
+        for i in 0..3 {
+            prop_assert!(
+                approx_eq!(f32, nu[i], ns[i], epsilon = 1.0e-3),
+                "axis {i}: unscaled={}, scaled={}",
+                nu[i],
+                ns[i],
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
 // AffineTransform3D properties
 // ---------------------------------------------------------------------
 
@@ -169,7 +242,7 @@ fn affine_rotation_or_translation() -> impl Strategy<Value = AffineTransform3D> 
 fn axis_angle_safe() -> impl Strategy<Value = ([f64; 3], f64)> {
     // Generate axes with magnitude clearly above the f64::EPSILON
     // threshold the constructor rejects. Bound the angle to one full
-    // turn either way — Rodrigues is well-defined everywhere, this just
+    // turn either way: Rodrigues is well-defined everywhere, this just
     // makes failure cases readable.
     (
         (
@@ -401,7 +474,7 @@ proptest! {
     /// `Aabb::transformed_arvo` must be a conservative enclosure of
     /// the transformed AABB: every one of the eight transformed
     /// corners of the local box must lie inside the returned world
-    /// box. This is the algorithm's defining contract — the
+    /// box. This is the algorithm's defining contract: the
     /// closed-form formula approximates the per-corner method by an
     /// outer bound, never a tighter one.
     #[test]
@@ -450,7 +523,7 @@ proptest! {
     }
 
     /// `Aabb::transformed_arvo` for a translation transform exactly
-    /// equals the local AABB shifted by the translation vector —
+    /// equals the local AABB shifted by the translation vector:
     /// translations are tight, not just conservative, in Arvo's
     /// formula.
     #[test]

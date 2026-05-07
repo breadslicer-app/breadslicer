@@ -13,9 +13,9 @@
 //! live on the witness, so the in-range invariant is statically
 //! enforced rather than relying on the caller's discipline.
 //!
-//! Operations that preserve the invariant (`fix_faces_orientation` —
+//! Operations that preserve the invariant (`fix_faces_orientation`,
 //! either reverses a face's vertex order in place or mutates its
-//! normal — and the same for the read-only validators) are methods on
+//! normal, and the same for the read-only validators) are methods on
 //! the witnesses. `fix_zero_length_edges` lives on `IndexedMesh`
 //! itself and minted-via-shortcut: see
 //! `IndexedMesh::fix_zero_length_edges_into_validated`.
@@ -27,7 +27,7 @@ use float_cmp::approx_eq;
 
 use crate::errors::{FaceIndex, MeshFix, MeshManifoldError, MeshNormalVectorError, VertexIndex};
 use crate::geometry::{
-    DEGENERATE_AREA_SQUARED, NORMAL_ANGLE_TOLERANCE_COS, UNIT_NORM_TOLERANCE, gt_strict,
+    DEGENERACY_SIN_SQ_THRESHOLD, NORMAL_ANGLE_TOLERANCE_COS, UNIT_NORM_TOLERANCE, gt_strict,
 };
 use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
 
@@ -99,7 +99,7 @@ impl<'a> ValidatedFacesMut<'a> {
     /// normal-recompute pass replaces `face.normal` only. Neither
     /// touches `vertices.len()` nor introduces new
     /// `face.vertices[k]` values, so the in-range invariant the
-    /// witness encodes is preserved across the call — `self`
+    /// witness encodes is preserved across the call: `self`
     /// remains a valid witness afterwards.
     pub fn fix_faces_orientation(
         &mut self,
@@ -137,9 +137,13 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 
         let cross = e1.cross_product(&e2);
         let cross_mag_sq = cross.squared_norm();
+        let edges_mag_sq_product = e1.squared_norm() * e2.squared_norm();
 
         // degenerate (zero-area) triangles; also handles NaN coordinates.
-        if !gt_strict(cross_mag_sq, DEGENERATE_AREA_SQUARED) {
+        if !gt_strict(
+            cross_mag_sq,
+            DEGENERACY_SIN_SQ_THRESHOLD * edges_mag_sq_product,
+        ) {
             errors.push(MeshNormalVectorError::ZeroAreaTriangle { face_idx });
             continue;
         }
@@ -178,7 +182,7 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 /// Body of `validate_manifold`. Strictly speaking this routine never
 /// indexes into `mesh.vertices` (it only uses `face.vertices` values
 /// as half-edge keys), so the in-range invariant is not a soundness
-/// requirement here — the witness gates this method only for API
+/// requirement here: the witness gates this method only for API
 /// symmetry with `validate_normal_vectors`.
 fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldError>> {
     let mut errors: Vec<MeshManifoldError> = vec![];

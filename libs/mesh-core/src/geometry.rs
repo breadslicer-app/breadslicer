@@ -10,12 +10,19 @@ use anyhow::{Result, anyhow};
 
 use crate::primitives::{Normal, Vertex};
 
-/// Squared-area threshold below which a triangle is treated as degenerate.
+/// Threshold on `sin²(θ)` between two edges of a triangle. Below this
+/// the triangle is treated as degenerate.
 ///
-/// Compared against `‖e1 × e2‖²` in f64 — twice the (squared) triangle
-/// area. The numeric value matches the original `f32::EPSILON as f64`
-/// guard so behaviour is preserved across the rename.
-pub(crate) const DEGENERATE_AREA_SQUARED: f64 = f32::EPSILON as f64;
+/// Equivalent to `‖e1 × e2‖² / (‖e1‖² · ‖e2‖²) > THRESHOLD`. The
+/// criterion is dimensionless, scale-invariant, so a sub-millimeter
+/// detail mesh is judged on the same footing as a printer-bed-scale
+/// one. An earlier absolute-area threshold flagged every triangle in a
+/// small mesh as degenerate.
+///
+/// θ ≳ 5.7×10⁻⁵° at this value: well above f64 noise (~1e-16) and the
+/// f32-quantisation floor of the inputs (~1e-14), well below the
+/// smallest corner angle a real mesh would have.
+pub(crate) const DEGENERACY_SIN_SQ_THRESHOLD: f64 = 1e-12;
 
 /// Tolerance for "is this f64 magnitude squared close enough to 1?" in
 /// the unit-norm check on stored f32 normals widened to f64.
@@ -81,9 +88,16 @@ pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f6
     let cross = e1.cross_product(&e2);
 
     let cross_mag_sq = cross.squared_norm();
+    let edges_mag_sq_product = e1.squared_norm() * e2.squared_norm();
 
-    // degenerate (zero-area) triangles; also handles NaN coordinates.
-    if !gt_strict(cross_mag_sq, DEGENERATE_AREA_SQUARED) {
+    // `cross_mag_sq / edges_mag_sq_product = sin²(θ)`. Multiplying
+    // through avoids dividing by zero on collapsed edges; NaN inputs
+    // flow into both sides, and `gt_strict(NaN, _) == false` keeps
+    // them rejected.
+    if !gt_strict(
+        cross_mag_sq,
+        DEGENERACY_SIN_SQ_THRESHOLD * edges_mag_sq_product,
+    ) {
         return Err(anyhow!("Degenerate (near-zero area) triangle found"));
     }
 
@@ -167,6 +181,52 @@ mod geometry_tests {
         let n = normal.coords();
         let mag = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         assert!((mag - 1.0).abs() < 1e-5, "magnitude was {mag}");
+    }
+
+    #[test]
+    fn small_but_valid_triangle_is_accepted() {
+        // Edge length ~1e-4 mm. Far below the absolute-area threshold
+        // an earlier version of this routine used (~3.4e-4 mm side for
+        // an equilateral) but sin²(θ) is still ~0.5, so the relative
+        // criterion accepts it.
+        let verts = [v(0.0, 0.0, 0.0), v(1e-4, 0.0, 0.0), v(0.0, 1e-4, 0.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn scale_invariance_yields_same_normal() {
+        // Geometrically-identical triangles at very different scales
+        // produce the same unit normal, the dimensionless criterion
+        // doesn't care about the absolute size. An earlier
+        // absolute-area threshold rejected the small one and accepted
+        // the large one.
+        let small = [v(0.0, 0.0, 0.0), v(1e-4, 0.0, 0.0), v(0.0, 1e-4, 0.0)];
+        let large = [v(0.0, 0.0, 0.0), v(1e3, 0.0, 0.0), v(0.0, 1e3, 0.0)];
+        let n_small = compute_normal_from_triangle_vertices(&small).unwrap();
+        let n_large = compute_normal_from_triangle_vertices(&large).unwrap();
+        assert_normal_approx(&n_small, n_large.coords());
+        assert_normal_approx(&n_small, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn sliver_below_threshold_returns_error() {
+        // e1 = (1, 0, 0), e2 = (0.5, 1e-7, 0). cross = (0, 0, 1e-7),
+        // ‖cross‖² = 1e-14, ‖e1‖²·‖e2‖² ≈ 0.25, so sin²(θ) ≈ 4e-14
+        // below the 1e-12 threshold. Pins the threshold against
+        // accidental loosening.
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 1e-7, 0.0)];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
+    fn sliver_above_threshold_is_accepted() {
+        // Same shape as the rejection test but with the corner offset
+        // grown so sin²(θ) ≈ 4e-10, two orders above the 1e-12
+        // threshold. Pins the threshold against accidental tightening.
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 1e-5, 0.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
     }
 
     #[test]

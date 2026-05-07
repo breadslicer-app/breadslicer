@@ -361,7 +361,7 @@ mod indexed_mesh_validate_faces_tests {
 
     #[test]
     fn degenerate_triangle_reports_all_collapsed_edges() {
-        // All three vertices are the same → all three edges are collapsed
+        // All three vertices are the same -> all three edges are collapsed
         let mesh = make_mesh_with_faces(3, vec![make_face(1, 1, 1)]);
         let errors = mesh.validate_faces().unwrap_err();
         assert_eq!(errors.len(), 3);
@@ -475,6 +475,25 @@ mod indexed_mesh_validate_normal_vectors_tests {
     #[test]
     fn ok_for_empty_faces() {
         let mesh = make_mesh(xy_triangle_vertices(), vec![]);
+        assert!(
+            mesh.validated_faces()
+                .unwrap()
+                .validate_normal_vectors()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn ok_for_small_but_valid_triangle() {
+        // Sub-millimetre detail (~1 µm edges). Pre-fix this would have
+        // been flagged ZeroAreaTriangle by the absolute-area threshold
+        // an earlier version of the validator used.
+        let vertices = vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1e-3, 0.0, 0.0]),
+            Vertex::new([0.0, 1e-3, 0.0]),
+        ];
+        let mesh = make_mesh(vertices, vec![face([0.0, 0.0, 1.0], [0, 1, 2])]);
         assert!(
             mesh.validated_faces()
                 .unwrap()
@@ -751,10 +770,10 @@ mod indexed_mesh_validate_manifold_tests {
                 Vertex::new([-1.0, -1.0, 1.0]),
             ],
             faces: vec![
-                face([0, 1, 2]), // edges: 0→1, 1→2, 2→0
-                face([0, 3, 1]), // edges: 0→3, 3→1, 1→0
-                face([0, 2, 3]), // edges: 0→2, 2→3, 3→0
-                face([1, 3, 2]), // edges: 1→3, 3→2, 2→1
+                face([0, 1, 2]), // edges: 0->1, 1->2, 2->0
+                face([0, 3, 1]), // edges: 0->3, 3->1, 1->0
+                face([0, 2, 3]), // edges: 0->2, 2->3, 3->0
+                face([1, 3, 2]), // edges: 1->3, 3->2, 2->1
             ],
         }
     }
@@ -802,10 +821,10 @@ mod indexed_mesh_validate_manifold_tests {
     #[test]
     fn detects_boundary_edge_open_surface() {
         // Two triangles sharing one edge, leaving 4 boundary edges
-        // Face 0: 0→1, 1→2, 2→0
-        // Face 1: 1→0, 0→3, 3→1
-        // Edge (0,1) is shared with consistent winding (0→1 and 1→0) — OK
-        // Edges 1→2, 2→0, 0→3, 3→1 are boundary
+        // Face 0: 0->1, 1->2, 2->0
+        // Face 1: 1->0, 0->3, 3->1
+        // Edge (0,1) is shared with consistent winding (0->1 and 1->0) : OK
+        // Edges 1->2, 2->0, 0->3, 3->1 are boundary
         let mesh = make_mesh(4, vec![face([0, 1, 2]), face([1, 0, 3])]);
         let errors = mesh
             .validated_faces()
@@ -821,10 +840,10 @@ mod indexed_mesh_validate_manifold_tests {
 
     #[test]
     fn detects_inconsistent_winding_order() {
-        // Two triangles sharing edge (0,1) but both traverse it as 0→1
-        // Face 0: 0→1, 1→2, 2→0
-        // Face 1: 0→1, 1→3, 3→0
-        // Edge (0,1) appears twice in the same direction → inconsistent winding
+        // Two triangles sharing edge (0,1) but both traverse it as 0->1
+        // Face 0: 0->1, 1->2, 2->0
+        // Face 1: 0->1, 1->3, 3->0
+        // Edge (0,1) appears twice in the same direction -> inconsistent winding
         let mesh = make_mesh(4, vec![face([0, 1, 2]), face([0, 1, 3])]);
         let errors = mesh
             .validated_faces()
@@ -850,10 +869,10 @@ mod indexed_mesh_validate_manifold_tests {
     #[test]
     fn detects_non_manifold_edge() {
         // Three faces all sharing edge (0,1)
-        // Face 0: 0→1, 1→2, 2→0
-        // Face 1: 1→0, 0→3, 3→1
-        // Face 2: 0→1, 1→4, 4→0
-        // Edge (0,1): forward [0, 2], reverse [1] → total 3 faces
+        // Face 0: 0->1, 1->2, 2->0
+        // Face 1: 1->0, 0->3, 3->1
+        // Face 2: 0->1, 1->4, 4->0
+        // Edge (0,1): forward [0, 2], reverse [1] -> total 3 faces
         let mesh = make_mesh(5, vec![face([0, 1, 2]), face([1, 0, 3]), face([0, 1, 4])]);
         let errors = mesh
             .validated_faces()
@@ -882,8 +901,8 @@ mod indexed_mesh_validate_manifold_tests {
     fn tetrahedron_with_one_flipped_face_detects_inconsistent_winding() {
         // Take a valid tetrahedron and flip one face's winding
         let mut mesh = tetrahedron();
-        // Flip face 0: [0, 1, 2] → [0, 2, 1]
-        // This reverses edges 0→1 to 0→2, 1→2 to 2→1, 2→0 to 1→0
+        // Flip face 0: [0, 1, 2] -> [0, 2, 1]
+        // This reverses edges 0->1 to 0->2, 1->2 to 2->1, 2->0 to 1->0
         mesh.faces[0].vertices = [0, 2, 1].map(VertexIndex::from);
 
         let errors = mesh
@@ -901,7 +920,7 @@ mod indexed_mesh_validate_manifold_tests {
 
     #[test]
     fn reports_multiple_error_types() {
-        // Face 0 and Face 1 share edge (0,1) with inconsistent winding (both 0→1),
+        // Face 0 and Face 1 share edge (0,1) with inconsistent winding (both 0->1),
         // plus all other edges are boundary.
         let mesh = make_mesh(4, vec![face([0, 1, 2]), face([0, 1, 3])]);
         let errors = mesh
