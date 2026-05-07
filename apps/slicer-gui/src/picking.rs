@@ -40,11 +40,23 @@ use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
 
 use crate::camera::OrbitCamera;
 
-/// Tolerance for the determinant in Möller–Trumbore. Hits with a
-/// determinant smaller than this in absolute value are treated as
-/// grazing / back-facing and rejected. f32 ulps near 1.0 are around
+/// Tolerance for the t-parameter "is this hit in front of the ray
+/// origin?" check at the end of Möller-Trumbore. Avoids spurious
+/// self-intersections at t close to 0. f32 ulps near 1.0 are around
 /// 1.19e-7, so 1e-7 is a few ulps above noise.
 const EPSILON: f32 = 1e-7;
+
+/// Scale-invariant threshold on `(det / (|edge1| · |edge2|))²` for
+/// the Möller-Trumbore front-face / degeneracy gate. The picker's
+/// determinant `det = edge1 · (direction × edge2)` uses a unit
+/// `direction`, so `|det| <= |edge1| · |edge2|`; the squared ratio
+/// is dimensionless and bounded by 1. Matching mesh-core's
+/// `DEGENERACY_SIN_SQ_THRESHOLD` lets the picker work uniformly
+/// across mesh scales: the previous absolute 1e-7 floor on `det`
+/// rejected legitimate front-face hits whenever triangle edges were
+/// short (e.g. a model exported in metres but loaded as if in mm),
+/// because `|det|` shrinks with edge length squared.
+const DET_SIN_SQ_THRESHOLD: f32 = 1e-12;
 
 /// Object-space ray plus the conversion factor needed to bring an MT
 /// `t` back to world space. `det_sign` is `+1.0` when the parent
@@ -216,7 +228,12 @@ pub(crate) fn ray_hits_triangle_oriented(
     let edge2 = v2 - v0;
     let h = ray.direction.cross(edge2);
     let det = edge1.dot(h);
-    if det * det_sign < EPSILON {
+    let det_oriented = det * det_sign;
+    if det_oriented <= 0.0 {
+        return None;
+    }
+    let edges_mag_sq = edge1.length_squared() * edge2.length_squared();
+    if det_oriented * det_oriented < DET_SIN_SQ_THRESHOLD * edges_mag_sq {
         return None;
     }
     let inv_det = 1.0 / det;
@@ -817,6 +834,83 @@ mod pick_object_tests {
         let ray = Ray {
             origin: Vec3::ZERO,
             direction: Vec3::X,
+        };
+        assert!(pick_object(&ray, &spatial).is_none());
+    }
+
+    #[test]
+    fn sub_millimetre_triangle_is_pickable() {
+        // Regression: `ray_hits_triangle_oriented` rejects hits whose
+        // MT determinant is below an absolute `EPSILON = 1e-7`. The
+        // determinant scales as `edge_length²` for a unit-direction
+        // ray, so on sub-millimetre meshes (e.g. files exported in
+        // metres but loaded as if in mm) it falls under that floor and
+        // a front-face hit is silently dropped. A scale-invariant gate
+        // (relative to `|edge1| · |dir × edge2|`) would let this pass.
+        //
+        // Triangle is a 0.1-mm-wide CCW patch in the z = 0 plane;
+        // |det| for a -Z, unit-direction ray is ≈ 1e-8.
+        let s = 5e-5_f32;
+        let mesh = IndexedMesh::new(
+            None,
+            vec![
+                Vertex::new([-s, -s, 0.0]),
+                Vertex::new([s, -s, 0.0]),
+                Vertex::new([0.0, s, 0.0]),
+            ],
+            vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        );
+        let spatial = spatial_for(Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        });
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 1.0),
+            direction: -Vec3::Z,
+        };
+        assert_eq!(pick_object(&ray, &spatial), Some(0));
+    }
+
+    #[test]
+    fn sub_millimetre_back_face_is_rejected() {
+        // Companion to `sub_millimetre_triangle_is_pickable`: with the
+        // scale-invariant gate, the sign of `det * det_sign` carries
+        // the front-face filter on its own (`det_oriented <= 0.0`).
+        // Pin that the cull still fires at small scale, so a future
+        // refactor that drops or weakens the sign check surfaces here.
+        let s = 5e-5_f32;
+        let mesh = IndexedMesh::new(
+            None,
+            vec![
+                Vertex::new([-s, -s, 0.0]),
+                Vertex::new([s, -s, 0.0]),
+                Vertex::new([0.0, s, 0.0]),
+            ],
+            vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        );
+        let spatial = spatial_for(Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        });
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, -1.0),
+            direction: Vec3::Z,
         };
         assert!(pick_object(&ray, &spatial).is_none());
     }
