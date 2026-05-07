@@ -26,7 +26,7 @@ mod ascii_stl_malformed_tests {
 
     #[test]
     fn missing_solid_header_is_an_error() {
-        // No leading "solid " — the regex rejects this on the very
+        // No leading "solid ": the regex rejects this on the very
         // first line.
         let buf = b"facet normal 0 0 0\nendsolid\n";
         let mut reader = Cursor::new(buf.to_vec());
@@ -44,7 +44,7 @@ mod ascii_stl_malformed_tests {
 
     #[test]
     fn invalid_facet_header_is_an_error() {
-        // `facet NOTNORMAL 0 0 0` — the second token has to be the
+        // `facet NOTNORMAL 0 0 0`: the second token has to be the
         // literal `normal`.
         let buf = b"\
 solid foo
@@ -196,9 +196,73 @@ endsolid foo
     }
 
     #[test]
-    fn zero_normal_with_degenerate_triangle_is_an_error() {
-        // Same shape as the previous test but with a collinear triangle:
-        // the recomputation returns an error, which the reader propagates.
+    fn parser_continues_past_a_degenerate_facet() {
+        // Three facets in order: valid, degenerate (collinear), valid.
+        // The parser must keep reading past the degenerate facet so an
+        // isolated bad triangle in a multi-facet file doesn't fail the
+        // whole load.
+        let buf = b"\
+solid foo
+  facet normal 0 0 1
+    outer loop
+      vertex 0 0 0
+      vertex 1 0 0
+      vertex 0 1 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 1 0 0
+      vertex 2 0 0
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 0 1 0
+      vertex 0 0 1
+    endloop
+  endfacet
+endsolid foo
+";
+        let mut reader = Cursor::new(buf.to_vec());
+        let scene = read_stla(&mut reader).unwrap();
+        let mesh = match &scene.objects[0].content {
+            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected an inline mesh"),
+        };
+
+        // All three facets survive; only the middle one carries a zero
+        // normal (the recompute couldn't produce a direction).
+        assert_eq!(mesh.faces().len(), 3);
+        assert_eq!(mesh.faces()[0].normal.coords(), [0.0_f32, 0.0_f32, 1.0_f32]);
+        assert_eq!(mesh.faces()[1].normal.coords(), [0.0_f32, 0.0_f32, 0.0_f32]);
+        assert_eq!(mesh.faces()[2].normal.coords(), [1.0_f32, 0.0_f32, 0.0_f32]);
+
+        // The validator flags exactly the middle facet.
+        let errors = mesh
+            .validated_faces()
+            .expect("face indices in range")
+            .validate_normal_vectors()
+            .expect_err("middle facet is degenerate");
+        assert_eq!(
+            errors,
+            vec![
+                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                    face_idx: 1_usize.into(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn zero_normal_with_degenerate_triangle_is_preserved_for_validation() {
+        // Same shape as the previous test but with a collinear triangle.
+        // The recomputation can't produce a meaningful direction; the
+        // parser leaves the zero normal in place and `validate_normal_vectors`
+        // flags the face later. Bailing here would fail the whole file
+        // over a single bad triangle in an otherwise-valid mesh.
         let buf = b"\
 solid foo
   facet normal 0 0 0
@@ -211,7 +275,26 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        assert!(read_stla(&mut reader).is_err());
+        let scene = read_stla(&mut reader).unwrap();
+        let mesh = match &scene.objects[0].content {
+            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected an inline mesh"),
+        };
+
+        // The zero normal is preserved verbatim.
+        let n = mesh.faces()[0].normal;
+        assert_eq!(n.coords(), [0.0_f32, 0.0_f32, 0.0_f32]);
+
+        // The validator catches the degeneracy.
+        let errors = mesh
+            .validated_faces()
+            .expect("face indices in range")
+            .validate_normal_vectors()
+            .expect_err("collinear triangle is degenerate");
+        assert!(matches!(
+            errors.as_slice(),
+            [sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle { .. }]
+        ));
     }
 }
 
@@ -229,7 +312,7 @@ mod binary_stl_malformed_tests {
 
     #[test]
     fn truncated_before_header_is_an_error() {
-        // Less than 80 bytes — the header read fails immediately.
+        // Less than 80 bytes: the header read fails immediately.
         let buf = vec![0u8; 50];
         let mut reader = Cursor::new(buf);
         assert!(read_stlb(&mut reader).is_err());
@@ -314,9 +397,128 @@ mod binary_stl_malformed_tests {
         assert!((n[2] - 1.0).abs() < 1e-6);
     }
 
+    #[test]
+    fn parser_continues_past_a_degenerate_triangle() {
+        // Three faces in order: valid, degenerate (collinear), valid.
+        // The parser must keep reading past the degenerate face so an
+        // isolated bad triangle in a multi-face file doesn't fail the
+        // whole load. Round-trip through `write_stlb` keeps the byte
+        // layout off the test surface.
+        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+        use sc_mesh_formats::stl::write_stlb;
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+                Vertex::new([2.0, 0.0, 0.0]), // collinear with vertices 0 and 1
+                Vertex::new([0.0, 0.0, 1.0]),
+            ],
+            faces: vec![
+                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
+                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 0.0]), [0, 1, 3]),
+                IndexedTriangle::from_raw_indices(Normal::new([1.0, 0.0, 0.0]), [0, 2, 4]),
+            ],
+        };
+        let mut buf = Vec::new();
+        write_stlb(&mesh, &mut buf).unwrap();
+
+        let mut reader = Cursor::new(buf);
+        let scene = read_stlb(&mut reader).unwrap();
+        let parsed = match &scene.objects[0].content {
+            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected an inline mesh"),
+        };
+
+        // All three faces survive; only the middle one carries a zero
+        // normal (the recompute couldn't produce a direction). The two
+        // valid faces keep their on-disk normals verbatim.
+        assert_eq!(parsed.faces().len(), 3);
+        assert_eq!(
+            parsed.faces()[0].normal.coords(),
+            [0.0_f32, 0.0_f32, 1.0_f32]
+        );
+        assert_eq!(
+            parsed.faces()[1].normal.coords(),
+            [0.0_f32, 0.0_f32, 0.0_f32]
+        );
+        assert_eq!(
+            parsed.faces()[2].normal.coords(),
+            [1.0_f32, 0.0_f32, 0.0_f32]
+        );
+
+        // The validator flags exactly the middle face, leaving the two
+        // valid faces alone (Part 1's relative threshold doesn't fire on
+        // unit-edge triangles).
+        let errors = parsed
+            .validated_faces()
+            .expect("face indices in range")
+            .validate_normal_vectors()
+            .expect_err("middle face is degenerate");
+        assert_eq!(
+            errors,
+            vec![
+                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                    face_idx: 1_usize.into(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn zero_normal_with_degenerate_triangle_is_preserved_for_validation() {
+        // Binary counterpart of the ASCII test: a triangle with the
+        // zero-normal sentinel and three collinear vertices. The
+        // recomputation can't produce a meaningful direction; the parser
+        // keeps the zero normal so the file still loads, and
+        // `validate_normal_vectors` flags the face later. Round-trip
+        // through `write_stlb` keeps the byte layout off the test surface.
+        use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+        use sc_mesh_formats::stl::write_stlb;
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([2.0, 0.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
+        };
+        let mut buf = Vec::new();
+        write_stlb(&mesh, &mut buf).unwrap();
+
+        let mut reader = Cursor::new(buf);
+        let scene = read_stlb(&mut reader).unwrap();
+        let parsed = match &scene.objects[0].content {
+            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
+            _ => panic!("expected an inline mesh"),
+        };
+
+        // The zero normal is preserved verbatim.
+        let n = parsed.faces()[0].normal;
+        assert_eq!(n.coords(), [0.0_f32, 0.0_f32, 0.0_f32]);
+
+        // The validator catches the degeneracy.
+        let errors = parsed
+            .validated_faces()
+            .expect("face indices in range")
+            .validate_normal_vectors()
+            .expect_err("collinear triangle is degenerate");
+        assert!(matches!(
+            errors.as_slice(),
+            [sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle { .. }]
+        ));
+    }
+
     /// Helpers for the non-finite-input regression tests.
     fn well_formed_triangle_bytes() -> Vec<u8> {
-        // CCW triangle in the XY plane with a unit +Z normal — the
+        // CCW triangle in the XY plane with a unit +Z normal: the
         // happy-path input the next few tests perturb, one f32 at a
         // time.
         let mut t = Vec::with_capacity(50);
@@ -403,7 +605,7 @@ mod binary_stl_malformed_tests {
     /// `is_finite`.
     #[test]
     fn non_canonical_nan_bit_pattern_in_normal_is_an_error() {
-        // Quiet NaN with a non-zero payload — distinct from the bit
+        // Quiet NaN with a non-zero payload, distinct from the bit
         // pattern produced by `f32::NAN`.
         let weird_nan = f32::from_bits(0x7FC0_1234);
         debug_assert!(weird_nan.is_nan());
@@ -420,7 +622,7 @@ mod binary_stl_malformed_tests {
     #[test]
     fn subnormal_components_are_accepted() {
         let mut triangle = well_formed_triangle_bytes();
-        // Subnormal — very small, but finite.
+        // Subnormal: very small, but finite.
         write_f32(&mut triangle, 12, f32::from_bits(1)); // v0.x
         let buf = make_binary_stl_with_count(1, &triangle);
         let mut reader = Cursor::new(buf);
