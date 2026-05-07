@@ -26,30 +26,30 @@ It is intentionally narrow:
   platform; +Z points away from it.
 - **Units:** every coordinate, length, and translation is in **millimetres**.
   Vertex positions are stored as `f32`; transform matrices are `f64`. Both
-  share the same millimetre scale — there is no unit type yet.
+  share the same millimetre scale; there is no unit type yet.
 
 ## Modules at a glance
 
-- `primitives` — `Vertex`, `Normal`, `Vector3D`, `Triangle`, `IndexedTriangle`.
-- `indexed_mesh` — `IndexedMesh` (vertex buffer + indexed face buffer + optional
+- `primitives`: `Vertex`, `Normal`, `Vector3D`, `Triangle`, `IndexedTriangle`.
+- `indexed_mesh`: `IndexedMesh` (vertex buffer + indexed face buffer + optional
   metadata), plus mesh validation and repair routines.
-- `aabb` — `Aabb` axis-aligned bounding boxes.
-- `transform` — `AffineTransform3D` 3×4 affine transforms in `f64`, with
+- `aabb`: `Aabb` axis-aligned bounding boxes.
+- `transform`: `AffineTransform3D` 3×4 affine transforms in `f64`, with
   composition, inversion, and a normal-aware apply.
-- `scene` — `Scene`, `SceneObject`, `Transform3D` (`Identity` /
+- `scene`: `Scene`, `SceneObject`, `Transform3D` (`Identity` /
   `Affine`-tagged) for placing meshes in world space, plus `Scene::aabb` and
   `Scene::merge_meshes` (transform baking).
-- `scene_edit` — `SceneEdit`, the typed mutation vocabulary over `Scene`
+- `scene_edit`: `SceneEdit`, the typed mutation vocabulary over `Scene`
   (variants + `apply_to_scene`). Cache layers like `sc-mesh-spatial`
   dispatch on the same enum to attach invalidation hints.
-- `errors` — typed error enums returned by validators and transform routines:
-  `MeshVertexError`, `MeshFaceError`, `MeshNormalVectorError`,
+- `errors`: typed error enums returned by validators and transform routines,
+  including `MeshVertexError`, `MeshFaceError`, `MeshNormalVectorError`,
   `MeshManifoldError`, `MeshFix`, `TransformError`, plus `Edge`,
   `VertexIndex`, `FaceIndex` and friends.
-- `geometry` — small numeric helpers used across the crate (singularity
+- `geometry`: small numeric helpers used across the crate (singularity
   threshold, strict comparisons).
 
-For the actual API — types, methods, signatures, and example-based docs —
+For the actual API (types, methods, signatures, and example-based docs)
 see [docs.rs](https://docs.rs/sc-mesh-core).
 
 ## Validation
@@ -63,5 +63,5 @@ rather than bailing on the first. Repair routines (`fix_faces_orientation`,
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE.txt) or the SPDX headers in each source
+Apache-2.0, see [LICENSE](./LICENSE.txt) or the SPDX headers in each source
 file.

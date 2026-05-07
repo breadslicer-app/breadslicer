@@ -22,7 +22,7 @@ The software libraries behind our applications:
 ## Community
 
 The SoulCrafted initiative seeks to protect and empower creators by introducing
-the concept of a digital label — a declaration that content originates from
+the concept of a digital label: a declaration that content originates from
 human creativity and spirit, not machines.
 
 The vision is to create a positive system that allows creators to differentiate
