@@ -5,14 +5,16 @@
 
 // Plate pipeline: renders the 3D plate slab (top face inside the
 // build envelope is the grid floor, the rounded outer ring is plain
-// border colour, sides + bottom are a darker shade so the slab
-// reads as 3D) plus the build-volume cage edges. Vertex positions
+// border colour, sides are a darker shade, bottom is translucent
+// so the cage and any meshes show through when the camera looks up
+// from below) plus the build-volume cage edges. Vertex positions
 // are world-space mm; `kind` selects which colour path the fragment
 // shader takes:
 //   0 = floor (inner top, grid)
 //   1 = cage edge
 //   2 = plate top border (outer rounded ring at Z = 0)
-//   3 = plate side (vertical panels and bottom face)
+//   3 = plate side (vertical panels)
+//   4 = plate bottom (alpha-blended translucent face)
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -48,9 +50,13 @@ const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.55, 0.40, 0.25);
 // grid floor base so the build-area edge reads visually without a
 // hard separator.
 const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.13, 0.16, 0.18);
-// Plate sides and bottom: darker still so the slab fakes 3D depth
-// without a lighting model.
+// Plate sides: darker still so the slab fakes 3D depth without a
+// lighting model.
 const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.09, 0.11, 0.13);
+// Bottom face: same hue as the sides, but emitted with alpha < 1
+// so the alpha-blending pipeline mixes it over whatever was in the
+// framebuffer when the camera looks up from below.
+const PLATE_BOTTOM_ALPHA: f32 = 0.45;
 
 // Major grid spacing: 10 mm. Single set of lines, moderate intensity.
 const GRID_SPACING_MM: f32 = 10.0;
@@ -86,6 +92,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     if in.kind == 3u {
         return vec4<f32>(PLATE_SIDE_COLOUR, 1.0);
+    }
+    if in.kind == 4u {
+        return vec4<f32>(PLATE_SIDE_COLOUR, PLATE_BOTTOM_ALPHA);
     }
     return vec4<f32>(CAGE_COLOUR, 1.0);
 }

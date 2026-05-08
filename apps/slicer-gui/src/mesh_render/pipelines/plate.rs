@@ -3,16 +3,22 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Build-plate render pipeline. Three pipelines share a vertex
-//! layout and bind-group layout, differing only in primitive topology
-//! and depth-write policy:
+//! Build-plate render pipeline. Four pipelines share a vertex layout
+//! and bind-group layout:
 //!
 //! - `top_pipeline`: fills the plate top face (inner grid + outer
 //!   rounded border) at `Z = 0`. Depth-write off so models resting
 //!   at `Z = 0` always win z-fighting against the plate.
-//! - `solid_pipeline`: fills the plate sides and bottom (the slab
-//!   below `Z = 0`). Depth-write on so the sides occlude content
-//!   behind them when the camera orbits below the plate.
+//! - `solid_pipeline`: fills the plate sides only. Depth-write on so
+//!   the sides occlude content behind them when the camera orbits
+//!   low.
+//! - `bottom_pipeline`: fills the plate bottom face. Alpha blending
+//!   on, depth-write off, and `cull_mode = Back` so the bottom is
+//!   only drawn when its front face faces the camera (i.e. from
+//!   below); from above the bottom is back-facing and culled, which
+//!   keeps the from-above view fully opaque. Drawn last in the main
+//!   pass so the cage edges and any meshes already in the
+//!   framebuffer blend through the bottom from below.
 //! - `line_pipeline`: draws the 12 cage edges as 1-pixel lines.
 //!   Depth-write on (so the cage is occluded by closer geometry as
 //!   expected), `cull_mode = None` (lines have no winding).
@@ -49,6 +55,7 @@ const KIND_FLOOR: u32 = 0;
 const KIND_CAGE: u32 = 1;
 const KIND_PLATE_TOP_BORDER: u32 = 2;
 const KIND_PLATE_SIDE: u32 = 3;
+const KIND_PLATE_BOTTOM: u32 = 4;
 
 /// Plate thickness, mm. The plate extends from `Z = 0` (top, the
 /// build floor) down to `Z = -PLATE_THICKNESS_MM`.
@@ -82,9 +89,14 @@ pub(in crate::mesh_render) struct PlatePipeline {
     /// Depth-write off so models resting at `Z = 0` win the
     /// z-fight against the plate.
     pub(in crate::mesh_render) top_pipeline: wgpu::RenderPipeline,
-    /// Plate sides + bottom face. Depth-write on so the slab
-    /// occludes content behind it when the camera orbits low.
+    /// Plate sides only. Depth-write on so the slab occludes content
+    /// behind it when the camera orbits low.
     pub(in crate::mesh_render) solid_pipeline: wgpu::RenderPipeline,
+    /// Plate bottom face. Alpha blending on, depth-write off,
+    /// `cull_mode = Back` so it only renders when the camera looks
+    /// up from below. Drawn last in the main pass so cage and mesh
+    /// pixels show through the translucent bottom.
+    pub(in crate::mesh_render) bottom_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
     /// Bind group built against this pipeline's own layout, but
     /// pointing at the mesh pipeline's uniform buffer. Reuses the
@@ -127,6 +139,11 @@ impl PlatePipeline {
             immediate_size: 0,
         });
 
+        // Alpha blending is always enabled. The plate fragment
+        // shader emits `alpha = 1` for every kind except the bottom
+        // fan (`KIND_PLATE_BOTTOM`), so the blend is a no-op
+        // everywhere except the bottom face, which appears
+        // translucent when the camera looks up from below.
         let make_pipeline = |label: &'static str,
                              topology: wgpu::PrimitiveTopology,
                              depth_write_enabled: bool|
@@ -178,7 +195,7 @@ impl PlatePipeline {
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: TEXTURE_FORMAT,
-                        blend: None,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -207,6 +224,60 @@ impl PlatePipeline {
             true,
         );
 
+        // Bottom face has its own descriptor: alpha blending, no
+        // depth write, and back-face culling. The bottom-fan winding
+        // is CCW from -Z, so it appears CCW (front-facing) from
+        // below the plate and CW (back-facing) from above. With
+        // `cull_mode = Back`, the GPU draws it only from below; from
+        // above it's culled and the top face stays opaque.
+        let bottom_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mesh-viewer plate bottom pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<PlateVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
+                }],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh-viewer plate uniforms bg"),
             layout: &uniforms_bgl,
@@ -219,6 +290,7 @@ impl PlatePipeline {
         Self {
             top_pipeline,
             solid_pipeline,
+            bottom_pipeline,
             line_pipeline,
             uniforms_bind_group,
         }
@@ -226,18 +298,19 @@ impl PlatePipeline {
 }
 
 /// GPU resources for one specific [`BuildVolume`]: one vertex buffer
-/// holding all plate + cage geometry, plus three index buffers (top
-/// face, plate sides + bottom, cage edges). The `build_volume` field
-/// is the cache key: when the renderer's per-frame `BuildVolume`
-/// differs, the buffers rebuild.
+/// holding all plate + cage geometry, plus four index buffers (top
+/// face, plate sides, bottom face, cage edges). The bottom face is
+/// indexed separately because it draws through its own pipeline.
 pub(in crate::mesh_render) struct PlateBuffers {
     pub(in crate::mesh_render) build_volume: BuildVolume,
     pub(in crate::mesh_render) vertex_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) top_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) solid_index_buffer: wgpu::Buffer,
+    pub(in crate::mesh_render) bottom_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) cage_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) top_index_count: u32,
     pub(in crate::mesh_render) solid_index_count: u32,
+    pub(in crate::mesh_render) bottom_index_count: u32,
     pub(in crate::mesh_render) cage_index_count: u32,
 }
 
@@ -259,6 +332,11 @@ impl PlateBuffers {
             contents: bytemuck::cast_slice(&geom.solid_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let bottom_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer plate bottom ibo"),
+            contents: bytemuck::cast_slice(&geom.bottom_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
         let cage_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh-viewer plate cage ibo"),
             contents: bytemuck::cast_slice(&geom.cage_indices),
@@ -269,20 +347,25 @@ impl PlateBuffers {
             vertex_buffer,
             top_index_buffer,
             solid_index_buffer,
+            bottom_index_buffer,
             cage_index_buffer,
             top_index_count: geom.top_indices.len() as u32,
             solid_index_count: geom.solid_indices.len() as u32,
+            bottom_index_count: geom.bottom_indices.len() as u32,
             cage_index_count: geom.cage_indices.len() as u32,
         }
     }
 }
 
 /// Bundle returned by [`plate_geometry`]: one vertex buffer plus
-/// three index streams (top face, plate sides + bottom, cage edges).
+/// four index streams (top face, plate sides, bottom face, cage
+/// edges). The bottom face is emitted separately so it can be drawn
+/// last with its own pipeline.
 pub(in crate::mesh_render) struct PlateGeometry {
     pub(in crate::mesh_render) vertices: Vec<PlateVertex>,
     pub(in crate::mesh_render) top_indices: Vec<u32>,
     pub(in crate::mesh_render) solid_indices: Vec<u32>,
+    pub(in crate::mesh_render) bottom_indices: Vec<u32>,
     pub(in crate::mesh_render) cage_indices: Vec<u32>,
 }
 
@@ -317,7 +400,9 @@ pub(in crate::mesh_render) struct PlateGeometry {
 /// - `[8+8n..8+12n]`: outline at `Z = -PLATE_THICKNESS_MM`,
 ///   kind = side (bottom edge of side panels + bottom face).
 /// - `[8+12n]`: bottom-face fan centre at the origin XY,
-///   `Z = -PLATE_THICKNESS_MM`, kind = side.
+///   `Z = -PLATE_THICKNESS_MM`, kind = bottom (provoking vertex of
+///   every fan triangle, so flat interpolation routes the whole fan
+///   through the translucent fragment-shader branch).
 /// - `[8+12n+1..8+12n+9]`: 8 cage corners (4 at `Z = 0`, 4 at
 ///   `Z = H`), kind = cage.
 pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> PlateGeometry {
@@ -413,10 +498,14 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         });
     }
 
+    // The bottom-fan provoking vertex (first index of every fan
+    // triangle is `bottom_centre`); tagging it as `KIND_PLATE_BOTTOM`
+    // is enough to route the whole fan through the translucent
+    // fragment-shader branch under flat interpolation.
     let bottom_centre = side_bot_off + outline_len as u32;
     vertices.push(PlateVertex {
         position: [0.0, 0.0, z_bot],
-        kind: KIND_PLATE_SIDE,
+        kind: KIND_PLATE_BOTTOM,
     });
 
     let cage_off = bottom_centre + 1;
@@ -469,8 +558,8 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         top_indices.push(outer_top_off + arc_last);
     }
 
-    // Solid: side panels + bottom face.
-    let mut solid_indices: Vec<u32> = Vec::with_capacity(6 * outline_len + 3 * outline_len);
+    // Solid: side panels only.
+    let mut solid_indices: Vec<u32> = Vec::with_capacity(6 * outline_len);
 
     // Side panels: one quad per outline segment (i, i+1), with the
     // top edge from the side-top vertex range and the bottom edge
@@ -492,12 +581,16 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
 
     // Bottom face: fan from `bottom_centre` outward. CCW from -Z
     // (the visible side when the camera orbits below the plate),
-    // which is CW from +Z, i.e. the reverse of the top-face order.
+    // which is CW from +Z and gets back-face-culled by
+    // `bottom_pipeline` when the camera is above. The fan provoking
+    // vertex `bottom_centre` carries `KIND_PLATE_BOTTOM`, which
+    // routes the fan through the translucent fragment-shader branch.
+    let mut bottom_indices: Vec<u32> = Vec::with_capacity(3 * outline_len);
     for i in 0..outline_len_u32 {
         let next = (i + 1) % outline_len_u32;
-        solid_indices.push(bottom_centre);
-        solid_indices.push(side_bot_off + next);
-        solid_indices.push(side_bot_off + i);
+        bottom_indices.push(bottom_centre);
+        bottom_indices.push(side_bot_off + next);
+        bottom_indices.push(side_bot_off + i);
     }
 
     // Cage: 4 bottom edges, 4 top edges, 4 verticals.
@@ -518,6 +611,7 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         vertices,
         top_indices,
         solid_indices,
+        bottom_indices,
         cage_indices,
     }
 }
@@ -556,9 +650,14 @@ mod plate_geometry_tests {
         for v in &g.vertices[8..8 + n] {
             assert_eq!(v.kind, KIND_PLATE_TOP_BORDER);
         }
-        for v in &g.vertices[8 + n..8 + 3 * n + 1] {
+        // Side panel outlines (top edge then bottom edge) are
+        // KIND_PLATE_SIDE; the bottom-fan centre that follows is
+        // KIND_PLATE_BOTTOM (the provoking vertex of every bottom
+        // fan triangle).
+        for v in &g.vertices[8 + n..8 + 3 * n] {
             assert_eq!(v.kind, KIND_PLATE_SIDE);
         }
+        assert_eq!(g.vertices[8 + 3 * n].kind, KIND_PLATE_BOTTOM);
         for v in &g.vertices[8 + 3 * n + 1..] {
             assert_eq!(v.kind, KIND_CAGE);
         }
@@ -676,11 +775,26 @@ mod plate_geometry_tests {
     }
 
     #[test]
-    fn solid_indices_cover_side_panels_and_bottom_fan() {
-        // Sides: outline_len quads = 6 * n indices. Bottom fan:
-        // outline_len triangles = 3 * n indices.
+    fn solid_indices_cover_side_panels_only() {
+        // Sides: outline_len quads = 6 * n indices.
         let g = plate_geometry(vol());
         let n = outline_len();
-        assert_eq!(g.solid_indices.len(), 6 * n + 3 * n);
+        assert_eq!(g.solid_indices.len(), 6 * n);
+    }
+
+    #[test]
+    fn bottom_indices_cover_the_fan_only() {
+        // Bottom fan: outline_len triangles = 3 * n indices. Each
+        // fan triangle starts with the bottom-fan centre, the
+        // provoking vertex with KIND_PLATE_BOTTOM. Any other
+        // ordering would route the fan through the wrong fragment-
+        // shader branch (loses translucency).
+        let g = plate_geometry(vol());
+        let n = outline_len();
+        assert_eq!(g.bottom_indices.len(), 3 * n);
+        let bottom_centre = 8 + 3 * outline_len() as u32;
+        for tri in g.bottom_indices.chunks(3) {
+            assert_eq!(tri[0], bottom_centre);
+        }
     }
 }
