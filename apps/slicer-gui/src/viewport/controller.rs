@@ -1982,6 +1982,38 @@ mod viewport_click_tests {
     }
 
     #[test]
+    fn set_build_volume_updates_field_when_value_changes() {
+        let ctrl = ViewportController::new_for_test();
+        let initial = ctrl.build_volume.get();
+        let new_bv = BuildVolume::new(50.0, 50.0, 50.0);
+        assert_ne!(initial, new_bv);
+
+        ctrl.set_build_volume(new_bv);
+
+        assert_eq!(ctrl.build_volume.get(), new_bv);
+    }
+
+    #[test]
+    fn set_build_volume_is_idempotent_for_equal_values() {
+        // The redraw side effect goes through a `Weak<MainWindow>`
+        // that is dangling under `new_for_test`, so the no-redraw
+        // half of the contract isn't directly observable here. What
+        // we can pin down: the field doesn't churn when the same
+        // value is written twice, and a real change still goes
+        // through after.
+        let ctrl = ViewportController::new_for_test();
+        let bv = BuildVolume::new(80.0, 80.0, 120.0);
+
+        ctrl.set_build_volume(bv);
+        ctrl.set_build_volume(bv);
+        assert_eq!(ctrl.build_volume.get(), bv);
+
+        let bigger = BuildVolume::new(150.0, 80.0, 120.0);
+        ctrl.set_build_volume(bigger);
+        assert_eq!(ctrl.build_volume.get(), bigger);
+    }
+
+    #[test]
     fn gizmo_translate_drag_clamps_at_plus_x_wall() {
         // The fixture's triangle has world.max.x = 0.5 with the
         // installed transform (Affine zero). Setting a build envelope
