@@ -428,6 +428,29 @@ impl Renderer {
                     pass.draw_indexed(0..obj.index_count(), 0, 0..1);
                 }
             }
+
+            // Plate bottom: drawn last in the main pass with alpha
+            // blending and back-face culling. Cage edges and any
+            // meshes are already in the framebuffer, so the bottom
+            // blends over them when the camera looks up from below;
+            // from above the bottom is back-facing and culled by the
+            // pipeline, leaving the top face fully opaque. The mesh
+            // loop above left the plate vertex buffer unbound, so
+            // rebind. Stencil reset to 0 so the outline post-pass
+            // leaves the bottom untouched.
+            pass.set_pipeline(&self.plate.bottom_pipeline);
+            pass.set_bind_group(
+                PlateBindGroup::Uniforms.idx(),
+                &self.plate.uniforms_bind_group,
+                &[],
+            );
+            pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+            pass.set_index_buffer(
+                plate_buffers.bottom_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.set_stencil_reference(0);
+            pass.draw_indexed(0..plate_buffers.bottom_index_count, 0, 0..1);
         }
         // Outline post-pass: only run when something is selected
         // and at least one mesh draw wrote stencil = 1 (i.e. a
