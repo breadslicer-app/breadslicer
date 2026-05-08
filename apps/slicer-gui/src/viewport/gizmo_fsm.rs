@@ -9,7 +9,7 @@
 //! abort. The pure-data types (`GizmoState`, `DragOp`, `HandleHit`,
 //! `ReanchorCtx`) plus the per-frame compose helpers
 //! (`apply_drag_move`, `re_anchor_scale_axis`) live in
-//! `viewport::gizmo_drag` — this module hosts only the cell and the
+//! `viewport::gizmo_drag`; this module hosts only the cell and the
 //! controller-side coordination glue.
 
 use std::cell::{Cell, RefCell};
@@ -18,6 +18,7 @@ use std::rc::Rc;
 use sc_mesh_core::scene::Transform3D;
 
 use crate::PointerModifiers;
+use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::gizmo;
 use crate::mesh_render::{GizmoHover, default_fov_y};
@@ -27,6 +28,7 @@ use crate::scene_document::{SceneDocument, SceneEdit};
 use super::gizmo_drag::{
     DragOp, GizmoState, HandleHit, ReanchorCtx, apply_drag_move, re_anchor_scale_axis,
 };
+use super::translation_clamp::clamp_translate_edit;
 use super::types::{ScreenPoint, ViewportSize};
 
 /// Per-press inputs carried into [`GizmoFsm::try_start_drag`].
@@ -46,6 +48,10 @@ pub(super) struct MoveCtx<'a> {
     pub(super) viewport: Option<ViewportSize>,
     pub(super) cursor: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
+    /// Build envelope used by the post-move clamp on translate
+    /// drags (rotate / scale drags ignore it). Carried by value
+    /// since `BuildVolume` is `Copy` and small.
+    pub(super) build_volume: BuildVolume,
 }
 
 /// Per-hover inputs carried into [`GizmoFsm::update_hover`]. Same
@@ -143,7 +149,7 @@ impl GizmoFsm {
     /// like a plain click candidate.
     ///
     /// `modifiers.shift` at press time captures into the resulting
-    /// `ScaleAxis.proportional` flag — a press on the per-axis cube
+    /// `ScaleAxis.proportional` flag: a press on the per-axis cube
     /// with Shift held starts uniformly; subsequent toggles
     /// re-anchor through the move path.
     pub(super) fn try_start_drag(&self, ctx: StartCtx<'_>) {
@@ -179,7 +185,7 @@ impl GizmoFsm {
                     HandleHit::Rotate(axis) => {
                         // `rotate_drag_angle` returns `None` only inside the
                         // arc lock-out, which `rotate_hit_test` already
-                        // rejected — but bail defensively if it slips
+                        // rejected; but bail defensively if it slips
                         // through, leaving the press as a click candidate.
                         let start_angle = gizmo::drag_math::rotate_drag_angle(&ray, pivot, axis)?;
                         DragOp::Rotate {
@@ -193,7 +199,7 @@ impl GizmoFsm {
                         let start_anchor =
                             gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
                         // The uniform-branch anchors are captured at press as
-                        // well, even when `proportional` starts false — that
+                        // well, even when `proportional` starts false; that
                         // way a mid-drag Shift press flips the formula
                         // through the same `re_anchor_scale_axis` path
                         // either direction without needing a "first-toggle"
@@ -261,7 +267,7 @@ impl GizmoFsm {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
                 // Live Shift toggle on a `ScaleAxis` drag re-anchors before
-                // the move's delta is computed — the running transform
+                // the move's delta is computed: the running transform
                 // becomes the new `original`, the current cursor becomes
                 // the new press, so the per-axis ↔ uniform formula switch
                 // does not snap the object.
@@ -293,7 +299,31 @@ impl GizmoFsm {
             return false;
         };
 
-        // Persist the (possibly updated) drag state — Rotate's
+        // Translate drags are clamped against the build envelope so
+        // the object's transformed AABB cannot leave it. Other op
+        // kinds (rotate, scale) compose translation as a pivot side
+        // effect and are not clamped. The clamp re-opens the
+        // document's read borrow; `with_scene` returns `None` if the
+        // scene was cleared between the move computation and now,
+        // in which case we keep the unclamped transform (the next
+        // frame will redo the work against a fresh scene).
+        let new_transform = if matches!(new_op, DragOp::Translate { .. }) {
+            ctx.document
+                .with_scene(|spatial| {
+                    clamp_translate_edit(
+                        spatial,
+                        object_idx,
+                        original,
+                        new_transform,
+                        ctx.build_volume,
+                    )
+                })
+                .unwrap_or(new_transform)
+        } else {
+            new_transform
+        };
+
+        // Persist the (possibly updated) drag state: Rotate's
         // unwrap counter mutates per move; the others' state is
         // captured at press and stays put. `original` may also have
         // been reset by a Shift re-anchor on this frame.
@@ -343,7 +373,7 @@ impl GizmoFsm {
     /// Recomputes the hover-handle under the cursor and stores it on
     /// the FSM. No-op while a drag is in progress (the dragged handle
     /// is already at full brightness, and hover would just race with
-    /// the drag state). Returns `true` if the cached hover changed —
+    /// the drag state). Returns `true` if the cached hover changed,
     /// the caller marks the renderer dirty so the new tint takes
     /// effect on the next frame.
     pub(super) fn update_hover(&self, ctx: HoverCtx<'_>) -> bool {
@@ -374,7 +404,7 @@ fn front_most_handle(
     let scale = gizmo::gizmo_scale(camera, fov_y, h);
     let cyl_radius = gizmo::hit_radius_world(camera, fov_y, h);
     let arc_radius_world = scale * gizmo::dimensions::ROTATE_ARC_RADIUS_FRACTION;
-    // Rotate cones and scale cubes scale with the gizmo — handle-local
+    // Rotate cones and scale cubes scale with the gizmo: handle-local
     // sizes (in `gizmo` constants) map to world space via the
     // per-frame shaft length.
     let rotate_cone_length_world = scale * gizmo::dimensions::ROTATE_CONE_LENGTH;
@@ -504,7 +534,7 @@ mod hover_pre_check_tests {
         let fov_y = default_fov_y();
         let (w, h) = (1024.0, 768.0);
         // A cursor in the corner of a 1024×768 viewport sits ~640 px from
-        // the centre — well outside the rotate-arc radius (≈ a few dozen
+        // the centre, well outside the rotate-arc radius (~ a few dozen
         // px at this distance) plus the HANDLE_PIXEL_LENGTH slack
         // (120 px).
         let cursor = ScreenPoint { x: 0.0, y: 0.0 };

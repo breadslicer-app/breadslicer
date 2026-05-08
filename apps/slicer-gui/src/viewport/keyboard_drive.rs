@@ -18,7 +18,9 @@ use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
+use super::translation_clamp::clamp_translate_edit;
 use super::types::ViewportSize;
+use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::gizmo::axis::Axis;
 use crate::mesh_render::default_fov_y;
@@ -110,7 +112,7 @@ pub(super) const KBD_MAX_DT: f32 = 0.1;
 /// `KBD_MAX_DT` and gate against non-positive values before calling.
 ///
 /// Translate steps compose as `T(delta) ∘ running`. Rotate steps
-/// compose as `T(p) ∘ R_z ∘ R_y ∘ R_x ∘ T(-p) ∘ running` — a fixed
+/// compose as `T(p) ∘ R_z ∘ R_y ∘ R_x ∘ T(-p) ∘ running`, a fixed
 /// canonical order across held axes; for the small per-tick angles
 /// this matters only by a second-order amount. Scale steps compose
 /// as `T(p) ∘ diag(s) ∘ T(-p) ∘ running`, with off-axes held at
@@ -179,6 +181,10 @@ pub(super) struct IntegrationCtx<'a> {
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
     pub(super) selection_idx: Option<usize>,
+    /// Build envelope used by the post-step clamp on `Translate`
+    /// focus (rotate / scale focuses ignore it). Carried by value
+    /// since `BuildVolume` is `Copy` and small.
+    pub(super) build_volume: BuildVolume,
 }
 
 /// Tracks the in-progress "keyboard burst": the user holds one or
@@ -257,7 +263,7 @@ impl KeyboardDriveState {
     }
 
     /// Force-clear focus + bitset + tick. Used on scene close. Any
-    /// in-progress burst is dropped without flushing — the object
+    /// in-progress burst is dropped without flushing; the object
     /// indices it referred to are about to become meaningless.
     pub(super) fn reset(&self) {
         self.focus.set(KbdFocus::None);
@@ -435,6 +441,23 @@ impl KeyboardDriveState {
             keyboard_step(focus, arrows, dt, pivot, &running, world_per_pixel)
         else {
             return false;
+        };
+
+        // Translate focus is clamped against the build envelope so
+        // the object's transformed AABB cannot leave it. Rotate /
+        // Scale paths compose translation as a pivot side effect
+        // and are not clamped. The clamp re-opens the document's
+        // read borrow; `with_scene` returns `None` if the scene was
+        // cleared between the step computation and now, in which
+        // case we keep the unclamped transform.
+        let new_transform = if focus == KbdFocus::Translate {
+            ctx.document
+                .with_scene(|spatial| {
+                    clamp_translate_edit(spatial, idx, running, new_transform, ctx.build_volume)
+                })
+                .unwrap_or(new_transform)
+        } else {
+            new_transform
         };
 
         ctx.document.apply_edit(SceneEdit::ObjectTransform {

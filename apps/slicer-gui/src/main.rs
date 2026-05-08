@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // hand them to Slint via `WGPUConfiguration::Manual` so every
     // top-level Window shares the same Device. Letting Slint pick
     // `Automatic` triggers a full Vulkan ICD re-enumeration per
-    // window (4-5 stalls of ~225 ms each on NVIDIA — measured), which
+    // window (4-5 stalls of ~225 ms each on NVIDIA, measured), which
     // makes "New Window" feel like it hangs.
     use slint::wgpu_28::wgpu;
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // OS "Open With…" / file-association support on Linux + Windows:
     // every positional argument that names a supported mesh file gets
     // its own window. Rejected paths (unsupported extension, missing
-    // file) are reported on stderr without aborting the launch — the
+    // file) are reported on stderr without aborting the launch; the
     // user still sees the app come up. macOS file association doesn't
     // go through argv (Finder posts an `application:openURLs:` event
     // to the running NSApplication); see the open-with plan.

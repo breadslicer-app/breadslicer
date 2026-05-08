@@ -21,13 +21,8 @@
 //! and, eventually, a per-project override; the canonical type will
 //! migrate to a shared printer-profile crate when one exists.
 
-// The translate-clamp integration that consumes the public surface
-// here is staged separately; until it lands, the binary target sees
-// the methods only via tests.
-#![allow(dead_code)]
-
 use glam::Vec3;
-use sc_mesh_core::{Aabb, Vertex};
+use sc_mesh_core::Aabb;
 
 /// Rectangular build envelope of a printer, in millimetres.
 ///
@@ -55,18 +50,6 @@ impl BuildVolume {
         }
     }
 
-    pub const fn width_mm(&self) -> f32 {
-        self.width_mm
-    }
-
-    pub const fn depth_mm(&self) -> f32 {
-        self.depth_mm
-    }
-
-    pub const fn height_mm(&self) -> f32 {
-        self.height_mm
-    }
-
     /// Envelope minimum corner: `(-W/2, -D/2, 0)`.
     pub fn envelope_min_mm(&self) -> Vec3 {
         Vec3::new(-0.5 * self.width_mm, -0.5 * self.depth_mm, 0.0)
@@ -75,17 +58,6 @@ impl BuildVolume {
     /// Envelope maximum corner: `(W/2, D/2, H)`.
     pub fn envelope_max_mm(&self) -> Vec3 {
         Vec3::new(0.5 * self.width_mm, 0.5 * self.depth_mm, self.height_mm)
-    }
-
-    /// Envelope as an [`Aabb`]: useful when callers want to reuse
-    /// `mesh-core`'s AABB primitives (union with a scene AABB, etc.).
-    pub fn envelope_aabb(&self) -> Aabb {
-        let lo = self.envelope_min_mm();
-        let hi = self.envelope_max_mm();
-        Aabb::from_min_max(
-            Vertex::new([lo.x, lo.y, lo.z]),
-            Vertex::new([hi.x, hi.y, hi.z]),
-        )
     }
 
     /// Largest fraction of `delta` (per axis) that keeps `aabb_pre +
@@ -151,6 +123,8 @@ mod build_volume_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
 
+    use sc_mesh_core::Vertex;
+
     fn aabb(min: [f32; 3], max: [f32; 3]) -> Aabb {
         Aabb::from_min_max(Vertex::new(min), Vertex::new(max))
     }
@@ -171,14 +145,6 @@ mod build_volume_tests {
         assert_approx_eq!(f32, hi.x, 50.0);
         assert_approx_eq!(f32, hi.y, 30.0);
         assert_approx_eq!(f32, hi.z, 80.0);
-    }
-
-    #[test]
-    fn envelope_aabb_matches_corners() {
-        let v = vol();
-        let a = v.envelope_aabb();
-        assert_eq!(a.min().coords(), [-50.0, -30.0, 0.0]);
-        assert_eq!(a.max().coords(), [50.0, 30.0, 80.0]);
     }
 
     #[test]
@@ -294,10 +260,11 @@ mod build_volume_tests {
     }
 
     #[test]
-    fn hardcoded_default_is_finite_and_positive() {
+    fn hardcoded_default_envelope_is_finite_and_positive() {
         let v = HARDCODED_DEFAULT_BUILD_VOLUME;
-        assert!(v.width_mm() > 0.0 && v.width_mm().is_finite());
-        assert!(v.depth_mm() > 0.0 && v.depth_mm().is_finite());
-        assert!(v.height_mm() > 0.0 && v.height_mm().is_finite());
+        let lo = v.envelope_min_mm();
+        let hi = v.envelope_max_mm();
+        assert!(lo.x.is_finite() && lo.y.is_finite() && lo.z.is_finite());
+        assert!(hi.x > lo.x && hi.y > lo.y && hi.z > lo.z);
     }
 }
