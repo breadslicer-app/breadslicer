@@ -3,10 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-// Plate pipeline: renders the floor quad and the build-volume cage
-// edges directly in world space. Vertex positions are world-space mm;
-// `kind` selects floor (0) vs cage edge (1) so the fragment shader
-// picks the right colour without needing a per-draw uniform write.
+// Plate pipeline: renders the 3D plate slab (top face inside the
+// build envelope is the grid floor, the rounded outer ring is plain
+// border colour, sides + bottom are a darker shade so the slab
+// reads as 3D) plus the build-volume cage edges. Vertex positions
+// are world-space mm; `kind` selects which colour path the fragment
+// shader takes:
+//   0 = floor (inner top, grid)
+//   1 = cage edge
+//   2 = plate top border (outer rounded ring at Z = 0)
+//   3 = plate side (vertical panels and bottom face)
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -38,6 +44,13 @@ fn vs_main(in: VsIn) -> VsOut {
 const FLOOR_BASE: vec3<f32> = vec3<f32>(0.16, 0.20, 0.22);
 const FLOOR_GRID: vec3<f32> = vec3<f32>(0.22, 0.28, 0.30);
 const CAGE_COLOUR: vec3<f32> = vec3<f32>(0.55, 0.40, 0.25);
+// Plate top border (outer rounded ring): slightly darker than the
+// grid floor base so the build-area edge reads visually without a
+// hard separator.
+const PLATE_TOP_BORDER_COLOUR: vec3<f32> = vec3<f32>(0.13, 0.16, 0.18);
+// Plate sides and bottom: darker still so the slab fakes 3D depth
+// without a lighting model.
+const PLATE_SIDE_COLOUR: vec3<f32> = vec3<f32>(0.09, 0.11, 0.13);
 
 // Major grid spacing: 10 mm. Single set of lines, moderate intensity.
 const GRID_SPACING_MM: f32 = 10.0;
@@ -67,6 +80,12 @@ fn floor_colour(world_xy: vec2<f32>) -> vec3<f32> {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.kind == 0u {
         return vec4<f32>(floor_colour(in.world_pos.xy), 1.0);
+    }
+    if in.kind == 2u {
+        return vec4<f32>(PLATE_TOP_BORDER_COLOUR, 1.0);
+    }
+    if in.kind == 3u {
+        return vec4<f32>(PLATE_SIDE_COLOUR, 1.0);
     }
     return vec4<f32>(CAGE_COLOUR, 1.0);
 }

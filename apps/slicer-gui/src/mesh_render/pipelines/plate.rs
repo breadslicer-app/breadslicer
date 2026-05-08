@@ -3,13 +3,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Build-plate render pipeline. Two pipelines share a vertex layout
-//! and bind-group layout, differing only in primitive topology and
-//! depth-write policy:
+//! Build-plate render pipeline. Three pipelines share a vertex
+//! layout and bind-group layout, differing only in primitive topology
+//! and depth-write policy:
 //!
-//! - `triangle_pipeline`: fills the floor quad. Depth-write off so
-//!   models resting at `Z = 0` always win z-fighting against the
-//!   plate.
+//! - `top_pipeline`: fills the plate top face (inner grid + outer
+//!   rounded border) at `Z = 0`. Depth-write off so models resting
+//!   at `Z = 0` always win z-fighting against the plate.
+//! - `solid_pipeline`: fills the plate sides and bottom (the slab
+//!   below `Z = 0`). Depth-write on so the sides occlude content
+//!   behind them when the camera orbits below the plate.
 //! - `line_pipeline`: draws the 12 cage edges as 1-pixel lines.
 //!   Depth-write on (so the cage is occluded by closer geometry as
 //!   expected), `cull_mode = None` (lines have no winding).
@@ -33,8 +36,8 @@ use crate::build_volume::BuildVolume;
 
 const PLATE_SHADER_SOURCE: &str = include_str!("../shaders/plate.wgsl");
 
-/// Vertex format shared by floor and cage. `kind` selects the
-/// fragment-shader colour path (0 = floor, 1 = cage).
+/// Vertex format shared by floor, plate skin, and cage. `kind`
+/// selects the fragment-shader colour path.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(in crate::mesh_render) struct PlateVertex {
@@ -44,6 +47,20 @@ pub(in crate::mesh_render) struct PlateVertex {
 
 const KIND_FLOOR: u32 = 0;
 const KIND_CAGE: u32 = 1;
+const KIND_PLATE_TOP_BORDER: u32 = 2;
+const KIND_PLATE_SIDE: u32 = 3;
+
+/// Plate thickness, mm. The plate extends from `Z = 0` (top, the
+/// build floor) down to `Z = -PLATE_THICKNESS_MM`.
+const PLATE_THICKNESS_MM: f32 = 4.0;
+/// How far the plate extends in XY beyond the build envelope, mm.
+const PLATE_OVERHANG_MM: f32 = 8.0;
+/// Corner radius (XY) for the rounded outer plate edge, mm.
+const PLATE_CORNER_RADIUS_MM: f32 = 6.0;
+/// Tessellation per quarter-arc on the rounded corners. Higher =
+/// smoother corner, more triangles. 8 segments = a 90 degree arc
+/// stepped at 11.25 degrees, smooth at default zoom.
+const PLATE_CORNER_SEGMENTS: u32 = 8;
 
 /// Bind-group indices for the plate pipeline. Variant order must
 /// match `shaders/plate.wgsl`'s `@group(N)` decls and the layout
@@ -61,7 +78,13 @@ impl PlateBindGroup {
 }
 
 pub(in crate::mesh_render) struct PlatePipeline {
-    pub(in crate::mesh_render) triangle_pipeline: wgpu::RenderPipeline,
+    /// Top face of the plate (inner grid + outer rounded border).
+    /// Depth-write off so models resting at `Z = 0` win the
+    /// z-fight against the plate.
+    pub(in crate::mesh_render) top_pipeline: wgpu::RenderPipeline,
+    /// Plate sides + bottom face. Depth-write on so the slab
+    /// occludes content behind it when the camera orbits low.
+    pub(in crate::mesh_render) solid_pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) line_pipeline: wgpu::RenderPipeline,
     /// Bind group built against this pipeline's own layout, but
     /// pointing at the mesh pipeline's uniform buffer. Reuses the
@@ -164,12 +187,19 @@ impl PlatePipeline {
             })
         };
 
-        let triangle_pipeline = make_pipeline(
-            "mesh-viewer plate floor pipeline",
+        let top_pipeline = make_pipeline(
+            "mesh-viewer plate top pipeline",
             wgpu::PrimitiveTopology::TriangleList,
-            // Floor does not write depth: a model resting at Z = 0
-            // always wins z-fighting against the plate.
+            // Top face does not write depth: a model resting at
+            // Z = 0 always wins z-fighting against the plate.
             false,
+        );
+        let solid_pipeline = make_pipeline(
+            "mesh-viewer plate solid pipeline",
+            wgpu::PrimitiveTopology::TriangleList,
+            // Sides + bottom write depth so they occlude content
+            // behind them when the camera orbits low.
+            true,
         );
         let line_pipeline = make_pipeline(
             "mesh-viewer plate cage pipeline",
@@ -187,202 +217,470 @@ impl PlatePipeline {
         });
 
         Self {
-            triangle_pipeline,
+            top_pipeline,
+            solid_pipeline,
             line_pipeline,
             uniforms_bind_group,
         }
     }
 }
 
-/// GPU resources for one specific [`BuildVolume`]: a single vertex
-/// buffer holding both the floor quad's four corners and the eight
-/// cage corners, plus two index buffers (floor triangles and cage
-/// edges). The `build_volume` field is the cache key: when the
-/// renderer's per-frame `BuildVolume` differs, the buffers rebuild.
+/// GPU resources for one specific [`BuildVolume`]: one vertex buffer
+/// holding all plate + cage geometry, plus three index buffers (top
+/// face, plate sides + bottom, cage edges). The `build_volume` field
+/// is the cache key: when the renderer's per-frame `BuildVolume`
+/// differs, the buffers rebuild.
 pub(in crate::mesh_render) struct PlateBuffers {
     pub(in crate::mesh_render) build_volume: BuildVolume,
     pub(in crate::mesh_render) vertex_buffer: wgpu::Buffer,
-    pub(in crate::mesh_render) floor_index_buffer: wgpu::Buffer,
+    pub(in crate::mesh_render) top_index_buffer: wgpu::Buffer,
+    pub(in crate::mesh_render) solid_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) cage_index_buffer: wgpu::Buffer,
-    pub(in crate::mesh_render) floor_index_count: u32,
+    pub(in crate::mesh_render) top_index_count: u32,
+    pub(in crate::mesh_render) solid_index_count: u32,
     pub(in crate::mesh_render) cage_index_count: u32,
 }
 
 impl PlateBuffers {
     pub(in crate::mesh_render) fn create(device: &wgpu::Device, build_volume: BuildVolume) -> Self {
-        let (vertices, floor_indices, cage_indices) = plate_geometry(build_volume);
+        let geom = plate_geometry(build_volume);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh-viewer plate vbo"),
-            contents: bytemuck::cast_slice(&vertices),
+            contents: bytemuck::cast_slice(&geom.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let floor_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate floor ibo"),
-            contents: bytemuck::cast_slice(&floor_indices),
+        let top_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer plate top ibo"),
+            contents: bytemuck::cast_slice(&geom.top_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let solid_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer plate solid ibo"),
+            contents: bytemuck::cast_slice(&geom.solid_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
         let cage_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh-viewer plate cage ibo"),
-            contents: bytemuck::cast_slice(&cage_indices),
+            contents: bytemuck::cast_slice(&geom.cage_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
         Self {
             build_volume,
             vertex_buffer,
-            floor_index_buffer,
+            top_index_buffer,
+            solid_index_buffer,
             cage_index_buffer,
-            floor_index_count: floor_indices.len() as u32,
-            cage_index_count: cage_indices.len() as u32,
+            top_index_count: geom.top_indices.len() as u32,
+            solid_index_count: geom.solid_indices.len() as u32,
+            cage_index_count: geom.cage_indices.len() as u32,
         }
     }
 }
 
-/// Build the per-`BuildVolume` static geometry: 4 floor corners
-/// (kind = 0) followed by 8 cage corners (kind = 1), with a
-/// triangle-list index pattern for the floor and a line-list index
-/// pattern for the 12 cage edges.
+/// Bundle returned by [`plate_geometry`]: one vertex buffer plus
+/// three index streams (top face, plate sides + bottom, cage edges).
+pub(in crate::mesh_render) struct PlateGeometry {
+    pub(in crate::mesh_render) vertices: Vec<PlateVertex>,
+    pub(in crate::mesh_render) top_indices: Vec<u32>,
+    pub(in crate::mesh_render) solid_indices: Vec<u32>,
+    pub(in crate::mesh_render) cage_indices: Vec<u32>,
+}
+
+/// Build the per-`BuildVolume` static geometry for the 3D plate slab
+/// + cage.
 ///
-/// Floor corner order is CCW when viewed from `+Z` (so the front
-/// face is up-facing); both sides are visible regardless because
-/// the pipeline has `cull_mode = None`.
+/// The plate is a rounded-rectangle slab extending `PLATE_OVERHANG_MM`
+/// beyond the build envelope in XY, with rounded outer corners of
+/// radius `PLATE_CORNER_RADIUS_MM`, occupying
+/// `Z in [-PLATE_THICKNESS_MM, 0]`. The top face is split: the inner
+/// rectangle that matches the build envelope footprint draws the
+/// grid (`KIND_FLOOR`), the rounded ring around it draws plain
+/// border colour (`KIND_PLATE_TOP_BORDER`). Sides and bottom share
+/// `KIND_PLATE_SIDE` (a darker shade so the slab reads as 3D).
 ///
-/// Cage corner index layout (low-Z layer 0..3, high-Z layer 4..7):
+/// Vertex buffer layout (n = `PLATE_CORNER_SEGMENTS + 1`, the count
+/// of points per quarter-arc; outline length = `4n`):
 ///
-/// ```text
-///       7 -------- 6
-///      /|         /|
-///     4 -------- 5 |
-///     | 3 ------ | 2
-///     |/         |/
-///     0 -------- 1
-/// ```
-pub(in crate::mesh_render) fn plate_geometry(
-    build_volume: BuildVolume,
-) -> (Vec<PlateVertex>, Vec<u32>, Vec<u32>) {
+/// - `[0..4]`: inner build-envelope corners at `Z = 0`, kind = floor.
+///   The 2 triangles of the inner top face index these.
+/// - `[4..8]`: same inner-corner positions duplicated at `Z = 0`
+///   with kind = top border. Used as the inner edge of the outer
+///   border ring; the duplication keeps every border-ring triangle
+///   uniformly border-kind so flat interpolation never bleeds the
+///   grid into the rounded ring (the provoking vertex is the
+///   first, and a triangle mixing kinds would inherit whichever
+///   appeared first in its index list).
+/// - `[8..8+4n]`: outer rounded outline at `Z = 0`, kind = top
+///   border.
+/// - `[8+4n..8+8n]`: same outline points duplicated at `Z = 0`,
+///   kind = side (used for the top edge of side panels).
+/// - `[8+8n..8+12n]`: outline at `Z = -PLATE_THICKNESS_MM`,
+///   kind = side (bottom edge of side panels + bottom face).
+/// - `[8+12n]`: bottom-face fan centre at the origin XY,
+///   `Z = -PLATE_THICKNESS_MM`, kind = side.
+/// - `[8+12n+1..8+12n+9]`: 8 cage corners (4 at `Z = 0`, 4 at
+///   `Z = H`), kind = cage.
+pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> PlateGeometry {
     let lo = build_volume.envelope_min_mm();
     let hi = build_volume.envelope_max_mm();
+    let half_w = 0.5 * build_volume.width_mm();
+    let half_d = 0.5 * build_volume.depth_mm();
+    let outer_w = half_w + PLATE_OVERHANG_MM;
+    let outer_d = half_d + PLATE_OVERHANG_MM;
+    // Clamp the corner radius so a tiny envelope doesn't produce a
+    // self-intersecting outline.
+    let max_radius = outer_w.min(outer_d);
+    let radius = PLATE_CORNER_RADIUS_MM.min(max_radius);
+    let segments = PLATE_CORNER_SEGMENTS;
+    let arc_pts = segments + 1;
+    let outline_len = (4 * arc_pts) as usize;
+    let z_top = 0.0;
+    let z_bot = -PLATE_THICKNESS_MM;
 
-    let mut vertices = Vec::with_capacity(12);
+    // CCW (viewed from +Z) outline: arc 0 at +X+Y, then top edge,
+    // arc 1 at -X+Y, left edge, arc 2 at -X-Y, bottom edge, arc 3
+    // at +X-Y, right edge. Each arc is `arc_pts` points; the first
+    // point of the next arc forms the implicit straight-edge end of
+    // the previous one.
+    let mut outline_xy: Vec<[f32; 2]> = Vec::with_capacity(outline_len);
+    let corner_centres = [
+        (outer_w - radius, outer_d - radius, 0.0_f32),
+        (
+            -outer_w + radius,
+            outer_d - radius,
+            std::f32::consts::FRAC_PI_2,
+        ),
+        (-outer_w + radius, -outer_d + radius, std::f32::consts::PI),
+        (
+            outer_w - radius,
+            -outer_d + radius,
+            3.0 * std::f32::consts::FRAC_PI_2,
+        ),
+    ];
+    for (cx, cy, start_angle) in corner_centres {
+        for i in 0..arc_pts {
+            let t = i as f32 / segments as f32;
+            let angle = start_angle + t * std::f32::consts::FRAC_PI_2;
+            outline_xy.push([cx + radius * angle.cos(), cy + radius * angle.sin()]);
+        }
+    }
+    debug_assert_eq!(outline_xy.len(), outline_len);
 
-    // Floor quad: 4 corners on Z = 0 (= lo.z by the centred-on-XY,
-    // floor-on-Z=0 envelope convention). Indices 0..3.
-    vertices.push(PlateVertex {
-        position: [lo.x, lo.y, lo.z],
-        kind: KIND_FLOOR,
-    });
-    vertices.push(PlateVertex {
-        position: [hi.x, lo.y, lo.z],
-        kind: KIND_FLOOR,
-    });
-    vertices.push(PlateVertex {
-        position: [hi.x, hi.y, lo.z],
-        kind: KIND_FLOOR,
-    });
-    vertices.push(PlateVertex {
-        position: [lo.x, hi.y, lo.z],
-        kind: KIND_FLOOR,
-    });
+    let mut vertices: Vec<PlateVertex> = Vec::with_capacity(8 + 12 * outline_len + 1 + 8);
 
-    // Cage corners: 4 on the low-Z plane (= floor plane) and 4 on
-    // the high-Z plane (= ceiling). Indices 4..11. Reuses the
-    // same XY pattern as the floor corners.
-    for &z in &[lo.z, hi.z] {
+    // [0..4]: inner top corners (build envelope footprint), used by
+    // the inner grid triangles.
+    let inner_corners = [[hi.x, hi.y], [lo.x, hi.y], [lo.x, lo.y], [hi.x, lo.y]];
+    for [x, y] in inner_corners {
         vertices.push(PlateVertex {
-            position: [lo.x, lo.y, z],
-            kind: KIND_CAGE,
-        });
-        vertices.push(PlateVertex {
-            position: [hi.x, lo.y, z],
-            kind: KIND_CAGE,
-        });
-        vertices.push(PlateVertex {
-            position: [hi.x, hi.y, z],
-            kind: KIND_CAGE,
-        });
-        vertices.push(PlateVertex {
-            position: [lo.x, hi.y, z],
-            kind: KIND_CAGE,
+            position: [x, y, z_top],
+            kind: KIND_FLOOR,
         });
     }
 
-    let floor_indices = vec![0u32, 1, 2, 0, 2, 3];
+    // [4..8]: same inner-corner positions, kind = top border. Used
+    // as the inner edge of the rounded ring so each ring triangle
+    // is uniformly border-kind.
+    let inner_as_border_off = 4u32;
+    for [x, y] in inner_corners {
+        vertices.push(PlateVertex {
+            position: [x, y, z_top],
+            kind: KIND_PLATE_TOP_BORDER,
+        });
+    }
 
-    // 12 cage edges: 4 on the bottom rectangle, 4 on the top
-    // rectangle, 4 verticals connecting matching corners.
-    let bottom_offset = 4u32;
-    let top_offset = 8u32;
+    let outer_top_off = 8u32;
+    for [x, y] in &outline_xy {
+        vertices.push(PlateVertex {
+            position: [*x, *y, z_top],
+            kind: KIND_PLATE_TOP_BORDER,
+        });
+    }
+
+    let side_top_off = outer_top_off + outline_len as u32;
+    for [x, y] in &outline_xy {
+        vertices.push(PlateVertex {
+            position: [*x, *y, z_top],
+            kind: KIND_PLATE_SIDE,
+        });
+    }
+
+    let side_bot_off = side_top_off + outline_len as u32;
+    for [x, y] in &outline_xy {
+        vertices.push(PlateVertex {
+            position: [*x, *y, z_bot],
+            kind: KIND_PLATE_SIDE,
+        });
+    }
+
+    let bottom_centre = side_bot_off + outline_len as u32;
+    vertices.push(PlateVertex {
+        position: [0.0, 0.0, z_bot],
+        kind: KIND_PLATE_SIDE,
+    });
+
+    let cage_off = bottom_centre + 1;
+    for &z in &[lo.z, hi.z] {
+        for [x, y] in [[lo.x, lo.y], [hi.x, lo.y], [hi.x, hi.y], [lo.x, hi.y]] {
+            vertices.push(PlateVertex {
+                position: [x, y, z],
+                kind: KIND_CAGE,
+            });
+        }
+    }
+
+    let outline_len_u32 = outline_len as u32;
+    let mut top_indices: Vec<u32> = Vec::with_capacity(6 + 6 * outline_len);
+
+    // Inner rectangle: 2 triangles, CCW from +Z.
+    top_indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+
+    // Outer top border ring: connect each inner corner to the
+    // outline arc points ringing it, plus quad strips along each
+    // straight edge between adjacent arcs. The outline points of
+    // arc `c` are at indices `[c * arc_pts .. (c+1) * arc_pts)` in
+    // the outline, in CCW order. Each arc rounds a single inner
+    // corner; index the inner corners (via their border-kind
+    // duplicates) in matching CCW order.
+    //
+    // CCW order from +Z, starting at +X+Y: I0 = (hi.x, hi.y),
+    // I1 = (lo.x, hi.y), I2 = (lo.x, lo.y), I3 = (hi.x, lo.y).
+    for c in 0..4u32 {
+        let inner = inner_as_border_off + c;
+        let next_inner = inner_as_border_off + (c + 1) % 4;
+        // Arc fan around inner corner `c`.
+        for s in 0..segments {
+            let arc_idx = c * arc_pts + s;
+            let next_arc_idx = c * arc_pts + s + 1;
+            top_indices.push(inner);
+            top_indices.push(outer_top_off + arc_idx);
+            top_indices.push(outer_top_off + next_arc_idx);
+        }
+        // Straight edge between this arc's last point and the next
+        // arc's first point: one quad (inner -> next_inner ->
+        // next_arc_first -> arc_last) split into two triangles.
+        let arc_last = c * arc_pts + segments;
+        let next_arc_first = ((c + 1) % 4) * arc_pts;
+        top_indices.push(inner);
+        top_indices.push(next_inner);
+        top_indices.push(outer_top_off + next_arc_first);
+        top_indices.push(inner);
+        top_indices.push(outer_top_off + next_arc_first);
+        top_indices.push(outer_top_off + arc_last);
+    }
+
+    // Solid: side panels + bottom face.
+    let mut solid_indices: Vec<u32> = Vec::with_capacity(6 * outline_len + 3 * outline_len);
+
+    // Side panels: one quad per outline segment (i, i+1), with the
+    // top edge from the side-top vertex range and the bottom edge
+    // from the side-bottom vertex range. Wound CCW from outside the
+    // plate so the front face is the visible one.
+    for i in 0..outline_len_u32 {
+        let next = (i + 1) % outline_len_u32;
+        let t_i = side_top_off + i;
+        let t_n = side_top_off + next;
+        let b_i = side_bot_off + i;
+        let b_n = side_bot_off + next;
+        solid_indices.push(t_i);
+        solid_indices.push(b_i);
+        solid_indices.push(b_n);
+        solid_indices.push(t_i);
+        solid_indices.push(b_n);
+        solid_indices.push(t_n);
+    }
+
+    // Bottom face: fan from `bottom_centre` outward. CCW from -Z
+    // (the visible side when the camera orbits below the plate),
+    // which is CW from +Z, i.e. the reverse of the top-face order.
+    for i in 0..outline_len_u32 {
+        let next = (i + 1) % outline_len_u32;
+        solid_indices.push(bottom_centre);
+        solid_indices.push(side_bot_off + next);
+        solid_indices.push(side_bot_off + i);
+    }
+
+    // Cage: 4 bottom edges, 4 top edges, 4 verticals.
+    let cage_bottom = cage_off;
+    let cage_top = cage_off + 4;
     let mut cage_indices: Vec<u32> = Vec::with_capacity(24);
     for i in 0..4u32 {
         let next = (i + 1) % 4;
-        cage_indices.push(bottom_offset + i);
-        cage_indices.push(bottom_offset + next);
-        cage_indices.push(top_offset + i);
-        cage_indices.push(top_offset + next);
-        cage_indices.push(bottom_offset + i);
-        cage_indices.push(top_offset + i);
+        cage_indices.push(cage_bottom + i);
+        cage_indices.push(cage_bottom + next);
+        cage_indices.push(cage_top + i);
+        cage_indices.push(cage_top + next);
+        cage_indices.push(cage_bottom + i);
+        cage_indices.push(cage_top + i);
     }
 
-    (vertices, floor_indices, cage_indices)
+    PlateGeometry {
+        vertices,
+        top_indices,
+        solid_indices,
+        cage_indices,
+    }
 }
 
 #[cfg(test)]
 mod plate_geometry_tests {
     use super::*;
+    use float_cmp::assert_approx_eq;
+
+    fn vol() -> BuildVolume {
+        BuildVolume::new(100.0, 60.0, 80.0)
+    }
+
+    fn outline_len() -> usize {
+        4 * (PLATE_CORNER_SEGMENTS + 1) as usize
+    }
+
+    fn cage_off() -> u32 {
+        // 4 inner-floor + 4 inner-as-border + 3 outline copies + 1
+        // bottom-fan centre.
+        8 + 3 * outline_len() as u32 + 1
+    }
 
     #[test]
-    fn vertex_count_is_four_floor_plus_eight_cage() {
-        let (verts, _, _) = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0));
-        assert_eq!(verts.len(), 12);
-        // First four are floor (kind = 0); next eight are cage.
-        for v in &verts[..4] {
+    fn vertex_buffer_has_inner_quad_border_dups_three_outlines_a_centre_and_eight_cage() {
+        let g = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0));
+        let n = outline_len();
+        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8);
+
+        for v in &g.vertices[..4] {
             assert_eq!(v.kind, KIND_FLOOR);
         }
-        for v in &verts[4..] {
+        for v in &g.vertices[4..8] {
+            assert_eq!(v.kind, KIND_PLATE_TOP_BORDER);
+        }
+        for v in &g.vertices[8..8 + n] {
+            assert_eq!(v.kind, KIND_PLATE_TOP_BORDER);
+        }
+        for v in &g.vertices[8 + n..8 + 3 * n + 1] {
+            assert_eq!(v.kind, KIND_PLATE_SIDE);
+        }
+        for v in &g.vertices[8 + 3 * n + 1..] {
             assert_eq!(v.kind, KIND_CAGE);
         }
     }
 
     #[test]
-    fn floor_corners_are_centred_on_xy_at_z_zero() {
-        let (verts, _, _) = plate_geometry(BuildVolume::new(100.0, 60.0, 80.0));
-        // Floor corners at +/- 50 on X, +/- 30 on Y, all at Z = 0.
-        for v in &verts[..4] {
+    fn inner_top_corners_are_envelope_corners_at_z_zero() {
+        let g = plate_geometry(vol());
+        for v in &g.vertices[..4] {
             assert_eq!(v.position[2], 0.0);
             assert_eq!(v.position[0].abs(), 50.0);
             assert_eq!(v.position[1].abs(), 30.0);
+        }
+        // The inner-as-border duplicates share the same XY.
+        for (a, b) in g.vertices[..4].iter().zip(&g.vertices[4..8]) {
+            assert_eq!(a.position, b.position);
+        }
+    }
+
+    #[test]
+    fn outline_extends_overhang_beyond_envelope() {
+        // The outline's bounding box should be the build envelope
+        // expanded by `PLATE_OVERHANG_MM` on each axis.
+        let g = plate_geometry(vol());
+        let n = outline_len();
+        let outline = &g.vertices[8..8 + n];
+        let max_x = outline
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let max_y = outline
+            .iter()
+            .map(|v| v.position[1])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_approx_eq!(f32, max_x, 50.0 + PLATE_OVERHANG_MM, epsilon = 1e-4);
+        assert_approx_eq!(f32, max_y, 30.0 + PLATE_OVERHANG_MM, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn outline_has_thickness_between_top_and_bottom_copies() {
+        let g = plate_geometry(vol());
+        let n = outline_len();
+        let side_top_off = 8 + n;
+        let side_bot_off = side_top_off + n;
+        for i in 0..n {
+            let top = &g.vertices[side_top_off + i];
+            let bot = &g.vertices[side_bot_off + i];
+            assert_eq!(top.position[0], bot.position[0]);
+            assert_eq!(top.position[1], bot.position[1]);
+            assert_approx_eq!(f32, top.position[2], 0.0);
+            assert_approx_eq!(f32, bot.position[2], -PLATE_THICKNESS_MM);
+        }
+    }
+
+    #[test]
+    fn top_border_ring_triangles_have_uniform_border_kind() {
+        // A border-ring triangle must have all three vertices at
+        // KIND_PLATE_TOP_BORDER. If any inner-corner FLOOR vertex
+        // sneaks in, flat interpolation would bleed the grid into
+        // the rounded ring.
+        let g = plate_geometry(vol());
+        // Skip the inner quad's first 6 indices (2 triangles).
+        let ring_indices = &g.top_indices[6..];
+        for tri in ring_indices.chunks(3) {
+            for &idx in tri {
+                let kind = g.vertices[idx as usize].kind;
+                assert_eq!(
+                    kind, KIND_PLATE_TOP_BORDER,
+                    "border ring index {idx} has kind {kind}, expected PLATE_TOP_BORDER"
+                );
+            }
         }
     }
 
     #[test]
     fn cage_uses_low_and_high_z_layers() {
-        let (verts, _, _) = plate_geometry(BuildVolume::new(100.0, 60.0, 80.0));
-        // First four cage verts on Z = 0, last four on Z = H = 80.
-        for v in &verts[4..8] {
+        let g = plate_geometry(vol());
+        let off = cage_off() as usize;
+        for v in &g.vertices[off..off + 4] {
             assert_eq!(v.position[2], 0.0);
         }
-        for v in &verts[8..12] {
+        for v in &g.vertices[off + 4..off + 8] {
             assert_eq!(v.position[2], 80.0);
         }
     }
 
     #[test]
-    fn floor_index_count_is_two_triangles() {
-        let (_, floor, _) = plate_geometry(BuildVolume::new(100.0, 60.0, 80.0));
-        assert_eq!(floor.len(), 6);
-    }
-
-    #[test]
     fn cage_index_count_is_twelve_edges() {
-        let (_, _, cage) = plate_geometry(BuildVolume::new(100.0, 60.0, 80.0));
+        let g = plate_geometry(vol());
         // Two indices per edge, 12 edges = 24 indices.
-        assert_eq!(cage.len(), 24);
+        assert_eq!(g.cage_indices.len(), 24);
     }
 
     #[test]
     fn cage_indices_reference_only_cage_vertices() {
-        let (_, _, cage) = plate_geometry(BuildVolume::new(100.0, 60.0, 80.0));
-        for idx in cage {
-            assert!((4..12).contains(&idx), "cage index {idx} out of cage range");
+        let g = plate_geometry(vol());
+        let off = cage_off();
+        for idx in g.cage_indices {
+            assert!(
+                (off..off + 8).contains(&idx),
+                "cage index {idx} out of cage range starting at {off}"
+            );
         }
+    }
+
+    #[test]
+    fn top_indices_cover_inner_quad_plus_border_ring() {
+        // Inner quad: 2 triangles = 6 indices. Outer border ring:
+        // per inner corner, `segments` arc triangles + 2 strip
+        // triangles = 3 * (segments + 2) indices, times 4 corners.
+        let g = plate_geometry(vol());
+        let segments = PLATE_CORNER_SEGMENTS;
+        let expected = 6 + 4 * 3 * (segments + 2) as usize;
+        assert_eq!(g.top_indices.len(), expected);
+    }
+
+    #[test]
+    fn solid_indices_cover_side_panels_and_bottom_fan() {
+        // Sides: outline_len quads = 6 * n indices. Bottom fan:
+        // outline_len triangles = 3 * n indices.
+        let g = plate_geometry(vol());
+        let n = outline_len();
+        assert_eq!(g.solid_indices.len(), 6 * n + 3 * n);
     }
 }
