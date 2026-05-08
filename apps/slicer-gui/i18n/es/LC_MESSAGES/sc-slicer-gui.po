@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-04-27 16:01+0000\n"
+"POT-Creation-Date: 2026-05-08 17:09+0000\n"
 "PO-Revision-Date: 2026-05-01 06:44+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
@@ -44,30 +44,118 @@ msgctxt "About"
 msgid "Close"
 msgstr "Cerrar"
 
+#: ui/replace-scene-dialog.slint:14
+msgctxt "ReplaceSceneDialog"
+msgid "Open new model"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:61
+msgctxt "ReplaceSceneDialog"
+msgid "Replace the current scene?"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:67
+msgctxt "ReplaceSceneDialog"
+msgid "Opening: {}"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:80
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Export it first to keep any changes you've "
+"made."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:84
+msgctxt "ReplaceSceneDialog"
+msgid "The current scene will be closed."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:98
+msgctxt "ReplaceSceneDialog"
+msgid "Discard & Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:105
+#, fuzzy
+#| msgctxt "MenuBar"
+#| msgid "Open…"
+msgctxt "ReplaceSceneDialog"
+msgid "Export & Open…"
+msgstr "Abrir…"
+
+#: ui/replace-scene-dialog.slint:112
+msgctxt "ReplaceSceneDialog"
+msgid "Cancel"
+msgstr ""
+
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr "Ajustes"
 
-#: ui/preferences/preferences-window.slint:49
+#: ui/preferences/preferences-window.slint:56
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr "Preferencias"
 
-#: ui/preferences/preferences-window.slint:51
+#: ui/preferences/preferences-window.slint:58
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr "Interfaz de usuario y tema"
 
-#: ui/preferences/preferences-window.slint:52
+#: ui/preferences/preferences-window.slint:59
 msgctxt "PreferencesMenu"
 msgid "3D View"
 msgstr "Vista en 3D"
 
-#: ui/preferences/3dview.slint:9
+#: ui/preferences/3dview.slint:10
 msgctxt "PreferencesPage"
 msgid "3D View"
 msgstr "Vista 3D"
+
+#: ui/preferences/3dview.slint:21
+msgctxt "PreferencesPage"
+msgid "Build volume (mm)"
+msgstr ""
+
+#: ui/preferences/3dview.slint:31
+msgctxt "PreferencesPage"
+msgid "Width"
+msgstr ""
+
+#: ui/preferences/3dview.slint:39
+msgctxt "PreferencesPage"
+msgid "Build volume width in millimetres"
+msgstr ""
+
+#: ui/preferences/3dview.slint:49
+msgctxt "PreferencesPage"
+msgid "Depth"
+msgstr ""
+
+#: ui/preferences/3dview.slint:57
+msgctxt "PreferencesPage"
+msgid "Build volume depth in millimetres"
+msgstr ""
+
+#: ui/preferences/3dview.slint:67
+#, fuzzy
+#| msgctxt "AppearancePreferences"
+#| msgid "Light"
+msgctxt "PreferencesPage"
+msgid "Height"
+msgstr "Claro"
+
+#: ui/preferences/3dview.slint:75
+msgctxt "PreferencesPage"
+msgid "Build volume height in millimetres"
+msgstr ""
+
+#: ui/preferences/3dview.slint:84
+msgctxt "PreferencesPage"
+msgid "Reset to default"
+msgstr ""
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
@@ -146,127 +234,137 @@ msgctxt "ObjectList"
 msgid "No objects to display"
 msgstr "No hay elementos que mostrar"
 
-#: ui/main-window.slint:60
+#: ui/main-window.slint:61
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:102
+#: ui/main-window.slint:127
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Archivo"
 
-#: ui/main-window.slint:105
+#: ui/main-window.slint:130
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr "Nueva ventana"
 
-#: ui/main-window.slint:115
+#: ui/main-window.slint:140
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr "Abrir…"
 
-#: ui/main-window.slint:124
+#: ui/main-window.slint:149
 msgctxt "MenuBar"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/main-window.slint:135
+#: ui/main-window.slint:160
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/main-window.slint:141
+#: ui/main-window.slint:166
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr "Guardar como…"
 
-#: ui/main-window.slint:148
+#: ui/main-window.slint:174
+msgctxt "MenuBar"
+msgid "Export As…"
+msgstr ""
+
+#: ui/main-window.slint:184
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr "Editar"
 
-#: ui/main-window.slint:150
+#: ui/main-window.slint:186
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr "Deshacer"
 
-#: ui/main-window.slint:156
+#: ui/main-window.slint:195
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr "Rehacer"
 
-#: ui/main-window.slint:164
+#: ui/main-window.slint:206
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr "Ajustes"
 
-#: ui/main-window.slint:173
+#: ui/main-window.slint:215
 msgctxt "MenuBar"
 msgid "View"
 msgstr "Vista"
 
-#: ui/main-window.slint:177
+#: ui/main-window.slint:219
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr "Ocultar la lista de objetos"
 
-#: ui/main-window.slint:178
+#: ui/main-window.slint:220
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr "Mostrar lista de objetos"
 
-#: ui/main-window.slint:188
+#: ui/main-window.slint:230
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Ayuda"
 
-#: ui/main-window.slint:190
+#: ui/main-window.slint:232
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentación"
 
-#: ui/main-window.slint:195
+#: ui/main-window.slint:237
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Mostrar notas de lanzamiento"
 
-#: ui/main-window.slint:202
+#: ui/main-window.slint:244
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Informar de un problema"
 
-#: ui/main-window.slint:209
+#: ui/main-window.slint:251
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Comprobar actualizaciones…"
 
-#: ui/main-window.slint:216
+#: ui/main-window.slint:258
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Acerca de"
 
-#: ui/main-window.slint:223
+#: ui/main-window.slint:265
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Ver licencia"
 
-#: ui/main-window.slint:235
+#: ui/main-window.slint:277
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Abrir modelo 3D para visualizarlo aquí"
 
-#: ui/mesh-viewer.slint:37
+#: ui/main-window.slint:364
+msgctxt "MainWindow"
+msgid "Drop to open"
+msgstr ""
+
+#: ui/mesh-viewer.slint:83
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr "Visor de modelos 3D, vacío"
 
-#: ui/mesh-viewer.slint:38
+#: ui/mesh-viewer.slint:84
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr "Visor de modelos 3D"
 
-#: ui/mesh-viewer.slint:39
+#: ui/mesh-viewer.slint:85
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Shift with right-click drag, "
@@ -282,17 +380,17 @@ msgstr ""
 "superior; mantenga presionada la tecla Control para vista trasera, izquierda "
 "o inferior."
 
-#: src/viewport/controller.rs:1178
+#: src/viewport/controller.rs:944
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr "No se pudo mostrar el modelo 3D"
 
-#: src/viewport/controller.rs:1182
+#: src/viewport/controller.rs:948
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr "No se ha podido pasar la textura renderizada a la interfaz gráfica."
 
-#: src/viewport/controller.rs:1536
+#: src/viewport/object_list.rs:39
 msgctxt "ObjectList"
 msgid "Object {}"
 msgstr "Objeto {}"
@@ -302,7 +400,7 @@ msgctxt "FileDialog"
 msgid "All supported files"
 msgstr "Todos los archivos compatibles"
 
-#: src/wiring.rs:210
+#: src/wiring.rs:210 src/wiring.rs:313
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr "Archivos OBJ"
@@ -317,27 +415,59 @@ msgctxt "FileDialog"
 msgid "All files"
 msgstr "Todos los archivos"
 
-#: src/scene_loader.rs:286
+#: src/wiring.rs:268 src/wiring.rs:286
+#, fuzzy
+#| msgctxt "ErrorDialog"
+#| msgid "Failed to open 3D model"
 msgctxt "ErrorDialog"
-msgid "Failed to load the 3D model"
-msgstr "No se pudo cargar el modelo 3D"
-
-#: src/scene_loader.rs:290
-msgctxt "ErrorDialog"
-msgid "The mesh could not be prepared for rendering."
-msgstr "La malla presenta algún problema que impide su representación."
-
-#: src/scene_loader.rs:320
-msgctxt "ErrorDialog"
-msgid "Failed to open 3D model"
+msgid "Failed to export"
 msgstr "No se pudo abrir el modelo 3D"
 
-#: src/scene_loader.rs:321
+#: src/wiring.rs:269 src/wiring.rs:287 src/scene_loader.rs:325
+#: src/app_state.rs:242
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr "Archivo: {}"
 
-#: src/mesh_loader.rs:51
+#: src/wiring.rs:305
+msgctxt "FileDialog"
+msgid "STL (binary)"
+msgstr ""
+
+#: src/wiring.rs:309
+msgctxt "FileDialog"
+msgid "STL (ASCII)"
+msgstr ""
+
+#: src/scene_loader.rs:290
+msgctxt "ErrorDialog"
+msgid "Failed to load the 3D model"
+msgstr "No se pudo cargar el modelo 3D"
+
+#: src/scene_loader.rs:294
+msgctxt "ErrorDialog"
+msgid "The mesh could not be prepared for rendering."
+msgstr "La malla presenta algún problema que impide su representación."
+
+#: src/scene_loader.rs:324
+msgctxt "ErrorDialog"
+msgid "Failed to open 3D model"
+msgstr "No se pudo abrir el modelo 3D"
+
+#: src/app_state.rs:241
+#, fuzzy
+#| msgctxt "FileDialog"
+#| msgid "All supported files"
+msgctxt "ErrorDialog"
+msgid "Unsupported file type"
+msgstr "Todos los archivos compatibles"
+
+#: src/app_state.rs:245
+msgctxt "ErrorDialog"
+msgid "Only the following file types can be opened: {}"
+msgstr ""
+
+#: src/mesh_loader.rs:72
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
