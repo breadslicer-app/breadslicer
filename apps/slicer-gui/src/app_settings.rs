@@ -15,6 +15,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::ThemePreference;
+use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::language::LanguagePreference;
 
 // Linux's config_dir = $XDG_CONFIG_HOME/<application>. Bare "slicer" would
@@ -73,10 +74,77 @@ pub(crate) struct Appearance {
     language: LanguagePreference,
 }
 
+/// Lower bound for any build-volume axis (mm). Below this, the camera
+/// can't reasonably frame the plate and translate-clamp arithmetic
+/// loses precision; on-disk values below the bound are clamped on
+/// load.
+pub(crate) const MIN_DIM_MM: f32 = 10.0;
+/// Upper bound for any build-volume axis (mm). An ample envelope for
+/// prosumer-class SLA printers; on-disk values above the bound are
+/// clamped on load to keep the camera framing radius finite.
+pub(crate) const MAX_DIM_MM: f32 = 1000.0;
+
+/// On-disk representation of `BuildVolume`. Stored as three numeric
+/// fields rather than the type itself so a hand-edited or out-of-range
+/// value loads as a clamped default instead of failing the whole file
+/// parse.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct BuildVolumeSetting {
+    width_mm: f32,
+    depth_mm: f32,
+    height_mm: f32,
+}
+
+impl Default for BuildVolumeSetting {
+    fn default() -> Self {
+        BuildVolumeSetting::from(HARDCODED_DEFAULT_BUILD_VOLUME)
+    }
+}
+
+impl From<BuildVolume> for BuildVolumeSetting {
+    fn from(value: BuildVolume) -> Self {
+        Self {
+            width_mm: value.width_mm(),
+            depth_mm: value.depth_mm(),
+            height_mm: value.height_mm(),
+        }
+    }
+}
+
+impl From<BuildVolumeSetting> for BuildVolume {
+    fn from(value: BuildVolumeSetting) -> Self {
+        BuildVolume::new(
+            sanitise_dim(value.width_mm),
+            sanitise_dim(value.depth_mm),
+            sanitise_dim(value.height_mm),
+        )
+    }
+}
+
+/// Coerce a dimension into a valid axis length: NaN / non-finite
+/// values fall back to the minimum bound, then the value is clamped
+/// into `[MIN_DIM_MM, MAX_DIM_MM]`. Used by both the on-disk loader
+/// and the preferences-UI commit handler so all entry points share
+/// one normalisation rule.
+pub(crate) fn sanitise_dim(d: f32) -> f32 {
+    if !d.is_finite() {
+        return MIN_DIM_MM;
+    }
+    d.clamp(MIN_DIM_MM, MAX_DIM_MM)
+}
+
+fn build_volume_is_default(bv: &BuildVolumeSetting) -> bool {
+    *bv == BuildVolumeSetting::default()
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct AppSettings {
     #[serde(default)]
     pub appearance: Appearance,
+    /// Omitted in TOML when the user has the hardcoded default, so a
+    /// fresh config stays minimal.
+    #[serde(default, skip_serializing_if = "build_volume_is_default")]
+    build_volume: BuildVolumeSetting,
 }
 
 impl AppSettings {
@@ -135,6 +203,14 @@ impl AppSettings {
     pub fn set_language(&mut self, language: LanguagePreference) {
         self.appearance.language = language;
     }
+
+    pub fn build_volume(&self) -> BuildVolume {
+        self.build_volume.into()
+    }
+
+    pub fn set_build_volume(&mut self, bv: BuildVolume) {
+        self.build_volume = bv.into();
+    }
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -169,7 +245,7 @@ mod app_settings_tests {
 
     #[test]
     fn malformed_toml_logs_and_loads_defaults() {
-        // A parse failure is intentionally non-fatal — first-run / hand-
+        // A parse failure is intentionally non-fatal: first-run / hand-
         // edited typo cases must not refuse to launch the GUI.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
@@ -187,7 +263,7 @@ mod app_settings_tests {
         s.set_theme(ThemePreference::Dark);
         s.save_to_path(&path).unwrap();
 
-        // The save call must create parent directories — the path
+        // The save call must create parent directories: the path
         // above includes a `nested/` segment that doesn't exist yet.
         assert!(path.exists());
 
@@ -239,5 +315,73 @@ mod app_settings_tests {
         s.save_to_path(&path).unwrap();
         let loaded = AppSettings::load_from_path(&path);
         assert!(matches!(loaded.theme(), ThemePreference::Light));
+    }
+
+    #[test]
+    fn default_build_volume_matches_hardcoded_constant() {
+        let s = AppSettings::default();
+        let bv = s.build_volume();
+        assert_eq!(bv, HARDCODED_DEFAULT_BUILD_VOLUME);
+    }
+
+    #[test]
+    fn explicit_build_volume_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_build_volume(BuildVolume::new(150.0, 80.0, 160.0));
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        let bv = loaded.build_volume();
+        assert_eq!(bv, BuildVolume::new(150.0, 80.0, 160.0));
+    }
+
+    #[test]
+    fn saved_toml_omits_default_build_volume() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let s = AppSettings::default();
+        s.save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("[build_volume]"),
+            "default settings should not serialise the build_volume table, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn out_of_range_build_volume_clamps_on_load() {
+        // 5 mm is below MIN_DIM_MM (10), 5000 mm is above MAX_DIM_MM (1000).
+        // Both axes should be clamped into the allowed band.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(
+            &path,
+            "[build_volume]\nwidth_mm = 5.0\ndepth_mm = 50.0\nheight_mm = 5000.0\n",
+        )
+        .unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        let bv = loaded.build_volume();
+        assert_eq!(bv, BuildVolume::new(MIN_DIM_MM, 50.0, MAX_DIM_MM));
+    }
+
+    #[test]
+    fn non_finite_build_volume_falls_back_to_min() {
+        // NaN / inf in the file shouldn't crash; they collapse to the
+        // minimum bound so the GUI can still launch and the user sees
+        // a small but legal envelope rather than an undefined render.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(
+            &path,
+            "[build_volume]\nwidth_mm = nan\ndepth_mm = inf\nheight_mm = 80.0\n",
+        )
+        .unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        let bv = loaded.build_volume();
+        assert_eq!(bv, BuildVolume::new(MIN_DIM_MM, MIN_DIM_MM, 80.0));
     }
 }

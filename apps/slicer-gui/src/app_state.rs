@@ -34,8 +34,8 @@ use crate::window_prefs::WindowPreferences;
 /// unregistering the window's preference-apply listener. Held by value
 /// in `AppState::main_windows` so closing a window via
 /// `on_close_requested` cleans up all three halves in one step. The
-/// `window` field is load-bearing — holding the Slint handle by value
-/// keeps the component alive — even though the only accesses to the
+/// `window` field is load-bearing: holding the Slint handle by value
+/// keeps the component alive, even though the only accesses to the
 /// live window happen through the `Weak<MainWindow>` captured in the
 /// subscription's listener. The `controller` is held so external entry
 /// points (path-driven loads from argv / drag-and-drop) can resolve
@@ -89,6 +89,7 @@ impl AppState {
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             language: settings.language(),
+            build_volume: settings.build_volume(),
         };
         // Apply the persisted language *once* up front so the very
         // first `@tr` evaluation during window construction uses the
@@ -111,6 +112,7 @@ impl AppState {
                 let mut settings = settings.borrow_mut();
                 settings.set_theme(snap.theme);
                 settings.set_language(snap.language);
+                settings.set_build_volume(snap.build_volume);
                 if let Err(err) = settings.save() {
                     eprintln!("Failed to save settings: {err}");
                 }
@@ -145,11 +147,16 @@ impl AppState {
     /// close-request handler are wired here.
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
-        ui.apply_preferences(&self.prefs.snapshot());
+        let snapshot = self.prefs.snapshot();
+        ui.apply_preferences(&snapshot);
         let document = SceneDocument::new();
         let pending_load = Rc::new(PendingLoad::new());
         let ctrl = Rc::new(ViewportController::new(&ui, document, pending_load.clone()));
         ctrl.register_document_listener();
+        // Bus listeners only fire on `update`, not on subscribe, so
+        // the persisted build volume is pushed imperatively here.
+        // Future runtime edits flow in through the subscription below.
+        ctrl.set_build_volume(snapshot.build_volume);
 
         crate::wiring::wire_main_window(&ui, ctrl.clone())?;
         self.wire_app_level_menus(&ui);
@@ -158,16 +165,20 @@ impl AppState {
         self.next_window_id.set(id.wrapping_add(1));
 
         let ui_weak = ui.as_weak();
-        let subscription = self.prefs.subscribe(move |snap, _change| {
+        let ctrl_for_listener = ctrl.clone();
+        let subscription = self.prefs.subscribe(move |snap, change| {
             if let Some(w) = ui_weak.upgrade() {
                 w.apply_preferences(snap);
+            }
+            if matches!(change, PreferencesChange::BuildVolume) {
+                ctrl_for_listener.set_build_volume(snap.build_volume);
             }
         });
 
         // On OS-level close: drop our strong handle so the window's
-        // `ViewportController`, `Renderer`, and scene — and the
-        // preference subscription — can be released. Without this,
-        // hidden windows accumulate for the whole session.
+        // `ViewportController`, `Renderer`, scene, and the preference
+        // subscription can be released. Without this, hidden windows
+        // accumulate for the whole session.
         {
             let app_weak = Rc::downgrade(self);
             ui.window().on_close_requested(move || {
@@ -182,7 +193,7 @@ impl AppState {
         // window's surface into the shared `open_path_in_window`
         // entry, and toggle the `drop-hovering` overlay on hover
         // events. Wayland users won't see any of this until winit
-        // lands its Wayland DnD support upstream — see the open-with
+        // lands its Wayland DnD support upstream; see the open-with
         // plan for context.
         {
             use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
@@ -284,7 +295,7 @@ impl AppState {
             .unwrap_or("")
             .to_string();
         // `can_undo` is true iff the user has applied at least one
-        // command on the loaded scene that hasn't been undone — our
+        // command on the loaded scene that hasn't been undone: our
         // proxy for "this scene has unsaved changes". If they haven't
         // touched it, exporting would just write a copy of the source
         // file they already have, so the Export button is hidden.

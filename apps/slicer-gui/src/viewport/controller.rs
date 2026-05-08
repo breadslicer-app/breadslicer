@@ -297,6 +297,19 @@ impl ViewportController {
         render_scheduler::request_redraw(&self.ui);
     }
 
+    /// Replace the active build volume and trigger a redraw. The
+    /// renderer's plate-buffer cache keys off the `BuildVolume`, so
+    /// the next render rebuilds the floor + cage geometry against
+    /// the new envelope automatically. Camera position is preserved
+    /// (mid-session edits leave the user's view alone).
+    pub fn set_build_volume(&self, bv: BuildVolume) {
+        if self.build_volume.get() == bv {
+            return;
+        }
+        self.build_volume.set(bv);
+        self.request_redraw();
+    }
+
     fn mark_dirty(&self) {
         render_scheduler::mark_dirty(&self.frame, &self.ui);
     }

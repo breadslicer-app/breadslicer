@@ -24,9 +24,16 @@ export component PreferencesWindow inherits Window {
     in-out property <ThemePreference> theme: ThemePreference.System;
     in property <[string]> language-options;
     in-out property <int> current-language-index: 0;
+    in property <string> build-volume-width-text;
+    in property <string> build-volume-depth-text;
+    in property <string> build-volume-height-text;
     callback close-requested();
     callback theme-changed(ThemePreference);
     callback language-changed(int);
+    callback build-volume-width-committed(string);
+    callback build-volume-depth-committed(string);
+    callback build-volume-height-committed(string);
+    callback reset-build-volume-requested();
 
     changed theme => {
         Palette.color-scheme =
@@ -66,7 +73,23 @@ export component PreferencesWindow inherits Window {
                     root.language-changed(i);
                 }
             }
-            if(side-bar.current-item == 1) : _3DViewPreferences {}
+            if(side-bar.current-item == 1) : _3DViewPreferences {
+                build-volume-width-text: root.build-volume-width-text;
+                build-volume-depth-text: root.build-volume-depth-text;
+                build-volume-height-text: root.build-volume-height-text;
+                build-volume-width-committed(t) => {
+                    root.build-volume-width-committed(t);
+                }
+                build-volume-depth-committed(t) => {
+                    root.build-volume-depth-committed(t);
+                }
+                build-volume-height-committed(t) => {
+                    root.build-volume-height-committed(t);
+                }
+                reset-build-volume-requested => {
+                    root.reset-build-volume-requested();
+                }
+            }
         }
     }
 }

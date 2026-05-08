@@ -50,6 +50,21 @@ impl BuildVolume {
         }
     }
 
+    /// X extent in millimetres.
+    pub fn width_mm(&self) -> f32 {
+        self.width_mm
+    }
+
+    /// Y extent in millimetres.
+    pub fn depth_mm(&self) -> f32 {
+        self.depth_mm
+    }
+
+    /// Z extent in millimetres.
+    pub fn height_mm(&self) -> f32 {
+        self.height_mm
+    }
+
     /// Envelope minimum corner: `(-W/2, -D/2, 0)`.
     pub fn envelope_min_mm(&self) -> Vec3 {
         Vec3::new(-0.5 * self.width_mm, -0.5 * self.depth_mm, 0.0)

@@ -14,7 +14,7 @@
 //! Listeners receive the whole new snapshot plus a `PreferencesChange`
 //! enum describing what triggered the dispatch. They can filter by
 //! variant if they only care about specific prefs. Listener order is
-//! registration order — `AppState`'s persistence + language-apply
+//! registration order: `AppState`'s persistence + language-apply
 //! listeners are subscribed first, so per-window listeners see the
 //! post-persistence, post-`select_bundled_translation` world.
 //!
@@ -27,6 +27,7 @@ use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 use crate::ThemePreference;
+use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
 
 /// Full read-out of every preference. Listeners receive a reference;
@@ -35,6 +36,7 @@ use crate::language::LanguagePreference;
 pub(crate) struct PreferencesSnapshot {
     pub theme: ThemePreference,
     pub language: LanguagePreference,
+    pub build_volume: BuildVolume,
 }
 
 /// Describes which field was mutated in the last `update` call.
@@ -42,6 +44,7 @@ pub(crate) struct PreferencesSnapshot {
 pub(crate) enum PreferencesChange {
     Theme,
     Language,
+    BuildVolume,
 }
 
 type Listener = Rc<dyn Fn(&PreferencesSnapshot, &PreferencesChange)>;
@@ -78,7 +81,7 @@ impl PreferencesBus {
     /// change the caller reports. Listeners are cloned out of the
     /// inner state before dispatch so a listener can freely call back
     /// into `subscribe` / `snapshot` without re-borrowing the cell.
-    /// Listeners must *not* call `update` re-entrantly — we don't
+    /// Listeners must *not* call `update` re-entrantly: we don't
     /// queue nested updates and the behaviour is undefined.
     pub fn update<F>(&self, f: F)
     where
@@ -137,11 +140,13 @@ mod preferences_bus_tests {
     use std::cell::{Cell, RefCell};
 
     use crate::ThemePreference;
+    use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
 
     fn initial() -> PreferencesSnapshot {
         PreferencesSnapshot {
             theme: ThemePreference::System,
             language: LanguagePreference::System,
+            build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
         }
     }
 
@@ -285,6 +290,33 @@ mod preferences_bus_tests {
             1,
             "the newly-registered listener must fire on subsequent updates"
         );
+    }
+
+    #[test]
+    fn build_volume_change_propagates_to_listener() {
+        use crate::build_volume::BuildVolume;
+
+        let bus = PreferencesBus::new(initial());
+        let captured: Rc<RefCell<Option<(BuildVolume, PreferencesChange)>>> =
+            Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, change| {
+                *captured.borrow_mut() = Some((snap.build_volume, *change));
+            })
+        };
+
+        let new_bv = BuildVolume::new(150.0, 80.0, 160.0);
+        bus.update(|snap| {
+            snap.build_volume = new_bv;
+            PreferencesChange::BuildVolume
+        });
+
+        let (got_bv, got_change) = captured
+            .borrow()
+            .expect("listener must have fired and captured the payload");
+        assert_eq!(got_bv, new_bv);
+        assert_eq!(got_change, PreferencesChange::BuildVolume);
     }
 
     #[test]

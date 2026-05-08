@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-05-02 21:31+0000\n"
+"POT-Creation-Date: 2026-05-08 17:09+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -89,24 +89,64 @@ msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:49
+#: ui/preferences/preferences-window.slint:56
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:51
+#: ui/preferences/preferences-window.slint:58
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:52
+#: ui/preferences/preferences-window.slint:59
 msgctxt "PreferencesMenu"
 msgid "3D View"
 msgstr ""
 
-#: ui/preferences/3dview.slint:9
+#: ui/preferences/3dview.slint:10
 msgctxt "PreferencesPage"
 msgid "3D View"
+msgstr ""
+
+#: ui/preferences/3dview.slint:21
+msgctxt "PreferencesPage"
+msgid "Build volume (mm)"
+msgstr ""
+
+#: ui/preferences/3dview.slint:31
+msgctxt "PreferencesPage"
+msgid "Width"
+msgstr ""
+
+#: ui/preferences/3dview.slint:39
+msgctxt "PreferencesPage"
+msgid "Build volume width in millimetres"
+msgstr ""
+
+#: ui/preferences/3dview.slint:49
+msgctxt "PreferencesPage"
+msgid "Depth"
+msgstr ""
+
+#: ui/preferences/3dview.slint:57
+msgctxt "PreferencesPage"
+msgid "Build volume depth in millimetres"
+msgstr ""
+
+#: ui/preferences/3dview.slint:67
+msgctxt "PreferencesPage"
+msgid "Height"
+msgstr ""
+
+#: ui/preferences/3dview.slint:75
+msgctxt "PreferencesPage"
+msgid "Build volume height in millimetres"
+msgstr ""
+
+#: ui/preferences/3dview.slint:84
+msgctxt "PreferencesPage"
+msgid "Reset to default"
 msgstr ""
 
 #: ui/preferences/appearance.slint:12

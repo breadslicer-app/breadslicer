@@ -3,8 +3,86 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import { Button, LineEdit } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
 export component _3DViewPreferences inherits PreferencesPage {
     title: @tr("PreferencesPage" => "3D View");
+
+    in property <string> build-volume-width-text;
+    in property <string> build-volume-depth-text;
+    in property <string> build-volume-height-text;
+    callback build-volume-width-committed(string);
+    callback build-volume-depth-committed(string);
+    callback build-volume-height-committed(string);
+    callback reset-build-volume-requested();
+
+    Text {
+        text: @tr("PreferencesPage" => "Build volume (mm)");
+        font-weight: 600;
+        accessible-role: none;
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("PreferencesPage" => "Width");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        LineEdit {
+            input-type: decimal;
+            text: root.build-volume-width-text;
+            accessible-label: @tr("PreferencesPage" => "Build volume width in millimetres");
+            accepted(t) => { root.build-volume-width-committed(t); }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("PreferencesPage" => "Depth");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        LineEdit {
+            input-type: decimal;
+            text: root.build-volume-depth-text;
+            accessible-label: @tr("PreferencesPage" => "Build volume depth in millimetres");
+            accepted(t) => { root.build-volume-depth-committed(t); }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: @tr("PreferencesPage" => "Height");
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        LineEdit {
+            input-type: decimal;
+            text: root.build-volume-height-text;
+            accessible-label: @tr("PreferencesPage" => "Build volume height in millimetres");
+            accepted(t) => { root.build-volume-height-committed(t); }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: start;
+
+        Button {
+            text: @tr("PreferencesPage" => "Reset to default");
+            clicked => { root.reset-build-volume-requested(); }
+        }
+    }
 }
