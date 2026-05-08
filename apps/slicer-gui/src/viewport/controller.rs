@@ -1955,6 +1955,27 @@ mod viewport_click_tests {
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         assert!(ctrl.redraw_owed_for_test());
     }
+
+    #[test]
+    fn gizmo_translate_drag_clamps_at_plus_x_wall() {
+        // The fixture's triangle has world.max.x = 0.5 with the
+        // installed transform (Affine zero). Setting a build envelope
+        // whose env.max.x = 0.5 leaves zero room on +X: any positive
+        // drag delta must clamp to zero. Without the clamp wiring,
+        // the same press + move would translate the object along +X
+        // (covered by `drag_translates_object_along_world_axis`).
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.build_volume.set(BuildVolume::new(1.0, 4.0, 4.0));
+
+        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1, no_mods());
+
+        let actual = read_translation(&ctrl);
+        assert_approx_eq!(f32, actual.x, 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, actual.y, 0.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, actual.z, 0.0, epsilon = 1e-6);
+    }
 }
 
 #[cfg(test)]
@@ -2212,5 +2233,130 @@ mod keyboard_focus_tests {
         // Level 3 → selection clears.
         ctrl.on_clear_selection();
         assert_eq!(ctrl.selection(), None);
+    }
+
+    /// Single object whose local AABB has world.max.x = 1 with the
+    /// identity transform. Useful for clamp tests where the goal is
+    /// "envelope is exactly flush with the object's +X face, so any
+    /// +X delta clamps to zero".
+    fn cube_object_scene() -> Scene {
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(IndexedMesh {
+                    meta: None,
+                    vertices: vec![Vertex::new([-1.0, -1.0, 0.0]), Vertex::new([1.0, 1.0, 2.0])],
+                    faces: vec![],
+                }),
+            }],
+        }
+    }
+
+    /// Front-axis camera + 400 x 200 viewport. Mirrors the gizmo
+    /// tests' setup so `world_per_pixel` is the same scale, and
+    /// the keyboard integrator's translation rate is comparable.
+    fn install_for_integration(ctrl: &ViewportController) {
+        ctrl.install_scene_for_test(cube_object_scene());
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
+        cam.set_axis_view(crate::camera::AxisView::Front);
+        *ctrl.camera.borrow_mut() = Some(cam);
+        ctrl.set_viewport_for_test(400.0, 200.0);
+    }
+
+    /// Drive `kbd_drive.integrate` twice with a real-time pause
+    /// between calls so the per-tick `dt` is non-zero on the second
+    /// call. The first call seeds `last_tick`; the second produces
+    /// the actual integration step.
+    fn integrate_two_ticks(ctrl: &ViewportController) {
+        let _ = ctrl.kbd_drive.integrate(IntegrationCtx {
+            document: &ctrl.document,
+            camera: &ctrl.camera,
+            viewport: ctrl.viewport.get(),
+            selection_idx: ctrl.document.selection_primary_idx(),
+            build_volume: ctrl.build_volume.get(),
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let _ = ctrl.kbd_drive.integrate(IntegrationCtx {
+            document: &ctrl.document,
+            camera: &ctrl.camera,
+            viewport: ctrl.viewport.get(),
+            selection_idx: ctrl.document.selection_primary_idx(),
+            build_volume: ctrl.build_volume.get(),
+        });
+    }
+
+    #[test]
+    fn keyboard_translate_focus_clamps_at_plus_x_wall() {
+        // Cube world AABB.max.x = 1.0 with identity. Envelope of
+        // (2, 4, 4) gives env.max.x = 1.0 exactly: zero room on +X.
+        // Holding +X under Translate focus must leave the object's
+        // translation at zero across as many ticks as we run.
+        let ctrl = ViewportController::new_for_test();
+        install_for_integration(&ctrl);
+        ctrl.on_select_by_index(0);
+        ctrl.build_volume.set(BuildVolume::new(2.0, 4.0, 4.0));
+        ctrl.on_gizmo_focus_translate();
+
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        integrate_two_ticks(&ctrl);
+
+        let transform = ctrl
+            .document
+            .with_scene(|s| s.scene().objects[0].transform)
+            .unwrap();
+        let translation = match transform {
+            Transform3D::Identity => [0.0; 3],
+            Transform3D::Affine(a) => *a.translation(),
+        };
+        assert!(
+            translation[0] <= f64::EPSILON,
+            "expected translation.x clamped to 0 against +X wall, got {}",
+            translation[0]
+        );
+    }
+
+    #[test]
+    fn keyboard_rotate_focus_unaffected_by_envelope() {
+        // Same envelope-flush-with-cube setup. Rotate focus must
+        // ignore the clamp: the linear part of the resulting
+        // transform should reflect the integrated rotation, even
+        // though the composed translation component is non-zero
+        // (rotation about a non-origin pivot leaves the box centroid
+        // in place but writes a non-zero translation into the affine
+        // form). The test asserts the linear part diverges from
+        // identity, which is the load-bearing claim that "rotation
+        // happened, the clamp didn't squash it".
+        let ctrl = ViewportController::new_for_test();
+        install_for_integration(&ctrl);
+        ctrl.on_select_by_index(0);
+        ctrl.build_volume.set(BuildVolume::new(2.0, 4.0, 4.0));
+        ctrl.on_gizmo_focus_rotate();
+
+        ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        integrate_two_ticks(&ctrl);
+
+        let transform = ctrl
+            .document
+            .with_scene(|s| s.scene().objects[0].transform)
+            .unwrap();
+        match transform {
+            Transform3D::Identity => panic!("rotate focus should have produced an affine"),
+            Transform3D::Affine(a) => {
+                let m = a.linear();
+                // R_x(theta) maps (0, 1, 0) to (0, cos, sin) and
+                // (0, 0, 1) to (0, -sin, cos). For any non-zero
+                // theta, m[2][1] (the Y-into-Z coefficient) is
+                // non-zero, distinguishing the result from the
+                // identity matrix.
+                assert!(
+                    m[2][1].abs() > 1e-6,
+                    "expected non-trivial rotation, got linear {:?}",
+                    m
+                );
+            }
+        }
     }
 }
