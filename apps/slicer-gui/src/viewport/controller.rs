@@ -302,12 +302,16 @@ impl ViewportController {
     /// the next render rebuilds the floor + cage geometry against
     /// the new envelope automatically. Camera position is preserved
     /// (mid-session edits leave the user's view alone).
+    ///
+    /// Uses `mark_dirty`, not just `request_redraw`: the render path
+    /// early-returns when `frame.redraw_owed` is false, so a bare
+    /// window-poke isn't enough on its own.
     pub fn set_build_volume(&self, bv: BuildVolume) {
         if self.build_volume.get() == bv {
             return;
         }
         self.build_volume.set(bv);
-        self.request_redraw();
+        self.mark_dirty();
     }
 
     fn mark_dirty(&self) {
@@ -1982,35 +1986,41 @@ mod viewport_click_tests {
     }
 
     #[test]
-    fn set_build_volume_updates_field_when_value_changes() {
+    fn set_build_volume_updates_field_and_marks_redraw_owed() {
+        // The render path gates on `frame.redraw_owed`; without the
+        // dirty flag the next `before-rendering` tick early-returns
+        // and the new envelope only paints when something else
+        // (camera rotate, pointer move) happens to mark the frame.
         let ctrl = ViewportController::new_for_test();
         let initial = ctrl.build_volume.get();
         let new_bv = BuildVolume::new(50.0, 50.0, 50.0);
         assert_ne!(initial, new_bv);
+        ctrl.clear_frame_state_for_test();
+        assert!(!ctrl.redraw_owed_for_test());
 
         ctrl.set_build_volume(new_bv);
 
         assert_eq!(ctrl.build_volume.get(), new_bv);
+        assert!(ctrl.redraw_owed_for_test());
     }
 
     #[test]
     fn set_build_volume_is_idempotent_for_equal_values() {
-        // The redraw side effect goes through a `Weak<MainWindow>`
-        // that is dangling under `new_for_test`, so the no-redraw
-        // half of the contract isn't directly observable here. What
-        // we can pin down: the field doesn't churn when the same
-        // value is written twice, and a real change still goes
-        // through after.
+        // Same value twice: the second call is a no-op, the frame
+        // stays clean. A subsequent real change re-marks dirty.
         let ctrl = ViewportController::new_for_test();
         let bv = BuildVolume::new(80.0, 80.0, 120.0);
+        ctrl.set_build_volume(bv);
+        ctrl.clear_frame_state_for_test();
 
         ctrl.set_build_volume(bv);
-        ctrl.set_build_volume(bv);
         assert_eq!(ctrl.build_volume.get(), bv);
+        assert!(!ctrl.redraw_owed_for_test());
 
         let bigger = BuildVolume::new(150.0, 80.0, 120.0);
         ctrl.set_build_volume(bigger);
         assert_eq!(ctrl.build_volume.get(), bigger);
+        assert!(ctrl.redraw_owed_for_test());
     }
 
     #[test]
