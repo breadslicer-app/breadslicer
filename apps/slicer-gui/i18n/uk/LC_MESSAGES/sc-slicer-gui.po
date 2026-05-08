@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-08 17:09+0000\n"
-"PO-Revision-Date: 2026-05-07 20:58+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-05-19 11:18+0000\n"
+"Last-Translator: SomeTr <sometr@noreply.codeberg.org>\n"
 "Language-Team: Ukrainian <https://translate.codeberg.org/projects/"
 "soulcrafted-slicer/slicer-gui/uk/>\n"
 "Language: uk\n"
@@ -13,7 +13,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\n"
-"X-Generator: Weblate 5.17.1\n"
+"X-Generator: Weblate 2026.5\n"
 
 #: ui/about-window.slint:10
 msgctxt "AboutWindow"
@@ -48,17 +48,17 @@ msgstr "Закрити"
 #: ui/replace-scene-dialog.slint:14
 msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
-msgstr ""
+msgstr "Відкрити нову модель"
 
 #: ui/replace-scene-dialog.slint:61
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
-msgstr ""
+msgstr "Замінити поточну сцену?"
 
 #: ui/replace-scene-dialog.slint:67
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
-msgstr ""
+msgstr "Відкриття: {}"
 
 #: ui/replace-scene-dialog.slint:80
 msgctxt "ReplaceSceneDialog"
@@ -66,29 +66,28 @@ msgid ""
 "The current scene will be closed. Export it first to keep any changes you've "
 "made."
 msgstr ""
+"Поточну сцену буде закрито. Спочатку експортуйте її, щоб зберегти всі "
+"внесені зміни."
 
 #: ui/replace-scene-dialog.slint:84
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
-msgstr ""
+msgstr "Поточну сцену буде закрито."
 
 #: ui/replace-scene-dialog.slint:98
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
-msgstr ""
+msgstr "Відхилити і відкрити"
 
 #: ui/replace-scene-dialog.slint:105
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "Open…"
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
-msgstr "Відкрити…"
+msgstr "Експортувати і відкрити…"
 
 #: ui/replace-scene-dialog.slint:112
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
-msgstr ""
+msgstr "Скасувати"
 
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
@@ -118,45 +117,42 @@ msgstr "Перегляд 3D"
 #: ui/preferences/3dview.slint:21
 msgctxt "PreferencesPage"
 msgid "Build volume (mm)"
-msgstr ""
+msgstr "Робоча зона (мм)"
 
 #: ui/preferences/3dview.slint:31
 msgctxt "PreferencesPage"
 msgid "Width"
-msgstr ""
+msgstr "Ширина"
 
 #: ui/preferences/3dview.slint:39
 msgctxt "PreferencesPage"
 msgid "Build volume width in millimetres"
-msgstr ""
+msgstr "Ширина робочого простору в міліметрах"
 
 #: ui/preferences/3dview.slint:49
 msgctxt "PreferencesPage"
 msgid "Depth"
-msgstr ""
+msgstr "Глибина"
 
 #: ui/preferences/3dview.slint:57
 msgctxt "PreferencesPage"
 msgid "Build volume depth in millimetres"
-msgstr ""
+msgstr "Глибина робочого простору в міліметрах"
 
 #: ui/preferences/3dview.slint:67
-#, fuzzy
-#| msgctxt "AppearancePreferences"
-#| msgid "Light"
 msgctxt "PreferencesPage"
 msgid "Height"
-msgstr "Світла"
+msgstr "Висота"
 
 #: ui/preferences/3dview.slint:75
 msgctxt "PreferencesPage"
 msgid "Build volume height in millimetres"
-msgstr ""
+msgstr "Висота робочого простору в міліметрах"
 
 #: ui/preferences/3dview.slint:84
 msgctxt "PreferencesPage"
 msgid "Reset to default"
-msgstr ""
+msgstr "Скинути"
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
@@ -273,7 +269,7 @@ msgstr "Зберегти як…"
 #: ui/main-window.slint:174
 msgctxt "MenuBar"
 msgid "Export As…"
-msgstr ""
+msgstr "Експортувати як…"
 
 #: ui/main-window.slint:184
 msgctxt "MenuBar"
@@ -353,7 +349,7 @@ msgstr "Відкрийте 3D-модель, щоб переглянути її �
 #: ui/main-window.slint:364
 msgctxt "MainWindow"
 msgid "Drop to open"
-msgstr ""
+msgstr "Перетягніть, щоб відкрити"
 
 #: ui/mesh-viewer.slint:83
 msgctxt "MeshViewer"
@@ -418,12 +414,9 @@ msgid "All files"
 msgstr "Усі файли"
 
 #: src/wiring.rs:268 src/wiring.rs:286
-#, fuzzy
-#| msgctxt "ErrorDialog"
-#| msgid "Failed to open 3D model"
 msgctxt "ErrorDialog"
 msgid "Failed to export"
-msgstr "Не вдалося відкрити 3D-модель"
+msgstr "Не вдалося експортувати"
 
 #: src/wiring.rs:269 src/wiring.rs:287 src/scene_loader.rs:325
 #: src/app_state.rs:242
@@ -434,12 +427,12 @@ msgstr "Файл: {}"
 #: src/wiring.rs:305
 msgctxt "FileDialog"
 msgid "STL (binary)"
-msgstr ""
+msgstr "STL (бінарний)"
 
 #: src/wiring.rs:309
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
-msgstr ""
+msgstr "STL (ASCII)"
 
 #: src/scene_loader.rs:290
 msgctxt "ErrorDialog"
@@ -457,17 +450,14 @@ msgid "Failed to open 3D model"
 msgstr "Не вдалося відкрити 3D-модель"
 
 #: src/app_state.rs:241
-#, fuzzy
-#| msgctxt "FileDialog"
-#| msgid "All supported files"
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
-msgstr "Усі підтримувані файли"
+msgstr "Формат файлу не підтримується"
 
 #: src/app_state.rs:245
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
-msgstr ""
+msgstr "Відкрити можна лише файли таких типів: {}"
 
 #: src/mesh_loader.rs:72
 msgctxt "ErrorDialog"
