@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 struct Uniforms {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,

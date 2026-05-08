@@ -10,6 +10,7 @@ use glam::Vec3;
 use sc_mesh_core::scene::Scene;
 use slint::wgpu_28::wgpu;
 
+use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::gizmo::axis::ALL_AXES;
 
@@ -30,9 +31,28 @@ pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
+use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{MODEL_ENTRY_SIZE, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
+
+/// Scene-dependent inputs to [`Renderer::render`]. The selection
+/// drives the outline post-pass and the gizmo overlay drives the
+/// gizmo pass; both are meaningful only when a scene is loaded, so
+/// they live alongside the scene reference rather than on
+/// [`Renderer::render`]'s top-level signature where the type system
+/// would let a caller pass `selection: Some(_)` against
+/// `scene: None`.
+#[derive(Clone, Copy)]
+pub struct SceneRender<'a> {
+    pub scene: &'a Scene,
+    /// Object index whose stencil mask the outline post-pass
+    /// dilates. `None` skips the outline pass.
+    pub selection: Option<usize>,
+    /// Gizmo overlay parameters; the gizmo pass runs only when
+    /// this is `Some`.
+    pub gizmo: Option<GizmoFrame>,
+}
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// Format for the gizmo pass's private depth attachment. Stencil is
@@ -64,6 +84,11 @@ pub struct Renderer {
     outline: OutlinePipeline,
     gizmo: GizmoPipeline,
     gizmo_buffers: GizmoBuffers,
+    plate: PlatePipeline,
+    /// Cached plate geometry for the current `BuildVolume`. `None`
+    /// until the first render call; rebuilt when the per-frame
+    /// `BuildVolume` differs from the cached one.
+    plate_buffers: Option<PlateBuffers>,
     scene: Option<InstalledScene>,
     msaa: Option<MsaaTargets>,
     targets: Option<TargetPool>,
@@ -74,7 +99,7 @@ pub struct Renderer {
 /// Chosen so that a sphere of the scene's bounding radius fills
 /// `FIT_FRACTION` of the viewport height when the camera sits at its initial
 /// framing distance (`DEFAULT_DISTANCE_FACTOR * radius`). Being a pure
-/// function of those constants, the FOV is viewport-independent — resizing
+/// function of those constants, the FOV is viewport-independent, resizing
 /// the window rescales the image but never distorts perspective.
 pub fn default_fov_y() -> f32 {
     2.0 * (1.0 / (FIT_FRACTION * DEFAULT_DISTANCE_FACTOR)).atan()
@@ -86,6 +111,7 @@ impl Renderer {
         let outline = OutlinePipeline::create(&device);
         let gizmo_buffers = GizmoBuffers::create(&device);
         let gizmo = GizmoPipeline::create(&device, &gizmo_buffers);
+        let plate = PlatePipeline::create(&device, &mesh);
 
         Self {
             device,
@@ -94,6 +120,8 @@ impl Renderer {
             outline,
             gizmo,
             gizmo_buffers,
+            plate,
+            plate_buffers: None,
             scene: None,
             msaa: None,
             targets: None,
@@ -192,55 +220,98 @@ impl Renderer {
         self.targets = Some(TargetPool::create(&self.device, width, height));
     }
 
+    /// Lazily create or rebuild the plate's GPU buffers. The cache
+    /// key is the `BuildVolume`; a different value triggers a
+    /// rebuild so a runtime envelope change reaches the next frame.
+    fn ensure_plate_buffers(&mut self, build_volume: BuildVolume) {
+        if self
+            .plate_buffers
+            .as_ref()
+            .is_some_and(|b| b.build_volume == build_volume)
+        {
+            return;
+        }
+        self.plate_buffers = Some(PlateBuffers::create(&self.device, build_volume));
+    }
+
     pub fn render(
         &mut self,
-        scene: &Scene,
+        scene_render: Option<SceneRender<'_>>,
+        build_volume: BuildVolume,
         camera: &OrbitCamera,
-        selection: Option<usize>,
-        gizmo: Option<GizmoFrame>,
         width: u32,
         height: u32,
     ) -> Option<wgpu::Texture> {
-        if width == 0 || height == 0 || self.scene.is_none() {
+        if width == 0 || height == 0 {
             return None;
         }
+
+        let (scene, selection, gizmo) = match scene_render {
+            Some(sr) => (Some(sr.scene), sr.selection, sr.gizmo),
+            None => (None, None, None),
+        };
 
         self.ensure_msaa(width, height);
         self.ensure_targets(width, height);
-        let installed = self.scene.as_ref().unwrap();
+        self.ensure_plate_buffers(build_volume);
+        let installed = self.scene.as_ref();
         let msaa = self.msaa.as_ref().unwrap();
+        let plate_buffers = self
+            .plate_buffers
+            .as_ref()
+            .expect("ensure_plate_buffers populated the cache");
 
-        // Per-frame upload of model matrices. The CPU-side `Scene` is the
-        // source of truth; the GPU uniform buffer is a mirror that lives
-        // long enough to be sampled across the next draw. The renderer's
-        // GpuScene must match the Scene 1:1 — caller-side invariant
-        // checked by debug_assert so test failures surface early.
-        debug_assert_eq!(
-            installed.gpu.object_count(),
-            scene.objects.len(),
-            "GpuScene and Scene have diverged in object count"
-        );
-        let entries = build_model_entries(scene, selection);
-        if entries.is_empty() {
-            // Defensive: nothing to draw.
-            return None;
-        }
-        // Each entry lives at `i * model_stride`. The stride is at least
-        // `MODEL_ENTRY_SIZE` and a multiple of the device's uniform
-        // offset alignment (typically 256 bytes), so consecutive entries
-        // are not contiguous and must be written individually.
-        for (i, entry) in entries.iter().enumerate() {
-            let offset = i as u64 * installed.gpu.model_stride();
-            self.queue.write_buffer(
-                installed.gpu.model_buffer(),
-                offset,
-                bytemuck::bytes_of(entry),
+        // Per-frame upload of model matrices when a `GpuScene` is
+        // installed AND the caller passed the matching CPU `Scene`.
+        // The CPU scene is the source of truth; the GPU uniform
+        // buffer is a mirror that lives long enough to be sampled
+        // across the next draw. The renderer's `GpuScene` must
+        // match the `Scene` 1:1; caller-side invariant checked by
+        // debug_assert so test failures surface early.
+        let scene_for_draws = if let (Some(inst), Some(scene_data)) = (installed, scene) {
+            debug_assert_eq!(
+                inst.gpu.object_count(),
+                scene_data.objects.len(),
+                "GpuScene and Scene have diverged in object count"
             );
-        }
+            let entries = build_model_entries(scene_data, selection);
+            // Each entry lives at `i * model_stride`. The stride is
+            // at least `MODEL_ENTRY_SIZE` and a multiple of the
+            // device's uniform offset alignment (typically 256
+            // bytes), so consecutive entries are not contiguous
+            // and must be written individually.
+            for (i, entry) in entries.iter().enumerate() {
+                let offset = i as u64 * inst.gpu.model_stride();
+                self.queue
+                    .write_buffer(inst.gpu.model_buffer(), offset, bytemuck::bytes_of(entry));
+            }
+            !entries.is_empty()
+        } else {
+            false
+        };
 
-        let (aabb_min, aabb_max) = installed.gpu.aabb();
-        let view_proj =
-            frame::compute_view_proj(camera, aabb_min, aabb_max, width, height, default_fov_y());
+        // Framing AABB drives `compute_view_proj`'s near/far
+        // multipliers. With a scene installed, union the scene's
+        // world AABB with the plate envelope so the plate stays
+        // inside the depth range; without a scene, the envelope
+        // alone is the framing AABB.
+        let env_min = build_volume.envelope_min_mm();
+        let env_max = build_volume.envelope_max_mm();
+        let (framing_min, framing_max) = match installed {
+            Some(inst) => {
+                let (smin, smax) = inst.gpu.aabb();
+                (smin.min(env_min), smax.max(env_max))
+            }
+            None => (env_min, env_max),
+        };
+        let view_proj = frame::compute_view_proj(
+            camera,
+            framing_min,
+            framing_max,
+            width,
+            height,
+            default_fov_y(),
+        );
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -288,37 +359,70 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.mesh.pipeline);
+
+            // Plate floor: filled quad at Z = 0. Depth-write off,
+            // so a model resting at Z = 0 always wins z-fighting
+            // against the plate. Stencil reference stays at 0 so
+            // the outline post-pass leaves the plate untouched.
+            pass.set_pipeline(&self.plate.triangle_pipeline);
             pass.set_bind_group(
-                MeshBindGroup::Uniforms.idx(),
-                &self.mesh.uniforms_bind_group,
+                PlateBindGroup::Uniforms.idx(),
+                &self.plate.uniforms_bind_group,
                 &[],
             );
-            // One draw call per object. The models bind group is rebound
-            // at each step with the dynamic offset of the matching
-            // ModelEntry slot, so the vertex shader's `model_entry`
-            // uniform reads that object's matrix. The stencil
-            // reference is `1` only for the selected object, so after
-            // this pass the stencil holds 1 over its visible silhouette
-            // and 0 everywhere else — what the outline post-pass
-            // dilates.
-            for (i, obj) in installed.gpu.objects().iter().enumerate() {
-                let offset = (i as u64 * installed.gpu.model_stride()) as u32;
+            pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+            pass.set_index_buffer(
+                plate_buffers.floor_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.set_stencil_reference(0);
+            pass.draw_indexed(0..plate_buffers.floor_index_count, 0, 0..1);
+
+            // Cage: 12 wireframe edges sharing the floor's vertex
+            // buffer; the line-list index buffer picks the cage
+            // corner range.
+            pass.set_pipeline(&self.plate.line_pipeline);
+            pass.set_index_buffer(
+                plate_buffers.cage_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+
+            if scene_for_draws && let Some(inst) = installed {
+                pass.set_pipeline(&self.mesh.pipeline);
                 pass.set_bind_group(
-                    MeshBindGroup::Models.idx(),
-                    &installed.models_bind_group,
-                    &[offset],
+                    MeshBindGroup::Uniforms.idx(),
+                    &self.mesh.uniforms_bind_group,
+                    &[],
                 );
-                pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
-                pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_stencil_reference(if Some(i) == selection { 1 } else { 0 });
-                pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+                // One draw call per object. The models bind group
+                // is rebound at each step with the dynamic offset
+                // of the matching ModelEntry slot, so the vertex
+                // shader's `model_entry` uniform reads that
+                // object's matrix. The stencil reference is `1`
+                // only for the selected object, so after this pass
+                // the stencil holds 1 over its visible silhouette
+                // and 0 everywhere else, what the outline
+                // post-pass dilates.
+                for (i, obj) in inst.gpu.objects().iter().enumerate() {
+                    let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+                    pass.set_bind_group(
+                        MeshBindGroup::Models.idx(),
+                        &inst.models_bind_group,
+                        &[offset],
+                    );
+                    pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+                    pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_stencil_reference(if Some(i) == selection { 1 } else { 0 });
+                    pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+                }
             }
         }
-        // Outline post-pass: only run when something is selected, since
-        // an empty stencil yields no edges anyway and the extra draw
-        // is wasted bandwidth on every unselected frame.
-        if selection.is_some() {
+        // Outline post-pass: only run when something is selected
+        // and at least one mesh draw wrote stencil = 1 (i.e. a
+        // scene is installed). Without a scene, the stencil is all
+        // zeroes and the dilate would be a no-op.
+        if selection.is_some() && scene_for_draws {
             let mut outline_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh-viewer outline pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -364,7 +468,7 @@ impl Renderer {
 
             // Decide which categories to draw and write the matching
             // entry slots. Other slots are not used this frame, so we
-            // skip writing them — the dynamic-offset bind only ever
+            // skip writing them, the dynamic-offset bind only ever
             // points at slots that received fresh data.
             let render_translate = matches!(
                 frame.visibility,
@@ -449,7 +553,7 @@ impl Renderer {
                     );
                     gizmo_pass.draw_indexed(0..self.gizmo_buffers.shaft_line_index_count, 0, 0..1);
                 }
-                // Solid cone tip — the active translate handle.
+                // Solid cone tip, the active translate handle.
                 gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
                 gizmo_pass
                     .set_vertex_buffer(0, self.gizmo_buffers.cone_tip_vertex_buffer.slice(..));
@@ -487,7 +591,7 @@ impl Renderer {
                     );
                     gizmo_pass.draw_indexed(0..self.gizmo_buffers.arc_line_index_count, 0, 0..1);
                 }
-                // Two-cone spindle at the arc's midpoint — the active
+                // Two-cone spindle at the arc's midpoint, the active
                 // rotate handle. Shares the per-axis camera-rolled
                 // `axis_rotation` so it lands at the visual centre of
                 // the arc.
@@ -541,7 +645,7 @@ impl Renderer {
 
 /// End-to-end GPU tests. They construct a fresh wgpu device with the
 /// **default-limits profile** (the same profile Slint uses), so they
-/// catch regressions that would only show up at runtime — most
+/// catch regressions that would only show up at runtime, most
 /// importantly, any binding type that is gated by a non-default
 /// limit (storage buffers in the vertex stage have
 /// `max_storage_buffers_per_shader_stage = 0` under default limits and
@@ -555,14 +659,20 @@ impl Renderer {
 #[cfg(test)]
 mod gpu_integration_tests {
     use super::*;
+    use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
     use crate::gizmo::axis::Axis;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::transform::AffineTransform3D;
 
+    /// Build envelope used by the render tests below. Held as a
+    /// module-level constant so each test passes the same value to
+    /// `render` without extra boilerplate.
+    const TEST_BV: BuildVolume = HARDCODED_DEFAULT_BUILD_VOLUME;
+
     /// Builds a wgpu (Device, Queue) with the default-limits profile
-    /// Slint requests. Returns `None` if no adapter is available — the
+    /// Slint requests. Returns `None` if no adapter is available, the
     /// caller soft-skips so CI without a GPU isn't blocked.
     fn make_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -573,7 +683,7 @@ mod gpu_integration_tests {
             label: Some("mesh-viewer test device"),
             // Default-limits matches what Slint asks for. If a binding
             // we declare exceeds these limits, `Renderer::new` will
-            // panic in `create_bind_group_layout` — that's the
+            // panic in `create_bind_group_layout`, that's the
             // regression we want this test to catch.
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
@@ -663,7 +773,17 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let texture = renderer
-            .render(&scene, &camera, None, None, 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: None,
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("render should produce a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
@@ -690,7 +810,17 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let texture = renderer
-            .render(&scene, &camera, Some(0), None, 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("render with selection should produce a texture");
         assert_eq!(texture.size().width, 64);
     }
@@ -719,13 +849,33 @@ mod gpu_integration_tests {
         let center = (bounds.0 + bounds.1) * 0.5;
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
-        // Twice — first frame creates the MSAA targets and outline
+        // Twice, first frame creates the MSAA targets and outline
         // bind group; second exercises the cached path.
         let _ = renderer
-            .render(&scene, &camera, Some(0), None, 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("render with selection runs the outline pass");
         let _ = renderer
-            .render(&scene, &camera, Some(0), None, 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("cached outline bind group survives a second frame");
     }
 
@@ -761,15 +911,35 @@ mod gpu_integration_tests {
             drag_visual: None,
         };
         let _ = renderer
-            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: Some(frame),
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("first gizmo render should succeed");
         let _ = renderer
-            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: Some(frame),
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("cached gizmo resources survive a second frame");
     }
 
     /// Idle visibility renders all three handle categories
-    /// simultaneously — exercises the translate, rotate, and scale
+    /// simultaneously, exercises the translate, rotate, and scale
     /// draws in a single frame.
     #[test]
     fn render_with_idle_gizmo_under_default_limits() {
@@ -797,7 +967,17 @@ mod gpu_integration_tests {
             drag_visual: None,
         };
         let _ = renderer
-            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: Some(frame),
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("idle gizmo render should succeed");
     }
 
@@ -830,11 +1010,21 @@ mod gpu_integration_tests {
             drag_visual: None,
         };
         let _ = renderer
-            .render(&scene, &camera, Some(0), Some(frame), 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: Some(frame),
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("rotate gizmo render should succeed");
     }
 
-    /// Scale-axis renders the three midpoint cubes — pins the
+    /// Scale-axis renders the three midpoint cubes, pins the
     /// scale-pass wiring under default-limits.
     #[test]
     fn render_with_scale_gizmo_under_default_limits() {
@@ -862,7 +1052,17 @@ mod gpu_integration_tests {
             drag_visual: None,
         };
         let _ = renderer
-            .render(&scene, &camera, Some(0), Some(scale_axis), 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: Some(0),
+                    gizmo: Some(scale_axis),
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("scale-axis gizmo render should succeed");
     }
 
@@ -920,7 +1120,65 @@ mod gpu_integration_tests {
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
         let camera = OrbitCamera::new(center, radius);
         let _texture = renderer
-            .render(&scene, &camera, None, None, 64, 64)
+            .render(
+                Some(SceneRender {
+                    scene: &scene,
+                    selection: None,
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
             .expect("render multi-object");
+    }
+
+    /// Render with no scene installed: the plate alone should
+    /// produce a non-`None` texture. Two consecutive calls so the
+    /// second exercises the cached `plate_buffers` path.
+    #[test]
+    fn render_plate_only_under_default_limits() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, queue);
+        let (centre, radius) = TEST_BV.framing(None);
+        let camera = OrbitCamera::new(centre, radius);
+        let _ = renderer
+            .render(None, TEST_BV, &camera, 64, 64)
+            .expect("first plate-only render should succeed");
+        let _ = renderer
+            .render(None, TEST_BV, &camera, 64, 64)
+            .expect("second plate-only render should succeed");
+    }
+
+    /// A render call against a different `BuildVolume` rebuilds the
+    /// cached plate buffers so the new envelope reaches the next
+    /// frame. Verified through the public path: render once at the
+    /// default envelope, then at a smaller one, and confirm both
+    /// frames succeed and the cache key reflects the latest call.
+    #[test]
+    fn render_plate_buffers_rebuild_on_envelope_change() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, queue);
+        let camera = OrbitCamera::new(Vec3::ZERO, 100.0);
+
+        let _ = renderer
+            .render(None, TEST_BV, &camera, 64, 64)
+            .expect("render at default envelope");
+        let cached_after_first = renderer.plate_buffers.as_ref().map(|b| b.build_volume);
+        assert_eq!(cached_after_first, Some(TEST_BV));
+
+        let smaller = BuildVolume::new(50.0, 50.0, 50.0);
+        let _ = renderer
+            .render(None, smaller, &camera, 64, 64)
+            .expect("render at smaller envelope");
+        let cached_after_second = renderer.plate_buffers.as_ref().map(|b| b.build_volume);
+        assert_eq!(cached_after_second, Some(smaller));
     }
 }

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 // Outline post-pass.
 //
 // Reads sample 0 of the multisampled stencil produced by the main pass

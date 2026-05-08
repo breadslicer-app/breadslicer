@@ -113,9 +113,6 @@ impl BuildVolume {
     /// Component-wise `min` / `max` against the envelope corners yields
     /// the union, so a degenerate scene AABB (sentinel
     /// `(+inf, -inf)`) collapses safely to envelope-only.
-    // Consumed by the controller's camera-init path when the plate
-    // render lands; until then, only the unit tests below exercise it.
-    #[allow(dead_code)]
     pub fn framing(&self, scene_aabb: Option<(Vec3, Vec3)>) -> (Vec3, f32) {
         let env_min = self.envelope_min_mm();
         let env_max = self.envelope_max_mm();

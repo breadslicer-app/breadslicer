@@ -12,3 +12,4 @@
 pub(super) mod gizmo;
 pub(super) mod mesh;
 pub(super) mod outline;
+pub(super) mod plate;

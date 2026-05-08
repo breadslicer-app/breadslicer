@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 // Translate gizmo: three axis handles drawn after the main scene
 // from a single axis-along-+X geometry, rotated and tinted per axis.
 // No lighting — handles read as flat-shaded UI, not as 3D objects.

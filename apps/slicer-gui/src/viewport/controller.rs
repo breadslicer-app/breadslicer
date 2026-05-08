@@ -30,7 +30,7 @@ use crate::error_dialog::DialogManager;
 use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, default_fov_y};
+use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, SceneRender, default_fov_y};
 use crate::pending_load::PendingLoad;
 use crate::picking;
 #[cfg(test)]
@@ -510,7 +510,7 @@ impl ViewportController {
     ///    to the captured original), keep selection / focus.
     /// 2. Else if keyboard gizmo focus is active → drop focus only,
     ///    keep selection.
-    /// 3. Else → clear selection (Phase B behaviour).
+    /// 3. Else → clear the selection.
     ///
     /// "Click on empty space" enters at level 3 (the picker has
     /// already dispatched here from `on_pointer_up` after determining
@@ -786,8 +786,10 @@ impl ViewportController {
         self.loader.reset_upload_failures();
         if self.document.is_loaded() {
             self.frame.update(FrameState::with_upload_owed);
-            self.request_redraw();
         }
+        // Always request a redraw after RenderingSetup: even with no
+        // scene, the plate is part of the steady-state output.
+        self.request_redraw();
         // The device is now snapshottable; drain any path that was
         // queued before this point (argv at startup, etc.).
         // `begin_load` returning `None` means a load is somehow already
@@ -836,18 +838,6 @@ impl ViewportController {
                 Some(Ok(())) => {
                     self.frame.update(FrameState::after_upload_success);
                     self.loader.note_upload_success();
-                    // Frame the camera off the AABB the upload just
-                    // computed. Skipped if a camera already exists
-                    // (e.g. this was a re-upload across a
-                    // RenderingTeardown→Setup cycle, and the user's
-                    // view should persist).
-                    if self.camera.borrow().is_none()
-                        && let Some((min, max)) = renderer.scene_bounds()
-                    {
-                        let center = (min + max) * 0.5;
-                        let radius = ((max - min).length() * 0.5).max(1e-3);
-                        *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
-                    }
                 }
                 Some(Err(err)) => {
                     // Leave the upload flag set so it continues to
@@ -863,6 +853,16 @@ impl ViewportController {
                     self.frame.update(FrameState::upload_cleared);
                 }
             }
+        }
+
+        // Initialise the orbit camera if it isn't yet. With the plate
+        // visible at first paint, framing comes from the union of the
+        // scene's world AABB (when uploaded) and the build envelope.
+        // Skipped if a camera already exists (re-upload across a
+        // RenderingTeardown -> Setup cycle preserves the user's view).
+        if self.camera.borrow().is_none() {
+            let (centre, radius) = self.build_volume.get().framing(renderer.scene_bounds());
+            *self.camera.borrow_mut() = Some(OrbitCamera::new(centre, radius));
         }
 
         if !self.frame.get().redraw_owed() {
@@ -890,88 +890,100 @@ impl ViewportController {
             return;
         };
 
-        // The trailing render path holds the document's scene borrow
-        // for as long as the closure runs. `None` means the scene was
-        // cleared between the upload check and now; the function
-        // returns without further work.
-        self.document.with_scene(|spatial_for_render| {
-            let selection_idx = self.document.selection_primary_idx();
-            let drag_state = self.gizmo_fsm.current();
-            let (visibility, drag_visual) = match drag_state {
-                GizmoState::Drag { op, pivot, .. } => match op {
-                    DragOp::Translate { axis, .. } => {
-                        (GizmoVisibility::DraggingTranslate { axis }, None)
-                    }
-                    DragOp::Rotate { axis, last_raw, .. } => (
-                        GizmoVisibility::DraggingRotate { axis },
-                        Some(GizmoDragVisual::Rotate {
-                            axis,
-                            angle: last_raw,
-                        }),
-                    ),
-                    DragOp::ScaleAxis {
-                        axis,
-                        current_anchor,
-                        proportional,
-                        ..
-                    } => {
-                        // Proportional (Shift) is a uniform scale that
-                        // doesn't have a per-axis cursor projection, the
-                        // cube stays put and the object grows uniformly.
-                        let drag_visual = if proportional {
-                            None
-                        } else {
-                            let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
-                            Some(GizmoDragVisual::ScaleAxis {
-                                axis,
-                                axial_distance,
-                            })
-                        };
-                        (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
-                    }
-                },
-                GizmoState::Idle => (GizmoVisibility::Idle, None),
-            };
-            let hover = self.gizmo_fsm.current_hover();
-            let gizmo_frame = selection_idx.and_then(|sel| {
-                gizmo::frame::build_gizmo_frame(
-                    spatial_for_render,
-                    camera,
-                    sel,
-                    h_logical,
-                    visibility,
-                    hover,
-                    drag_visual,
-                )
-            });
+        let build_volume = self.build_volume.get();
 
-            let Some(texture) = renderer.render(
-                spatial_for_render.scene(),
-                camera,
-                selection_idx,
-                gizmo_frame,
-                eff_w,
-                eff_h,
-            ) else {
-                return;
-            };
-            self.frame.update(FrameState::after_render);
-            match slint::Image::try_from(texture) {
-                Ok(image) => ui.set_mesh_rendering(image),
-                Err(err) => self.dialogs.show_error_deferred(
-                    ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
-                    Some(
-                        ctr!(
-                            "ErrorDialog",
-                            "The rendered texture could not be handed to the UI."
-                        )
-                        .to_string(),
-                    ),
-                    err.to_string(),
-                    format!("{err:?}"),
+        // Render path. With a scene installed, the closure inside
+        // `with_scene` builds the gizmo frame against the live scene
+        // and renders the union (plate + objects). With no scene,
+        // `with_scene` returns `None` and the fallback below renders
+        // the plate alone with neither selection nor gizmo.
+        let texture = self
+            .document
+            .with_scene(|spatial_for_render| {
+                let selection_idx = self.document.selection_primary_idx();
+                let drag_state = self.gizmo_fsm.current();
+                let (visibility, drag_visual) = match drag_state {
+                    GizmoState::Drag { op, pivot, .. } => match op {
+                        DragOp::Translate { axis, .. } => {
+                            (GizmoVisibility::DraggingTranslate { axis }, None)
+                        }
+                        DragOp::Rotate { axis, last_raw, .. } => (
+                            GizmoVisibility::DraggingRotate { axis },
+                            Some(GizmoDragVisual::Rotate {
+                                axis,
+                                angle: last_raw,
+                            }),
+                        ),
+                        DragOp::ScaleAxis {
+                            axis,
+                            current_anchor,
+                            proportional,
+                            ..
+                        } => {
+                            // Proportional (Shift) is a uniform scale
+                            // that doesn't have a per-axis cursor
+                            // projection, the cube stays put and the
+                            // object grows uniformly.
+                            let drag_visual = if proportional {
+                                None
+                            } else {
+                                let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
+                                Some(GizmoDragVisual::ScaleAxis {
+                                    axis,
+                                    axial_distance,
+                                })
+                            };
+                            (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
+                        }
+                    },
+                    GizmoState::Idle => (GizmoVisibility::Idle, None),
+                };
+                let hover = self.gizmo_fsm.current_hover();
+                let gizmo_frame = selection_idx.and_then(|sel| {
+                    gizmo::frame::build_gizmo_frame(
+                        spatial_for_render,
+                        camera,
+                        sel,
+                        h_logical,
+                        visibility,
+                        hover,
+                        drag_visual,
+                    )
+                });
+
+                renderer.render(
+                    Some(SceneRender {
+                        scene: spatial_for_render.scene(),
+                        selection: selection_idx,
+                        gizmo: gizmo_frame,
+                    }),
+                    build_volume,
+                    camera,
+                    eff_w,
+                    eff_h,
+                )
+            })
+            .unwrap_or_else(|| renderer.render(None, build_volume, camera, eff_w, eff_h));
+
+        let Some(texture) = texture else {
+            return;
+        };
+        self.frame.update(FrameState::after_render);
+        match slint::Image::try_from(texture) {
+            Ok(image) => ui.set_mesh_rendering(image),
+            Err(err) => self.dialogs.show_error_deferred(
+                ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
+                Some(
+                    ctr!(
+                        "ErrorDialog",
+                        "The rendered texture could not be handed to the UI."
+                    )
+                    .to_string(),
                 ),
-            }
-        });
+                err.to_string(),
+                format!("{err:?}"),
+            ),
+        }
     }
 }
 
@@ -1499,9 +1511,9 @@ mod viewport_click_tests {
         // Two pointer-moves during the same drag: the final transform
         // must reflect the absolute cursor position relative to the
         // press, *not* the cumulative sum of per-frame deltas. The
-        // distinction matters when Phase D adds rotation/scale,
-        // pinning it here means a bug in that direction trips this
-        // test loudly.
+        // distinction matters once rotation and scale ride the same
+        // drag pipeline; pinning it here means a bug in that
+        // direction trips this test loudly.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
@@ -1632,7 +1644,7 @@ mod viewport_click_tests {
         );
 
         // A second Esc, with no drag and no keyboard focus, clears
-        // the selection (Phase B behaviour).
+        // the selection.
         ctrl.on_clear_selection();
         assert_eq!(ctrl.selection(), None);
     }
