@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-08 17:09+0000\n"
-"PO-Revision-Date: 2026-05-01 06:44+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-05-19 11:18+0000\n"
+"Last-Translator: gallegonovato <gallegonovato@noreply.codeberg.org>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/es/>\n"
 "Language: es\n"
@@ -12,7 +12,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.17\n"
+"X-Generator: Weblate 2026.5\n"
 
 #: ui/about-window.slint:10
 msgctxt "AboutWindow"
@@ -47,17 +47,17 @@ msgstr "Cerrar"
 #: ui/replace-scene-dialog.slint:14
 msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
-msgstr ""
+msgstr "Abrir nuevo modelo"
 
 #: ui/replace-scene-dialog.slint:61
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
-msgstr ""
+msgstr "¿Quieres sustituir la escena actual?"
 
 #: ui/replace-scene-dialog.slint:67
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
-msgstr ""
+msgstr "Abriendo: {}"
 
 #: ui/replace-scene-dialog.slint:80
 msgctxt "ReplaceSceneDialog"
@@ -65,29 +65,28 @@ msgid ""
 "The current scene will be closed. Export it first to keep any changes you've "
 "made."
 msgstr ""
+"Se cerrará la escena actual. Exporta primero para guardar los cambios que "
+"hayas realizado."
 
 #: ui/replace-scene-dialog.slint:84
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
-msgstr ""
+msgstr "Se cerrará la escena actual."
 
 #: ui/replace-scene-dialog.slint:98
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
-msgstr ""
+msgstr "Descartar y abrir"
 
 #: ui/replace-scene-dialog.slint:105
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "Open…"
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
-msgstr "Abrir…"
+msgstr "Exportar y abrir…"
 
 #: ui/replace-scene-dialog.slint:112
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
-msgstr ""
+msgstr "Cancelar"
 
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
@@ -117,45 +116,42 @@ msgstr "Vista 3D"
 #: ui/preferences/3dview.slint:21
 msgctxt "PreferencesPage"
 msgid "Build volume (mm)"
-msgstr ""
+msgstr "Volumen de impresión (mm)"
 
 #: ui/preferences/3dview.slint:31
 msgctxt "PreferencesPage"
 msgid "Width"
-msgstr ""
+msgstr "Ancho"
 
 #: ui/preferences/3dview.slint:39
 msgctxt "PreferencesPage"
 msgid "Build volume width in millimetres"
-msgstr ""
+msgstr "Ancho del volumen de impresión en milímetros"
 
 #: ui/preferences/3dview.slint:49
 msgctxt "PreferencesPage"
 msgid "Depth"
-msgstr ""
+msgstr "Profundidad"
 
 #: ui/preferences/3dview.slint:57
 msgctxt "PreferencesPage"
 msgid "Build volume depth in millimetres"
-msgstr ""
+msgstr "Profundidad del volumen de impresión en milímetros"
 
 #: ui/preferences/3dview.slint:67
-#, fuzzy
-#| msgctxt "AppearancePreferences"
-#| msgid "Light"
 msgctxt "PreferencesPage"
 msgid "Height"
-msgstr "Claro"
+msgstr "Altura"
 
 #: ui/preferences/3dview.slint:75
 msgctxt "PreferencesPage"
 msgid "Build volume height in millimetres"
-msgstr ""
+msgstr "Altura del volumen de impresión en milímetros"
 
 #: ui/preferences/3dview.slint:84
 msgctxt "PreferencesPage"
 msgid "Reset to default"
-msgstr ""
+msgstr "Restablecer los valores predeterminados"
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
@@ -272,7 +268,7 @@ msgstr "Guardar como…"
 #: ui/main-window.slint:174
 msgctxt "MenuBar"
 msgid "Export As…"
-msgstr ""
+msgstr "Exportar como…"
 
 #: ui/main-window.slint:184
 msgctxt "MenuBar"
@@ -352,7 +348,7 @@ msgstr "Abrir modelo 3D para visualizarlo aquí"
 #: ui/main-window.slint:364
 msgctxt "MainWindow"
 msgid "Drop to open"
-msgstr ""
+msgstr "Desliza hacia abajo para abrir"
 
 #: ui/mesh-viewer.slint:83
 msgctxt "MeshViewer"
@@ -416,12 +412,9 @@ msgid "All files"
 msgstr "Todos los archivos"
 
 #: src/wiring.rs:268 src/wiring.rs:286
-#, fuzzy
-#| msgctxt "ErrorDialog"
-#| msgid "Failed to open 3D model"
 msgctxt "ErrorDialog"
 msgid "Failed to export"
-msgstr "No se pudo abrir el modelo 3D"
+msgstr "No se ha podido exportar"
 
 #: src/wiring.rs:269 src/wiring.rs:287 src/scene_loader.rs:325
 #: src/app_state.rs:242
@@ -432,12 +425,12 @@ msgstr "Archivo: {}"
 #: src/wiring.rs:305
 msgctxt "FileDialog"
 msgid "STL (binary)"
-msgstr ""
+msgstr "STL (binario)"
 
 #: src/wiring.rs:309
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
-msgstr ""
+msgstr "STL (ASCII)"
 
 #: src/scene_loader.rs:290
 msgctxt "ErrorDialog"
@@ -455,17 +448,14 @@ msgid "Failed to open 3D model"
 msgstr "No se pudo abrir el modelo 3D"
 
 #: src/app_state.rs:241
-#, fuzzy
-#| msgctxt "FileDialog"
-#| msgid "All supported files"
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
-msgstr "Todos los archivos compatibles"
+msgstr "Archivo no compatible"
 
 #: src/app_state.rs:245
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
-msgstr ""
+msgstr "Solo se pueden abrir los siguientes tipos de archivo: {}"
 
 #: src/mesh_loader.rs:72
 msgctxt "ErrorDialog"
