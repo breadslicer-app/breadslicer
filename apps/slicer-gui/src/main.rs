@@ -61,6 +61,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         trace: wgpu::Trace::Off,
     }))?;
 
+    // Pin wgpu-core's SNATCH_LOCK_TRACE thread-local on the main
+    // thread before BackendSelector::select() registers Slint's own
+    // thread-local SlintContext (which takes ownership of `device`
+    // and `queue` below). TLS destructors fire LIFO at process exit;
+    // left to the natural order, SNATCH_LOCK_TRACE gets registered
+    // later (during the first render) and so dies first, and the
+    // queue's drop reached via SlintContext then panics on
+    // AccessError when it tries to take a snatch lock. Polling now
+    // exercises SnatchLock::read() so the trace TLS outlives
+    // SlintContext. Debug-build only; release stubs the trace out.
+    // See https://github.com/gfx-rs/wgpu/issues/8259.
+    let _ = device.poll(wgpu::PollType::Poll);
+
     slint::BackendSelector::new()
         .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::Manual {
             instance,
