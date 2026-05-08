@@ -102,6 +102,31 @@ impl BuildVolume {
         }
         Vec3::new(out[0], out[1], out[2])
     }
+
+    /// Orbit-camera framing for the union of an optional scene AABB
+    /// and the build envelope. Returns the centre and bounding-sphere
+    /// radius (clamped to `1e-3` mm to keep `OrbitCamera::new` from
+    /// producing a zero distance for degenerate inputs).
+    ///
+    /// `scene_aabb` is `Option<(min, max)>` to match
+    /// `Renderer::scene_bounds()`; `None` frames on the envelope alone.
+    /// Component-wise `min` / `max` against the envelope corners yields
+    /// the union, so a degenerate scene AABB (sentinel
+    /// `(+inf, -inf)`) collapses safely to envelope-only.
+    // Consumed by the controller's camera-init path when the plate
+    // render lands; until then, only the unit tests below exercise it.
+    #[allow(dead_code)]
+    pub fn framing(&self, scene_aabb: Option<(Vec3, Vec3)>) -> (Vec3, f32) {
+        let env_min = self.envelope_min_mm();
+        let env_max = self.envelope_max_mm();
+        let (min, max) = match scene_aabb {
+            Some((sm, sx)) => (sm.min(env_min), sx.max(env_max)),
+            None => (env_min, env_max),
+        };
+        let centre = (min + max) * 0.5;
+        let radius = ((max - min).length() * 0.5).max(1e-3);
+        (centre, radius)
+    }
 }
 
 fn clamp_axis(pre_min: f32, pre_max: f32, env_min: f32, env_max: f32, d: f32) -> f32 {
@@ -266,5 +291,52 @@ mod build_volume_tests {
         let hi = v.envelope_max_mm();
         assert!(lo.x.is_finite() && lo.y.is_finite() && lo.z.is_finite());
         assert!(hi.x > lo.x && hi.y > lo.y && hi.z > lo.z);
+    }
+
+    #[test]
+    fn framing_with_no_scene_returns_plate_geometry() {
+        // Envelope 100 x 60 x 80: corners at (-50, -30, 0) and
+        // (50, 30, 80). Centre at (0, 0, 40), bounding-sphere radius
+        // is half the diagonal = sqrt(100^2 + 60^2 + 80^2) / 2.
+        let v = vol();
+        let (centre, radius) = v.framing(None);
+        let expected_radius =
+            (100.0_f32.powi(2) + 60.0_f32.powi(2) + 80.0_f32.powi(2)).sqrt() * 0.5;
+        assert_approx_eq!(f32, centre.x, 0.0);
+        assert_approx_eq!(f32, centre.y, 0.0);
+        assert_approx_eq!(f32, centre.z, 40.0);
+        assert_approx_eq!(f32, radius, expected_radius, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn framing_with_scene_inside_envelope_is_dominated_by_plate() {
+        // A small scene AABB strictly inside the envelope must not
+        // shift the framing: the union is the envelope itself.
+        let v = vol();
+        let scene = (Vec3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 2.0));
+        let (centre_with, radius_with) = v.framing(Some(scene));
+        let (centre_alone, radius_alone) = v.framing(None);
+        assert_approx_eq!(f32, centre_with.x, centre_alone.x);
+        assert_approx_eq!(f32, centre_with.y, centre_alone.y);
+        assert_approx_eq!(f32, centre_with.z, centre_alone.z);
+        assert_approx_eq!(f32, radius_with, radius_alone);
+    }
+
+    #[test]
+    fn framing_with_scene_outside_envelope_extends_bounds() {
+        // Scene AABB poking out past +X / +Y. The union takes the
+        // envelope on the negative side and the scene on the
+        // positive side.
+        let v = vol();
+        let scene = (Vec3::new(100.0, 100.0, 50.0), Vec3::new(110.0, 110.0, 60.0));
+        let (centre, radius) = v.framing(Some(scene));
+        // Union: (-50, -30, 0) to (110, 110, 80). Centre = (30, 40, 40).
+        // Diagonal = (160, 140, 80); half-length is the radius.
+        let expected_radius =
+            (160.0_f32.powi(2) + 140.0_f32.powi(2) + 80.0_f32.powi(2)).sqrt() * 0.5;
+        assert_approx_eq!(f32, centre.x, 30.0);
+        assert_approx_eq!(f32, centre.y, 40.0);
+        assert_approx_eq!(f32, centre.z, 40.0);
+        assert_approx_eq!(f32, radius, expected_radius, epsilon = 1e-3);
     }
 }
