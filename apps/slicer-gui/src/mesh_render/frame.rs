@@ -16,13 +16,18 @@ use crate::camera::OrbitCamera;
 
 /// Mesh-pipeline per-frame uniforms. Layout matches
 /// `shaders/mesh_render.wgsl`'s `Uniforms` struct (16-byte-aligned
-/// fields, `light_dir` padded to a `vec4` so the shader can read
-/// `.xyz` and ignore the trailing component).
+/// fields; `light_dir`, `env_min`, `env_max` are padded to `vec4` so
+/// the shader can read `.xyz` and ignore the trailing component).
+/// `env_min` / `env_max` carry the printer's build envelope corners
+/// in world-space mm so the fragment shader can mark fragments that
+/// fall outside the envelope.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct Uniforms {
     pub(super) view_proj: [[f32; 4]; 4],
     pub(super) light_dir: [f32; 4],
+    pub(super) env_min: [f32; 4],
+    pub(super) env_max: [f32; 4],
 }
 
 /// World-space directional light. The fourth component is layout

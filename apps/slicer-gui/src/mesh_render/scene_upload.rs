@@ -6,10 +6,12 @@
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
-use sc_mesh_core::scene::{Scene, SceneObjectContent, Transform3D};
+use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::transform::AffineTransform3D;
 use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
+
+use crate::build_volume::BuildVolume;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -41,7 +43,7 @@ pub(super) const fn align_up(size: u64, alignment: u64) -> u64 {
 }
 
 /// GPU-resident draw data for a single `SceneObject`: its local-space
-/// vertex+index buffers (the object's transform is *not* baked in — it
+/// vertex+index buffers (the object's transform is *not* baked in; it
 /// arrives at draw time through the model storage buffer).
 pub(super) struct ObjectDraw {
     vertex_buffer: wgpu::Buffer,
@@ -175,20 +177,68 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 /// `selection` is an index into `scene.objects`; out-of-bounds values
 /// (or `None`) mean nothing is selected and every entry's `flags.x`
 /// stays 0. The shader reads `flags.x` and mixes a warm tint when it
-/// is 1.
-pub(super) fn build_model_entries(scene: &Scene, selection: Option<usize>) -> Vec<ModelEntry> {
+/// is 1; `flags.y` is set when the object has any vertex outside the
+/// build envelope, driving the mild interior wash that marks the
+/// whole object as "offending" even where individual fragments are
+/// still inside the envelope.
+pub(super) fn build_model_entries(
+    scene: &Scene,
+    selection: Option<usize>,
+    build_volume: BuildVolume,
+) -> Vec<ModelEntry> {
+    let env_min = build_volume.envelope_min_mm();
+    let env_max = build_volume.envelope_max_mm();
     scene
         .objects
         .iter()
         .enumerate()
         .map(|(idx, obj)| {
             let selected = selection == Some(idx);
+            let breaches = object_breaches_envelope(obj, scene, env_min, env_max);
             ModelEntry {
                 model: transform_to_mat4(&obj.transform).to_cols_array_2d(),
-                flags: [u32::from(selected), 0, 0, 0],
+                flags: [u32::from(selected), u32::from(breaches), 0, 0],
             }
         })
         .collect()
+}
+
+/// Returns `true` if any vertex of `object`, after its
+/// `Transform3D` is applied, falls strictly outside the axis-aligned
+/// envelope `[env_min, env_max]`. A convex envelope contains a mesh
+/// iff it contains every vertex, so this per-vertex test is exact for
+/// "is any part of the mesh outside the envelope" (no triangle
+/// interior can escape an envelope that already encloses all of its
+/// vertices). Returns `false` for resource references whose index is
+/// out of bounds, mirroring the silent fallback used elsewhere in
+/// this module.
+fn object_breaches_envelope(
+    object: &SceneObject,
+    scene: &Scene,
+    env_min: Vec3,
+    env_max: Vec3,
+) -> bool {
+    let mesh = match &object.content {
+        SceneObjectContent::Mesh(m) => m,
+        SceneObjectContent::Resource(idx) => match scene.resources.get(*idx) {
+            Some(m) => m,
+            None => return false,
+        },
+    };
+    let transform_mat = transform_to_mat4(&object.transform);
+    for v in mesh.vertices() {
+        let p = transform_mat.transform_point3(Vec3::from(v.coords()));
+        if p.x < env_min.x
+            || p.x > env_max.x
+            || p.y < env_min.y
+            || p.y > env_max.y
+            || p.z < env_min.z
+            || p.z > env_max.z
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// CPU-only build of the per-object draw data plus the world-space
@@ -223,7 +273,7 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
 
         if mesh.faces().is_empty() {
             // An object with no geometry contributes nothing to the
-            // draw set — skip it but keep its slot in the model
+            // draw set, skip it but keep its slot in the model
             // buffer so `instance_index` keeps lining up with
             // `Scene::objects` indices in later phases. We achieve
             // that by emitting a zero-vertex / zero-index ObjectData,
@@ -395,7 +445,7 @@ mod build_gpu_scene_data_tests {
     #[test]
     fn indices_are_local_per_object_not_offset() {
         // With per-object draws, each object's index buffer references its
-        // own vertex buffer, so indices stay local — not offset by
+        // own vertex buffer, so indices stay local, not offset by
         // previous objects' vertex counts as the merged build did.
         let a = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -492,7 +542,7 @@ mod build_gpu_scene_data_tests {
         // (it uses Arvo), so this currently succeeds. The check here
         // pins the behaviour: the per-object data is built without
         // touching `apply_to_normal`, so even a degenerate transform
-        // doesn't bring the build down — degenerate matrices only
+        // doesn't bring the build down; degenerate matrices only
         // matter at `merge_meshes` / export time.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -507,7 +557,7 @@ mod build_gpu_scene_data_tests {
             resources: vec![],
             objects: vec![affine_object(mesh, singular)],
         };
-        // Singular transforms aren't rejected here — the GPU path is
+        // Singular transforms aren't rejected here; the GPU path is
         // fine with a singular model matrix (it just collapses the
         // mesh to a plane). Mirror this in the assertion so the test
         // fails loudly if the behaviour changes.
@@ -551,7 +601,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn affine_to_mat4_matches_apply_to_vertex() {
         // The matrix should transform vertices the same way the
-        // mesh-core `apply_to_vertex` does — that is the contract the
+        // mesh-core `apply_to_vertex` does; that is the contract the
         // shader relies on.
         let a = AffineTransform3D::from_translation([1.0, 2.0, 3.0]).compose(
             &AffineTransform3D::from_rotation_z(std::f64::consts::FRAC_PI_4)
@@ -565,6 +615,13 @@ mod transform_to_mat4_tests {
             assert_approx_eq!(f32, by_matrix.y, by_apply[1], epsilon = 1e-5);
             assert_approx_eq!(f32, by_matrix.z, by_apply[2], epsilon = 1e-5);
         }
+    }
+
+    /// Roomy envelope that contains every fixture in this module so
+    /// tests focused on the selection / model-matrix lanes are not
+    /// disturbed by the breach detection added to `build_model_entries`.
+    fn permissive_volume() -> BuildVolume {
+        BuildVolume::new(1000.0, 1000.0, 1000.0)
     }
 
     #[test]
@@ -599,7 +656,7 @@ mod transform_to_mat4_tests {
                 },
             ],
         };
-        let entries = build_model_entries(&scene, None);
+        let entries = build_model_entries(&scene, None, permissive_volume());
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -644,7 +701,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn no_selection_leaves_every_flags_x_zero() {
         let scene = two_object_scene();
-        let entries = build_model_entries(&scene, None);
+        let entries = build_model_entries(&scene, None, permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
@@ -652,7 +709,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn selected_index_sets_only_that_entrys_flags_x() {
         let scene = two_object_scene();
-        let entries = build_model_entries(&scene, Some(1));
+        let entries = build_model_entries(&scene, Some(1), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 1);
     }
@@ -660,9 +717,120 @@ mod transform_to_mat4_tests {
     #[test]
     fn out_of_bounds_selection_falls_back_to_no_highlight() {
         let scene = two_object_scene();
-        let entries = build_model_entries(&scene, Some(99));
+        let entries = build_model_entries(&scene, Some(99), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
+    }
+
+    fn unit_triangle_object_at(translation: [f64; 3]) -> SceneObject {
+        use sc_mesh_core::IndexedMesh;
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::scene::SceneObjectContent;
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        SceneObject {
+            meta: None,
+            transform: Transform3D::Affine(AffineTransform3D::from_translation(translation)),
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    /// 100 mm x 60 mm plate, 80 mm tall: envelope is X in [-50, 50],
+    /// Y in [-30, 30], Z in [0, 80]. Tight enough that small fixtures
+    /// can be placed strictly inside or strictly outside without
+    /// arithmetic gymnastics.
+    fn snug_volume() -> BuildVolume {
+        BuildVolume::new(100.0, 60.0, 80.0)
+    }
+
+    #[test]
+    fn flags_y_is_zero_for_fully_inside_object() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, 0.0, 1.0])],
+        };
+        let entries = build_model_entries(&scene, None, snug_volume());
+        assert_eq!(entries[0].flags[1], 0);
+    }
+
+    #[test]
+    fn flags_y_is_one_when_any_vertex_is_past_a_side_wall() {
+        // Translation +60 mm on X puts the unit triangle's vertices at
+        // [60, 0, 0], [61, 0, 0], [60, 1, 0]. All three lie past the
+        // +X wall at x = 50.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([60.0, 0.0, 0.0])],
+        };
+        let entries = build_model_entries(&scene, None, snug_volume());
+        assert_eq!(entries[0].flags[1], 1);
+    }
+
+    #[test]
+    fn flags_y_is_one_when_any_vertex_dips_below_the_floor() {
+        // Translation in Z by -0.5 puts every vertex below z = 0.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, 0.0, -0.5])],
+        };
+        let entries = build_model_entries(&scene, None, snug_volume());
+        assert_eq!(entries[0].flags[1], 1);
+    }
+
+    #[test]
+    fn flags_y_is_one_when_object_straddles_a_wall() {
+        // Translation +49.5 mm on X: vertex [0,0,0] lands at x = 49.5
+        // (inside), [1,0,0] at x = 50.5 (outside +X wall). Per-vertex
+        // breach detection must fire on the second vertex.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([49.5, 0.0, 0.0])],
+        };
+        let entries = build_model_entries(&scene, None, snug_volume());
+        assert_eq!(entries[0].flags[1], 1);
+    }
+
+    #[test]
+    fn flags_y_is_unset_for_object_resting_exactly_on_the_floor() {
+        // Every vertex has z = 0 (the floor). The breach test uses a
+        // strict comparison, so resting on the plate is "inside".
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, 0.0, 0.0])],
+        };
+        let entries = build_model_entries(&scene, None, snug_volume());
+        assert_eq!(entries[0].flags[1], 0);
+    }
+
+    #[test]
+    fn flags_y_falls_back_to_zero_for_dangling_resource_reference() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(7),
+            }],
+        };
+        let entries = build_model_entries(&scene, None, snug_volume());
+        assert_eq!(entries[0].flags[1], 0);
     }
 }
 

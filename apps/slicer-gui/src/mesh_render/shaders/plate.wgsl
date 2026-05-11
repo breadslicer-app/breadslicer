@@ -19,6 +19,12 @@
 struct Uniforms {
     view_proj: mat4x4<f32>,
     light_dir: vec4<f32>,
+    // Shared with the mesh pipeline. The plate shader does not read
+    // these today; they are declared so the WGSL struct layout matches
+    // the host Rust `Uniforms` (the same buffer is bound by both
+    // pipelines).
+    env_min: vec4<f32>,
+    env_max: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;

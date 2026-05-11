@@ -274,7 +274,7 @@ impl Renderer {
                 scene_data.objects.len(),
                 "GpuScene and Scene have diverged in object count"
             );
-            let entries = build_model_entries(scene_data, selection);
+            let entries = build_model_entries(scene_data, selection, build_volume);
             // Each entry lives at `i * model_stride`. The stride is
             // at least `MODEL_ENTRY_SIZE` and a multiple of the
             // device's uniform offset alignment (typically 256
@@ -316,6 +316,8 @@ impl Renderer {
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::LIGHT_DIR,
+            env_min: [env_min.x, env_min.y, env_min.z, 0.0],
+            env_max: [env_max.x, env_max.y, env_max.z, 0.0],
         };
         self.queue
             .write_buffer(&self.mesh.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
