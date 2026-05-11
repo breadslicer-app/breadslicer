@@ -241,6 +241,60 @@ fn object_breaches_envelope(
     false
 }
 
+/// Bit positions for the per-face breach mask consumed by the plate
+/// shader's envelope-wall pass. The Z = 0 floor (bit "-Z") is
+/// intentionally absent; the plate floor renders that warning through
+/// its own shader path so the indicator overlays the grid instead of
+/// a separate quad.
+pub(super) const FACE_BIT_X_NEG: u32 = 1 << 0;
+pub(super) const FACE_BIT_X_POS: u32 = 1 << 1;
+pub(super) const FACE_BIT_Y_NEG: u32 = 1 << 2;
+pub(super) const FACE_BIT_Y_POS: u32 = 1 << 3;
+pub(super) const FACE_BIT_Z_POS: u32 = 1 << 4;
+
+/// Walks every object's transformed vertices and returns a bitmask of
+/// envelope walls that some vertex falls outside. The mask matches
+/// the shader's bit layout: `FACE_BIT_X_NEG` etc.
+///
+/// Per-vertex (not per-AABB) is mathematically exact for a convex
+/// envelope: a vertex outside on axis `a` is the only way for the
+/// mesh's `a`-face to be breached, since the convex hull of the
+/// vertices contains the mesh and the envelope is convex.
+pub(super) fn build_envelope_warning_mask(scene: &Scene, build_volume: BuildVolume) -> u32 {
+    let env_min = build_volume.envelope_min_mm();
+    let env_max = build_volume.envelope_max_mm();
+    let mut mask = 0u32;
+    for object in &scene.objects {
+        let mesh = match &object.content {
+            SceneObjectContent::Mesh(m) => m,
+            SceneObjectContent::Resource(idx) => match scene.resources.get(*idx) {
+                Some(m) => m,
+                None => continue,
+            },
+        };
+        let transform_mat = transform_to_mat4(&object.transform);
+        for v in mesh.vertices() {
+            let p = transform_mat.transform_point3(Vec3::from(v.coords()));
+            if p.x < env_min.x {
+                mask |= FACE_BIT_X_NEG;
+            }
+            if p.x > env_max.x {
+                mask |= FACE_BIT_X_POS;
+            }
+            if p.y < env_min.y {
+                mask |= FACE_BIT_Y_NEG;
+            }
+            if p.y > env_max.y {
+                mask |= FACE_BIT_Y_POS;
+            }
+            if p.z > env_max.z {
+                mask |= FACE_BIT_Z_POS;
+            }
+        }
+    }
+    mask
+}
+
 /// CPU-only build of the per-object draw data plus the world-space
 /// scene AABB. Kept separate from buffer creation so the transformation
 /// can be unit-tested without a `wgpu::Device`.
@@ -831,6 +885,100 @@ mod transform_to_mat4_tests {
         };
         let entries = build_model_entries(&scene, None, snug_volume());
         assert_eq!(entries[0].flags[1], 0);
+    }
+
+    #[test]
+    fn warning_mask_is_zero_when_every_object_fits() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, 0.0, 1.0])],
+        };
+        assert_eq!(build_envelope_warning_mask(&scene, snug_volume()), 0);
+    }
+
+    #[test]
+    fn warning_mask_sets_plus_x_when_a_vertex_passes_the_plus_x_wall() {
+        // Vertex [1,0,0] translated to [60,0,0] sits past +X (50).
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([60.0, 0.0, 0.0])],
+        };
+        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
+        assert_eq!(mask & FACE_BIT_X_NEG, 0);
+    }
+
+    #[test]
+    fn warning_mask_sets_minus_y_when_a_vertex_passes_the_minus_y_wall() {
+        // Vertex [0,1,0] translated by [0,-40,0] lands at [0,-39,0],
+        // and [0,0,0] lands at [0,-40,0], past the -Y wall (-30).
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, -40.0, 0.0])],
+        };
+        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
+        assert_eq!(mask & FACE_BIT_Y_POS, 0);
+    }
+
+    #[test]
+    fn warning_mask_sets_plus_z_when_a_vertex_passes_the_ceiling() {
+        // Vertices land at [0,0,90], past the +Z ceiling (80).
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, 0.0, 90.0])],
+        };
+        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        assert_eq!(mask & FACE_BIT_Z_POS, FACE_BIT_Z_POS);
+    }
+
+    #[test]
+    fn warning_mask_does_not_set_minus_z_for_below_floor_breach() {
+        // The Z = 0 floor is handled by the plate shader's floor path,
+        // not the wall pass; no bit in this mask should fire for a
+        // sub-floor vertex.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![unit_triangle_object_at([0.0, 0.0, -1.0])],
+        };
+        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        assert_eq!(mask, 0);
+    }
+
+    #[test]
+    fn warning_mask_unions_bits_across_objects() {
+        // First object breaches +X, second breaches -Y. The mask
+        // collects both bits.
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                unit_triangle_object_at([60.0, 0.0, 0.0]),
+                unit_triangle_object_at([0.0, -40.0, 0.0]),
+            ],
+        };
+        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
+        assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
+    }
+
+    #[test]
+    fn warning_mask_skips_dangling_resource_references() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(7),
+            }],
+        };
+        assert_eq!(build_envelope_warning_mask(&scene, snug_volume()), 0);
     }
 }
 

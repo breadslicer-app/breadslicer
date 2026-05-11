@@ -56,6 +56,17 @@ const KIND_CAGE: u32 = 1;
 const KIND_PLATE_TOP_BORDER: u32 = 2;
 const KIND_PLATE_SIDE: u32 = 3;
 const KIND_PLATE_BOTTOM: u32 = 4;
+/// Five quads coplanar with the build envelope's side walls and top.
+/// Each fragment of these quads is discarded by the plate shader
+/// unless the matching bit of `face_breach_mask.x` is set; when it
+/// is set, the fragment draws as part of a diagonal red stripe
+/// pattern. The five kinds are numbered consecutively so the shader
+/// derives the face index as `kind - KIND_ENVELOPE_WALL_X_NEG`.
+const KIND_ENVELOPE_WALL_X_NEG: u32 = 5;
+const KIND_ENVELOPE_WALL_X_POS: u32 = 6;
+const KIND_ENVELOPE_WALL_Y_NEG: u32 = 7;
+const KIND_ENVELOPE_WALL_Y_POS: u32 = 8;
+const KIND_ENVELOPE_WALL_Z_POS: u32 = 9;
 
 /// Plate thickness, mm. The plate extends from `Z = 0` (top, the
 /// build floor) down to `Z = -PLATE_THICKNESS_MM`.
@@ -308,10 +319,15 @@ pub(in crate::mesh_render) struct PlateBuffers {
     pub(in crate::mesh_render) solid_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) bottom_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) cage_index_buffer: wgpu::Buffer,
+    /// Index buffer for the 5 envelope-wall quads. Drawn through
+    /// `top_pipeline` after the mesh pass; the plate shader gates
+    /// each fragment on the matching bit of `face_breach_mask`.
+    pub(in crate::mesh_render) wall_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) top_index_count: u32,
     pub(in crate::mesh_render) solid_index_count: u32,
     pub(in crate::mesh_render) bottom_index_count: u32,
     pub(in crate::mesh_render) cage_index_count: u32,
+    pub(in crate::mesh_render) wall_index_count: u32,
 }
 
 impl PlateBuffers {
@@ -342,6 +358,11 @@ impl PlateBuffers {
             contents: bytemuck::cast_slice(&geom.cage_indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let wall_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh-viewer plate wall ibo"),
+            contents: bytemuck::cast_slice(&geom.wall_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
         Self {
             build_volume,
             vertex_buffer,
@@ -349,10 +370,12 @@ impl PlateBuffers {
             solid_index_buffer,
             bottom_index_buffer,
             cage_index_buffer,
+            wall_index_buffer,
             top_index_count: geom.top_indices.len() as u32,
             solid_index_count: geom.solid_indices.len() as u32,
             bottom_index_count: geom.bottom_indices.len() as u32,
             cage_index_count: geom.cage_indices.len() as u32,
+            wall_index_count: geom.wall_indices.len() as u32,
         }
     }
 }
@@ -367,6 +390,7 @@ pub(in crate::mesh_render) struct PlateGeometry {
     pub(in crate::mesh_render) solid_indices: Vec<u32>,
     pub(in crate::mesh_render) bottom_indices: Vec<u32>,
     pub(in crate::mesh_render) cage_indices: Vec<u32>,
+    pub(in crate::mesh_render) wall_indices: Vec<u32>,
 }
 
 /// Build the per-`BuildVolume` static geometry for the 3D plate slab
@@ -518,6 +542,69 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         }
     }
 
+    // 5 envelope-wall quads (4 sides + Z = hi.z top), 4 vertices each.
+    // Their fragments are normally discarded; the bit corresponding
+    // to `kind - KIND_ENVELOPE_WALL_X_NEG` in `face_breach_mask` gates
+    // visibility. The walls share the cage's plane: depth-test Less
+    // against the cage edges (which have written depth first) means
+    // the cage edges stay visible on top of the wall stripes.
+    let wall_off = cage_off + 8;
+    let wall_corners: [(u32, [[f32; 3]; 4]); 5] = [
+        (
+            KIND_ENVELOPE_WALL_X_NEG,
+            [
+                [lo.x, lo.y, lo.z],
+                [lo.x, hi.y, lo.z],
+                [lo.x, hi.y, hi.z],
+                [lo.x, lo.y, hi.z],
+            ],
+        ),
+        (
+            KIND_ENVELOPE_WALL_X_POS,
+            [
+                [hi.x, lo.y, lo.z],
+                [hi.x, hi.y, lo.z],
+                [hi.x, hi.y, hi.z],
+                [hi.x, lo.y, hi.z],
+            ],
+        ),
+        (
+            KIND_ENVELOPE_WALL_Y_NEG,
+            [
+                [lo.x, lo.y, lo.z],
+                [hi.x, lo.y, lo.z],
+                [hi.x, lo.y, hi.z],
+                [lo.x, lo.y, hi.z],
+            ],
+        ),
+        (
+            KIND_ENVELOPE_WALL_Y_POS,
+            [
+                [lo.x, hi.y, lo.z],
+                [hi.x, hi.y, lo.z],
+                [hi.x, hi.y, hi.z],
+                [lo.x, hi.y, hi.z],
+            ],
+        ),
+        (
+            KIND_ENVELOPE_WALL_Z_POS,
+            [
+                [lo.x, lo.y, hi.z],
+                [hi.x, lo.y, hi.z],
+                [hi.x, hi.y, hi.z],
+                [lo.x, hi.y, hi.z],
+            ],
+        ),
+    ];
+    for (kind, quad) in &wall_corners {
+        for position in quad {
+            vertices.push(PlateVertex {
+                position: *position,
+                kind: *kind,
+            });
+        }
+    }
+
     let outline_len_u32 = outline_len as u32;
     let mut top_indices: Vec<u32> = Vec::with_capacity(6 + 6 * outline_len);
 
@@ -607,12 +694,22 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         cage_indices.push(cage_top + i);
     }
 
+    // Envelope-wall quads: 2 triangles each, 5 quads. Winding doesn't
+    // affect visibility (the wall pipeline uses `cull_mode: None`),
+    // so a single ordering works for all five faces.
+    let mut wall_indices: Vec<u32> = Vec::with_capacity(30);
+    for face in 0..5u32 {
+        let base = wall_off + 4 * face;
+        wall_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
     PlateGeometry {
         vertices,
         top_indices,
         solid_indices,
         bottom_indices,
         cage_indices,
+        wall_indices,
     }
 }
 
@@ -635,11 +732,17 @@ mod plate_geometry_tests {
         8 + 3 * outline_len() as u32 + 1
     }
 
+    fn wall_off() -> u32 {
+        cage_off() + 8
+    }
+
     #[test]
-    fn vertex_buffer_has_inner_quad_border_dups_three_outlines_a_centre_and_eight_cage() {
+    fn vertex_buffer_has_inner_quad_border_dups_three_outlines_a_centre_eight_cage_and_five_walls()
+    {
         let g = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0));
         let n = outline_len();
-        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8);
+        // 5 envelope walls add 20 vertices (4 per quad).
+        assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8 + 20);
 
         for v in &g.vertices[..4] {
             assert_eq!(v.kind, KIND_FLOOR);
@@ -658,8 +761,23 @@ mod plate_geometry_tests {
             assert_eq!(v.kind, KIND_PLATE_SIDE);
         }
         assert_eq!(g.vertices[8 + 3 * n].kind, KIND_PLATE_BOTTOM);
-        for v in &g.vertices[8 + 3 * n + 1..] {
+        let cage_end = wall_off() as usize;
+        for v in &g.vertices[8 + 3 * n + 1..cage_end] {
             assert_eq!(v.kind, KIND_CAGE);
+        }
+        // Wall quads come last, in face order: -X, +X, -Y, +Y, +Z.
+        let expected_wall_kinds = [
+            KIND_ENVELOPE_WALL_X_NEG,
+            KIND_ENVELOPE_WALL_X_POS,
+            KIND_ENVELOPE_WALL_Y_NEG,
+            KIND_ENVELOPE_WALL_Y_POS,
+            KIND_ENVELOPE_WALL_Z_POS,
+        ];
+        for (face, expected) in expected_wall_kinds.iter().enumerate() {
+            let base = cage_end + 4 * face;
+            for v in &g.vertices[base..base + 4] {
+                assert_eq!(v.kind, *expected);
+            }
         }
     }
 
@@ -795,6 +913,53 @@ mod plate_geometry_tests {
         let bottom_centre = 8 + 3 * outline_len() as u32;
         for tri in g.bottom_indices.chunks(3) {
             assert_eq!(tri[0], bottom_centre);
+        }
+    }
+
+    #[test]
+    fn wall_indices_cover_five_quads() {
+        // 5 quads, 2 triangles per quad, 3 indices per triangle.
+        let g = plate_geometry(vol());
+        assert_eq!(g.wall_indices.len(), 30);
+    }
+
+    #[test]
+    fn wall_indices_reference_only_wall_vertices() {
+        let g = plate_geometry(vol());
+        let off = wall_off();
+        for idx in &g.wall_indices {
+            assert!(
+                (off..off + 20).contains(idx),
+                "wall index {idx} out of wall range starting at {off}"
+            );
+        }
+    }
+
+    #[test]
+    fn wall_vertices_sit_on_their_envelope_face() {
+        let g = plate_geometry(vol());
+        let lo = vol().envelope_min_mm();
+        let hi = vol().envelope_max_mm();
+        let off = wall_off() as usize;
+        // -X quad: x = lo.x.
+        for v in &g.vertices[off..off + 4] {
+            assert_approx_eq!(f32, v.position[0], lo.x);
+        }
+        // +X quad: x = hi.x.
+        for v in &g.vertices[off + 4..off + 8] {
+            assert_approx_eq!(f32, v.position[0], hi.x);
+        }
+        // -Y quad: y = lo.y.
+        for v in &g.vertices[off + 8..off + 12] {
+            assert_approx_eq!(f32, v.position[1], lo.y);
+        }
+        // +Y quad: y = hi.y.
+        for v in &g.vertices[off + 12..off + 16] {
+            assert_approx_eq!(f32, v.position[1], hi.y);
+        }
+        // +Z top quad: z = hi.z.
+        for v in &g.vertices[off + 16..off + 20] {
+            assert_approx_eq!(f32, v.position[2], hi.z);
         }
     }
 }

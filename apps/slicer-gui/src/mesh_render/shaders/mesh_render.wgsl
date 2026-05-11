@@ -10,6 +10,11 @@ struct Uniforms {
     // padding for std140-style 16-byte alignment.
     env_min: vec4<f32>,
     env_max: vec4<f32>,
+    // face_breach_mask.x is a 5-bit field consumed by the plate
+    // shader's warning-wall path; the mesh shader does not read it.
+    // Declared here so this WGSL struct matches the host Rust
+    // `Uniforms` layout (the buffer is shared with the plate pipeline).
+    face_breach_mask: vec4<u32>,
 };
 
 struct ModelEntry {

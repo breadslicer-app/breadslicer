@@ -33,7 +33,7 @@ use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
 pub(crate) use scene_upload::GpuScene;
-use scene_upload::{MODEL_ENTRY_SIZE, build_model_entries};
+use scene_upload::{MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
 
 /// Scene-dependent inputs to [`Renderer::render`]. The selection
@@ -313,11 +313,19 @@ impl Renderer {
             default_fov_y(),
         );
 
+        // Per-frame envelope-wall warning mask: which side walls (and
+        // the top) some object breaches. Recomputed each frame from
+        // the CPU `Scene`; cheap (a single per-vertex scan) and keeps
+        // the breach signal in lockstep with the per-object `flags.y`
+        // bit. `None` for an empty scene leaves the mask at 0 so all
+        // wall fragments are discarded.
+        let face_breach_mask = scene.map_or(0, |s| build_envelope_warning_mask(s, build_volume));
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::LIGHT_DIR,
             env_min: [env_min.x, env_min.y, env_min.z, 0.0],
             env_max: [env_max.x, env_max.y, env_max.z, 0.0],
+            face_breach_mask: [face_breach_mask, 0, 0, 0],
         };
         self.queue
             .write_buffer(&self.mesh.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -430,6 +438,32 @@ impl Renderer {
                     pass.draw_indexed(0..obj.index_count(), 0, 0..1);
                 }
             }
+
+            // Envelope-warning walls: 5 invisible quads coplanar with
+            // the build-volume side faces and top. The plate shader
+            // discards a wall fragment unless the matching bit of
+            // `face_breach_mask` is set; on a set bit it emits the
+            // diagonal red stripe pattern. Drawn after the mesh pass
+            // so the mesh's depth-write gates wall visibility: stripes
+            // appear over the part of the mesh that lies on the far
+            // side of the envelope wall from the camera, while
+            // closer-to-camera mesh pixels occlude the wall as they
+            // should. `top_pipeline` matches the needs here
+            // (TriangleList, depth-test Less, depth-write off,
+            // cull none, alpha blending). Stencil stays at 0.
+            pass.set_pipeline(&self.plate.top_pipeline);
+            pass.set_bind_group(
+                PlateBindGroup::Uniforms.idx(),
+                &self.plate.uniforms_bind_group,
+                &[],
+            );
+            pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+            pass.set_index_buffer(
+                plate_buffers.wall_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.set_stencil_reference(0);
+            pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..1);
 
             // Plate bottom: drawn last in the main pass with alpha
             // blending and back-face culling. Cage edges and any
