@@ -18,10 +18,13 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
+use sc_mesh_core::scene::{Scene, Transform3D};
+use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_spatial::SceneSpatial;
 use slint::wgpu_28::wgpu;
 
+use crate::build_volume::BuildVolume;
 use crate::i18n::ctr;
 use crate::mesh_render::GpuScene;
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
@@ -42,7 +45,7 @@ const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
 pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = &["obj", "stl", "stla", "stlb"];
 
 /// Returns `true` if `path` has an extension matching one of
-/// `SUPPORTED_MESH_EXTENSIONS`. Matching is case-insensitive — Windows
+/// `SUPPORTED_MESH_EXTENSIONS`. Matching is case-insensitive: Windows
 /// file systems are case-insensitive and `.STL` is common in the wild;
 /// Linux and macOS are usually case-sensitive but the user-facing
 /// convention is still lowercase.
@@ -56,7 +59,7 @@ pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
 
 /// Precheck the file at `path` against the size ceiling. Returns
 /// `Err` if the file is over the limit; `Ok(())` otherwise. A
-/// `metadata()` failure falls through as `Ok(())` — the worker will
+/// `metadata()` failure falls through as `Ok(())`: the worker will
 /// hit the same problem when it opens the file and surface a more
 /// specific error from the parser.
 pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
@@ -84,7 +87,17 @@ pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
 /// like `AppState::open_path_in_window` (which acquire the ticket once
 /// the path is known) converge here. Each bailout deposits an error
 /// against the ticket so the UI sees a single load completion event.
-pub(crate) fn start_load_with_ticket(ticket: LoadTicket, path: PathBuf, loader: &SceneLoader) {
+///
+/// `build_volume` is captured at dispatch time so the worker can drop
+/// the parsed scene onto the plate before priming spatial caches; a
+/// later envelope change does not retroactively reposition a load
+/// already in flight.
+pub(crate) fn start_load_with_ticket(
+    ticket: LoadTicket,
+    path: PathBuf,
+    loader: &SceneLoader,
+    build_volume: BuildVolume,
+) {
     if let Err(err) = check_file_size(&path) {
         ticket.deposit(path, Err(err));
         return;
@@ -100,7 +113,35 @@ pub(crate) fn start_load_with_ticket(ticket: LoadTicket, path: PathBuf, loader: 
         );
         return;
     };
-    spawn_load(ticket, path, device);
+    spawn_load(ticket, path, device, build_volume);
+}
+
+/// Translates every object in `scene` by a single shared delta so the
+/// scene's world AABB lands centred on the envelope's XY centre with
+/// its bottom resting on the envelope's Z floor. A scene with no
+/// geometry, or one already at the target, is a no-op.
+///
+/// The translation is composed as an outer left-multiplication onto
+/// each object's existing transform, so the per-object relative layout
+/// the file author chose is preserved (multi-object OBJ groups stay
+/// in formation).
+pub(crate) fn place_on_plate(scene: &mut Scene, build_volume: BuildVolume) -> anyhow::Result<()> {
+    let env_min = build_volume.envelope_min_mm();
+    let env_max = build_volume.envelope_max_mm();
+    let target_xy = [0.5 * (env_min.x + env_max.x), 0.5 * (env_min.y + env_max.y)];
+    let floor_z = env_min.z;
+    let Some(delta) = scene.translation_to_drop_at(target_xy, floor_z)? else {
+        return Ok(());
+    };
+    if delta == [0.0, 0.0, 0.0] {
+        return Ok(());
+    }
+    let drop = AffineTransform3D::from_translation(delta);
+    for obj in &mut scene.objects {
+        let outer = Transform3D::Affine(drop);
+        obj.transform = outer.compose(&obj.transform);
+    }
+    Ok(())
 }
 
 /// Spawns a worker thread that parses the mesh at `path`, uploads its
@@ -119,8 +160,13 @@ pub(crate) fn start_load_with_ticket(ticket: LoadTicket, path: PathBuf, loader: 
 ///
 /// If `load_mesh_from_path` is ever changed to return a type
 /// borrowing from a memory-mapped region, revisit the
-/// `AssertUnwindSafe` claim — it would then hide potential UB.
-pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf, device: wgpu::Device) {
+/// `AssertUnwindSafe` claim: it would then hide potential UB.
+pub(crate) fn spawn_load(
+    ticket: LoadTicket,
+    path: PathBuf,
+    device: wgpu::Device,
+    build_volume: BuildVolume,
+) {
     std::thread::spawn(move || {
         let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             sc_mesh_formats::load_mesh_from_path(&path, None)
@@ -129,21 +175,30 @@ pub(crate) fn spawn_load(ticket: LoadTicket, path: PathBuf, device: wgpu::Device
             let msg = panic_message(&payload);
             Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
         });
-        let result = parsed.and_then(|LoadedMesh { scene, warnings }| {
-            let gpu_scene = GpuScene::build(&device, &scene)?;
-            // Eager priming: build the per-mesh spatial caches on this
-            // worker thread, so the UI thread receives a fully-primed
-            // `SceneSpatial` and the first picker click / gizmo
-            // attachment doesn't pay the build cost synchronously.
-            let spatial = SceneSpatial::primed(scene);
-            Ok(PreparedScene {
-                spatial,
-                gpu_scene,
-                device: device.clone(),
-                warnings,
-                source_path: path.clone(),
-            })
-        });
+        let result = parsed.and_then(
+            |LoadedMesh {
+                 mut scene,
+                 warnings,
+             }| {
+                // Drop the parsed mesh onto the build plate before the GPU
+                // upload and cache priming run on it, so both observe the
+                // placed world coordinates.
+                place_on_plate(&mut scene, build_volume)?;
+                let gpu_scene = GpuScene::build(&device, &scene)?;
+                // Eager priming: build the per-mesh spatial caches on this
+                // worker thread, so the UI thread receives a fully-primed
+                // `SceneSpatial` and the first picker click / gizmo
+                // attachment doesn't pay the build cost synchronously.
+                let spatial = SceneSpatial::primed(scene);
+                Ok(PreparedScene {
+                    spatial,
+                    gpu_scene,
+                    device: device.clone(),
+                    warnings,
+                    source_path: path.clone(),
+                })
+            },
+        );
         ticket.deposit(path, result);
     });
 }
@@ -182,7 +237,7 @@ mod check_file_size_tests {
     #[test]
     fn missing_file_falls_through_as_ok() {
         // metadata() failure (e.g. missing file) intentionally returns
-        // Ok(()) — the precheck defers the real error to the parser
+        // Ok(()): the precheck defers the real error to the parser
         // which produces a more specific message.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("missing.stl");
@@ -234,7 +289,7 @@ mod is_supported_mesh_extension_tests {
     #[test]
     fn directory_path_with_trailing_slash_is_rejected() {
         // `Path::extension` returns `None` for paths whose final
-        // component has no dot — guards against accidentally treating
+        // component has no dot: guards against accidentally treating
         // a dropped directory as a loadable file.
         assert!(!is_supported_mesh_extension(Path::new("/tmp/")));
     }
@@ -267,5 +322,165 @@ mod panic_message_tests {
         // arms; the function falls through to the placeholder string.
         let payload = boxed(42i32);
         assert_eq!(panic_message(&payload), "unknown panic payload");
+    }
+}
+
+#[cfg(test)]
+mod place_on_plate_tests {
+    use super::*;
+    use sc_mesh_core::indexed_mesh::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+
+    fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
+        let v = |x, y, z| Vertex::new([x, y, z]);
+        let vertices = vec![
+            v(min[0], min[1], min[2]),
+            v(max[0], min[1], min[2]),
+            v(max[0], max[1], min[2]),
+            v(min[0], max[1], min[2]),
+            v(min[0], min[1], max[2]),
+            v(max[0], min[1], max[2]),
+            v(max[0], max[1], max[2]),
+            v(min[0], max[1], max[2]),
+        ];
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        let faces = vec![
+            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
+            IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
+        ];
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    fn inline_object(mesh: IndexedMesh, t: Transform3D) -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: t,
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    fn small_envelope() -> BuildVolume {
+        // Plate centred on origin in XY: target_xy is (0, 0); floor at
+        // Z=0. The actual extents don't matter for placement, only the
+        // envelope's centre and floor do.
+        BuildVolume::new(100.0, 80.0, 200.0)
+    }
+
+    #[test]
+    fn empty_scene_is_a_no_op() {
+        let mut scene = Scene::default();
+        place_on_plate(&mut scene, small_envelope()).unwrap();
+        assert!(scene.objects.is_empty());
+    }
+
+    #[test]
+    fn off_origin_single_object_gets_centred_with_bottom_on_plate() {
+        // Local cube [100, 200, 50] -> [110, 220, 60], identity
+        // transform. After placement the world AABB must be centred on
+        // (0, 0) in XY and resting on Z=0: world min should be
+        // (-5, -10, 0).
+        let mut scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(
+                cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
+                Transform3D::Identity,
+            )],
+        };
+        place_on_plate(&mut scene, small_envelope()).unwrap();
+        let world_aabb = scene.aabb().unwrap().unwrap();
+        assert_eq!(world_aabb.min().coords(), [-5.0, -10.0, 0.0]);
+        assert_eq!(world_aabb.max().coords(), [5.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn already_placed_scene_is_a_no_op() {
+        // Cube already centred on origin with bottom at Z=0. Placement
+        // computes a zero translation and leaves every object's
+        // transform untouched (still Identity, not Affine(zero)).
+        let mut scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(
+                cube_mesh([-5.0, -5.0, 0.0], [5.0, 5.0, 10.0]),
+                Transform3D::Identity,
+            )],
+        };
+        place_on_plate(&mut scene, small_envelope()).unwrap();
+        assert!(matches!(scene.objects[0].transform, Transform3D::Identity));
+    }
+
+    #[test]
+    fn multi_object_scene_keeps_relative_layout() {
+        // Two cubes 9 mm apart in X and Y. After placement, the
+        // union AABB lands centred on origin with bottom on Z=0; the
+        // individual cubes' relative offset is unchanged (still 9 mm
+        // apart on X and Y).
+        let mut scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                inline_object(
+                    cube_mesh([100.0, 200.0, 50.0], [101.0, 201.0, 51.0]),
+                    Transform3D::Identity,
+                ),
+                inline_object(
+                    cube_mesh([109.0, 209.0, 53.0], [110.0, 210.0, 54.0]),
+                    Transform3D::Identity,
+                ),
+            ],
+        };
+        place_on_plate(&mut scene, small_envelope()).unwrap();
+        let aabb_0 = match &scene.objects[0].content {
+            SceneObjectContent::Mesh(m) => m.local_aabb().unwrap(),
+            SceneObjectContent::Resource(_) => unreachable!(),
+        };
+        let aabb_1 = match &scene.objects[1].content {
+            SceneObjectContent::Mesh(m) => m.local_aabb().unwrap(),
+            SceneObjectContent::Resource(_) => unreachable!(),
+        };
+        // The local AABBs are unchanged by placement (we only touch
+        // transforms). Verify world AABBs by applying each object's
+        // transform to its corners and checking the union sits on the
+        // plate.
+        let world = scene.aabb().unwrap().unwrap();
+        assert_eq!(world.min().coords()[2], 0.0, "union bottom rests on Z=0");
+        // Union XY extent is 10 x 10 mm; centred on origin gives
+        // [-5, 5] on both X and Y.
+        assert_eq!(world.min().coords()[0], -5.0);
+        assert_eq!(world.min().coords()[1], -5.0);
+        assert_eq!(world.max().coords()[0], 5.0);
+        assert_eq!(world.max().coords()[1], 5.0);
+        // Sanity: the local AABBs were not mutated.
+        assert_eq!(aabb_0.min().coords(), [100.0, 200.0, 50.0]);
+        assert_eq!(aabb_1.min().coords(), [109.0, 209.0, 53.0]);
+    }
+
+    #[test]
+    fn composes_with_existing_object_transform() {
+        // The parsed object already carries a non-identity transform
+        // (synthetic: STL/OBJ readers don't produce these today, but
+        // the helper must be correct under composition). Local cube
+        // [0, 0, 0] -> [1, 1, 1] under translation (10, 20, 5): world
+        // AABB [10, 20, 5] -> [11, 21, 6]; placement delta
+        // (-10.5, -20.5, -5). After placement the world AABB sits on
+        // [-0.5, -0.5, 0] -> [0.5, 0.5, 1].
+        let mut scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(
+                cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),
+            )],
+        };
+        place_on_plate(&mut scene, small_envelope()).unwrap();
+        let world = scene.aabb().unwrap().unwrap();
+        assert_eq!(world.min().coords(), [-0.5, -0.5, 0.0]);
+        assert_eq!(world.max().coords(), [0.5, 0.5, 1.0]);
     }
 }

@@ -12,6 +12,8 @@ use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
 use super::gizmo_drag::{DragOp, GizmoState};
+use glam::Vec3;
+
 use super::gizmo_fsm::{
     GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
 };
@@ -306,6 +308,12 @@ impl ViewportController {
     /// Uses `mark_dirty`, not just `request_redraw`: the render path
     /// early-returns when `frame.redraw_owed` is false, so a bare
     /// window-poke isn't enough on its own.
+    /// Current build envelope. Read by the load pipeline at dispatch
+    /// time so the worker can drop the parsed scene onto the plate.
+    pub fn build_volume(&self) -> BuildVolume {
+        self.build_volume.get()
+    }
+
     pub fn set_build_volume(&self, bv: BuildVolume) {
         if self.build_volume.get() == bv {
             return;
@@ -436,17 +444,28 @@ impl ViewportController {
 
         if scene_installed {
             self.loader.note_upload_success();
-            // Frame the camera off the AABB the worker computed.
-            let bounds = self
+            // Frame on the union of the scene's world AABB and the
+            // build envelope, so the plate is always inside the view
+            // and the orbit centre / zoom limits are anchored to the
+            // printer's coordinate frame regardless of how big or
+            // small the imported model is. Mirrors the framing the
+            // pre-first-paint path uses when the camera slot is empty.
+            let scene_bounds = self
                 .renderer
                 .borrow()
                 .as_ref()
                 .and_then(|r| r.scene_bounds());
-            if let Some((min, max)) = bounds {
-                let center = (min + max) * 0.5;
-                let radius = ((max - min).length() * 0.5).max(1e-3);
-                *self.camera.borrow_mut() = Some(OrbitCamera::new(center, radius));
-            }
+            let (centre, view_radius) = self.build_volume.get().framing(scene_bounds);
+            // Detail radius drives the zoom-in floor. Anchored to the
+            // scene's own AABB so the user can pull close to a model
+            // much smaller than the envelope; falls back to
+            // `view_radius` when there's no scene yet.
+            let detail_radius = scene_only_radius(scene_bounds).unwrap_or(view_radius);
+            *self.camera.borrow_mut() = Some(OrbitCamera::with_detail_radius(
+                centre,
+                view_radius,
+                detail_radius,
+            ));
             self.frame.update(FrameState::with_redraw_owed);
         } else {
             self.frame.update(FrameState::with_upload_owed);
@@ -817,7 +836,7 @@ impl ViewportController {
         if let Some(path) = self.pending_load.take()
             && let Some(ticket) = self.loader.begin_load()
         {
-            start_load_with_ticket(ticket, path, &self.loader);
+            start_load_with_ticket(ticket, path, &self.loader, self.build_volume.get());
         }
     }
 
@@ -878,8 +897,14 @@ impl ViewportController {
         // Skipped if a camera already exists (re-upload across a
         // RenderingTeardown -> Setup cycle preserves the user's view).
         if self.camera.borrow().is_none() {
-            let (centre, radius) = self.build_volume.get().framing(renderer.scene_bounds());
-            *self.camera.borrow_mut() = Some(OrbitCamera::new(centre, radius));
+            let scene_bounds = renderer.scene_bounds();
+            let (centre, view_radius) = self.build_volume.get().framing(scene_bounds);
+            let detail_radius = scene_only_radius(scene_bounds).unwrap_or(view_radius);
+            *self.camera.borrow_mut() = Some(OrbitCamera::with_detail_radius(
+                centre,
+                view_radius,
+                detail_radius,
+            ));
         }
 
         if !self.frame.get().redraw_owed() {
@@ -1002,6 +1027,14 @@ impl ViewportController {
             ),
         }
     }
+}
+
+/// Half-length of the scene's AABB diagonal in millimetres, used as
+/// the `detail_radius` argument to `OrbitCamera::with_detail_radius`.
+/// Returns `None` when the renderer has no scene bounds, so callers
+/// can fall back to the envelope-derived `view_radius`.
+fn scene_only_radius(scene_bounds: Option<(Vec3, Vec3)>) -> Option<f32> {
+    scene_bounds.map(|(min, max)| ((max - min).length() * 0.5).max(1e-3))
 }
 
 fn axis_from_ui(view: crate::AxisView) -> AxisView {

@@ -322,12 +322,16 @@ impl AppState {
     /// from the post-Discard / post-Export callbacks below. Caller is
     /// responsible for ensuring any prior scene has been closed.
     fn dispatch_path_to_loader(&self, window_id: u64, path: PathBuf) {
-        let (loader, pending) = {
+        let (loader, pending, build_volume) = {
             let main_windows = self.main_windows.borrow();
             let Some(wired) = main_windows.get(&window_id) else {
                 return;
             };
-            (wired.controller.loader(), wired.pending_load.clone())
+            (
+                wired.controller.loader(),
+                wired.pending_load.clone(),
+                wired.controller.build_volume(),
+            )
         };
         if loader.gpu_snapshot().is_none() {
             // Pre-first-paint: the controller will dispatch this once
@@ -339,7 +343,7 @@ impl AppState {
             // Decision #2: drop onto a busy window is silently ignored.
             return;
         };
-        start_load_with_ticket(ticket, path, &loader);
+        start_load_with_ticket(ticket, path, &loader, build_volume);
     }
 
     /// Replace-confirm Discard branch: clear the current scene then

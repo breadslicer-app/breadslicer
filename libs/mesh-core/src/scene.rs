@@ -123,8 +123,8 @@ impl SceneObject {
     /// For `Transform3D::Identity`, this clones the referenced mesh
     /// without touching its data. For `Affine`, every vertex is passed
     /// through `apply_to_vertex`, every face normal through
-    /// `apply_to_normal`, and — when the transform's determinant is
-    /// negative (a mirror) — each face's vertex order is reversed so
+    /// `apply_to_normal`, and, when the transform's determinant is
+    /// negative (a mirror), each face's vertex order is reversed so
     /// the resulting mesh is consistently oriented in world space.
     ///
     /// The output mesh has no metadata; downstream consumers
@@ -236,6 +236,38 @@ impl Scene {
         }
 
         Ok(has_any.then_some(aabb))
+    }
+
+    /// Translation that, applied as an outer left-multiplication to
+    /// every object's transform, drops the scene's world AABB so its
+    /// XY centre lands at `target_xy` and its minimum Z lands at
+    /// `floor_z`. Returns `Ok(None)` for an empty scene (or one whose
+    /// objects all contribute no geometry); propagates the
+    /// resource-index error from [`Self::aabb`].
+    ///
+    /// The translation is `[f64; 3]` to match
+    /// [`AffineTransform3D`](crate::transform::AffineTransform3D)
+    /// storage; callers compose it with
+    /// `AffineTransform3D::from_translation(t).compose(&existing)`
+    /// (outer composition: apply `existing` first, then the drop
+    /// translation).
+    pub fn translation_to_drop_at(
+        &self,
+        target_xy: [f32; 2],
+        floor_z: f32,
+    ) -> Result<Option<[f64; 3]>> {
+        let Some(aabb) = self.aabb()? else {
+            return Ok(None);
+        };
+        let min = aabb.min().coords();
+        let max = aabb.max().coords();
+        let centre_x = 0.5 * (min[0] + max[0]);
+        let centre_y = 0.5 * (min[1] + max[1]);
+        Ok(Some([
+            f64::from(target_xy[0] - centre_x),
+            f64::from(target_xy[1] - centre_y),
+            f64::from(floor_z - min[2]),
+        ]))
     }
 
     /// Merges all meshes in the scene into a single [`IndexedMesh`],
@@ -381,7 +413,7 @@ mod transform_3d_tests {
         let inv = a.inverse().unwrap();
         let composed = a.compose(&inv);
         // The composition equals the affine identity, but the variant is
-        // `Affine`, not `Identity` — `compose` doesn't fold an `Affine ∘
+        // `Affine`, not `Identity`: `compose` doesn't fold an `Affine ∘
         // Affine` back to `Identity`. Check the action on a point.
         let v = Vertex::new([5.0, 7.0, -1.0]);
         let round_trip = composed.apply_to_vertex(v);
@@ -816,8 +848,8 @@ mod merge_meshes_tests {
     #[test]
     fn aabb_with_identity_transform_matches_unwrapped() {
         // A scene with explicit `Transform3D::Identity` produces the
-        // same AABB as one whose objects had no transform field at all
-        // — the `Identity` arm uses the same per-vertex fold.
+        // same AABB as one whose objects had no transform field at all:
+        // the `Identity` arm uses the same per-vertex fold.
         let mesh = unit_cube_mesh();
         let scene = Scene {
             meta: None,
@@ -880,7 +912,7 @@ mod merge_meshes_tests {
     fn aabb_arvo_matches_corner_aabb_for_a_cube() {
         // For a unit cube whose vertices are exactly the corners of its
         // local AABB, the Arvo method must give the same world AABB as
-        // transforming all 8 corners and folding them — they are
+        // transforming all 8 corners and folding them: they are
         // computing the same set.
         let mesh = unit_cube_mesh();
         let t = AffineTransform3D::from_translation([2.0, 0.0, 0.0])
@@ -899,8 +931,8 @@ mod merge_meshes_tests {
 
     #[test]
     fn aabb_arvo_contains_per_vertex_for_non_box_mesh() {
-        // For a tetrahedron — whose convex hull is strictly smaller than
-        // its local AABB — Arvo's method must STILL produce an AABB
+        // For a tetrahedron, whose convex hull is strictly smaller than
+        // its local AABB, Arvo's method must STILL produce an AABB
         // that contains every transformed vertex (the conservativeness
         // guarantee). It may be larger than the tightest possible AABB
         // of the transformed vertices, which is fine.
@@ -1145,5 +1177,167 @@ mod merge_meshes_tests {
         // Affine object's vertices are translated.
         assert_approx_eq!(f32, result.vertices[3][0], 100.0, epsilon = 1e-6);
         assert_approx_eq!(f32, result.vertices[4][0], 101.0, epsilon = 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod translation_to_drop_at_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
+        let v = |x, y, z| Vertex::new([x, y, z]);
+        let vertices = vec![
+            v(min[0], min[1], min[2]),
+            v(max[0], min[1], min[2]),
+            v(max[0], max[1], min[2]),
+            v(min[0], max[1], min[2]),
+            v(min[0], min[1], max[2]),
+            v(max[0], min[1], max[2]),
+            v(max[0], max[1], max[2]),
+            v(min[0], max[1], max[2]),
+        ];
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        let faces = vec![
+            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
+            IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
+        ];
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    fn inline(mesh: IndexedMesh, t: Transform3D) -> SceneObject {
+        SceneObject {
+            meta: None,
+            transform: t,
+            content: SceneObjectContent::Mesh(mesh),
+        }
+    }
+
+    fn scene_with(objects: Vec<SceneObject>) -> Scene {
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects,
+        }
+    }
+
+    #[test]
+    fn empty_scene_returns_none() {
+        let scene = Scene::default();
+        assert_eq!(scene.translation_to_drop_at([0.0, 0.0], 0.0).unwrap(), None);
+    }
+
+    #[test]
+    fn off_origin_cube_lands_centered_on_target_with_bottom_at_floor() {
+        // AABB [100, 200, 50] -> [110, 220, 60]; centre XY = (105, 210),
+        // min Z = 50. Target (0, 0, 0): delta = (-105, -210, -50).
+        let scene = scene_with(vec![inline(
+            cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
+            Transform3D::Identity,
+        )]);
+        let t = scene
+            .translation_to_drop_at([0.0, 0.0], 0.0)
+            .unwrap()
+            .expect("non-empty scene yields a translation");
+        assert_approx_eq!(f64, t[0], -105.0);
+        assert_approx_eq!(f64, t[1], -210.0);
+        assert_approx_eq!(f64, t[2], -50.0);
+    }
+
+    #[test]
+    fn already_centered_scene_returns_near_zero_translation() {
+        // AABB [-5, -5, 0] -> [5, 5, 10]: centre (0, 0), min Z = 0.
+        // Target (0, 0, 0): delta = (0, 0, 0).
+        let scene = scene_with(vec![inline(
+            cube_mesh([-5.0, -5.0, 0.0], [5.0, 5.0, 10.0]),
+            Transform3D::Identity,
+        )]);
+        let t = scene
+            .translation_to_drop_at([0.0, 0.0], 0.0)
+            .unwrap()
+            .expect("non-empty scene yields a translation");
+        assert_approx_eq!(f64, t[0], 0.0);
+        assert_approx_eq!(f64, t[1], 0.0);
+        assert_approx_eq!(f64, t[2], 0.0);
+    }
+
+    #[test]
+    fn multi_object_scene_uses_union_aabb() {
+        // Two cubes: [0, 0, 0] -> [1, 1, 1] and [9, 9, 3] -> [10, 10, 4].
+        // Union: [0, 0, 0] -> [10, 10, 4]; centre XY = (5, 5), min Z = 0.
+        // Target (0, 0, 0): delta = (-5, -5, 0). The shared translation
+        // preserves the cubes' relative offset.
+        let scene = scene_with(vec![
+            inline(
+                cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+                Transform3D::Identity,
+            ),
+            inline(
+                cube_mesh([9.0, 9.0, 3.0], [10.0, 10.0, 4.0]),
+                Transform3D::Identity,
+            ),
+        ]);
+        let t = scene
+            .translation_to_drop_at([0.0, 0.0], 0.0)
+            .unwrap()
+            .expect("non-empty scene yields a translation");
+        assert_approx_eq!(f64, t[0], -5.0);
+        assert_approx_eq!(f64, t[1], -5.0);
+        assert_approx_eq!(f64, t[2], 0.0);
+    }
+
+    #[test]
+    fn respects_non_zero_target_and_non_zero_floor() {
+        // AABB [10, 10, 5] -> [12, 14, 15]; centre XY = (11, 12), min
+        // Z = 5. Target XY = (-3, 7), floor Z = 2: delta = (-14, -5, -3).
+        let scene = scene_with(vec![inline(
+            cube_mesh([10.0, 10.0, 5.0], [12.0, 14.0, 15.0]),
+            Transform3D::Identity,
+        )]);
+        let t = scene
+            .translation_to_drop_at([-3.0, 7.0], 2.0)
+            .unwrap()
+            .expect("non-empty scene yields a translation");
+        assert_approx_eq!(f64, t[0], -14.0);
+        assert_approx_eq!(f64, t[1], -5.0);
+        assert_approx_eq!(f64, t[2], -3.0);
+    }
+
+    #[test]
+    fn accounts_for_existing_object_transform_when_computing_world_aabb() {
+        // Local cube at [0, 0, 0] -> [1, 1, 1] under a translation
+        // (100, 200, 50): world AABB [100, 200, 50] -> [101, 201, 51];
+        // centre XY = (100.5, 200.5), min Z = 50. Target (0, 0, 0):
+        // delta = (-100.5, -200.5, -50). Confirms the helper is reading
+        // *world* coords, not raw vertices.
+        let scene = scene_with(vec![inline(
+            cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+            Transform3D::Affine(AffineTransform3D::from_translation([100.0, 200.0, 50.0])),
+        )]);
+        let t = scene
+            .translation_to_drop_at([0.0, 0.0], 0.0)
+            .unwrap()
+            .expect("non-empty scene yields a translation");
+        assert_approx_eq!(f64, t[0], -100.5);
+        assert_approx_eq!(f64, t[1], -200.5);
+        assert_approx_eq!(f64, t[2], -50.0);
+    }
+
+    #[test]
+    fn propagates_resource_index_error() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(7),
+            }],
+        };
+        assert!(scene.translation_to_drop_at([0.0, 0.0], 0.0).is_err());
     }
 }

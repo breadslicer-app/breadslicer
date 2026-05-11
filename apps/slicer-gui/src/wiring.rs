@@ -20,7 +20,7 @@ use crate::i18n::ctr;
 use crate::mesh_loader;
 use crate::scene_document::SceneDocument;
 use crate::scene_export;
-use crate::scene_loader::{LoadTicket, SceneLoader};
+use crate::scene_loader::LoadTicket;
 use crate::viewport::{RESIZE_SETTLE, ViewportController};
 
 /// Installs every per-window Slint callback (rendering notifier, input
@@ -169,17 +169,16 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         ui.on_scene_load_finished(move || ctrl.on_scene_load_finished());
     }
 
-    let loader = ctrl.loader();
     ui.on_open_file_requested(move || {
         // The Slint event loop keeps processing callbacks while the native
         // file dialog is open, and `enabled: !root.loading` on the menu item
         // doesn't block that. Gate in Rust via `begin_load` *before* touching
         // the dialog, so `loading` flips immediately (not after pick_file
         // awaits) and a ticket is held for the duration of the load.
-        let Some(ticket) = loader.begin_load() else {
+        let Some(ticket) = ctrl.loader().begin_load() else {
             return;
         };
-        if let Err(err) = slint::spawn_local(run_open_file_flow(ticket, loader.clone())) {
+        if let Err(err) = slint::spawn_local(run_open_file_flow(ticket, ctrl.clone())) {
             eprintln!("Failed to spawn file dialog task: {err}");
             // `ticket` was moved into the future; when `spawn_local`
             // returns `Err`, the future is dropped and the ticket with
@@ -193,12 +192,16 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 /// acquired before the dialog so `loading` flips immediately rather
 /// than after the await; if the user cancels, the ticket drops here
 /// and the gate releases.
-async fn run_open_file_flow(ticket: LoadTicket, loader: Rc<SceneLoader>) {
+///
+/// The build envelope is read *after* the dialog so the placement
+/// reflects whatever the user has set by the time they finished
+/// picking; a mid-dialog settings edit lands on the next file.
+async fn run_open_file_flow(ticket: LoadTicket, ctrl: Rc<ViewportController>) {
     let Some(path) = pick_mesh_file().await else {
         // User cancelled the dialog.
         return;
     };
-    mesh_loader::start_load_with_ticket(ticket, path, &loader);
+    mesh_loader::start_load_with_ticket(ticket, path, &ctrl.loader(), ctrl.build_volume());
 }
 
 async fn pick_mesh_file() -> Option<PathBuf> {
@@ -299,7 +302,7 @@ async fn pick_export_target(
 ) -> Option<PathBuf> {
     // Filters in source-format-first order. Most rfd backends pick
     // the first filter as the active one, which is also the
-    // extension we seed the filename with — so the dialog opens on a
+    // extension we seed the filename with, so the dialog opens on a
     // consistent format pair.
     let stl_bin = (
         ctr!("FileDialog", "STL (binary)").to_string(),
