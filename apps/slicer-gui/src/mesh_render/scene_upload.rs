@@ -242,18 +242,19 @@ fn object_breaches_envelope(
 }
 
 /// Bit positions for the per-face breach mask consumed by the plate
-/// shader's envelope-wall pass. The Z = 0 floor (bit "-Z") is
-/// intentionally absent; the plate floor renders that warning through
-/// its own shader path so the indicator overlays the grid instead of
-/// a separate quad.
+/// shader. Bits 0..=4 drive the side-wall + top warning quads; bit 5
+/// (-Z, the build-plate floor) is read by the floor path of the same
+/// shader and overlays a stripe pattern on top of the grid instead of
+/// going through a dedicated wall quad.
 pub(super) const FACE_BIT_X_NEG: u32 = 1 << 0;
 pub(super) const FACE_BIT_X_POS: u32 = 1 << 1;
 pub(super) const FACE_BIT_Y_NEG: u32 = 1 << 2;
 pub(super) const FACE_BIT_Y_POS: u32 = 1 << 3;
 pub(super) const FACE_BIT_Z_POS: u32 = 1 << 4;
+pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 
 /// Walks every object's transformed vertices and returns a bitmask of
-/// envelope walls that some vertex falls outside. The mask matches
+/// envelope faces that some vertex falls outside. The mask matches
 /// the shader's bit layout: `FACE_BIT_X_NEG` etc.
 ///
 /// Per-vertex (not per-AABB) is mathematically exact for a convex
@@ -286,6 +287,9 @@ pub(super) fn build_envelope_warning_mask(scene: &Scene, build_volume: BuildVolu
             }
             if p.y > env_max.y {
                 mask |= FACE_BIT_Y_POS;
+            }
+            if p.z < env_min.z {
+                mask |= FACE_BIT_Z_NEG;
             }
             if p.z > env_max.z {
                 mask |= FACE_BIT_Z_POS;
@@ -937,17 +941,22 @@ mod transform_to_mat4_tests {
     }
 
     #[test]
-    fn warning_mask_does_not_set_minus_z_for_below_floor_breach() {
-        // The Z = 0 floor is handled by the plate shader's floor path,
-        // not the wall pass; no bit in this mask should fire for a
-        // sub-floor vertex.
+    fn warning_mask_sets_minus_z_when_a_vertex_dips_below_the_floor() {
+        // The Z = 0 floor breach is still represented in the mask
+        // (bit FACE_BIT_Z_NEG); the plate shader consumes it through
+        // the floor-overlay path rather than a dedicated wall quad.
         let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![unit_triangle_object_at([0.0, 0.0, -1.0])],
         };
         let mask = build_envelope_warning_mask(&scene, snug_volume());
-        assert_eq!(mask, 0);
+        assert_eq!(mask & FACE_BIT_Z_NEG, FACE_BIT_Z_NEG);
+        // None of the lateral bits fire for a purely-vertical breach.
+        assert_eq!(
+            mask & (FACE_BIT_X_NEG | FACE_BIT_X_POS | FACE_BIT_Y_NEG | FACE_BIT_Y_POS),
+            0
+        );
     }
 
     #[test]
