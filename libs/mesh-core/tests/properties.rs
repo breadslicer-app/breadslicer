@@ -44,6 +44,46 @@ fn vector3d_f64() -> impl Strategy<Value = Vector3D<f64>> {
     (bounded_f64(), bounded_f64(), bounded_f64()).prop_map(|(x, y, z)| Vector3D::new([x, y, z]))
 }
 
+/// f32 generator that occasionally emits NaN, ±∞, signed zero, or a
+/// subnormal value alongside ordinary bounded coordinates. Used by
+/// rejection-contract property tests: public APIs given pathological
+/// input must either return Err or a fully finite result, never panic
+/// and never return a non-finite "successful" answer the caller
+/// cannot distinguish from a valid one.
+fn pathological_f32() -> impl Strategy<Value = f32> {
+    prop_oneof![
+        1 => Just(f32::NAN),
+        1 => Just(f32::INFINITY),
+        1 => Just(f32::NEG_INFINITY),
+        1 => Just(0.0_f32),
+        1 => Just(-0.0_f32),
+        1 => Just(f32::MIN_POSITIVE / 2.0),
+        20 => bounded_f32(),
+    ]
+}
+
+/// Builds a triangle whose sin²(θ) sits within roughly one order of
+/// magnitude of `DEGENERACY_SIN_SQ_THRESHOLD` (1e-12) on either side.
+/// edge1 has length 1 along +X; edge2 = 0.5·edge1 + perp·Y, so
+/// sin²(θ) = perp² / (0.25 + perp²). The `perp` range
+/// `[3e-7, 3e-6]` produces sin² in `[3.6e-13, 3.6e-11]`. The triangle
+/// is anchored at a random base vertex to keep the scale-invariant
+/// test surface meaningful.
+fn near_degeneracy_threshold_triangle() -> impl Strategy<Value = [Vertex; 3]> {
+    (
+        3.0e-7_f32..3.0e-6_f32,
+        -10.0_f32..10.0_f32,
+        -10.0_f32..10.0_f32,
+        -10.0_f32..10.0_f32,
+    )
+        .prop_map(|(perp, bx, by, bz)| {
+            let v0 = Vertex::new([bx, by, bz]);
+            let v1 = Vertex::new([bx + 1.0, by, bz]);
+            let v2 = Vertex::new([bx + 0.5, by + perp, bz]);
+            [v0, v1, v2]
+        })
+}
+
 // ---------------------------------------------------------------------
 // Vector3D properties
 // ---------------------------------------------------------------------
@@ -216,6 +256,61 @@ proptest! {
                 "axis {i}: unscaled={}, scaled={}",
                 nu[i],
                 ns[i],
+            );
+        }
+    }
+
+    /// Rejection contract under pathological f32 input: NaN / ±∞ /
+    /// signed zero / subnormal coordinates must not produce a "Ok"
+    /// result with non-finite components, and must not panic. Either
+    /// the routine returns Err (the usual outcome for these inputs)
+    /// or it returns a finite unit normal (when the pathology
+    /// happens to cancel out, e.g. all-zero vertex shifts that still
+    /// leave a valid triangle).
+    #[test]
+    fn compute_normal_never_returns_non_finite_or_panics_on_pathological_input(
+        v0 in (pathological_f32(), pathological_f32(), pathological_f32()),
+        v1 in (pathological_f32(), pathological_f32(), pathological_f32()),
+        v2 in (pathological_f32(), pathological_f32(), pathological_f32()),
+    ) {
+        let verts = [
+            Vertex::new([v0.0, v0.1, v0.2]),
+            Vertex::new([v1.0, v1.1, v1.2]),
+            Vertex::new([v2.0, v2.1, v2.2]),
+        ];
+        if let Ok(n) = compute_normal_from_triangle_vertices(&verts) {
+            let c = n.coords();
+            for (i, x) in c.iter().enumerate() {
+                prop_assert!(x.is_finite(), "axis {i} non-finite in Ok result: {c:?}");
+            }
+            let mag_sq = c[0].mul_add(c[0], c[1].mul_add(c[1], c[2] * c[2]));
+            prop_assert!(
+                (mag_sq - 1.0).abs() < 1.0e-5,
+                "Ok result is not unit length: mag²={mag_sq}",
+            );
+        }
+    }
+
+    /// Triangle generators straddle `DEGENERACY_SIN_SQ_THRESHOLD` by
+    /// design (sin² in roughly [3.6e-13, 3.6e-11], one order of
+    /// magnitude on either side of the 1e-12 threshold). The contract
+    /// is the same as above: a successful result must be a finite
+    /// unit normal; rejection is also acceptable. This catches any
+    /// future change to the threshold or its comparison logic that
+    /// would leak NaN / non-unit outputs into "Ok".
+    #[test]
+    fn compute_normal_at_degeneracy_threshold_is_finite_or_errs(
+        verts in near_degeneracy_threshold_triangle(),
+    ) {
+        if let Ok(n) = compute_normal_from_triangle_vertices(&verts) {
+            let c = n.coords();
+            for (i, x) in c.iter().enumerate() {
+                prop_assert!(x.is_finite(), "axis {i} non-finite in Ok result: {c:?}");
+            }
+            let mag_sq = c[0].mul_add(c[0], c[1].mul_add(c[1], c[2] * c[2]));
+            prop_assert!(
+                (mag_sq - 1.0).abs() < 1.0e-4,
+                "Ok result is not unit length: mag²={mag_sq}",
             );
         }
     }
