@@ -558,6 +558,40 @@ mod affine_transform_3d_tests {
     }
 
     #[test]
+    fn from_axis_angle_zero_angle_is_exact_identity() {
+        // sin(0) and cos(0) are both representable exactly in IEEE 754,
+        // so one_minus_c = 0 and every Rodrigues term collapses; the
+        // matrix is bit-identical to the identity regardless of axis.
+        let identity = AffineTransform3D::identity();
+        for axis in [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [1.0, 1.0, 1.0]] {
+            let t = AffineTransform3D::from_axis_angle(axis, 0.0).unwrap();
+            assert_eq!(t.linear, identity.linear, "axis {:?}", axis);
+        }
+    }
+
+    #[test]
+    fn from_axis_angle_subnormal_angle_is_near_identity() {
+        // Angle 1e-9 rad: sin ≈ 1e-9, 1 - cos ≈ 5e-19 (below f64 precision
+        // for 1.0). The resulting linear part must differ from identity
+        // only on the order of the angle, with no catastrophic
+        // cancellation in the Rodrigues formula.
+        let t = AffineTransform3D::from_axis_angle([0.0, 0.0, 1.0], 1.0e-9).unwrap();
+        let identity = AffineTransform3D::identity();
+        assert_linear_approx(&t.linear, &identity.linear, 1.0e-8);
+    }
+
+    #[test]
+    fn from_axis_angle_two_pi_is_near_identity() {
+        // 2π is not exactly representable in f64; sin(2π) ≈ -2.4e-16,
+        // 1 - cos(2π) ≈ 1.7e-16. The resulting linear part must be
+        // identity to within that residual, with no axis-dependent
+        // drift introduced by the cofactor-style cross terms.
+        let t = AffineTransform3D::from_axis_angle([0.0, 0.0, 1.0], 2.0 * PI).unwrap();
+        let identity = AffineTransform3D::identity();
+        assert_linear_approx(&t.linear, &identity.linear, 1.0e-14);
+    }
+
+    #[test]
     fn from_linear_and_translation_stores_inputs_verbatim() {
         let linear = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
         let translation = [10.0, 11.0, 12.0];
