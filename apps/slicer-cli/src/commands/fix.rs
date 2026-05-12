@@ -20,7 +20,9 @@ use sc_mesh_formats::load_mesh_from_path;
 use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
-use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
+use crate::filesystem::{
+    MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path, validate_targetfile_path,
+};
 
 /// Repairs the user requested when running `fix`. Each flag enables an
 /// independent pass over the mesh; passes that find nothing to repair
@@ -53,7 +55,7 @@ pub(crate) fn fix(
         None => infer_mesh_file_format_from_extension(&target_path)?,
     })?;
 
-    let loaded = load_mesh_from_path(&source_path, source_format)?;
+    let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings);
     let mut scene = loaded.scene;
 
@@ -89,7 +91,7 @@ fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, options: FixOptions) -> Result
 
     // Try to obtain the witness directly. If the mesh's faces
     // already validate, no further face-level repair is necessary
-    // and we move straight on to normal/winding fixes — paying for
+    // and we move straight on to normal/winding fixes, paying for
     // `validate_faces` exactly once. Otherwise, fall back to
     // repairing the zero-length-edge cases (when enabled) and then
     // re-mint the witness from the post-removal mesh; the helper

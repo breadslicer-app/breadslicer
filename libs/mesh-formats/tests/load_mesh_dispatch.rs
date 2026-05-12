@@ -156,7 +156,7 @@ mod path_loading_tests {
         write_stla(&triangle_mesh(), &mut file).unwrap();
         drop(file);
 
-        let loaded = load_mesh_from_path(&path, None).unwrap();
+        let loaded = load_mesh_from_path(&path, None, None).unwrap();
         assert_eq!(loaded.scene.objects.len(), 1);
         assert!(loaded.warnings.is_empty());
 
@@ -172,10 +172,65 @@ mod path_loading_tests {
         write_stla(&triangle_mesh(), &mut file).unwrap();
         drop(file);
 
-        assert!(load_mesh_from_path(&path, None).is_err());
-        let loaded = load_mesh_from_path(&path, Some(MeshFileType::StlAscii)).unwrap();
+        assert!(load_mesh_from_path(&path, None, None).is_err());
+        let loaded = load_mesh_from_path(&path, Some(MeshFileType::StlAscii), None).unwrap();
         assert_eq!(loaded.scene.objects.len(), 1);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn expect_err(result: anyhow::Result<sc_mesh_formats::LoadedMesh>) -> anyhow::Error {
+        match result {
+            Ok(_) => panic!("expected an error from load_mesh_from_path"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn file_size_cap_rejects_oversized_input() {
+        // Write a small STL file and ask for a 1-byte cap: the
+        // metadata precheck must fire before the parser sees the
+        // file. The error must surface both the actual size and the
+        // cap so callers can format a user-facing message.
+        let path = tmp_path("load_mesh_dispatch_oversize.stla");
+        let mut file = std::fs::File::create(&path).unwrap();
+        write_stla(&triangle_mesh(), &mut file).unwrap();
+        drop(file);
+
+        let err = expect_err(load_mesh_from_path(&path, None, Some(1)));
+        let msg = err.to_string();
+        assert!(msg.contains("exceeds"), "{msg}");
+        assert!(msg.contains("1 byte limit"), "{msg}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn file_size_cap_accepts_within_limit() {
+        // Same file, generous cap: parser runs and returns the mesh.
+        let path = tmp_path("load_mesh_dispatch_within_cap.stla");
+        let mut file = std::fs::File::create(&path).unwrap();
+        write_stla(&triangle_mesh(), &mut file).unwrap();
+        drop(file);
+
+        let loaded = load_mesh_from_path(&path, None, Some(u64::MAX)).unwrap();
+        assert_eq!(loaded.scene.objects.len(), 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn missing_file_falls_through_to_open_error() {
+        // metadata() failure (missing file) is not surfaced by the
+        // size gate; the subsequent File::open produces the more
+        // specific I/O error. The same path with no cap behaves
+        // identically.
+        let path = tmp_path("load_mesh_dispatch_missing.stla");
+        let _ = std::fs::remove_file(&path);
+
+        let err_capped = expect_err(load_mesh_from_path(&path, None, Some(1024)));
+        let err_uncapped = expect_err(load_mesh_from_path(&path, None, None));
+        assert!(!err_capped.to_string().contains("byte limit"));
+        assert_eq!(err_capped.to_string(), err_uncapped.to_string());
     }
 }

@@ -15,6 +15,33 @@ use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
 use crate::messages::{LoadMeshWarning, LoadObjWarning};
 
+/// Hard ceiling on the number of vertices a single OBJ file may declare.
+/// Matches the binary STL triangle cap so all our format readers share
+/// the same memory-exhaustion ceiling.
+const MAX_OBJ_VERTICES: usize = 200_000_000;
+
+/// Hard ceiling on the number of vertex tokens a single `f` directive
+/// may carry. Bounds the fan-triangulation amplification for one
+/// pathological line; real OBJ exporters stay well below this.
+const MAX_FACE_TOKENS: usize = 1024;
+
+/// Resource caps applied while parsing an OBJ. The public `read_obj`
+/// always uses the production values via `Caps::DEFAULT`; the internal
+/// `read_obj_with_caps` lets tests drive small caps so we can exercise
+/// the cap branches without materialising 200 M vertices.
+#[derive(Clone, Copy, Debug)]
+struct Caps {
+    max_vertices: usize,
+    max_face_tokens: usize,
+}
+
+impl Caps {
+    const DEFAULT: Self = Self {
+        max_vertices: MAX_OBJ_VERTICES,
+        max_face_tokens: MAX_FACE_TOKENS,
+    };
+}
+
 /// Finalises a pending object by extracting only the vertices it references,
 /// re-indexing the faces to use local (per-object) indices, and returning a
 /// `SceneObject`.  Returns `None` and leaves `current_faces` empty if there
@@ -113,6 +140,17 @@ pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<
 where
     R: std::io::Read,
 {
+    read_obj_with_caps(read, warnings, Caps::DEFAULT)
+}
+
+fn read_obj_with_caps<R>(
+    read: &mut R,
+    warnings: &mut Vec<LoadMeshWarning>,
+    caps: Caps,
+) -> Result<Scene>
+where
+    R: std::io::Read,
+{
     // OBJ vertices are global: any face in any object can reference any vertex
     // defined earlier in the file.
     let mut global_vertices: Vec<Vertex> = Vec::new();
@@ -191,6 +229,13 @@ where
             }
             "v" => {
                 header_ended = true;
+                if global_vertices.len() >= caps.max_vertices {
+                    return Err(anyhow!(
+                        "line {}: file declares more than {} vertices",
+                        line_num + 1,
+                        caps.max_vertices,
+                    ));
+                }
                 let coords: Vec<&str> = line.split_whitespace().skip(1).collect();
                 let num_coords = coords.len();
                 if !(3..=4).contains(&num_coords) {
@@ -203,7 +248,7 @@ where
                 let x = parse_f32(coords[0], line_num)?;
                 let y = parse_f32(coords[1], line_num)?;
                 let z = parse_f32(coords[2], line_num)?;
-                if num_coords == 4 {
+                let vertex = if num_coords == 4 {
                     let w = parse_f32(coords[3], line_num)?;
                     if approx_eq!(f32, w, 0.0, ulps = 2) {
                         return Err(anyhow!(
@@ -211,19 +256,41 @@ where
                             line_num + 1
                         ));
                     }
-                    global_vertices.push(Vertex::new([x / w, y / w, z / w]));
+                    Vertex::new([x / w, y / w, z / w])
                 } else {
-                    global_vertices.push(Vertex::new([x, y, z]));
-                }
+                    Vertex::new([x, y, z])
+                };
+                global_vertices.try_reserve(1).map_err(|_| {
+                    anyhow!(
+                        "line {}: out of memory while parsing OBJ vertices",
+                        line_num + 1
+                    )
+                })?;
+                global_vertices.push(vertex);
             }
             "f" => {
                 header_ended = true;
-                let tokens: Vec<&str> = line.split_whitespace().skip(1).collect();
+                // `take(cap + 1)` caps the intermediate `tokens` allocation
+                // for one pathological line; we then refuse anything strictly
+                // above the cap. The +1 lets us tell "at cap" from "over cap"
+                // without scanning the whole iterator.
+                let tokens: Vec<&str> = line
+                    .split_whitespace()
+                    .skip(1)
+                    .take(caps.max_face_tokens + 1)
+                    .collect();
                 if tokens.len() < 3 {
                     return Err(anyhow!(
                         "line {}: face requires at least 3 vertices, got {}",
                         line_num + 1,
                         tokens.len()
+                    ));
+                }
+                if tokens.len() > caps.max_face_tokens {
+                    return Err(anyhow!(
+                        "line {}: face exceeds the {}-vertex limit",
+                        line_num + 1,
+                        caps.max_face_tokens,
                     ));
                 }
 
@@ -232,6 +299,16 @@ where
                     .iter()
                     .map(|token| parse_face_vertex_index(token, vertex_count, line_num))
                     .collect::<Result<Vec<VertexIndex>>>()?;
+
+                // Reserve exactly the number of triangles this fan will emit;
+                // we already know `indices.len() >= 3` from the check above.
+                let new_faces = indices.len() - 2;
+                current_faces.try_reserve_exact(new_faces).map_err(|_| {
+                    anyhow!(
+                        "line {}: out of memory while expanding face into triangles",
+                        line_num + 1,
+                    )
+                })?;
 
                 // Fan triangulation for polygons with more than 3 vertices.
                 for i in 1..indices.len() - 1 {
@@ -1313,5 +1390,123 @@ f 1 3 4
                 shared_indices: vec![0, 2],
             })]
         );
+    }
+}
+
+#[cfg(test)]
+mod caps_tests {
+    use std::io::Cursor;
+
+    use sc_mesh_core::scene::SceneObjectContent;
+
+    use super::{Caps, LoadMeshWarning, MAX_FACE_TOKENS, MAX_OBJ_VERTICES, read_obj_with_caps};
+
+    fn parse_with_caps(s: &str, caps: Caps) -> anyhow::Result<usize> {
+        let mut reader = Cursor::new(s.as_bytes());
+        let mut warnings: Vec<LoadMeshWarning> = Vec::new();
+        let scene = read_obj_with_caps(&mut reader, &mut warnings, caps)?;
+        Ok(match scene.objects.first().map(|o| &o.content) {
+            Some(SceneObjectContent::Mesh(m)) => m.faces().len(),
+            _ => 0,
+        })
+    }
+
+    #[test]
+    fn vertex_count_at_cap_succeeds() {
+        let caps = Caps {
+            max_vertices: 3,
+            max_face_tokens: MAX_FACE_TOKENS,
+        };
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+";
+        let face_count = parse_with_caps(obj, caps).unwrap();
+        assert_eq!(face_count, 1);
+    }
+
+    #[test]
+    fn vertex_count_above_cap_is_error() {
+        // Cap of 2 lets the first two `v` lines through; the third
+        // line trips the cap and returns a line-numbered error.
+        let caps = Caps {
+            max_vertices: 2,
+            max_face_tokens: MAX_FACE_TOKENS,
+        };
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+";
+        let err = parse_with_caps(obj, caps).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("line 3"), "{msg}");
+        assert!(msg.contains("more than 2 vertices"), "{msg}");
+    }
+
+    #[test]
+    fn face_token_count_at_cap_succeeds() {
+        // Cap of 4 admits an `f` with exactly 4 tokens; the fan emits
+        // 2 triangles.
+        let caps = Caps {
+            max_vertices: MAX_OBJ_VERTICES,
+            max_face_tokens: 4,
+        };
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 1.0 1.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3 4
+";
+        let face_count = parse_with_caps(obj, caps).unwrap();
+        assert_eq!(face_count, 2);
+    }
+
+    #[test]
+    fn face_token_count_above_cap_is_error() {
+        // Cap of 3 admits triangles but rejects the 4-token quad.
+        let caps = Caps {
+            max_vertices: MAX_OBJ_VERTICES,
+            max_face_tokens: 3,
+        };
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 1.0 1.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3 4
+";
+        let err = parse_with_caps(obj, caps).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("line 5"), "{msg}");
+        assert!(msg.contains("exceeds the 3-vertex limit"), "{msg}");
+    }
+
+    #[test]
+    fn face_token_overflow_does_not_collect_unbounded() {
+        // The cap-exceeded branch fires off `take(cap + 1)` so the
+        // intermediate token Vec is bounded even when the line has
+        // many more tokens than the cap. Direct memory check is not
+        // possible from a test, but we can at least confirm the
+        // error fires before any allocation could explode.
+        let caps = Caps {
+            max_vertices: MAX_OBJ_VERTICES,
+            max_face_tokens: 3,
+        };
+        // 50 tokens, well above the cap; with `take(4)` the parser sees
+        // at most 4 of them before bailing.
+        let many_tokens: String = (1..=50)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let obj = format!(
+            "v 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf {}\n",
+            many_tokens
+        );
+        let err = parse_with_caps(&obj, caps).unwrap_err();
+        assert!(err.to_string().contains("exceeds the 3-vertex limit"));
     }
 }

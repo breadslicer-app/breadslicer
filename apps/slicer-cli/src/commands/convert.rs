@@ -17,7 +17,9 @@ use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
-use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
+use crate::filesystem::{
+    MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path, validate_targetfile_path,
+};
 
 pub(crate) fn convert(
     source: OsString,
@@ -54,7 +56,11 @@ pub(crate) fn convert(
 
     let target_write_format = WriteFormat::try_from(target_format)?;
 
-    let loaded = load_mesh_from_path(&source_path, Some(source_format))?;
+    let loaded = load_mesh_from_path(
+        &source_path,
+        Some(source_format),
+        Some(MAX_INPUT_FILE_SIZE_BYTES),
+    )?;
     display_warnings(&loaded.warnings);
 
     write_scene(&loaded.scene, &target_path, target_write_format)

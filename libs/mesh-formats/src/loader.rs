@@ -23,7 +23,29 @@ pub struct LoadedMesh {
 /// Loads a mesh from `path`. When `kind` is `None` the format is inferred
 /// from the file extension; otherwise the caller's override is used (handy
 /// for `--from-format` CLI flags).
-pub fn load_mesh_from_path(path: &Path, kind: Option<MeshFileType>) -> Result<LoadedMesh> {
+///
+/// `max_file_size` is the upper bound on the on-disk byte count. When
+/// `Some(cap)` and `std::fs::metadata` succeeds, the function refuses
+/// the file before opening it; this is the only memory-exhaustion gate
+/// for in-process readers like the OBJ parser whose worst-case
+/// expansion factor is several times the on-disk size. When `None`,
+/// no precheck runs. A `metadata` failure falls through as `Ok(())`:
+/// the subsequent `File::open` produces a more specific I/O error.
+pub fn load_mesh_from_path(
+    path: &Path,
+    kind: Option<MeshFileType>,
+    max_file_size: Option<u64>,
+) -> Result<LoadedMesh> {
+    if let Some(cap) = max_file_size
+        && let Ok(meta) = std::fs::metadata(path)
+        && meta.len() > cap
+    {
+        return Err(anyhow!(
+            "file is {} bytes, which exceeds the {} byte limit",
+            meta.len(),
+            cap,
+        ));
+    }
     let kind = match kind {
         Some(k) => k,
         None => infer_mesh_file_format_from_extension(path)?,

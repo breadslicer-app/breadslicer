@@ -17,11 +17,11 @@ use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::mesh_loader::display_warnings;
-use crate::filesystem::validate_sourcefile_path;
+use crate::filesystem::{MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path};
 
 pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
-    let loaded = load_mesh_from_path(&source_path, source_format)?;
+    let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings);
     let scene = loaded.scene;
 
@@ -65,7 +65,7 @@ fn diagnose_mesh(mesh: &IndexedMesh) -> bool {
     // `validated_faces` is the gate that produces the witness needed
     // by `validate_normal_vectors` and `validate_manifold`. If it
     // fails, vertex indices are out of range or edges are
-    // collapsed — neither downstream check is meaningful in that
+    // collapsed; neither downstream check is meaningful in that
     // state, so the function returns early after surfacing the
     // face errors.
     let validated = match mesh.validated_faces() {

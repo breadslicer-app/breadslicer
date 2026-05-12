@@ -34,7 +34,7 @@ use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 // on an accidental huge pick. 2 GiB is already well beyond anything a
 // resin printer slices.
 pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = 2048;
-const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
+pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
 
 /// Lower-case file extensions the GUI's mesh loader can currently
 /// read. Single source of truth: the file dialog's "All supported
@@ -169,7 +169,7 @@ pub(crate) fn spawn_load(
 ) {
     std::thread::spawn(move || {
         let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            sc_mesh_formats::load_mesh_from_path(&path, None)
+            sc_mesh_formats::load_mesh_from_path(&path, None, Some(MAX_MESH_FILE_SIZE_BYTES))
         }))
         .unwrap_or_else(|payload| {
             let msg = panic_message(&payload);
