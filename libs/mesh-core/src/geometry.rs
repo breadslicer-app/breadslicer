@@ -254,6 +254,43 @@ mod geometry_tests {
     }
 
     #[test]
+    fn sliver_just_below_threshold_returns_error() {
+        // e1 = (1, 0, 0), e2 = (0.5, 4e-7, 0). cross_mag² ≈ 1.6e-13,
+        // edges_product ≈ 0.25, so sin²(θ) ≈ 6.4e-13. That is below
+        // the 1e-12 threshold by less than one order of magnitude;
+        // tighter than the existing well-below test, intended to
+        // catch an accidental loosening of the threshold.
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 4e-7, 0.0)];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
+    fn sliver_just_above_threshold_is_accepted() {
+        // Same geometry with the corner grown to 6e-7. sin²(θ) ≈
+        // 1.44e-12, less than half an order of magnitude above the
+        // threshold; tighter than the existing well-above test,
+        // intended to catch an accidental tightening of the threshold.
+        let verts = [v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0), v(0.5, 6e-7, 0.0)];
+        let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
+        assert_normal_approx(&normal, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn infinite_coordinate_returns_error() {
+        // Any non-finite coordinate propagates into the cross-product
+        // arithmetic. The cross-mag and edges-product both go to
+        // infinity (or NaN via 0·∞), so `gt_strict` rejects; the
+        // routine must surface the degeneracy rather than emit a
+        // non-finite normal.
+        let verts = [
+            v(f32::INFINITY, 0.0, 0.0),
+            v(1.0, 0.0, 0.0),
+            v(0.0, 1.0, 0.0),
+        ];
+        assert!(compute_normal_from_triangle_vertices(&verts).is_err());
+    }
+
+    #[test]
     fn diagonal_triangle_normal_is_normalized() {
         let verts = [v(1.0, 0.0, 0.0), v(0.0, 1.0, 0.0), v(0.0, 0.0, 1.0)];
         let normal = compute_normal_from_triangle_vertices(&verts).unwrap();
