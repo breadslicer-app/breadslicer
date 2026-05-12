@@ -23,13 +23,13 @@ pub(super) const CLICK_DRAG_THRESHOLD: f32 = 4.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ClickOrDrag {
     /// Release stayed within `CLICK_DRAG_THRESHOLD` of the press
-    /// origin — treat as a click.
+    /// origin: treat as a click.
     Click,
-    /// Release moved beyond `CLICK_DRAG_THRESHOLD` — treat as the tail
+    /// Release moved beyond `CLICK_DRAG_THRESHOLD`: treat as the tail
     /// of a drag.
     Drag,
     /// `on_pointer_up` was reached without a matching `on_pointer_down`
-    /// (defensive — e.g. when another control captured the press).
+    /// (defensive, e.g. when another control captured the press).
     NoPress,
 }
 
@@ -72,5 +72,100 @@ impl InputState {
             }
             InputPhase::Idle => ClickOrDrag::NoPress,
         }
+    }
+}
+
+#[cfg(test)]
+mod input_state_tests {
+    use super::*;
+
+    fn pt(x: f32, y: f32) -> ScreenPoint {
+        ScreenPoint { x, y }
+    }
+
+    #[test]
+    fn release_without_press_classifies_as_no_press() {
+        let state = InputState::new();
+        assert_eq!(state.click_or_drag(pt(10.0, 10.0)), ClickOrDrag::NoPress);
+    }
+
+    #[test]
+    fn release_at_press_origin_is_click() {
+        let state = InputState::new();
+        state.set_pressed(pt(50.0, 50.0));
+        assert_eq!(state.click_or_drag(pt(50.0, 50.0)), ClickOrDrag::Click);
+    }
+
+    #[test]
+    fn release_just_below_threshold_is_click() {
+        // (3.0, 2.0) has distance sqrt(13) ~= 3.606 < 4.0.
+        let state = InputState::new();
+        state.set_pressed(pt(0.0, 0.0));
+        assert_eq!(state.click_or_drag(pt(3.0, 2.0)), ClickOrDrag::Click);
+    }
+
+    #[test]
+    fn release_at_exact_threshold_is_click() {
+        // Distance exactly 4.0 from the origin. The implementation
+        // uses `<=`, so this is inclusive; the test pins that.
+        let state = InputState::new();
+        state.set_pressed(pt(0.0, 0.0));
+        assert_eq!(state.click_or_drag(pt(4.0, 0.0)), ClickOrDrag::Click);
+    }
+
+    #[test]
+    fn release_just_above_threshold_is_drag() {
+        // (4.001, 0.0): distance 4.001 > 4.0.
+        let state = InputState::new();
+        state.set_pressed(pt(0.0, 0.0));
+        assert_eq!(state.click_or_drag(pt(4.001, 0.0)), ClickOrDrag::Drag);
+    }
+
+    #[test]
+    fn release_far_from_origin_is_drag() {
+        let state = InputState::new();
+        state.set_pressed(pt(0.0, 0.0));
+        assert_eq!(state.click_or_drag(pt(100.0, 100.0)), ClickOrDrag::Drag);
+    }
+
+    #[test]
+    fn nan_release_classifies_as_drag() {
+        // NaN propagates through dx^2 + dy^2, so the `<=` comparison
+        // is false and the gesture falls to the drag branch. This is
+        // the safe default: a non-finite release can't be a click.
+        let state = InputState::new();
+        state.set_pressed(pt(0.0, 0.0));
+        assert_eq!(state.click_or_drag(pt(f32::NAN, 0.0)), ClickOrDrag::Drag);
+    }
+
+    #[test]
+    fn second_release_without_repress_is_no_press() {
+        // First release consumes the latch; the next click_or_drag must
+        // not reuse the prior origin (the double-up case).
+        let state = InputState::new();
+        state.set_pressed(pt(10.0, 10.0));
+        assert_eq!(state.click_or_drag(pt(10.0, 10.0)), ClickOrDrag::Click);
+        assert_eq!(state.click_or_drag(pt(10.0, 10.0)), ClickOrDrag::NoPress);
+    }
+
+    #[test]
+    fn set_idle_clears_pending_press() {
+        // Drag abort / scene reload uses set_idle to discard an
+        // in-flight press. The next release must be NoPress.
+        let state = InputState::new();
+        state.set_pressed(pt(10.0, 10.0));
+        state.set_idle();
+        assert_eq!(state.click_or_drag(pt(10.0, 10.0)), ClickOrDrag::NoPress);
+    }
+
+    #[test]
+    fn second_press_overrides_first_origin() {
+        // If somehow two presses arrive without a release between them,
+        // the most recent origin wins (the latch is a simple Cell).
+        let state = InputState::new();
+        state.set_pressed(pt(0.0, 0.0));
+        state.set_pressed(pt(100.0, 100.0));
+        // Released near the second origin, far from the first.
+        assert_eq!(state.click_or_drag(pt(100.0, 100.0)), ClickOrDrag::Click);
     }
 }
