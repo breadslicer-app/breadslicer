@@ -3,6 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! ASCII STL reader.
+//!
+//! Keyword matching is case-insensitive. The original 3D Systems
+//! specification uses lowercase keywords (`solid`, `facet`, `vertex`,
+//! ...), but at least one widely distributed STL utility, admesh,
+//! has emitted files with uppercase keywords. Slic3r adopted
+//! case-insensitive parsing after a real-world crash report against
+//! such a file: https://github.com/slic3r/Slic3r/issues/2971. This
+//! reader follows the same convention: tokens are lowered at
+//! line-split time and the probe regex matches case-insensitively
+//! via the `(?i)` inline flag.
+
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::sync::LazyLock;
 
@@ -13,10 +25,11 @@ use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
 
 use crate::stl::TriangleIterator;
 
-static ASTL_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$").unwrap());
+static ASTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$").unwrap()
+});
 static ASTL_HEADER_RE_LN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$").unwrap()
+    Regex::new(r"(?i)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$").unwrap()
 });
 
 pub struct AsciiStlReader<'a> {
@@ -99,12 +112,17 @@ impl<'a> AsciiStlReader<'a> {
             _ => {}
         }
 
+        // Lowercase every token. Keyword comparisons downstream
+        // (`face_header[0] == "facet"`, `expect_static(...)`, etc.)
+        // are written against bare lowercase literals; lowering at
+        // this single point keeps them so. f32 parsing is unaffected:
+        // `1.0E+02` and `1.0e+02` both parse to the same value.
         let lines = lines
             .map(|line_result| {
                 line_result
                     .map(|l| {
                         l.split_whitespace()
-                            .map(|t| t.to_string())
+                            .map(|t| t.to_ascii_lowercase())
                             .collect::<Vec<_>>()
                     })
                     .map_err(|err| err.into())
@@ -313,5 +331,91 @@ endsolid";
             },
             mesh
         );
+    }
+
+    /// Same geometry as STL_1, every keyword uppercased. Mirrors the
+    /// admesh-style files that crashed Slic3r before it adopted
+    /// case-insensitive parsing.
+    static STL_1_UPPER: &[u8] = b"SOLID foobar
+   FACET NORMAL -1.000000e+000 0.000000e+000 0.000000e+000
+      OUTER LOOP
+         VERTEX 0.000000e+000 1.000000e+002 1.000000e+002
+         VERTEX 0.000000e+000 1.000000e+002 0.000000e+000
+         VERTEX 0.000000e+000 0.000000e+000 1.000000e+002
+      ENDLOOP
+   ENDFACET
+ENDSOLID foobar";
+
+    /// Same geometry as STL_1, keywords in title case. Catches the
+    /// in-between of "all lower" and "all upper", in case any
+    /// downstream comparison still uses an exact-match pattern.
+    static STL_1_MIXED: &[u8] = b"Solid foobar
+   Facet Normal -1.000000e+000 0.000000e+000 0.000000e+000
+      Outer Loop
+         Vertex 0.000000e+000 1.000000e+002 1.000000e+002
+         Vertex 0.000000e+000 1.000000e+002 0.000000e+000
+         Vertex 0.000000e+000 0.000000e+000 1.000000e+002
+      EndLoop
+   EndFacet
+EndSolid foobar";
+
+    fn expected_mesh() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 100.0, 100.0]),
+                Vertex::new([0.0, 100.0, 0.0]),
+                Vertex::new([0.0, 0.0, 100.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([-1.0, 0.0, 0.0]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    #[test]
+    fn probe_accepts_uppercase_solid_header() {
+        let mut reader = std::io::Cursor::new(STL_1_UPPER);
+        assert!(AsciiStlReader::probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn probe_accepts_mixed_case_solid_header() {
+        let mut reader = std::io::Cursor::new(STL_1_MIXED);
+        assert!(AsciiStlReader::probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn parses_all_uppercase_keywords() {
+        let mut reader = std::io::Cursor::new(STL_1_UPPER);
+        let mesh = AsciiStlReader::create_triangles_iterator(&mut reader)
+            .unwrap()
+            .as_indexed_mesh(None)
+            .unwrap();
+        assert_eq!(mesh, expected_mesh());
+    }
+
+    #[test]
+    fn parses_mixed_case_keywords() {
+        let mut reader = std::io::Cursor::new(STL_1_MIXED);
+        let mesh = AsciiStlReader::create_triangles_iterator(&mut reader)
+            .unwrap()
+            .as_indexed_mesh(None)
+            .unwrap();
+        assert_eq!(mesh, expected_mesh());
+    }
+
+    #[test]
+    fn extract_metadata_preserves_original_case_of_name() {
+        // The keyword `SOLID` matches case-insensitively but the
+        // captured name group retains its original case (regex
+        // captures are verbatim slices of the input). A user who
+        // exports an STL with a name like "PartA" must see it as
+        // "PartA", not "parta".
+        let bytes: &[u8] = b"SOLID PartA-001\nendsolid PartA-001";
+        let mut reader = std::io::Cursor::new(bytes);
+        let metadata = AsciiStlReader::extract_metadata(&mut reader).unwrap();
+        assert_eq!(metadata.name.as_deref(), Some("PartA-001"));
     }
 }
