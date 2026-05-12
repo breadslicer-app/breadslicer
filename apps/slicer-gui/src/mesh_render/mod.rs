@@ -1251,4 +1251,198 @@ mod gpu_integration_tests {
         let cached_after_second = renderer.plate_buffers.as_ref().map(|b| b.build_volume);
         assert_eq!(cached_after_second, Some(smaller));
     }
+
+    /// Builds a one-triangle scene that pokes one vertex past the
+    /// `TEST_BV`'s +X envelope wall at x = +96 mm. Two anchor
+    /// vertices stay inside the envelope so the scene's AABB
+    /// straddles the wall (and the camera framing centres on it).
+    fn x_pos_breaching_scene() -> Scene {
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, -1.0, 50.0]),
+                Vertex::new([0.0, 1.0, 50.0]),
+                Vertex::new([120.0, 0.0, 50.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        }
+    }
+
+    /// Counts pixels whose RGB signature matches the wall warning
+    /// stripe. The shader emits `WALL_WARNING_COLOUR = (1.00, 0.15,
+    /// 0.15)` with `WALL_STRIPE_ALPHA = 0.55`, so on a typical
+    /// background the visible pixel is red-dominant with green and
+    /// blue both well below red. The thresholds are loose enough to
+    /// match the stripe over any plausible background (white plate,
+    /// grey mesh, dark cage) but tight enough that no untinted
+    /// surface in the scene clears the bar.
+    fn count_warning_pixels(rgba: &[u8]) -> usize {
+        rgba.chunks_exact(4)
+            .filter(|p| {
+                let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+                r > 128 && (r - g) > 40 && (r - b) > 40
+            })
+            .count()
+    }
+
+    /// Copies an `Rgba8Unorm` 2D texture back to the CPU and returns
+    /// the pixel bytes in row-major RGBA order. Requires
+    /// `wgpu::TextureUsages::COPY_SRC` on the texture (the renderer's
+    /// resolved color target has it). `width * 4` must satisfy
+    /// `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes); the test sites
+    /// pick widths that already do, so the function asserts rather
+    /// than padding silently.
+    fn read_target_back(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Vec<u8> {
+        const BYTES_PER_PIXEL: u32 = 4;
+        let bytes_per_row = width * BYTES_PER_PIXEL;
+        assert!(
+            bytes_per_row.is_multiple_of(256),
+            "test-only helper expects width * 4 to be a 256-byte multiple; got {bytes_per_row}"
+        );
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-viewer test readback"),
+            size: (bytes_per_row * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("mesh-viewer test readback encoder"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result)
+                .expect("readback map_async receiver dropped");
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll for readback");
+        rx.recv()
+            .expect("readback map_async sender dropped")
+            .expect("readback map_async failed");
+        let data = slice.get_mapped_range().to_vec();
+        readback.unmap();
+        data
+    }
+
+    /// End-to-end property test for the +X envelope warning stripe.
+    /// Renders the same camera-frame twice, once with a mesh that
+    /// stays inside the envelope and once with a mesh that pokes
+    /// past +X, reads back both framebuffers, and asserts that the
+    /// breach render carries visible stripe pixels (red-dominant,
+    /// green / blue subordinate) and the safe render does not.
+    /// Property-level: independent of the exact stripe geometry,
+    /// driver-specific blending rounding, and viewport jitter.
+    #[test]
+    fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
+        let Some((device, queue)) = make_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue.clone());
+        // 64 * 4 = 256 bytes / row, which already satisfies
+        // `COPY_BYTES_PER_ROW_ALIGNMENT` and matches the size used by
+        // the other render tests in this module.
+        let width = 64u32;
+        let height = 64u32;
+        // Centre the orbit on the build-volume centre with a radius
+        // that comfortably contains the envelope so the +X wall is
+        // in frame regardless of which mesh is installed.
+        let camera = OrbitCamera::new(Vec3::new(0.0, 0.0, 100.0), 250.0);
+
+        let safe_scene =
+            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 50.0]));
+        renderer
+            .upload_scene(&safe_scene)
+            .expect("upload safe scene");
+        let safe_texture = renderer
+            .render(
+                Some(SceneRender {
+                    scene: &safe_scene,
+                    selection: None,
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                width,
+                height,
+            )
+            .expect("safe render produces a texture");
+        let safe_pixels = read_target_back(&device, &queue, &safe_texture, width, height);
+        let safe_warning = count_warning_pixels(&safe_pixels);
+
+        let breach_scene = x_pos_breaching_scene();
+        renderer
+            .upload_scene(&breach_scene)
+            .expect("upload breaching scene");
+        let breach_texture = renderer
+            .render(
+                Some(SceneRender {
+                    scene: &breach_scene,
+                    selection: None,
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                width,
+                height,
+            )
+            .expect("breach render produces a texture");
+        let breach_pixels = read_target_back(&device, &queue, &breach_texture, width, height);
+        let breach_warning = count_warning_pixels(&breach_pixels);
+
+        assert!(
+            safe_warning < 5,
+            "safe render should be essentially free of warning-colour pixels, got {safe_warning}"
+        );
+        assert!(
+            breach_warning >= 20,
+            "breach render should paint visible stripe pixels, got {breach_warning} (safe={safe_warning})"
+        );
+        assert!(
+            breach_warning > safe_warning * 4,
+            "breach must dominate safe in warning-colour pixel count: breach={breach_warning}, safe={safe_warning}"
+        );
+    }
 }

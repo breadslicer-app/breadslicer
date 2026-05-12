@@ -29,7 +29,7 @@ pub(super) struct MsaaTargets {
     /// at pass start so it sits on top of the mesh, but the gizmo
     /// pipeline still runs depth-test-on internally so the three
     /// axes order correctly where they overlap near the pivot. We
-    /// can't reuse the main MSAA depth — its sample count (4)
+    /// can't reuse the main MSAA depth: its sample count (4)
     /// doesn't match the gizmo pipeline's count (1).
     pub(super) gizmo_depth_view: wgpu::TextureView,
 }
@@ -159,6 +159,10 @@ impl TargetPool {
 }
 
 fn create_color_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+    // COPY_SRC is included so a debug screenshot or a test-time
+    // readback path can copy the resolved frame back to the CPU. The
+    // flag is free at runtime, the driver only widens the texture's
+    // allowed-operations mask.
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("mesh-viewer color"),
         size: wgpu::Extent3d {
@@ -170,7 +174,9 @@ fn create_color_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: TEXTURE_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
 }
