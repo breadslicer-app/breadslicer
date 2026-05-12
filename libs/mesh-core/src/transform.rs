@@ -1051,6 +1051,48 @@ mod affine_transform_3d_tests {
     }
 
     #[test]
+    fn compose_chain_of_twenty_subrotations_is_near_full_rotation() {
+        // 20 rotations of π/10 about Z compose to 2π, i.e. identity.
+        // The check stresses matrix-multiply drift across the chain:
+        // each compose introduces ~3·eps per entry; 20 of them should
+        // stay within ~6e-15 of identity. The 1e-12 tolerance leaves
+        // generous headroom for platform variation.
+        let step = AffineTransform3D::from_rotation_z(PI / 10.0);
+        let chain = (0..20).fold(AffineTransform3D::identity(), |acc, _| acc.compose(&step));
+        assert_transform_approx(&chain, &AffineTransform3D::identity(), 1e-12);
+    }
+
+    #[test]
+    fn compose_chain_apply_matches_sequential_apply_at_length_twenty() {
+        // Build a 20-element heterogeneous chain (rotation, scale,
+        // translation cycling); applying the composed transform to a
+        // point must match the sequential apply within f32 precision,
+        // even as f64 internals accumulate roundings along the way.
+        let parts: Vec<AffineTransform3D> = (0..20)
+            .map(|i| match i % 3 {
+                0 => AffineTransform3D::from_rotation_z(PI / 17.0 + (i as f64) * 0.01),
+                1 => AffineTransform3D::from_non_uniform_scale([
+                    1.0 + (i as f64) * 0.001,
+                    1.0 - (i as f64) * 0.001,
+                    1.0,
+                ]),
+                _ => AffineTransform3D::from_translation([
+                    (i as f64) * 0.5,
+                    -(i as f64) * 0.25,
+                    (i as f64) * 0.1,
+                ]),
+            })
+            .collect();
+        let composed = parts
+            .iter()
+            .fold(AffineTransform3D::identity(), |acc, p| acc.compose(p));
+        let v = Vertex::new([2.5, -1.25, 3.75]);
+        let via_compose = composed.apply_to_vertex(v);
+        let via_sequence = parts.iter().rev().fold(v, |acc, p| p.apply_to_vertex(acc));
+        assert_vertex_approx(via_compose, via_sequence.coords(), 1e-3);
+    }
+
+    #[test]
     fn inverse_of_identity_is_identity() {
         let inv = AffineTransform3D::identity().inverse().unwrap();
         assert_transform_approx(&inv, &AffineTransform3D::identity(), 1e-15);
