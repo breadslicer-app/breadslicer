@@ -441,6 +441,175 @@ mod convert_tests {
             .assert()
             .failure();
     }
+
+    // -----------------------------------------------------------------
+    // Format-pair sweep. The CLI's effective conversion matrix is
+    // 4 readable (Stl, StlAscii, StlBin, Obj) by 3 writable (StlAscii,
+    // StlBin, Obj). The tests above cover obj->stla (extension
+    // inference) and stla->stla (same-format short circuit); the
+    // tests below add the remaining round-trip pairs, plus a single
+    // PLY-as-source rejection test that also covers AMF and 3MF since
+    // the three share one dispatch arm in `load_mesh_from_reader`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn convert_stla_to_stlb_writes_fixed_size_binary() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        let target = tmp.path().join("out.stlb");
+        write_clean_stla(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        // 80-byte header + 4-byte u32 count + 4 * 50-byte triangle rec.
+        assert_eq!(fs::metadata(&target).unwrap().len(), 80 + 4 + 4 * 50);
+    }
+
+    #[test]
+    fn convert_stla_to_obj_writes_vertex_and_face_lines() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        let target = tmp.path().join("out.obj");
+        write_clean_stla(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        let content = fs::read_to_string(&target).unwrap();
+        assert!(
+            content.lines().any(|l| l.starts_with("v ")),
+            "OBJ output missing vertex lines"
+        );
+        assert!(
+            content.lines().any(|l| l.starts_with("f ")),
+            "OBJ output missing face lines"
+        );
+    }
+
+    #[test]
+    fn convert_stlb_to_stla_writes_ascii_solid_header() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stlb");
+        let target = tmp.path().join("out.stla");
+        write_clean_stlb(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        let content = fs::read_to_string(&target).unwrap();
+        assert!(
+            content.starts_with("solid"),
+            "ASCII STL must start with `solid`, got: {:?}",
+            &content[..content.len().min(60)]
+        );
+    }
+
+    #[test]
+    fn convert_stlb_to_obj_writes_vertex_and_face_lines() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stlb");
+        let target = tmp.path().join("out.obj");
+        write_clean_stlb(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        let content = fs::read_to_string(&target).unwrap();
+        assert!(
+            content.lines().any(|l| l.starts_with("v ")),
+            "OBJ output missing vertex lines"
+        );
+        assert!(
+            content.lines().any(|l| l.starts_with("f ")),
+            "OBJ output missing face lines"
+        );
+    }
+
+    #[test]
+    fn convert_obj_to_stlb_writes_well_formed_binary_payload() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("out.stlb");
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                examples_path("double_mesh.obj").to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        // Binary STL is fixed-width: 80-byte header + 4-byte u32 count
+        // + N * 50-byte triangle records. Asserting the size matches
+        // that pattern (rather than a specific N) keeps the test
+        // stable against changes in `examples/double_mesh.obj`.
+        let size = fs::metadata(&target).unwrap().len();
+        assert!(size > 84, "binary STL too short, got {size} bytes");
+        assert_eq!(
+            (size - 84) % 50,
+            0,
+            "binary STL payload past the 84-byte preamble must be a multiple of 50 bytes, got {size}"
+        );
+    }
+
+    #[test]
+    fn convert_ply_source_errors_with_unsupported_message() {
+        // PLY/AMF/3MF have no reader implementation; the loader
+        // rejects them at dispatch time with "Unsupported mesh file
+        // type" before parsing the file body.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("dummy.ply");
+        let target = tmp.path().join("out.stla");
+        fs::write(&source, b"ply\nformat ascii 1.0\n").unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Unsupported mesh file type"));
+    }
 }
 
 #[cfg(test)]
