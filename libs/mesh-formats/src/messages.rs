@@ -31,6 +31,14 @@ pub enum LoadObjWarning {
     SkippedComment {
         line: usize,
     },
+    /// A directive defined by the OBJ specification (e.g. `l` line segments,
+    /// `p` points, free-form `curv` / `surf`) appeared, but this reader does
+    /// not process it.  The file is otherwise valid; only that line is
+    /// dropped.
+    SkippedUnknownDirective {
+        line: usize,
+        directive: String,
+    },
     /// One or more vertices are shared between this object and a previously
     /// loaded object.  The OBJ format allows this, but it usually indicates
     /// that the file was not exported cleanly for use as separate meshes.

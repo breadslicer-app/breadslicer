@@ -10,7 +10,7 @@
 //! its `Drop` impl decrements the inflight counter (and flips the UI's
 //! `loading` property when the count hits zero). The caller cannot
 //! forge a stamp, cannot deposit without a ticket, and cannot forget to
-//! release the gate — the gate releases itself when the ticket goes out
+//! release the gate: the gate releases itself when the ticket goes out
 //! of scope.
 //!
 //! A typical load:
@@ -96,7 +96,7 @@ impl Drop for TicketGuard {
         }
         // Inflight hit zero. Flip the UI's `loading` property.
         // `Weak::upgrade` only returns `Some` on the UI thread with the
-        // window still alive — the common case, since guards usually
+        // window still alive, the common case, since guards usually
         // drop inside `take_finished_load` or in the file-dialog
         // closure. From the worker thread (e.g. a panic that didn't
         // reach `deposit`) or when the window has closed, fall back to
@@ -125,8 +125,8 @@ impl Drop for TicketGuard {
 /// internal guard so it gets released the moment the ticket is consumed
 /// (deposit destructures `self` and the local slot ref drops at the end
 /// of `deposit`'s body) or cancelled (the field drops with the ticket).
-/// Crucially, the slot ref does NOT travel into the slot itself — only
-/// the guard does — so there is no path that forms a self-cycle.
+/// Crucially, the slot ref does NOT travel into the slot itself, only
+/// the guard does, so there is no path that forms a self-cycle.
 pub struct LoadTicket {
     guard: TicketGuard,
     slot: LoadSlot,
@@ -223,7 +223,7 @@ impl SceneLoader {
     /// The returned `LoadTicket` is the only way to deposit a result,
     /// and releases the gate on drop.
     ///
-    /// The gpu slot is *not* checked here — callers must read it via
+    /// The gpu slot is *not* checked here; callers must read it via
     /// [`SceneLoader::gpu_snapshot`] after the user has actually
     /// picked a file, since the loader is constructed before the
     /// first `RenderingSetup` and a synchronous gate would prevent
@@ -313,7 +313,7 @@ impl SceneLoader {
 
     /// A scene upload just failed. Increments the counter and, on the
     /// 0 → 1 transition, surfaces the error dialog. Subsequent
-    /// failures for the same scene are swallowed until a reset — this
+    /// failures for the same scene are swallowed until a reset; this
     /// prevents dialog spam if the renderer retries every frame.
     pub fn note_upload_failure(&self, err: &anyhow::Error) {
         let prior = self.upload_failures.get();
@@ -368,8 +368,8 @@ impl SceneLoader {
     /// the raw `(path, result)` for the caller to dispatch on. The
     /// ticket that was in the slot drops here, releasing the gate when
     /// its drop runs the inflight counter down to zero. Returns `None`
-    /// for empty / stale deposits — same condition as
-    /// `take_finished_load`'s early return — without surfacing any
+    /// for empty / stale deposits, same condition as
+    /// `take_finished_load`'s early return, without surfacing any
     /// dialog. Split from `take_finished_load` so the FSM-only
     /// behaviour (drain + stamp + gate release) is unit-testable
     /// without a `wgpu::Device` or a Slint event loop.
@@ -425,6 +425,9 @@ fn describe_obj_warning(warning: &LoadObjWarning) -> String {
             format!("line {line}: skipped material library '{path}'")
         }
         LoadObjWarning::SkippedComment { line } => format!("line {line}: skipped comment"),
+        LoadObjWarning::SkippedUnknownDirective { line, directive } => {
+            format!("line {line}: skipped OBJ directive '{directive}'")
+        }
         LoadObjWarning::SharedVertices {
             object_name,
             shared_indices,
@@ -447,7 +450,7 @@ mod scene_loader_tests {
         SceneLoader::new_for_test(DialogManager::new())
     }
 
-    /// Stub deposit payload used by FSM-only tests — only the
+    /// Stub deposit payload used by FSM-only tests, only the
     /// stamp-check / gate-release / slot-drain paths are exercised
     /// here, never the `Ok(PreparedScene)` arm of `take_finished_load`
     /// (which would require a real `wgpu::Device` to construct a

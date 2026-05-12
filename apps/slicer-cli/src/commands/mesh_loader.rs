@@ -50,6 +50,15 @@ pub(crate) fn display_warnings(warnings: &[LoadMeshWarning]) {
                 sc_mesh_formats::messages::LoadObjWarning::SkippedComment { line } => {
                     eprintln!("WARNING (line {}): Skipped comment", line);
                 }
+                sc_mesh_formats::messages::LoadObjWarning::SkippedUnknownDirective {
+                    line,
+                    directive,
+                } => {
+                    eprintln!(
+                        "WARNING (line {}): Skipped OBJ directive '{}'",
+                        line, directive
+                    );
+                }
                 sc_mesh_formats::messages::LoadObjWarning::SharedVertices {
                     object_name,
                     shared_indices,

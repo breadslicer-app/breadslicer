@@ -295,12 +295,21 @@ where
                     },
                 ));
             }
-            _ => {
-                return Err(anyhow!(
-                    "line {}: unrecognized directive '{}'",
-                    line_num + 1,
-                    first_token
-                ));
+            other => {
+                if is_known_obj_spec_directive(other) {
+                    warnings.push(LoadMeshWarning::Obj(
+                        LoadObjWarning::SkippedUnknownDirective {
+                            line: line_num + 1,
+                            directive: other.to_string(),
+                        },
+                    ));
+                } else {
+                    return Err(anyhow!(
+                        "line {}: unrecognized directive '{}'",
+                        line_num + 1,
+                        first_token
+                    ));
+                }
             }
         }
     }
@@ -399,6 +408,30 @@ fn parse_face_vertex_index(
     }
 
     Ok(VertexIndex::from(resolved as u32))
+}
+
+/// Returns `true` when the directive is part of the OBJ specification but
+/// this reader does not process it.  Used by the catch-all branch so
+/// real-world OBJ files (Blender exports with `l` line segments, free-form
+/// surfaces, rendering hints) load with a warning instead of failing.
+fn is_known_obj_spec_directive(token: &str) -> bool {
+    matches!(
+        token,
+        // Line segments, points, parameter-space vertices.
+        "l" | "p" | "vp"
+        // Free-form curves and surfaces.
+        | "cstype" | "deg" | "bmat" | "step"
+        | "curv" | "curv2" | "surf" | "parm"
+        | "trim" | "hole" | "scrv" | "sp" | "end"
+        // Connectivity, merging groups.
+        | "con" | "mg"
+        // Display / render attributes.
+        | "bevel" | "c_interp" | "d_interp"
+        | "lod" | "shadow_obj" | "trace_obj"
+        | "ctech" | "stech"
+        // Texture-map extensions.
+        | "maplib" | "usemap"
+    )
 }
 
 #[cfg(test)]
@@ -871,6 +904,71 @@ f 1 2 3
                 LoadMeshWarning::Obj(LoadObjWarning::SkippedGroup {
                     line: 10,
                     name: "group1".into()
+                }),
+            ]
+        );
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces().len(), 1);
+    }
+
+    #[test]
+    fn line_segment_directive_warns_and_skips() {
+        // `l` is an OBJ-spec directive (line segments). The reader does not
+        // process it, but the file is otherwise valid: the surrounding
+        // vertices and face must still load, and a warning must surface
+        // the skipped line.
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+l 1 2 3
+f 1 2 3
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
+        assert_eq!(
+            warnings,
+            vec![LoadMeshWarning::Obj(
+                LoadObjWarning::SkippedUnknownDirective {
+                    line: 4,
+                    directive: "l".into(),
+                }
+            )]
+        );
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces().len(), 1);
+        assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
+    }
+
+    #[test]
+    fn multiple_spec_directives_each_produce_warning() {
+        // Mixed bag of spec directives the reader doesn't process. Each
+        // gets its own warning carrying the original token and 1-based line.
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+p 1
+curv 0.0 1.0 1 2
+bevel on
+f 1 2 3
+";
+        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&scene);
+        assert_eq!(
+            warnings,
+            vec![
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedUnknownDirective {
+                    line: 4,
+                    directive: "p".into(),
+                }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedUnknownDirective {
+                    line: 5,
+                    directive: "curv".into(),
+                }),
+                LoadMeshWarning::Obj(LoadObjWarning::SkippedUnknownDirective {
+                    line: 6,
+                    directive: "bevel".into(),
                 }),
             ]
         );
