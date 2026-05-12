@@ -11,7 +11,6 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
@@ -22,6 +21,50 @@ use crate::scene_document::SceneDocument;
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
 use crate::viewport::{RESIZE_SETTLE, ViewportController};
+
+mod export_flow_dispatch {
+    use std::path::PathBuf;
+
+    use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
+
+    /// Classification of the file-save dialog's outcome for the
+    /// "Export As..." flow. Pure: derived only from whether the user
+    /// picked a path and whether that path's extension maps to a
+    /// writeable format. The variants own the picked path (when
+    /// present) so the caller can render it back into an error dialog
+    /// or pass it straight to the exporter without re-cloning the
+    /// `Option`.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(crate) enum ExportDispatch {
+        /// The user dismissed the dialog.
+        Cancelled,
+        /// The user picked a path, but its extension is either not
+        /// inferrable or maps to a format the writer side does not
+        /// support (e.g. `.ply`, `.amf`, `.3mf`).
+        UnsupportedExtension(PathBuf),
+        /// The user picked a path and its extension cleanly maps to a
+        /// `WriteFormat` the exporter accepts.
+        Ready {
+            target: PathBuf,
+            format: WriteFormat,
+        },
+    }
+
+    pub(crate) fn decide_export_dispatch(target: Option<PathBuf>) -> ExportDispatch {
+        let Some(target) = target else {
+            return ExportDispatch::Cancelled;
+        };
+        match infer_mesh_file_format_from_extension(&target)
+            .ok()
+            .and_then(|f| WriteFormat::try_from(f).ok())
+        {
+            Some(format) => ExportDispatch::Ready { target, format },
+            None => ExportDispatch::UnsupportedExtension(target),
+        }
+    }
+}
+
+use export_flow_dispatch::{ExportDispatch, decide_export_dispatch};
 
 /// Installs every per-window Slint callback (rendering notifier, input
 /// handlers, file open/close, resize debounce). Called once per
@@ -247,22 +290,16 @@ pub(crate) async fn run_export_as_flow(
     default_stem: Option<String>,
     default_extension: &'static str,
 ) -> bool {
-    let Some(target) = pick_export_target(default_stem, default_extension).await else {
-        // User cancelled the dialog.
-        return false;
-    };
-
     // rfd 0.17 doesn't expose the filter the user actually picked, so
     // the path's extension is the portable source of truth for the
-    // format. `.stl` → binary, `.stla` → ASCII, `.obj` → OBJ. The
+    // format. `.stl` -> binary, `.stla` -> ASCII, `.obj` -> OBJ. The
     // dialog seeds the active filter's extension into the filename so
     // the user gets the format they implicitly chose.
-    let format = match infer_mesh_file_format_from_extension(&target)
-        .ok()
-        .and_then(|f| WriteFormat::try_from(f).ok())
-    {
-        Some(f) => f,
-        None => {
+    let dispatch =
+        decide_export_dispatch(pick_export_target(default_stem, default_extension).await);
+    match dispatch {
+        ExportDispatch::Cancelled => false,
+        ExportDispatch::UnsupportedExtension(target) => {
             let err = anyhow::anyhow!(
                 "Unable to infer file format from filename. Use one of: \
                  .stl (binary STL), .stla (ASCII STL), or .obj."
@@ -273,25 +310,26 @@ pub(crate) async fn run_export_as_flow(
                 err.to_string(),
                 format_anyhow_chain(&err),
             );
-            return false;
-        }
-    };
-
-    match scene_export::export_scene_as(&doc, &target, format) {
-        Ok(warnings) => {
-            for w in &warnings {
-                eprintln!("WARNING [{}]: {}", target.display(), w.user_message());
-            }
-            true
-        }
-        Err(err) => {
-            dialogs.show_error(
-                ctr!("ErrorDialog", "Failed to export").as_str(),
-                Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
-                err.to_string(),
-                format_anyhow_chain(&err),
-            );
             false
+        }
+        ExportDispatch::Ready { target, format } => {
+            match scene_export::export_scene_as(&doc, &target, format) {
+                Ok(warnings) => {
+                    for w in &warnings {
+                        eprintln!("WARNING [{}]: {}", target.display(), w.user_message());
+                    }
+                    true
+                }
+                Err(err) => {
+                    dialogs.show_error(
+                        ctr!("ErrorDialog", "Failed to export").as_str(),
+                        Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
+                        err.to_string(),
+                        format_anyhow_chain(&err),
+                    );
+                    false
+                }
+            }
         }
     }
 }
@@ -330,4 +368,76 @@ async fn pick_export_target(
         dialog = dialog.set_file_name(format!("{stem}.{default_extension}"));
     }
     dialog.save_file().await.map(|h| h.path().to_path_buf())
+}
+
+#[cfg(test)]
+mod export_flow_dispatch_tests {
+    use std::path::PathBuf;
+
+    use sc_mesh_formats::filetypes::WriteFormat;
+
+    use super::export_flow_dispatch::{ExportDispatch, decide_export_dispatch};
+
+    #[test]
+    fn none_target_classifies_as_cancelled() {
+        assert_eq!(decide_export_dispatch(None), ExportDispatch::Cancelled);
+    }
+
+    #[test]
+    fn unknown_extension_classifies_as_unsupported() {
+        let path = PathBuf::from("/tmp/out.dat");
+        assert_eq!(
+            decide_export_dispatch(Some(path.clone())),
+            ExportDispatch::UnsupportedExtension(path)
+        );
+    }
+
+    #[test]
+    fn missing_extension_classifies_as_unsupported() {
+        let path = PathBuf::from("/tmp/noext");
+        assert_eq!(
+            decide_export_dispatch(Some(path.clone())),
+            ExportDispatch::UnsupportedExtension(path)
+        );
+    }
+
+    #[test]
+    fn readable_but_unwriteable_extensions_classify_as_unsupported() {
+        // PLY / AMF / 3MF are inferrable as `MeshFileType` but
+        // `WriteFormat::try_from` rejects them, so the dispatch must
+        // collapse them into `UnsupportedExtension` rather than letting
+        // them escape as a "Ready" variant the exporter can't handle.
+        for name in ["model.ply", "model.amf", "model.3mf"] {
+            let path = PathBuf::from(name);
+            assert_eq!(
+                decide_export_dispatch(Some(path.clone())),
+                ExportDispatch::UnsupportedExtension(path),
+                "{name} should be flagged unsupported"
+            );
+        }
+    }
+
+    #[test]
+    fn writeable_extensions_classify_as_ready_with_the_matching_write_format() {
+        // `.stl` (no ASCII/binary hint) maps to binary STL by
+        // long-standing project convention; see
+        // `WriteFormat::try_from(MeshFileType::Stl)`.
+        let cases = [
+            ("/tmp/out.stl", WriteFormat::StlBin),
+            ("/tmp/out.stlb", WriteFormat::StlBin),
+            ("/tmp/out.stla", WriteFormat::StlAscii),
+            ("/tmp/out.obj", WriteFormat::Obj),
+        ];
+        for (name, expected_format) in cases {
+            let path = PathBuf::from(name);
+            assert_eq!(
+                decide_export_dispatch(Some(path.clone())),
+                ExportDispatch::Ready {
+                    target: path,
+                    format: expected_format,
+                },
+                "{name} should be Ready({expected_format:?})"
+            );
+        }
+    }
 }
