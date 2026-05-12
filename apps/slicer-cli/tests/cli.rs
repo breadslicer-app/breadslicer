@@ -256,6 +256,27 @@ mod version_tests {
 }
 
 #[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    #[test]
+    fn help_subcommand_prints_command_list() {
+        // The `help` subcommand re-runs the parser with `-h` and prints
+        // bpaf's auto-generated help text. Asserting on "Available
+        // commands:" and one known subcommand name (`convert`) pins
+        // both the section banner and the visibility of registered
+        // subcommands.
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .arg("help")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Available commands:"))
+            .stdout(predicate::str::contains("convert"));
+    }
+}
+
+#[cfg(test)]
 mod convert_tests {
     use super::*;
 
@@ -852,6 +873,35 @@ mod fix_tests {
     }
 
     #[test]
+    fn fix_with_default_flags_repairs_flipped_winding() {
+        // Default flags: zero-length-edges=true, flipped-faces=true,
+        // face-normals=false. The flipped-winding tetrahedron triggers
+        // the flipped-face fix path. The test pins that the default
+        // configuration (no `--fix-*` flags on the command line) does
+        // produce a fix, surfaces it in the "Applied fixes" report,
+        // and writes the repaired mesh to the target.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("flipped.stla");
+        let target = tmp.path().join("fixed.stla");
+        write_stla_to(&source, &flipped_winding_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Applied fixes"))
+            .stdout(predicate::str::contains("Flipped orientation"));
+        assert!(target.exists());
+    }
+
+    #[test]
     fn fix_target_equal_to_source_errors() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("clean.stla");
@@ -1102,6 +1152,50 @@ mod fix_no_panic_contract_tests {
             .assert()
             .failure()
             .stderr(no_panic_in_stderr().not());
+    }
+}
+
+#[cfg(test)]
+mod argument_parsing_tests {
+    use super::*;
+
+    #[test]
+    fn convert_without_source_argument_fails_with_usage_hint() {
+        // The `--source` argument is mandatory; bpaf reports the
+        // missing argument with the expected-token name in stderr.
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .arg("convert")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("--source"));
+    }
+
+    #[test]
+    fn convert_with_invalid_source_format_fails_with_type_parse_error() {
+        // `--source-format` parses through `MeshFileType::FromStr`,
+        // which returns `InvalidMeshFileType` for any unknown token.
+        // bpaf surfaces the error via Display, so stderr carries the
+        // "Invalid mesh file format type" string.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        let target = tmp.path().join("out.stla");
+        write_clean_stla(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "--source-format",
+                "xyz",
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Invalid mesh file format type"));
     }
 }
 
