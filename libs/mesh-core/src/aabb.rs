@@ -99,10 +99,19 @@ impl Aabb {
     ///
     /// Source: Jim Arvo, "Transforming Axis-Aligned Bounding Boxes",
     /// *Graphics Gems I* (1990), pp. 548-550. See also Ericson,
-    /// *Real-Time Collision Detection*, §4.2.6. The output is conservative —
+    /// *Real-Time Collision Detection*, §4.2.6. The output is conservative:
     /// it contains every transformed vertex and is exactly tight for
     /// axis-aligned scaling and translation.
+    ///
+    /// If `self.is_empty()` (the `Aabb::empty()` sentinel, or any other
+    /// box with `min[i] > max[i]` on some axis), the routine returns
+    /// `Aabb::empty()` directly. Running the centre/half-extents math
+    /// on the `±∞` sentinels would otherwise produce `NaN` corners that
+    /// `is_empty()` cannot detect.
     pub fn transformed_arvo(&self, a: &AffineTransform3D) -> Aabb {
+        if self.is_empty() {
+            return Aabb::empty();
+        }
         let lmin = self.min.coords();
         let lmax = self.max.coords();
         // Promote to f64 so the matrix-vector products match the precision of
@@ -225,5 +234,50 @@ mod aabb_tests {
         let mut aabb = Aabb::empty();
         aabb.union(&real);
         assert_eq!(aabb, real);
+    }
+
+    #[test]
+    fn transformed_arvo_on_empty_with_identity_stays_empty() {
+        // Without the short-circuit the centre/half-extents math
+        // produces NaN corners (∞ + -∞ = NaN), which `is_empty()`
+        // cannot detect; the bug surfaces only at the first
+        // downstream consumer that trusts `is_empty()`.
+        let out = Aabb::empty().transformed_arvo(&AffineTransform3D::identity());
+        assert!(out.is_empty());
+        assert_eq!(out, Aabb::empty());
+    }
+
+    #[test]
+    fn transformed_arvo_on_empty_stays_empty_for_arbitrary_transform() {
+        // Rotation, non-uniform scale and translation: each on its
+        // own and combined. A real transform's matrix entries would
+        // otherwise propagate through the ±∞ sentinels and produce
+        // NaN coords (sign-mixed products of zero matrix entries
+        // with the infinite extents).
+        let combined = AffineTransform3D::from_rotation_z(0.7)
+            .compose(&AffineTransform3D::from_non_uniform_scale([2.0, 0.5, 3.0]))
+            .compose(&AffineTransform3D::from_translation([10.0, -5.0, 1.0]));
+        for t in [
+            AffineTransform3D::from_rotation_z(0.5),
+            AffineTransform3D::from_non_uniform_scale([2.0, 0.5, 3.0]),
+            AffineTransform3D::from_translation([5.0, -2.0, 1.0]),
+            combined,
+        ] {
+            let out = Aabb::empty().transformed_arvo(&t);
+            assert!(out.is_empty(), "transform {:?} did not preserve empty", t);
+            assert_eq!(out, Aabb::empty());
+        }
+    }
+
+    #[test]
+    fn transformed_arvo_on_empty_does_not_propagate_nan_to_output() {
+        // Explicit NaN-coord check: every output coord must be the
+        // canonical ±∞ sentinel, never NaN. This is the regression
+        // guard for the original break.
+        let out = Aabb::empty().transformed_arvo(&AffineTransform3D::identity());
+        for axis in 0..3 {
+            assert!(!out.min()[axis].is_nan(), "axis {axis}: min is NaN");
+            assert!(!out.max()[axis].is_nan(), "axis {axis}: max is NaN");
+        }
     }
 }
