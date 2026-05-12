@@ -609,6 +609,94 @@ mod indexed_mesh_validate_normal_vectors_tests {
     }
 
     #[test]
+    fn accepts_normal_just_inside_unit_norm_tolerance() {
+        // n_mag_sq = 0.9999998² ≈ 0.99999960 in f64 after f32 round-trip.
+        // Deviation from 1.0 is ~4e-7, comfortably inside the 1e-6
+        // tolerance. The normal is Z-aligned so the direction check
+        // following the magnitude check also passes.
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 0.999_999_8], [0, 1, 2])],
+        );
+        assert!(
+            mesh.validated_faces()
+                .unwrap()
+                .validate_normal_vectors()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_normal_just_outside_unit_norm_tolerance_below() {
+        // n_mag_sq = 0.999998² ≈ 0.999996. Deviation ~4e-6, four times
+        // the 1e-6 tolerance: must fire NonUnitNorm without falling
+        // through to the direction check.
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 0.999_998], [0, 1, 2])],
+        );
+        let errors = mesh
+            .validated_faces()
+            .unwrap()
+            .validate_normal_vectors()
+            .unwrap_err();
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
+                assert_eq!(*face_idx, 0_usize.into());
+            }
+            other => panic!("expected NonUnitNorm, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rejects_normal_just_outside_unit_norm_tolerance_above() {
+        // n_mag_sq = 1.000002² ≈ 1.000004. Same ~4e-6 deviation as
+        // the below case but on the other side; pins that the
+        // tolerance check is symmetric.
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, 1.000_002], [0, 1, 2])],
+        );
+        let errors = mesh
+            .validated_faces()
+            .unwrap()
+            .validate_normal_vectors()
+            .unwrap_err();
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
+                assert_eq!(*face_idx, 0_usize.into());
+            }
+            other => panic!("expected NonUnitNorm, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rejects_nan_magnitude_normal() {
+        // NaN propagates through the squared-norm sum and lands at
+        // n_mag_sq = NaN. `approx_eq` returns false for any NaN
+        // operand, so the magnitude check rejects without ever
+        // reaching the direction check.
+        let mesh = make_mesh(
+            xy_triangle_vertices(),
+            vec![face([0.0, 0.0, f32::NAN], [0, 1, 2])],
+        );
+        let errors = mesh
+            .validated_faces()
+            .unwrap()
+            .validate_normal_vectors()
+            .unwrap_err();
+        assert_eq!(errors.len(), 1);
+        match &errors[0] {
+            MeshNormalVectorError::NonUnitNorm { face_idx, norm: _ } => {
+                assert_eq!(*face_idx, 0_usize.into());
+            }
+            other => panic!("expected NonUnitNorm, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn detects_expectation_mismatch_opposite_direction() {
         // Correct normal is [0,0,1], but we provide [0,0,-1] (unit, but wrong direction)
         let mesh = make_mesh(
