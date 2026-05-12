@@ -15,8 +15,8 @@
 //! mismatched queries are structurally impossible.
 
 use sc_mesh_core::{
-    Aabb, IndexedMesh,
-    scene::{Scene, SceneObject, SceneObjectContent},
+    Aabb, IndexedMesh, Vertex,
+    scene::{Scene, SceneObject, SceneObjectContent, Transform3D},
     scene_edit::SceneEdit,
 };
 
@@ -102,7 +102,7 @@ impl SceneSpatial {
     ///
     /// This is the *only* public path from a spatial cache to a mesh
     /// in this crate. The triple comes from a single internal lookup,
-    /// so the mesh and the cache are guaranteed to belong together —
+    /// so the mesh and the cache are guaranteed to belong together;
     /// callers cannot pair them incorrectly.
     pub fn object(&self, idx: usize) -> Option<ObjectQuery<'_>> {
         let object = self.scene.objects.get(idx)?;
@@ -126,8 +126,8 @@ impl SceneSpatial {
 
     /// Apply a typed scene edit and update caches accordingly. The
     /// exhaustive `match` on the edit shape ensures that any future
-    /// variant must declare its invalidation pattern at compile time
-    /// — adding a variant without an arm here is a compile error.
+    /// variant must declare its invalidation pattern at compile time:
+    /// adding a variant without an arm here is a compile error.
     pub fn apply_edit(&mut self, edit: SceneEdit) {
         match &edit {
             SceneEdit::ObjectTransform { .. } => {
@@ -180,7 +180,7 @@ impl<'a> ObjectQuery<'a> {
         self.object
     }
 
-    /// The resolved mesh — for an inline object, the inline mesh;
+    /// The resolved mesh: for an inline object, the inline mesh;
     /// for a resource reference, the resource it points to.
     pub fn mesh(&self) -> &'a IndexedMesh {
         self.mesh
@@ -192,9 +192,42 @@ impl<'a> ObjectQuery<'a> {
         self.cache.local_aabb(self.mesh)
     }
 
+    /// World-space AABB of [`Self::mesh`] after applying `transform`.
+    /// Computed from the transformed vertices, so the result is the
+    /// tight AABB of the rotated mesh, not the larger AABB-of-the-
+    /// rotated-local-AABB that Arvo's formula produces. `None` when
+    /// the mesh has no vertices.
+    ///
+    /// Internally cached by the linear part of `transform`: the same
+    /// linear key (typically the current rotation/scale) reuses the
+    /// computed AABB and only shifts it by the new translation. A
+    /// translate-mode drag, whose linear part is constant tick to
+    /// tick, pays the vertex walk once.
+    pub fn transformed_aabb(&self, transform: Transform3D) -> Option<Aabb> {
+        match transform {
+            Transform3D::Identity => self.local_aabb(),
+            Transform3D::Affine(a) => {
+                let aabb = self.cache.linear_aabb(self.mesh, a.linear())?;
+                Some(translate_aabb(aabb, a.translation()))
+            }
+        }
+    }
+
     /// Object-space triangle clusters over [`Self::mesh`]. Cached.
     /// `None` when the mesh has no faces or has corrupt face indices.
     pub fn clusters(&self) -> Option<&'a TriangleClusters> {
         self.cache.clusters(self.mesh)
     }
+}
+
+fn translate_aabb(aabb: Aabb, t: &[f64; 3]) -> Aabb {
+    let tx = t[0] as f32;
+    let ty = t[1] as f32;
+    let tz = t[2] as f32;
+    let min = aabb.min().coords();
+    let max = aabb.max().coords();
+    Aabb::from_min_max(
+        Vertex::new([min[0] + tx, min[1] + ty, min[2] + tz]),
+        Vertex::new([max[0] + tx, max[1] + ty, max[2] + tz]),
+    )
 }

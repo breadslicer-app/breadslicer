@@ -10,7 +10,7 @@
 //!   cache pairing of §2 in the extraction plan.
 //! - `scene_aabb` consistency between cached and uncached forms.
 //! - Per-variant invalidation discipline for `SceneEdit` (basic enum
-//!   behaviour — `is_noop`, `inverse` — is tested in `mesh-core`).
+//!   behaviour, `is_noop` and `inverse`, is tested in `mesh-core`).
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
@@ -120,7 +120,7 @@ mod object_query_binding {
     #[test]
     fn shared_resource_uses_a_single_cache_slot() {
         // Two objects pointing at the same Resource(0). The cache
-        // for that resource must be built once and reused — both
+        // for that resource must be built once and reused: both
         // ObjectQuery handles must observe identical AABB and the
         // same TriangleClusters reference.
         let scene = Scene {
@@ -393,7 +393,7 @@ mod invalidation_discipline {
         let mut spatial = SceneSpatial::primed(scene);
         // Prime via a query, then invalidate, then assert the next
         // query still returns the right value (because the cache is
-        // rebuilt lazily — invalidation should not corrupt
+        // rebuilt lazily; invalidation should not corrupt
         // anything, just discard).
         let before = spatial.object(0).unwrap().local_aabb().unwrap();
         spatial.invalidate_object(0);
@@ -473,5 +473,208 @@ mod invalidation_discipline {
         let mut spatial = SceneSpatial::primed(scene);
         spatial.invalidate_object(0);
         assert!(spatial.object(0).unwrap().local_aabb().is_some());
+    }
+}
+
+mod transformed_aabb {
+    //! `ObjectQuery::transformed_aabb` returns the AABB of the
+    //! mesh's transformed vertices: tight for any mesh, including
+    //! rotated non-box meshes where Arvo's AABB-of-AABB is strictly
+    //! larger than the AABB-of-vertices.
+
+    use super::*;
+    use float_cmp::assert_approx_eq;
+    use std::f64::consts::FRAC_PI_4;
+
+    /// Six-vertex octahedron skeleton on the unit axes. The local
+    /// AABB is the unit cube `[-1, 1]^3`, but no vertex reaches a
+    /// corner: the gap is what makes Arvo's transformed-AABB
+    /// strictly larger than the actual rotated-vertex AABB.
+    fn octahedron_mesh() -> IndexedMesh {
+        IndexedMesh::new(
+            None,
+            vec![
+                vertex(1.0, 0.0, 0.0),
+                vertex(-1.0, 0.0, 0.0),
+                vertex(0.0, 1.0, 0.0),
+                vertex(0.0, -1.0, 0.0),
+                vertex(0.0, 0.0, 1.0),
+                vertex(0.0, 0.0, -1.0),
+            ],
+            vec![],
+        )
+    }
+
+    /// Axis-aligned unit cube (eight corner vertices). Fills its
+    /// local AABB: Arvo and per-vertex agree under any linear, so
+    /// these tests serve as a baseline that the cube case is
+    /// unchanged.
+    fn cube_mesh() -> IndexedMesh {
+        IndexedMesh::new(
+            None,
+            vec![
+                vertex(-1.0, -1.0, -1.0),
+                vertex(1.0, -1.0, -1.0),
+                vertex(-1.0, 1.0, -1.0),
+                vertex(1.0, 1.0, -1.0),
+                vertex(-1.0, -1.0, 1.0),
+                vertex(1.0, -1.0, 1.0),
+                vertex(-1.0, 1.0, 1.0),
+                vertex(1.0, 1.0, 1.0),
+            ],
+            vec![],
+        )
+    }
+
+    fn one_object(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
+        SceneSpatial::new(Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![inline_object(mesh, transform)],
+        })
+    }
+
+    fn assert_aabb_approx(actual: sc_mesh_core::Aabb, min: [f32; 3], max: [f32; 3], eps: f32) {
+        let amin = actual.min().coords();
+        let amax = actual.max().coords();
+        for i in 0..3 {
+            assert_approx_eq!(f32, amin[i], min[i], epsilon = eps);
+            assert_approx_eq!(f32, amax[i], max[i], epsilon = eps);
+        }
+    }
+
+    #[test]
+    fn identity_returns_local_aabb() {
+        let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
+        let q = spatial.object(0).unwrap();
+        assert_eq!(q.transformed_aabb(Transform3D::Identity), q.local_aabb());
+    }
+
+    #[test]
+    fn pure_translation_shifts_local_aabb() {
+        let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
+        let q = spatial.object(0).unwrap();
+        let t = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
+        assert_aabb_approx(
+            q.transformed_aabb(t).unwrap(),
+            [9.0, -6.0, 1.0],
+            [11.0, -4.0, 3.0],
+            1e-5,
+        );
+    }
+
+    #[test]
+    fn rotated_octahedron_is_tighter_than_arvo_for_unit_cube_aabb() {
+        // The octahedron's local AABB is the unit cube; Arvo's box
+        // for a 45° Z rotation of a unit cube would extend ±√2 on
+        // X and Y. The actual rotated octahedron only reaches ±√2/2
+        // on those axes (the rotated tips of (±1, 0, 0) / (0, ±1, 0)).
+        // Z is unrotated, so it stays at ±1.
+        let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
+        let spatial = one_object(octahedron_mesh(), Transform3D::Affine(r));
+        let q = spatial.object(0).unwrap();
+        let aabb = q.transformed_aabb(Transform3D::Affine(r)).unwrap();
+        let half = std::f32::consts::FRAC_1_SQRT_2; // = √2 / 2.
+        assert_aabb_approx(aabb, [-half, -half, -1.0], [half, half, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn rotated_cube_matches_arvos_corner_aabb() {
+        // A cube fills its local AABB, so the tight per-vertex AABB
+        // and Arvo's AABB-of-AABB agree. After a 45° Z rotation,
+        // both produce X/Y half-extents of √2 and Z half-extents
+        // unchanged.
+        let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
+        let spatial = one_object(cube_mesh(), Transform3D::Affine(r));
+        let q = spatial.object(0).unwrap();
+        let aabb = q.transformed_aabb(Transform3D::Affine(r)).unwrap();
+        let s = std::f32::consts::SQRT_2;
+        assert_aabb_approx(aabb, [-s, -s, -1.0], [s, s, 1.0], 1e-5);
+    }
+
+    #[test]
+    fn rotation_then_translation_composes_per_vertex_and_shift() {
+        // The whole transform = R(45° Z) then T(+10, +20, +30).
+        // Per-vertex computation gives the rotated octahedron AABB
+        // ±√2/2 on X/Y, ±1 on Z; the translation shifts the corners.
+        let composed = AffineTransform3D::from_translation([10.0, 20.0, 30.0])
+            .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
+        let spatial = one_object(octahedron_mesh(), Transform3D::Affine(composed));
+        let q = spatial.object(0).unwrap();
+        let aabb = q.transformed_aabb(Transform3D::Affine(composed)).unwrap();
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert_aabb_approx(
+            aabb,
+            [10.0 - half, 20.0 - half, 29.0],
+            [10.0 + half, 20.0 + half, 31.0],
+            1e-5,
+        );
+    }
+
+    #[test]
+    fn empty_mesh_returns_none() {
+        let spatial = one_object(
+            IndexedMesh::new(None, vec![], vec![]),
+            Transform3D::Identity,
+        );
+        let q = spatial.object(0).unwrap();
+        assert!(q.transformed_aabb(Transform3D::Identity).is_none());
+        let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
+        assert!(q.transformed_aabb(t).is_none());
+    }
+
+    #[test]
+    fn cache_hits_across_translation_changes() {
+        // Two queries with the same linear part but different
+        // translations must agree on the AABB modulo the translation
+        // shift. This exercises the "linear part is the cache key,
+        // translation is a post-shift" contract: a translate drag
+        // changes only the translation tick to tick and must reuse
+        // the cached linear AABB.
+        let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
+        let t1 =
+            Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0]).compose(&r));
+        let t2 =
+            Transform3D::Affine(AffineTransform3D::from_translation([0.0, 1.0, 0.0]).compose(&r));
+        let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
+        let q = spatial.object(0).unwrap();
+        let a1 = q.transformed_aabb(t1).unwrap();
+        let a2 = q.transformed_aabb(t2).unwrap();
+        // Each component of (a2 - a1) must equal (t2_translation - t1_translation).
+        let a1_min = a1.min().coords();
+        let a1_max = a1.max().coords();
+        let a2_min = a2.min().coords();
+        let a2_max = a2.max().coords();
+        assert_approx_eq!(f32, a2_min[0] - a1_min[0], -1.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, a2_min[1] - a1_min[1], 1.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, a2_min[2] - a1_min[2], 0.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, a2_max[0] - a1_max[0], -1.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, a2_max[1] - a1_max[1], 1.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, a2_max[2] - a1_max[2], 0.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn linear_change_replaces_cached_entry() {
+        // After querying with one linear, querying with a different
+        // linear must return the AABB for the new linear (not stale
+        // data from the first one). This guards against a future
+        // refactor that turns the slot into "remember the first
+        // linear" by accident.
+        let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
+        let q = spatial.object(0).unwrap();
+        let identity = Transform3D::Affine(AffineTransform3D::identity());
+        let rotated = Transform3D::Affine(AffineTransform3D::from_rotation_z(FRAC_PI_4));
+
+        let a_identity = q.transformed_aabb(identity).unwrap();
+        assert_aabb_approx(a_identity, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], 1e-5);
+
+        let a_rotated = q.transformed_aabb(rotated).unwrap();
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert_aabb_approx(a_rotated, [-half, -half, -1.0], [half, half, 1.0], 1e-5);
+
+        // Re-query identity: must be the identity AABB again, not
+        // the cached rotated one.
+        let a_identity_again = q.transformed_aabb(identity).unwrap();
+        assert_eq!(a_identity, a_identity_again);
     }
 }

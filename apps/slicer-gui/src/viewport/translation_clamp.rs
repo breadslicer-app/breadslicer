@@ -20,9 +20,14 @@
 //! transforms' translation components, runs it through
 //! [`BuildVolume::clamp_translation_delta`], and rebuilds the result
 //! by composing the clamped delta onto `before`.
+//!
+//! `aabb_pre` comes from `ObjectQuery::transformed_aabb`, which walks
+//! the rotated vertices rather than passing the local AABB through
+//! Arvo. The tight AABB matches the envelope-warning overlay's
+//! per-vertex test, so the two never disagree: an axis is clamped iff
+//! some vertex would breach the corresponding wall.
 
 use glam::Vec3;
-use sc_mesh_core::Aabb;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_spatial::SceneSpatial;
@@ -48,10 +53,9 @@ pub(super) fn clamp_translate_edit(
     let Some(query) = spatial.object(object_idx) else {
         return proposed_after;
     };
-    let Some(local) = query.local_aabb() else {
+    let Some(aabb_pre) = query.transformed_aabb(before) else {
         return proposed_after;
     };
-    let aabb_pre = transformed_arvo_or_identity(local, before);
     let delta = translation_delta(before, proposed_after);
     let clamped = build_volume.clamp_translation_delta(aabb_pre, delta);
     if clamped == delta {
@@ -63,13 +67,6 @@ pub(super) fn clamp_translate_edit(
     let translation =
         AffineTransform3D::from_translation([clamped.x as f64, clamped.y as f64, clamped.z as f64]);
     Transform3D::Affine(translation).compose(&before)
-}
-
-fn transformed_arvo_or_identity(local: Aabb, t: Transform3D) -> Aabb {
-    match t {
-        Transform3D::Identity => local,
-        Transform3D::Affine(a) => local.transformed_arvo(&a),
-    }
 }
 
 fn translation_delta(before: Transform3D, after: Transform3D) -> Vec3 {
@@ -103,12 +100,53 @@ mod translation_clamp_tests {
     }
 
     fn spatial_with_centred_unit_cube() -> SceneSpatial {
-        // Two-vertex "mesh" stored just for its local AABB:
-        // [-1, 1]^2 on X/Y, [0, 2] on Z. Faces are empty; the AABB
-        // path only walks vertices.
+        // Eight-vertex axis-aligned unit cube centred on (0, 0, 1):
+        // [-1, 1]^2 on X/Y, [0, 2] on Z. Vertices reach every AABB
+        // corner, so per-vertex and Arvo agree under any rotation,
+        // which is what the rotation-coverage tests below rely on.
         let mesh = IndexedMesh {
             meta: None,
-            vertices: vec![Vertex::new([-1.0, -1.0, 0.0]), Vertex::new([1.0, 1.0, 2.0])],
+            vertices: vec![
+                Vertex::new([-1.0, -1.0, 0.0]),
+                Vertex::new([1.0, -1.0, 0.0]),
+                Vertex::new([-1.0, 1.0, 0.0]),
+                Vertex::new([1.0, 1.0, 0.0]),
+                Vertex::new([-1.0, -1.0, 2.0]),
+                Vertex::new([1.0, -1.0, 2.0]),
+                Vertex::new([-1.0, 1.0, 2.0]),
+                Vertex::new([1.0, 1.0, 2.0]),
+            ],
+            faces: vec![],
+        };
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        };
+        SceneSpatial::new(scene)
+    }
+
+    fn spatial_with_octahedron() -> SceneSpatial {
+        // Six unit-axis vertices: AABB is [-1, 1]^3 but no vertex
+        // reaches a corner. The local AABB is the same as a unit
+        // cube's, so this is the worst-case fixture for the old
+        // Arvo-based clamp: after a 45° Z rotation, Arvo extends X
+        // and Y by sqrt(2) while the true rotated-mesh AABB stays
+        // at sqrt(2) / 2 on those axes.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([-1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+                Vertex::new([0.0, -1.0, 0.0]),
+                Vertex::new([0.0, 0.0, 1.0]),
+                Vertex::new([0.0, 0.0, -1.0]),
+            ],
             faces: vec![],
         };
         let scene = Scene {
@@ -256,5 +294,73 @@ mod translation_clamp_tests {
         let out_up = clamp_translate_edit(&spatial, 0, Transform3D::Identity, up, vol());
         let t = affine_translation(out_up);
         assert_approx_eq!(f64, t[2], 50.0);
+    }
+
+    fn rotation_z(angle: f64) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_rotation_z(angle))
+    }
+
+    fn translation_then_rotation_z(d: [f64; 3], angle: f64) -> Transform3D {
+        Transform3D::Affine(
+            AffineTransform3D::from_translation(d)
+                .compose(&AffineTransform3D::from_rotation_z(angle)),
+        )
+    }
+
+    #[test]
+    fn rotated_octahedron_can_travel_further_than_arvo_would_allow() {
+        // Regression for the over-clamping bug: a 45° Z rotation of
+        // the unit-axis octahedron has true rotated-mesh
+        // half-extents of √2 / 2 (≈ 0.707) on X. Arvo on the local
+        // AABB (the unit cube) would report √2 (≈ 1.414). With the
+        // envelope at X ∈ [-50, 50], the tight clamp lets the mesh
+        // travel up to 50 - √2 / 2 ≈ 49.29 on +X; Arvo would have
+        // stopped it at 50 - √2 ≈ 48.59. Ask for +60; the new path
+        // must report ~49.29, not ~48.59.
+        let spatial = spatial_with_octahedron();
+        let before = rotation_z(std::f64::consts::FRAC_PI_4);
+        let proposed = translation_then_rotation_z([60.0, 0.0, 0.0], std::f64::consts::FRAC_PI_4);
+        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let t = affine_translation(out);
+        let expected = 50.0 - f64::from(std::f32::consts::FRAC_1_SQRT_2);
+        let arvo_bound = 50.0 - f64::from(std::f32::consts::SQRT_2);
+        assert_approx_eq!(f64, t[0], expected, epsilon = 1e-4);
+        // Hard guard against regressing to the Arvo bound: the new
+        // result must be strictly past where Arvo would have stopped.
+        assert!(
+            t[0] > arvo_bound + 0.1,
+            "rotated octahedron over-clamped: got {}, Arvo bound was {}",
+            t[0],
+            arvo_bound,
+        );
+    }
+
+    #[test]
+    fn rotated_cube_clamps_at_arvo_bound_because_it_fills_its_aabb() {
+        // The cube fills its local AABB, so the tight and Arvo
+        // bounds coincide. A 45° Z rotation of the centred unit
+        // cube extends X to ±√2 around the cube centre. With the
+        // envelope X ∈ [-50, 50], asking for +60 on X must clamp to
+        // (envelope_max - rotated_max) = 50 - √2 ≈ 48.586.
+        let spatial = spatial_with_centred_unit_cube();
+        let before = rotation_z(std::f64::consts::FRAC_PI_4);
+        let proposed = translation_then_rotation_z([60.0, 0.0, 0.0], std::f64::consts::FRAC_PI_4);
+        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let t = affine_translation(out);
+        let expected = 50.0 - f64::from(std::f32::consts::SQRT_2);
+        assert_approx_eq!(f64, t[0], expected, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn small_in_bounds_delta_passes_through_under_rotation() {
+        // A cube already away from any wall, rotated 45° about Z,
+        // gets a small in-bounds delta. The result must be the
+        // unchanged `proposed`, not silently clamped: the tighten
+        // must not introduce a false clamp for cubes either.
+        let spatial = spatial_with_centred_unit_cube();
+        let before = rotation_z(std::f64::consts::FRAC_PI_4);
+        let proposed = translation_then_rotation_z([2.0, 1.0, 3.0], std::f64::consts::FRAC_PI_4);
+        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        assert_eq!(out, proposed);
     }
 }

@@ -13,9 +13,9 @@
 //! pairing is what makes mismatched (mesh, cache) queries
 //! structurally impossible.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
-use sc_mesh_core::{Aabb, IndexedMesh};
+use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
 
 use crate::clusters::TriangleClusters;
 
@@ -23,6 +23,18 @@ use crate::clusters::TriangleClusters;
 pub(crate) struct MeshSpatial {
     local_aabb: OnceLock<Aabb>,
     clusters: OnceLock<TriangleClusters>,
+    /// Cache for the AABB of the mesh's vertices under a fixed
+    /// linear transform (translation excluded). One slot, keyed by
+    /// bit-equal match on the linear part: hit when the next query
+    /// uses the same rotation/scale, miss otherwise. The clamp helper
+    /// in the GUI hits this slot every tick of a translate-mode drag,
+    /// where the linear part stays constant.
+    linear_aabb: Mutex<Option<LinearAabbEntry>>,
+}
+
+struct LinearAabbEntry {
+    linear: [[f64; 3]; 3],
+    aabb: Aabb,
 }
 
 impl MeshSpatial {
@@ -32,7 +44,7 @@ impl MeshSpatial {
     /// The caller is responsible for passing the same `mesh` it
     /// would pass on every other call to this `MeshSpatial`. The
     /// public surface of the crate ([`SceneSpatial::object`]) takes
-    /// care of that — this type is module-private precisely to keep
+    /// care of that; this type is module-private precisely to keep
     /// the pairing inside the spatial layer.
     pub(crate) fn local_aabb(&self, mesh: &IndexedMesh) -> Option<Aabb> {
         if let Some(cached) = self.local_aabb.get() {
@@ -58,12 +70,55 @@ impl MeshSpatial {
         self.clusters.get()
     }
 
+    /// AABB of `mesh.vertices` after applying `linear` (no
+    /// translation). Tight: walks vertices directly rather than
+    /// passing the local AABB through Arvo, so it does not inherit
+    /// Arvo's slack on rotated non-box meshes. Cached in the single
+    /// `linear_aabb` slot, replacing the cached entry when the
+    /// caller's `linear` differs from the cached one. `None` for
+    /// empty meshes.
+    pub(crate) fn linear_aabb(&self, mesh: &IndexedMesh, linear: &[[f64; 3]; 3]) -> Option<Aabb> {
+        {
+            let guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
+            if let Some(entry) = guard.as_ref()
+                && &entry.linear == linear
+            {
+                return Some(entry.aabb);
+            }
+        }
+        let mut iter = mesh.vertices.iter();
+        let first = apply_linear(linear, *iter.next()?);
+        let mut aabb = Aabb::from_min_max(first, first);
+        for v in iter {
+            aabb.extend(apply_linear(linear, *v));
+        }
+        let mut guard = self.linear_aabb.lock().expect("linear_aabb poisoned");
+        *guard = Some(LinearAabbEntry {
+            linear: *linear,
+            aabb,
+        });
+        Some(aabb)
+    }
+
     /// Eagerly populate every cache in this slot. Used by
     /// [`SceneSpatial::primed`](crate::SceneSpatial::primed) to do
     /// the work off the UI thread before the mesh ever reaches a
     /// query site.
+    ///
+    /// `linear_aabb` is intentionally not primed: its key depends on
+    /// the object's current transform, which is not known until a
+    /// query site presents it.
     pub(crate) fn prime(&self, mesh: &IndexedMesh) {
         let _ = self.local_aabb(mesh);
         let _ = self.clusters(mesh);
     }
+}
+
+fn apply_linear(m: &[[f64; 3]; 3], v: Vertex) -> Vertex {
+    let v = v.coords();
+    let v = [v[0] as f64, v[1] as f64, v[2] as f64];
+    let x = m[0][0].mul_add(v[0], m[0][1].mul_add(v[1], m[0][2] * v[2]));
+    let y = m[1][0].mul_add(v[0], m[1][1].mul_add(v[1], m[1][2] * v[2]));
+    let z = m[2][0].mul_add(v[0], m[2][1].mul_add(v[1], m[2][2] * v[2]));
+    Vertex::new([x as f32, y as f32, z as f32])
 }
