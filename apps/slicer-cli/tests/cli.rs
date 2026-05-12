@@ -109,8 +109,8 @@ fn nonunit_normal_tetrahedron_mesh() -> IndexedMesh {
 }
 
 /// Tetrahedron with three extra collinear vertices appended and an
-/// extra face built from them. The face is degenerate — its computed
-/// normal is `Err(Degenerate triangle)` — but every face index in the
+/// extra face built from them. The face is degenerate (its computed
+/// normal is `Err(Degenerate triangle)`) but every face index in the
 /// mesh is in range. This is the worst-case input the CLI's `fix`
 /// pipeline can encounter through the bundled loaders.
 fn tetrahedron_with_extra_collinear_face() -> IndexedMesh {
@@ -133,6 +133,71 @@ fn write_stla_to(path: &Path, mesh: &IndexedMesh) {
     write_stla(mesh, &mut writer).expect("write_stla");
 }
 
+/// A degenerate triangle whose first and third vertex are the same
+/// point. STL stores explicit vertices, so the writer emits the same
+/// (0, 0, 0) coordinate twice; on read, `as_indexed_mesh` dedups by
+/// f32 bit pattern and the face collapses to indices `[0, 1, 0]`,
+/// which `validate_faces` flags as a `ZeroLengthEdge`.
+fn mesh_with_zero_length_edge() -> IndexedMesh {
+    let repeat = Vertex::new([0.0, 0.0, 0.0]);
+    IndexedMesh {
+        meta: None,
+        vertices: vec![repeat, Vertex::new([1.0, 0.0, 0.0]), repeat],
+        faces: vec![IndexedTriangle::from_raw_indices(
+            Normal::new([0.0, 0.0, 1.0]),
+            [0, 1, 2],
+        )],
+    }
+}
+
+/// A mesh with exactly one triangle. Every edge appears once and only
+/// in one direction; `validate_manifold` flags all three as
+/// `BoundaryEdge` because nothing closes them.
+fn single_triangle_mesh() -> IndexedMesh {
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ],
+        faces: vec![IndexedTriangle::from_raw_indices(
+            Normal::new([0.0, 0.0, 1.0]),
+            [0, 1, 2],
+        )],
+    }
+}
+
+/// Three triangles all sharing the edge `(v0, v1)`. The half-edge
+/// `(0, 1)` appears three times forward and zero times reverse, which
+/// `validate_manifold` flags as `NonManifoldEdge`.
+fn three_triangles_sharing_edge_mesh() -> IndexedMesh {
+    let vertices = vec![
+        Vertex::new([0.0, 0.0, 0.0]),
+        Vertex::new([1.0, 0.0, 0.0]),
+        Vertex::new([0.5, 1.0, 0.0]),
+        Vertex::new([0.5, -1.0, 0.0]),
+        Vertex::new([0.5, 0.0, 1.0]),
+    ];
+    let faces = [[0, 1, 2], [0, 1, 3], [0, 1, 4]]
+        .iter()
+        .map(|idx| {
+            let tri_verts = [
+                vertices[idx[0] as usize],
+                vertices[idx[1] as usize],
+                vertices[idx[2] as usize],
+            ];
+            let normal = compute_normal_from_triangle_vertices(&tri_verts).unwrap();
+            IndexedTriangle::from_raw_indices(normal, *idx)
+        })
+        .collect();
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces,
+    }
+}
+
 /// `assert_cmd` predicate that fails if stderr contains the textual
 /// signature of a Rust panic. A Rust panic in a `#[panic = "unwind"]`
 /// build prints `thread '…' panicked at …` and exits with code 101 by
@@ -140,7 +205,7 @@ fn write_stla_to(path: &Path, mesh: &IndexedMesh) {
 /// header before aborting. Either way, the substring is reliable.
 ///
 /// Use this in addition to `.success()` / `.failure()` whenever the
-/// property we care about is "the binary did not crash" — a Rust
+/// property we care about is "the binary did not crash": a Rust
 /// panic propagating to the CLI is *always* a bug, regardless of what
 /// the user typed.
 fn no_panic_in_stderr() -> predicates::str::ContainsPredicate {
@@ -453,6 +518,142 @@ mod diagnose_tests {
             .assert()
             .success();
     }
+
+    // -----------------------------------------------------------------
+    // Per-category sweep over `diagnose`'s error variants. Each test
+    // builds a minimal mesh that triggers one specific category and
+    // asserts the category-specific stderr fragment is surfaced.
+    //
+    // 8 of the 11 mesh-validator error variants are reachable through
+    // the CLI's STL/OBJ loaders. The three unreachable categories are
+    // `MeshVertexError::InfiniteCoordinate`,
+    // `MeshVertexError::NaNCoordinate`, and
+    // `MeshFaceError::OutOfRangeVertexIndex`. The STL and OBJ parsers
+    // reject non-finite f32 tokens and out-of-range face indices at
+    // parse time, before any mesh ever reaches `validate_*`, so those
+    // variants can only fire on meshes constructed directly in code
+    // (covered by the unit tests in `sc-mesh-core`).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn diagnose_reports_zero_length_edge() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("zle.stla");
+        write_stla_to(&source, &mesh_with_zero_length_edge());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("with same value"));
+    }
+
+    #[test]
+    fn diagnose_reports_zero_area_triangle() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("zat.stla");
+        write_stla_to(&source, &tetrahedron_with_extra_collinear_face());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("area equal to 0"));
+    }
+
+    #[test]
+    fn diagnose_reports_non_unit_norm() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("nun.stla");
+        write_stla_to(&source, &nonunit_normal_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("non-unit norm"));
+    }
+
+    #[test]
+    fn diagnose_reports_expectation_mismatch() {
+        // The flipped-winding fixture also triggers
+        // `InconsistentWindingOrder`; this test only pins that the
+        // expectation-mismatch fragment appears alongside it.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("em.stla");
+        write_stla_to(&source, &flipped_winding_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("does not match our calculations"));
+    }
+
+    #[test]
+    fn diagnose_reports_empty_mesh() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("empty.stla");
+        let empty = IndexedMesh {
+            meta: None,
+            vertices: vec![],
+            faces: vec![],
+        };
+        write_stla_to(&source, &empty);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Loaded mesh is empty"));
+    }
+
+    #[test]
+    fn diagnose_reports_boundary_edge() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("boundary.stla");
+        write_stla_to(&source, &single_triangle_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("boundary edge"));
+    }
+
+    #[test]
+    fn diagnose_reports_non_manifold_edge() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("nme.stla");
+        write_stla_to(&source, &three_triangles_sharing_edge_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("shared by more than"));
+    }
+
+    #[test]
+    fn diagnose_reports_inconsistent_winding_order() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("iwo.stla");
+        write_stla_to(&source, &flipped_winding_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("inconsistent normal vectors"));
+    }
 }
 
 #[cfg(test)]
@@ -537,7 +738,7 @@ mod fix_tests {
 /// These are **contract tests**, not regression tests. The bundled
 /// STL/OBJ loaders dedupe vertices densely, so no file-driven input
 /// the CLI accepts today can carry out-of-range face indices, and
-/// the unchecked-index assumption holds — the tests are expected to
+/// the unchecked-index assumption holds; the tests are expected to
 /// pass against the unmodified library. They serve two purposes:
 ///
 /// 1. Lock the property "the CLI does not panic on any
@@ -586,7 +787,7 @@ mod fix_no_panic_contract_tests {
 
     #[test]
     fn fix_with_all_fix_passes_disabled_is_a_clean_no_op() {
-        // All three `--fix-*` flags off — `fix_mesh` skips every
+        // All three `--fix-*` flags off: `fix_mesh` skips every
         // validate/fix sub-pass. The pipeline must still succeed
         // (the writer runs unconditionally) and must not panic.
         let tmp = TempDir::new().unwrap();
@@ -618,7 +819,7 @@ mod fix_no_panic_contract_tests {
         // `validate_manifold` returns `InconsistentWindingOrder`
         // errors and `validate_normal_vectors` returns an
         // `ExpectationMismatch` for face 0. With `--fix-zero-length-edges=false`,
-        // `validate_faces` is skipped — the fix routine receives
+        // `validate_faces` is skipped: the fix routine receives
         // these errors and exercises the flip + normal-recompute
         // branch end-to-end through the binary.
         let tmp = TempDir::new().unwrap();
@@ -710,7 +911,7 @@ mod fix_no_panic_contract_tests {
 
     #[test]
     fn fix_with_validate_faces_skipped_does_not_panic_on_malformed_input() {
-        // Loader rejects the input — the validate/fix pipeline is
+        // Loader rejects the input; the validate/fix pipeline is
         // never reached. Pin that skipping `--fix-zero-length-edges`
         // does not change the failure shape: the binary still exits
         // non-zero with no Rust panic in stderr.
@@ -741,7 +942,7 @@ mod inspect_and_slice_tests {
 
     #[test]
     fn inspect_subcommand_panics_with_todo() {
-        // `inspect` is not implemented yet — the binary calls `todo!()`
+        // `inspect` is not implemented yet: the binary calls `todo!()`
         // and exits non-zero. Pinning this so a future "no it returns
         // success now" change shows up as a deliberate test update.
         Command::cargo_bin(BIN)
