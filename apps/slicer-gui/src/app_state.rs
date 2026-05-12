@@ -14,7 +14,6 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
-use crate::error_dialog::ReplaceSceneChoice;
 use crate::i18n::ctr;
 use crate::mesh_loader::{
     SUPPORTED_MESH_EXTENSIONS, is_supported_mesh_extension, start_load_with_ticket,
@@ -28,6 +27,65 @@ use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
+
+mod replace_scene_policy {
+    use crate::error_dialog::ReplaceSceneChoice;
+
+    /// Pre-prompt branch chosen by `open_path_in_window` from the
+    /// state of the target window and the dropped/opened path.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum OpenPathAction {
+        /// Path extension is not in the supported mesh set; caller
+        /// should surface an "Unsupported file type" error dialog.
+        RejectUnsupported,
+        /// No scene is currently loaded; caller should dispatch the
+        /// path to the loader directly.
+        DispatchImmediately,
+        /// A scene is already loaded; caller should show the replace-
+        /// scene confirmation dialog. `can_export` controls whether
+        /// the Export button is visible (true iff the user has
+        /// applied at least one undoable command, our proxy for
+        /// "this scene has unsaved changes worth exporting").
+        PromptReplace { can_export: bool },
+    }
+
+    /// Post-prompt branch chosen from the user's reply to the
+    /// replace-scene confirmation dialog.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum PostPromptAction {
+        DiscardThenOpen,
+        ExportThenOpen,
+        NoOp,
+    }
+
+    pub(crate) fn decide_open_path_action(
+        supported_extension: bool,
+        document_loaded: bool,
+        document_can_undo: bool,
+    ) -> OpenPathAction {
+        if !supported_extension {
+            return OpenPathAction::RejectUnsupported;
+        }
+        if !document_loaded {
+            return OpenPathAction::DispatchImmediately;
+        }
+        OpenPathAction::PromptReplace {
+            can_export: document_can_undo,
+        }
+    }
+
+    pub(crate) fn map_replace_choice(choice: ReplaceSceneChoice) -> PostPromptAction {
+        match choice {
+            ReplaceSceneChoice::Discard => PostPromptAction::DiscardThenOpen,
+            ReplaceSceneChoice::Export => PostPromptAction::ExportThenOpen,
+            ReplaceSceneChoice::Cancel => PostPromptAction::NoOp,
+        }
+    }
+}
+
+use replace_scene_policy::{
+    OpenPathAction, PostPromptAction, decide_open_path_action, map_replace_choice,
+};
 
 /// A main window paired with its viewport controller and preference-
 /// bus subscription. Drop of this struct drops the subscription,
@@ -264,57 +322,60 @@ impl AppState {
             wired.controller.clone()
         };
 
-        if !is_supported_mesh_extension(&path) {
-            controller.dialogs().show_error(
-                ctr!("ErrorDialog", "Unsupported file type").as_str(),
-                Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
-                ctr!(
-                    "ErrorDialog",
-                    "Only the following file types can be opened: {}",
-                    SUPPORTED_MESH_EXTENSIONS.join(", ")
-                )
-                .to_string(),
-                String::new(),
-            );
-            return;
+        let action = decide_open_path_action(
+            is_supported_mesh_extension(&path),
+            controller.document().is_loaded(),
+            controller.document().can_undo(),
+        );
+        match action {
+            OpenPathAction::RejectUnsupported => {
+                controller.dialogs().show_error(
+                    ctr!("ErrorDialog", "Unsupported file type").as_str(),
+                    Some(ctr!("ErrorDialog", "File: {}", path.display()).to_string()),
+                    ctr!(
+                        "ErrorDialog",
+                        "Only the following file types can be opened: {}",
+                        SUPPORTED_MESH_EXTENSIONS.join(", ")
+                    )
+                    .to_string(),
+                    String::new(),
+                );
+            }
+            OpenPathAction::DispatchImmediately => {
+                self.dispatch_path_to_loader(window_id, path);
+            }
+            OpenPathAction::PromptReplace { can_export } => {
+                // Replace-confirm flow. The choice callback fires on
+                // the UI thread once the user picks a button.
+                // `Weak<AppState>` keeps the closure non-cyclic; if
+                // the app is gone by then, every branch silently
+                // drops.
+                let app_weak = Rc::downgrade(self);
+                let source_name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                controller.dialogs().show_replace_scene_confirm(
+                    source_name,
+                    can_export,
+                    move |choice| {
+                        let Some(app) = app_weak.upgrade() else {
+                            return;
+                        };
+                        match map_replace_choice(choice) {
+                            PostPromptAction::DiscardThenOpen => {
+                                app.discard_then_open(window_id, path);
+                            }
+                            PostPromptAction::ExportThenOpen => {
+                                app.export_then_open(window_id, path);
+                            }
+                            PostPromptAction::NoOp => {}
+                        }
+                    },
+                );
+            }
         }
-
-        if !controller.document().is_loaded() {
-            self.dispatch_path_to_loader(window_id, path);
-            return;
-        }
-
-        // Replace-confirm flow. The choice callback fires on the UI
-        // thread once the user picks a button. `Weak<AppState>` keeps
-        // the closure non-cyclic; if the app is gone by then, every
-        // branch silently drops.
-        let app_weak = Rc::downgrade(self);
-        let source_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        // `can_undo` is true iff the user has applied at least one
-        // command on the loaded scene that hasn't been undone: our
-        // proxy for "this scene has unsaved changes". If they haven't
-        // touched it, exporting would just write a copy of the source
-        // file they already have, so the Export button is hidden.
-        let can_export = controller.document().can_undo();
-        controller
-            .dialogs()
-            .show_replace_scene_confirm(source_name, can_export, move |choice| match choice {
-                ReplaceSceneChoice::Discard => {
-                    if let Some(app) = app_weak.upgrade() {
-                        app.discard_then_open(window_id, path);
-                    }
-                }
-                ReplaceSceneChoice::Export => {
-                    if let Some(app) = app_weak.upgrade() {
-                        app.export_then_open(window_id, path);
-                    }
-                }
-                ReplaceSceneChoice::Cancel => {}
-            });
     }
 
     /// Inner queue-or-load step. Called from `open_path_in_window`
@@ -465,5 +526,64 @@ impl AppState {
             }
             Err(err) => eprintln!("Failed to create Preferences window: {err}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod replace_scene_policy_tests {
+    use super::replace_scene_policy::*;
+    use crate::error_dialog::ReplaceSceneChoice;
+
+    #[test]
+    fn unsupported_extension_rejects_regardless_of_load_state() {
+        assert_eq!(
+            decide_open_path_action(false, false, false),
+            OpenPathAction::RejectUnsupported
+        );
+        assert_eq!(
+            decide_open_path_action(false, true, true),
+            OpenPathAction::RejectUnsupported
+        );
+    }
+
+    #[test]
+    fn supported_extension_with_no_loaded_document_dispatches_immediately() {
+        assert_eq!(
+            decide_open_path_action(true, false, false),
+            OpenPathAction::DispatchImmediately
+        );
+        // `document_can_undo` is irrelevant when nothing is loaded.
+        assert_eq!(
+            decide_open_path_action(true, false, true),
+            OpenPathAction::DispatchImmediately
+        );
+    }
+
+    #[test]
+    fn supported_extension_with_loaded_document_prompts_with_export_iff_can_undo() {
+        assert_eq!(
+            decide_open_path_action(true, true, false),
+            OpenPathAction::PromptReplace { can_export: false }
+        );
+        assert_eq!(
+            decide_open_path_action(true, true, true),
+            OpenPathAction::PromptReplace { can_export: true }
+        );
+    }
+
+    #[test]
+    fn map_replace_choice_translates_each_user_choice() {
+        assert_eq!(
+            map_replace_choice(ReplaceSceneChoice::Discard),
+            PostPromptAction::DiscardThenOpen
+        );
+        assert_eq!(
+            map_replace_choice(ReplaceSceneChoice::Export),
+            PostPromptAction::ExportThenOpen
+        );
+        assert_eq!(
+            map_replace_choice(ReplaceSceneChoice::Cancel),
+            PostPromptAction::NoOp
+        );
     }
 }
