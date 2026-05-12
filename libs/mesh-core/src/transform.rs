@@ -209,7 +209,7 @@ impl AffineTransform3D {
 
         // The (i, j) entry of M⁻ᵀ is the (j, i) cofactor of M divided by
         // det(M). The 1/|det| factor is removed by the final
-        // renormalisation, but its sign is not — a mirror (det < 0)
+        // renormalisation, but its sign is not; a mirror (det < 0)
         // must flip the normal, so the sign is reapplied explicitly
         // after the matrix multiply.
         let m = &self.linear;
@@ -277,7 +277,7 @@ impl AffineTransform3D {
         }
 
         // Translation: A · t_b + t_a (because (A·B)·v + A·t_b + t_a =
-        // A·(B·v + t_b) + t_a — i.e. apply `other` first, then `self`).
+        // A·(B·v + t_b) + t_a, i.e. apply `other` first, then `self`).
         let tb = &other.translation;
         let ta = &self.translation;
         let translation = [
@@ -434,7 +434,7 @@ mod affine_transform_3d_tests {
     #[test]
     fn from_uniform_scale_negative_mirrors() {
         // A negative uniform scale is a valid affine transform that mirrors
-        // every axis. We don't reject it here — callers (e.g. the future
+        // every axis. We don't reject it here; callers (e.g. the future
         // determinant check) handle handedness.
         let t = AffineTransform3D::from_uniform_scale(-2.0);
         assert_eq!(
@@ -740,7 +740,7 @@ mod affine_transform_3d_tests {
         // Surface in the XY plane (normal = +Z), tilted by stretching
         // along X. With non-uniform scale s = (s_x, 1, 1), naively
         // applying the linear part would give (s_x, 0, 0)·n = (0, 0, 1)
-        // (correct here because the normal has no X component) — so a
+        // (correct here because the normal has no X component), so a
         // more meaningful test uses a tilted plane.
         //
         // Consider the surface containing (1,0,0), (0,1,0), (0,0,0).
@@ -749,7 +749,7 @@ mod affine_transform_3d_tests {
         // (0,1,0), (0,0,0); its true normal is (1, 2, 0)/√5.
         //
         // Using the linear part naively would give
-        // (2,1,0)/√5 ≠ (1,2,0)/√5 — the inverse-transpose is required.
+        // (2,1,0)/√5 ≠ (1,2,0)/√5; the inverse-transpose is required.
         let t = AffineTransform3D::from_non_uniform_scale([2.0, 1.0, 1.0]);
         let n = Normal::new([
             std::f32::consts::FRAC_1_SQRT_2,
@@ -822,6 +822,77 @@ mod affine_transform_3d_tests {
         assert_eq!(
             t.apply_to_normal(n).unwrap_err(),
             TransformError::ZeroMagnitudeNormal
+        );
+    }
+
+    #[test]
+    fn apply_to_normal_at_exact_singularity_threshold_returns_error() {
+        // det = SINGULARITY_THRESHOLD exactly. The check uses
+        // `gt_strict`, so equal-to-threshold is treated as singular.
+        // Diagonal scale: det = f64::EPSILON · 1 · 1 = f64::EPSILON.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[f64::EPSILON, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_eq!(
+            t.apply_to_normal(n).unwrap_err(),
+            TransformError::SingularLinear
+        );
+    }
+
+    #[test]
+    fn apply_to_normal_just_above_singularity_threshold_succeeds() {
+        // det = 2 · SINGULARITY_THRESHOLD: the smallest determinant
+        // that should still pass the first guard. The normal is
+        // aligned with the squeezed axis so the cofactor product
+        // (`cof[0] · n = [1, 0, 0]`) has unit magnitude, isolating
+        // the determinant check from the post-multiply magnitude
+        // check that fires for normals perpendicular to a collapsing
+        // direction.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [
+                [2.0 * f64::EPSILON, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            [0.0, 0.0, 0.0],
+        );
+        let n = Normal::new([1.0, 0.0, 0.0]);
+        assert_normal_approx(t.apply_to_normal(n).unwrap(), [1.0, 0.0, 0.0], 1e-6);
+    }
+
+    #[test]
+    fn apply_to_normal_negative_determinant_uses_abs_threshold() {
+        // det = -SINGULARITY_THRESHOLD. The check is on the magnitude,
+        // so this must still be rejected (mirrors with a singular
+        // magnitude are no more invertible than scales are).
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[-f64::EPSILON, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_eq!(
+            t.apply_to_normal(n).unwrap_err(),
+            TransformError::SingularLinear
+        );
+    }
+
+    #[test]
+    fn apply_to_normal_nan_determinant_returns_error() {
+        // A NaN entry propagates into the determinant. `gt_strict`
+        // rejects NaN by returning false, so the singular branch
+        // fires. Without this guard a NaN linear part would propagate
+        // through the cofactor matrix and surface as a non-finite
+        // normal much further downstream.
+        let t = AffineTransform3D::from_linear_and_translation(
+            [[f64::NAN, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        assert_eq!(
+            t.apply_to_normal(n).unwrap_err(),
+            TransformError::SingularLinear
         );
     }
 
