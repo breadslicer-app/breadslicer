@@ -172,6 +172,73 @@ endsolid my_mesh",
             result_str
         );
     }
+
+    #[test]
+    fn empty_mesh_round_trips_through_writer_and_reader() {
+        // Zero faces, zero vertices. Writer must produce a well-formed
+        // `solid` / `endsolid` skeleton; reader must parse it back to
+        // an empty mesh without errors.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![],
+            faces: vec![],
+        };
+        let mut buf: Vec<u8> = vec![];
+        write_stla(&mesh, &mut buf).expect("write_stla succeeds on empty mesh");
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let round_tripped =
+            crate::stl::stla::AsciiStlReader::create_triangles_iterator(&mut cursor)
+                .expect("reader constructs")
+                .as_indexed_mesh(None)
+                .expect("read succeeds");
+
+        assert_eq!(round_tripped.vertices().len(), 0);
+        assert_eq!(round_tripped.faces().len(), 0);
+    }
+
+    #[test]
+    fn extreme_coordinates_round_trip_through_scientific_format() {
+        // The writer formats every coordinate with `{:e}` (Rust's
+        // canonical scientific notation for f32). Pin that the
+        // resulting text re-parses back to the same f32 values,
+        // including non-trivial exponents and a negative coordinate.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([1.0e30, -2.5e-12, 7.125e15]),
+                Vertex::new([0.0, 1.0, -3.4e-20]),
+                Vertex::new([f32::MIN, 0.0, f32::MAX]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        let mut buf: Vec<u8> = vec![];
+        write_stla(&mesh, &mut buf).expect("write_stla succeeds");
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let round_tripped =
+            crate::stl::stla::AsciiStlReader::create_triangles_iterator(&mut cursor)
+                .expect("reader constructs")
+                .as_indexed_mesh(None)
+                .expect("read succeeds");
+
+        // Three vertices, one face. Vertex ordering inside the mesh
+        // is first-seen so it matches the input.
+        assert_eq!(round_tripped.vertices().len(), 3);
+        assert_eq!(round_tripped.faces().len(), 1);
+        assert_eq!(
+            round_tripped.vertices()[0].coords(),
+            [1.0e30, -2.5e-12, 7.125e15]
+        );
+        assert_eq!(round_tripped.vertices()[1].coords(), [0.0, 1.0, -3.4e-20]);
+        assert_eq!(
+            round_tripped.vertices()[2].coords(),
+            [f32::MIN, 0.0, f32::MAX]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -242,5 +309,48 @@ mod test_write_stlb {
         // Header starts with "my_mesh", rest is zeros
         assert_eq!(&out[..7], b"my_mesh");
         assert!(out[7..80].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn header_truncates_name_longer_than_80_bytes() {
+        // STL binary's 80-byte header is fixed-width. Names longer
+        // than that must be cut to the first 80 bytes; the surplus
+        // is silently dropped (with no NUL terminator inside the 80
+        // bytes when the name fills it completely).
+        let name = "a".repeat(100);
+        let mesh = make_mesh(Some(MeshMetadata {
+            name: Some(name),
+            ..Default::default()
+        }));
+        let mut out: Vec<u8> = vec![];
+        write_stlb(&mesh, &mut out).unwrap();
+
+        assert_eq!(out.len(), 80 + 4 + 50);
+        assert!(
+            out[..80].iter().all(|&b| b == b'a'),
+            "every header byte must be 'a' when the name fills it completely",
+        );
+    }
+
+    #[test]
+    fn empty_mesh_round_trips_through_writer() {
+        // Zero faces, zero vertices. Header alone + zero count = 84
+        // bytes of output, no triangle records.
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![],
+            faces: vec![],
+        };
+        let mut out: Vec<u8> = vec![];
+        write_stlb(&mesh, &mut out).expect("write_stlb succeeds on empty mesh");
+        assert_eq!(out.len(), 84);
+        assert!(out[..80].iter().all(|&b| b == 0));
+        assert_eq!(u32::from_le_bytes(out[80..84].try_into().unwrap()), 0);
+
+        // Reading back must produce an empty triangle iterator.
+        let mut cursor = std::io::Cursor::new(out);
+        let mut iter = crate::stl::stlb::BinaryStlReader::create_triangles_iterator(&mut cursor)
+            .expect("reader constructs");
+        assert!(iter.next().is_none());
     }
 }
