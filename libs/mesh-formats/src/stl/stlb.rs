@@ -10,6 +10,19 @@ use anyhow::{Context, Result, anyhow};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
+/// Hard ceiling on the declared triangle count in a binary STL
+/// header. Files claiming more than this are refused at construction
+/// time, before any payload bytes are read.
+///
+/// 200M triangles is ~10 GB of payload (50 bytes per triangle), well
+/// above any legitimate engineering or scan mesh. The cap is a backstop
+/// against a malicious or corrupt header for consumers that operate
+/// without an earlier file-size gate (CLI, direct API). The GUI
+/// enforces its own tighter 2 GiB file-size cap upstream (see
+/// `MAX_MESH_FILE_SIZE_MIB` in the GUI crate), so this parser cap
+/// only fires when that gate is absent.
+const MAX_BINARY_STL_TRIANGLES: usize = 200_000_000;
+
 fn read_exact_section<R: Read>(reader: &mut R, buf: &mut [u8], what: &str) -> Result<()> {
     match reader.read_exact(buf) {
         Ok(()) => Ok(()),
@@ -74,6 +87,13 @@ impl<'a> BinaryStlReader<'a> {
         let mut count_buf = [0u8; 4];
         read_exact_section(&mut reader, &mut count_buf, "the triangle count")?;
         let num_faces = u32::from_le_bytes(count_buf) as usize;
+        if num_faces > MAX_BINARY_STL_TRIANGLES {
+            return Err(anyhow!(
+                "declared triangle count {} exceeds the {} maximum supported by this reader",
+                num_faces,
+                MAX_BINARY_STL_TRIANGLES,
+            ));
+        }
         Ok(Box::new(BinaryStlReader {
             reader,
             index: 0,
@@ -126,3 +146,72 @@ impl<'a> BinaryStlReader<'a> {
 }
 
 impl<'a> TriangleIterator for BinaryStlReader<'a> {}
+
+#[cfg(test)]
+mod binary_stl_reader_tests {
+    use std::io::Cursor;
+
+    use super::{BinaryStlReader, MAX_BINARY_STL_TRIANGLES};
+
+    /// Builds an 84-byte binary STL header: 80 zero-padded name bytes
+    /// followed by a 4-byte little-endian declared triangle count. The
+    /// payload is left empty so the reader sees an EOF the first time
+    /// it tries to consume a triangle record.
+    fn header_with_declared_count(count: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; 84];
+        buf[80..84].copy_from_slice(&count.to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn rejects_declared_count_just_above_cap() {
+        let bytes = header_with_declared_count((MAX_BINARY_STL_TRIANGLES as u32) + 1);
+        let mut cursor = Cursor::new(bytes);
+        let err = BinaryStlReader::create_triangles_iterator(&mut cursor)
+            .err()
+            .expect("over-cap declared count must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds") && msg.contains("maximum"),
+            "unexpected error message: {msg}",
+        );
+    }
+
+    #[test]
+    fn rejects_max_u32_declared_count() {
+        // The pathological case from the audit. Without the cap this
+        // produced billions of failed reads before propagating an
+        // EOF; with the cap it errors at construction.
+        let bytes = header_with_declared_count(u32::MAX);
+        let mut cursor = Cursor::new(bytes);
+        assert!(
+            BinaryStlReader::create_triangles_iterator(&mut cursor).is_err(),
+            "u32::MAX declared count must be rejected",
+        );
+    }
+
+    #[test]
+    fn accepts_declared_count_at_exact_cap() {
+        // Boundary: equal to the cap must pass the check (the check
+        // is `>`, not `>=`). The iterator is constructible; the body
+        // is empty, so the first `next()` call surfaces a truncated
+        // read, but construction itself succeeds.
+        let bytes = header_with_declared_count(MAX_BINARY_STL_TRIANGLES as u32);
+        let mut cursor = Cursor::new(bytes);
+        assert!(
+            BinaryStlReader::create_triangles_iterator(&mut cursor).is_ok(),
+            "exact-cap declared count must construct successfully",
+        );
+    }
+
+    #[test]
+    fn accepts_zero_declared_count() {
+        // A header that says "no triangles" must construct cleanly;
+        // the resulting iterator yields nothing.
+        let bytes = header_with_declared_count(0);
+        let mut cursor = Cursor::new(bytes);
+        let mut iter = BinaryStlReader::create_triangles_iterator(&mut cursor)
+            .expect("zero-count header constructs");
+        assert!(iter.next().is_none());
+    }
+}
