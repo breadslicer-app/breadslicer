@@ -129,7 +129,19 @@ impl<'a> BinaryStlReader<'a> {
             Vertex::new([f(24, "v1.x")?, f(28, "v1.y")?, f(32, "v1.z")?]),
             Vertex::new([f(36, "v2.x")?, f(40, "v2.y")?, f(44, "v2.z")?]),
         ];
-        // buf[48..50] is the attribute byte count, ignored. TODO: check
+        // buf[48..50] is the per-triangle attribute byte count.
+        // Currently discarded. The standard prescribes a zero value
+        // but two real conventions store colour data here:
+        //   VisCAM / SolidView: 15-bit RGB packed as R (bits 10-14),
+        //     G (5-9), B (0-4) plus a validity bit (bit 15).
+        //   Materialise Magics: per-facet colour in addition to a
+        //     `COLOR=RGBA` field in the header, with R/G/B order
+        //     reversed relative to the VisCAM convention.
+        // When multi-material resin printing reaches the roadmap, a
+        // `LoadStlWarning::AttributeBytesIgnored { face_idx, value }`
+        // warning emitted here would let downstream surface it; that
+        // requires a `LoadStlWarning` enum first (mirroring
+        // `LoadObjWarning`).
 
         // We interpret a zero-length normal vector as a hint to compute it at load time.
         // If the triangle is truly degenerate the recomputation can't produce a meaningful
@@ -212,6 +224,55 @@ mod binary_stl_reader_tests {
         let mut cursor = Cursor::new(bytes);
         let mut iter = BinaryStlReader::create_triangles_iterator(&mut cursor)
             .expect("zero-count header constructs");
+        assert!(iter.next().is_none());
+    }
+
+    /// Builds a single-triangle binary STL whose attribute-byte-count
+    /// (the trailing u16 in the triangle record) is non-zero. The
+    /// rest of the record describes a unit XY triangle with normal
+    /// +Z, so the parser has no excuse to fail.
+    fn single_triangle_with_attribute_bytes(attr_bytes: u16) -> Vec<u8> {
+        let mut bytes = header_with_declared_count(1);
+        // Normal: (0, 0, 1).
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        // v0: (0, 0, 0).
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        // v1: (1, 0, 0).
+        bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        // v2: (0, 1, 0).
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+        // Attribute byte count.
+        bytes.extend_from_slice(&attr_bytes.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn non_zero_attribute_bytes_are_silently_discarded() {
+        // VisCAM / Magics colour conventions stash data in the
+        // attribute bytes. This reader does not surface them today;
+        // the test pins that behaviour so a future change adding a
+        // warning channel updates this expectation deliberately.
+        let bytes = single_triangle_with_attribute_bytes(0x8421);
+        let mut cursor = Cursor::new(bytes);
+        let mut iter =
+            BinaryStlReader::create_triangles_iterator(&mut cursor).expect("header constructs");
+        let tri = iter
+            .next()
+            .expect("one triangle")
+            .expect("triangle parses cleanly");
+        assert_eq!(tri.normal().coords(), [0.0, 0.0, 1.0]);
+        let verts = tri.vertices();
+        assert_eq!(verts[0].coords(), [0.0, 0.0, 0.0]);
+        assert_eq!(verts[1].coords(), [1.0, 0.0, 0.0]);
+        assert_eq!(verts[2].coords(), [0.0, 1.0, 0.0]);
         assert!(iter.next().is_none());
     }
 }
