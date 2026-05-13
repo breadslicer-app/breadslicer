@@ -7,7 +7,7 @@ pub mod fix;
 pub mod validate;
 pub mod validated;
 
-pub use fix::MeshFix;
+pub use fix::{MeshFix, MeshFixError};
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{MeshManifoldError, MeshNormalVectorError, ValidatedFaces, ValidatedFacesMut};
 

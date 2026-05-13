@@ -4,10 +4,9 @@
  */
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
-use anyhow::{Result, anyhow};
-
-use crate::geometry::compute_normal_from_triangle_vertices;
+use crate::geometry::{GeometryError, compute_normal_from_triangle_vertices};
 use crate::primitives::{FaceIndex, Normal, VertexIndex};
 
 use super::validate::MeshFaceError;
@@ -32,6 +31,50 @@ pub enum MeshFix {
         old_normal: Normal,
         new_normal: Normal,
     },
+}
+
+/// Failure modes of `fix_faces_orientation`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeshFixError {
+    /// The input manifold-error set names this face in more than three
+    /// `InconsistentWindingOrder` entries. A triangle has only three
+    /// edges, so the input is self-inconsistent.
+    FaceWithTooManyWindingErrors { face_idx: FaceIndex },
+    /// More than half of the mesh's faces would have to be flipped.
+    /// The routine treats this as "the entire mesh is inside-out" and
+    /// refuses the per-face fix in favour of an explicit global flip
+    /// by the caller.
+    TooManyFlippedFaces,
+    /// Recomputing the normal from a face's vertices failed because
+    /// the triangle is degenerate.
+    NormalRecompute(GeometryError),
+}
+
+impl fmt::Display for MeshFixError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FaceWithTooManyWindingErrors { face_idx } => {
+                write!(f, "face {face_idx} has more than 3 winding-order errors")
+            }
+            Self::TooManyFlippedFaces => f.write_str("too many flipped faces"),
+            Self::NormalRecompute(err) => write!(f, "normal recompute failed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for MeshFixError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NormalRecompute(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<GeometryError> for MeshFixError {
+    fn from(err: GeometryError) -> Self {
+        Self::NormalRecompute(err)
+    }
 }
 
 /// One planned mutation of a face. The fix routine builds a `Vec` of
@@ -64,7 +107,7 @@ pub(super) fn fix_faces_orientation_impl(
     manifold_errors: &[MeshManifoldError],
     normal_vector_errors: &[MeshNormalVectorError],
     options: FixFacesOptions,
-) -> Result<Vec<MeshFix>> {
+) -> Result<Vec<MeshFix>, MeshFixError> {
     let mut fixes: Vec<MeshFix> = Vec::new();
 
     let mut possibly_flipped_faces: HashMap<FaceIndex, u8> = HashMap::new();
@@ -106,10 +149,9 @@ pub(super) fn fix_faces_orientation_impl(
         // We do a first counting round
         for (face_idx, n_errors) in &possibly_flipped_faces {
             if *n_errors > 3 {
-                return Err(anyhow!(
-                    "Face with ID {} has more than 3 winding order errors",
-                    face_idx
-                ));
+                return Err(MeshFixError::FaceWithTooManyWindingErrors {
+                    face_idx: *face_idx,
+                });
             } else if *n_errors == 3 || *n_errors == 2 {
                 num_flipped_faces += 1;
             }
@@ -117,7 +159,7 @@ pub(super) fn fix_faces_orientation_impl(
 
         let flipped_threshold = (mesh.faces.len() / 2) as u32;
         if num_flipped_faces >= flipped_threshold {
-            return Err(anyhow!("Too many flipped faces"));
+            return Err(MeshFixError::TooManyFlippedFaces);
         }
 
         for (face_idx, n_errors) in &possibly_flipped_faces {
@@ -534,13 +576,10 @@ mod indexed_mesh_fix_faces_orientation_tests {
                 normals: true,
             },
         );
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("more than 3 winding order errors")
-        );
+        assert!(matches!(
+            result,
+            Err(MeshFixError::FaceWithTooManyWindingErrors { face_idx }) if face_idx == FaceIndex::from(0_usize)
+        ));
     }
 
     #[test]
@@ -587,13 +626,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
                 normals: true,
             },
         );
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Too many flipped faces")
-        );
+        assert!(matches!(result, Err(MeshFixError::TooManyFlippedFaces)));
     }
 
     #[test]

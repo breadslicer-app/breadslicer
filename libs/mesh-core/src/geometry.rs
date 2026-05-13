@@ -5,10 +5,27 @@
 
 use core::f32;
 use std::cmp::Ordering;
-
-use anyhow::{Result, anyhow};
+use std::fmt;
 
 use crate::primitives::{Normal, Vertex};
+
+/// Failure mode of `compute_normal_from_triangle_vertices`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeometryError {
+    /// Triangle has near-zero area (sin²(theta) below
+    /// `DEGENERACY_SIN_SQ_THRESHOLD`), so no direction can be recovered.
+    DegenerateTriangle,
+}
+
+impl fmt::Display for GeometryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::DegenerateTriangle => "degenerate (near-zero area) triangle",
+        })
+    }
+}
+
+impl std::error::Error for GeometryError {}
 
 /// Threshold on `sin²(θ)` between two edges of a triangle. Below this
 /// the triangle is treated as degenerate.
@@ -77,7 +94,9 @@ pub(crate) fn gt_strict(value: f64, threshold: f64) -> bool {
 ///
 /// The result is returned as an f64 array so callers that want to compare it
 /// against a stored f32 normal can do so at f64 precision.
-pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f64; 3]> {
+pub(crate) fn compute_reference_normal_f64(
+    vertices: &[Vertex; 3],
+) -> Result<[f64; 3], GeometryError> {
     let v0 = vertices[0].to_f64();
     let v1 = vertices[1].to_f64();
     let v2 = vertices[2].to_f64();
@@ -98,7 +117,7 @@ pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f6
         cross_mag_sq,
         DEGENERACY_SIN_SQ_THRESHOLD * edges_mag_sq_product,
     ) {
-        return Err(anyhow!("Degenerate (near-zero area) triangle found"));
+        return Err(GeometryError::DegenerateTriangle);
     }
 
     let cross_mag = cross_mag_sq.sqrt();
@@ -109,7 +128,9 @@ pub(crate) fn compute_reference_normal_f64(vertices: &[Vertex; 3]) -> Result<[f6
     ])
 }
 
-pub fn compute_normal_from_triangle_vertices(vertices: &[Vertex; 3]) -> Result<Normal> {
+pub fn compute_normal_from_triangle_vertices(
+    vertices: &[Vertex; 3],
+) -> Result<Normal, GeometryError> {
     let unit = compute_reference_normal_f64(vertices)?;
     Ok(Normal::new([
         unit[0] as f32,

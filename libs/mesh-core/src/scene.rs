@@ -3,11 +3,48 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::fmt;
+
 use crate::aabb::Aabb;
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Normal, Vertex};
 use crate::transform::{AffineTransform3D, TransformError};
-use anyhow::{Result, anyhow};
+
+/// Failure modes of `Scene` / `SceneObject` baking helpers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneError {
+    /// `SceneObjectContent::Resource(idx)` points past the scene's
+    /// resource vector.
+    ResourceOutOfBounds { idx: usize },
+    /// A `Transform3D::Affine` operation failed while baking.
+    Transform(TransformError),
+}
+
+impl fmt::Display for SceneError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ResourceOutOfBounds { idx } => {
+                write!(f, "resource index {idx} out of bounds")
+            }
+            Self::Transform(err) => write!(f, "transform error: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for SceneError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transform(err) => Some(err),
+            Self::ResourceOutOfBounds { .. } => None,
+        }
+    }
+}
+
+impl From<TransformError> for SceneError {
+    fn from(err: TransformError) -> Self {
+        Self::Transform(err)
+    }
+}
 
 /// Per-object transform. The `Identity` variant lets callers skip the
 /// matrix application entirely for the (very common) case where an object
@@ -60,7 +97,7 @@ impl Transform3D {
     /// Inverse of the transform. Identity is its own inverse;
     /// `Affine` propagates the singular-matrix error from
     /// `AffineTransform3D::inverse`.
-    pub fn inverse(&self) -> Result<Self> {
+    pub fn inverse(&self) -> Result<Self, TransformError> {
         match self {
             Self::Identity => Ok(Self::Identity),
             Self::Affine(a) => Ok(Self::Affine(a.inverse()?)),
@@ -107,12 +144,15 @@ impl SceneObject {
     /// Resolves the object's referenced mesh against `resources`.
     /// Returns an error if the object is a `Resource(idx)` whose index
     /// is out of bounds.
-    pub fn resolve_mesh<'a>(&'a self, resources: &'a [IndexedMesh]) -> Result<&'a IndexedMesh> {
+    pub fn resolve_mesh<'a>(
+        &'a self,
+        resources: &'a [IndexedMesh],
+    ) -> Result<&'a IndexedMesh, SceneError> {
         match &self.content {
             SceneObjectContent::Mesh(m) => Ok(m),
             SceneObjectContent::Resource(idx) => resources
                 .get(*idx)
-                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds")),
+                .ok_or(SceneError::ResourceOutOfBounds { idx: *idx }),
         }
     }
 
@@ -128,7 +168,7 @@ impl SceneObject {
     ///
     /// The output mesh has no metadata; downstream consumers
     /// (`merge_meshes`, format writers) attach their own.
-    pub fn baked_mesh(&self, resources: &[IndexedMesh]) -> Result<IndexedMesh> {
+    pub fn baked_mesh(&self, resources: &[IndexedMesh]) -> Result<IndexedMesh, SceneError> {
         let mesh = self.resolve_mesh(resources)?;
         match &self.transform {
             Transform3D::Identity => Ok(IndexedMesh {
@@ -211,7 +251,7 @@ impl Scene {
     /// union the local AABB directly; affine objects pass it through
     /// Arvo's method, which is conservative and tight for non-rotated
     /// transforms.
-    pub fn aabb(&self) -> Result<Option<Aabb>> {
+    pub fn aabb(&self) -> Result<Option<Aabb>, SceneError> {
         let mut aabb = Aabb::empty();
         let mut has_any = false;
 
@@ -221,7 +261,7 @@ impl Scene {
                 SceneObjectContent::Resource(idx) => self
                     .resources
                     .get(*idx)
-                    .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
+                    .ok_or(SceneError::ResourceOutOfBounds { idx: *idx })?,
             };
 
             let Some(local) = mesh.local_aabb() else {
@@ -254,7 +294,7 @@ impl Scene {
         &self,
         target_xy: [f32; 2],
         floor_z: f32,
-    ) -> Result<Option<[f64; 3]>> {
+    ) -> Result<Option<[f64; 3]>, SceneError> {
         let Some(aabb) = self.aabb()? else {
             return Ok(None);
         };
@@ -274,7 +314,7 @@ impl Scene {
     /// Returns `Ok(None)` if the scene contains no geometry, or an error
     /// if any resource index is out of bounds or any object's transform
     /// is singular (which makes `apply_to_normal` fail).
-    pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>> {
+    pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>, SceneError> {
         let mut vertices = Vec::new();
         let mut faces = Vec::new();
 

@@ -22,7 +22,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
 use float_cmp::approx_eq;
 
 use crate::geometry::{
@@ -30,7 +29,7 @@ use crate::geometry::{
 };
 use crate::primitives::{FaceIndex, IndexedTriangle, Vector3D, Vertex, VertexIndex};
 
-use super::fix::MeshFix;
+use super::fix::{MeshFix, MeshFixError};
 use super::{FixFacesOptions, IndexedMesh};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -134,7 +133,7 @@ impl<'a> ValidatedFacesMut<'a> {
         manifold_errors: &[MeshManifoldError],
         normal_vector_errors: &[MeshNormalVectorError],
         options: FixFacesOptions,
-    ) -> Result<Vec<MeshFix>> {
+    ) -> Result<Vec<MeshFix>, MeshFixError> {
         super::fix::fix_faces_orientation_impl(
             self.mesh,
             manifold_errors,
