@@ -24,7 +24,7 @@
 //!    is matched by accepting hits whose MT determinant has the same
 //!    sign as the linear part's determinant: a transform with
 //!    `det < 0` reverses world-space winding, so the object-space
-//!    front face is the world-space back face — and vice versa.
+//!    front face is the world-space back face, and vice versa.
 //!
 //! Iterating in object space turns a per-triangle 3 × `Mat4 * Vec3`
 //! transform (the previous world-space variant) into a per-object
@@ -34,6 +34,7 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
+use sc_mesh_core::aabb::arvo_transformed_aabb;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
@@ -61,7 +62,7 @@ const DET_SIN_SQ_THRESHOLD: f32 = 1e-12;
 /// Object-space ray plus the conversion factor needed to bring an MT
 /// `t` back to world space. `det_sign` is `+1.0` when the parent
 /// transform's linear part has positive determinant, `-1.0` when
-/// negative — used to flip the MT front-face filter for mirrored
+/// negative; used to flip the MT front-face filter for mirrored
 /// objects so the picker keeps agreeing with the renderer's CCW
 /// culling.
 struct LocalRay {
@@ -120,7 +121,7 @@ pub fn ray_from_pixel(
 }
 
 /// Projects a world-space point onto the viewport in logical-pixel
-/// coordinates (top-left origin, y growing downward — same convention
+/// coordinates (top-left origin, y growing downward; same convention
 /// as `ray_from_pixel`'s input). Returns `None` when the point is
 /// behind the camera.
 ///
@@ -292,7 +293,7 @@ pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Optio
 }
 
 /// Build the object-space form of `ray` for `transform`. Returns
-/// `None` when the transform's linear part is singular — the picker
+/// `None` when the transform's linear part is singular; the picker
 /// treats that as a malformed object and skips it. For an identity
 /// transform the local ray equals the world ray, with
 /// `world_to_local_scale = 1` and `det_sign = +1`.
@@ -378,44 +379,24 @@ fn world_aabb_from_local(local: Aabb, transform: &Transform3D) -> (Vec3, Vec3) {
     }
 }
 
-/// Arvo's transformed-AABB formula in f32. Mirrors `Aabb::transformed_arvo`
-/// (which works in f64 for vertex-AABB precision); for picking, f32 is
-/// adequate — the AABB only gates the triangle test, which itself is
-/// f32 throughout.
+/// Arvo's transformed-AABB formula in f32, delegating to mesh-core's
+/// generic implementation. For picking, f32 is adequate: the AABB only
+/// gates the per-triangle test, which itself is f32 throughout.
+/// `AffineTransform3D` stores its linear part / translation as f64, so
+/// the f32 cast happens once per call rather than per term.
 fn arvo(lmin: Vec3, lmax: Vec3, a: &AffineTransform3D) -> (Vec3, Vec3) {
-    let center = (lmin + lmax) * 0.5;
-    let half = (lmax - lmin) * 0.5;
-
     let m = a.linear();
     let t = a.translation();
+    let m_f32: [[f32; 3]; 3] = [
+        [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+        [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+        [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
+    ];
+    let t_f32 = [t[0] as f32, t[1] as f32, t[2] as f32];
 
-    let new_center = Vec3::new(
-        (m[0][0] as f32) * center.x
-            + (m[0][1] as f32) * center.y
-            + (m[0][2] as f32) * center.z
-            + (t[0] as f32),
-        (m[1][0] as f32) * center.x
-            + (m[1][1] as f32) * center.y
-            + (m[1][2] as f32) * center.z
-            + (t[1] as f32),
-        (m[2][0] as f32) * center.x
-            + (m[2][1] as f32) * center.y
-            + (m[2][2] as f32) * center.z
-            + (t[2] as f32),
-    );
-    let new_half = Vec3::new(
-        (m[0][0] as f32).abs() * half.x
-            + (m[0][1] as f32).abs() * half.y
-            + (m[0][2] as f32).abs() * half.z,
-        (m[1][0] as f32).abs() * half.x
-            + (m[1][1] as f32).abs() * half.y
-            + (m[1][2] as f32).abs() * half.z,
-        (m[2][0] as f32).abs() * half.x
-            + (m[2][1] as f32).abs() * half.y
-            + (m[2][2] as f32).abs() * half.z,
-    );
-
-    (new_center - new_half, new_center + new_half)
+    let (new_min, new_max) =
+        arvo_transformed_aabb::<f32>(lmin.to_array(), lmax.to_array(), &m_f32, &t_f32);
+    (Vec3::from(new_min), Vec3::from(new_max))
 }
 
 #[cfg(test)]
@@ -460,7 +441,7 @@ mod ray_from_pixel_tests {
     fn corner_rays_respect_aspect_ratio() {
         // For a wide viewport, a horizontal-edge ray must subtend a
         // wider angle from forward than a vertical-edge ray of the
-        // same NDC magnitude. Compare cos(angle) — the wider angle
+        // same NDC magnitude. Compare cos(angle); the wider angle
         // has the smaller cos.
         let cam = camera_at_origin();
         let fov = std::f32::consts::FRAC_PI_3;
@@ -642,7 +623,7 @@ mod pick_object_tests {
 
     #[test]
     fn ray_hits_object_uses_object_transform() {
-        // Same triangle, two scenes — one identity, one translated by
+        // Same triangle, two scenes: one identity, one translated by
         // +X. Ray points at the +X position; only the translated copy
         // should be hit.
         let id_spatial = spatial_for(Scene {
@@ -737,7 +718,7 @@ mod pick_object_tests {
         assert_eq!(pick_object(&ray, &spatial), Some(1));
 
         // Confirm the AABB rejector specifically rules out the
-        // off-axis object — its world-space AABB should miss the ray.
+        // off-axis object: its world-space AABB should miss the ray.
         let q = spatial.object(0).unwrap();
         let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
         assert!(
@@ -765,7 +746,7 @@ mod pick_object_tests {
         let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
         assert!(
             ray_hits_aabb(&ray, min, max),
-            "AABB should be intersected — that's the whole point of this test"
+            "AABB should be intersected: that's the whole point of this test"
         );
         assert!(
             pick_object(&ray, &spatial).is_none(),
@@ -777,7 +758,7 @@ mod pick_object_tests {
     fn mirrored_object_keeps_picker_in_agreement_with_renderer() {
         // The triangle is CCW when viewed from +Z in object space, so
         // its object-space front face is +Z. A non-uniform scale of
-        // [-1, 1, 1] has det = -1 and reverses world-space winding —
+        // [-1, 1, 1] has det = -1 and reverses world-space winding;
         // the *world-space* front face becomes -Z. The picker must
         // pick that up: a ray from +Z hits the world-space back face
         // and must be rejected; a ray from -Z hits the world-space
@@ -818,7 +799,7 @@ mod pick_object_tests {
 
     #[test]
     fn dangling_resource_index_is_treated_as_a_no_op() {
-        // The picker shouldn't surface errors for malformed scenes —
+        // The picker shouldn't surface errors for malformed scenes;
         // it just skips the object. The renderer's scene-build path
         // already errors on dangling indices, so the picker only sees
         // such scenes if something else has gone wrong upstream.
@@ -1023,7 +1004,7 @@ mod arvo_consistency_tests {
 
     #[test]
     fn off_origin_aabb_agrees() {
-        // AABB whose corners are all positive — the centre is not at
+        // AABB whose corners are all positive: the centre is not at
         // the origin, so the centre-and-half-extents formula has both
         // a non-trivial centre transform and a non-trivial half-extent
         // computation.

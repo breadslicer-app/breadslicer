@@ -15,6 +15,7 @@
 use float_cmp::approx_eq;
 use proptest::prelude::*;
 use sc_mesh_core::Aabb;
+use sc_mesh_core::aabb::arvo_transformed_aabb;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::{Vector3D, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
@@ -640,6 +641,68 @@ proptest! {
             prop_assert!(
                 approx_eq!(f32, world_max[axis], expected_max[axis], epsilon = 1e-4),
             );
+        }
+    }
+
+    /// Conservativeness contract for the f32 monomorphisation of
+    /// [`arvo_transformed_aabb`] (the path the GUI's picker uses to
+    /// gate per-triangle tests). The f32 AABB must contain every
+    /// corner of the local box transformed at f64 precision, within a
+    /// tolerance that scales with the world-AABB diagonal. The f64
+    /// reference is computed by direct matrix-vector product against
+    /// the transform's stored linear/translation parts, so the only
+    /// precision loss in the comparison is the final f32 cast.
+    #[test]
+    fn f32_arvo_transformed_aabb_contains_every_high_precision_corner(
+        (mn, mx) in aabb_strategy(),
+        a in affine_strategy(),
+    ) {
+        let m = a.linear();
+        let t = a.translation();
+        let m_f32: [[f32; 3]; 3] = [
+            [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+            [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+            [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
+        ];
+        let t_f32 = [t[0] as f32, t[1] as f32, t[2] as f32];
+        let (world_min, world_max) =
+            arvo_transformed_aabb::<f32>(mn, mx, &m_f32, &t_f32);
+
+        let corners = [
+            [mn[0], mn[1], mn[2]],
+            [mx[0], mn[1], mn[2]],
+            [mn[0], mx[1], mn[2]],
+            [mx[0], mx[1], mn[2]],
+            [mn[0], mn[1], mx[2]],
+            [mx[0], mn[1], mx[2]],
+            [mn[0], mx[1], mx[2]],
+            [mx[0], mx[1], mx[2]],
+        ];
+
+        let diag = ((world_max[0] - world_min[0]).powi(2)
+            + (world_max[1] - world_min[1]).powi(2)
+            + (world_max[2] - world_min[2]).powi(2))
+        .sqrt();
+        let eps = (diag * 1e-4).max(1e-4);
+
+        for corner in corners {
+            let cf = [corner[0] as f64, corner[1] as f64, corner[2] as f64];
+            let transformed_f64 = [
+                m[0][0] * cf[0] + m[0][1] * cf[1] + m[0][2] * cf[2] + t[0],
+                m[1][0] * cf[0] + m[1][1] * cf[1] + m[1][2] * cf[2] + t[1],
+                m[2][0] * cf[0] + m[2][1] * cf[1] + m[2][2] * cf[2] + t[2],
+            ];
+            for axis in 0..3 {
+                let high = transformed_f64[axis] as f32;
+                prop_assert!(
+                    high >= world_min[axis] - eps,
+                    "corner {transformed_f64:?} below world_min {world_min:?} on axis {axis}",
+                );
+                prop_assert!(
+                    high <= world_max[axis] + eps,
+                    "corner {transformed_f64:?} above world_max {world_max:?} on axis {axis}",
+                );
+            }
         }
     }
 }
