@@ -6,20 +6,16 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-#[cfg(test)]
-use sc_mesh_core::scene::Scene;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
+use super::camera_controller::CameraController;
 use super::gizmo_drag::{DragOp, GizmoState};
-use glam::Vec3;
 
 use super::gizmo_fsm::{
     GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
 };
 use super::input_state::{ClickOrDrag, InputState};
-#[cfg(test)]
-use super::keyboard_drive::{ARROW_X_POS, ARROW_Y_POS};
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_scheduler;
@@ -27,7 +23,7 @@ use super::types::{FrameState, ScreenPoint, ViewportSize};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
-use crate::camera::{AxisView, OrbitCamera};
+use crate::camera::AxisView;
 use crate::error_dialog::DialogManager;
 use crate::gizmo;
 use crate::i18n::ctr;
@@ -35,14 +31,9 @@ use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, SceneRender, default_fov_y};
 use crate::pending_load::PendingLoad;
 use crate::picking;
-#[cfg(test)]
-use crate::scene_document::SceneEdit;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{ObjectIdx, Selection};
-
-#[cfg(test)]
-use crate::gizmo::axis::Axis;
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -50,10 +41,7 @@ pub struct ViewportController {
     // ahead, the undo stack). The controller observes it.
     document: Rc<SceneDocument>,
     renderer: RefCell<Option<Renderer>>,
-    // The camera lives next to the scene (not inside the GPU renderer), so it
-    // survives device-loss / RenderingTeardown→Setup cycles for free and can
-    // be manipulated without a GPU present.
-    camera: RefCell<Option<OrbitCamera>>,
+    camera: CameraController,
     viewport: Cell<Option<ViewportSize>>,
     // Per-frame work owed: a redraw (something visual changed) and/or
     // a GPU upload (CPU-side scene differs from the renderer's
@@ -111,7 +99,7 @@ impl ViewportController {
             ui: ui.as_weak(),
             document,
             renderer: RefCell::new(None),
-            camera: RefCell::new(None),
+            camera: CameraController::new(),
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             input_state: InputState::new(),
@@ -139,7 +127,7 @@ impl ViewportController {
             ui: slint::Weak::default(),
             document: SceneDocument::new(),
             renderer: RefCell::new(None),
-            camera: RefCell::new(None),
+            camera: CameraController::new(),
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             input_state: InputState::new(),
@@ -155,7 +143,7 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(crate) fn install_scene_for_test(&self, scene: Scene) {
+    pub(crate) fn install_scene_for_test(&self, scene: sc_mesh_core::scene::Scene) {
         // Tests don't care about the source path; populate the slot
         // with a sentinel so the document's invariant ("scene present
         // ⇔ path present") holds and any future test assertion on
@@ -254,7 +242,7 @@ impl ViewportController {
     /// `on_scene_load_finished` can populate it; UI mirrors the new
     /// scene's object list and the freshly-cleared selection.
     fn on_scene_installed(&self) {
-        *self.camera.borrow_mut() = None;
+        self.camera.reset();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
             let names = self
@@ -276,7 +264,7 @@ impl ViewportController {
     /// transform; same for the keyboard integrator's focus and
     /// held-arrow bitset.
     fn on_scene_cleared(&self) {
-        *self.camera.borrow_mut() = None;
+        self.camera.reset();
         self.frame.set(FrameState::default());
         self.gizmo_fsm.set_idle();
         self.gizmo_fsm.clear_hover();
@@ -350,54 +338,34 @@ impl ViewportController {
     }
 
     pub fn on_rotate(&self, dx: f32, dy: f32) {
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-        if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.orbit(dx, dy, vp.height());
+        if self.camera.on_rotate(dx, dy, self.viewport.get()) {
             self.mark_dirty();
         }
     }
 
     pub fn on_pan(&self, dx: f32, dy: f32) {
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-        if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.pan(dx, dy, default_fov_y(), vp.height());
+        if self.camera.on_pan(dx, dy, self.viewport.get()) {
             self.mark_dirty();
         }
     }
 
     pub fn on_zoom(&self, delta: f32, cursor_x: f32, cursor_y: f32) {
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-        let factor = (-delta * 0.005).exp().clamp(0.1, 10.0);
-        if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.zoom_at(
-                factor,
-                cursor_x,
-                cursor_y,
-                default_fov_y(),
-                vp.width(),
-                vp.height(),
-            );
+        if self
+            .camera
+            .on_zoom(delta, cursor_x, cursor_y, self.viewport.get())
+        {
             self.mark_dirty();
         }
     }
 
     pub fn on_frame_view(&self) {
-        if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.frame_scene();
+        if self.camera.on_frame_view() {
             self.mark_dirty();
         }
     }
 
     pub fn on_axis_view(&self, view: crate::AxisView) {
-        let axis = axis_from_ui(view);
-        if let Some(cam) = self.camera.borrow_mut().as_mut() {
-            cam.set_axis_view(axis);
+        if self.camera.on_axis_view(axis_from_ui(view)) {
             self.mark_dirty();
         }
     }
@@ -455,17 +423,8 @@ impl ViewportController {
                 .borrow()
                 .as_ref()
                 .and_then(|r| r.scene_bounds());
-            let (centre, view_radius) = self.build_volume.get().framing(scene_bounds);
-            // Detail radius drives the zoom-in floor. Anchored to the
-            // scene's own AABB so the user can pull close to a model
-            // much smaller than the envelope; falls back to
-            // `view_radius` when there's no scene yet.
-            let detail_radius = scene_only_radius(scene_bounds).unwrap_or(view_radius);
-            *self.camera.borrow_mut() = Some(OrbitCamera::with_detail_radius(
-                centre,
-                view_radius,
-                detail_radius,
-            ));
+            self.camera
+                .replace_with_framing(scene_bounds, self.build_volume.get());
             self.frame.update(FrameState::with_redraw_owed);
         } else {
             self.frame.update(FrameState::with_upload_owed);
@@ -675,7 +634,7 @@ impl ViewportController {
     pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         let ctx = GizmoMoveCtx {
             document: &self.document,
-            camera: &self.camera,
+            camera: self.camera.camera_cell(),
             viewport: self.viewport.get(),
             cursor: ScreenPoint { x, y },
             modifiers,
@@ -691,7 +650,7 @@ impl ViewportController {
         // scene mutation, so it stays on the manual dirty path.
         let hover_ctx = GizmoHoverCtx {
             document: &self.document,
-            camera: &self.camera,
+            camera: self.camera.camera_cell(),
             viewport: self.viewport.get(),
             selection_idx: self.document.selection_primary_idx(),
             cursor: ScreenPoint { x, y },
@@ -735,7 +694,7 @@ impl ViewportController {
     fn try_start_gizmo_drag(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         let ctx = GizmoStartCtx {
             document: &self.document,
-            camera: &self.camera,
+            camera: self.camera.camera_cell(),
             viewport: self.viewport.get(),
             selection_idx: self.document.selection_primary_idx(),
             press: ScreenPoint { x, y },
@@ -771,7 +730,7 @@ impl ViewportController {
     fn integrate_keyboard_arrows(&self) {
         let ctx = IntegrationCtx {
             document: &self.document,
-            camera: &self.camera,
+            camera: self.camera.camera_cell(),
             viewport: self.viewport.get(),
             selection_idx: self.document.selection_primary_idx(),
             build_volume: self.build_volume.get(),
@@ -787,7 +746,7 @@ impl ViewportController {
             return;
         };
         let pick = {
-            let camera_slot = self.camera.borrow();
+            let camera_slot = self.camera.camera_cell().borrow();
             let Some(camera) = camera_slot.as_ref() else {
                 return;
             };
@@ -896,15 +855,10 @@ impl ViewportController {
         // scene's world AABB (when uploaded) and the build envelope.
         // Skipped if a camera already exists (re-upload across a
         // RenderingTeardown -> Setup cycle preserves the user's view).
-        if self.camera.borrow().is_none() {
+        if !self.camera.is_initialised() {
             let scene_bounds = renderer.scene_bounds();
-            let (centre, view_radius) = self.build_volume.get().framing(scene_bounds);
-            let detail_radius = scene_only_radius(scene_bounds).unwrap_or(view_radius);
-            *self.camera.borrow_mut() = Some(OrbitCamera::with_detail_radius(
-                centre,
-                view_radius,
-                detail_radius,
-            ));
+            self.camera
+                .replace_with_framing(scene_bounds, self.build_volume.get());
         }
 
         if !self.frame.get().redraw_owed() {
@@ -927,7 +881,7 @@ impl ViewportController {
 
         let (eff_w, eff_h) = render_scheduler::bucketed_size(width, height, self.resizing.get());
 
-        let camera_slot = self.camera.borrow();
+        let camera_slot = self.camera.camera_cell().borrow();
         let Some(camera) = camera_slot.as_ref() else {
             return;
         };
@@ -1027,14 +981,6 @@ impl ViewportController {
             ),
         }
     }
-}
-
-/// Half-length of the scene's AABB diagonal in millimetres, used as
-/// the `detail_radius` argument to `OrbitCamera::with_detail_radius`.
-/// Returns `None` when the renderer has no scene bounds, so callers
-/// can fall back to the envelope-derived `view_radius`.
-fn scene_only_radius(scene_bounds: Option<(Vec3, Vec3)>) -> Option<f32> {
-    scene_bounds.map(|(min, max)| ((max - min).length() * 0.5).max(1e-3))
 }
 
 fn axis_from_ui(view: crate::AxisView) -> AxisView {
@@ -1290,6 +1236,7 @@ mod selection_tests {
 mod viewport_click_tests {
     use super::*;
     use crate::camera::OrbitCamera;
+    use crate::gizmo::axis::Axis;
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
     use sc_mesh_core::IndexedMesh;
@@ -1363,7 +1310,8 @@ mod viewport_click_tests {
 
         // Camera framed on the first triangle, looking down -Z.
         // Centre pixel of the viewport casts a ray straight at it.
-        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        *ctrl.camera.camera_cell().borrow_mut() =
+            Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
 
         ctrl.on_pointer_down(100.0, 50.0, no_mods());
@@ -1380,7 +1328,8 @@ mod viewport_click_tests {
             objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
         };
         ctrl.install_scene_for_test(scene);
-        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        *ctrl.camera.camera_cell().borrow_mut() =
+            Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         // A 200×100 viewport with the default gizmo size leaves no
         // truly-empty pixel: HANDLE_PIXEL_LENGTH is 120 px, so the
         // rotate-cone bounding volumes (perspective-projected close
@@ -1413,7 +1362,8 @@ mod viewport_click_tests {
             objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
         };
         ctrl.install_scene_for_test(scene);
-        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        *ctrl.camera.camera_cell().borrow_mut() =
+            Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
 
         // Press over the triangle, release 50 px away → drag.
@@ -1449,7 +1399,7 @@ mod viewport_click_tests {
             objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
         };
         ctrl.install_scene_for_test(scene);
-        *ctrl.camera.borrow_mut() = Some(front_camera());
+        *ctrl.camera.camera_cell().borrow_mut() = Some(front_camera());
         let (vw, vh) = GIZMO_TEST_VIEWPORT;
         ctrl.set_viewport_for_test(vw, vh);
         ctrl.on_select_by_index(0);
@@ -1489,7 +1439,7 @@ mod viewport_click_tests {
     /// `pivot + axis_world * (scale * MIDPOINT_FRACTION)`; with the
     /// front camera, that lands on screen-y = viewport-centre.
     fn x_midpoint_press_screen(ctrl: &ViewportController) -> (f32, f32) {
-        let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
+        let cam = ctrl.camera.camera_cell().borrow().as_ref().unwrap().clone();
         let (vw, vh) = ctrl.viewport_for_test().unwrap();
         let fov_y = default_fov_y();
         let scale = gizmo::gizmo_scale(&cam, fov_y, vh);
@@ -1536,7 +1486,7 @@ mod viewport_click_tests {
         let press = X_CONE_PRESS;
         let release = (X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
         let (vw, vh) = GIZMO_TEST_VIEWPORT;
-        let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
+        let cam = ctrl.camera.camera_cell().borrow().as_ref().unwrap().clone();
         let fov_y = default_fov_y();
         let press_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1);
         let release_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1);
@@ -1571,7 +1521,7 @@ mod viewport_click_tests {
         let mid = (X_CONE_PRESS.0 + 3.0, X_CONE_PRESS.1);
         let release = (X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1);
         let (vw, vh) = GIZMO_TEST_VIEWPORT;
-        let cam = ctrl.camera.borrow().as_ref().unwrap().clone();
+        let cam = ctrl.camera.camera_cell().borrow().as_ref().unwrap().clone();
         let fov_y = default_fov_y();
         let press_anchor = gizmo::drag_math::closest_point_on_axis(
             &picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1),
@@ -1731,7 +1681,8 @@ mod viewport_click_tests {
             objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
         };
         ctrl.install_scene_for_test(scene);
-        *ctrl.camera.borrow_mut() = Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
+        *ctrl.camera.camera_cell().borrow_mut() =
+            Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
 
         ctrl.on_pointer_down(100.0, 50.0, no_mods());
@@ -2080,7 +2031,11 @@ mod viewport_click_tests {
 
 #[cfg(test)]
 mod keyboard_focus_tests {
+    use super::super::keyboard_drive::{ARROW_X_POS, ARROW_Y_POS};
     use super::*;
+    use crate::camera::OrbitCamera;
+    use crate::gizmo::axis::Axis;
+    use crate::scene_document::SceneEdit;
     use glam::Vec3;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
@@ -2362,7 +2317,7 @@ mod keyboard_focus_tests {
         ctrl.install_scene_for_test(cube_object_scene());
         let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
         cam.set_axis_view(crate::camera::AxisView::Front);
-        *ctrl.camera.borrow_mut() = Some(cam);
+        *ctrl.camera.camera_cell().borrow_mut() = Some(cam);
         ctrl.set_viewport_for_test(400.0, 200.0);
     }
 
@@ -2373,7 +2328,7 @@ mod keyboard_focus_tests {
     fn integrate_two_ticks(ctrl: &ViewportController) {
         let _ = ctrl.kbd_drive.integrate(IntegrationCtx {
             document: &ctrl.document,
-            camera: &ctrl.camera,
+            camera: ctrl.camera.camera_cell(),
             viewport: ctrl.viewport.get(),
             selection_idx: ctrl.document.selection_primary_idx(),
             build_volume: ctrl.build_volume.get(),
@@ -2381,7 +2336,7 @@ mod keyboard_focus_tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let _ = ctrl.kbd_drive.integrate(IntegrationCtx {
             document: &ctrl.document,
-            camera: &ctrl.camera,
+            camera: ctrl.camera.camera_cell(),
             viewport: ctrl.viewport.get(),
             selection_idx: ctrl.document.selection_primary_idx(),
             build_volume: ctrl.build_volume.get(),
