@@ -457,8 +457,19 @@ fn parse_face_vertex_index(
     let resolved = if index > 0 {
         (index - 1) as usize // OBJ is 1-based
     } else if index < 0 {
-        // Negative indices are relative to the current vertex list end
-        let abs_index = (-index) as usize;
+        // Negative indices are relative to the current vertex list end.
+        // `checked_neg` covers the `i64::MIN` overflow; `try_from`
+        // catches 32-bit targets where the magnitude exceeds `usize::MAX`.
+        let abs_index: usize = index
+            .checked_neg()
+            .and_then(|n| usize::try_from(n).ok())
+            .ok_or_else(|| {
+                anyhow!(
+                    "line {}: negative face index {} out of range",
+                    line_num + 1,
+                    index,
+                )
+            })?;
         if abs_index > vertex_count {
             return Err(anyhow!(
                 "line {}: negative index {} out of range (only {} vertices defined)",
@@ -662,6 +673,17 @@ mod parse_face_vertex_index_tests {
     #[test]
     fn negative_out_of_range() {
         let err = parse_face_vertex_index("-6", 5, 0).unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    // `-i64::MIN` overflows. The release profile has no overflow checks
+    // and the wrapped value happens to fail the bounds check, but a
+    // debug build (or any future profile with overflow checks enabled)
+    // would panic on `(-index) as usize`. This test pins the contract.
+    #[test]
+    fn i64_min_negative_index_is_error_not_panic() {
+        let token = i64::MIN.to_string();
+        let err = parse_face_vertex_index(&token, 5, 0).unwrap_err();
         assert!(err.to_string().contains("out of range"));
     }
 
