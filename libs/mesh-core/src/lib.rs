@@ -29,6 +29,7 @@ pub mod scene_graph;
 pub mod scene_graph_aabb;
 pub mod scene_graph_bake;
 pub mod scene_graph_node;
+pub mod scene_graph_shims;
 pub mod transform;
 
 use std::collections::HashMap;

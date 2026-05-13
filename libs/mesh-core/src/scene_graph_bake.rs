@@ -16,8 +16,8 @@ impl SceneGraph {
     /// Merges all leaf meshes reachable from scene roots into a single
     /// [`IndexedMesh`], baking the composed ancestor-chain transform
     /// into each leaf's vertices and normals. `Group` and `Instance`
-    /// nodes are traversed. `Csg` nodes are an error: phase 1 does not
-    /// ship an evaluator, and any caller that wants to flatten a graph
+    /// nodes are traversed. `Csg` nodes are an error: there is no
+    /// evaluator yet, so any caller that wants to flatten a graph
     /// containing CSG must first resolve those nodes through a kernel.
     pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>, SceneGraphError> {
         let mut vertices: Vec<Vertex> = Vec::new();

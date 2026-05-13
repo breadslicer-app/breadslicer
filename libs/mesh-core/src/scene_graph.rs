@@ -510,7 +510,9 @@ impl SceneGraph {
         None
     }
 
-    /// Re-check every invariant from the plan section 2.4.
+    /// Re-check every structural invariant of this graph: live ids in
+    /// every reference, intersection non-empty, parent/child agreement,
+    /// expansion-graph acyclicity.
     pub fn validate(&self) -> Result<(), SceneGraphError> {
         // (1) Every NodeId referenced exists. (2)(3) Likewise for
         // resource ids. (5) Intersection has >= 1 child.
