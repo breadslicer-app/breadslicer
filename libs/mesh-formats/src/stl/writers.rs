@@ -3,8 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
+
+// Binary STL stores the triangle count in a fixed 4-byte little-endian
+// header field. Centralising the encode lets us pin the contract: any
+// face count beyond `u32::MAX` must surface a clean error rather than
+// silently truncate to the low 32 bits (which would produce an STL
+// file whose header lies about the body).
+fn encode_triangle_count(count: usize) -> Result<[u8; 4]> {
+    u32::try_from(count)
+        .map(|n| n.to_le_bytes())
+        .map_err(|_| anyhow!("binary STL writer: face count {count} exceeds u32::MAX"))
+}
 
 pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<()>
 where
@@ -72,7 +83,7 @@ where
     writer.write_all(&header)?;
 
     // Triangle count
-    writer.write_all(&(mesh.faces().len() as u32).to_le_bytes())?;
+    writer.write_all(&encode_triangle_count(mesh.faces().len())?)?;
 
     // Per-triangle records
     for face in mesh.faces() {
@@ -93,6 +104,47 @@ where
 
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod encode_triangle_count_tests {
+    use super::encode_triangle_count;
+
+    #[test]
+    fn zero_count() {
+        assert_eq!(encode_triangle_count(0).unwrap(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn small_count() {
+        assert_eq!(encode_triangle_count(1).unwrap(), 1u32.to_le_bytes());
+        assert_eq!(encode_triangle_count(257).unwrap(), 257u32.to_le_bytes());
+    }
+
+    #[test]
+    fn u32_max_is_still_valid() {
+        assert_eq!(
+            encode_triangle_count(u32::MAX as usize).unwrap(),
+            u32::MAX.to_le_bytes()
+        );
+    }
+
+    // Face counts that exceed `u32::MAX` cannot be represented in the
+    // 4-byte STL header. The writer must reject them outright instead
+    // of silently writing the low 32 bits (which would yield an STL
+    // file whose header lies about the body).
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn count_above_u32_max_errors() {
+        let too_many = (u32::MAX as usize) + 1;
+        assert!(encode_triangle_count(too_many).is_err());
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn usize_max_errors() {
+        assert!(encode_triangle_count(usize::MAX).is_err());
+    }
 }
 
 #[cfg(test)]
