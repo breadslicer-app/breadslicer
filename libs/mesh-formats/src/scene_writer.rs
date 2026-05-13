@@ -23,13 +23,15 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::Scene;
 
+use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
 use crate::obj::write_obj;
 use crate::stl::{write_stla, write_stlb};
+
+type Result<T> = std::result::Result<T, WriteSceneError>;
 
 // Process-wide counter that disambiguates concurrent atomic writes
 // from inside the same process (e.g. multiple parallel test threads
@@ -43,7 +45,7 @@ fn next_atomic_write_token() -> u64 {
 fn atomic_temp_path(target: &Path) -> Result<PathBuf> {
     let file_name = target
         .file_name()
-        .ok_or_else(|| anyhow!("Target path {} has no file name", target.display()))?
+        .ok_or_else(|| WriteSceneError::PathHasNoFileName(target.to_path_buf()))?
         .to_string_lossy()
         .into_owned();
     let parent = match target.parent() {
@@ -72,7 +74,10 @@ where
         .write(true)
         .create_new(true)
         .open(&temp_path)
-        .map_err(|e| anyhow!("Failed to create temp file {}: {}", temp_path.display(), e))?;
+        .map_err(|source| WriteSceneError::CreateTempFile {
+            path: temp_path.clone(),
+            source,
+        })?;
     let mut writer = BufWriter::new(file);
 
     let inner = (|| -> Result<()> {
@@ -87,14 +92,13 @@ where
     match inner {
         Ok(()) => match std::fs::rename(&temp_path, target_path) {
             Ok(()) => Ok(()),
-            Err(e) => {
+            Err(source) => {
                 let _ = std::fs::remove_file(&temp_path);
-                Err(anyhow!(
-                    "Failed to rename {} to {}: {}",
-                    temp_path.display(),
-                    target_path.display(),
-                    e,
-                ))
+                Err(WriteSceneError::Rename {
+                    from: temp_path,
+                    to: target_path.to_path_buf(),
+                    source,
+                })
             }
         },
         Err(e) => {
@@ -146,7 +150,7 @@ pub struct FlattenedScene {
 ///   user.
 pub fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
     match scene.objects.len() {
-        0 => Err(anyhow!("Cannot flatten an empty scene to a single mesh")),
+        0 => Err(WriteSceneError::EmptyScene),
         1 => {
             let obj = &scene.objects[0];
             let source_meta = obj.resolve_mesh(&scene.resources)?.meta().clone();
@@ -158,9 +162,7 @@ pub fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
             })
         }
         n => {
-            let merged = scene
-                .merge_meshes()?
-                .ok_or_else(|| anyhow!("Cannot flatten an empty scene to a single mesh"))?;
+            let merged = scene.merge_meshes()?.ok_or(WriteSceneError::EmptyScene)?;
             Ok(FlattenedScene {
                 mesh: merged,
                 warnings: vec![FlattenWarning::MultiObjectMerge { object_count: n }],
@@ -182,17 +184,26 @@ pub fn write_scene(
 ) -> Result<Vec<FlattenWarning>> {
     match target_format {
         WriteFormat::Obj => {
-            write_atomically(target_path, |writer| write_obj(scene, writer))?;
+            write_atomically(target_path, |writer| {
+                write_obj(scene, writer)?;
+                Ok(())
+            })?;
             Ok(Vec::new())
         }
         WriteFormat::StlBin => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            write_atomically(target_path, |writer| write_stlb(&flattened.mesh, writer))?;
+            write_atomically(target_path, |writer| {
+                write_stlb(&flattened.mesh, writer)?;
+                Ok(())
+            })?;
             Ok(flattened.warnings)
         }
         WriteFormat::StlAscii => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            write_atomically(target_path, |writer| write_stla(&flattened.mesh, writer))?;
+            write_atomically(target_path, |writer| {
+                write_stla(&flattened.mesh, writer)?;
+                Ok(())
+            })?;
             Ok(flattened.warnings)
         }
     }

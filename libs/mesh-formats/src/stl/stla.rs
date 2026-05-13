@@ -18,12 +18,14 @@
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::sync::LazyLock;
 
-use anyhow::Result;
 use regex::Regex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
 
+use crate::error::LoadStlError;
 use crate::stl::TriangleIterator;
+
+type Result<T> = std::result::Result<T, LoadStlError>;
 
 static ASTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$").unwrap()
@@ -89,26 +91,17 @@ impl<'a> AsciiStlReader<'a> {
 
     pub fn create_triangles_iterator(
         read: &'a mut dyn Read,
-    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error> + 'a>>
-    {
+    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError> + 'a>> {
         let mut lines = BufReader::new(read).lines();
 
         // Consume first line
         match lines.next() {
             Some(Err(e)) => return Err(e.into()),
             Some(Ok(ref line)) if !ASTL_HEADER_RE.is_match(line) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Ascii STL does not start with \"solid \"",
-                )
-                .into());
+                return Err(LoadStlError::AsciiHeaderMissing);
             }
             None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "File seems to be empty",
-                )
-                .into());
+                return Err(LoadStlError::AsciiEmptyInput);
             }
             _ => {}
         }
@@ -126,7 +119,7 @@ impl<'a> AsciiStlReader<'a> {
                             .map(|t| t.to_ascii_lowercase())
                             .collect::<Vec<_>>()
                     })
-                    .map_err(|err| err.into())
+                    .map_err(LoadStlError::from)
             })
             .filter(|result| !matches!(result, Ok(tokens) if tokens.is_empty()));
 
@@ -134,17 +127,15 @@ impl<'a> AsciiStlReader<'a> {
             lines: Box::new(lines),
         })
             as Box<
-                dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error>,
+                dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError>,
             >)
     }
 
     fn next_face(&mut self) -> Result<Option<Triangle>> {
         let Some(face_header) = self.lines.next() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "EOF while expecting facet or endsolid.",
-            )
-            .into());
+            return Err(LoadStlError::AsciiEofWhileExpecting {
+                what: "facet or endsolid",
+            });
         };
 
         // Our iterator is fallible
@@ -155,45 +146,39 @@ impl<'a> AsciiStlReader<'a> {
         }
 
         if face_header.len() != 5 || face_header[0] != "facet" || face_header[1] != "normal" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid facet header: {face_header:?}"),
-            )
-            .into());
+            return Err(LoadStlError::AsciiInvalidFacetHeader {
+                tokens: face_header,
+            });
         }
 
         let mut normal_components = [0.0_f32; 3];
-        AsciiStlReader::tokens_to_f32(&face_header[2..5], &mut normal_components)?;
+        AsciiStlReader::tokens_to_f32(
+            &face_header[2..5],
+            &mut normal_components,
+            "facet normal component",
+        )?;
         let mut normal = Normal::new(normal_components);
 
-        self.expect_static(&["outer", "loop"])?;
+        self.expect_static(&["outer", "loop"], "outer loop")?;
 
         let mut vertices = [Vertex::new([0.0; 3]); 3];
         for vertex_slot in &mut vertices {
             let Some(line) = self.lines.next() else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "EOF while expecting vertex",
-                )
-                .into());
+                return Err(LoadStlError::AsciiEofWhileExpecting { what: "vertex" });
             };
 
             let line = line?;
 
             if line.len() != 4 || line[0] != "vertex" {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Expected vertex f32 f32 f32, got {line:?}"),
-                )
-                .into());
+                return Err(LoadStlError::AsciiInvalidVertexLine { tokens: line });
             }
             let mut coords = [0.0_f32; 3];
-            AsciiStlReader::tokens_to_f32(&line[1..4], &mut coords)?;
+            AsciiStlReader::tokens_to_f32(&line[1..4], &mut coords, "vertex coordinate")?;
             *vertex_slot = Vertex::new(coords);
         }
 
-        self.expect_static(&["endloop"])?;
-        self.expect_static(&["endfacet"])?;
+        self.expect_static(&["endloop"], "endloop")?;
+        self.expect_static(&["endfacet"], "endfacet")?;
 
         // We interpret a zero-length normal vector as a hint to compute it at load time.
         // If the triangle is truly degenerate the recomputation can't produce a meaningful
@@ -208,20 +193,19 @@ impl<'a> AsciiStlReader<'a> {
         Ok(Some(Triangle::new(normal, vertices)))
     }
 
-    fn tokens_to_f32(tokens: &[String], output: &mut [f32]) -> Result<()> {
+    fn tokens_to_f32(tokens: &[String], output: &mut [f32], what: &'static str) -> Result<()> {
         assert_eq!(tokens.len(), output.len());
 
         for (token, out) in tokens.iter().zip(output.iter_mut()) {
             let f = token
                 .parse::<f32>()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+                .map_err(|source| LoadStlError::InvalidFloat {
+                    token: token.clone(),
+                    source,
+                })?;
 
             if !f.is_finite() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("expected finite f32, got {f} which is {:?}", f.classify()),
-                )
-                .into());
+                return Err(LoadStlError::NonFiniteFloat { what, value: f });
             }
             *out = f;
         }
@@ -229,23 +213,18 @@ impl<'a> AsciiStlReader<'a> {
         Ok(())
     }
 
-    fn expect_static(&mut self, expectation: &[&str]) -> Result<()> {
+    fn expect_static(&mut self, expectation: &[&str], label: &'static str) -> Result<()> {
         let Some(line) = self.lines.next() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                format!("EOF while expecting {expectation:?}"),
-            )
-            .into());
+            return Err(LoadStlError::AsciiEofWhileExpecting { what: label });
         };
 
         let line = line?;
 
         if line != expectation {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("expected {expectation:?}, got {line:?}"),
-            )
-            .into());
+            return Err(LoadStlError::AsciiUnexpected {
+                expected: label,
+                got: line,
+            });
         }
 
         Ok(())
@@ -253,7 +232,7 @@ impl<'a> AsciiStlReader<'a> {
 }
 
 impl<'a> TriangleIterator for AsciiStlReader<'a> {
-    type Error = anyhow::Error;
+    type Error = LoadStlError;
 }
 
 #[cfg(test)]

@@ -10,12 +10,12 @@ keywords = ["3d", "mesh", "stl"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
-anyhow.workspace = true
 float-cmp.workspace = true
 sc-mesh-core.workspace = true
 
 regex = { version = "1.12.3", default-features = false }
 
 [dev-dependencies]
+anyhow.workspace = true
 proptest.workspace = true
 tempfile = "3.23.0"

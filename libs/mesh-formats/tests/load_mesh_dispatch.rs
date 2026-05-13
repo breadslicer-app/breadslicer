@@ -179,7 +179,9 @@ mod path_loading_tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    fn expect_err(result: anyhow::Result<sc_mesh_formats::LoadedMesh>) -> anyhow::Error {
+    fn expect_err(
+        result: Result<sc_mesh_formats::LoadedMesh, sc_mesh_formats::error::LoadMeshError>,
+    ) -> sc_mesh_formats::error::LoadMeshError {
         match result {
             Ok(_) => panic!("expected an error from load_mesh_from_path"),
             Err(e) => e,

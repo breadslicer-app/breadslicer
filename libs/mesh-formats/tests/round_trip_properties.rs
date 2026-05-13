@@ -148,7 +148,7 @@ proptest! {
 
     #[test]
     fn stlb_round_trip_preserves_normal(mesh in indexed_mesh_strategy()) {
-        // Binary STL stores the normal as three f32s — the recovered
+        // Binary STL stores the normal as three f32s; the recovered
         // normal must match bit-for-bit.
         let mut buf: Vec<u8> = Vec::new();
         write_stlb(&mesh, &mut buf).unwrap();

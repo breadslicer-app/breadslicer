@@ -3,21 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use anyhow::{Result, anyhow};
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
+
+use crate::error::WriteStlError;
 
 // Binary STL stores the triangle count in a fixed 4-byte little-endian
 // header field. Centralising the encode lets us pin the contract: any
 // face count beyond `u32::MAX` must surface a clean error rather than
 // silently truncate to the low 32 bits (which would produce an STL
 // file whose header lies about the body).
-fn encode_triangle_count(count: usize) -> Result<[u8; 4]> {
+fn encode_triangle_count(count: usize) -> Result<[u8; 4], WriteStlError> {
     u32::try_from(count)
         .map(|n| n.to_le_bytes())
-        .map_err(|_| anyhow!("binary STL writer: face count {count} exceeds u32::MAX"))
+        .map_err(|_| WriteStlError::FaceCountExceedsU32 { count })
 }
 
-pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<()>
+pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
 {
@@ -66,7 +67,7 @@ where
     Ok(())
 }
 
-pub fn write_stlb<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<()>
+pub fn write_stlb<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
 {

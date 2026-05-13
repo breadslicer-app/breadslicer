@@ -152,11 +152,12 @@ pub(crate) fn place_on_plate(scene: &mut Scene, build_volume: BuildVolume) -> an
 ///
 /// `AssertUnwindSafe` around the parser call is sound because
 /// `load_mesh_from_path` returns an owned `Result<LoadedMesh,
-/// anyhow::Error>`, so a mid-parse panic drops any partial state on
-/// the stack. A panic elsewhere in the worker (post-parse,
-/// pre-deposit) unwinds out of the thread; `ticket` drops on the
-/// worker, its `Drop` decrements inflight and schedules
-/// `loading = false` through the event loop, so the UI recovers.
+/// LoadMeshError>` (lifted into `anyhow::Error` here at the worker
+/// boundary), so a mid-parse panic drops any partial state on the
+/// stack. A panic elsewhere in the worker (post-parse, pre-deposit)
+/// unwinds out of the thread; `ticket` drops on the worker, its
+/// `Drop` decrements inflight and schedules `loading = false` through
+/// the event loop, so the UI recovers.
 ///
 /// If `load_mesh_from_path` is ever changed to return a type
 /// borrowing from a memory-mapped region, revisit the
@@ -168,13 +169,16 @@ pub(crate) fn spawn_load(
     build_volume: BuildVolume,
 ) {
     std::thread::spawn(move || {
-        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            sc_mesh_formats::load_mesh_from_path(&path, None, Some(MAX_MESH_FILE_SIZE_BYTES))
-        }))
-        .unwrap_or_else(|payload| {
-            let msg = panic_message(&payload);
-            Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-        });
+        let parsed: anyhow::Result<LoadedMesh> =
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sc_mesh_formats::load_mesh_from_path(&path, None, Some(MAX_MESH_FILE_SIZE_BYTES))
+            })) {
+                Ok(r) => r.map_err(anyhow::Error::from),
+                Err(payload) => {
+                    let msg = panic_message(&payload);
+                    Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
+                }
+            };
         let result = parsed.and_then(
             |LoadedMesh {
                  mut scene,

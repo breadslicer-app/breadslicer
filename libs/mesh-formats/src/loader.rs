@@ -7,9 +7,9 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
 use sc_mesh_core::scene::Scene;
 
+use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 use crate::messages::LoadMeshWarning;
 use crate::obj::read_obj;
@@ -35,16 +35,15 @@ pub fn load_mesh_from_path(
     path: &Path,
     kind: Option<MeshFileType>,
     max_file_size: Option<u64>,
-) -> Result<LoadedMesh> {
+) -> Result<LoadedMesh, LoadMeshError> {
     if let Some(cap) = max_file_size
         && let Ok(meta) = std::fs::metadata(path)
         && meta.len() > cap
     {
-        return Err(anyhow!(
-            "file is {} bytes, which exceeds the {} byte limit",
-            meta.len(),
-            cap,
-        ));
+        return Err(LoadMeshError::FileTooLarge {
+            actual_bytes: meta.len(),
+            limit_bytes: cap,
+        });
     }
     let kind = match kind {
         Some(k) => k,
@@ -57,7 +56,10 @@ pub fn load_mesh_from_path(
 
 /// Loads a mesh from an already-open reader. The caller provides the
 /// `MeshFileType` since a raw reader has no path to infer from.
-pub fn load_mesh_from_reader<R>(kind: MeshFileType, reader: &mut R) -> Result<LoadedMesh>
+pub fn load_mesh_from_reader<R>(
+    kind: MeshFileType,
+    reader: &mut R,
+) -> Result<LoadedMesh, LoadMeshError>
 where
     R: Read + Seek,
 {
@@ -67,7 +69,7 @@ where
         MeshFileType::StlAscii => read_stla(reader)?,
         MeshFileType::StlBin => read_stlb(reader)?,
         MeshFileType::Obj => read_obj(reader, &mut warnings)?,
-        other => return Err(anyhow!("Unsupported mesh file type: {:?}", other)),
+        other => return Err(LoadMeshError::UnsupportedFormat(other)),
     };
     Ok(LoadedMesh { scene, warnings })
 }

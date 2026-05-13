@@ -3,33 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::Scene;
+
+use crate::error::WriteObjError;
 
 // OBJ face indices are 1-based, so the writer emits `local + offset + 1`
 // for every vertex reference. `to_global_face_index` performs that math
 // with overflow checks; both the addition and the implicit `+1` must
 // stay within `u32`, otherwise the resulting OBJ file would point at a
 // wrapped index and silently decode to garbage.
-fn to_global_face_index(local: u32, offset: u32) -> Result<u32> {
+fn to_global_face_index(local: u32, offset: u32) -> Result<u32, WriteObjError> {
     local
         .checked_add(offset)
         .and_then(|n| n.checked_add(1))
-        .ok_or_else(|| {
-            anyhow!("OBJ writer: face vertex index overflow (local={local}, offset={offset})",)
-        })
+        .ok_or(WriteObjError::FaceIndexOverflow { local, offset })
 }
 
-fn advance_vertex_offset(offset: u32, vertex_count: usize) -> Result<u32> {
+fn advance_vertex_offset(offset: u32, vertex_count: usize) -> Result<u32, WriteObjError> {
     let added = u32::try_from(vertex_count)
-        .map_err(|_| anyhow!("OBJ writer: mesh has {vertex_count} vertices, exceeds u32::MAX"))?;
-    offset.checked_add(added).ok_or_else(|| {
-        anyhow!("OBJ writer: cumulative vertex offset overflows u32 (offset={offset}, +{added})",)
-    })
+        .map_err(|_| WriteObjError::VertexCountExceedsU32 { vertex_count })?;
+    offset
+        .checked_add(added)
+        .ok_or(WriteObjError::VertexOffsetOverflow { offset, added })
 }
 
-pub fn write_obj<W>(scene: &Scene, writer: &mut W) -> Result<()>
+pub fn write_obj<W>(scene: &Scene, writer: &mut W) -> Result<(), WriteObjError>
 where
     W: std::io::Write,
 {
@@ -79,7 +78,7 @@ fn write_mesh_section<W>(
     write_object_marker: bool,
     vertex_offset: &mut u32,
     writer: &mut W,
-) -> Result<()>
+) -> Result<(), WriteObjError>
 where
     W: std::io::Write,
 {

@@ -7,7 +7,7 @@ use std::fmt::Display;
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{Result, anyhow};
+use crate::error::InferFileTypeError;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct InvalidMeshFileType;
@@ -49,8 +49,8 @@ impl FromStr for MeshFileType {
 }
 
 /// Formats `scene_writer::write_scene` can produce. Distinct from
-/// [`MeshFileType`] because the read side carries variants — `Stl`
-/// (auto-detect ASCII vs binary at parse time), `Ply`, `Amf`, `_3mf` —
+/// [`MeshFileType`] because the read side carries variants, `Stl`
+/// (auto-detect ASCII vs binary at parse time), `Ply`, `Amf`, `_3mf`,
 /// that are either ambiguous or unimplemented on the write side. Going
 /// through this enum makes the writer's domain a compile-time invariant
 /// instead of a runtime `unreachable!` / "not implemented" arm.
@@ -92,7 +92,9 @@ impl TryFrom<MeshFileType> for WriteFormat {
     }
 }
 
-pub fn infer_mesh_file_format_from_extension(path: &Path) -> Result<MeshFileType> {
+pub fn infer_mesh_file_format_from_extension(
+    path: &Path,
+) -> Result<MeshFileType, InferFileTypeError> {
     let extension = match path.extension() {
         Some(ext) => ext.to_str().unwrap_or(""),
         None => "",
@@ -107,10 +109,9 @@ pub fn infer_mesh_file_format_from_extension(path: &Path) -> Result<MeshFileType
         "ply" => Ok(MeshFileType::Ply),
         "amf" => Ok(MeshFileType::Amf),
         "3mf" => Ok(MeshFileType::_3mf),
-        _ => Err(anyhow!(
-            "Unable to infer file format from filename extension for \"{:?}\"",
-            path
-        )),
+        _ => Err(InferFileTypeError::UnknownExtension {
+            path: path.to_path_buf(),
+        }),
     }
 }
 

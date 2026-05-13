@@ -6,9 +6,12 @@
 use std::ffi::CStr;
 use std::io::{BufReader, ErrorKind, Read, Seek};
 
-use anyhow::{Context, Result, anyhow};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
+
+use crate::error::LoadStlError;
+
+type Result<T> = std::result::Result<T, LoadStlError>;
 
 /// Hard ceiling on the declared triangle count in a binary STL
 /// header. Files claiming more than this are refused at construction
@@ -23,13 +26,11 @@ use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 /// only fires when that gate is absent.
 const MAX_BINARY_STL_TRIANGLES: usize = 200_000_000;
 
-fn read_exact_section<R: Read>(reader: &mut R, buf: &mut [u8], what: &str) -> Result<()> {
+fn read_exact_section<R: Read>(reader: &mut R, buf: &mut [u8], what: &'static str) -> Result<()> {
     match reader.read_exact(buf) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(anyhow!(
-            "The STL file is truncated or malformed: it ended before {what} could be read",
-        )),
-        Err(e) => Err(e).with_context(|| format!("Failed to read {what} from the STL file")),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(LoadStlError::Truncated { what }),
+        Err(e) => Err(LoadStlError::Io(e)),
     }
 }
 
@@ -62,11 +63,15 @@ impl<'a> BinaryStlReader<'a> {
         read.seek(std::io::SeekFrom::Start(0))?;
 
         header[80] = 0u8; // To ensure we have a null-terminated string
-        let mesh_name_cstr = CStr::from_bytes_until_nul(&header)?;
-        let mesh_name = mesh_name_cstr.to_str()?.trim();
+        let mesh_name_cstr = CStr::from_bytes_until_nul(&header)
+            .map_err(|_| LoadStlError::HeaderNotNulTerminated)?;
+        let mesh_name = mesh_name_cstr
+            .to_str()
+            .map_err(LoadStlError::HeaderNotUtf8)?
+            .trim();
 
         if !mesh_name.is_ascii() {
-            return Err(anyhow!("Mesh name is not ASCII"));
+            return Err(LoadStlError::HeaderNotAscii);
         }
         if mesh_name.is_empty() {
             return Ok(MeshMetadata::default());
@@ -80,8 +85,7 @@ impl<'a> BinaryStlReader<'a> {
 
     pub fn create_triangles_iterator(
         read: &'a mut dyn Read,
-    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error> + 'a>>
-    {
+    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError> + 'a>> {
         let mut reader = Box::new(BufReader::new(read));
         let mut header = [0u8; 80];
         read_exact_section(&mut reader, &mut header, "the 80-byte STL header")?;
@@ -89,11 +93,10 @@ impl<'a> BinaryStlReader<'a> {
         read_exact_section(&mut reader, &mut count_buf, "the triangle count")?;
         let num_faces = u32::from_le_bytes(count_buf) as usize;
         if num_faces > MAX_BINARY_STL_TRIANGLES {
-            return Err(anyhow!(
-                "declared triangle count {} exceeds the {} maximum supported by this reader",
-                num_faces,
-                MAX_BINARY_STL_TRIANGLES,
-            ));
+            return Err(LoadStlError::DeclaredTriangleCountExceedsCap {
+                declared: num_faces,
+                cap: MAX_BINARY_STL_TRIANGLES,
+            });
         }
         Ok(Box::new(BinaryStlReader {
             reader,
@@ -101,7 +104,7 @@ impl<'a> BinaryStlReader<'a> {
             size: num_faces,
         })
             as Box<
-                dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error>,
+                dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError>,
             >)
     }
 
@@ -110,7 +113,7 @@ impl<'a> BinaryStlReader<'a> {
         let mut buf = [0u8; 50];
         read_exact_section(&mut self.reader, &mut buf, "a triangle record")?;
 
-        let f = |offset: usize, what: &str| -> Result<f32> {
+        let f = |offset: usize, what: &'static str| -> Result<f32> {
             let value = f32::from_le_bytes([
                 buf[offset],
                 buf[offset + 1],
@@ -118,10 +121,7 @@ impl<'a> BinaryStlReader<'a> {
                 buf[offset + 3],
             ]);
             if !value.is_finite() {
-                return Err(anyhow!(
-                    "expected finite f32 for {what}, got {value} which is {:?}",
-                    value.classify()
-                ));
+                return Err(LoadStlError::NonFiniteFloat { what, value });
             }
             Ok(value)
         };
@@ -161,7 +161,7 @@ impl<'a> BinaryStlReader<'a> {
 }
 
 impl<'a> TriangleIterator for BinaryStlReader<'a> {
-    type Error = anyhow::Error;
+    type Error = LoadStlError;
 }
 
 #[cfg(test)]

@@ -7,14 +7,16 @@ mod stla;
 mod stlb;
 mod writers;
 
-use anyhow::Result;
 use sc_mesh_core::TriangleIterator;
 use sc_mesh_core::scene::Scene;
 
+use crate::error::LoadStlError;
 use stla::AsciiStlReader;
 use stlb::BinaryStlReader;
 
 pub use writers::{write_stla, write_stlb};
+
+type Result<T> = std::result::Result<T, LoadStlError>;
 
 pub fn read_stl<R>(read: &mut R) -> Result<Scene>
 where

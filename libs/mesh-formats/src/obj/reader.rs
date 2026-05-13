@@ -6,13 +6,13 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 
-use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
+use crate::error::LoadObjError;
 use crate::messages::{LoadMeshWarning, LoadObjWarning};
 
 /// Hard ceiling on the number of vertices a single OBJ file may declare.
@@ -136,7 +136,7 @@ fn check_sharing_and_flush(
     }
 }
 
-pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene>
+pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene, LoadObjError>
 where
     R: std::io::Read,
 {
@@ -147,7 +147,7 @@ fn read_obj_with_caps<R>(
     read: &mut R,
     warnings: &mut Vec<LoadMeshWarning>,
     caps: Caps,
-) -> Result<Scene>
+) -> Result<Scene, LoadObjError>
 where
     R: std::io::Read,
 {
@@ -230,20 +230,18 @@ where
             "v" => {
                 header_ended = true;
                 if global_vertices.len() >= caps.max_vertices {
-                    return Err(anyhow!(
-                        "line {}: file declares more than {} vertices",
-                        line_num + 1,
-                        caps.max_vertices,
-                    ));
+                    return Err(LoadObjError::VertexCountExceedsLimit {
+                        line: line_num + 1,
+                        limit: caps.max_vertices,
+                    });
                 }
                 let coords: Vec<&str> = line.split_whitespace().skip(1).collect();
                 let num_coords = coords.len();
                 if !(3..=4).contains(&num_coords) {
-                    return Err(anyhow!(
-                        "line {}: vertex requires 3 or 4 coordinates, got {}",
-                        line_num + 1,
-                        coords.len()
-                    ));
+                    return Err(LoadObjError::VertexCoordCountInvalid {
+                        line: line_num + 1,
+                        got: coords.len(),
+                    });
                 }
                 let x = parse_f32(coords[0], line_num)?;
                 let y = parse_f32(coords[1], line_num)?;
@@ -251,21 +249,15 @@ where
                 let vertex = if num_coords == 4 {
                     let w = parse_f32(coords[3], line_num)?;
                     if approx_eq!(f32, w, 0.0, ulps = 2) {
-                        return Err(anyhow!(
-                            "line {}: vertex w coordinate must not be zero",
-                            line_num + 1
-                        ));
+                        return Err(LoadObjError::VertexWZero { line: line_num + 1 });
                     }
                     Vertex::new([x / w, y / w, z / w])
                 } else {
                     Vertex::new([x, y, z])
                 };
-                global_vertices.try_reserve(1).map_err(|_| {
-                    anyhow!(
-                        "line {}: out of memory while parsing OBJ vertices",
-                        line_num + 1
-                    )
-                })?;
+                global_vertices
+                    .try_reserve(1)
+                    .map_err(|_| LoadObjError::OutOfMemoryVertices { line: line_num + 1 })?;
                 global_vertices.push(vertex);
             }
             "f" => {
@@ -280,35 +272,30 @@ where
                     .take(caps.max_face_tokens + 1)
                     .collect();
                 if tokens.len() < 3 {
-                    return Err(anyhow!(
-                        "line {}: face requires at least 3 vertices, got {}",
-                        line_num + 1,
-                        tokens.len()
-                    ));
+                    return Err(LoadObjError::FaceTooFewVertices {
+                        line: line_num + 1,
+                        got: tokens.len(),
+                    });
                 }
                 if tokens.len() > caps.max_face_tokens {
-                    return Err(anyhow!(
-                        "line {}: face exceeds the {}-vertex limit",
-                        line_num + 1,
-                        caps.max_face_tokens,
-                    ));
+                    return Err(LoadObjError::FaceExceedsTokenLimit {
+                        line: line_num + 1,
+                        limit: caps.max_face_tokens,
+                    });
                 }
 
                 let vertex_count = global_vertices.len();
                 let indices: Vec<VertexIndex> = tokens
                     .iter()
                     .map(|token| parse_face_vertex_index(token, vertex_count, line_num))
-                    .collect::<Result<Vec<VertexIndex>>>()?;
+                    .collect::<Result<Vec<VertexIndex>, LoadObjError>>()?;
 
                 // Reserve exactly the number of triangles this fan will emit;
                 // we already know `indices.len() >= 3` from the check above.
                 let new_faces = indices.len() - 2;
-                current_faces.try_reserve_exact(new_faces).map_err(|_| {
-                    anyhow!(
-                        "line {}: out of memory while expanding face into triangles",
-                        line_num + 1,
-                    )
-                })?;
+                current_faces
+                    .try_reserve_exact(new_faces)
+                    .map_err(|_| LoadObjError::OutOfMemoryFaces { line: line_num + 1 })?;
 
                 // Fan triangulation for polygons with more than 3 vertices.
                 for i in 1..indices.len() - 1 {
@@ -381,11 +368,10 @@ where
                         },
                     ));
                 } else {
-                    return Err(anyhow!(
-                        "line {}: unrecognized directive '{}'",
-                        line_num + 1,
-                        first_token
-                    ));
+                    return Err(LoadObjError::UnrecognizedDirective {
+                        line: line_num + 1,
+                        directive: first_token.to_string(),
+                    });
                 }
             }
         }
@@ -420,17 +406,20 @@ where
     })
 }
 
-fn parse_f32(token: &str, line_num: usize) -> Result<f32> {
+fn parse_f32(token: &str, line_num: usize) -> Result<f32, LoadObjError> {
     let f = token
         .parse::<f32>()
-        .map_err(|e| anyhow!("line {}: invalid float '{}': {}", line_num + 1, token, e))?;
+        .map_err(|source| LoadObjError::InvalidFloat {
+            line: line_num + 1,
+            token: token.to_string(),
+            source,
+        })?;
 
     if !f.is_finite() {
-        return Err(anyhow!(
-            "line {}: expected finite float, got {}",
-            line_num + 1,
-            f
-        ));
+        return Err(LoadObjError::NonFiniteFloat {
+            line: line_num + 1,
+            value: f,
+        });
     }
 
     Ok(f)
@@ -440,19 +429,18 @@ fn parse_face_vertex_index(
     token: &str,
     vertex_count: usize,
     line_num: usize,
-) -> Result<VertexIndex> {
+) -> Result<VertexIndex, LoadObjError> {
     // OBJ face indices can be: v, v/vt, v/vt/vn, or v//vn
     // We only care about the vertex index (first component).
     let index_str = token.split('/').next().unwrap();
 
-    let index = index_str.parse::<i64>().map_err(|e| {
-        anyhow!(
-            "line {}: invalid face index '{}': {}",
-            line_num + 1,
-            token,
-            e
-        )
-    })?;
+    let index = index_str
+        .parse::<i64>()
+        .map_err(|source| LoadObjError::InvalidFaceIndex {
+            line: line_num + 1,
+            token: token.to_string(),
+            source,
+        })?;
 
     let resolved = if index > 0 {
         (index - 1) as usize // OBJ is 1-based
@@ -463,36 +451,28 @@ fn parse_face_vertex_index(
         let abs_index: usize = index
             .checked_neg()
             .and_then(|n| usize::try_from(n).ok())
-            .ok_or_else(|| {
-                anyhow!(
-                    "line {}: negative face index {} out of range",
-                    line_num + 1,
-                    index,
-                )
+            .ok_or(LoadObjError::NegativeFaceIndexOutOfRange {
+                line: line_num + 1,
+                index,
             })?;
         if abs_index > vertex_count {
-            return Err(anyhow!(
-                "line {}: negative index {} out of range (only {} vertices defined)",
-                line_num + 1,
+            return Err(LoadObjError::FaceIndexOutOfRange {
+                line: line_num + 1,
                 index,
-                vertex_count
-            ));
+                vertex_count,
+            });
         }
         vertex_count - abs_index
     } else {
-        return Err(anyhow!(
-            "line {}: face index must not be zero",
-            line_num + 1
-        ));
+        return Err(LoadObjError::FaceIndexZero { line: line_num + 1 });
     };
 
     if resolved >= vertex_count {
-        return Err(anyhow!(
-            "line {}: vertex index {} out of range (only {} vertices defined)",
-            line_num + 1,
+        return Err(LoadObjError::FaceIndexOutOfRange {
+            line: line_num + 1,
             index,
-            vertex_count
-        ));
+            vertex_count,
+        });
     }
 
     Ok(VertexIndex::from(resolved as u32))
@@ -717,7 +697,7 @@ mod read_obj_tests {
 
     use super::{LoadMeshWarning, LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(s: &str) -> anyhow::Result<(Scene, Vec<LoadMeshWarning>)> {
+    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadMeshWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings = Vec::new();
         let scene = read_obj(&mut reader, &mut warnings)?;
@@ -1423,7 +1403,7 @@ mod caps_tests {
 
     use super::{Caps, LoadMeshWarning, MAX_FACE_TOKENS, MAX_OBJ_VERTICES, read_obj_with_caps};
 
-    fn parse_with_caps(s: &str, caps: Caps) -> anyhow::Result<usize> {
+    fn parse_with_caps(s: &str, caps: Caps) -> Result<usize, super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings: Vec<LoadMeshWarning> = Vec::new();
         let scene = read_obj_with_caps(&mut reader, &mut warnings, caps)?;

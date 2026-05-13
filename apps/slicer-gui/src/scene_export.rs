@@ -4,7 +4,7 @@
  */
 
 //! "Export As" support: pure functions over `&SceneDocument`. The
-//! viewport stays out of this module — the wiring layer drives the
+//! viewport stays out of this module; the wiring layer drives the
 //! file dialog, then calls in here to produce the file.
 
 use std::path::Path;
@@ -56,15 +56,17 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
 /// Writes the document's current scene out to `target` in `format`.
 /// Returns the warnings the flatten step produced (currently
 /// `MultiObjectMerge` for STL with >1 object). Errors when no scene is
-/// loaded — the menu item should be disabled in that case, but the
+/// loaded: the menu item should be disabled in that case, but the
 /// guard catches a stale callback racing the close path.
 pub(crate) fn export_scene_as(
     doc: &SceneDocument,
     target: &Path,
     format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
-    doc.with_scene(|spatial| scene_writer::write_scene(spatial.scene(), target, format))
-        .ok_or_else(|| anyhow!("No scene loaded"))?
+    let warnings = doc
+        .with_scene(|spatial| scene_writer::write_scene(spatial.scene(), target, format))
+        .ok_or_else(|| anyhow!("No scene loaded"))??;
+    Ok(warnings)
 }
 
 #[cfg(test)]
