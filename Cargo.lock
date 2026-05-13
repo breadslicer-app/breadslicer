@@ -4503,6 +4503,7 @@ dependencies = [
  "proptest",
  "regex",
  "sc-mesh-core",
+ "tempfile",
 ]
 
 [[package]]

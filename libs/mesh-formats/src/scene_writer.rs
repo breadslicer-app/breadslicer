@@ -11,14 +11,17 @@
 //!   single `IndexedMesh`, returning the merged mesh plus any
 //!   non-fatal warnings (currently only [`FlattenWarning::MultiObjectMerge`]).
 //! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
-//!   appropriate format. OBJ goes through `write_obj(&Scene, …)` —
-//!   it preserves per-object boundaries — while the STL variants
+//!   appropriate format. OBJ goes through `write_obj(&Scene, ...)`
+//!   (preserving per-object boundaries), while the STL variants
 //!   route through `flatten_scene_to_mesh` first.
 //!
 //! Warnings are returned to the caller. The CLI surfaces them via
 //! `eprintln!`; the GUI may surface them through its dialog stack.
 
-use std::path::Path;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
@@ -28,6 +31,79 @@ use crate::filetypes::WriteFormat;
 use crate::obj::write_obj;
 use crate::stl::{write_stla, write_stlb};
 
+// Process-wide counter that disambiguates concurrent atomic writes
+// from inside the same process (e.g. multiple parallel test threads
+// or several scene exports running on a worker pool).
+static ATOMIC_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_atomic_write_token() -> u64 {
+    ATOMIC_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+fn atomic_temp_path(target: &Path) -> Result<PathBuf> {
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| anyhow!("Target path {} has no file name", target.display()))?
+        .to_string_lossy()
+        .into_owned();
+    let parent = match target.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let pid = std::process::id();
+    let token = next_atomic_write_token();
+    Ok(parent.join(format!(".{file_name}.tmp.{pid}.{token}")))
+}
+
+// Writes to `target_path` atomically: opens a temp file in the same
+// parent directory with `create_new(true)` (which never follows
+// symlinks), runs `write_fn`, fsyncs, then renames over the target.
+// On any error the temp file is removed and the existing target is
+// left untouched. Closes the TOCTOU/symlink window the CLI used to
+// expose AND the truncate-on-partial-write hazard a pre-existing
+// target faced.
+fn write_atomically<F>(target_path: &Path, write_fn: F) -> Result<()>
+where
+    F: FnOnce(&mut BufWriter<File>) -> Result<()>,
+{
+    let temp_path = atomic_temp_path(target_path)?;
+
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|e| anyhow!("Failed to create temp file {}: {}", temp_path.display(), e))?;
+    let mut writer = BufWriter::new(file);
+
+    let inner = (|| -> Result<()> {
+        write_fn(&mut writer)?;
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        Ok(())
+    })();
+
+    drop(writer);
+
+    match inner {
+        Ok(()) => match std::fs::rename(&temp_path, target_path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp_path);
+                Err(anyhow!(
+                    "Failed to rename {} to {}: {}",
+                    temp_path.display(),
+                    target_path.display(),
+                    e,
+                ))
+            }
+        },
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(e)
+        }
+    }
+}
+
 /// A warning produced by `flatten_scene_to_mesh` that the caller may want
 /// to surface to the user (or ignore). Distinct from errors: warnings do
 /// not prevent the flattened mesh from being usable.
@@ -35,7 +111,7 @@ use crate::stl::{write_stla, write_stlb};
 pub enum FlattenWarning {
     /// The scene contained more than one object, so the flatten step
     /// merged them and dropped per-object names and boundaries (which
-    /// the target format — typically STL — cannot represent anyway).
+    /// the target format (typically STL) cannot represent anyway).
     MultiObjectMerge { object_count: usize },
 }
 
@@ -95,7 +171,7 @@ pub fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
 
 /// Writes `scene` to `target_path` in the given `target_format`.
 ///
-/// Returns the warnings that surfaced during flatten — the caller
+/// Returns the warnings that surfaced during flatten; the caller
 /// decides how to surface them (CLI → `eprintln!`; GUI → dialog or
 /// log). For OBJ the per-object boundaries are preserved, so no
 /// flatten happens and the warning vec is always empty.
@@ -106,23 +182,17 @@ pub fn write_scene(
 ) -> Result<Vec<FlattenWarning>> {
     match target_format {
         WriteFormat::Obj => {
-            let output_file = std::fs::File::create(target_path)?;
-            let mut writer = std::io::BufWriter::new(output_file);
-            write_obj(scene, &mut writer)?;
+            write_atomically(target_path, |writer| write_obj(scene, writer))?;
             Ok(Vec::new())
         }
         WriteFormat::StlBin => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            let output_file = std::fs::File::create(target_path)?;
-            let mut writer = std::io::BufWriter::new(output_file);
-            write_stlb(&flattened.mesh, &mut writer)?;
+            write_atomically(target_path, |writer| write_stlb(&flattened.mesh, writer))?;
             Ok(flattened.warnings)
         }
         WriteFormat::StlAscii => {
             let flattened = flatten_scene_to_mesh(scene)?;
-            let output_file = std::fs::File::create(target_path)?;
-            let mut writer = std::io::BufWriter::new(output_file);
-            write_stla(&flattened.mesh, &mut writer)?;
+            write_atomically(target_path, |writer| write_stla(&flattened.mesh, writer))?;
             Ok(flattened.warnings)
         }
     }
@@ -255,5 +325,136 @@ mod flatten_scene_to_mesh_tests {
         );
         let scene = scene_with_object(unit_triangle_mesh(None), Transform3D::Affine(singular));
         assert!(flatten_scene_to_mesh(&scene).is_err());
+    }
+}
+
+#[cfg(test)]
+mod write_scene_atomicity_tests {
+    use super::write_scene;
+    use crate::filetypes::WriteFormat;
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+
+    fn valid_scene() -> Scene {
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(IndexedMesh {
+                    meta: None,
+                    vertices: vec![
+                        Vertex::new([0.0, 0.0, 0.0]),
+                        Vertex::new([1.0, 0.0, 0.0]),
+                        Vertex::new([0.0, 1.0, 0.0]),
+                    ],
+                    faces: vec![IndexedTriangle::from_raw_indices(
+                        Normal::new([0.0, 0.0, 1.0]),
+                        [0, 1, 2],
+                    )],
+                }),
+            }],
+        }
+    }
+
+    // A scene whose OBJ writer fails mid-stream. The face vertex index
+    // is deliberately set to `u32::MAX` so `write_obj` returns an
+    // error after the `v` lines and `o` marker have already been
+    // emitted to the underlying writer. With the buggy direct-create
+    // path, that leaves the on-disk target truncated to the partial
+    // bytes; the atomic-temp-and-rename fix must keep the original
+    // file intact.
+    fn scene_that_fails_mid_obj_write() -> Scene {
+        Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(IndexedMesh {
+                    meta: None,
+                    vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+                    faces: vec![IndexedTriangle::from_raw_indices(
+                        Normal::new([0.0, 0.0, 1.0]),
+                        [u32::MAX, 0, 0],
+                    )],
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn happy_path_writes_target_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("output.obj");
+        let warnings = write_scene(&valid_scene(), &target, WriteFormat::Obj).unwrap();
+        assert!(warnings.is_empty());
+
+        let contents = std::fs::read_to_string(&target).unwrap();
+        assert!(contents.contains("v 0 0 0"));
+        assert!(contents.contains("f 1 2 3"));
+
+        // Exactly one entry in the parent dir: the target itself, no
+        // dangling `.output.obj.tmp.*` left over.
+        let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+    }
+
+    // Pre-existing target file plus a writer that errors after writing
+    // some bytes. The original file must survive intact and no
+    // half-written temp must remain.
+    #[test]
+    fn existing_target_is_preserved_when_writer_fails_mid_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("output.obj");
+        let original: &[u8] = b"original contents that must survive\n";
+        std::fs::write(&target, original).unwrap();
+
+        let result = write_scene(&scene_that_fails_mid_obj_write(), &target, WriteFormat::Obj);
+        assert!(
+            result.is_err(),
+            "writer must propagate the mid-stream error"
+        );
+
+        assert_eq!(std::fs::read(&target).unwrap(), original);
+
+        // Only the original target remains in the dir.
+        let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+    }
+
+    // CLI-H-1: a symlink planted at the target path between validation
+    // and write must not be followed. With the buggy `File::create`,
+    // the write transparently follows the symlink and clobbers the
+    // pointed-to file; the fix opens the temp file with
+    // `create_new(true)` (which never follows symlinks) and renames
+    // over the symlink, leaving the original target of the symlink
+    // untouched.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_at_target_is_replaced_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = dir.path().join("secret.txt");
+        let secret_bytes: &[u8] = b"sensitive content that must survive\n";
+        std::fs::write(&secret, secret_bytes).unwrap();
+
+        let target = dir.path().join("output.obj");
+        std::os::unix::fs::symlink(&secret, &target).unwrap();
+
+        write_scene(&valid_scene(), &target, WriteFormat::Obj).unwrap();
+
+        // The pointed-to file is untouched.
+        assert_eq!(std::fs::read(&secret).unwrap(), secret_bytes);
+
+        // The target is no longer a symlink, it's a regular file with
+        // the OBJ output.
+        let meta = std::fs::symlink_metadata(&target).unwrap();
+        assert!(
+            !meta.file_type().is_symlink(),
+            "target must have been replaced, not followed"
+        );
+        let contents = std::fs::read_to_string(&target).unwrap();
+        assert!(contents.contains("v 0 0 0"));
     }
 }
