@@ -10,7 +10,6 @@ keywords = ["3d", "mesh"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
-anyhow.workspace = true
 float-cmp.workspace = true
 newtypes = "0.4.0"
 

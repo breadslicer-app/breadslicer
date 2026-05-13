@@ -4488,7 +4488,6 @@ dependencies = [
 name = "sc-mesh-core"
 version = "0.0.12"
 dependencies = [
- "anyhow",
  "float-cmp 0.10.0",
  "newtypes",
  "proptest",

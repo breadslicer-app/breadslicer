@@ -80,7 +80,8 @@ impl<'a> BinaryStlReader<'a> {
 
     pub fn create_triangles_iterator(
         read: &'a mut dyn Read,
-    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>> + 'a>> {
+    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error> + 'a>>
+    {
         let mut reader = Box::new(BufReader::new(read));
         let mut header = [0u8; 80];
         read_exact_section(&mut reader, &mut header, "the 80-byte STL header")?;
@@ -99,7 +100,9 @@ impl<'a> BinaryStlReader<'a> {
             index: 0,
             size: num_faces,
         })
-            as Box<dyn TriangleIterator<Item = Result<Triangle>>>)
+            as Box<
+                dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error>,
+            >)
     }
 
     fn next_face(&mut self) -> Result<Triangle> {
@@ -157,7 +160,9 @@ impl<'a> BinaryStlReader<'a> {
     }
 }
 
-impl<'a> TriangleIterator for BinaryStlReader<'a> {}
+impl<'a> TriangleIterator for BinaryStlReader<'a> {
+    type Error = anyhow::Error;
+}
 
 #[cfg(test)]
 mod binary_stl_reader_tests {

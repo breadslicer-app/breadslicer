@@ -29,15 +29,24 @@ pub mod transform;
 
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 // Re-exporting "core" symbols for ease of use
 pub use crate::aabb::Aabb;
 pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 
-pub trait TriangleIterator: Iterator<Item = Result<Triangle>> {
-    fn as_indexed_mesh(&mut self, meta: Option<MeshMetadata>) -> Result<IndexedMesh> {
+/// Fallible streaming iterator of triangles, used by format readers as the
+/// bridge between byte-level parsing and the indexed-mesh aggregate.
+///
+/// The associated `Error` is owned by the adapter; the domain core only
+/// requires that yielded items report a `Result<Triangle, Self::Error>`.
+/// This keeps `sc-mesh-core` free of any error-type dependency on the
+/// crate that drives the stream.
+pub trait TriangleIterator:
+    Iterator<Item = Result<Triangle, <Self as TriangleIterator>::Error>>
+{
+    type Error;
+
+    fn as_indexed_mesh(&mut self, meta: Option<MeshMetadata>) -> Result<IndexedMesh, Self::Error> {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut triangles: Vec<IndexedTriangle> = Vec::new();
         let mut vertex_to_index: HashMap<[u32; 3], usize> = std::collections::HashMap::new();

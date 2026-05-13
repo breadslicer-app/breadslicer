@@ -89,7 +89,8 @@ impl<'a> AsciiStlReader<'a> {
 
     pub fn create_triangles_iterator(
         read: &'a mut dyn Read,
-    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>> + 'a>> {
+    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error> + 'a>>
+    {
         let mut lines = BufReader::new(read).lines();
 
         // Consume first line
@@ -132,7 +133,9 @@ impl<'a> AsciiStlReader<'a> {
         Ok(Box::new(AsciiStlReader {
             lines: Box::new(lines),
         })
-            as Box<dyn TriangleIterator<Item = Result<Triangle>>>)
+            as Box<
+                dyn TriangleIterator<Item = Result<Triangle>, Error = anyhow::Error>,
+            >)
     }
 
     fn next_face(&mut self) -> Result<Option<Triangle>> {
@@ -249,7 +252,9 @@ impl<'a> AsciiStlReader<'a> {
     }
 }
 
-impl<'a> TriangleIterator for AsciiStlReader<'a> {}
+impl<'a> TriangleIterator for AsciiStlReader<'a> {
+    type Error = anyhow::Error;
+}
 
 #[cfg(test)]
 mod test_ascii_stl_reader {
