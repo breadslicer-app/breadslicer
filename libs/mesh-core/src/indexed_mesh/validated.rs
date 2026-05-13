@@ -25,13 +25,41 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use float_cmp::approx_eq;
 
-use crate::errors::{FaceIndex, MeshFix, MeshManifoldError, MeshNormalVectorError, VertexIndex};
 use crate::geometry::{
     DEGENERACY_SIN_SQ_THRESHOLD, NORMAL_ANGLE_TOLERANCE_COS, UNIT_NORM_TOLERANCE, gt_strict,
 };
-use crate::primitives::{IndexedTriangle, Vector3D, Vertex};
+use crate::primitives::{FaceIndex, IndexedTriangle, Vector3D, Vertex, VertexIndex};
 
+use super::fix::MeshFix;
 use super::{FixFacesOptions, IndexedMesh};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MeshNormalVectorError {
+    ZeroAreaTriangle { face_idx: FaceIndex },
+    NonUnitNorm { face_idx: FaceIndex, norm: f32 },
+    ExpectationMismatch { face_idx: FaceIndex },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeshManifoldError {
+    EmptyMesh,
+    /// An edge that belongs to only one face (the mesh has a boundary).
+    BoundaryEdge {
+        edge: (VertexIndex, VertexIndex),
+        face_idx: FaceIndex,
+    },
+    /// An edge shared by more than two faces.
+    NonManifoldEdge {
+        edge: (VertexIndex, VertexIndex),
+        face_indices: Vec<FaceIndex>,
+    },
+    /// Two faces share an edge but traverse it in the same direction,
+    /// meaning their normals are inconsistently oriented.
+    InconsistentWindingOrder {
+        edge: (VertexIndex, VertexIndex),
+        face_indices: [FaceIndex; 2],
+    },
+}
 
 /// Read-only witness that the underlying `IndexedMesh`'s face indices
 /// are all in range.
@@ -251,8 +279,8 @@ fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldErro
 #[cfg(test)]
 mod indexed_mesh_validated_faces_tests {
     use super::*;
-    use crate::errors::{MeshFaceError, TriVertexSlot, VertexIndex};
-    use crate::primitives::Normal;
+    use crate::indexed_mesh::validate::MeshFaceError;
+    use crate::primitives::{Normal, TriVertexSlot};
 
     fn face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
         IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])

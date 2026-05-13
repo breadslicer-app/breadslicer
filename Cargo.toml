@@ -19,9 +19,9 @@ debug = false
 strip = true
 
 [workspace.dependencies]
-sc-mesh-core = { path = "libs/mesh-core", version = "0.0.11" }
-sc-mesh-formats = { path = "libs/mesh-formats", version = "0.0.11" }
-sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.0.11" }
+sc-mesh-core = { path = "libs/mesh-core", version = "0.0.12" }
+sc-mesh-formats = { path = "libs/mesh-formats", version = "0.0.12" }
+sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.0.12" }
 
 anyhow = "1.0.102"
 float-cmp = "0.10.0"

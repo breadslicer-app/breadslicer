@@ -3,9 +3,40 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use newtypes::newtype_array;
+use std::fmt;
 
-use crate::errors::VertexIndex;
+use newtypes::{newtype_array, newtype_from_only, newtype_ord};
+
+/// Which coordinate of a 3D point is being referred to. Used both as
+/// an iteration helper (`CoordAxis::ALL`) and as a diagnostic field
+/// in vertex-validation errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum CoordAxis {
+    X = 0,
+    Y = 1,
+    Z = 2,
+}
+
+impl CoordAxis {
+    pub const ALL: [Self; 3] = [Self::X, Self::Y, Self::Z];
+
+    /// 0/1/2 index into a `[T; 3]` coordinate array.
+    #[inline]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
+impl fmt::Display for CoordAxis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+        })
+    }
+}
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Vector3D<F: Copy + PartialEq + PartialOrd>(pub(crate) [F; 3]);
@@ -174,6 +205,88 @@ impl Triangle {
 
     pub fn vertices(&self) -> [Vertex; 3] {
         self.vertices
+    }
+}
+
+// Index into `IndexedMesh::vertices`.
+newtype_ord!(VertexIndex, u32);
+newtype_from_only!(VertexIndex, u32);
+
+impl VertexIndex {
+    /// The raw `u32` index into `IndexedMesh::vertices`.
+    #[inline]
+    pub fn get(self) -> u32 {
+        self.into()
+    }
+
+    /// Adds an integer offset to the index. Used when re-basing a
+    /// face's vertex indices into a merged vertex array (see
+    /// `Scene::merge_meshes`).
+    #[inline]
+    pub fn offset(self, by: u32) -> Self {
+        Self::from(u32::from(self) + by)
+    }
+}
+
+impl From<VertexIndex> for usize {
+    #[inline]
+    fn from(v: VertexIndex) -> Self {
+        u32::from(v) as usize
+    }
+}
+
+impl fmt::Display for VertexIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
+// Index into `IndexedMesh::faces`. Same shape as `VertexIndex`.
+newtype_ord!(FaceIndex, usize);
+newtype_from_only!(FaceIndex, usize);
+
+impl FaceIndex {
+    /// The raw `usize` index into `IndexedMesh::faces`.
+    #[inline]
+    pub fn get(self) -> usize {
+        self.into()
+    }
+}
+
+impl fmt::Display for FaceIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
+/// Which of a triangle's three corners is being referred to. Used as
+/// an iteration helper (`TriVertexSlot::ALL`) and as a diagnostic
+/// field in face-validation errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum TriVertexSlot {
+    V0 = 0,
+    V1 = 1,
+    V2 = 2,
+}
+
+impl TriVertexSlot {
+    pub const ALL: [Self; 3] = [Self::V0, Self::V1, Self::V2];
+
+    /// 0/1/2 index into a triangle's `vertices: [u32; 3]` array.
+    #[inline]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
+impl fmt::Display for TriVertexSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::V0 => "v0",
+            Self::V1 => "v1",
+            Self::V2 => "v2",
+        })
     }
 }
 

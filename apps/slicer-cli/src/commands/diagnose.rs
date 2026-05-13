@@ -9,7 +9,7 @@ use std::{ffi::OsString, path::PathBuf};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::errors::{
+use sc_mesh_core::indexed_mesh::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
 use sc_mesh_core::scene::SceneObjectContent;

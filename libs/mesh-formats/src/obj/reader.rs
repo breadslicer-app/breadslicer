@@ -8,8 +8,8 @@ use std::io::{BufRead, BufReader};
 
 use anyhow::{Result, anyhow};
 use float_cmp::approx_eq;
-use sc_mesh_core::errors::VertexIndex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
+use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
@@ -602,7 +602,7 @@ mod parse_f32_tests {
 #[cfg(test)]
 mod parse_face_vertex_index_tests {
     use super::parse_face_vertex_index;
-    use sc_mesh_core::errors::VertexIndex;
+    use sc_mesh_core::primitives::VertexIndex;
 
     fn vi(n: u32) -> VertexIndex {
         VertexIndex::from(n)
@@ -1225,7 +1225,7 @@ f 1 2 3
         assert_eq!(
             errors,
             vec![
-                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle {
                     face_idx: 0_usize.into(),
                 }
             ]
@@ -1267,7 +1267,7 @@ f 1 3 5
         assert_eq!(
             errors,
             vec![
-                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle {
                     face_idx: 1_usize.into(),
                 }
             ]

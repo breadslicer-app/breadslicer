@@ -9,8 +9,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::errors::MeshFix;
-use sc_mesh_core::indexed_mesh::FixFacesOptions;
+use sc_mesh_core::indexed_mesh::{FixFacesOptions, MeshFix};
 use sc_mesh_core::scene::SceneObjectContent;
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,

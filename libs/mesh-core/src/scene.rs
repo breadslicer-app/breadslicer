@@ -4,10 +4,9 @@
  */
 
 use crate::aabb::Aabb;
-use crate::errors::TransformError;
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Normal, Vertex};
-use crate::transform::AffineTransform3D;
+use crate::transform::{AffineTransform3D, TransformError};
 use anyhow::{Result, anyhow};
 
 /// Per-object transform. The `Identity` variant lets callers skip the

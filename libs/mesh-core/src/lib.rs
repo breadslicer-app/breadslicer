@@ -16,11 +16,10 @@
 //!   in **millimetres**. Mesh storage is `f32` for vertex positions and
 //!   `f64` for transform matrices; both share the same millimetre scale.
 //!   Format readers (STL, OBJ, …) are unit-less by spec, so the convention
-//!   is "the file's numbers are millimetres" — converting other units is
+//!   is "the file's numbers are millimetres"; converting other units is
 //!   the caller's job.
 
 pub mod aabb;
-pub mod errors;
 pub mod geometry;
 pub mod indexed_mesh;
 pub mod primitives;

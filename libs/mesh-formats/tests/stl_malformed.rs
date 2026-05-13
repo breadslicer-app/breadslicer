@@ -249,7 +249,7 @@ endsolid foo
         assert_eq!(
             errors,
             vec![
-                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle {
                     face_idx: 1_usize.into(),
                 }
             ]
@@ -293,7 +293,7 @@ endsolid foo
             .expect_err("collinear triangle is degenerate");
         assert!(matches!(
             errors.as_slice(),
-            [sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle { .. }]
+            [sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle { .. }]
         ));
     }
 }
@@ -460,7 +460,7 @@ mod binary_stl_malformed_tests {
         assert_eq!(
             errors,
             vec![
-                sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle {
+                sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle {
                     face_idx: 1_usize.into(),
                 }
             ]
@@ -512,7 +512,7 @@ mod binary_stl_malformed_tests {
             .expect_err("collinear triangle is degenerate");
         assert!(matches!(
             errors.as_slice(),
-            [sc_mesh_core::errors::MeshNormalVectorError::ZeroAreaTriangle { .. }]
+            [sc_mesh_core::indexed_mesh::MeshNormalVectorError::ZeroAreaTriangle { .. }]
         ));
     }
 

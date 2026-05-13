@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-pub(crate) mod fix;
-mod validate;
-mod validated;
+pub mod fix;
+pub mod validate;
+pub mod validated;
 
-pub use validated::{ValidatedFaces, ValidatedFacesMut};
+pub use fix::MeshFix;
+pub use validate::{MeshFaceError, MeshVertexError};
+pub use validated::{MeshManifoldError, MeshNormalVectorError, ValidatedFaces, ValidatedFacesMut};
 
 use crate::aabb::Aabb;
-use crate::errors::{MeshFaceError, MeshFix};
 use crate::primitives::{IndexedTriangle, Vertex};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -76,7 +77,7 @@ impl IndexedMesh {
         self.meta = meta;
     }
 
-    /// Object-space AABB of `self.vertices`. Uncached — each call
+    /// Object-space AABB of `self.vertices`. Uncached: each call
     /// walks the vertex array. Callers that hammer this should hold
     /// a `SceneSpatial` from `sc-mesh-spatial` instead, which caches
     /// the result. Returns `None` for an empty mesh.
@@ -113,9 +114,9 @@ impl IndexedMesh {
     /// are ignored), then return a witness for the post-removal mesh.
     ///
     /// If every input error is a `ZeroLengthEdge`, the resulting
-    /// mesh's face indices are guaranteed to remain in range —
+    /// mesh's face indices are guaranteed to remain in range:
     /// removing whole faces does not change `vertices.len()` and does
-    /// not alter any survivor's `face.vertices[k]` — so the witness
+    /// not alter any survivor's `face.vertices[k]`, so the witness
     /// is minted directly without re-running `validate_faces`.
     /// Otherwise, the post-removal mesh is re-validated and the
     /// validation result is returned alongside the applied fixes.

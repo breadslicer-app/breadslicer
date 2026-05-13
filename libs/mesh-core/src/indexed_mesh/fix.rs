@@ -7,16 +7,32 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
 
-use crate::errors::{
-    FaceIndex, MeshFaceError, MeshFix, MeshManifoldError, MeshNormalVectorError, VertexIndex,
-};
 use crate::geometry::compute_normal_from_triangle_vertices;
-use crate::primitives::Normal;
+use crate::primitives::{FaceIndex, Normal, VertexIndex};
 
+use super::validate::MeshFaceError;
+use super::validated::{MeshManifoldError, MeshNormalVectorError};
 use super::{FixFacesOptions, IndexedMesh};
 
 #[cfg(test)]
 use crate::primitives::{IndexedTriangle, Vertex};
+
+/// Records of repair operations applied to a mesh by a fix routine.
+/// Returned alongside the mutated mesh so callers can surface a
+/// human-readable summary (CLI: print; GUI: dialog).
+#[derive(Clone, Debug, PartialEq)]
+pub enum MeshFix {
+    /// A face was removed because it had a zero-length edge.
+    RemovedZeroLengthEdgeFace { face_idx: FaceIndex },
+    /// A face's winding order was flipped (vertices reversed).
+    FlippedFaceOrientation { face_idx: FaceIndex },
+    /// A face's normal vector was recomputed from its vertices.
+    RecomputedNormal {
+        face_idx: FaceIndex,
+        old_normal: Normal,
+        new_normal: Normal,
+    },
+}
 
 /// One planned mutation of a face. The fix routine builds a `Vec` of
 /// these and only applies them once every fallible step has succeeded,
@@ -164,7 +180,7 @@ pub(super) fn fix_faces_orientation_impl(
         }
     }
 
-    // Every fallible step has succeeded — commit the plan.
+    // Every fallible step has succeeded; commit the plan.
     for entry in plan {
         let face = &mut mesh.faces[entry.face_idx.get()];
         if let Some(verts) = entry.new_vertices {
@@ -236,9 +252,7 @@ pub(super) fn fix_zero_length_edges_impl(
 #[cfg(test)]
 mod indexed_mesh_fix_faces_orientation_tests {
     use super::*;
-    use crate::errors::{MeshManifoldError, MeshNormalVectorError, VertexIndex};
     use crate::geometry::compute_normal_from_triangle_vertices;
-    use crate::primitives::Normal;
 
     /// Test-local shorthand for `VertexIndex::from(n)`. Keeps the
     /// dense `MeshManifoldError::*` literals readable.
@@ -640,7 +654,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let mut mesh = tetrahedron();
         let original = mesh.clone();
 
-        // Only 1 winding error for face 0 — below threshold of 2
+        // Only 1 winding error for face 0, below threshold of 2
         let manifold_errors = vec![MeshManifoldError::InconsistentWindingOrder {
             edge: (vi(0), vi(1)),
             face_indices: [0_usize.into(), 1_usize.into()],
@@ -813,7 +827,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     }
 
     // -------------------------------------------------------------------
-    // Atomicity regression — `fix_faces_orientation`.
+    // Atomicity regression: `fix_faces_orientation`.
     //
     // The fix routine must be transactional: on any error path, the mesh
     // must be byte-for-byte identical to its pre-call state. Previously,
@@ -854,7 +868,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     ///   "too many flipped faces" threshold).
     /// - A crafted normal-vector error puts face 0 in
     ///   `faces_with_wrong_normals`, so the flip branch tries to
-    ///   recompute the normal — which fails because the triangle is
+    ///   recompute the normal, which fails because the triangle is
     ///   degenerate.
     ///
     /// Pre-fix: face 0's vertices were reversed before the recompute
@@ -1067,8 +1081,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
 #[cfg(test)]
 mod indexed_mesh_fix_zero_length_edges_tests {
     use super::*;
-    use crate::errors::{MeshFaceError, MeshFix, TriVertexSlot, VertexIndex};
-    use crate::primitives::Normal;
+    use crate::primitives::TriVertexSlot;
 
     fn make_mesh(num_vertices: usize, faces: Vec<IndexedTriangle>) -> IndexedMesh {
         IndexedMesh {
@@ -1092,7 +1105,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
 
     #[test]
     fn empty_face_list_with_unrelated_errors_is_a_no_op() {
-        // Pass face errors that are *not* ZeroLengthEdge — the fix routine
+        // Pass face errors that are *not* ZeroLengthEdge: the fix routine
         // should ignore them and leave the mesh untouched.
         let mut mesh = make_mesh(3, vec![face(0, 1, 2)]);
         let errors = vec![MeshFaceError::OutOfRangeVertexIndex {
@@ -1135,7 +1148,7 @@ mod indexed_mesh_fix_zero_length_edges_tests {
 
         assert_eq!(mesh.faces.len(), 0);
         // One face was removed, but the fix log still mirrors the original
-        // error list — caller can choose to deduplicate the report.
+        // error list; caller can choose to deduplicate the report.
         let zero = MeshFix::RemovedZeroLengthEdgeFace {
             face_idx: 0_usize.into(),
         };

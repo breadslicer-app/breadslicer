@@ -18,6 +18,7 @@ Our applications:
 The software libraries behind our applications:
 - [`sc-mesh-core`](./libs/mesh-core/README.md)
 - [`sc-mesh-formats`](./libs/mesh-formats/README.md)
+- [`sc-mesh-spatial](./libs/mesh-spatial/README.md)
 
 ## Community
 

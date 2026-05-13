@@ -3,9 +3,38 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::errors::TransformError;
+use std::fmt;
+
 use crate::geometry::{SINGULARITY_THRESHOLD, gt_strict};
 use crate::primitives::{Normal, Vector3D, Vertex};
+
+/// Failure modes of `AffineTransform3D` / `Transform3D` operations that
+/// can encounter degenerate inputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransformError {
+    /// The linear part has a determinant whose magnitude is below the
+    /// singularity threshold, so it has no inverse and no
+    /// inverse-transpose.
+    SingularLinear,
+    /// A rotation axis was given with magnitude at or below the
+    /// singularity threshold, so it cannot be normalised.
+    ZeroAxis,
+    /// Applying the inverse-transpose to a unit normal produced a
+    /// zero-magnitude vector, so no direction can be recovered.
+    ZeroMagnitudeNormal,
+}
+
+impl fmt::Display for TransformError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::SingularLinear => "linear part of the transform is singular",
+            Self::ZeroAxis => "rotation axis must be non-zero",
+            Self::ZeroMagnitudeNormal => "transformed normal has zero magnitude",
+        })
+    }
+}
+
+impl std::error::Error for TransformError {}
 
 /// 3×4 affine transform: a 3×3 linear part plus a 3-vec translation.
 ///
@@ -700,9 +729,9 @@ mod affine_transform_3d_tests {
             .expect_err("transformed inf vertex must surface as InfiniteCoordinate");
         assert!(errors.iter().any(|e| matches!(
             e,
-            crate::errors::MeshVertexError::InfiniteCoordinate {
+            crate::indexed_mesh::MeshVertexError::InfiniteCoordinate {
                 vertex_idx: 0,
-                coord: crate::errors::CoordAxis::X,
+                coord: crate::primitives::CoordAxis::X,
             }
         )));
     }

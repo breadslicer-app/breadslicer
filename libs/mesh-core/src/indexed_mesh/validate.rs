@@ -5,9 +5,37 @@
 
 use anyhow::Result;
 
-use crate::errors::{CoordAxis, FaceIndex, MeshFaceError, MeshVertexError, TriVertexSlot};
+use crate::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
 use super::IndexedMesh;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeshVertexError {
+    InfiniteCoordinate { vertex_idx: usize, coord: CoordAxis },
+    NaNCoordinate { vertex_idx: usize, coord: CoordAxis },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeshFaceError {
+    OutOfRangeVertexIndex {
+        /// Index for the problematic face
+        face_idx: FaceIndex,
+        /// Which corner of the triangle holds the offending index.
+        vertex_pos: TriVertexSlot,
+        /// Value of the problematic vertex index, as found in the face.
+        vertex_idx: VertexIndex,
+    },
+    ZeroLengthEdge {
+        /// Index for the problematic face
+        face_idx: FaceIndex,
+        /// One of the two corners that share the same vertex.
+        vertex_pos_a: TriVertexSlot,
+        /// The other corner that shares the same vertex.
+        vertex_pos_b: TriVertexSlot,
+        /// The shared vertex index.
+        vertex_idx: VertexIndex,
+    },
+}
 
 #[cfg(test)]
 use crate::primitives::{IndexedTriangle, Vertex};
@@ -88,7 +116,7 @@ impl IndexedMesh {
 #[cfg(test)]
 mod indexed_mesh_validate_vertices_tests {
     use super::*;
-    use crate::errors::{CoordAxis, MeshVertexError};
+    use crate::primitives::CoordAxis;
 
     fn make_mesh(vertices: Vec<Vertex>) -> IndexedMesh {
         IndexedMesh {
@@ -245,8 +273,7 @@ mod indexed_mesh_validate_vertices_tests {
 #[cfg(test)]
 mod indexed_mesh_validate_faces_tests {
     use super::*;
-    use crate::errors::{MeshFaceError, TriVertexSlot};
-    use crate::primitives::Normal;
+    use crate::primitives::{Normal, TriVertexSlot};
 
     fn make_face(v0: u32, v1: u32, v2: u32) -> IndexedTriangle {
         IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [v0, v1, v2])
@@ -433,7 +460,7 @@ mod indexed_mesh_validate_faces_tests {
 #[cfg(test)]
 mod indexed_mesh_validate_normal_vectors_tests {
     use super::*;
-    use crate::errors::MeshNormalVectorError;
+    use crate::indexed_mesh::validated::MeshNormalVectorError;
     use crate::primitives::Normal;
 
     fn make_mesh(vertices: Vec<Vertex>, faces: Vec<IndexedTriangle>) -> IndexedMesh {
@@ -824,8 +851,8 @@ mod indexed_mesh_validate_normal_vectors_tests {
 #[cfg(test)]
 mod indexed_mesh_validate_manifold_tests {
     use super::*;
-    use crate::errors::{FaceIndex, MeshManifoldError, VertexIndex};
-    use crate::primitives::Normal;
+    use crate::indexed_mesh::validated::MeshManifoldError;
+    use crate::primitives::{FaceIndex, Normal, VertexIndex};
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
         IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), v)
