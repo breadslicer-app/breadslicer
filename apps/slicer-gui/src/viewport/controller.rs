@@ -11,15 +11,11 @@ use slint::wgpu_28::wgpu;
 
 use super::camera_controller::CameraController;
 use super::gizmo_drag::{DragOp, GizmoState};
-
-use super::gizmo_fsm::{
-    GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
-};
-use super::input_state::{ClickOrDrag, InputState};
-use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
+use super::input_dispatch::{InputDispatch, PointerUpOutcome};
+use super::keyboard_drive::KbdFocus;
 use super::object_list::{build_object_list_names, push_object_list};
-use super::render_scheduler;
-use super::types::{FrameState, ScreenPoint, ViewportSize};
+use super::render_host::RenderHost;
+use super::types::{FrameState, ScreenPoint};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
@@ -28,9 +24,8 @@ use crate::error_dialog::DialogManager;
 use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, Renderer, SceneRender, default_fov_y};
+use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, SceneRender};
 use crate::pending_load::PendingLoad;
-use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{ObjectIdx, Selection};
@@ -40,29 +35,9 @@ pub struct ViewportController {
     // Document-level model. Owns the loaded scene + selection (and,
     // ahead, the undo stack). The controller observes it.
     document: Rc<SceneDocument>,
-    renderer: RefCell<Option<Renderer>>,
     camera: CameraController,
-    viewport: Cell<Option<ViewportSize>>,
-    // Per-frame work owed: a redraw (something visual changed) and/or
-    // a GPU upload (CPU-side scene differs from the renderer's
-    // buffers). Both can be set independently, a successful upload
-    // also sets the redraw flag so the just-uploaded scene is shown,
-    // and a redraw can be flagged alone (e.g. camera moved without a
-    // scene change).
-    frame: Cell<FrameState>,
-    // Logical-pixel position at which the left button was last
-    // pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
-    // `on_pointer_up` reads it to decide whether the gesture was a
-    // click (small movement → run picker) or a drag (large movement →
-    // either consumed by the gizmo FSM or dropped on the floor).
-    input_state: InputState,
-    // Translate-gizmo drag state. Idle when no drag is in progress.
-    gizmo_fsm: GizmoFsm,
-    // Keyboard-driven gizmo state: focus (`T`/`R`/`S` modes), held-
-    // arrow bitset (driven by `gizmo-arrow-pressed/released`), and
-    // the per-frame integrator's tick clock. Sampled in
-    // `handle_before_rendering`.
-    kbd_drive: KeyboardDriveState,
+    render: RenderHost,
+    input: InputDispatch,
     loader: Rc<SceneLoader>,
     // Slot for a load request that arrived before the GPU device was
     // available (typically argv at startup, or future macOS `openURLs`
@@ -71,11 +46,6 @@ pub struct ViewportController {
     // `handle_rendering_setup` once `set_gpu` makes the device
     // snapshottable. See `pending_load.rs` for the full lifecycle.
     pending_load: Rc<PendingLoad>,
-    // True between a `viewport-resized` event and the debounce timer firing
-    // in `on_resize_settled`. While set, `handle_before_rendering` rounds the
-    // render target size up to the next `RESIZE_BUCKET` multiple so drag
-    // resizes don't churn the MSAA/target allocations on every pointer move.
-    resizing: Cell<bool>,
     dialogs: Rc<DialogManager>,
     // Document subscription. Held by the controller so it's dropped
     // alongside the controller; populated by `register_document_listener`
@@ -98,16 +68,11 @@ impl ViewportController {
         Self {
             ui: ui.as_weak(),
             document,
-            renderer: RefCell::new(None),
             camera: CameraController::new(),
-            viewport: Cell::new(None),
-            frame: Cell::new(FrameState::default()),
-            input_state: InputState::new(),
-            gizmo_fsm: GizmoFsm::new(),
-            kbd_drive: KeyboardDriveState::new(),
+            render: RenderHost::new(ui),
+            input: InputDispatch::new(),
             loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
             pending_load,
-            resizing: Cell::new(false),
             dialogs,
             document_subscription: RefCell::new(None),
             build_volume: Cell::new(HARDCODED_DEFAULT_BUILD_VOLUME),
@@ -126,16 +91,11 @@ impl ViewportController {
         Self {
             ui: slint::Weak::default(),
             document: SceneDocument::new(),
-            renderer: RefCell::new(None),
             camera: CameraController::new(),
-            viewport: Cell::new(None),
-            frame: Cell::new(FrameState::default()),
-            input_state: InputState::new(),
-            gizmo_fsm: GizmoFsm::new(),
-            kbd_drive: KeyboardDriveState::new(),
+            render: RenderHost::new_for_test(),
+            input: InputDispatch::new(),
             loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             pending_load: Rc::new(PendingLoad::new()),
-            resizing: Cell::new(false),
             dialogs,
             document_subscription: RefCell::new(None),
             build_volume: Cell::new(HARDCODED_DEFAULT_BUILD_VOLUME),
@@ -154,22 +114,22 @@ impl ViewportController {
 
     #[cfg(test)]
     pub(crate) fn clear_frame_state_for_test(&self) {
-        self.frame.set(FrameState::default());
+        self.render.clear_frame_state();
     }
 
     #[cfg(test)]
     pub(crate) fn redraw_owed_for_test(&self) -> bool {
-        self.frame.get().redraw_owed()
+        self.render.redraw_owed()
     }
 
     #[cfg(test)]
     pub(crate) fn set_viewport_for_test(&self, w: f32, h: f32) {
-        self.viewport.set(ViewportSize::new(w, h));
+        self.render.set_viewport(w, h);
     }
 
     #[cfg(test)]
     pub(crate) fn viewport_for_test(&self) -> Option<(f32, f32)> {
-        self.viewport.get().map(|vp| (vp.width(), vp.height()))
+        self.render.viewport().map(|vp| (vp.width(), vp.height()))
     }
 
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
@@ -265,14 +225,9 @@ impl ViewportController {
     /// held-arrow bitset.
     fn on_scene_cleared(&self) {
         self.camera.reset();
-        self.frame.set(FrameState::default());
-        self.gizmo_fsm.set_idle();
-        self.gizmo_fsm.clear_hover();
-        self.input_state.set_idle();
-        self.kbd_drive.reset();
-        if let Some(r) = self.renderer.borrow_mut().as_mut() {
-            r.clear_scene();
-        }
+        self.render.set_frame(FrameState::default());
+        self.input.reset();
+        self.render.clear_renderer_scene();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_mesh_rendering(slint::Image::default());
             ui.set_has_scene(false);
@@ -284,7 +239,7 @@ impl ViewportController {
     }
 
     fn request_redraw(&self) {
-        render_scheduler::request_redraw(&self.ui);
+        self.render.request_redraw();
     }
 
     /// Replace the active build volume and trigger a redraw. The
@@ -311,18 +266,11 @@ impl ViewportController {
     }
 
     fn mark_dirty(&self) {
-        render_scheduler::mark_dirty(&self.frame, &self.ui);
+        self.render.mark_dirty();
     }
 
     pub fn on_viewport_resized(&self, w: f32, h: f32) {
-        render_scheduler::on_viewport_resized(
-            &self.viewport,
-            &self.resizing,
-            &self.frame,
-            &self.ui,
-            w,
-            h,
-        );
+        self.render.on_viewport_resized(w, h);
     }
 
     /// Called once `viewport-resized` has stayed quiet for `RESIZE_SETTLE`.
@@ -330,21 +278,17 @@ impl ViewportController {
     /// reallocates at the exact logical size, eliminating the `image-fit:
     /// fill` stretch that persisted during the drag.
     pub fn on_resize_settled(&self) {
-        render_scheduler::on_resize_settled(&self.resizing, &self.frame, &self.ui, || {
-            if let Some(r) = self.renderer.borrow_mut().as_mut() {
-                r.invalidate_sizing();
-            }
-        });
+        self.render.on_resize_settled();
     }
 
     pub fn on_rotate(&self, dx: f32, dy: f32) {
-        if self.camera.on_rotate(dx, dy, self.viewport.get()) {
+        if self.camera.on_rotate(dx, dy, self.render.viewport()) {
             self.mark_dirty();
         }
     }
 
     pub fn on_pan(&self, dx: f32, dy: f32) {
-        if self.camera.on_pan(dx, dy, self.viewport.get()) {
+        if self.camera.on_pan(dx, dy, self.render.viewport()) {
             self.mark_dirty();
         }
     }
@@ -352,7 +296,7 @@ impl ViewportController {
     pub fn on_zoom(&self, delta: f32, cursor_x: f32, cursor_y: f32) {
         if self
             .camera
-            .on_zoom(delta, cursor_x, cursor_y, self.viewport.get())
+            .on_zoom(delta, cursor_x, cursor_y, self.render.viewport())
         {
             self.mark_dirty();
         }
@@ -398,7 +342,8 @@ impl ViewportController {
         // gone (post-teardown) or has rotated to a different device
         // than the worker built against (mid-load device loss).
         let scene_installed = self
-            .renderer
+            .render
+            .renderer_cell()
             .borrow_mut()
             .as_mut()
             .map(|r| r.install_scene(gpu_scene, &built_with))
@@ -419,15 +364,16 @@ impl ViewportController {
             // small the imported model is. Mirrors the framing the
             // pre-first-paint path uses when the camera slot is empty.
             let scene_bounds = self
-                .renderer
+                .render
+                .renderer_cell()
                 .borrow()
                 .as_ref()
                 .and_then(|r| r.scene_bounds());
             self.camera
                 .replace_with_framing(scene_bounds, self.build_volume.get());
-            self.frame.update(FrameState::with_redraw_owed);
+            self.render.update_frame(FrameState::with_redraw_owed);
         } else {
-            self.frame.update(FrameState::with_upload_owed);
+            self.render.update_frame(FrameState::with_upload_owed);
         }
     }
 
@@ -525,12 +471,12 @@ impl ViewportController {
     }
 
     pub fn on_clear_selection(&self) {
-        if matches!(self.gizmo_fsm.current(), GizmoState::Drag { .. }) {
-            self.abort_gizmo_drag();
+        if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
+            self.input.abort_gizmo_drag(&self.document);
             return;
         }
-        if self.kbd_drive.current_focus() != KbdFocus::None {
-            self.set_keyboard_focus(KbdFocus::None);
+        if self.input.kbd_drive().current_focus() != KbdFocus::None {
+            self.apply_keyboard_focus(KbdFocus::None);
             return;
         }
         if matches!(self.document.selection(), Selection::None) {
@@ -541,7 +487,7 @@ impl ViewportController {
         // before the document mutation keeps the order matching the
         // pre-listener implementation; `set_selection` then fires
         // `SelectionChanged` and the listener mirrors UI + dirty.
-        self.gizmo_fsm.clear_hover();
+        self.input.gizmo_fsm().clear_hover();
         self.document.set_selection(Selection::None);
     }
 
@@ -551,217 +497,93 @@ impl ViewportController {
     /// type twice is a no-op so the integrator's tick clock isn't
     /// reset by autorepeat.
     pub fn on_gizmo_focus_translate(&self) {
-        self.set_keyboard_focus(KbdFocus::Translate);
+        self.apply_keyboard_focus(KbdFocus::Translate);
     }
 
     pub fn on_gizmo_focus_rotate(&self) {
-        self.set_keyboard_focus(KbdFocus::Rotate);
+        self.apply_keyboard_focus(KbdFocus::Rotate);
     }
 
     pub fn on_gizmo_focus_scale(&self) {
-        self.set_keyboard_focus(KbdFocus::Scale);
+        self.apply_keyboard_focus(KbdFocus::Scale);
     }
 
-    /// Internal: writes the focus cell, mirrors to the UI property,
-    /// and resets the held-arrow bitset on focus change so a held key
-    /// from one mode doesn't bleed into another.
-    fn set_keyboard_focus(&self, focus: KbdFocus) {
-        let has_selection = !matches!(self.document.selection(), Selection::None);
-        if !self
-            .kbd_drive
-            .try_set_focus(&self.document, focus, has_selection)
-        {
+    /// Sets the keyboard focus on the input concern, then mirrors
+    /// the activation state to the UI property and marks dirty on
+    /// any actual change. The mirror + dirty step is the cross-
+    /// concern part of the cascade: InputDispatch owns the focus
+    /// cell, the coordinator owns the UI handle.
+    fn apply_keyboard_focus(&self, focus: KbdFocus) {
+        let Some(new_focus) = self.input.set_keyboard_focus(&self.document, focus) else {
             return;
-        }
+        };
         if let Some(ui) = self.ui.upgrade() {
-            ui.set_gizmo_keyboard_focus_active(focus != KbdFocus::None);
+            ui.set_gizmo_keyboard_focus_active(new_focus != KbdFocus::None);
         }
         self.mark_dirty();
     }
 
-    /// Held-key handler for the arrow / PageUp / PageDown bindings
-    /// while keyboard gizmo focus is active. `code` is the
-    /// `ARROW_*` index defined above; out-of-range codes are
-    /// ignored. Marks the controller dirty so the next render-tick
-    /// runs the integrator.
     pub fn on_gizmo_arrow_pressed(&self, code: i32) {
-        if self.kbd_drive.current_focus() == KbdFocus::None {
-            return;
-        }
-        let sel = self.document.selection_primary_idx();
-        if self.kbd_drive.update_arrow(&self.document, sel, code, true) {
+        if self.input.on_gizmo_arrow_pressed(&self.document, code) {
             self.mark_dirty();
         }
     }
 
-    /// Counterpart to `on_gizmo_arrow_pressed`. Released codes are
-    /// always processed even with focus dropped, a release that
-    /// arrives just after the focus was cleared (race with Esc
-    /// → focus drop) still has to clear its bit so the bitset
-    /// doesn't accumulate stuck flags.
     pub fn on_gizmo_arrow_released(&self, code: i32) {
-        let sel = self.document.selection_primary_idx();
-        if self
-            .kbd_drive
-            .update_arrow(&self.document, sel, code, false)
-        {
+        if self.input.on_gizmo_arrow_released(&self.document, code) {
             self.mark_dirty();
         }
     }
 
-    /// Left button pressed at logical coords `(x, y)`. Records the
-    /// press position so `on_pointer_up` can disambiguate click from
-    /// drag. If a gizmo handle is selected and the press hits it,
-    /// the FSM also enters `Drag`, capturing the original transform
-    /// and the world-space anchor on the axis. The modifier state
-    /// at press feeds the `ScaleAxis` proportional flag, pressing
-    /// the per-axis cube with Shift already held starts the drag in
-    /// uniform-scale mode.
     pub fn on_pointer_down(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        self.input_state.set_pressed(ScreenPoint { x, y });
-        self.try_start_gizmo_drag(x, y, modifiers);
+        self.input.on_pointer_down(
+            &self.document,
+            self.camera.camera_cell(),
+            self.render.viewport(),
+            ScreenPoint { x, y },
+            modifiers,
+        );
     }
 
-    /// Pointer moved while the left button is held and no camera
-    /// gesture is active. Drives the gizmo drag, branches on the
-    /// active `DragOp`, recomputes the per-op delta from the current
-    /// cursor ray, and composes the resulting transform onto the
-    /// captured original. If a `ScaleAxis` drag is live and the live
-    /// Shift state has flipped since the last frame, re-anchors the
-    /// drag (current transform → new `original`, current cursor →
-    /// new anchors) so the per-axis ↔ uniform formula switch is
-    /// visually snap-free.
     pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        let ctx = GizmoMoveCtx {
-            document: &self.document,
-            camera: self.camera.camera_cell(),
-            viewport: self.viewport.get(),
-            cursor: ScreenPoint { x, y },
+        if self.input.on_pointer_move(
+            &self.document,
+            self.camera.camera_cell(),
+            self.render.viewport(),
+            self.build_volume.get(),
+            ScreenPoint { x, y },
             modifiers,
-            build_volume: self.build_volume.get(),
-        };
-        // A successful drag move routes through `apply_command`, which
-        // fires `Mutated` and schedules the redraw via the listener;
-        // the bool return is intentionally discarded here.
-        self.gizmo_fsm.on_move(ctx);
-        // No-op while a drag is in progress (the FSM short-circuits
-        // hover updates internally), so this just covers the hover-
-        // tint update on idle pointer moves. Hover state is not a
-        // scene mutation, so it stays on the manual dirty path.
-        let hover_ctx = GizmoHoverCtx {
-            document: &self.document,
-            camera: self.camera.camera_cell(),
-            viewport: self.viewport.get(),
-            selection_idx: self.document.selection_primary_idx(),
-            cursor: ScreenPoint { x, y },
-        };
-        if self.gizmo_fsm.update_hover(hover_ctx) {
+        ) {
             self.mark_dirty();
         }
     }
 
-    /// Left button released at logical coords `(x, y)`. If a drag was
-    /// in progress, the final composed transform stands and the FSM
-    /// returns to `Idle`. Otherwise the press → release is treated as
-    /// a click iff its movement stays within `CLICK_DRAG_THRESHOLD`,
-    /// dispatching through the picker in that case. Modifier state
-    /// at release is currently unused; threaded through for symmetry
-    /// with the down/move callbacks and so future operations
-    /// (snapping, etc.) can read it without another signature change.
     pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
-        let outcome = self.input_state.click_or_drag(ScreenPoint { x, y });
-        if self.gizmo_fsm.commit_drag(&self.document) {
-            self.mark_dirty();
+        match self
+            .input
+            .on_pointer_up(&self.document, ScreenPoint { x, y })
+        {
+            PointerUpOutcome::DragCommitted => self.mark_dirty(),
+            PointerUpOutcome::Click(cursor) => self.run_pick_at(cursor),
+            PointerUpOutcome::Nothing => (),
+        }
+    }
+
+    /// Picker dispatch: hand the pixel coordinates to InputDispatch
+    /// (which builds the ray and runs `pick_object`) and apply the
+    /// pick result through the Session-level selection setters.
+    fn run_pick_at(&self, cursor: ScreenPoint) {
+        let Some(pick) = self.input.pick_at(
+            &self.document,
+            self.camera.camera_cell(),
+            self.render.viewport(),
+            cursor,
+        ) else {
             return;
-        }
-        if outcome == ClickOrDrag::Click {
-            self.run_pick_at(x, y);
-        }
-    }
-
-    /// Runs the four gizmo hit tests against the current camera +
-    /// cursor ray and, if a handle is grabbed, transitions the FSM
-    /// into `Drag`. The front-most candidate (smallest positive `t`
-    /// along the press ray) wins across translate cones, rotate
-    /// arcs, scale midpoint cubes, and the centre cube. Bails on
-    /// missing camera / scene / no selection / zero viewport, in
-    /// which case the press behaves like a plain click candidate.
-    ///
-    /// `modifiers.shift` at press time captures into the resulting
-    /// `ScaleAxis.proportional` flag, a press on the per-axis cube
-    /// with Shift held starts uniformly; subsequent toggles
-    /// re-anchor through the move path.
-    fn try_start_gizmo_drag(&self, x: f32, y: f32, modifiers: PointerModifiers) {
-        let ctx = GizmoStartCtx {
-            document: &self.document,
-            camera: self.camera.camera_cell(),
-            viewport: self.viewport.get(),
-            selection_idx: self.document.selection_primary_idx(),
-            press: ScreenPoint { x, y },
-            modifiers,
-        };
-        self.gizmo_fsm.try_start_drag(ctx);
-    }
-
-    /// Aborts any in-progress drag and reverts the affected object's
-    /// transform to its captured original. Called from
-    /// `on_clear_selection` and `on_close_scene` so a drag never
-    /// outlives its valid context.
-    fn abort_gizmo_drag(&self) {
-        // The revert routes through `apply_command` and the `Mutated`
-        // listener schedules the redraw; only the input-phase reset
-        // is the controller's job.
-        if self.gizmo_fsm.abort(&self.document) {
-            self.input_state.set_idle();
-        }
-    }
-
-    /// Per-frame integrator: if a keyboard gizmo focus is active and
-    /// any arrow key is held, applies one tick of motion to the
-    /// selected object. Bails (without resetting the tick clock) on
-    /// missing camera / scene / selection / zero viewport so a hot
-    /// re-init doesn't hand back time the user didn't drive.
-    ///
-    /// A successful tick routes through `apply_command` and the
-    /// `Mutated` listener marks the controller dirty so the next
-    /// `handle_before_rendering` runs again, the integrator
-    /// self-pumps as long as the user holds keys, and quiesces when
-    /// they release.
-    fn integrate_keyboard_arrows(&self) {
-        let ctx = IntegrationCtx {
-            document: &self.document,
-            camera: self.camera.camera_cell(),
-            viewport: self.viewport.get(),
-            selection_idx: self.document.selection_primary_idx(),
-            build_volume: self.build_volume.get(),
-        };
-        self.kbd_drive.integrate(ctx);
-    }
-
-    /// Picker dispatch: build the ray at `(x, y)`, run `pick_object`,
-    /// update the selection. Bails on missing camera / scene / zero
-    /// viewport.
-    fn run_pick_at(&self, x: f32, y: f32) {
-        let Some(vp) = self.viewport.get() else {
-            return;
-        };
-        let pick = {
-            let camera_slot = self.camera.camera_cell().borrow();
-            let Some(camera) = camera_slot.as_ref() else {
-                return;
-            };
-            let ray =
-                picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
-            // Both borrows (camera_slot here, document scene inside
-            // `with_scene`) drop at this expression's end, so the
-            // selection setters below can re-borrow without overlap.
-            self.document
-                .with_scene(|scene| picking::pick_object(&ray, scene))
         };
         match pick {
-            None => (),
-            Some(Some(idx)) => self.on_select_by_index(idx),
-            Some(None) => self.on_clear_selection(),
+            Some(idx) => self.on_select_by_index(idx),
+            None => self.on_clear_selection(),
         }
     }
 
@@ -777,10 +599,10 @@ impl ViewportController {
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
         self.loader.set_gpu(device.clone(), queue.clone());
-        *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
+        self.render.handle_rendering_setup(device, queue);
         self.loader.reset_upload_failures();
         if self.document.is_loaded() {
-            self.frame.update(FrameState::with_upload_owed);
+            self.render.update_frame(FrameState::with_upload_owed);
         }
         // Always request a redraw after RenderingSetup: even with no
         // scene, the plate is part of the steady-state output.
@@ -809,8 +631,7 @@ impl ViewportController {
     // build buffers against an unowned device.
     pub fn handle_rendering_teardown(&self) {
         self.loader.clear_gpu();
-        *self.renderer.borrow_mut() = None;
-        self.frame.update(FrameState::after_render);
+        self.render.handle_rendering_teardown();
     }
 
     pub fn handle_before_rendering(&self) {
@@ -818,20 +639,25 @@ impl ViewportController {
         // renderer, the integrator mutates the scene's transform
         // and marks dirty, which is exactly the input the renderer
         // pass below needs to read in this same frame.
-        self.integrate_keyboard_arrows();
+        self.input.integrate_keyboard_arrows(
+            &self.document,
+            self.camera.camera_cell(),
+            self.render.viewport(),
+            self.build_volume.get(),
+        );
 
-        let mut renderer_slot = self.renderer.borrow_mut();
+        let mut renderer_slot = self.render.renderer_cell().borrow_mut();
         let Some(renderer) = renderer_slot.as_mut() else {
             return;
         };
 
-        if self.frame.get().upload_owed() {
+        if self.render.frame().upload_owed() {
             let upload = self
                 .document
                 .with_scene(|spatial| renderer.upload_scene(spatial.scene()));
             match upload {
                 Some(Ok(())) => {
-                    self.frame.update(FrameState::after_upload_success);
+                    self.render.update_frame(FrameState::after_upload_success);
                     self.loader.note_upload_success();
                 }
                 Some(Err(err)) => {
@@ -845,7 +671,7 @@ impl ViewportController {
                 }
                 None => {
                     // Flag set but the scene was cleared before we got to it.
-                    self.frame.update(FrameState::upload_cleared);
+                    self.render.update_frame(FrameState::upload_cleared);
                 }
             }
         }
@@ -861,14 +687,14 @@ impl ViewportController {
                 .replace_with_framing(scene_bounds, self.build_volume.get());
         }
 
-        if !self.frame.get().redraw_owed() {
+        if !self.render.frame().redraw_owed() {
             return;
         }
 
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let Some(vp) = self.viewport.get() else {
+        let Some(vp) = self.render.viewport() else {
             return;
         };
         let h_logical = vp.height();
@@ -879,7 +705,7 @@ impl ViewportController {
             return;
         }
 
-        let (eff_w, eff_h) = render_scheduler::bucketed_size(width, height, self.resizing.get());
+        let (eff_w, eff_h) = self.render.bucketed_size(width, height);
 
         let camera_slot = self.camera.camera_cell().borrow();
         let Some(camera) = camera_slot.as_ref() else {
@@ -897,7 +723,7 @@ impl ViewportController {
             .document
             .with_scene(|spatial_for_render| {
                 let selection_idx = self.document.selection_primary_idx();
-                let drag_state = self.gizmo_fsm.current();
+                let drag_state = self.input.gizmo_fsm().current();
                 let (visibility, drag_visual) = match drag_state {
                     GizmoState::Drag { op, pivot, .. } => match op {
                         DragOp::Translate { axis, .. } => {
@@ -934,7 +760,7 @@ impl ViewportController {
                     },
                     GizmoState::Idle => (GizmoVisibility::Idle, None),
                 };
-                let hover = self.gizmo_fsm.current_hover();
+                let hover = self.input.gizmo_fsm().current_hover();
                 let gizmo_frame = selection_idx.and_then(|sel| {
                     gizmo::frame::build_gizmo_frame(
                         spatial_for_render,
@@ -964,7 +790,7 @@ impl ViewportController {
         let Some(texture) = texture else {
             return;
         };
-        self.frame.update(FrameState::after_render);
+        self.render.update_frame(FrameState::after_render);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
             Err(err) => self.dialogs.show_error_deferred(
@@ -1237,6 +1063,8 @@ mod viewport_click_tests {
     use super::*;
     use crate::camera::OrbitCamera;
     use crate::gizmo::axis::Axis;
+    use crate::mesh_render::default_fov_y;
+    use crate::picking;
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
     use sc_mesh_core::IndexedMesh;
@@ -1456,7 +1284,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        match ctrl.gizmo_fsm.current() {
+        match ctrl.input.gizmo_fsm().current() {
             GizmoState::Drag {
                 op: DragOp::Translate { axis, .. },
                 ..
@@ -1472,7 +1300,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(0.0, 0.0, no_mods());
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
     }
 
     #[test]
@@ -1497,7 +1325,10 @@ mod viewport_click_tests {
 
         ctrl.on_pointer_down(press.0, press.1, no_mods());
         // Drag must have started, otherwise the move is a no-op.
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Drag { .. }));
+        assert!(matches!(
+            ctrl.input.gizmo_fsm().current(),
+            GizmoState::Drag { .. }
+        ));
         ctrl.on_pointer_move(release.0, release.1, no_mods());
 
         let actual = read_translation(&ctrl);
@@ -1554,7 +1385,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
 
         // Drag state cleared.
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
         // Translation persists, the user committed the drag.
         let after = read_translation(&ctrl);
         assert_approx_eq!(f32, after.x, mid_drag.x, epsilon = 1e-6);
@@ -1636,7 +1467,7 @@ mod viewport_click_tests {
         assert_approx_eq!(f32, reverted.x, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, reverted.y, 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, reverted.z, 0.0, epsilon = 1e-6);
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
         assert_eq!(
             ctrl.selection(),
             Some(0),
@@ -1665,7 +1496,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_close_scene();
 
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1699,7 +1530,7 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
         ctrl.on_pointer_down(press.0, press.1, shift_held());
-        match ctrl.gizmo_fsm.current() {
+        match ctrl.input.gizmo_fsm().current() {
             GizmoState::Drag {
                 op: DragOp::ScaleAxis {
                     axis, proportional, ..
@@ -1725,7 +1556,7 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
         ctrl.on_pointer_down(press.0, press.1, no_mods());
-        match ctrl.gizmo_fsm.current() {
+        match ctrl.input.gizmo_fsm().current() {
             GizmoState::Drag {
                 op: DragOp::ScaleAxis { proportional, .. },
                 ..
@@ -1929,10 +1760,13 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Drag { .. }));
+        assert!(matches!(
+            ctrl.input.gizmo_fsm().current(),
+            GizmoState::Drag { .. }
+        ));
 
         let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
-        let aborted = ctrl.gizmo_fsm.abort(&ctrl.document);
+        let aborted = ctrl.input.gizmo_fsm().abort(&ctrl.document);
         assert!(aborted);
         assert_eq!(count.get(), 1);
     }
@@ -1943,10 +1777,10 @@ mod viewport_click_tests {
         // the document, so no Mutated must fire.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
 
         let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
-        let aborted = ctrl.gizmo_fsm.abort(&ctrl.document);
+        let aborted = ctrl.input.gizmo_fsm().abort(&ctrl.document);
         assert!(!aborted);
         assert_eq!(count.get(), 0);
     }
@@ -2031,7 +1865,7 @@ mod viewport_click_tests {
 
 #[cfg(test)]
 mod keyboard_focus_tests {
-    use super::super::keyboard_drive::{ARROW_X_POS, ARROW_Y_POS};
+    use super::super::keyboard_drive::{ARROW_X_POS, ARROW_Y_POS, IntegrationCtx};
     use super::*;
     use crate::camera::OrbitCamera;
     use crate::gizmo::axis::Axis;
@@ -2065,7 +1899,7 @@ mod keyboard_focus_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_scene_for_test(one_object_scene());
         ctrl.on_gizmo_focus_translate();
-        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::None);
+        assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::None);
     }
 
     #[test]
@@ -2074,11 +1908,11 @@ mod keyboard_focus_tests {
         ctrl.install_scene_for_test(one_object_scene());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
-        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Translate);
+        assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::Translate);
         ctrl.on_gizmo_focus_rotate();
-        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Rotate);
+        assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::Rotate);
         ctrl.on_gizmo_focus_scale();
-        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Scale);
+        assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::Scale);
     }
 
     #[test]
@@ -2091,11 +1925,11 @@ mod keyboard_focus_tests {
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        assert!(ctrl.kbd_drive.current_arrows().any_held());
+        assert!(ctrl.input.kbd_drive().current_arrows().any_held());
 
         ctrl.on_gizmo_focus_rotate();
         assert!(
-            !ctrl.kbd_drive.current_arrows().any_held(),
+            !ctrl.input.kbd_drive().current_arrows().any_held(),
             "switching focus must clear held arrows so a held key from one mode \
              doesn't leak into another"
         );
@@ -2111,7 +1945,7 @@ mod keyboard_focus_tests {
         ctrl.install_scene_for_test(one_object_scene());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        assert!(!ctrl.kbd_drive.current_arrows().any_held());
+        assert!(!ctrl.input.kbd_drive().current_arrows().any_held());
     }
 
     #[test]
@@ -2128,7 +1962,7 @@ mod keyboard_focus_tests {
         ctrl.on_clear_selection();
         // Stale release arrives.
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
-        assert!(!ctrl.kbd_drive.current_arrows().any_held());
+        assert!(!ctrl.input.kbd_drive().current_arrows().any_held());
     }
 
     fn translation_x(dx: f64) -> Transform3D {
@@ -2264,7 +2098,7 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
         // No drag is possible without a camera; simulate the
         // mid-cascade state by directly writing the gizmo cell.
-        ctrl.gizmo_fsm.force_set(GizmoState::Drag {
+        ctrl.input.gizmo_fsm().force_set(GizmoState::Drag {
             op: DragOp::Translate {
                 axis: Axis::X,
                 anchor: Vec3::ZERO,
@@ -2276,13 +2110,13 @@ mod keyboard_focus_tests {
 
         // Level 1 → drag aborts; focus and selection survive.
         ctrl.on_clear_selection();
-        assert!(matches!(ctrl.gizmo_fsm.current(), GizmoState::Idle));
-        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::Translate);
+        assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
+        assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::Translate);
         assert_eq!(ctrl.selection(), Some(0));
 
         // Level 2 → focus drops; selection survives.
         ctrl.on_clear_selection();
-        assert_eq!(ctrl.kbd_drive.current_focus(), KbdFocus::None);
+        assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::None);
         assert_eq!(ctrl.selection(), Some(0));
 
         // Level 3 → selection clears.
@@ -2326,18 +2160,18 @@ mod keyboard_focus_tests {
     /// call. The first call seeds `last_tick`; the second produces
     /// the actual integration step.
     fn integrate_two_ticks(ctrl: &ViewportController) {
-        let _ = ctrl.kbd_drive.integrate(IntegrationCtx {
+        let _ = ctrl.input.kbd_drive().integrate(IntegrationCtx {
             document: &ctrl.document,
             camera: ctrl.camera.camera_cell(),
-            viewport: ctrl.viewport.get(),
+            viewport: ctrl.render.viewport(),
             selection_idx: ctrl.document.selection_primary_idx(),
             build_volume: ctrl.build_volume.get(),
         });
         std::thread::sleep(std::time::Duration::from_millis(50));
-        let _ = ctrl.kbd_drive.integrate(IntegrationCtx {
+        let _ = ctrl.input.kbd_drive().integrate(IntegrationCtx {
             document: &ctrl.document,
             camera: ctrl.camera.camera_cell(),
-            viewport: ctrl.viewport.get(),
+            viewport: ctrl.render.viewport(),
             selection_idx: ctrl.document.selection_primary_idx(),
             build_volume: ctrl.build_volume.get(),
         });
