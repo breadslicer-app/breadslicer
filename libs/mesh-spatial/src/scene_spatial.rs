@@ -138,6 +138,12 @@ impl SceneSpatial {
                 // geometry will call `invalidate_object` /
                 // `invalidate_resource` from this arm.
             }
+            SceneEdit::SetLocalTransform { .. } => {
+                // Addresses a `NodeId`, which the wrapped `Scene` has
+                // no analogue for. The headless `apply_to_scene` arm
+                // for this variant is also a no-op, so neither the
+                // scene nor the per-mesh caches change here.
+            }
         }
         edit.apply_to_scene(&mut self.scene);
     }

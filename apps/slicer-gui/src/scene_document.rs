@@ -16,7 +16,7 @@
 //! [`sc_mesh_core::scene_edit`] and routes through
 //! [`SceneSpatial::apply_edit`], which keeps spatial caches in sync
 //! with the scene state. There is no closure-based mutation entry
-//! point — the cache layer would not be able to inspect a closure to
+//! point: the cache layer would not be able to inspect a closure to
 //! decide what to invalidate.
 
 use std::cell::{Cell, RefCell};
@@ -68,7 +68,7 @@ pub(crate) struct SceneDocument {
     /// "Reload". Cleared in lockstep with `spatial`.
     source_path: RefCell<Option<PathBuf>>,
     /// Currently-selected object. Reset to `Selection::None` whenever
-    /// the scene is installed or cleared — a new scene has its own
+    /// the scene is installed or cleared: a new scene has its own
     /// object indices, so a prior selection is no longer meaningful.
     selection: SelectionState,
     /// Registered listeners. Cloned out of the cell before dispatch
@@ -79,7 +79,7 @@ pub(crate) struct SceneDocument {
     /// recent edit at the back; capped at `UNDO_STACK_CAP`.
     undo_stack: RefCell<VecDeque<SceneEdit>>,
     /// Edits that were rolled back by `undo` and can be replayed by
-    /// `redo`. Cleared whenever a fresh edit lands via `push_edit` —
+    /// `redo`. Cleared whenever a fresh edit lands via `push_edit`:
     /// new history invalidates the redo trail.
     redo_stack: RefCell<VecDeque<SceneEdit>>,
 }
@@ -98,7 +98,7 @@ impl SceneDocument {
     }
 
     /// Wrap a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and install
-    /// it. Convenience for callers that have a plain `Scene` —
+    /// it. Convenience for callers that have a plain `Scene`,
     /// primarily tests and future scripted construction. The
     /// mesh-loader pipeline calls [`Self::install_spatial`] with a
     /// `SceneSpatial::primed(...)` built off the UI thread.
@@ -136,7 +136,7 @@ impl SceneDocument {
     }
 
     /// Drops any pending undo/redo entries. Returns whether either
-    /// stack was non-empty before the call — callers that fire
+    /// stack was non-empty before the call: callers that fire
     /// `UndoStackChanged` only when an observable change happened use
     /// this to gate the notification.
     fn clear_history(&self) -> bool {
@@ -174,7 +174,7 @@ impl SceneDocument {
     /// loaded and the edit was applied, `false` when no scene is
     /// loaded.
     ///
-    /// Does **not** touch the undo stack — `push_edit` is a separate
+    /// Does **not** touch the undo stack: `push_edit` is a separate
     /// concern so live-drag ticks can mutate the scene without
     /// flooding the history. Callers that mean "apply and record"
     /// invoke `apply_edit` followed by `push_edit` at gesture-end.
@@ -192,7 +192,7 @@ impl SceneDocument {
     /// Records a reversible edit on the undo stack. No-op edits
     /// (`before == after`) are dropped silently so a gesture that
     /// began and ended in the same place doesn't clutter history. A
-    /// successful push clears the redo stack — a fresh edit
+    /// successful push clears the redo stack: a fresh edit
     /// invalidates the previously-rolled-back trail.
     pub(crate) fn push_edit(&self, edit: SceneEdit) {
         if edit.is_noop() {
@@ -225,7 +225,7 @@ impl SceneDocument {
             return false;
         };
         if !self.apply_edit(edit.inverse()) {
-            // No scene loaded — restore the popped entry so the
+            // No scene loaded: restore the popped entry so the
             // stack stays consistent with the user's history.
             self.undo_stack.borrow_mut().push_back(edit);
             return false;
@@ -309,7 +309,7 @@ impl SceneDocument {
 
     /// Runs `f` against the loaded [`SceneSpatial`], if any. Returns
     /// `None` when no scene is installed. Callers must keep the
-    /// closure short — the internal borrow is held for its
+    /// closure short: the internal borrow is held for its
     /// duration. Use `spatial.scene()` inside the closure to access
     /// the underlying [`Scene`] for read-only navigation.
     pub fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
@@ -450,7 +450,7 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(empty_scene(), fixture_path());
         doc.set_selection(Selection::One(ObjectIdx(7)));
-        // Loading another scene drops the prior selection — its
+        // Loading another scene drops the prior selection: its
         // index referred to the previous scene's objects.
         doc.install_scene(empty_scene(), fixture_path());
         assert_eq!(doc.selection(), Selection::None);
@@ -707,6 +707,9 @@ mod scene_document_tests {
             SceneEdit::ObjectTransform { after, .. } => {
                 assert_eq!(after, translation(6.0));
             }
+            SceneEdit::SetLocalTransform { .. } => {
+                panic!("only ObjectTransform was pushed in this test")
+            }
         }
     }
 
@@ -789,7 +792,7 @@ mod scene_document_tests {
         doc.install_scene(scene_with_one_object(), fixture_path());
         assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
 
-        // Push an edit, then install again — the second install must
+        // Push an edit, then install again: the second install must
         // also report the history clear.
         doc.push_edit(SceneEdit::ObjectTransform {
             object_idx: 0,
