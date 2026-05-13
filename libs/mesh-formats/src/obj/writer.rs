@@ -3,9 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::scene::Scene;
+
+// OBJ face indices are 1-based, so the writer emits `local + offset + 1`
+// for every vertex reference. `to_global_face_index` performs that math
+// with overflow checks; both the addition and the implicit `+1` must
+// stay within `u32`, otherwise the resulting OBJ file would point at a
+// wrapped index and silently decode to garbage.
+fn to_global_face_index(local: u32, offset: u32) -> Result<u32> {
+    local
+        .checked_add(offset)
+        .and_then(|n| n.checked_add(1))
+        .ok_or_else(|| {
+            anyhow!("OBJ writer: face vertex index overflow (local={local}, offset={offset})",)
+        })
+}
+
+fn advance_vertex_offset(offset: u32, vertex_count: usize) -> Result<u32> {
+    let added = u32::try_from(vertex_count)
+        .map_err(|_| anyhow!("OBJ writer: mesh has {vertex_count} vertices, exceeds u32::MAX"))?;
+    offset.checked_add(added).ok_or_else(|| {
+        anyhow!("OBJ writer: cumulative vertex offset overflows u32 (offset={offset}, +{added})",)
+    })
+}
 
 pub fn write_obj<W>(scene: &Scene, writer: &mut W) -> Result<()>
 where
@@ -77,15 +99,58 @@ where
     }
 
     for face in mesh.faces() {
-        let v0 = u32::from(face.vertices[0]) + *vertex_offset + 1;
-        let v1 = u32::from(face.vertices[1]) + *vertex_offset + 1;
-        let v2 = u32::from(face.vertices[2]) + *vertex_offset + 1;
+        let v0 = to_global_face_index(u32::from(face.vertices[0]), *vertex_offset)?;
+        let v1 = to_global_face_index(u32::from(face.vertices[1]), *vertex_offset)?;
+        let v2 = to_global_face_index(u32::from(face.vertices[2]), *vertex_offset)?;
         writeln!(writer, "f {v0} {v1} {v2}")?;
     }
 
-    *vertex_offset += mesh.vertices().len() as u32;
+    *vertex_offset = advance_vertex_offset(*vertex_offset, mesh.vertices().len())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::{advance_vertex_offset, to_global_face_index};
+
+    #[test]
+    fn global_face_index_happy_path() {
+        assert_eq!(to_global_face_index(0, 0).unwrap(), 1);
+        assert_eq!(to_global_face_index(5, 10).unwrap(), 16);
+    }
+
+    #[test]
+    fn global_face_index_local_at_u32_max_errors() {
+        assert!(to_global_face_index(u32::MAX, 0).is_err());
+    }
+
+    #[test]
+    fn global_face_index_sum_overflow_errors() {
+        assert!(to_global_face_index(u32::MAX - 2, 3).is_err());
+        assert!(to_global_face_index(1, u32::MAX).is_err());
+    }
+
+    #[test]
+    fn advance_offset_happy_path() {
+        assert_eq!(advance_vertex_offset(0, 3).unwrap(), 3);
+        assert_eq!(advance_vertex_offset(10, 7).unwrap(), 17);
+    }
+
+    #[test]
+    fn advance_offset_overflow_errors() {
+        assert!(advance_vertex_offset(u32::MAX - 2, 5).is_err());
+    }
+
+    // On 64-bit targets, `usize` can exceed `u32::MAX`. This pins the
+    // try_from path even though we cannot allocate that many vertices
+    // in a real test.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn advance_offset_vertex_count_exceeds_u32_errors() {
+        let huge = (u32::MAX as usize) + 1;
+        assert!(advance_vertex_offset(0, huge).is_err());
+    }
 }
 
 #[cfg(test)]
@@ -160,7 +225,7 @@ mod tests {
     fn multi_line_scene_comment_prefixes_every_line() {
         // The reader joins consecutive `#` header lines with `\n`.
         // The writer must re-prefix each segment so the output stays
-        // a valid OBJ file — bare continuation lines fail the next
+        // a valid OBJ file; bare continuation lines fail the next
         // load with `unrecognized directive`.
         let mut scene = scene_with_mesh(make_triangle_mesh(None));
         scene.meta = Some(SceneMetadata {
@@ -358,6 +423,61 @@ mod tests {
         // The `o MyObj` marker comes from the source mesh's metadata even
         // though `baked_mesh` strips its own metadata.
         assert!(out.starts_with("o MyObj\n"));
+    }
+
+    // A face index near `u32::MAX` combined with the implicit `+1`
+    // (OBJ is 1-based) overflows the `local + offset + 1` addition
+    // the writer uses for face emission. Release builds wrap silently
+    // and produce a garbage OBJ; debug builds panic. The contract is
+    // that the writer must surface a clean error on either profile.
+    #[test]
+    fn face_index_plus_offset_overflow_returns_error() {
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [u32::MAX, 0, 0],
+            )],
+        };
+        let scene = scene_with_mesh(mesh);
+        let mut buf: Vec<u8> = Vec::new();
+        assert!(write_obj(&scene, &mut buf).is_err());
+    }
+
+    // Same overflow shape, but split across two meshes: a small first
+    // mesh advances `vertex_offset`, and the second mesh's face index
+    // overflows once the offset is added. Covers the cross-mesh path
+    // that a single-mesh test alone can miss after the fix.
+    #[test]
+    fn cross_mesh_face_index_overflow_returns_error() {
+        let first = make_triangle_mesh(None);
+        let second = IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [u32::MAX - 2, 0, 0],
+            )],
+        };
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![
+                SceneObject {
+                    meta: None,
+                    transform: Transform3D::Identity,
+                    content: SceneObjectContent::Mesh(first),
+                },
+                SceneObject {
+                    meta: None,
+                    transform: Transform3D::Identity,
+                    content: SceneObjectContent::Mesh(second),
+                },
+            ],
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        assert!(write_obj(&scene, &mut buf).is_err());
     }
 
     #[test]
