@@ -13,6 +13,7 @@ mod keyboard_drive;
 mod object_list;
 mod render_host;
 mod render_scheduler;
+mod session_state;
 mod translation_clamp;
 mod types;
 

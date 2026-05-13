@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use slint::ComponentHandle;
@@ -15,10 +14,11 @@ use super::input_dispatch::{InputDispatch, PointerUpOutcome};
 use super::keyboard_drive::KbdFocus;
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_host::RenderHost;
+use super::session_state::SessionState;
 use super::types::{FrameState, ScreenPoint};
 use crate::MainWindow;
 use crate::PointerModifiers;
-use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
+use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
 use crate::error_dialog::DialogManager;
 use crate::gizmo;
@@ -26,36 +26,16 @@ use crate::i18n::ctr;
 use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, SceneRender};
 use crate::pending_load::PendingLoad;
-use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
+use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{ObjectIdx, Selection};
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
-    // Document-level model. Owns the loaded scene + selection (and,
-    // ahead, the undo stack). The controller observes it.
-    document: Rc<SceneDocument>,
+    session: SessionState,
     camera: CameraController,
     render: RenderHost,
     input: InputDispatch,
-    loader: Rc<SceneLoader>,
-    // Slot for a load request that arrived before the GPU device was
-    // available (typically argv at startup, or future macOS `openURLs`
-    // delivered before first paint). Shared with `WiredMainWindow`,
-    // which is the writer; the controller drains it in
-    // `handle_rendering_setup` once `set_gpu` makes the device
-    // snapshottable. See `pending_load.rs` for the full lifecycle.
-    pending_load: Rc<PendingLoad>,
-    dialogs: Rc<DialogManager>,
-    // Document subscription. Held by the controller so it's dropped
-    // alongside the controller; populated by `register_document_listener`
-    // after the controller is wrapped in `Rc`.
-    document_subscription: RefCell<Option<SceneSubscription>>,
-    // Build envelope used to clamp translate edits. `Cell` so the
-    // hardcoded default can later be swapped at runtime by the
-    // preferences pipeline (and by tests, which inject a smaller
-    // envelope to make the wall reachable in a few drag pixels).
-    build_volume: Cell<BuildVolume>,
 }
 
 impl ViewportController {
@@ -65,17 +45,13 @@ impl ViewportController {
         pending_load: Rc<PendingLoad>,
     ) -> Self {
         let dialogs = DialogManager::new();
+        let loader = Rc::new(SceneLoader::new(ui, dialogs.clone()));
         Self {
             ui: ui.as_weak(),
-            document,
+            session: SessionState::new(document, loader, pending_load, dialogs),
             camera: CameraController::new(),
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
-            loader: Rc::new(SceneLoader::new(ui, dialogs.clone())),
-            pending_load,
-            dialogs,
-            document_subscription: RefCell::new(None),
-            build_volume: Cell::new(HARDCODED_DEFAULT_BUILD_VOLUME),
         }
     }
 
@@ -88,17 +64,14 @@ impl ViewportController {
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
         let dialogs = DialogManager::new();
+        let loader = Rc::new(SceneLoader::new_for_test(dialogs.clone()));
+        let pending_load = Rc::new(PendingLoad::new());
         Self {
             ui: slint::Weak::default(),
-            document: SceneDocument::new(),
+            session: SessionState::new(SceneDocument::new(), loader, pending_load, dialogs),
             camera: CameraController::new(),
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
-            loader: Rc::new(SceneLoader::new_for_test(dialogs.clone())),
-            pending_load: Rc::new(PendingLoad::new()),
-            dialogs,
-            document_subscription: RefCell::new(None),
-            build_volume: Cell::new(HARDCODED_DEFAULT_BUILD_VOLUME),
         }
     }
 
@@ -108,7 +81,8 @@ impl ViewportController {
         // with a sentinel so the document's invariant ("scene present
         // ⇔ path present") holds and any future test assertion on
         // `source_path` is explicit about its synthetic origin.
-        self.document
+        self.session
+            .document()
             .install_scene(scene, std::path::PathBuf::from("<test>"));
     }
 
@@ -136,14 +110,14 @@ impl ViewportController {
     /// handshake (begin/end, stamp, slot) against the loader directly
     /// rather than through delegating methods on the controller.
     pub fn loader(&self) -> Rc<SceneLoader> {
-        self.loader.clone()
+        self.session.loader().clone()
     }
 
     /// Access to the document. Used by `wiring.rs` to drive the
     /// `Export As` flow (read scene + source path) without going
     /// through delegating methods on the controller.
     pub fn document(&self) -> Rc<SceneDocument> {
-        self.document.clone()
+        self.session.document().clone()
     }
 
     /// Access to the dialog manager. Used by `wiring.rs` to surface
@@ -151,7 +125,7 @@ impl ViewportController {
     /// async file-save dialog flow whose result needs an error
     /// dialog).
     pub fn dialogs(&self) -> Rc<DialogManager> {
-        self.dialogs.clone()
+        self.session.dialogs().clone()
     }
 
     /// Subscribes the controller to its document. Called from
@@ -160,12 +134,12 @@ impl ViewportController {
     /// the document.
     pub fn register_document_listener(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        let sub = self.document.subscribe(move |event| {
+        let sub = self.session.document().subscribe(move |event| {
             if let Some(strong) = weak.upgrade() {
                 strong.handle_scene_event(event);
             }
         });
-        *self.document_subscription.borrow_mut() = Some(sub);
+        self.session.install_subscription(sub);
     }
 
     /// Translates a `SceneEvent` into the viewport-state reset that
@@ -192,8 +166,8 @@ impl ViewportController {
 
     fn mirror_undo_state_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            ui.set_can_undo(self.document.can_undo());
-            ui.set_can_redo(self.document.can_redo());
+            ui.set_can_undo(self.session.document().can_undo());
+            ui.set_can_redo(self.session.document().can_redo());
         }
     }
 
@@ -206,7 +180,8 @@ impl ViewportController {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
             let names = self
-                .document
+                .session
+                .document()
                 .with_scene(|spatial| build_object_list_names(spatial.scene()))
                 .unwrap_or_default();
             push_object_list(&ui, names);
@@ -254,15 +229,13 @@ impl ViewportController {
     /// Current build envelope. Read by the load pipeline at dispatch
     /// time so the worker can drop the parsed scene onto the plate.
     pub fn build_volume(&self) -> BuildVolume {
-        self.build_volume.get()
+        self.session.build_volume()
     }
 
     pub fn set_build_volume(&self, bv: BuildVolume) {
-        if self.build_volume.get() == bv {
-            return;
+        if self.session.set_build_volume(bv) {
+            self.mark_dirty();
         }
-        self.build_volume.set(bv);
-        self.mark_dirty();
     }
 
     fn mark_dirty(&self) {
@@ -321,12 +294,12 @@ impl ViewportController {
         // `SceneEvent::Cleared`, and the controller's listener
         // handles the full viewport-state reset (camera, frame,
         // gizmo, kbd, renderer, UI).
-        self.loader.invalidate_and_clear();
-        self.document.clear_scene();
+        self.session.loader().invalidate_and_clear();
+        self.session.document().clear_scene();
     }
 
     pub fn on_scene_load_finished(&self) {
-        let Some(prepared) = self.loader.take_finished_load() else {
+        let Some(prepared) = self.session.loader().take_finished_load() else {
             return;
         };
         let PreparedScene {
@@ -353,10 +326,12 @@ impl ViewportController {
         // camera to `None` (so the bounds-based framing below sees a
         // fresh slot), pushes the new object list, and rearms the UI
         // mirror.
-        self.document.install_spatial(spatial, source_path);
+        self.session
+            .document()
+            .install_spatial(spatial, source_path);
 
         if scene_installed {
-            self.loader.note_upload_success();
+            self.session.loader().note_upload_success();
             // Frame on the union of the scene's world AABB and the
             // build envelope, so the plate is always inside the view
             // and the orbit centre / zoom limits are anchored to the
@@ -370,7 +345,7 @@ impl ViewportController {
                 .as_ref()
                 .and_then(|r| r.scene_bounds());
             self.camera
-                .replace_with_framing(scene_bounds, self.build_volume.get());
+                .replace_with_framing(scene_bounds, self.session.build_volume());
             self.render.update_frame(FrameState::with_redraw_owed);
         } else {
             self.render.update_frame(FrameState::with_upload_owed);
@@ -381,7 +356,7 @@ impl ViewportController {
     /// this to assert FSM transitions.
     #[cfg(test)]
     pub(crate) fn selection(&self) -> Option<usize> {
-        self.document.selection_primary_idx()
+        self.session.document().selection_primary_idx()
     }
 
     /// Slint-side selection-changed callback. Out-of-bounds indices map
@@ -391,7 +366,8 @@ impl ViewportController {
     /// doesn't fire `selection-changed` again.
     pub fn on_select_by_index(&self, idx: usize) {
         let scene_len = self
-            .document
+            .session
+            .document()
             .with_scene(|s| s.scene().objects.len())
             .unwrap_or(0);
         let new_sel = if idx < scene_len {
@@ -402,7 +378,7 @@ impl ViewportController {
         // `set_selection` short-circuits on no-change and fires
         // `SceneEvent::SelectionChanged` only on actual transitions;
         // the listener takes care of mirror-to-UI + mark-dirty.
-        self.document.set_selection(new_sel);
+        self.session.document().set_selection(new_sel);
     }
 
     /// Tab / Shift+Tab selection cycling.
@@ -426,14 +402,15 @@ impl ViewportController {
     /// fix is to call `abort_gizmo_drag` here.
     pub fn on_selection_cycle(&self, delta: i32) {
         let scene_len = self
-            .document
+            .session
+            .document()
             .with_scene(|s| s.scene().objects.len())
             .unwrap_or(0);
         if scene_len == 0 {
             return;
         }
         let step = delta.signum();
-        let next = match self.document.selection() {
+        let next = match self.session.document().selection() {
             Selection::None => 0,
             Selection::One(i) => {
                 let len_i = scene_len as i32;
@@ -462,24 +439,24 @@ impl ViewportController {
     /// shortcut can race a freshly-emptied stack, the document's
     /// own check is the source of truth).
     pub fn on_undo_requested(&self) {
-        self.document.undo();
+        self.session.document().undo();
     }
 
     /// Edit → Redo handler.
     pub fn on_redo_requested(&self) {
-        self.document.redo();
+        self.session.document().redo();
     }
 
     pub fn on_clear_selection(&self) {
         if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
-            self.input.abort_gizmo_drag(&self.document);
+            self.input.abort_gizmo_drag(self.session.document());
             return;
         }
         if self.input.kbd_drive().current_focus() != KbdFocus::None {
             self.apply_keyboard_focus(KbdFocus::None);
             return;
         }
-        if matches!(self.document.selection(), Selection::None) {
+        if matches!(self.session.document().selection(), Selection::None) {
             return;
         }
         // Selection going away kills the gizmo, so any cached hover
@@ -488,7 +465,7 @@ impl ViewportController {
         // pre-listener implementation; `set_selection` then fires
         // `SelectionChanged` and the listener mirrors UI + dirty.
         self.input.gizmo_fsm().clear_hover();
-        self.document.set_selection(Selection::None);
+        self.session.document().set_selection(Selection::None);
     }
 
     /// `T`/`R`/`S` keyboard handlers. Each requires a selection to
@@ -514,7 +491,10 @@ impl ViewportController {
     /// concern part of the cascade: InputDispatch owns the focus
     /// cell, the coordinator owns the UI handle.
     fn apply_keyboard_focus(&self, focus: KbdFocus) {
-        let Some(new_focus) = self.input.set_keyboard_focus(&self.document, focus) else {
+        let Some(new_focus) = self
+            .input
+            .set_keyboard_focus(self.session.document(), focus)
+        else {
             return;
         };
         if let Some(ui) = self.ui.upgrade() {
@@ -524,20 +504,26 @@ impl ViewportController {
     }
 
     pub fn on_gizmo_arrow_pressed(&self, code: i32) {
-        if self.input.on_gizmo_arrow_pressed(&self.document, code) {
+        if self
+            .input
+            .on_gizmo_arrow_pressed(self.session.document(), code)
+        {
             self.mark_dirty();
         }
     }
 
     pub fn on_gizmo_arrow_released(&self, code: i32) {
-        if self.input.on_gizmo_arrow_released(&self.document, code) {
+        if self
+            .input
+            .on_gizmo_arrow_released(self.session.document(), code)
+        {
             self.mark_dirty();
         }
     }
 
     pub fn on_pointer_down(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         self.input.on_pointer_down(
-            &self.document,
+            self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
             ScreenPoint { x, y },
@@ -547,10 +533,10 @@ impl ViewportController {
 
     pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
         if self.input.on_pointer_move(
-            &self.document,
+            self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
-            self.build_volume.get(),
+            self.session.build_volume(),
             ScreenPoint { x, y },
             modifiers,
         ) {
@@ -561,7 +547,7 @@ impl ViewportController {
     pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
         match self
             .input
-            .on_pointer_up(&self.document, ScreenPoint { x, y })
+            .on_pointer_up(self.session.document(), ScreenPoint { x, y })
         {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => self.run_pick_at(cursor),
@@ -574,7 +560,7 @@ impl ViewportController {
     /// pick result through the Session-level selection setters.
     fn run_pick_at(&self, cursor: ScreenPoint) {
         let Some(pick) = self.input.pick_at(
-            &self.document,
+            self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
             cursor,
@@ -589,7 +575,7 @@ impl ViewportController {
 
     fn mirror_selection_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            let idx = match self.document.selection() {
+            let idx = match self.session.document().selection() {
                 Selection::One(i) => i.as_usize() as i32,
                 Selection::None => -1,
             };
@@ -598,10 +584,10 @@ impl ViewportController {
     }
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
-        self.loader.set_gpu(device.clone(), queue.clone());
+        self.session.loader().set_gpu(device.clone(), queue.clone());
         self.render.handle_rendering_setup(device, queue);
-        self.loader.reset_upload_failures();
-        if self.document.is_loaded() {
+        self.session.loader().reset_upload_failures();
+        if self.session.document().is_loaded() {
             self.render.update_frame(FrameState::with_upload_owed);
         }
         // Always request a redraw after RenderingSetup: even with no
@@ -614,10 +600,15 @@ impl ViewportController {
         // possible after a teardown→setup cycle that races a click on
         // Open; in that case the queued path is dropped, matching the
         // "drop while busy" decision for drag-and-drop.
-        if let Some(path) = self.pending_load.take()
-            && let Some(ticket) = self.loader.begin_load()
+        if let Some(path) = self.session.pending_load().take()
+            && let Some(ticket) = self.session.loader().begin_load()
         {
-            start_load_with_ticket(ticket, path, &self.loader, self.build_volume.get());
+            start_load_with_ticket(
+                ticket,
+                path,
+                self.session.loader(),
+                self.session.build_volume(),
+            );
         }
     }
 
@@ -630,7 +621,7 @@ impl ViewportController {
     // setup is bounced by `begin_load` instead of leaving a worker to
     // build buffers against an unowned device.
     pub fn handle_rendering_teardown(&self) {
-        self.loader.clear_gpu();
+        self.session.loader().clear_gpu();
         self.render.handle_rendering_teardown();
     }
 
@@ -640,10 +631,10 @@ impl ViewportController {
         // and marks dirty, which is exactly the input the renderer
         // pass below needs to read in this same frame.
         self.input.integrate_keyboard_arrows(
-            &self.document,
+            self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
-            self.build_volume.get(),
+            self.session.build_volume(),
         );
 
         let mut renderer_slot = self.render.renderer_cell().borrow_mut();
@@ -653,12 +644,13 @@ impl ViewportController {
 
         if self.render.frame().upload_owed() {
             let upload = self
-                .document
+                .session
+                .document()
                 .with_scene(|spatial| renderer.upload_scene(spatial.scene()));
             match upload {
                 Some(Ok(())) => {
                     self.render.update_frame(FrameState::after_upload_success);
-                    self.loader.note_upload_success();
+                    self.session.loader().note_upload_success();
                 }
                 Some(Err(err)) => {
                     // Leave the upload flag set so it continues to
@@ -666,7 +658,7 @@ impl ViewportController {
                     // setup or scene reload (both of which reset the
                     // loader's failure counter) will drive a retry
                     // without relying on coincidental side effects.
-                    self.loader.note_upload_failure(&err);
+                    self.session.loader().note_upload_failure(&err);
                     return;
                 }
                 None => {
@@ -684,7 +676,7 @@ impl ViewportController {
         if !self.camera.is_initialised() {
             let scene_bounds = renderer.scene_bounds();
             self.camera
-                .replace_with_framing(scene_bounds, self.build_volume.get());
+                .replace_with_framing(scene_bounds, self.session.build_volume());
         }
 
         if !self.render.frame().redraw_owed() {
@@ -712,7 +704,7 @@ impl ViewportController {
             return;
         };
 
-        let build_volume = self.build_volume.get();
+        let build_volume = self.session.build_volume();
 
         // Render path. With a scene installed, the closure inside
         // `with_scene` builds the gizmo frame against the live scene
@@ -720,9 +712,10 @@ impl ViewportController {
         // `with_scene` returns `None` and the fallback below renders
         // the plate alone with neither selection nor gizmo.
         let texture = self
-            .document
+            .session
+            .document()
             .with_scene(|spatial_for_render| {
-                let selection_idx = self.document.selection_primary_idx();
+                let selection_idx = self.session.document().selection_primary_idx();
                 let drag_state = self.input.gizmo_fsm().current();
                 let (visibility, drag_visual) = match drag_state {
                     GizmoState::Drag { op, pivot, .. } => match op {
@@ -793,7 +786,7 @@ impl ViewportController {
         self.render.update_frame(FrameState::after_render);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),
-            Err(err) => self.dialogs.show_error_deferred(
+            Err(err) => self.session.dialogs().show_error_deferred(
                 ctr!("ErrorDialog", "Failed to display the 3D model").to_string(),
                 Some(
                     ctr!(
@@ -1065,12 +1058,14 @@ mod viewport_click_tests {
     use crate::gizmo::axis::Axis;
     use crate::mesh_render::default_fov_y;
     use crate::picking;
+    use crate::scene_document::SceneSubscription;
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::transform::AffineTransform3D;
+    use std::cell::Cell;
 
     /// `PointerModifiers::default()`, all four flags off.
     fn no_mods() -> PointerModifiers {
@@ -1241,7 +1236,8 @@ mod viewport_click_tests {
     const X_CONE_PRESS: (f32, f32) = (335.0, 100.0);
 
     fn read_translation(ctrl: &ViewportController) -> Vec3 {
-        ctrl.document
+        ctrl.session
+            .document()
             .with_scene(|spatial| match spatial.scene().objects[0].transform {
                 Transform3D::Identity => Vec3::ZERO,
                 Transform3D::Affine(a) => Vec3::new(
@@ -1254,7 +1250,8 @@ mod viewport_click_tests {
     }
 
     fn read_linear(ctrl: &ViewportController) -> [[f64; 3]; 3] {
-        ctrl.document
+        ctrl.session
+            .document()
             .with_scene(|spatial| match spatial.scene().objects[0].transform {
                 Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                 Transform3D::Affine(a) => *a.linear(),
@@ -1403,19 +1400,19 @@ mod viewport_click_tests {
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
 
-        assert!(ctrl.document.can_undo());
-        assert!(!ctrl.document.can_redo());
+        assert!(ctrl.session.document().can_undo());
+        assert!(!ctrl.session.document().can_redo());
 
         let after_drag = read_translation(&ctrl);
         assert!(after_drag.x.abs() > 1e-4);
 
-        assert!(ctrl.document.undo());
+        assert!(ctrl.session.document().undo());
         let after_undo = read_translation(&ctrl);
         assert_approx_eq!(f32, after_undo.x, 0.0, epsilon = 1e-6);
-        assert!(!ctrl.document.can_undo());
-        assert!(ctrl.document.can_redo());
+        assert!(!ctrl.session.document().can_undo());
+        assert!(ctrl.session.document().can_redo());
 
-        assert!(ctrl.document.redo());
+        assert!(ctrl.session.document().redo());
         let after_redo = read_translation(&ctrl);
         assert_approx_eq!(f32, after_redo.x, after_drag.x, epsilon = 1e-6);
     }
@@ -1431,7 +1428,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_pointer_up(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
 
-        assert!(!ctrl.document.can_undo());
+        assert!(!ctrl.session.document().can_undo());
     }
 
     #[test]
@@ -1446,7 +1443,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_clear_selection();
 
-        assert!(!ctrl.document.can_undo());
+        assert!(!ctrl.session.document().can_undo());
     }
 
     #[test]
@@ -1731,7 +1728,7 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
 
-        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
+        let (count, _sub) = subscribe_mutated_counter(ctrl.session.document());
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
         assert_eq!(count.get(), 1);
     }
@@ -1746,7 +1743,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
+        let (count, _sub) = subscribe_mutated_counter(ctrl.session.document());
         ctrl.on_pointer_move(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1, no_mods());
         assert_eq!(count.get(), 0);
@@ -1765,8 +1762,8 @@ mod viewport_click_tests {
             GizmoState::Drag { .. }
         ));
 
-        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
-        let aborted = ctrl.input.gizmo_fsm().abort(&ctrl.document);
+        let (count, _sub) = subscribe_mutated_counter(ctrl.session.document());
+        let aborted = ctrl.input.gizmo_fsm().abort(ctrl.session.document());
         assert!(aborted);
         assert_eq!(count.get(), 1);
     }
@@ -1779,8 +1776,8 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
 
-        let (count, _sub) = subscribe_mutated_counter(&ctrl.document);
-        let aborted = ctrl.input.gizmo_fsm().abort(&ctrl.document);
+        let (count, _sub) = subscribe_mutated_counter(ctrl.session.document());
+        let aborted = ctrl.input.gizmo_fsm().abort(ctrl.session.document());
         assert!(!aborted);
         assert_eq!(count.get(), 0);
     }
@@ -1810,7 +1807,7 @@ mod viewport_click_tests {
         // and the new envelope only paints when something else
         // (camera rotate, pointer move) happens to mark the frame.
         let ctrl = ViewportController::new_for_test();
-        let initial = ctrl.build_volume.get();
+        let initial = ctrl.session.build_volume();
         let new_bv = BuildVolume::new(50.0, 50.0, 50.0);
         assert_ne!(initial, new_bv);
         ctrl.clear_frame_state_for_test();
@@ -1818,7 +1815,7 @@ mod viewport_click_tests {
 
         ctrl.set_build_volume(new_bv);
 
-        assert_eq!(ctrl.build_volume.get(), new_bv);
+        assert_eq!(ctrl.session.build_volume(), new_bv);
         assert!(ctrl.redraw_owed_for_test());
     }
 
@@ -1832,12 +1829,12 @@ mod viewport_click_tests {
         ctrl.clear_frame_state_for_test();
 
         ctrl.set_build_volume(bv);
-        assert_eq!(ctrl.build_volume.get(), bv);
+        assert_eq!(ctrl.session.build_volume(), bv);
         assert!(!ctrl.redraw_owed_for_test());
 
         let bigger = BuildVolume::new(150.0, 80.0, 120.0);
         ctrl.set_build_volume(bigger);
-        assert_eq!(ctrl.build_volume.get(), bigger);
+        assert_eq!(ctrl.session.build_volume(), bigger);
         assert!(ctrl.redraw_owed_for_test());
     }
 
@@ -1851,7 +1848,8 @@ mod viewport_click_tests {
         // (covered by `drag_translates_object_along_world_axis`).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.build_volume.set(BuildVolume::new(1.0, 4.0, 4.0));
+        ctrl.session
+            .set_build_volume(BuildVolume::new(1.0, 4.0, 4.0));
 
         ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
         ctrl.on_pointer_move(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1, no_mods());
@@ -1982,17 +1980,20 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
-            before: Transform3D::Identity,
-            after: translation_x(2.0),
-        });
+        ctrl.session
+            .document()
+            .apply_edit(SceneEdit::ObjectTransform {
+                object_idx: 0,
+                before: Transform3D::Identity,
+                after: translation_x(2.0),
+            });
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
 
-        assert!(ctrl.document.can_undo());
-        assert!(ctrl.document.undo());
+        assert!(ctrl.session.document().can_undo());
+        assert!(ctrl.session.document().undo());
         let after_undo = ctrl
-            .document
+            .session
+            .document()
             .with_scene(|s| s.scene().objects[0].transform)
             .unwrap();
         assert_eq!(after_undo, Transform3D::Identity);
@@ -2011,7 +2012,7 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
 
-        assert!(!ctrl.document.can_undo());
+        assert!(!ctrl.session.document().can_undo());
     }
 
     #[test]
@@ -2025,18 +2026,21 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
-            before: Transform3D::Identity,
-            after: translation_x(3.0),
-        });
+        ctrl.session
+            .document()
+            .apply_edit(SceneEdit::ObjectTransform {
+                object_idx: 0,
+                before: Transform3D::Identity,
+                after: translation_x(3.0),
+            });
         // User switches mode without releasing the key.
         ctrl.on_gizmo_focus_rotate();
 
-        assert!(ctrl.document.can_undo());
-        ctrl.document.undo();
+        assert!(ctrl.session.document().can_undo());
+        ctrl.session.document().undo();
         let after_undo = ctrl
-            .document
+            .session
+            .document()
             .with_scene(|s| s.scene().objects[0].transform)
             .unwrap();
         assert_eq!(after_undo, Transform3D::Identity);
@@ -2054,19 +2058,21 @@ mod keyboard_focus_tests {
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         ctrl.on_gizmo_arrow_pressed(ARROW_Y_POS);
-        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
-            before: Transform3D::Identity,
-            after: translation_x(1.0),
-        });
+        ctrl.session
+            .document()
+            .apply_edit(SceneEdit::ObjectTransform {
+                object_idx: 0,
+                before: Transform3D::Identity,
+                after: translation_x(1.0),
+            });
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
         // Bitset still has Y_POS held, must not flush yet.
-        assert!(!ctrl.document.can_undo());
+        assert!(!ctrl.session.document().can_undo());
         ctrl.on_gizmo_arrow_released(ARROW_Y_POS);
-        assert!(ctrl.document.can_undo());
+        assert!(ctrl.session.document().can_undo());
         // Exactly one entry: a second undo is rejected.
-        assert!(ctrl.document.undo());
-        assert!(!ctrl.document.can_undo());
+        assert!(ctrl.session.document().undo());
+        assert!(!ctrl.session.document().can_undo());
     }
 
     #[test]
@@ -2079,14 +2085,16 @@ mod keyboard_focus_tests {
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
-        ctrl.document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
-            before: Transform3D::Identity,
-            after: translation_x(1.0),
-        });
+        ctrl.session
+            .document()
+            .apply_edit(SceneEdit::ObjectTransform {
+                object_idx: 0,
+                before: Transform3D::Identity,
+                after: translation_x(1.0),
+            });
 
         ctrl.on_close_scene();
-        assert!(!ctrl.document.can_undo());
+        assert!(!ctrl.session.document().can_undo());
     }
 
     #[test]
@@ -2161,19 +2169,19 @@ mod keyboard_focus_tests {
     /// the actual integration step.
     fn integrate_two_ticks(ctrl: &ViewportController) {
         let _ = ctrl.input.kbd_drive().integrate(IntegrationCtx {
-            document: &ctrl.document,
+            document: ctrl.session.document(),
             camera: ctrl.camera.camera_cell(),
             viewport: ctrl.render.viewport(),
-            selection_idx: ctrl.document.selection_primary_idx(),
-            build_volume: ctrl.build_volume.get(),
+            selection_idx: ctrl.session.document().selection_primary_idx(),
+            build_volume: ctrl.session.build_volume(),
         });
         std::thread::sleep(std::time::Duration::from_millis(50));
         let _ = ctrl.input.kbd_drive().integrate(IntegrationCtx {
-            document: &ctrl.document,
+            document: ctrl.session.document(),
             camera: ctrl.camera.camera_cell(),
             viewport: ctrl.render.viewport(),
-            selection_idx: ctrl.document.selection_primary_idx(),
-            build_volume: ctrl.build_volume.get(),
+            selection_idx: ctrl.session.document().selection_primary_idx(),
+            build_volume: ctrl.session.build_volume(),
         });
     }
 
@@ -2186,14 +2194,16 @@ mod keyboard_focus_tests {
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
-        ctrl.build_volume.set(BuildVolume::new(2.0, 4.0, 4.0));
+        ctrl.session
+            .set_build_volume(BuildVolume::new(2.0, 4.0, 4.0));
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         integrate_two_ticks(&ctrl);
 
         let transform = ctrl
-            .document
+            .session
+            .document()
             .with_scene(|s| s.scene().objects[0].transform)
             .unwrap();
         let translation = match transform {
@@ -2221,14 +2231,16 @@ mod keyboard_focus_tests {
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
-        ctrl.build_volume.set(BuildVolume::new(2.0, 4.0, 4.0));
+        ctrl.session
+            .set_build_volume(BuildVolume::new(2.0, 4.0, 4.0));
         ctrl.on_gizmo_focus_rotate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         integrate_two_ticks(&ctrl);
 
         let transform = ctrl
-            .document
+            .session
+            .document()
             .with_scene(|s| s.scene().objects[0].transform)
             .unwrap();
         match transform {
