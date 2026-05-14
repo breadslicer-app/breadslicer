@@ -26,6 +26,13 @@
 //! Arvo. The tight AABB matches the envelope-warning overlay's
 //! per-vertex test, so the two never disagree: an axis is clamped iff
 //! some vertex would breach the corresponding wall.
+//!
+//! `before` is the leaf's parent-relative transform (as carried by
+//! the gizmo / keyboard FSMs); the AABB the envelope cares about is
+//! in world space. The helper composes the leaf's `parent_world`
+//! onto `before` before walking the mesh, so a non-identity ancestor
+//! transform (e.g. the placement translation `place_on_plate` writes
+//! onto the scene root) is honoured.
 
 use glam::Vec3;
 use sc_mesh_core::NodeId;
@@ -44,6 +51,16 @@ use crate::build_volume::BuildVolume;
 ///   zero on every axis after clamping). Preserves the
 ///   `Transform3D::Identity` variant when `before` is identity.
 /// - `Affine(clamped_delta).compose(before)` otherwise.
+///
+/// `before` is the leaf's parent-relative transform. The world-space
+/// AABB is computed by composing the leaf's `parent_world` onto
+/// `before`. The translation delta passed to
+/// [`BuildVolume::clamp_translation_delta`] is the world-space delta,
+/// derived from the world translations of `before` and
+/// `proposed_after`; the result is rewritten back as a world-space
+/// translation composed with `before` (the leaf's parent ancestor
+/// is currently a pure translation in every production scene, so the
+/// world delta lands on the leaf transform unchanged).
 pub(super) fn clamp_translate_edit(
     spatial: &SceneSpatial,
     node_id: NodeId,
@@ -54,10 +71,13 @@ pub(super) fn clamp_translate_edit(
     let Some(query) = spatial.leaf(node_id) else {
         return proposed_after;
     };
-    let Some(aabb_pre) = query.transformed_aabb(before) else {
+    let parent_world = query.parent_world();
+    let world_before = parent_world.compose(&before);
+    let world_after = parent_world.compose(&proposed_after);
+    let Some(aabb_pre) = query.transformed_aabb(world_before) else {
         return proposed_after;
     };
-    let delta = translation_delta(before, proposed_after);
+    let delta = translation_delta(world_before, world_after);
     let clamped = build_volume.clamp_translation_delta(aabb_pre, delta);
     if clamped == delta {
         return proposed_after;
@@ -160,6 +180,46 @@ mod translation_clamp_tests {
             }],
         };
         SceneSpatial::new(scene).unwrap()
+    }
+
+    /// Builds the same centred unit cube as
+    /// [`spatial_with_centred_unit_cube`] but with a non-identity
+    /// translation written onto the scene root (mimicking the
+    /// loader's `place_on_plate`: the placement delta lives on the
+    /// root Group, leaves keep their authored local transform).
+    /// Without the world-space AABB fix, the clamp would treat the
+    /// leaf's identity local transform as the world transform and
+    /// either over-block or fail to block the drag.
+    fn spatial_with_unit_cube_under_root_translation(root_translation: [f64; 3]) -> SceneSpatial {
+        use sc_mesh_core::NodeId;
+        use sc_mesh_core::scene_graph::SceneGraph;
+        use sc_mesh_core::scene_graph_node::LeafPayload;
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([-1.0, -1.0, 0.0]),
+                Vertex::new([1.0, -1.0, 0.0]),
+                Vertex::new([-1.0, 1.0, 0.0]),
+                Vertex::new([1.0, 1.0, 0.0]),
+                Vertex::new([-1.0, -1.0, 2.0]),
+                Vertex::new([1.0, -1.0, 2.0]),
+                Vertex::new([-1.0, 1.0, 2.0]),
+                Vertex::new([1.0, 1.0, 2.0]),
+            ],
+            faces: vec![],
+        };
+        let mut graph = SceneGraph::new();
+        let root: NodeId = graph.add_group(
+            None,
+            Transform3D::Affine(AffineTransform3D::from_translation(root_translation)),
+        );
+        graph.add_root(root).unwrap();
+        let leaf = graph
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .unwrap();
+        graph.add_child(root, leaf).unwrap();
+        SceneSpatial::primed_graph(graph).unwrap()
     }
 
     fn spatial_with_empty_mesh() -> SceneSpatial {
@@ -277,6 +337,62 @@ mod translation_clamp_tests {
         let before = translate([69.0, 0.0, 0.0]);
         // +5 on X would push further out; clamped to 0, returns before.
         let proposed = translate([74.0, 0.0, 0.0]);
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
+        assert_eq!(out, before);
+    }
+
+    #[test]
+    fn root_translation_offsets_world_aabb_so_leaf_can_drag_back_inside() {
+        // Regression for the `place_on_plate`-shaped scene: the
+        // placement delta lives on the root, the leaf carries
+        // identity local. With the cube's local AABB at
+        // `[-1, 1] x [-1, 1] x [0, 2]` and the root translated by
+        // (+69, 0, 0), the WORLD AABB.max.x is 70, past the envelope
+        // wall at +50. An inward drag (-10 on X composed onto the
+        // leaf's identity local) must be allowed, exactly the same
+        // way it would be on a flat scene where the leaf's own
+        // transform carried the (+69, 0, 0) offset.
+        //
+        // Before the fix, `transformed_aabb(leaf_local)` would have
+        // produced the LOCAL AABB (no offset), looking like both
+        // walls were inside the envelope; the helper would have
+        // either pass-throughed (wrong-but-permissive) or blocked
+        // incorrectly when combined with an outward proposal.
+        let spatial = spatial_with_unit_cube_under_root_translation([69.0, 0.0, 0.0]);
+        let before = Transform3D::Identity;
+        let proposed = translate([-10.0, 0.0, 0.0]); // inward
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
+        let t = affine_translation(out);
+        assert_approx_eq!(f64, t[0], -10.0);
+        assert_approx_eq!(f64, t[1], 0.0);
+        assert_approx_eq!(f64, t[2], 0.0);
+    }
+
+    #[test]
+    fn root_translation_offsets_world_aabb_so_further_outward_is_blocked() {
+        // Sibling of the previous regression: the cube's WORLD AABB
+        // sticks past +X = 50 because of the root translation. A
+        // further outward drag (+5 on X) must be clamped to zero,
+        // returning the leaf's `before` unchanged. The bug being
+        // pinned here is that without parent_world composition, the
+        // helper would mistakenly let the drag through (LOCAL AABB
+        // is inside the envelope), pushing the object further out.
+        let spatial = spatial_with_unit_cube_under_root_translation([69.0, 0.0, 0.0]);
+        let before = Transform3D::Identity;
+        let proposed = translate([5.0, 0.0, 0.0]); // outward
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
+        assert_eq!(out, before);
+    }
+
+    #[test]
+    fn root_translation_z_floor_blocks_downward_through_plate() {
+        // The plate-placement case the GUI actually exercises: the
+        // loader translates the root so the cube's bottom rests on
+        // Z = 0. Asking to translate the leaf by -1 on Z (the
+        // textbook "below the plate" case) must be blocked.
+        let spatial = spatial_with_unit_cube_under_root_translation([0.0, 0.0, 0.0]);
+        let before = Transform3D::Identity;
+        let proposed = translate([0.0, 0.0, -1.0]);
         let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         assert_eq!(out, before);
     }

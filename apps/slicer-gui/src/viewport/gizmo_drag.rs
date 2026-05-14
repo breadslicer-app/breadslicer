@@ -120,6 +120,7 @@ pub(super) fn apply_drag_move(
     op: DragOp,
     ray: &picking::Ray,
     pivot: Vec3,
+    parent_world: &Transform3D,
     original: &Transform3D,
     cursor_x: f32,
     cursor_y: f32,
@@ -150,10 +151,11 @@ pub(super) fn apply_drag_move(
                 last_raw: raw,
                 current_unwrapped: new_unwrapped,
             };
-            // R(axis, delta_angle) about the world-space pivot:
-            //   T(pivot) ∘ R ∘ T(-pivot) ∘ original.
-            let rotation =
-                axis_rotation(axis, delta_angle).map(|r| compose_about_pivot(&r, pivot, original));
+            // R(axis, delta_angle) about the world-space pivot,
+            // expressed in the leaf's parent space by
+            // `compose_about_pivot`.
+            let rotation = axis_rotation(axis, delta_angle)
+                .map(|r| compose_about_pivot(&r, pivot, parent_world, original));
             rotation.map(|new_t| (new_t, new_op))
         }
         DragOp::ScaleAxis {
@@ -198,7 +200,10 @@ pub(super) fn apply_drag_move(
                 press_screen,
                 pivot_screen,
             };
-            Some((compose_about_pivot(&scale_mat, pivot, original), new_op))
+            Some((
+                compose_about_pivot(&scale_mat, pivot, parent_world, original),
+                new_op,
+            ))
         }
     }
 }
@@ -287,19 +292,61 @@ pub(super) fn scale_along_axis(axis: Axis, factor: f32) -> AffineTransform3D {
 }
 
 /// Composes a rotation/scale operation `m` about a world-space
-/// `pivot`, then applies it to `original`:
-///   `T(pivot) ∘ m ∘ T(-pivot) ∘ original`.
+/// `pivot`, then applies it to `original` (the leaf's
+/// parent-relative transform).
+///
+/// `parent_world` is the leaf's ancestor chain composed up to but
+/// not including the leaf itself. When it is `Identity`, the
+/// world-space "rotate/scale about `pivot`" reduces to the textbook
+/// `T(pivot) ∘ m ∘ T(-pivot) ∘ original`. When the parent is
+/// non-trivial (e.g. the placement translation `place_on_plate`
+/// writes onto the scene root), the world pivot must be expressed
+/// in the leaf's parent space first: otherwise the composition
+/// applies the rotation/scale about a point offset by the parent's
+/// own translation, displacing the object instead of holding it
+/// fixed.
+///
+/// For a pure-translation parent (the only kind today's scene
+/// shapes produce), the conversion is `pivot_local = pivot − δ_p`,
+/// where `δ_p` is the parent's translation. The general form goes
+/// through `parent_world.inverse()` applied as a point transform.
 pub(super) fn compose_about_pivot(
     m: &AffineTransform3D,
     pivot: Vec3,
+    parent_world: &Transform3D,
     original: &Transform3D,
 ) -> Transform3D {
-    let to_pivot =
-        AffineTransform3D::from_translation([pivot.x as f64, pivot.y as f64, pivot.z as f64]);
-    let from_pivot =
-        AffineTransform3D::from_translation([-pivot.x as f64, -pivot.y as f64, -pivot.z as f64]);
+    let pivot_local = world_pivot_to_local(pivot, parent_world);
+    let to_pivot = AffineTransform3D::from_translation([
+        pivot_local.x as f64,
+        pivot_local.y as f64,
+        pivot_local.z as f64,
+    ]);
+    let from_pivot = AffineTransform3D::from_translation([
+        -pivot_local.x as f64,
+        -pivot_local.y as f64,
+        -pivot_local.z as f64,
+    ]);
     let about_pivot = to_pivot.compose(&m.compose(&from_pivot));
     Transform3D::Affine(about_pivot).compose(original)
+}
+
+/// Express the world-space `pivot` in the leaf's parent space, i.e.
+/// apply `parent_world.inverse()` as a point transform. Falls back
+/// to the world `pivot` unchanged if the parent transform is
+/// singular (cannot happen for valid scene graphs today: every
+/// production parent is a pure translation, which is invertible).
+fn world_pivot_to_local(pivot: Vec3, parent_world: &Transform3D) -> Vec3 {
+    let Transform3D::Affine(p) = parent_world else {
+        return pivot;
+    };
+    let Ok(inv) = p.inverse() else {
+        return pivot;
+    };
+    let mapped = inv.apply_to_vertex(sc_mesh_core::primitives::Vertex::new([
+        pivot.x, pivot.y, pivot.z,
+    ]));
+    Vec3::from(mapped.coords())
 }
 
 #[cfg(test)]
@@ -405,7 +452,8 @@ mod apply_drag_move_tests {
         };
         // Construct a ray whose closest point on +X axis is (1.5, 0, 0).
         let ray = ray_from(Vec3::new(1.5, -3.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
-        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
+        let (new_t, _) =
+            apply_drag_move(op, &ray, pivot, &Transform3D::Identity, &original, 0.0, 0.0).unwrap();
         let translation = read_translation_t(&new_t);
         assert_approx_eq!(f64, translation[0], 0.5, epsilon = 1e-4);
         assert_approx_eq!(f64, translation[1], 0.0, epsilon = 1e-4);
@@ -433,7 +481,8 @@ mod apply_drag_move_tests {
             pivot_screen: (0.0, 0.0),
         };
         let ray = ray_from(Vec3::new(2.0, -3.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
-        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
+        let (new_t, _) =
+            apply_drag_move(op, &ray, pivot, &Transform3D::Identity, &original, 0.0, 0.0).unwrap();
         let m = read_linear(&new_t);
         assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
         assert_approx_eq!(f64, m[1][1], 1.0, epsilon = 1e-6);
@@ -463,7 +512,16 @@ mod apply_drag_move_tests {
             pivot_screen: (100.0, 100.0),
         };
         let ray = ray_from(Vec3::new(0.0, -3.0, 0.0), Vec3::ZERO);
-        let (new_t, _) = apply_drag_move(op, &ray, pivot, &original, 200.0, 100.0).unwrap();
+        let (new_t, _) = apply_drag_move(
+            op,
+            &ray,
+            pivot,
+            &Transform3D::Identity,
+            &original,
+            200.0,
+            100.0,
+        )
+        .unwrap();
         let m = read_linear(&new_t);
         assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
         assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
@@ -487,7 +545,8 @@ mod apply_drag_move_tests {
         // Ray crosses the X arc plane at (0, 0, 1): a point on +Z
         // → angle π/2 in the X-axis basis (u=Y, v=Z).
         let ray = ray_from(Vec3::new(5.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
-        let (new_t, new_op) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();
+        let (new_t, new_op) =
+            apply_drag_move(op, &ray, pivot, &Transform3D::Identity, &original, 0.0, 0.0).unwrap();
         // The linear part rotates +Y onto +Z (right-handed about +X).
         let m = read_linear(&new_t);
         // R(X, π/2) maps (0, 1, 0) → (0, 0, 1):
@@ -509,5 +568,111 @@ mod apply_drag_move_tests {
         } else {
             panic!("expected Rotate, got {new_op:?}");
         }
+    }
+
+    #[test]
+    fn scale_axis_proportional_under_translated_parent_keeps_world_centre_fixed() {
+        // Regression for the displacement-on-shift bug: the gizmo
+        // pivot lives in world space; the leaf's transform is the
+        // PARENT-relative local. With a root translation
+        // `parent_world = T(40, 0, 0)` and an identity leaf carrying
+        // a mesh centred on the LOCAL origin, the world centre of
+        // the object is at `(40, 0, 0)`, which is also the press-
+        // time gizmo pivot. A uniform scale by factor 2 about that
+        // world pivot must produce a new leaf local whose world
+        // image still has its centre at `(40, 0, 0)`. The check is
+        // direct: the new leaf local, composed with parent_world,
+        // maps the origin (the mesh centre) to `(40, 0, 0)`.
+        //
+        // Before the fix, `compose_about_pivot` would have applied
+        // `T(40) ∘ scale ∘ T(-40)` on top of the identity leaf
+        // local, treating the world pivot as a local pivot. The
+        // resulting WORLD image of the origin came out at
+        // `(80, 0, 0)`: the object shifted by `δ_root * (1 - factor)
+        //  = 40 * (1 - 2) = -40`, i.e. ended up at world +80 if
+        // composed past the parent's +40.
+        let parent_world =
+            Transform3D::Affine(AffineTransform3D::from_translation([40.0, 0.0, 0.0]));
+        let original = Transform3D::Identity;
+        let world_pivot = Vec3::new(40.0, 0.0, 0.0);
+        let op = DragOp::ScaleAxis {
+            axis: Axis::X,
+            start_anchor: Vec3::new(41.0, 0.0, 0.0),
+            current_anchor: Vec3::new(41.0, 0.0, 0.0),
+            proportional: true,
+            press_screen: (150.0, 100.0),
+            pivot_screen: (100.0, 100.0),
+        };
+        // Pixel anchors: pivot at (100, 100), press at (150, 100)
+        // (50 px out), cursor at (200, 100) (100 px out) → uniform
+        // factor 2.
+        let ray = ray_from(Vec3::new(40.0, -3.0, 0.0), Vec3::new(40.0, 0.0, 0.0));
+        let (new_local, _) = apply_drag_move(
+            op,
+            &ray,
+            world_pivot,
+            &parent_world,
+            &original,
+            200.0,
+            100.0,
+        )
+        .unwrap();
+
+        // Image of the mesh's local origin under the new world
+        // transform: `world_centre = parent_world ∘ new_local ∘ 0`.
+        let world_centre = match parent_world.compose(&new_local) {
+            Transform3D::Identity => Vec3::ZERO,
+            Transform3D::Affine(a) => {
+                let v = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new([0.0, 0.0, 0.0]));
+                Vec3::from(v.coords())
+            }
+        };
+        assert_approx_eq!(f32, world_centre.x, 40.0, epsilon = 1e-4);
+        assert_approx_eq!(f32, world_centre.y, 0.0, epsilon = 1e-4);
+        assert_approx_eq!(f32, world_centre.z, 0.0, epsilon = 1e-4);
+        // The linear part should still be a uniform 2x scale; the
+        // entire effect of the parent's translation should be
+        // confined to the translation channel of `new_local`.
+        let m = read_linear(&new_local);
+        assert_approx_eq!(f64, m[0][0], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[1][1], 2.0, epsilon = 1e-4);
+        assert_approx_eq!(f64, m[2][2], 2.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn rotate_under_translated_parent_keeps_world_centre_fixed() {
+        // Sibling of the scale regression: the rotate composition
+        // also goes through `compose_about_pivot`, so the same
+        // parent-translation displacement would manifest as the
+        // object orbiting around `(world_pivot + δ_root)` instead
+        // of spinning in place. Verify that the rotated leaf's
+        // world image of the mesh-local origin still sits at the
+        // world pivot.
+        let parent_world =
+            Transform3D::Affine(AffineTransform3D::from_translation([40.0, 0.0, 0.0]));
+        let original = Transform3D::Identity;
+        let world_pivot = Vec3::new(40.0, 0.0, 0.0);
+        let op = DragOp::Rotate {
+            axis: Axis::Z,
+            start_angle: 0.0,
+            last_raw: 0.0,
+            current_unwrapped: 0.0,
+        };
+        // Ray hits the Z-axis plane at the pivot (degenerate angle
+        // 0); use a ray crossing y=+1 in the pivot's XY plane so
+        // `rotate_drag_angle` returns π/2 (90° CCW).
+        let ray = ray_from(Vec3::new(40.0, 1.0, 5.0), Vec3::new(40.0, 1.0, 0.0));
+        let (new_local, _) =
+            apply_drag_move(op, &ray, world_pivot, &parent_world, &original, 0.0, 0.0).unwrap();
+        let world_centre = match parent_world.compose(&new_local) {
+            Transform3D::Identity => Vec3::ZERO,
+            Transform3D::Affine(a) => {
+                let v = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new([0.0, 0.0, 0.0]));
+                Vec3::from(v.coords())
+            }
+        };
+        assert_approx_eq!(f32, world_centre.x, 40.0, epsilon = 1e-4);
+        assert_approx_eq!(f32, world_centre.y, 0.0, epsilon = 1e-4);
+        assert_approx_eq!(f32, world_centre.z, 0.0, epsilon = 1e-4);
     }
 }

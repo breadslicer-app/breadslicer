@@ -123,6 +123,7 @@ pub(super) fn keyboard_step(
     arrows: ArrowDrive,
     dt: f32,
     pivot: Vec3,
+    parent_world: &Transform3D,
     running: &Transform3D,
     world_per_pixel: f32,
 ) -> Option<Transform3D> {
@@ -150,7 +151,7 @@ pub(super) fn keyboard_step(
                 }
                 let angle = sign * KBD_ROTATE_RAD_PER_SEC * dt;
                 if let Some(r) = axis_rotation(axis, angle) {
-                    t = compose_about_pivot(&r, pivot, &t);
+                    t = compose_about_pivot(&r, pivot, parent_world, &t);
                 }
             }
             Some(t)
@@ -168,7 +169,12 @@ pub(super) fn keyboard_step(
                 pow(sy) as f64,
                 pow(sz) as f64,
             ]);
-            Some(compose_about_pivot(&scale_mat, pivot, running))
+            Some(compose_about_pivot(
+                &scale_mat,
+                pivot,
+                parent_world,
+                running,
+            ))
         }
     }
 }
@@ -417,27 +423,41 @@ impl KeyboardDriveState {
             return false;
         }
 
-        // Pull the running transform + pivot + camera through the
-        // document's read borrow + camera borrow; both drop at the
-        // closure's end before the scene write below.
-        let prepared: Option<(Vec3, Transform3D, f32)> = ctx
+        // Pull the running transform + pivot + camera + the leaf's
+        // ancestor-chain transform through the document's read borrow
+        // + camera borrow; all drop at the closure's end before the
+        // scene write below.
+        let prepared: Option<(Vec3, Transform3D, Transform3D, f32)> = ctx
             .document
             .with_scene(|spatial| {
                 let idx = spatial.leaf_index_of(node_id)?;
                 let pivot = crate::gizmo::pivot_for_object(spatial, idx)?;
-                let running = spatial.leaf(node_id)?.local_transform();
+                let query = spatial.leaf(node_id)?;
+                let running = query.local_transform();
+                let parent_world = query.parent_world();
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                Some((pivot, running, camera.world_per_pixel(default_fov_y(), h)))
+                Some((
+                    pivot,
+                    running,
+                    parent_world,
+                    camera.world_per_pixel(default_fov_y(), h),
+                ))
             })
             .flatten();
-        let Some((pivot, running, world_per_pixel)) = prepared else {
+        let Some((pivot, running, parent_world, world_per_pixel)) = prepared else {
             return false;
         };
 
-        let Some(new_transform) =
-            keyboard_step(focus, arrows, dt, pivot, &running, world_per_pixel)
-        else {
+        let Some(new_transform) = keyboard_step(
+            focus,
+            arrows,
+            dt,
+            pivot,
+            &parent_world,
+            &running,
+            world_per_pixel,
+        ) else {
             return false;
         };
 
@@ -513,6 +533,7 @@ mod keyboard_step_tests {
             1.0,
             Vec3::ZERO,
             &Transform3D::Identity,
+            &Transform3D::Identity,
             0.1,
         )
         .unwrap();
@@ -536,6 +557,7 @@ mod keyboard_step_tests {
             1.0,
             Vec3::ZERO,
             &Transform3D::Identity,
+            &Transform3D::Identity,
             1.0,
         );
         assert!(result.is_none());
@@ -552,6 +574,7 @@ mod keyboard_step_tests {
             arrows,
             1.0,
             Vec3::ZERO,
+            &Transform3D::Identity,
             &Transform3D::Identity,
             1.0,
         );
@@ -571,6 +594,7 @@ mod keyboard_step_tests {
             arrows,
             1.0,
             Vec3::ZERO,
+            &Transform3D::Identity,
             &Transform3D::Identity,
             0.0, // world_per_pixel unused for rotate
         )
@@ -601,6 +625,7 @@ mod keyboard_step_tests {
             1.0,
             Vec3::ZERO,
             &Transform3D::Identity,
+            &Transform3D::Identity,
             0.0,
         )
         .unwrap();
@@ -626,6 +651,7 @@ mod keyboard_step_tests {
             arrows,
             1.0,
             Vec3::ZERO,
+            &Transform3D::Identity,
             &Transform3D::Identity,
             0.0,
         )

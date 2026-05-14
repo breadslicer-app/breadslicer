@@ -285,7 +285,11 @@ impl GizmoFsm {
                 }
                 let ray =
                     picking::ray_from_pixel(camera, default_fov_y(), vp.width(), vp.height(), x, y);
-                apply_drag_move(op, &ray, pivot, &original, x, y)
+                let parent_world = spatial
+                    .leaf(node_id)
+                    .map(|q| q.parent_world())
+                    .unwrap_or(Transform3D::Identity);
+                apply_drag_move(op, &ray, pivot, &parent_world, &original, x, y)
             })
             .flatten();
 

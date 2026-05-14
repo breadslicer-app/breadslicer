@@ -172,11 +172,16 @@ impl SceneSpatial {
             }
         };
         let world_transform = compose_world_transform(&self.graph, id);
+        let parent_world = match self.graph.parent_of(id) {
+            Some(parent) => compose_world_transform(&self.graph, parent),
+            None => Transform3D::Identity,
+        };
         Some(ObjectQuery {
             node,
             mesh,
             cache,
             world_transform,
+            parent_world,
         })
     }
 
@@ -374,6 +379,7 @@ pub struct ObjectQuery<'a> {
     mesh: &'a IndexedMesh,
     cache: &'a MeshSpatial,
     world_transform: Transform3D,
+    parent_world: Transform3D,
 }
 
 impl<'a> ObjectQuery<'a> {
@@ -395,6 +401,19 @@ impl<'a> ObjectQuery<'a> {
     /// that places the leaf's mesh in world coordinates.
     pub fn world_transform(&self) -> Transform3D {
         self.world_transform
+    }
+
+    /// Composed world transform of the leaf's ancestor chain,
+    /// excluding the leaf's own local transform. Equals
+    /// `Transform3D::Identity` when the leaf has no parent. For any
+    /// candidate `local`, `parent_world ∘ local` is the leaf's
+    /// world-space transform under that candidate. Callers that need
+    /// to evaluate the leaf in world space against a different
+    /// `local` than the one stored on the node (e.g. a captured drag
+    /// original or a proposed-edit candidate) compose this with that
+    /// `local`.
+    pub fn parent_world(&self) -> Transform3D {
+        self.parent_world
     }
 
     /// Object-space AABB of [`Self::mesh`]. Cached. `None` when the
