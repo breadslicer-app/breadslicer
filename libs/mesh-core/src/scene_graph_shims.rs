@@ -7,22 +7,25 @@
 //! [`SceneGraph`]. These shims exist for as long as the two types
 //! coexist in the workspace.
 
-use crate::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+use crate::scene::{Scene, SceneError, SceneObject, SceneObjectContent, Transform3D};
 use crate::scene_graph::{SceneGraph, SceneGraphError};
 use crate::scene_graph_node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 
-impl From<Scene> for SceneGraph {
+impl TryFrom<Scene> for SceneGraph {
+    type Error = SceneError;
+
     /// Wraps the flat scene under a single identity-`Group` root.
     /// Resources keep their order: `scene.resources[i]` becomes
     /// `MeshResourceId(i + 1)`. With `try_flatten` going the other way,
     /// `Scene -> SceneGraph -> Scene` is the identity for any valid
     /// input scene.
     ///
-    /// Panics on a `SceneObjectContent::Resource(idx)` whose index is
-    /// out of range. `Scene` carries no construction-time bounds check,
-    /// but every internal producer (format readers, the GUI document,
-    /// `try_flatten` itself) preserves the invariant.
-    fn from(scene: Scene) -> Self {
+    /// Returns [`SceneError::ResourceOutOfBounds`] when an
+    /// `SceneObjectContent::Resource(idx)` references a missing entry
+    /// in `scene.resources`. The flat `Scene` type carries no
+    /// construction-time bounds check, so this conversion is the gate
+    /// that rejects ill-formed inputs.
+    fn try_from(scene: Scene) -> Result<Self, Self::Error> {
         let mut g = SceneGraph::new();
         g.set_meta(scene.meta);
 
@@ -35,20 +38,22 @@ impl From<Scene> for SceneGraph {
         for obj in scene.objects {
             let payload = match obj.content {
                 SceneObjectContent::Mesh(m) => LeafPayload::Mesh(m),
-                SceneObjectContent::Resource(idx) => LeafPayload::MeshResource(
-                    *mesh_ids
+                SceneObjectContent::Resource(idx) => {
+                    let rid = mesh_ids
                         .get(idx)
-                        .expect("Scene::from: out-of-range resource index"),
-                ),
+                        .ok_or(SceneError::ResourceOutOfBounds { idx })?;
+                    LeafPayload::MeshResource(*rid)
+                }
             };
             let leaf = g
                 .add_leaf(obj.meta, obj.transform, payload)
-                .expect("payload validated above");
+                .expect("payload was resolved against this graph's mesh resources");
             g.add_child(root, leaf)
-                .expect("freshly added leaf has no parent");
+                .expect("freshly allocated leaf has no parent and is not a root");
         }
-        g.add_root(root).expect("freshly added group is free");
-        g
+        g.add_root(root)
+            .expect("freshly allocated group is not yet a root");
+        Ok(g)
     }
 }
 
@@ -60,7 +65,7 @@ impl SceneGraph {
     /// list.
     ///
     /// Mesh resources are emitted in `MeshResourceId` order, so a graph
-    /// produced by `SceneGraph::from(scene)` round-trips back to
+    /// produced by `SceneGraph::try_from(scene)` round-trips back to
     /// `scene` exactly.
     pub fn try_flatten(&self) -> Result<Scene, SceneGraphError> {
         let mut resources = Vec::with_capacity(self.mesh_resources.len());
@@ -173,7 +178,10 @@ mod scene_graph_shims_tests {
     #[test]
     fn round_trip_of_empty_scene_is_identity() {
         let scene = Scene::default();
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 
@@ -190,7 +198,10 @@ mod scene_graph_shims_tests {
                 ),
             )],
         };
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 
@@ -207,7 +218,10 @@ mod scene_graph_shims_tests {
                 ),
             )],
         };
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 
@@ -232,7 +246,10 @@ mod scene_graph_shims_tests {
                 ),
             ],
         };
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 
@@ -246,7 +263,10 @@ mod scene_graph_shims_tests {
             resources: vec![],
             objects: vec![],
         };
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 
@@ -267,7 +287,10 @@ mod scene_graph_shims_tests {
                 )),
             }],
         };
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 
@@ -386,12 +409,30 @@ mod scene_graph_shims_tests {
                 ),
             )],
         };
-        let g = SceneGraph::from(scene);
+        let g = SceneGraph::try_from(scene).unwrap();
         assert_eq!(g.roots().len(), 1);
         let root_id = g.roots()[0];
         let root_node = g.node(root_id).unwrap();
         assert!(matches!(root_node.local_transform, Transform3D::Identity));
         assert!(matches!(root_node.kind, NodeKind::Group { ref children } if children.len() == 1));
+    }
+
+    #[test]
+    fn try_from_errors_on_out_of_range_resource_index() {
+        let scene = Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(0),
+            }],
+        };
+        let result = SceneGraph::try_from(scene);
+        assert_eq!(
+            result.err(),
+            Some(SceneError::ResourceOutOfBounds { idx: 0 })
+        );
     }
 
     #[test]
@@ -418,7 +459,10 @@ mod scene_graph_shims_tests {
                 inline_object(Transform3D::Identity, inline),
             ],
         };
-        let round_tripped = SceneGraph::from(scene.clone()).try_flatten().unwrap();
+        let round_tripped = SceneGraph::try_from(scene.clone())
+            .unwrap()
+            .try_flatten()
+            .unwrap();
         assert_eq!(round_tripped, scene);
     }
 }

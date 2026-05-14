@@ -182,7 +182,10 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        let scene = read_stla(&mut reader).unwrap();
+        let scene = read_stla(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         // The recomputed normal for a CCW triangle in the XY plane is
         // (0, 0, 1).
         let mesh = match &scene.objects[0].content {
@@ -227,7 +230,10 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        let scene = read_stla(&mut reader).unwrap();
+        let scene = read_stla(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let mesh = match &scene.objects[0].content {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
@@ -275,7 +281,10 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        let scene = read_stla(&mut reader).unwrap();
+        let scene = read_stla(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let mesh = match &scene.objects[0].content {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
@@ -344,7 +353,10 @@ mod binary_stl_malformed_tests {
         // erroring on the missing payload.
         let buf = make_binary_stl_with_count(0, &[]);
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader).unwrap();
+        let scene = read_stlb(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         assert_eq!(scene.objects.len(), 1);
         let mesh = match &scene.objects[0].content {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
@@ -386,7 +398,10 @@ mod binary_stl_malformed_tests {
 
         let buf = make_binary_stl_with_count(1, &triangle);
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader).unwrap();
+        let scene = read_stlb(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let mesh = match &scene.objects[0].content {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
@@ -426,7 +441,10 @@ mod binary_stl_malformed_tests {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader).unwrap();
+        let scene = read_stlb(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let parsed = match &scene.objects[0].content {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),
@@ -494,7 +512,10 @@ mod binary_stl_malformed_tests {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader).unwrap();
+        let scene = read_stlb(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let parsed = match &scene.objects[0].content {
             sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
             _ => panic!("expected an inline mesh"),

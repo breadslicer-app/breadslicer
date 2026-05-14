@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Flatten a `Scene` and write it to a single-mesh file format
+//! Flatten a `SceneGraph` and write it to a single-mesh file format
 //! (`.stl` binary / ASCII, `.obj`).
 //!
 //! Two layers:
-//! - [`flatten_scene_to_mesh`] bakes per-object transforms into a
-//!   single `IndexedMesh`, returning the merged mesh plus any
-//!   non-fatal warnings (currently only [`FlattenWarning::MultiObjectMerge`]).
+//! - [`flatten_graph_to_mesh`] bakes the composed-ancestor transform
+//!   for every reachable leaf into a single `IndexedMesh`, returning
+//!   the merged mesh plus any non-fatal warnings (currently only
+//!   [`FlattenWarning::MultiObjectMerge`]).
 //! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
-//!   appropriate format. OBJ goes through `write_obj(&Scene, ...)`
+//!   appropriate format. OBJ goes through `write_obj(&SceneGraph, ...)`
 //!   (preserving per-object boundaries), while the STL variants
-//!   route through `flatten_scene_to_mesh` first.
+//!   route through `flatten_graph_to_mesh` first.
 //!
 //! Warnings are returned to the caller. The CLI surfaces them via
 //! `eprintln!`; the GUI may surface them through its dialog stack.
@@ -23,8 +24,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::{IndexedMesh, SceneGraph};
 
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
@@ -108,9 +108,9 @@ where
     }
 }
 
-/// A warning produced by `flatten_scene_to_mesh` that the caller may want
-/// to surface to the user (or ignore). Distinct from errors: warnings do
-/// not prevent the flattened mesh from being usable.
+/// A warning produced by `flatten_graph_to_mesh` that the caller may
+/// want to surface to the user (or ignore). Distinct from errors:
+/// warnings do not prevent the flattened mesh from being usable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlattenWarning {
     /// The scene contained more than one object, so the flatten step
@@ -138,17 +138,22 @@ pub struct FlattenedScene {
     pub warnings: Vec<FlattenWarning>,
 }
 
-/// Produces a single `IndexedMesh` representing the whole scene with
-/// per-object transforms baked into vertices and face normals.
+/// Produces a single `IndexedMesh` representing the whole graph with
+/// composed-ancestor transforms baked into vertices and face normals.
 ///
-/// - For a single-object scene, returns the object's baked mesh with the
+/// - For a single-leaf graph, returns the leaf's baked mesh with the
 ///   source mesh's metadata (notably its name, which the ASCII STL
 ///   writer puts in the `solid <name>` header) preserved.
-/// - For a multi-object scene, returns the result of `merge_meshes`,
-///   which concatenates baked vertices/faces and drops per-object names,
-///   plus a `MultiObjectMerge` warning so the caller can inform the
-///   user.
-pub fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
+/// - For a multi-leaf graph, returns the result of
+///   `SceneGraph::merge_meshes`, which concatenates baked
+///   vertices/faces and drops per-leaf names, plus a
+///   `MultiObjectMerge` warning so the caller can inform the user.
+///
+/// Errors out with [`WriteSceneError::Graph`] on a graph containing
+/// an unevaluated `Csg` node, since there is no kernel yet to reduce
+/// it.
+pub fn flatten_graph_to_mesh(graph: &SceneGraph) -> Result<FlattenedScene> {
+    let scene = graph.try_flatten()?;
     match scene.objects.len() {
         0 => Err(WriteSceneError::EmptyScene),
         1 => {
@@ -171,27 +176,27 @@ pub fn flatten_scene_to_mesh(scene: &Scene) -> Result<FlattenedScene> {
     }
 }
 
-/// Writes `scene` to `target_path` in the given `target_format`.
+/// Writes `graph` to `target_path` in the given `target_format`.
 ///
 /// Returns the warnings that surfaced during flatten; the caller
-/// decides how to surface them (CLI → `eprintln!`; GUI → dialog or
-/// log). For OBJ the per-object boundaries are preserved, so no
+/// decides how to surface them (CLI -> `eprintln!`; GUI -> dialog or
+/// log). For OBJ the per-leaf boundaries are preserved, so no
 /// flatten happens and the warning vec is always empty.
 pub fn write_scene(
-    scene: &Scene,
+    graph: &SceneGraph,
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
     match target_format {
         WriteFormat::Obj => {
             write_atomically(target_path, |writer| {
-                write_obj(scene, writer)?;
+                write_obj(graph, writer)?;
                 Ok(())
             })?;
             Ok(Vec::new())
         }
         WriteFormat::StlBin => {
-            let flattened = flatten_scene_to_mesh(scene)?;
+            let flattened = flatten_graph_to_mesh(graph)?;
             write_atomically(target_path, |writer| {
                 write_stlb(&flattened.mesh, writer)?;
                 Ok(())
@@ -199,7 +204,7 @@ pub fn write_scene(
             Ok(flattened.warnings)
         }
         WriteFormat::StlAscii => {
-            let flattened = flatten_scene_to_mesh(scene)?;
+            let flattened = flatten_graph_to_mesh(graph)?;
             write_atomically(target_path, |writer| {
                 write_stla(&flattened.mesh, writer)?;
                 Ok(())
@@ -211,10 +216,16 @@ pub fn write_scene(
 
 #[cfg(test)]
 mod flatten_scene_to_mesh_tests {
-    use super::{FlattenWarning, flatten_scene_to_mesh};
+    use super::{FlattenWarning, flatten_graph_to_mesh};
+    use sc_mesh_core::SceneGraph;
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+
+    fn flatten_scene(scene: Scene) -> super::Result<super::FlattenedScene> {
+        let graph = SceneGraph::try_from(scene)?;
+        flatten_graph_to_mesh(&graph)
+    }
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -253,13 +264,13 @@ mod flatten_scene_to_mesh_tests {
             resources: vec![],
             objects: vec![],
         };
-        assert!(flatten_scene_to_mesh(&scene).is_err());
+        assert!(flatten_scene(scene).is_err());
     }
 
     #[test]
     fn single_object_identity_preserves_vertices_and_name() {
         let scene = scene_with_object(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
-        let result = flatten_scene_to_mesh(&scene).unwrap();
+        let result = flatten_scene(scene).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [1.0, 0.0, 0.0]);
         assert_eq!(result.mesh.vertices()[1].coords(), [0.0, 1.0, 0.0]);
@@ -274,7 +285,7 @@ mod flatten_scene_to_mesh_tests {
     fn single_object_affine_bakes_translation() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
         let scene = scene_with_object(unit_triangle_mesh(None), t);
-        let result = flatten_scene_to_mesh(&scene).unwrap();
+        let result = flatten_scene(scene).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [11.0, -5.0, 2.0]);
         assert_eq!(result.mesh.vertices()[1].coords(), [10.0, -4.0, 2.0]);
@@ -285,7 +296,7 @@ mod flatten_scene_to_mesh_tests {
     fn single_object_affine_preserves_source_name() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
         let scene = scene_with_object(unit_triangle_mesh(Some("Translated")), t);
-        let result = flatten_scene_to_mesh(&scene).unwrap();
+        let result = flatten_scene(scene).unwrap();
         // The transform was baked into the vertices, but the source
         // mesh's name was preserved (so STL writers can put it in the
         // `solid <name>` / 80-byte header).
@@ -315,7 +326,7 @@ mod flatten_scene_to_mesh_tests {
                 },
             ],
         };
-        let result = flatten_scene_to_mesh(&scene).unwrap();
+        let result = flatten_scene(scene).unwrap();
         // Both objects' vertices are present; the second is translated.
         assert_eq!(result.mesh.vertices().len(), 6);
         assert_eq!(result.mesh.vertices()[3].coords(), [11.0, 0.0, 0.0]);
@@ -335,16 +346,26 @@ mod flatten_scene_to_mesh_tests {
             [0.0, 0.0, 0.0],
         );
         let scene = scene_with_object(unit_triangle_mesh(None), Transform3D::Affine(singular));
-        assert!(flatten_scene_to_mesh(&scene).is_err());
+        assert!(flatten_scene(scene).is_err());
     }
 }
 
 #[cfg(test)]
 mod write_scene_atomicity_tests {
-    use super::write_scene;
+    use super::write_scene as write_scene_inner;
     use crate::filetypes::WriteFormat;
+    use sc_mesh_core::SceneGraph;
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+
+    fn write_scene(
+        scene: &Scene,
+        target_path: &std::path::Path,
+        target_format: WriteFormat,
+    ) -> super::Result<Vec<super::FlattenWarning>> {
+        let graph = SceneGraph::try_from(scene.clone())?;
+        write_scene_inner(&graph, target_path, target_format)
+    }
 
     fn valid_scene() -> Scene {
         Scene {

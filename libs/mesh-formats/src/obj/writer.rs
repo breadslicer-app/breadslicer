@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::SceneGraph;
+use sc_mesh_core::{IndexedMesh, scene::Scene};
 
 use crate::error::WriteObjError;
 
@@ -28,7 +28,15 @@ fn advance_vertex_offset(offset: u32, vertex_count: usize) -> Result<u32, WriteO
         .ok_or(WriteObjError::VertexOffsetOverflow { offset, added })
 }
 
-pub fn write_obj<W>(scene: &Scene, writer: &mut W) -> Result<(), WriteObjError>
+pub fn write_obj<W>(graph: &SceneGraph, writer: &mut W) -> Result<(), WriteObjError>
+where
+    W: std::io::Write,
+{
+    let scene = graph.try_flatten()?;
+    write_flat_scene(&scene, writer)
+}
+
+fn write_flat_scene<W>(scene: &Scene, writer: &mut W) -> Result<(), WriteObjError>
 where
     W: std::io::Write,
 {
@@ -154,10 +162,19 @@ mod helper_tests {
 
 #[cfg(test)]
 mod tests {
+    use sc_mesh_core::SceneGraph;
     use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
     use super::write_obj;
+
+    fn write_obj_scene<W: std::io::Write>(
+        scene: &Scene,
+        writer: &mut W,
+    ) -> Result<(), super::WriteObjError> {
+        let graph = SceneGraph::try_from(scene.clone())?;
+        write_obj(&graph, writer)
+    }
 
     fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -191,7 +208,7 @@ mod tests {
 
     fn write_to_string(scene: &Scene) -> String {
         let mut buf: Vec<u8> = Vec::new();
-        write_obj(scene, &mut buf).expect("write_obj failed");
+        write_obj_scene(scene, &mut buf).expect("write_obj failed");
         String::from_utf8(buf).expect("output is not valid UTF-8")
     }
 
@@ -355,7 +372,7 @@ mod tests {
             }],
         };
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj(&scene, &mut buf).is_err());
+        assert!(write_obj_scene(&scene, &mut buf).is_err());
     }
 
     #[test]
@@ -441,7 +458,7 @@ mod tests {
         };
         let scene = scene_with_mesh(mesh);
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj(&scene, &mut buf).is_err());
+        assert!(write_obj_scene(&scene, &mut buf).is_err());
     }
 
     // Same overflow shape, but split across two meshes: a small first
@@ -476,7 +493,7 @@ mod tests {
             ],
         };
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj(&scene, &mut buf).is_err());
+        assert!(write_obj_scene(&scene, &mut buf).is_err());
     }
 
     #[test]
@@ -497,6 +514,6 @@ mod tests {
             }],
         };
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj(&scene, &mut buf).is_err());
+        assert!(write_obj_scene(&scene, &mut buf).is_err());
     }
 }

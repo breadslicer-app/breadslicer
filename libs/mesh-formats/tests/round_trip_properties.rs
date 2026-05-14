@@ -107,7 +107,10 @@ proptest! {
         write_stla(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stla(&mut reader).unwrap();
+        let scene = read_stla(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let recovered = unwrap_single_mesh(&scene);
 
         prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
@@ -120,7 +123,10 @@ proptest! {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader).unwrap();
+        let scene = read_stlb(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let recovered = unwrap_single_mesh(&scene);
 
         prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
@@ -135,7 +141,10 @@ proptest! {
         let mut buf: Vec<u8> = Vec::new();
         write_stla(&mesh, &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
-        let scene = read_stla(&mut reader).unwrap();
+        let scene = read_stla(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let recovered = unwrap_single_mesh(&scene);
 
         let distinct_input: std::collections::HashSet<[u32; 3]> = mesh
@@ -153,7 +162,10 @@ proptest! {
         let mut buf: Vec<u8> = Vec::new();
         write_stlb(&mesh, &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader).unwrap();
+        let scene = read_stlb(&mut reader)
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output flattens");
         let recovered = unwrap_single_mesh(&scene);
 
         for face in recovered.faces() {

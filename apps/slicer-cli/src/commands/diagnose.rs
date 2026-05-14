@@ -23,7 +23,10 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) ->
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings);
-    let scene = loaded.scene;
+    let scene = loaded
+        .graph
+        .try_flatten()
+        .map_err(|e| anyhow!("loader output flattens: {e}"))?;
 
     let mut detected_problems = false;
 

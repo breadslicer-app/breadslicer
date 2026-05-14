@@ -13,16 +13,16 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::SceneGraph;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer;
 
 pub(crate) fn write_scene(
-    scene: &Scene,
+    graph: &SceneGraph,
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<()> {
-    let warnings = scene_writer::write_scene(scene, target_path, target_format)?;
+    let warnings = scene_writer::write_scene(graph, target_path, target_format)?;
     for w in &warnings {
         eprintln!("WARNING: {}", w.user_message());
     }

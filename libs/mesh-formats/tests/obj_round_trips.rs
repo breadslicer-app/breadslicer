@@ -45,11 +45,15 @@ fn make_scene(objects: Vec<IndexedMesh>) -> Scene {
 
 fn round_trip(scene: &Scene) -> (Scene, Vec<LoadMeshWarning>) {
     let mut buf: Vec<u8> = Vec::new();
-    write_obj(scene, &mut buf).expect("write_obj failed");
+    let graph = sc_mesh_core::SceneGraph::try_from(scene.clone()).expect("test scene is valid");
+    write_obj(&graph, &mut buf).expect("write_obj failed");
 
     let mut reader = std::io::Cursor::new(buf);
     let mut warnings = vec![];
-    let recovered = read_obj(&mut reader, &mut warnings).expect("read_obj failed");
+    let recovered = read_obj(&mut reader, &mut warnings)
+        .expect("read_obj failed")
+        .try_flatten()
+        .expect("OBJ reader output flattens");
     (recovered, warnings)
 }
 

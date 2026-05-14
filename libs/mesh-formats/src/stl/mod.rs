@@ -7,6 +7,7 @@ mod stla;
 mod stlb;
 mod writers;
 
+use sc_mesh_core::SceneGraph;
 use sc_mesh_core::TriangleIterator;
 use sc_mesh_core::scene::Scene;
 
@@ -18,7 +19,7 @@ pub use writers::{write_stla, write_stlb};
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
-pub fn read_stl<R>(read: &mut R) -> Result<Scene>
+pub fn read_stl<R>(read: &mut R) -> Result<SceneGraph>
 where
     R: std::io::Read + std::io::Seek,
 {
@@ -36,25 +37,24 @@ where
         BinaryStlReader::create_triangles_iterator(read)
     }?;
 
-    stl_reader.as_indexed_mesh(Some(metadata)).map(Scene::from)
+    let mesh = stl_reader.as_indexed_mesh(Some(metadata))?;
+    Ok(SceneGraph::try_from(Scene::from(mesh))?)
 }
 
-pub fn read_stla<R>(read: &mut R) -> Result<Scene>
+pub fn read_stla<R>(read: &mut R) -> Result<SceneGraph>
 where
     R: std::io::Read + std::io::Seek,
 {
     let metadata = AsciiStlReader::extract_metadata(read)?;
-    AsciiStlReader::create_triangles_iterator(read)?
-        .as_indexed_mesh(Some(metadata))
-        .map(Scene::from)
+    let mesh = AsciiStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))?;
+    Ok(SceneGraph::try_from(Scene::from(mesh))?)
 }
 
-pub fn read_stlb<R>(read: &mut R) -> Result<Scene>
+pub fn read_stlb<R>(read: &mut R) -> Result<SceneGraph>
 where
     R: std::io::Read + std::io::Seek,
 {
     let metadata = BinaryStlReader::extract_metadata(read)?;
-    BinaryStlReader::create_triangles_iterator(read)?
-        .as_indexed_mesh(Some(metadata))
-        .map(Scene::from)
+    let mesh = BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))?;
+    Ok(SceneGraph::try_from(Scene::from(mesh))?)
 }

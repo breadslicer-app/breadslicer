@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::SceneGraph;
 
 use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
@@ -16,7 +16,7 @@ use crate::obj::read_obj;
 use crate::stl::{read_stl, read_stla, read_stlb};
 
 pub struct LoadedMesh {
-    pub scene: Scene,
+    pub graph: SceneGraph,
     pub warnings: Vec<LoadMeshWarning>,
 }
 
@@ -64,12 +64,12 @@ where
     R: Read + Seek,
 {
     let mut warnings = Vec::new();
-    let scene = match kind {
+    let graph = match kind {
         MeshFileType::Stl => read_stl(reader)?,
         MeshFileType::StlAscii => read_stla(reader)?,
         MeshFileType::StlBin => read_stlb(reader)?,
         MeshFileType::Obj => read_obj(reader, &mut warnings)?,
         other => return Err(LoadMeshError::UnsupportedFormat(other)),
     };
-    Ok(LoadedMesh { scene, warnings })
+    Ok(LoadedMesh { graph, warnings })
 }

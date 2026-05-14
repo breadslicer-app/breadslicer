@@ -70,7 +70,10 @@ mod stla_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_mesh = recovered_mesh.unwrap();
+        let recovered_mesh = recovered_mesh
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output is a single identity-group leaf");
 
         // Even if there is no metadata loaded, we still create the Metadata object.
         let mesh_unnamed = get_unnamed_mesh();
@@ -90,7 +93,10 @@ mod stla_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_mesh = recovered_mesh.unwrap();
+        let recovered_mesh = recovered_mesh
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output is a single identity-group leaf");
 
         assert_eq!(recovered_mesh, mesh_unnamed.into());
     }
@@ -108,7 +114,10 @@ mod stla_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_mesh = recovered_mesh.unwrap();
+        let recovered_mesh = recovered_mesh
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output is a single identity-group leaf");
 
         assert_eq!(recovered_mesh, mesh_named.into());
     }
@@ -130,7 +139,10 @@ mod stlb_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_mesh = recovered_mesh.unwrap();
+        let recovered_mesh = recovered_mesh
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output is a single identity-group leaf");
 
         // Even if there is no metadata loaded, we still create the Metadata object.
         let mesh_unnamed = get_unnamed_mesh();
@@ -150,7 +162,10 @@ mod stlb_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_mesh = recovered_mesh.unwrap();
+        let recovered_mesh = recovered_mesh
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output is a single identity-group leaf");
 
         assert_eq!(recovered_mesh, mesh_unnamed.into());
     }
@@ -168,7 +183,10 @@ mod stlb_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_mesh = recovered_mesh.unwrap();
+        let recovered_mesh = recovered_mesh
+            .unwrap()
+            .try_flatten()
+            .expect("STL reader output is a single identity-group leaf");
 
         assert_eq!(recovered_mesh, mesh_named.into());
     }

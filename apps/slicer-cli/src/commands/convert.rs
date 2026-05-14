@@ -63,5 +63,5 @@ pub(crate) fn convert(
     )?;
     display_warnings(&loaded.warnings);
 
-    write_scene(&loaded.scene, &target_path, target_write_format)
+    write_scene(&loaded.graph, &target_path, target_write_format)
 }

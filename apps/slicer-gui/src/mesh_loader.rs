@@ -179,30 +179,32 @@ pub(crate) fn spawn_load(
                     Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
                 }
             };
-        let result = parsed.and_then(
-            |LoadedMesh {
-                 mut scene,
-                 warnings,
-             }| {
-                // Drop the parsed mesh onto the build plate before the GPU
-                // upload and cache priming run on it, so both observe the
-                // placed world coordinates.
-                place_on_plate(&mut scene, build_volume)?;
-                let gpu_scene = GpuScene::build(&device, &scene)?;
-                // Eager priming: build the per-mesh spatial caches on this
-                // worker thread, so the UI thread receives a fully-primed
-                // `SceneSpatial` and the first picker click / gizmo
-                // attachment doesn't pay the build cost synchronously.
-                let spatial = SceneSpatial::primed(scene);
-                Ok(PreparedScene {
-                    spatial,
-                    gpu_scene,
-                    device: device.clone(),
-                    warnings,
-                    source_path: path.clone(),
-                })
-            },
-        );
+        let result = parsed.and_then(|LoadedMesh { graph, warnings }| {
+            // Flatten back to a Scene at the boundary: the GUI's
+            // GpuScene and SceneSpatial still speak Scene. When
+            // those migrate, this bridge collapses to passing the
+            // graph straight through.
+            let mut scene = graph
+                .try_flatten()
+                .map_err(|e| anyhow::anyhow!("loader output flattens: {e}"))?;
+            // Drop the parsed mesh onto the build plate before the GPU
+            // upload and cache priming run on it, so both observe the
+            // placed world coordinates.
+            place_on_plate(&mut scene, build_volume)?;
+            let gpu_scene = GpuScene::build(&device, &scene)?;
+            // Eager priming: build the per-mesh spatial caches on this
+            // worker thread, so the UI thread receives a fully-primed
+            // `SceneSpatial` and the first picker click / gizmo
+            // attachment doesn't pay the build cost synchronously.
+            let spatial = SceneSpatial::primed(scene);
+            Ok(PreparedScene {
+                spatial,
+                gpu_scene,
+                device: device.clone(),
+                warnings,
+                source_path: path.clone(),
+            })
+        });
         ticket.deposit(path, result);
     });
 }

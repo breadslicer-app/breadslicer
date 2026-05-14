@@ -237,7 +237,8 @@ fn write_two_object_obj(path: &Path) {
     };
     let file = fs::File::create(path).expect("create obj");
     let mut writer = std::io::BufWriter::new(file);
-    sc_mesh_formats::obj::write_obj(&scene, &mut writer).expect("write_obj");
+    let graph = sc_mesh_core::SceneGraph::try_from(scene).expect("test scene is valid");
+    sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 use std::str::Utf8Error;
 
+use sc_mesh_core::SceneGraphError;
 use sc_mesh_core::scene::SceneError;
 
 use crate::filetypes::MeshFileType;
@@ -112,6 +113,7 @@ pub enum WriteSceneError {
         source: std::io::Error,
     },
     Scene(SceneError),
+    Graph(SceneGraphError),
     Stl(WriteStlError),
     Obj(WriteObjError),
 }
@@ -134,6 +136,7 @@ impl fmt::Display for WriteSceneError {
                 to.display(),
             ),
             Self::Scene(e) => write!(f, "{e}"),
+            Self::Graph(e) => write!(f, "{e}"),
             Self::Stl(e) => write!(f, "{e}"),
             Self::Obj(e) => write!(f, "{e}"),
         }
@@ -146,6 +149,7 @@ impl std::error::Error for WriteSceneError {
             Self::Io(e) => Some(e),
             Self::CreateTempFile { source, .. } | Self::Rename { source, .. } => Some(source),
             Self::Scene(e) => Some(e),
+            Self::Graph(e) => Some(e),
             Self::Stl(e) => Some(e),
             Self::Obj(e) => Some(e),
             Self::EmptyScene | Self::PathHasNoFileName(_) => None,
@@ -162,6 +166,12 @@ impl From<std::io::Error> for WriteSceneError {
 impl From<SceneError> for WriteSceneError {
     fn from(e: SceneError) -> Self {
         Self::Scene(e)
+    }
+}
+
+impl From<SceneGraphError> for WriteSceneError {
+    fn from(e: SceneGraphError) -> Self {
+        Self::Graph(e)
     }
 }
 
@@ -203,6 +213,7 @@ impl std::error::Error for InferFileTypeError {}
 #[derive(Debug)]
 pub enum LoadStlError {
     Io(std::io::Error),
+    Scene(SceneError),
     Truncated {
         what: &'static str,
     },
@@ -242,6 +253,7 @@ impl fmt::Display for LoadStlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "STL I/O error: {e}"),
+            Self::Scene(e) => write!(f, "STL reader: {e}"),
             Self::Truncated { what } => write!(
                 f,
                 "The STL file is truncated or malformed: it ended before {what} could be read",
@@ -283,6 +295,7 @@ impl std::error::Error for LoadStlError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
+            Self::Scene(e) => Some(e),
             Self::HeaderNotUtf8(e) => Some(e),
             Self::InvalidFloat { source, .. } => Some(source),
             _ => None,
@@ -296,11 +309,18 @@ impl From<std::io::Error> for LoadStlError {
     }
 }
 
+impl From<SceneError> for LoadStlError {
+    fn from(e: SceneError) -> Self {
+        Self::Scene(e)
+    }
+}
+
 // --- per-format: OBJ load --------------------------------------------
 
 #[derive(Debug)]
 pub enum LoadObjError {
     Io(std::io::Error),
+    Scene(SceneError),
     InvalidFloat {
         line: usize,
         token: String,
@@ -362,6 +382,7 @@ impl fmt::Display for LoadObjError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "OBJ I/O error: {e}"),
+            Self::Scene(e) => write!(f, "OBJ reader: {e}"),
             Self::InvalidFloat {
                 line,
                 token,
@@ -433,6 +454,7 @@ impl std::error::Error for LoadObjError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
+            Self::Scene(e) => Some(e),
             Self::InvalidFloat { source, .. } => Some(source),
             Self::InvalidFaceIndex { source, .. } => Some(source),
             _ => None,
@@ -443,6 +465,12 @@ impl std::error::Error for LoadObjError {
 impl From<std::io::Error> for LoadObjError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<SceneError> for LoadObjError {
+    fn from(e: SceneError) -> Self {
+        Self::Scene(e)
     }
 }
 
@@ -486,6 +514,7 @@ impl From<std::io::Error> for WriteStlError {
 pub enum WriteObjError {
     Io(std::io::Error),
     Scene(SceneError),
+    Graph(SceneGraphError),
     FaceIndexOverflow { local: u32, offset: u32 },
     VertexCountExceedsU32 { vertex_count: usize },
     VertexOffsetOverflow { offset: u32, added: u32 },
@@ -496,6 +525,7 @@ impl fmt::Display for WriteObjError {
         match self {
             Self::Io(e) => write!(f, "OBJ writer I/O error: {e}"),
             Self::Scene(e) => write!(f, "OBJ writer: {e}"),
+            Self::Graph(e) => write!(f, "OBJ writer: {e}"),
             Self::FaceIndexOverflow { local, offset } => write!(
                 f,
                 "OBJ writer: face vertex index overflow (local={local}, offset={offset})",
@@ -517,6 +547,7 @@ impl std::error::Error for WriteObjError {
         match self {
             Self::Io(e) => Some(e),
             Self::Scene(e) => Some(e),
+            Self::Graph(e) => Some(e),
             _ => None,
         }
     }
@@ -531,5 +562,11 @@ impl From<std::io::Error> for WriteObjError {
 impl From<SceneError> for WriteObjError {
     fn from(e: SceneError) -> Self {
         Self::Scene(e)
+    }
+}
+
+impl From<SceneGraphError> for WriteObjError {
+    fn from(e: SceneGraphError) -> Self {
+        Self::Graph(e)
     }
 }

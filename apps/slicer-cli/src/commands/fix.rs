@@ -56,7 +56,10 @@ pub(crate) fn fix(
 
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings);
-    let mut scene = loaded.scene;
+    let mut scene = loaded
+        .graph
+        .try_flatten()
+        .map_err(|e| anyhow!("loader output flattens: {e}"))?;
 
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 
@@ -77,7 +80,9 @@ pub(crate) fn fix(
         show_applied_fixes(&all_fixes);
     }
 
-    write_scene(&scene, &target_path, target_format)
+    let graph = sc_mesh_core::SceneGraph::try_from(scene)
+        .map_err(|e| anyhow!("scene from fix path could not be converted to a graph: {e}"))?;
+    write_scene(&graph, &target_path, target_format)
 }
 
 fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, options: FixOptions) -> Result<Vec<MeshFix>> {

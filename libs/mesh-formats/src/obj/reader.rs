@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 
 use float_cmp::approx_eq;
+use sc_mesh_core::SceneGraph;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
@@ -136,11 +137,15 @@ fn check_sharing_and_flush(
     }
 }
 
-pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene, LoadObjError>
+pub fn read_obj<R>(
+    read: &mut R,
+    warnings: &mut Vec<LoadMeshWarning>,
+) -> Result<SceneGraph, LoadObjError>
 where
     R: std::io::Read,
 {
-    read_obj_with_caps(read, warnings, Caps::DEFAULT)
+    let scene = read_obj_with_caps(read, warnings, Caps::DEFAULT)?;
+    Ok(SceneGraph::try_from(scene)?)
 }
 
 fn read_obj_with_caps<R>(
@@ -700,7 +705,15 @@ mod read_obj_tests {
     fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadMeshWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings = Vec::new();
-        let scene = read_obj(&mut reader, &mut warnings)?;
+        let graph = read_obj(&mut reader, &mut warnings)?;
+        // The reader builds a flat Scene internally and wraps it in a
+        // SceneGraph with one identity-Group root. Flattening back is
+        // round-trip-identity for any scene the reader can produce
+        // (no Csg, no Instance), and lets the test helpers keep
+        // asserting against the familiar Scene shape.
+        let scene = graph
+            .try_flatten()
+            .expect("reader output is a flat tree, try_flatten cannot fail");
         Ok((scene, warnings))
     }
 
