@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 
 use anyhow::Result;
 use glam::Vec3;
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene_graph::SceneGraph;
 use slint::wgpu_28::wgpu;
 
 use crate::build_volume::BuildVolume;
@@ -33,7 +33,9 @@ use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
 pub(crate) use scene_upload::GpuScene;
-use scene_upload::{MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries};
+use scene_upload::{
+    MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries, graph_leaf_count,
+};
 use targets::{MsaaTargets, TargetPool};
 
 /// Scene-dependent inputs to [`Renderer::render`]. The selection
@@ -45,8 +47,8 @@ use targets::{MsaaTargets, TargetPool};
 /// `scene: None`.
 #[derive(Clone, Copy)]
 pub struct SceneRender<'a> {
-    pub scene: &'a Scene,
-    /// Object index whose stencil mask the outline post-pass
+    pub graph: &'a SceneGraph,
+    /// Pre-order leaf index whose stencil mask the outline post-pass
     /// dilates. `None` skips the outline pass.
     pub selection: Option<usize>,
     /// Gizmo overlay parameters; the gizmo pass runs only when
@@ -156,8 +158,8 @@ impl Renderer {
     /// `Renderer` and a worker-built `GpuScene` from the previous device
     /// would be unusable. New scene loads go through the worker via
     /// [`GpuScene::build`] + [`Renderer::install_scene`] instead.
-    pub fn upload_scene(&mut self, scene: &Scene) -> Result<()> {
-        let gpu = GpuScene::build(&self.device, scene)?;
+    pub fn upload_scene(&mut self, graph: &SceneGraph) -> Result<()> {
+        let gpu = GpuScene::build(&self.device, graph)?;
         self.attach_scene(gpu);
         Ok(())
     }
@@ -246,8 +248,8 @@ impl Renderer {
             return None;
         }
 
-        let (scene, selection, gizmo) = match scene_render {
-            Some(sr) => (Some(sr.scene), sr.selection, sr.gizmo),
+        let (graph, selection, gizmo) = match scene_render {
+            Some(sr) => (Some(sr.graph), sr.selection, sr.gizmo),
             None => (None, None, None),
         };
 
@@ -262,19 +264,20 @@ impl Renderer {
             .expect("ensure_plate_buffers populated the cache");
 
         // Per-frame upload of model matrices when a `GpuScene` is
-        // installed AND the caller passed the matching CPU `Scene`.
-        // The CPU scene is the source of truth; the GPU uniform
-        // buffer is a mirror that lives long enough to be sampled
-        // across the next draw. The renderer's `GpuScene` must
-        // match the `Scene` 1:1; caller-side invariant checked by
-        // debug_assert so test failures surface early.
-        let scene_for_draws = if let (Some(inst), Some(scene_data)) = (installed, scene) {
+        // installed AND the caller passed the matching CPU
+        // `SceneGraph`. The CPU graph is the source of truth; the GPU
+        // uniform buffer is a mirror that lives long enough to be
+        // sampled across the next draw. The renderer's `GpuScene`
+        // must match the graph's reachable-leaf count 1:1; caller-side
+        // invariant checked by debug_assert so test failures surface
+        // early.
+        let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
             debug_assert_eq!(
                 inst.gpu.object_count(),
-                scene_data.objects.len(),
-                "GpuScene and Scene have diverged in object count"
+                graph_leaf_count(graph_data),
+                "GpuScene and SceneGraph have diverged in leaf count"
             );
-            let entries = build_model_entries(scene_data, selection, build_volume);
+            let entries = build_model_entries(graph_data, selection, build_volume);
             // Each entry lives at `i * model_stride`. The stride is
             // at least `MODEL_ENTRY_SIZE` and a multiple of the
             // device's uniform offset alignment (typically 256
@@ -314,12 +317,12 @@ impl Renderer {
         );
 
         // Per-frame envelope-wall warning mask: which side walls (and
-        // the top) some object breaches. Recomputed each frame from
-        // the CPU `Scene`; cheap (a single per-vertex scan) and keeps
-        // the breach signal in lockstep with the per-object `flags.y`
-        // bit. `None` for an empty scene leaves the mask at 0 so all
-        // wall fragments are discarded.
-        let face_breach_mask = scene.map_or(0, |s| build_envelope_warning_mask(s, build_volume));
+        // the top) some leaf breaches. Recomputed each frame from
+        // the CPU `SceneGraph`; cheap (a single per-vertex scan) and
+        // keeps the breach signal in lockstep with the per-leaf
+        // `flags.y` bit. `None` for an empty graph leaves the mask
+        // at 0 so all wall fragments are discarded.
+        let face_breach_mask = graph.map_or(0, |g| build_envelope_warning_mask(g, build_volume));
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::LIGHT_DIR,
@@ -736,6 +739,10 @@ mod gpu_integration_tests {
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::transform::AffineTransform3D;
 
+    fn graph_from(scene: Scene) -> SceneGraph {
+        SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
+    }
+
     /// Build envelope used by the render tests below. Held as a
     /// module-level constant so each test passes the same value to
     /// `render` without extra boilerplate.
@@ -765,7 +772,7 @@ mod gpu_integration_tests {
         Some((device, queue))
     }
 
-    fn triangle_scene_with_translation(t: AffineTransform3D) -> Scene {
+    fn triangle_graph_with_translation(t: AffineTransform3D) -> SceneGraph {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -778,7 +785,7 @@ mod gpu_integration_tests {
                 [0, 1, 2],
             )],
         };
-        Scene {
+        graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -786,7 +793,7 @@ mod gpu_integration_tests {
                 transform: Transform3D::Affine(t),
                 content: SceneObjectContent::Mesh(mesh),
             }],
-        }
+        })
     }
 
     /// Smoke test: `Renderer::new` succeeds against the default-limits
@@ -803,16 +810,16 @@ mod gpu_integration_tests {
     }
 
     /// `GpuScene::build` succeeds against the default-limits device
-    /// for a non-trivial scene with a non-identity transform.
+    /// for a non-trivial graph with a non-identity transform.
     #[test]
     fn gpu_scene_build_succeeds_under_default_limits() {
         let Some((device, _queue)) = make_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
-        let gpu = GpuScene::build(&device, &scene).expect("GpuScene::build should succeed");
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
+        let gpu = GpuScene::build(&device, &graph).expect("GpuScene::build should succeed");
         // Stride must be at least one ModelEntry and a multiple of the
         // device's reported alignment.
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
@@ -833,10 +840,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -845,7 +852,7 @@ mod gpu_integration_tests {
         let texture = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: None,
                     gizmo: None,
                 }),
@@ -870,10 +877,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -882,7 +889,7 @@ mod gpu_integration_tests {
         let texture = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: None,
                 }),
@@ -910,10 +917,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -924,7 +931,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: None,
                 }),
@@ -937,7 +944,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: None,
                 }),
@@ -962,10 +969,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -983,7 +990,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: Some(frame),
                 }),
@@ -996,7 +1003,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: Some(frame),
                 }),
@@ -1018,10 +1025,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -1039,7 +1046,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: Some(frame),
                 }),
@@ -1061,10 +1068,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -1082,7 +1089,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: Some(frame),
                 }),
@@ -1103,10 +1110,10 @@ mod gpu_integration_tests {
             return;
         };
         let mut renderer = Renderer::new(device.clone(), queue);
-        let scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
-            .upload_scene(&scene)
+            .upload_scene(&graph)
             .expect("upload_scene under default limits");
         let bounds = renderer.scene_bounds().expect("scene bounds populated");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -1124,7 +1131,7 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: Some(0),
                     gizmo: Some(scale_axis),
                 }),
@@ -1158,7 +1165,7 @@ mod gpu_integration_tests {
                 [0, 1, 2],
             )],
         };
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![
@@ -1182,9 +1189,9 @@ mod gpu_integration_tests {
                     content: SceneObjectContent::Mesh(mesh),
                 },
             ],
-        };
+        });
         let mut renderer = Renderer::new(device.clone(), queue);
-        renderer.upload_scene(&scene).expect("upload");
+        renderer.upload_scene(&graph).expect("upload");
         let bounds = renderer.scene_bounds().expect("bounds");
         let center = (bounds.0 + bounds.1) * 0.5;
         let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
@@ -1192,7 +1199,7 @@ mod gpu_integration_tests {
         let _texture = renderer
             .render(
                 Some(SceneRender {
-                    scene: &scene,
+                    graph: &graph,
                     selection: None,
                     gizmo: None,
                 }),
@@ -1252,11 +1259,11 @@ mod gpu_integration_tests {
         assert_eq!(cached_after_second, Some(smaller));
     }
 
-    /// Builds a one-triangle scene that pokes one vertex past the
+    /// Builds a one-triangle graph that pokes one vertex past the
     /// `TEST_BV`'s +X envelope wall at x = +96 mm. Two anchor
-    /// vertices stay inside the envelope so the scene's AABB
+    /// vertices stay inside the envelope so the graph's AABB
     /// straddles the wall (and the camera framing centres on it).
-    fn x_pos_breaching_scene() -> Scene {
+    fn x_pos_breaching_graph() -> SceneGraph {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1269,7 +1276,7 @@ mod gpu_integration_tests {
                 [0, 1, 2],
             )],
         };
-        Scene {
+        graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -1277,7 +1284,7 @@ mod gpu_integration_tests {
                 transform: Transform3D::Identity,
                 content: SceneObjectContent::Mesh(mesh),
             }],
-        }
+        })
     }
 
     /// Counts pixels whose RGB signature matches the wall warning
@@ -1391,15 +1398,15 @@ mod gpu_integration_tests {
         // in frame regardless of which mesh is installed.
         let camera = OrbitCamera::new(Vec3::new(0.0, 0.0, 100.0), 250.0);
 
-        let safe_scene =
-            triangle_scene_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 50.0]));
+        let safe_graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 50.0]));
         renderer
-            .upload_scene(&safe_scene)
-            .expect("upload safe scene");
+            .upload_scene(&safe_graph)
+            .expect("upload safe graph");
         let safe_texture = renderer
             .render(
                 Some(SceneRender {
-                    scene: &safe_scene,
+                    graph: &safe_graph,
                     selection: None,
                     gizmo: None,
                 }),
@@ -1412,14 +1419,14 @@ mod gpu_integration_tests {
         let safe_pixels = read_target_back(&device, &queue, &safe_texture, width, height);
         let safe_warning = count_warning_pixels(&safe_pixels);
 
-        let breach_scene = x_pos_breaching_scene();
+        let breach_graph = x_pos_breaching_graph();
         renderer
-            .upload_scene(&breach_scene)
-            .expect("upload breaching scene");
+            .upload_scene(&breach_graph)
+            .expect("upload breaching graph");
         let breach_texture = renderer
             .render(
                 Some(SceneRender {
-                    scene: &breach_scene,
+                    graph: &breach_graph,
                     selection: None,
                     gizmo: None,
                 }),

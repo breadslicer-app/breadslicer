@@ -202,12 +202,7 @@ pub(crate) fn spawn_load(
                 // `SceneSpatial` and the first picker click / gizmo
                 // attachment doesn't pay the build cost synchronously.
                 let spatial = SceneSpatial::primed_graph(graph)?;
-                // BRIDGE: GpuScene::build still takes &Scene. Feed it via
-                // the mirror SceneSpatial maintains alongside the graph.
-                // DELETE-ON-CLEANUP: when GpuScene::build flips to
-                // &SceneGraph (later in phase 4b), replace with
-                // `GpuScene::build(&device, spatial.graph())`.
-                let gpu_scene = GpuScene::build(&device, spatial.scene())?;
+                let gpu_scene = GpuScene::build(&device, spatial.graph())?;
                 Ok(PreparedScene {
                     spatial,
                     gpu_scene,

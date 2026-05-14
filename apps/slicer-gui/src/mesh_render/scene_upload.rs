@@ -6,7 +6,10 @@
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
-use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::scene::Transform3D;
+use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
 use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
@@ -65,13 +68,14 @@ impl ObjectDraw {
     }
 }
 
-/// GPU mirror of a `Scene`. Holds one [`ObjectDraw`] per object plus a
-/// uniform buffer of [`ModelEntry`] slots, padded to the device's
+/// GPU mirror of a `SceneGraph`. Holds one [`ObjectDraw`] per leaf in
+/// pre-order traversal of the graph's roots, plus a uniform buffer of
+/// [`ModelEntry`] slots, padded to the device's
 /// `min_uniform_buffer_offset_alignment` so the render loop can address
 /// each slot via a dynamic-offset bind. The world-space AABB is captured
-/// at build time from `Scene::aabb`; it is used once for camera framing
-/// and is not refreshed on per-frame transform updates (the camera
-/// persists across edits, so a post-edit AABB is irrelevant for
+/// at build time from `SceneGraph::aabb`; it is used once for camera
+/// framing and is not refreshed on per-frame transform updates (the
+/// camera persists across edits, so a post-edit AABB is irrelevant for
 /// framing).
 ///
 /// Construction ([`GpuScene::build`]) touches a `wgpu::Device` but not
@@ -90,8 +94,8 @@ pub(crate) struct GpuScene {
 }
 
 impl GpuScene {
-    pub(crate) fn build(device: &wgpu::Device, scene: &Scene) -> Result<Self> {
-        let data = build_gpu_scene_data(scene)?;
+    pub(crate) fn build(device: &wgpu::Device, graph: &SceneGraph) -> Result<Self> {
+        let data = build_gpu_scene_data(graph)?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -174,58 +178,48 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
     }
 }
 
-/// `selection` is an index into `scene.objects`; out-of-bounds values
-/// (or `None`) mean nothing is selected and every entry's `flags.x`
-/// stays 0. The shader reads `flags.x` and mixes a warm tint when it
-/// is 1; `flags.y` is set when the object has any vertex outside the
-/// build envelope, driving the mild interior wash that marks the
-/// whole object as "offending" even where individual fragments are
-/// still inside the envelope.
+/// `selection` is the pre-order leaf index into `graph`'s reachable
+/// leaves; out-of-bounds values (or `None`) mean nothing is selected and
+/// every entry's `flags.x` stays 0. The shader reads `flags.x` and mixes
+/// a warm tint when it is 1; `flags.y` is set when the leaf has any
+/// vertex outside the build envelope, driving the mild interior wash
+/// that marks the whole object as "offending" even where individual
+/// fragments are still inside the envelope.
 pub(super) fn build_model_entries(
-    scene: &Scene,
+    graph: &SceneGraph,
     selection: Option<usize>,
     build_volume: BuildVolume,
 ) -> Vec<ModelEntry> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
-    scene
-        .objects
-        .iter()
-        .enumerate()
-        .map(|(idx, obj)| {
-            let selected = selection == Some(idx);
-            let breaches = object_breaches_envelope(obj, scene, env_min, env_max);
-            ModelEntry {
-                model: transform_to_mat4(&obj.transform).to_cols_array_2d(),
-                flags: [u32::from(selected), u32::from(breaches), 0, 0],
-            }
-        })
-        .collect()
+    let mut entries: Vec<ModelEntry> = Vec::new();
+    let mut idx: usize = 0;
+    let _ = for_each_leaf(graph, |_node_id, world_transform, mesh| {
+        let selected = selection == Some(idx);
+        let breaches = leaf_breaches_envelope(mesh, &world_transform, env_min, env_max);
+        entries.push(ModelEntry {
+            model: transform_to_mat4(&world_transform).to_cols_array_2d(),
+            flags: [u32::from(selected), u32::from(breaches), 0, 0],
+        });
+        idx += 1;
+        Ok(())
+    });
+    entries
 }
 
-/// Returns `true` if any vertex of `object`, after its
-/// `Transform3D` is applied, falls strictly outside the axis-aligned
-/// envelope `[env_min, env_max]`. A convex envelope contains a mesh
-/// iff it contains every vertex, so this per-vertex test is exact for
-/// "is any part of the mesh outside the envelope" (no triangle
-/// interior can escape an envelope that already encloses all of its
-/// vertices). Returns `false` for resource references whose index is
-/// out of bounds, mirroring the silent fallback used elsewhere in
-/// this module.
-fn object_breaches_envelope(
-    object: &SceneObject,
-    scene: &Scene,
+/// Returns `true` if any vertex of `mesh`, after `world_transform` is
+/// applied, falls strictly outside the axis-aligned envelope
+/// `[env_min, env_max]`. A convex envelope contains a mesh iff it
+/// contains every vertex, so this per-vertex test is exact for "is any
+/// part of the mesh outside the envelope" (no triangle interior can
+/// escape an envelope that already encloses all of its vertices).
+fn leaf_breaches_envelope(
+    mesh: &IndexedMesh,
+    world_transform: &Transform3D,
     env_min: Vec3,
     env_max: Vec3,
 ) -> bool {
-    let mesh = match &object.content {
-        SceneObjectContent::Mesh(m) => m,
-        SceneObjectContent::Resource(idx) => match scene.resources.get(*idx) {
-            Some(m) => m,
-            None => return false,
-        },
-    };
-    let transform_mat = transform_to_mat4(&object.transform);
+    let transform_mat = transform_to_mat4(world_transform);
     for v in mesh.vertices() {
         let p = transform_mat.transform_point3(Vec3::from(v.coords()));
         if p.x < env_min.x
@@ -253,27 +247,20 @@ pub(super) const FACE_BIT_Y_POS: u32 = 1 << 3;
 pub(super) const FACE_BIT_Z_POS: u32 = 1 << 4;
 pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 
-/// Walks every object's transformed vertices and returns a bitmask of
-/// envelope faces that some vertex falls outside. The mask matches
-/// the shader's bit layout: `FACE_BIT_X_NEG` etc.
+/// Walks every reachable leaf's world-transformed vertices and returns
+/// a bitmask of envelope faces that some vertex falls outside. The mask
+/// matches the shader's bit layout: `FACE_BIT_X_NEG` etc.
 ///
 /// Per-vertex (not per-AABB) is mathematically exact for a convex
 /// envelope: a vertex outside on axis `a` is the only way for the
 /// mesh's `a`-face to be breached, since the convex hull of the
 /// vertices contains the mesh and the envelope is convex.
-pub(super) fn build_envelope_warning_mask(scene: &Scene, build_volume: BuildVolume) -> u32 {
+pub(super) fn build_envelope_warning_mask(graph: &SceneGraph, build_volume: BuildVolume) -> u32 {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let mut mask = 0u32;
-    for object in &scene.objects {
-        let mesh = match &object.content {
-            SceneObjectContent::Mesh(m) => m,
-            SceneObjectContent::Resource(idx) => match scene.resources.get(*idx) {
-                Some(m) => m,
-                None => continue,
-            },
-        };
-        let transform_mat = transform_to_mat4(&object.transform);
+    let _ = for_each_leaf(graph, |_node_id, world_transform, mesh| {
+        let transform_mat = transform_to_mat4(&world_transform);
         for v in mesh.vertices() {
             let p = transform_mat.transform_point3(Vec3::from(v.coords()));
             if p.x < env_min.x {
@@ -295,8 +282,76 @@ pub(super) fn build_envelope_warning_mask(scene: &Scene, build_volume: BuildVolu
                 mask |= FACE_BIT_Z_POS;
             }
         }
-    }
+        Ok(())
+    });
     mask
+}
+
+/// Count of leaves reachable from `graph.roots()` in pre-order. Mirrors
+/// the count [`build_gpu_scene_data`] and [`build_model_entries`]
+/// produce; the renderer uses it to debug-assert that an installed
+/// `GpuScene` matches the graph it draws against.
+pub(super) fn graph_leaf_count(graph: &SceneGraph) -> usize {
+    let mut count: usize = 0;
+    let _ = for_each_leaf(graph, |_node_id, _world_transform, _mesh| {
+        count += 1;
+        Ok(())
+    });
+    count
+}
+
+/// Pre-order traversal of every leaf reachable from `graph.roots()`,
+/// resolving `MeshResource` payloads and composing each leaf's world
+/// transform from the ancestor chain. The closure receives the leaf's
+/// `NodeId`, its composed world transform, and a borrow of the leaf's
+/// mesh. Propagates the closure's error and any dangling-id error from
+/// the walk.
+fn for_each_leaf<F>(graph: &SceneGraph, mut f: F) -> Result<()>
+where
+    F: FnMut(NodeId, Transform3D, &IndexedMesh) -> Result<()>,
+{
+    for &root in graph.roots() {
+        descend_leaves(graph, root, Transform3D::Identity, &mut f)?;
+    }
+    Ok(())
+}
+
+fn descend_leaves<F>(
+    graph: &SceneGraph,
+    node_id: NodeId,
+    parent_world: Transform3D,
+    f: &mut F,
+) -> Result<()>
+where
+    F: FnMut(NodeId, Transform3D, &IndexedMesh) -> Result<()>,
+{
+    let node = graph
+        .node(node_id)
+        .ok_or_else(|| anyhow!("dangling node id {}", node_id.get()))?;
+    let world_from_self = parent_world.compose(&node.local_transform);
+    match &node.kind {
+        NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+            for &c in children {
+                descend_leaves(graph, c, world_from_self, f)?;
+            }
+        }
+        NodeKind::Instance { resource } => {
+            let root = graph
+                .subtree_resource_root(*resource)
+                .ok_or_else(|| anyhow!("dangling subtree resource id {}", resource.get()))?;
+            descend_leaves(graph, root, world_from_self, f)?;
+        }
+        NodeKind::Leaf(payload) => {
+            let mesh = match payload {
+                LeafPayload::Mesh(m) => m,
+                LeafPayload::MeshResource(rid) => graph
+                    .mesh_resource(*rid)
+                    .ok_or_else(|| anyhow!("dangling mesh resource id {}", rid.get()))?,
+            };
+            f(node_id, world_from_self, mesh)?;
+        }
+    }
+    Ok(())
 }
 
 /// CPU-only build of the per-object draw data plus the world-space
@@ -313,35 +368,21 @@ struct SceneData {
     aabb_max: Vec3,
 }
 
-fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
-    if scene.objects.is_empty() {
-        return Err(anyhow!("Scene has no geometry to render"));
-    }
-
-    let mut objects: Vec<ObjectData> = Vec::with_capacity(scene.objects.len());
-
-    for object in &scene.objects {
-        let mesh = match &object.content {
-            SceneObjectContent::Mesh(m) => m,
-            SceneObjectContent::Resource(idx) => scene
-                .resources
-                .get(*idx)
-                .ok_or_else(|| anyhow!("Resource index {idx} out of bounds"))?,
-        };
-
+fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
+    let mut objects: Vec<ObjectData> = Vec::new();
+    for_each_leaf(graph, |_node_id, _world_transform, mesh| {
         if mesh.faces().is_empty() {
-            // An object with no geometry contributes nothing to the
-            // draw set, skip it but keep its slot in the model
-            // buffer so `instance_index` keeps lining up with
-            // `Scene::objects` indices in later phases. We achieve
-            // that by emitting a zero-vertex / zero-index ObjectData,
-            // which the renderer's per-object loop draws as a no-op
-            // (index_count = 0).
+            // A leaf with no geometry contributes nothing to the
+            // draw set, but we keep its slot in the model buffer so
+            // the per-frame `build_model_entries` walk (which uses
+            // the same pre-order traversal) lines up index-by-index
+            // with the renderer's per-leaf draw loop. The slot is
+            // drawn as a no-op (index_count = 0).
             objects.push(ObjectData {
                 vertices: Vec::new(),
                 indices: Vec::new(),
             });
-            continue;
+            return Ok(());
         }
 
         let vertices: Vec<GpuVertex> = mesh
@@ -360,14 +401,19 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
         }
 
         objects.push(ObjectData { vertices, indices });
+        Ok(())
+    })?;
+
+    if objects.is_empty() {
+        return Err(anyhow!("Graph has no leaves to render"));
     }
 
-    // World-space scene AABB via `Scene::aabb`, which already does Arvo
-    // per object and respects each object's `Transform3D`. If every
-    // object is empty, fall back to a degenerate bbox at the origin
-    // (the renderer's diagonal-clamp `.max(1e-3)` keeps the projection
-    // matrix well-defined).
-    let (aabb_min, aabb_max) = match scene.aabb()? {
+    // World-space scene AABB via `SceneGraph::aabb`, which composes
+    // each leaf's ancestor chain via Arvo. If every leaf is empty,
+    // fall back to a degenerate bbox at the origin (the renderer's
+    // diagonal-clamp `.max(1e-3)` keeps the projection matrix
+    // well-defined).
+    let (aabb_min, aabb_max) = match graph.aabb()? {
         Some(aabb) => (
             Vec3::from(aabb.min().coords()),
             Vec3::from(aabb.max().coords()),
@@ -385,9 +431,8 @@ fn build_gpu_scene_data(scene: &Scene) -> Result<SceneData> {
 mod build_gpu_scene_data_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
     use sc_mesh_core::transform::AffineTransform3D;
 
     fn triangle_mesh(vertices: Vec<[f32; 3]>, face_vertices: [u32; 3]) -> IndexedMesh {
@@ -417,28 +462,33 @@ mod build_gpu_scene_data_tests {
         }
     }
 
-    fn resource_object(idx: usize) -> SceneObject {
-        SceneObject {
-            meta: None,
-            transform: Transform3D::Identity,
-            content: SceneObjectContent::Resource(idx),
-        }
+    fn graph_from(scene: Scene) -> SceneGraph {
+        SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
     }
 
     #[test]
-    fn empty_scene_returns_error() {
-        let scene = Scene::default();
-        assert!(build_gpu_scene_data(&scene).is_err());
+    fn empty_graph_returns_error() {
+        let graph = graph_from(Scene::default());
+        assert!(build_gpu_scene_data(&graph).is_err());
     }
 
     #[test]
-    fn dangling_resource_index_returns_error() {
+    fn dangling_resource_index_is_rejected_at_construction() {
+        // `SceneGraph::try_from` validates resource references, so a
+        // scene with a dangling `Resource(7)` cannot enter the
+        // renderer's input. The old silent-fallback path inside
+        // `build_gpu_scene_data` is gone; the rejection moves up to
+        // graph construction.
         let scene = Scene {
             meta: None,
             resources: vec![],
-            objects: vec![resource_object(7)],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(7),
+            }],
         };
-        assert!(build_gpu_scene_data(&scene).is_err());
+        assert!(SceneGraph::try_from(scene).is_err());
     }
 
     #[test]
@@ -450,9 +500,14 @@ mod build_gpu_scene_data_tests {
         let scene = Scene {
             meta: None,
             resources: vec![mesh.clone()],
-            objects: vec![resource_object(0)],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Resource(0),
+            }],
         };
-        let data = build_gpu_scene_data(&scene).unwrap();
+        let graph = graph_from(scene);
+        let data = build_gpu_scene_data(&graph).unwrap();
         assert_eq!(data.objects.len(), 1);
         assert_eq!(data.objects[0].vertices.len(), 3);
         assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
@@ -464,12 +519,12 @@ mod build_gpu_scene_data_tests {
             vec![[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 0.0, 0.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(mesh)],
-        };
-        let data = build_gpu_scene_data(&scene).unwrap();
+        });
+        let data = build_gpu_scene_data(&graph).unwrap();
         assert_eq!(data.objects.len(), 1);
         assert_eq!(data.objects[0].vertices[0].position, [1.0, -2.0, 3.0]);
         assert_eq!(data.objects[0].vertices[1].position, [4.0, 5.0, -6.0]);
@@ -479,32 +534,32 @@ mod build_gpu_scene_data_tests {
     #[test]
     fn vertices_stay_local_even_with_affine_transform() {
         // Vertex buffers are local-space; the transform is applied at
-        // draw time via the per-object model uniform, so
+        // draw time via the per-leaf model uniform, so
         // `build_gpu_scene_data` must NOT bake it into the vertex
         // stream.
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![affine_object(
                 mesh,
                 AffineTransform3D::from_translation([100.0, -50.0, 25.0]),
             )],
-        };
-        let data = build_gpu_scene_data(&scene).unwrap();
+        });
+        let data = build_gpu_scene_data(&graph).unwrap();
         assert_eq!(data.objects[0].vertices[0].position, [1.0, 0.0, 0.0]);
         assert_eq!(data.objects[0].vertices[1].position, [0.0, 1.0, 0.0]);
         assert_eq!(data.objects[0].vertices[2].position, [0.0, 0.0, 1.0]);
     }
 
     #[test]
-    fn indices_are_local_per_object_not_offset() {
-        // With per-object draws, each object's index buffer references its
+    fn indices_are_local_per_leaf_not_offset() {
+        // With per-leaf draws, each leaf's index buffer references its
         // own vertex buffer, so indices stay local, not offset by
-        // previous objects' vertex counts as the merged build did.
+        // previous leaves' vertex counts as the merged build did.
         let a = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -513,33 +568,33 @@ mod build_gpu_scene_data_tests {
             vec![[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(a), inline_object(b)],
-        };
-        let data = build_gpu_scene_data(&scene).unwrap();
+        });
+        let data = build_gpu_scene_data(&graph).unwrap();
         assert_eq!(data.objects.len(), 2);
         assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
         assert_eq!(data.objects[1].indices, vec![0, 1, 2]);
     }
 
     #[test]
-    fn scene_aabb_reflects_world_space_under_transforms() {
+    fn graph_aabb_reflects_world_space_under_transforms() {
         let mesh = triangle_mesh(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![affine_object(
                 mesh,
                 AffineTransform3D::from_translation([10.0, 20.0, 30.0]),
             )],
-        };
-        let data = build_gpu_scene_data(&scene).unwrap();
-        // Scene AABB = local AABB ([0,0,0]..[1,1,0]) translated by (10,20,30).
+        });
+        let data = build_gpu_scene_data(&graph).unwrap();
+        // World AABB = local AABB ([0,0,0]..[1,1,0]) translated by (10,20,30).
         assert_approx_eq!(f32, data.aabb_min.x, 10.0, epsilon = 1e-5);
         assert_approx_eq!(f32, data.aabb_min.y, 20.0, epsilon = 1e-5);
         assert_approx_eq!(f32, data.aabb_min.z, 30.0, epsilon = 1e-5);
@@ -549,7 +604,7 @@ mod build_gpu_scene_data_tests {
     }
 
     #[test]
-    fn scene_aabb_unions_two_objects() {
+    fn graph_aabb_unions_two_leaves() {
         let a = triangle_mesh(
             vec![[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 0.0, 0.0]],
             [0, 1, 2],
@@ -558,22 +613,22 @@ mod build_gpu_scene_data_tests {
             vec![[-7.0, 8.0, 0.5], [0.0, 0.0, 9.0], [2.0, 2.0, 2.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(a), inline_object(b)],
-        };
-        let data = build_gpu_scene_data(&scene).unwrap();
+        });
+        let data = build_gpu_scene_data(&graph).unwrap();
         assert_eq!(data.aabb_min, Vec3::new(-7.0, -2.0, -6.0));
         assert_eq!(data.aabb_max, Vec3::new(4.0, 8.0, 9.0));
     }
 
     #[test]
-    fn empty_object_keeps_a_slot_in_the_object_list() {
-        // An object with no faces still occupies an index in
-        // `Scene::objects`; the renderer indexes into `models[]` by that
-        // index, so the GpuScene must keep a parallel slot. The slot
-        // must be drawable as a no-op (index_count = 0).
+    fn empty_leaf_keeps_a_slot_in_the_leaf_list() {
+        // A leaf with no faces still occupies a slot in the per-leaf
+        // pre-order index; the renderer indexes into `models[]` by
+        // that index, so the GpuScene must keep a parallel slot. The
+        // slot must be drawable as a no-op (index_count = 0).
         let empty = IndexedMesh {
             meta: None,
             vertices: vec![],
@@ -583,22 +638,22 @@ mod build_gpu_scene_data_tests {
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(empty), inline_object(nonempty)],
-        };
-        let data = build_gpu_scene_data(&scene).unwrap();
+        });
+        let data = build_gpu_scene_data(&graph).unwrap();
         assert_eq!(data.objects.len(), 2);
         assert!(data.objects[0].indices.is_empty());
         assert_eq!(data.objects[1].indices.len(), 3);
     }
 
     #[test]
-    fn singular_transform_propagates_error() {
-        // `Scene::aabb` itself doesn't fail on singular linear parts
+    fn singular_transform_is_accepted() {
+        // `SceneGraph::aabb` doesn't fail on singular linear parts
         // (it uses Arvo), so this currently succeeds. The check here
-        // pins the behaviour: the per-object data is built without
+        // pins the behaviour: the per-leaf data is built without
         // touching `apply_to_normal`, so even a degenerate transform
         // doesn't bring the build down; degenerate matrices only
         // matter at `merge_meshes` / export time.
@@ -610,16 +665,16 @@ mod build_gpu_scene_data_tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![affine_object(mesh, singular)],
-        };
+        });
         // Singular transforms aren't rejected here; the GPU path is
         // fine with a singular model matrix (it just collapses the
         // mesh to a plane). Mirror this in the assertion so the test
         // fails loudly if the behaviour changes.
-        assert!(build_gpu_scene_data(&scene).is_ok());
+        assert!(build_gpu_scene_data(&graph).is_ok());
     }
 }
 
@@ -682,9 +737,12 @@ mod transform_to_mat4_tests {
         BuildVolume::new(1000.0, 1000.0, 1000.0)
     }
 
+    fn graph_from(scene: sc_mesh_core::scene::Scene) -> SceneGraph {
+        SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
+    }
+
     #[test]
-    fn build_model_entries_one_per_object() {
-        use sc_mesh_core::IndexedMesh;
+    fn build_model_entries_one_per_leaf() {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
@@ -696,7 +754,7 @@ mod transform_to_mat4_tests {
                 [0, 0, 0],
             )],
         };
-        let scene = Scene {
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![
@@ -713,8 +771,8 @@ mod transform_to_mat4_tests {
                     content: SceneObjectContent::Mesh(mesh),
                 },
             ],
-        };
-        let entries = build_model_entries(&scene, None, permissive_volume());
+        });
+        let entries = build_model_entries(&graph, None, permissive_volume());
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -725,10 +783,9 @@ mod transform_to_mat4_tests {
         assert_approx_eq!(f32, entries[1].model[3][2], 0.0);
     }
 
-    fn two_object_scene() -> Scene {
-        use sc_mesh_core::IndexedMesh;
+    fn two_object_graph() -> SceneGraph {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-        use sc_mesh_core::scene::{SceneObject, SceneObjectContent};
+        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
         let mesh = IndexedMesh {
             meta: None,
@@ -738,7 +795,7 @@ mod transform_to_mat4_tests {
                 [0, 0, 0],
             )],
         };
-        Scene {
+        graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![
@@ -753,37 +810,36 @@ mod transform_to_mat4_tests {
                     content: SceneObjectContent::Mesh(mesh),
                 },
             ],
-        }
+        })
     }
 
     #[test]
     fn no_selection_leaves_every_flags_x_zero() {
-        let scene = two_object_scene();
-        let entries = build_model_entries(&scene, None, permissive_volume());
+        let graph = two_object_graph();
+        let entries = build_model_entries(&graph, None, permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
 
     #[test]
     fn selected_index_sets_only_that_entrys_flags_x() {
-        let scene = two_object_scene();
-        let entries = build_model_entries(&scene, Some(1), permissive_volume());
+        let graph = two_object_graph();
+        let entries = build_model_entries(&graph, Some(1), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 1);
     }
 
     #[test]
     fn out_of_bounds_selection_falls_back_to_no_highlight() {
-        let scene = two_object_scene();
-        let entries = build_model_entries(&scene, Some(99), permissive_volume());
+        let graph = two_object_graph();
+        let entries = build_model_entries(&graph, Some(99), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
 
-    fn unit_triangle_object_at(translation: [f64; 3]) -> SceneObject {
-        use sc_mesh_core::IndexedMesh;
+    fn unit_triangle_graph_at(translation: [f64; 3]) -> SceneGraph {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-        use sc_mesh_core::scene::SceneObjectContent;
+        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
         let mesh = IndexedMesh {
             meta: None,
@@ -797,11 +853,15 @@ mod transform_to_mat4_tests {
                 [0, 1, 2],
             )],
         };
-        SceneObject {
+        graph_from(Scene {
             meta: None,
-            transform: Transform3D::Affine(AffineTransform3D::from_translation(translation)),
-            content: SceneObjectContent::Mesh(mesh),
-        }
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Affine(AffineTransform3D::from_translation(translation)),
+                content: SceneObjectContent::Mesh(mesh),
+            }],
+        })
     }
 
     /// 100 mm x 60 mm plate, 80 mm tall: envelope is X in [-50, 50],
@@ -813,13 +873,9 @@ mod transform_to_mat4_tests {
     }
 
     #[test]
-    fn flags_y_is_zero_for_fully_inside_object() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, 0.0, 1.0])],
-        };
-        let entries = build_model_entries(&scene, None, snug_volume());
+    fn flags_y_is_zero_for_fully_inside_leaf() {
+        let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
+        let entries = build_model_entries(&graph, None, snug_volume());
         assert_eq!(entries[0].flags[1], 0);
     }
 
@@ -828,56 +884,44 @@ mod transform_to_mat4_tests {
         // Translation +60 mm on X puts the unit triangle's vertices at
         // [60, 0, 0], [61, 0, 0], [60, 1, 0]. All three lie past the
         // +X wall at x = 50.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([60.0, 0.0, 0.0])],
-        };
-        let entries = build_model_entries(&scene, None, snug_volume());
+        let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
+        let entries = build_model_entries(&graph, None, snug_volume());
         assert_eq!(entries[0].flags[1], 1);
     }
 
     #[test]
     fn flags_y_is_one_when_any_vertex_dips_below_the_floor() {
         // Translation in Z by -0.5 puts every vertex below z = 0.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, 0.0, -0.5])],
-        };
-        let entries = build_model_entries(&scene, None, snug_volume());
+        let graph = unit_triangle_graph_at([0.0, 0.0, -0.5]);
+        let entries = build_model_entries(&graph, None, snug_volume());
         assert_eq!(entries[0].flags[1], 1);
     }
 
     #[test]
-    fn flags_y_is_one_when_object_straddles_a_wall() {
+    fn flags_y_is_one_when_leaf_straddles_a_wall() {
         // Translation +49.5 mm on X: vertex [0,0,0] lands at x = 49.5
         // (inside), [1,0,0] at x = 50.5 (outside +X wall). Per-vertex
         // breach detection must fire on the second vertex.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([49.5, 0.0, 0.0])],
-        };
-        let entries = build_model_entries(&scene, None, snug_volume());
+        let graph = unit_triangle_graph_at([49.5, 0.0, 0.0]);
+        let entries = build_model_entries(&graph, None, snug_volume());
         assert_eq!(entries[0].flags[1], 1);
     }
 
     #[test]
-    fn flags_y_is_unset_for_object_resting_exactly_on_the_floor() {
+    fn flags_y_is_unset_for_leaf_resting_exactly_on_the_floor() {
         // Every vertex has z = 0 (the floor). The breach test uses a
         // strict comparison, so resting on the plate is "inside".
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, 0.0, 0.0])],
-        };
-        let entries = build_model_entries(&scene, None, snug_volume());
+        let graph = unit_triangle_graph_at([0.0, 0.0, 0.0]);
+        let entries = build_model_entries(&graph, None, snug_volume());
         assert_eq!(entries[0].flags[1], 0);
     }
 
     #[test]
-    fn flags_y_falls_back_to_zero_for_dangling_resource_reference() {
+    fn dangling_resource_reference_is_rejected_at_construction() {
+        // The old per-frame `flags.y` silent-fallback path is gone:
+        // `SceneGraph::try_from` rejects dangling resources upfront,
+        // so the renderer never sees an unresolvable leaf.
+        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
         let scene = Scene {
             meta: None,
             resources: vec![],
@@ -887,29 +931,20 @@ mod transform_to_mat4_tests {
                 content: SceneObjectContent::Resource(7),
             }],
         };
-        let entries = build_model_entries(&scene, None, snug_volume());
-        assert_eq!(entries[0].flags[1], 0);
+        assert!(SceneGraph::try_from(scene).is_err());
     }
 
     #[test]
-    fn warning_mask_is_zero_when_every_object_fits() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, 0.0, 1.0])],
-        };
-        assert_eq!(build_envelope_warning_mask(&scene, snug_volume()), 0);
+    fn warning_mask_is_zero_when_every_leaf_fits() {
+        let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
+        assert_eq!(build_envelope_warning_mask(&graph, snug_volume()), 0);
     }
 
     #[test]
     fn warning_mask_sets_plus_x_when_a_vertex_passes_the_plus_x_wall() {
         // Vertex [1,0,0] translated to [60,0,0] sits past +X (50).
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([60.0, 0.0, 0.0])],
-        };
-        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
+        let mask = build_envelope_warning_mask(&graph, snug_volume());
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_X_NEG, 0);
     }
@@ -918,12 +953,8 @@ mod transform_to_mat4_tests {
     fn warning_mask_sets_minus_y_when_a_vertex_passes_the_minus_y_wall() {
         // Vertex [0,1,0] translated by [0,-40,0] lands at [0,-39,0],
         // and [0,0,0] lands at [0,-40,0], past the -Y wall (-30).
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, -40.0, 0.0])],
-        };
-        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        let graph = unit_triangle_graph_at([0.0, -40.0, 0.0]);
+        let mask = build_envelope_warning_mask(&graph, snug_volume());
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
         assert_eq!(mask & FACE_BIT_Y_POS, 0);
     }
@@ -931,12 +962,8 @@ mod transform_to_mat4_tests {
     #[test]
     fn warning_mask_sets_plus_z_when_a_vertex_passes_the_ceiling() {
         // Vertices land at [0,0,90], past the +Z ceiling (80).
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, 0.0, 90.0])],
-        };
-        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        let graph = unit_triangle_graph_at([0.0, 0.0, 90.0]);
+        let mask = build_envelope_warning_mask(&graph, snug_volume());
         assert_eq!(mask & FACE_BIT_Z_POS, FACE_BIT_Z_POS);
     }
 
@@ -945,12 +972,8 @@ mod transform_to_mat4_tests {
         // The Z = 0 floor breach is still represented in the mask
         // (bit FACE_BIT_Z_NEG); the plate shader consumes it through
         // the floor-overlay path rather than a dedicated wall quad.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_object_at([0.0, 0.0, -1.0])],
-        };
-        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        let graph = unit_triangle_graph_at([0.0, 0.0, -1.0]);
+        let mask = build_envelope_warning_mask(&graph, snug_volume());
         assert_eq!(mask & FACE_BIT_Z_NEG, FACE_BIT_Z_NEG);
         // None of the lateral bits fire for a purely-vertical breach.
         assert_eq!(
@@ -960,34 +983,47 @@ mod transform_to_mat4_tests {
     }
 
     #[test]
-    fn warning_mask_unions_bits_across_objects() {
-        // First object breaches +X, second breaches -Y. The mask
-        // collects both bits.
-        let scene = Scene {
+    fn warning_mask_unions_bits_across_leaves() {
+        // First leaf breaches +X, second breaches -Y. The mask
+        // collects both bits. Build a two-leaf graph by hand so we
+        // don't pay a second `try_from` round-trip.
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        let graph = graph_from(Scene {
             meta: None,
             resources: vec![],
             objects: vec![
-                unit_triangle_object_at([60.0, 0.0, 0.0]),
-                unit_triangle_object_at([0.0, -40.0, 0.0]),
+                SceneObject {
+                    meta: None,
+                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
+                        60.0, 0.0, 0.0,
+                    ])),
+                    content: SceneObjectContent::Mesh(mesh.clone()),
+                },
+                SceneObject {
+                    meta: None,
+                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
+                        0.0, -40.0, 0.0,
+                    ])),
+                    content: SceneObjectContent::Mesh(mesh),
+                },
             ],
-        };
-        let mask = build_envelope_warning_mask(&scene, snug_volume());
+        });
+        let mask = build_envelope_warning_mask(&graph, snug_volume());
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
-    }
-
-    #[test]
-    fn warning_mask_skips_dangling_resource_references() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(7),
-            }],
-        };
-        assert_eq!(build_envelope_warning_mask(&scene, snug_volume()), 0);
     }
 }
 

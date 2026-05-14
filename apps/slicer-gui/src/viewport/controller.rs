@@ -646,7 +646,7 @@ impl ViewportController {
             let upload = self
                 .session
                 .document()
-                .with_scene(|spatial| renderer.upload_scene(spatial.scene()));
+                .with_scene(|spatial| renderer.upload_scene(spatial.graph()));
             match upload {
                 Some(Ok(())) => {
                     self.render.update_frame(FrameState::after_upload_success);
@@ -768,7 +768,7 @@ impl ViewportController {
 
                 renderer.render(
                     Some(SceneRender {
-                        scene: spatial_for_render.scene(),
+                        graph: spatial_for_render.graph(),
                         selection: selection_idx,
                         gizmo: gizmo_frame,
                     }),
