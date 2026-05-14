@@ -160,11 +160,20 @@ impl SceneDocument {
         self.notify(SceneEvent::SelectionChanged);
     }
 
-    /// Currently-selected object's index as a plain `usize`.
-    /// Convenience for the (very common) call sites that only want
-    /// to look up `scene.objects[idx]`.
+    /// BRIDGE: currently-selected leaf's pre-order index, for legacy
+    /// idx-keyed consumers (renderer's `Option<usize>` selection,
+    /// sidebar list highlight, gizmo / keyboard FSMs). Internally
+    /// resolves the selected [`NodeId`] back to a pre-order leaf
+    /// position by walking the graph. Returns `None` when nothing is
+    /// selected, no scene is loaded, or the selected node no longer
+    /// names a reachable leaf.
+    ///
+    /// DELETE-ON-CLEANUP when downstream consumers carry `NodeId`
+    /// directly; consumers then read [`Self::selection`] and call
+    /// [`Selection::primary`] for the stable handle.
     pub fn selection_primary_idx(&self) -> Option<usize> {
-        self.selection.primary_idx()
+        self.with_scene(|spatial| self.selection.primary_legacy_idx(spatial))
+            .flatten()
     }
 
     /// Apply a typed scene edit. The single mutation choke-point on
@@ -436,33 +445,47 @@ mod scene_document_tests {
         assert_eq!(doc.selection_primary_idx(), None);
     }
 
+    /// Pick the [`LeafId`] of the document's first leaf. The test
+    /// suite uses this everywhere it needs a real `Selection::One(_)`
+    /// for a one-leaf fixture; the legacy `ObjectIdx(0)` constant has
+    /// no NodeId-side equivalent that tests can synthesise without
+    /// going through the spatial.
+    fn first_leaf_id(doc: &SceneDocument) -> crate::selection::LeafId {
+        crate::selection::LeafId(
+            doc.with_scene(|spatial| spatial.leaf_id_at_index(0))
+                .flatten()
+                .expect("fixture has at least one leaf"),
+        )
+    }
+
     #[test]
     fn set_selection_round_trips() {
-        use crate::selection::ObjectIdx;
         let doc = SceneDocument::new();
-        doc.set_selection(Selection::One(ObjectIdx(2)));
-        assert_eq!(doc.selection(), Selection::One(ObjectIdx(2)));
-        assert_eq!(doc.selection_primary_idx(), Some(2));
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let leaf = first_leaf_id(&doc);
+        doc.set_selection(Selection::One(leaf));
+        assert_eq!(doc.selection(), Selection::One(leaf));
+        assert_eq!(doc.selection_primary_idx(), Some(0));
     }
 
     #[test]
     fn install_scene_resets_selection() {
-        use crate::selection::ObjectIdx;
         let doc = SceneDocument::new();
-        doc.install_scene(empty_scene(), fixture_path());
-        doc.set_selection(Selection::One(ObjectIdx(7)));
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let leaf = first_leaf_id(&doc);
+        doc.set_selection(Selection::One(leaf));
         // Loading another scene drops the prior selection: its
-        // index referred to the previous scene's objects.
-        doc.install_scene(empty_scene(), fixture_path());
+        // NodeId belonged to the previous scene's arena.
+        doc.install_scene(scene_with_one_object(), fixture_path());
         assert_eq!(doc.selection(), Selection::None);
     }
 
     #[test]
     fn clear_scene_resets_selection() {
-        use crate::selection::ObjectIdx;
         let doc = SceneDocument::new();
-        doc.install_scene(empty_scene(), fixture_path());
-        doc.set_selection(Selection::One(ObjectIdx(0)));
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let leaf = first_leaf_id(&doc);
+        doc.set_selection(Selection::One(leaf));
         doc.clear_scene();
         assert_eq!(doc.selection(), Selection::None);
     }
@@ -491,14 +514,15 @@ mod scene_document_tests {
 
     #[test]
     fn set_selection_only_fires_on_actual_change() {
-        use crate::selection::ObjectIdx;
         let doc = SceneDocument::new();
+        doc.install_scene(scene_with_one_object(), fixture_path());
+        let leaf = first_leaf_id(&doc);
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
         doc.set_selection(Selection::None); // no change from initial
-        doc.set_selection(Selection::One(ObjectIdx(0))); // changes
-        doc.set_selection(Selection::One(ObjectIdx(0))); // no change
+        doc.set_selection(Selection::One(leaf)); // changes
+        doc.set_selection(Selection::One(leaf)); // no change
         doc.set_selection(Selection::None); // changes back
 
         assert_eq!(

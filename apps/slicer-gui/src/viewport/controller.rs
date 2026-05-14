@@ -28,7 +28,7 @@ use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, SceneRender};
 use crate::pending_load::PendingLoad;
 use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
-use crate::selection::{ObjectIdx, Selection};
+use crate::selection::{LeafId, Selection};
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -365,16 +365,17 @@ impl ViewportController {
     /// guard short-circuits the round-trip so the mirror-back to the UI
     /// doesn't fire `selection-changed` again.
     pub fn on_select_by_index(&self, idx: usize) {
-        let scene_len = self
+        // Resolve the legacy pre-order index against the live graph
+        // and store the resulting NodeId in the selection. An
+        // out-of-range index degrades to `Selection::None`, the same
+        // defensive behaviour as before; `leaf_id_at_index` returns
+        // `None` past the last reachable leaf.
+        let new_sel = self
             .session
             .document()
-            .with_scene(|s| s.scene().objects.len())
-            .unwrap_or(0);
-        let new_sel = if idx < scene_len {
-            Selection::One(ObjectIdx(idx))
-        } else {
-            Selection::None
-        };
+            .with_scene(|spatial| spatial.leaf_id_at_index(idx).map(LeafId))
+            .flatten()
+            .map_or(Selection::None, Selection::One);
         // `set_selection` short-circuits on no-change and fires
         // `SceneEvent::SelectionChanged` only on actual transitions;
         // the listener takes care of mirror-to-UI + mark-dirty.
@@ -410,12 +411,11 @@ impl ViewportController {
             return;
         }
         let step = delta.signum();
-        let next = match self.session.document().selection() {
-            Selection::None => 0,
-            Selection::One(i) => {
+        let next = match self.session.document().selection_primary_idx() {
+            None => 0,
+            Some(cur) => {
                 let len_i = scene_len as i32;
-                let cur = i.as_usize() as i32;
-                ((cur + step).rem_euclid(len_i)) as usize
+                ((cur as i32 + step).rem_euclid(len_i)) as usize
             }
         };
         self.on_select_by_index(next);
@@ -575,10 +575,11 @@ impl ViewportController {
 
     fn mirror_selection_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            let idx = match self.session.document().selection() {
-                Selection::One(i) => i.as_usize() as i32,
-                Selection::None => -1,
-            };
+            let idx = self
+                .session
+                .document()
+                .selection_primary_idx()
+                .map_or(-1, |i| i as i32);
             ui.set_selected_object_index(idx);
         }
     }

@@ -5,18 +5,22 @@
 
 //! Document-level selection model.
 //!
-//! `Selection` is the single-object-or-none shape exposed to the UI;
-//! `ObjectIdx` is the typed index into `Scene::objects`; `SelectionState`
+//! `Selection` is the single-leaf-or-none shape exposed to the UI;
+//! `LeafId` wraps a stable [`NodeId`] from the scene graph so
+//! selection survives any later graph mutation. `SelectionState`
 //! wraps a `Cell<Selection>` so callers can avoid repeating the
-//! `.get().primary().map(ObjectIdx::as_usize)` chain at every read.
+//! `.get().primary()` chain at every read.
 
 use std::cell::Cell;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct ObjectIdx(pub(crate) usize);
+use sc_mesh_core::NodeId;
+use sc_mesh_spatial::SceneSpatial;
 
-impl ObjectIdx {
-    pub(crate) fn as_usize(self) -> usize {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(crate) struct LeafId(pub(crate) NodeId);
+
+impl LeafId {
+    pub(crate) fn node_id(self) -> NodeId {
         self.0
     }
 }
@@ -24,11 +28,11 @@ impl ObjectIdx {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Selection {
     None,
-    One(ObjectIdx),
+    One(LeafId),
 }
 
 impl Selection {
-    pub(crate) fn primary(self) -> Option<ObjectIdx> {
+    pub(crate) fn primary(self) -> Option<LeafId> {
         match self {
             Selection::None => None,
             Selection::One(i) => Some(i),
@@ -55,10 +59,24 @@ impl SelectionState {
         self.cell.set(sel);
     }
 
-    /// Currently-selected object's index as a plain `usize`. Convenience
-    /// for the (very common) call sites that only want to look up
-    /// `scene.objects[idx]`.
-    pub(crate) fn primary_idx(&self) -> Option<usize> {
-        self.cell.get().primary().map(ObjectIdx::as_usize)
+    /// Stable `NodeId` of the currently-selected leaf, or `None`. The
+    /// permanent read API: selection survives any graph mutation that
+    /// keeps the leaf alive, since `NodeId` is the arena's
+    /// never-reused identifier.
+    pub(crate) fn primary_node_id(&self) -> Option<NodeId> {
+        self.cell.get().primary().map(LeafId::node_id)
+    }
+
+    /// BRIDGE: pre-order leaf index of the currently-selected leaf, or
+    /// `None` when nothing is selected or the selected `NodeId` no
+    /// longer points at a reachable leaf. Used by every legacy
+    /// idx-keyed consumer (renderer's `selection: Option<usize>`,
+    /// sidebar list highlight, gizmo / keyboard FSMs, document tests)
+    /// while the migration to `NodeId` walks through `slicer-gui`.
+    ///
+    /// DELETE-ON-CLEANUP when those consumers carry `NodeId` directly.
+    pub(crate) fn primary_legacy_idx(&self, spatial: &SceneSpatial) -> Option<usize> {
+        let node_id = self.primary_node_id()?;
+        spatial.leaf_index_of(node_id)
     }
 }

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! CPU ray-pick from a logical viewport pixel to a `Scene` object index.
+//! CPU ray-pick from a logical viewport pixel to a `SceneGraph` leaf
+//! identifier.
 //!
 //! Three-stage strategy:
 //!
@@ -34,6 +35,7 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
+use sc_mesh_core::NodeId;
 use sc_mesh_core::aabb::arvo_transformed_aabb;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
@@ -152,13 +154,18 @@ pub fn project_world_to_screen(
     Some((screen_x, screen_y))
 }
 
-/// Picks the closest object the ray hits, by index into
-/// `spatial.scene().objects`. Returns `None` if every object misses
-/// (whether by AABB pre-pass or triangle test).
-pub fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<usize> {
-    let mut best: Option<(usize, f32)> = None;
-    for idx in 0..spatial.scene().objects.len() {
-        let Some(query) = spatial.object(idx) else {
+/// Picks the closest leaf the ray hits, by stable [`NodeId`]. Returns
+/// `None` if every reachable leaf misses (whether by AABB pre-pass or
+/// triangle test). The walk is pre-order over `spatial.graph().roots()`
+/// via the bridge enumerator on [`SceneSpatial`]; the closest-hit
+/// arbitration ties by first-encountered, matching today's
+/// `scene.objects` iteration order.
+pub fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
+    let mut best: Option<(NodeId, f32)> = None;
+    let mut idx = 0usize;
+    while let Some(node_id) = spatial.leaf_id_at_index(idx) {
+        idx += 1;
+        let Some(query) = spatial.leaf(node_id) else {
             continue;
         };
         let Some(local) = query.local_aabb() else {
@@ -171,11 +178,11 @@ pub fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<usize> {
         if let Some(t) = ray_hits_object_query(ray, &query) {
             match best {
                 Some((_, prev_t)) if prev_t <= t => {}
-                _ => best = Some((idx, t)),
+                _ => best = Some((node_id, t)),
             }
         }
     }
-    best.map(|(idx, _)| idx)
+    best.map(|(node_id, _)| node_id)
 }
 
 /// Slab test against an axis-aligned box. Branchless variant: zero
@@ -693,17 +700,18 @@ mod pick_object_tests {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        // The z = 0 triangle is closest.
-        assert_eq!(pick_object(&ray, &spatial), Some(0));
+        // The z = 0 triangle (pre-order leaf 0) is closest.
+        let closest = spatial.leaf_id_at_index(0).unwrap();
+        assert_eq!(pick_object(&ray, &spatial), Some(closest));
     }
 
     #[test]
-    fn aabb_pre_pass_skips_off_ray_objects() {
+    fn aabb_pre_pass_skips_off_ray_leaves() {
         // Two triangles. One in the ray's path, one off to the side
         // (+Y by a wide margin). The off-axis one's AABB is missed by
         // the ray, so the picker eliminates it without running its
-        // triangle test. Functionally we observe that the picked
-        // index is the on-axis one.
+        // triangle test. Functionally we observe that the picked leaf
+        // is the on-axis one.
         let on_axis = unit_triangle_at([0.0, 0.0, 0.0]);
         let off_axis = unit_triangle_at([0.0, 50.0, 0.0]);
         let spatial = spatial_for(Scene {
@@ -715,7 +723,8 @@ mod pick_object_tests {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert_eq!(pick_object(&ray, &spatial), Some(1));
+        let on_axis_id = spatial.leaf_id_at_index(1).unwrap();
+        assert_eq!(pick_object(&ray, &spatial), Some(on_axis_id));
 
         // Confirm the AABB rejector specifically rules out the
         // off-axis object: its world-space AABB should miss the ray.
@@ -790,9 +799,10 @@ mod pick_object_tests {
             pick_object(&from_above, &spatial).is_none(),
             "world-space back face on a mirrored object must be culled"
         );
+        let only_leaf = spatial.leaf_id_at_index(0).unwrap();
         assert_eq!(
             pick_object(&from_below, &spatial),
-            Some(0),
+            Some(only_leaf),
             "world-space front face on a mirrored object must hit"
         );
     }
@@ -854,7 +864,8 @@ mod pick_object_tests {
             origin: Vec3::new(0.0, 0.0, 1.0),
             direction: -Vec3::Z,
         };
-        assert_eq!(pick_object(&ray, &spatial), Some(0));
+        let only_leaf = spatial.leaf_id_at_index(0).unwrap();
+        assert_eq!(pick_object(&ray, &spatial), Some(only_leaf));
     }
 
     #[test]

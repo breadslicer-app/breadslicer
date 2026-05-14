@@ -212,7 +212,16 @@ impl InputDispatch {
             cursor.x,
             cursor.y,
         );
-        document.with_scene(|scene| picking::pick_object(&ray, scene))
+        // BRIDGE: pick_object now returns the picked leaf's stable
+        // `NodeId`. Downstream of `pick_at` (controller's
+        // `run_pick_at` and through `on_select_by_index`) still
+        // operates in legacy pre-order-index space, so resolve the
+        // NodeId back to its pre-order leaf index here. The dual
+        // resolution disappears in S9 cleanup when the chain carries
+        // NodeId end-to-end.
+        document.with_scene(|spatial| {
+            picking::pick_object(&ray, spatial).and_then(|node_id| spatial.leaf_index_of(node_id))
+        })
     }
 
     /// Aborts any in-progress drag (reverts the affected object's

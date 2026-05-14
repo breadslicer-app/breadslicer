@@ -283,12 +283,17 @@ impl SceneSpatial {
         None
     }
 
-    /// Inverse of [`Self::leaf_id_at_index`]: walk the scene roots
-    /// in pre-order and return the leaf-index of `target`, or
+    /// BRIDGE: inverse of [`Self::leaf_id_at_index`]: walk the scene
+    /// roots in pre-order and return the leaf-index of `target`, or
     /// `None` when the node is not a reachable leaf. Used by
-    /// `apply_edit` to update the [`Scene`] mirror by idx.
-    /// DELETE-ON-CLEANUP with the mirror field.
-    fn leaf_index_of(&self, target: NodeId) -> Option<usize> {
+    /// `apply_edit` to update the [`Scene`] mirror by idx, and by
+    /// the slicer-gui selection bridge so that legacy idx-keyed
+    /// renderer / sidebar / FSM consumers keep working after the
+    /// selection switches to [`NodeId`] internally.
+    ///
+    /// DELETE-ON-CLEANUP with the mirror field and the legacy
+    /// idx-keyed selection bridge in `slicer-gui/src/selection.rs`.
+    pub fn leaf_index_of(&self, target: NodeId) -> Option<usize> {
         let mut count = 0usize;
         let mut stack: Vec<NodeId> = self.graph.roots().iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
