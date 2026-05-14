@@ -7,6 +7,7 @@
 //! controller's per-frame state (pivot, scale, visibility,
 //! lock-out mask) into the renderer's struct.
 
+use sc_mesh_core::NodeId;
 use sc_mesh_spatial::SceneSpatial;
 
 use crate::camera::OrbitCamera;
@@ -15,26 +16,26 @@ use crate::picking;
 
 use super::axis::ALL_AXES;
 use super::hit_test::{arc_pickable, axis_pickable};
-use super::{gizmo_scale, pivot_for_object};
+use super::{gizmo_scale, pivot_for_leaf};
 
 /// Builds the per-frame `GizmoFrame` for the renderer when a single
-/// object is selected. Returns `None` if the object has no geometry
-/// (no pivot to attach to). The locked-axes mask uses the camera's
-/// forward direction as a single representative ray — for a small
-/// gizmo near the screen centre, all rays through the gizmo region
-/// are within a degree or so of the camera forward, so a per-frame
-/// "is this axis grabbable from this view" check is uniform across
-/// the handle.
+/// leaf is selected. Returns `None` if the leaf has no geometry (no
+/// pivot to attach to) or `selection` does not name a reachable
+/// leaf. The locked-axes mask uses the camera's forward direction as
+/// a single representative ray: for a small gizmo near the screen
+/// centre, all rays through the gizmo region are within a degree or
+/// so of the camera forward, so a per-frame "is this axis grabbable
+/// from this view" check is uniform across the handle.
 pub fn build_gizmo_frame(
     spatial: &SceneSpatial,
     camera: &OrbitCamera,
-    selection: usize,
+    selection: NodeId,
     viewport_h_logical: f32,
     visibility: GizmoVisibility,
     hover: Option<GizmoHover>,
     drag_visual: Option<GizmoDragVisual>,
 ) -> Option<GizmoFrame> {
-    let pivot = pivot_for_object(spatial, selection)?;
+    let pivot = pivot_for_leaf(spatial, selection)?;
     let fov_y = default_fov_y();
     let scale = gizmo_scale(camera, fov_y, viewport_h_logical);
     let forward = (camera.target - camera.eye()).normalize_or_zero();

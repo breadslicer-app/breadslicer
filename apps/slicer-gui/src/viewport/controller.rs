@@ -182,7 +182,7 @@ impl ViewportController {
             let names = self
                 .session
                 .document()
-                .with_scene(|spatial| build_object_list_names(spatial.scene()))
+                .with_scene(|spatial| build_object_list_names(spatial.graph()))
                 .unwrap_or_default();
             push_object_list(&ui, names);
             ui.set_selected_object_index(-1);
@@ -557,7 +557,9 @@ impl ViewportController {
 
     /// Picker dispatch: hand the pixel coordinates to InputDispatch
     /// (which builds the ray and runs `pick_object`) and apply the
-    /// pick result through the Session-level selection setters.
+    /// pick result through the document's selection setters. The
+    /// picker carries `NodeId` directly; the document stores the
+    /// stable handle without a pre-order-index detour.
     fn run_pick_at(&self, cursor: ScreenPoint) {
         let Some(pick) = self.input.pick_at(
             self.session.document(),
@@ -568,7 +570,10 @@ impl ViewportController {
             return;
         };
         match pick {
-            Some(idx) => self.on_select_by_index(idx),
+            Some(node_id) => self
+                .session
+                .document()
+                .set_selection(Selection::One(LeafId(node_id))),
             None => self.on_clear_selection(),
         }
     }
@@ -716,7 +721,15 @@ impl ViewportController {
             .session
             .document()
             .with_scene(|spatial_for_render| {
+                // The renderer's outline post-pass keys on the
+                // pre-order leaf index of the GPU model buffer, so
+                // `SceneRender::selection` stays `Option<usize>`
+                // until the renderer flips its convention in a
+                // later phase. The gizmo-frame builder is
+                // `NodeId`-keyed end-to-end now, so it takes the
+                // document's selection directly.
                 let selection_idx = self.session.document().selection_primary_idx();
+                let selection_node_id = self.session.document().selection_primary_node_id();
                 let drag_state = self.input.gizmo_fsm().current();
                 let (visibility, drag_visual) = match drag_state {
                     GizmoState::Drag { op, pivot, .. } => match op {
@@ -755,7 +768,7 @@ impl ViewportController {
                     GizmoState::Idle => (GizmoVisibility::Idle, None),
                 };
                 let hover = self.input.gizmo_fsm().current_hover();
-                let gizmo_frame = selection_idx.and_then(|sel| {
+                let gizmo_frame = selection_node_id.and_then(|sel| {
                     gizmo::frame::build_gizmo_frame(
                         spatial_for_render,
                         camera,

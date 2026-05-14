@@ -165,8 +165,7 @@ impl GizmoFsm {
             .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                let sel_idx = spatial.leaf_index_of(sel_id)?;
-                let pivot = gizmo::pivot_for_object(spatial, sel_idx)?;
+                let pivot = gizmo::pivot_for_leaf(spatial, sel_id)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
                 let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
                 let original = spatial.leaf(sel_id)?.local_transform();
@@ -444,8 +443,7 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
         .with_scene(|spatial| {
             let camera_slot = ctx.camera.borrow();
             let camera = camera_slot.as_ref()?;
-            let sel_idx = spatial.leaf_index_of(sel_id)?;
-            let pivot = gizmo::pivot_for_object(spatial, sel_idx)?;
+            let pivot = gizmo::pivot_for_leaf(spatial, sel_id)?;
             if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor) {
                 return None;
             }

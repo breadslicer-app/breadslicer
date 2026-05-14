@@ -16,6 +16,7 @@ pub mod hit_test;
 mod tolerances;
 
 use glam::Vec3;
+use sc_mesh_core::NodeId;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
 
@@ -24,12 +25,12 @@ use crate::camera::OrbitCamera;
 use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 
 /// World-space pivot for the gizmo: the local-AABB centre of the
-/// object, transformed by the object's `Transform3D`. Returns `None`
-/// when the object has no vertices, an out-of-bounds resource
-/// reference, or `idx` is out of range; all of which render the
-/// gizmo unattachable.
-pub fn pivot_for_object(spatial: &SceneSpatial, idx: usize) -> Option<Vec3> {
-    let query = spatial.object(idx)?;
+/// leaf, transformed by the leaf's world transform. Returns `None`
+/// when the leaf has no vertices, an out-of-bounds resource
+/// reference, or `node_id` does not name a reachable leaf; all of
+/// which render the gizmo unattachable.
+pub fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
+    let query = spatial.leaf(node_id)?;
     let aabb = query.local_aabb()?;
     let lmin = Vec3::from(aabb.min().coords());
     let lmax = Vec3::from(aabb.max().coords());
@@ -90,6 +91,12 @@ mod pivot_tests {
         SceneSpatial::new(scene).unwrap()
     }
 
+    fn first_leaf(spatial: &SceneSpatial) -> NodeId {
+        spatial
+            .leaf_id_at_index(0)
+            .expect("fixture has a leaf at idx 0")
+    }
+
     #[test]
     fn pivot_under_identity_is_local_aabb_centre() {
         let spatial = spatial_for(Scene {
@@ -105,7 +112,7 @@ mod pivot_tests {
                 )),
             }],
         });
-        let p = pivot_for_object(&spatial, 0).unwrap();
+        let p = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
         // local AABB = ([-1, -2, -3], [3, 4, 5]) → centre (1, 1, 1)
         assert_approx_eq!(f32, p.x, 1.0);
         assert_approx_eq!(f32, p.y, 1.0);
@@ -129,7 +136,7 @@ mod pivot_tests {
                 )),
             }],
         });
-        let p = pivot_for_object(&spatial, 0).unwrap();
+        let p = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
         // Local centre (1, 1, 1) translated by (10, 20, 30).
         assert_approx_eq!(f32, p.x, 11.0, epsilon = 1e-5);
         assert_approx_eq!(f32, p.y, 21.0, epsilon = 1e-5);
@@ -147,23 +154,41 @@ mod pivot_tests {
                 content: SceneObjectContent::Mesh(IndexedMesh::new(None, vec![], vec![])),
             }],
         });
-        assert!(pivot_for_object(&spatial, 0).is_none());
+        assert!(pivot_for_leaf(&spatial, first_leaf(&spatial)).is_none());
     }
 
     #[test]
-    fn pivot_for_out_of_range_index_is_none() {
-        let spatial = spatial_for(Scene::default());
-        assert!(pivot_for_object(&spatial, 99).is_none());
+    fn pivot_for_non_leaf_node_is_none() {
+        // The Group root introduced by `SceneGraph::try_from(Scene)`
+        // is not a leaf; SceneSpatial::leaf rejects it, and
+        // pivot_for_leaf inherits that rejection. Replaces the old
+        // "out-of-range idx" test now that the helper is NodeId-keyed
+        // and there is no equivalent of an out-of-range usize.
+        let spatial = spatial_for(Scene {
+            meta: None,
+            resources: vec![],
+            objects: vec![SceneObject {
+                meta: None,
+                transform: Transform3D::Identity,
+                content: SceneObjectContent::Mesh(triangle_mesh(
+                    [-1.0, -2.0, -3.0],
+                    [3.0, 0.0, 0.0],
+                    [-1.0, 4.0, 5.0],
+                )),
+            }],
+        });
+        let root_id = spatial.graph().roots()[0];
+        assert!(pivot_for_leaf(&spatial, root_id).is_none());
     }
 
     #[test]
     fn dangling_resource_index_is_rejected_at_construction() {
         // Scenes with dangling resource references are rejected by
-        // SceneSpatial construction, so pivot_for_object is
+        // SceneSpatial construction, so pivot_for_leaf is
         // structurally unable to observe one at runtime. This test
         // pins the construction-time rejection rather than the
         // silent-`None` behaviour that used to live inside
-        // pivot_for_object.
+        // pivot_for_leaf.
         let scene = Scene {
             meta: None,
             resources: vec![],

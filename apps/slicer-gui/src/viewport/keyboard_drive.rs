@@ -430,8 +430,7 @@ impl KeyboardDriveState {
         let prepared: Option<(Vec3, Transform3D, Transform3D, f32)> = ctx
             .document
             .with_scene(|spatial| {
-                let idx = spatial.leaf_index_of(node_id)?;
-                let pivot = crate::gizmo::pivot_for_object(spatial, idx)?;
+                let pivot = crate::gizmo::pivot_for_leaf(spatial, node_id)?;
                 let query = spatial.leaf(node_id)?;
                 let running = query.local_transform();
                 let parent_world = query.parent_world();
