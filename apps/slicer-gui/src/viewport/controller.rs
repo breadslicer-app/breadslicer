@@ -2107,6 +2107,11 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
         // No drag is possible without a camera; simulate the
         // mid-cascade state by directly writing the gizmo cell.
+        let node_id = ctrl
+            .session
+            .document()
+            .selection_primary_node_id()
+            .expect("test selected object 0");
         ctrl.input.gizmo_fsm().force_set(GizmoState::Drag {
             op: DragOp::Translate {
                 axis: Axis::X,
@@ -2114,7 +2119,7 @@ mod keyboard_focus_tests {
             },
             original: Transform3D::Identity,
             pivot: Vec3::ZERO,
-            object_idx: 0,
+            node_id,
         });
 
         // Level 1 → drag aborts; focus and selection survive.
@@ -2173,7 +2178,7 @@ mod keyboard_focus_tests {
             document: ctrl.session.document(),
             camera: ctrl.camera.camera_cell(),
             viewport: ctrl.render.viewport(),
-            selection_idx: ctrl.session.document().selection_primary_idx(),
+            selection_id: ctrl.session.document().selection_primary_node_id(),
             build_volume: ctrl.session.build_volume(),
         });
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -2181,7 +2186,7 @@ mod keyboard_focus_tests {
             document: ctrl.session.document(),
             camera: ctrl.camera.camera_cell(),
             viewport: ctrl.render.viewport(),
-            selection_idx: ctrl.session.document().selection_primary_idx(),
+            selection_id: ctrl.session.document().selection_primary_node_id(),
             build_volume: ctrl.session.build_volume(),
         });
     }

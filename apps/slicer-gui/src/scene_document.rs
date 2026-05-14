@@ -24,6 +24,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
+use sc_mesh_core::NodeId;
 #[cfg(test)]
 use sc_mesh_core::scene::Scene;
 use sc_mesh_spatial::SceneSpatial;
@@ -160,13 +161,21 @@ impl SceneDocument {
         self.notify(SceneEvent::SelectionChanged);
     }
 
+    /// Currently-selected leaf's stable [`NodeId`], or `None` when no
+    /// selection exists. Permanent read API for consumers that carry
+    /// `NodeId` (viewport FSMs, scene-edit emitters); equivalent to
+    /// `self.selection().primary().map(LeafId::node_id)` but cheaper
+    /// to call repeatedly.
+    pub fn selection_primary_node_id(&self) -> Option<NodeId> {
+        self.selection.primary_node_id()
+    }
+
     /// BRIDGE: currently-selected leaf's pre-order index, for legacy
     /// idx-keyed consumers (renderer's `Option<usize>` selection,
-    /// sidebar list highlight, gizmo / keyboard FSMs). Internally
-    /// resolves the selected [`NodeId`] back to a pre-order leaf
-    /// position by walking the graph. Returns `None` when nothing is
-    /// selected, no scene is loaded, or the selected node no longer
-    /// names a reachable leaf.
+    /// sidebar list highlight). Internally resolves the selected
+    /// [`NodeId`] back to a pre-order leaf position by walking the
+    /// graph. Returns `None` when nothing is selected, no scene is
+    /// loaded, or the selected node no longer names a reachable leaf.
     ///
     /// DELETE-ON-CLEANUP when downstream consumers carry `NodeId`
     /// directly; consumers then read [`Self::selection`] and call

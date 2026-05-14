@@ -123,7 +123,7 @@ impl InputDispatch {
             document,
             camera,
             viewport,
-            selection_idx: document.selection_primary_idx(),
+            selection_id: document.selection_primary_node_id(),
             press: cursor,
             modifiers,
         };
@@ -163,7 +163,7 @@ impl InputDispatch {
             document,
             camera,
             viewport,
-            selection_idx: document.selection_primary_idx(),
+            selection_id: document.selection_primary_node_id(),
             cursor,
         };
         self.gizmo_fsm.update_hover(hover_ctx)
@@ -265,7 +265,7 @@ impl InputDispatch {
         if self.kbd_drive.current_focus() == KbdFocus::None {
             return false;
         }
-        let sel = document.selection_primary_idx();
+        let sel = document.selection_primary_node_id();
         self.kbd_drive.update_arrow(document, sel, code, true)
     }
 
@@ -273,7 +273,7 @@ impl InputDispatch {
     /// processed even with focus dropped so the bitset doesn't
     /// accumulate stuck flags after a focus race with Esc.
     pub(super) fn on_gizmo_arrow_released(&self, document: &Rc<SceneDocument>, code: i32) -> bool {
-        let sel = document.selection_primary_idx();
+        let sel = document.selection_primary_node_id();
         self.kbd_drive.update_arrow(document, sel, code, false)
     }
 
@@ -295,7 +295,7 @@ impl InputDispatch {
             document,
             camera,
             viewport,
-            selection_idx: document.selection_primary_idx(),
+            selection_id: document.selection_primary_node_id(),
             build_volume,
         };
         let _ = self.kbd_drive.integrate(ctx);

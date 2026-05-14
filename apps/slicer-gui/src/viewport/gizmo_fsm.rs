@@ -15,6 +15,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use sc_mesh_core::NodeId;
 use sc_mesh_core::scene::Transform3D;
 
 use crate::PointerModifiers;
@@ -36,7 +37,7 @@ pub(super) struct StartCtx<'a> {
     pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
-    pub(super) selection_idx: Option<usize>,
+    pub(super) selection_id: Option<NodeId>,
     pub(super) press: ScreenPoint,
     pub(super) modifiers: PointerModifiers,
 }
@@ -60,7 +61,7 @@ pub(super) struct HoverCtx<'a> {
     pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
-    pub(super) selection_idx: Option<usize>,
+    pub(super) selection_id: Option<NodeId>,
     pub(super) cursor: ScreenPoint,
 }
 
@@ -101,24 +102,17 @@ impl GizmoFsm {
     /// in flight when called.
     pub(super) fn commit_drag(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
-            original,
-            object_idx,
-            ..
+            original, node_id, ..
         } = self.state.get()
         else {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        let after = document.with_scene(|spatial| {
-            spatial
-                .scene()
-                .objects
-                .get(object_idx)
-                .map(|obj| obj.transform)
-        });
+        let after =
+            document.with_scene(|spatial| spatial.leaf(node_id).map(|q| q.local_transform()));
         if let Some(Some(after)) = after {
-            document.push_edit(SceneEdit::ObjectTransform {
-                object_idx,
+            document.push_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before: original,
                 after,
             });
@@ -153,7 +147,7 @@ impl GizmoFsm {
     /// with Shift held starts uniformly; subsequent toggles
     /// re-anchor through the move path.
     pub(super) fn try_start_drag(&self, ctx: StartCtx<'_>) {
-        let Some(sel_idx) = ctx.selection_idx else {
+        let Some(sel_id) = ctx.selection_id else {
             return;
         };
         let Some(vp) = ctx.viewport else {
@@ -171,11 +165,11 @@ impl GizmoFsm {
             .with_scene(|spatial| {
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
+                let sel_idx = spatial.leaf_index_of(sel_id)?;
                 let pivot = gizmo::pivot_for_object(spatial, sel_idx)?;
                 let ray = picking::ray_from_pixel(camera, fov_y, w, h, x, y);
                 let (winner, _) = front_most_handle(&ray, camera, pivot, fov_y, h)?;
-                let obj = spatial.scene().objects.get(sel_idx)?;
-                let original = obj.transform;
+                let original = spatial.leaf(sel_id)?.local_transform();
 
                 let op = match winner {
                     HandleHit::Translate(axis) => {
@@ -227,7 +221,7 @@ impl GizmoFsm {
             op,
             original,
             pivot,
-            object_idx: sel_idx,
+            node_id: sel_id,
         });
     }
 
@@ -246,7 +240,7 @@ impl GizmoFsm {
             mut op,
             mut original,
             pivot,
-            object_idx,
+            node_id,
         } = self.state.get()
         else {
             return false;
@@ -273,7 +267,7 @@ impl GizmoFsm {
                 // does not snap the object.
                 if let DragOp::ScaleAxis { proportional, .. } = op
                     && proportional != ctx.modifiers.shift
-                    && let Some(obj) = spatial.scene().objects.get(object_idx)
+                    && let Some(running) = spatial.leaf(node_id).map(|q| q.local_transform())
                 {
                     let reanchor_ctx = ReanchorCtx {
                         camera,
@@ -283,7 +277,7 @@ impl GizmoFsm {
                         cursor: (x, y),
                     };
                     if let Some(re_anchored) =
-                        re_anchor_scale_axis(op, obj.transform, &reanchor_ctx, ctx.modifiers.shift)
+                        re_anchor_scale_axis(op, running, &reanchor_ctx, ctx.modifiers.shift)
                     {
                         op = re_anchored.0;
                         original = re_anchored.1;
@@ -312,7 +306,7 @@ impl GizmoFsm {
                 .with_scene(|spatial| {
                     clamp_translate_edit(
                         spatial,
-                        object_idx,
+                        node_id,
                         original,
                         new_transform,
                         ctx.build_volume,
@@ -331,11 +325,11 @@ impl GizmoFsm {
             op: new_op,
             original,
             pivot,
-            object_idx,
+            node_id,
         });
 
-        ctx.document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx,
+        ctx.document.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: original,
             after: new_transform,
         })
@@ -347,23 +341,21 @@ impl GizmoFsm {
     /// event from `apply_edit` drives the redraw).
     pub(super) fn abort(&self, document: &Rc<SceneDocument>) -> bool {
         let GizmoState::Drag {
-            original,
-            object_idx,
-            ..
+            original, node_id, ..
         } = self.state.get()
         else {
             return false;
         };
         self.state.set(GizmoState::Idle);
-        // The current transform on the object is whatever the last
+        // The current transform on the leaf is whatever the last
         // drag tick wrote; we need it as the `before` so the edit
-        // describes "from current → back to original."
+        // describes "from current, back to original."
         let current = document
-            .with_scene(|spatial| spatial.scene().objects.get(object_idx).map(|o| o.transform))
+            .with_scene(|spatial| spatial.leaf(node_id).map(|q| q.local_transform()))
             .flatten()
             .unwrap_or(original);
-        document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx,
+        document.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: current,
             after: original,
         });
@@ -440,7 +432,7 @@ fn front_most_handle(
 /// (selection / scene / camera / viewport / pivot) are missing or
 /// the cursor isn't over any handle.
 fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
-    let sel_idx = ctx.selection_idx?;
+    let sel_id = ctx.selection_id?;
     let vp = ctx.viewport?;
     let (w, h) = (vp.width(), vp.height());
     let fov_y = default_fov_y();
@@ -448,6 +440,7 @@ fn compute_hover(ctx: &HoverCtx<'_>) -> Option<GizmoHover> {
         .with_scene(|spatial| {
             let camera_slot = ctx.camera.borrow();
             let camera = camera_slot.as_ref()?;
+            let sel_idx = spatial.leaf_index_of(sel_id)?;
             let pivot = gizmo::pivot_for_object(spatial, sel_idx)?;
             if !cursor_within_gizmo_screen_radius(camera, fov_y, w, h, pivot, ctx.cursor) {
                 return None;

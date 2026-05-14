@@ -28,6 +28,7 @@
 //! some vertex would breach the corresponding wall.
 
 use glam::Vec3;
+use sc_mesh_core::NodeId;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_spatial::SceneSpatial;
@@ -45,12 +46,12 @@ use crate::build_volume::BuildVolume;
 /// - `Affine(clamped_delta).compose(before)` otherwise.
 pub(super) fn clamp_translate_edit(
     spatial: &SceneSpatial,
-    object_idx: usize,
+    node_id: NodeId,
     before: Transform3D,
     proposed_after: Transform3D,
     build_volume: BuildVolume,
 ) -> Transform3D {
-    let Some(query) = spatial.object(object_idx) else {
+    let Some(query) = spatial.leaf(node_id) else {
         return proposed_after;
     };
     let Some(aabb_pre) = query.transformed_aabb(before) else {
@@ -183,6 +184,12 @@ mod translation_clamp_tests {
         Transform3D::Affine(AffineTransform3D::from_translation(d))
     }
 
+    fn first_leaf(spatial: &SceneSpatial) -> NodeId {
+        spatial
+            .leaf_id_at_index(0)
+            .expect("fixture has a leaf at idx 0")
+    }
+
     fn affine_translation(t: Transform3D) -> [f64; 3] {
         match t {
             Transform3D::Identity => [0.0; 3],
@@ -194,7 +201,13 @@ mod translation_clamp_tests {
     fn small_in_bounds_delta_passes_through_unchanged() {
         let spatial = spatial_with_centred_unit_cube();
         let proposed = translate([2.0, 1.0, 3.0]);
-        let out = clamp_translate_edit(&spatial, 0, Transform3D::Identity, proposed, vol());
+        let out = clamp_translate_edit(
+            &spatial,
+            first_leaf(&spatial),
+            Transform3D::Identity,
+            proposed,
+            vol(),
+        );
         assert_eq!(out, proposed);
     }
 
@@ -204,7 +217,13 @@ mod translation_clamp_tests {
         // Cube AABB is [-1, 1]; envelope is [-50, 50] on X. Room to
         // +X = 49. Asking for +60 should clamp to +49.
         let proposed = translate([60.0, 0.0, 0.0]);
-        let out = clamp_translate_edit(&spatial, 0, Transform3D::Identity, proposed, vol());
+        let out = clamp_translate_edit(
+            &spatial,
+            first_leaf(&spatial),
+            Transform3D::Identity,
+            proposed,
+            vol(),
+        );
         let t = affine_translation(out);
         assert_approx_eq!(f64, t[0], 49.0);
         assert_approx_eq!(f64, t[1], 0.0);
@@ -219,7 +238,7 @@ mod translation_clamp_tests {
         let spatial = spatial_with_centred_unit_cube();
         let before = translate([49.0, 0.0, 0.0]); // cube max.x = 50, flush against +X wall.
         let proposed = translate([54.0, 4.0, 0.0]); // +5 on X, +4 on Y from before.
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         let t = affine_translation(out);
         assert_approx_eq!(f64, t[0], 49.0);
         assert_approx_eq!(f64, t[1], 4.0);
@@ -236,7 +255,7 @@ mod translation_clamp_tests {
         let spatial = spatial_with_centred_unit_cube();
         let before = translate([49.0, 0.0, 0.0]);
         let proposed = translate([54.0, 0.0, 0.0]);
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         assert_eq!(out, before);
     }
 
@@ -247,7 +266,7 @@ mod translation_clamp_tests {
         let before = translate([69.0, 0.0, 0.0]);
         // -10 on X is "back toward inside", allowed.
         let proposed = translate([59.0, 0.0, 0.0]);
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         let t = affine_translation(out);
         assert_approx_eq!(f64, t[0], 59.0);
     }
@@ -258,7 +277,7 @@ mod translation_clamp_tests {
         let before = translate([69.0, 0.0, 0.0]);
         // +5 on X would push further out; clamped to 0, returns before.
         let proposed = translate([74.0, 0.0, 0.0]);
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         assert_eq!(out, before);
     }
 
@@ -268,15 +287,25 @@ mod translation_clamp_tests {
         // Wildly out-of-bounds delta: with no AABB to constrain,
         // the helper returns proposed_after unchanged.
         let proposed = translate([10000.0, 0.0, 0.0]);
-        let out = clamp_translate_edit(&spatial, 0, Transform3D::Identity, proposed, vol());
+        let out = clamp_translate_edit(
+            &spatial,
+            first_leaf(&spatial),
+            Transform3D::Identity,
+            proposed,
+            vol(),
+        );
         assert_eq!(out, proposed);
     }
 
     #[test]
-    fn missing_object_index_is_pass_through() {
+    fn non_leaf_node_is_pass_through() {
+        // Group nodes (e.g. the scene root) carry no resolvable mesh,
+        // so SceneSpatial::leaf returns None and the helper short-
+        // circuits to the unchanged proposed transform.
         let spatial = spatial_with_centred_unit_cube();
+        let root_id = spatial.graph().roots()[0];
         let proposed = translate([10000.0, 0.0, 0.0]);
-        let out = clamp_translate_edit(&spatial, 999, Transform3D::Identity, proposed, vol());
+        let out = clamp_translate_edit(&spatial, root_id, Transform3D::Identity, proposed, vol());
         assert_eq!(out, proposed);
     }
 
@@ -286,12 +315,24 @@ mod translation_clamp_tests {
         // Cube AABB.min.z = 0 with identity. -2 on Z would go
         // below the plate; clamped to 0.
         let down = translate([0.0, 0.0, -2.0]);
-        let out_down = clamp_translate_edit(&spatial, 0, Transform3D::Identity, down, vol());
+        let out_down = clamp_translate_edit(
+            &spatial,
+            first_leaf(&spatial),
+            Transform3D::Identity,
+            down,
+            vol(),
+        );
         assert_eq!(out_down, Transform3D::Identity);
 
         // +50 on Z is fine (cube max.z = 2 → room to ceiling = 78).
         let up = translate([0.0, 0.0, 50.0]);
-        let out_up = clamp_translate_edit(&spatial, 0, Transform3D::Identity, up, vol());
+        let out_up = clamp_translate_edit(
+            &spatial,
+            first_leaf(&spatial),
+            Transform3D::Identity,
+            up,
+            vol(),
+        );
         let t = affine_translation(out_up);
         assert_approx_eq!(f64, t[2], 50.0);
     }
@@ -320,7 +361,7 @@ mod translation_clamp_tests {
         let spatial = spatial_with_octahedron();
         let before = rotation_z(std::f64::consts::FRAC_PI_4);
         let proposed = translation_then_rotation_z([60.0, 0.0, 0.0], std::f64::consts::FRAC_PI_4);
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         let t = affine_translation(out);
         let expected = 50.0 - f64::from(std::f32::consts::FRAC_1_SQRT_2);
         let arvo_bound = 50.0 - f64::from(std::f32::consts::SQRT_2);
@@ -345,7 +386,7 @@ mod translation_clamp_tests {
         let spatial = spatial_with_centred_unit_cube();
         let before = rotation_z(std::f64::consts::FRAC_PI_4);
         let proposed = translation_then_rotation_z([60.0, 0.0, 0.0], std::f64::consts::FRAC_PI_4);
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         let t = affine_translation(out);
         let expected = 50.0 - f64::from(std::f32::consts::SQRT_2);
         assert_approx_eq!(f64, t[0], expected, epsilon = 1e-4);
@@ -360,7 +401,7 @@ mod translation_clamp_tests {
         let spatial = spatial_with_centred_unit_cube();
         let before = rotation_z(std::f64::consts::FRAC_PI_4);
         let proposed = translation_then_rotation_z([2.0, 1.0, 3.0], std::f64::consts::FRAC_PI_4);
-        let out = clamp_translate_edit(&spatial, 0, before, proposed, vol());
+        let out = clamp_translate_edit(&spatial, first_leaf(&spatial), before, proposed, vol());
         assert_eq!(out, proposed);
     }
 }

@@ -6,13 +6,14 @@
 //! Pure drag-math FSM for the transform gizmo. The data types
 //! (`GizmoState`, `DragOp`, `HandleHit`) and the per-frame compose
 //! functions (`apply_drag_move`, `re_anchor_scale_axis`) are
-//! controller-agnostic — they take the current cursor / camera /
+//! controller-agnostic: they take the current cursor / camera /
 //! pivot inputs and return the new transform plus the (possibly
 //! mutated) op state. The `ViewportController` owns the `Cell`s and
 //! drives the Slint callbacks; everything in this module is a free
 //! function.
 
 use glam::Vec3;
+use sc_mesh_core::NodeId;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 
@@ -24,11 +25,11 @@ use crate::picking;
 /// Gizmo input FSM. `Idle` is the resting state (no drag in
 /// progress). `Drag` captures the operation (translate / rotate /
 /// scale-axis / scale-uniform), the object's transform at gesture
-/// start, the world-space pivot, and the object index. The running
-/// transform is composed each frame *from the captured original*,
-/// not from the running transform — composing-from-original keeps
-/// long drags numerically clean (no float drift across hundreds of
-/// move events).
+/// start, the world-space pivot, and the dragged leaf's stable
+/// [`NodeId`]. The running transform is composed each frame *from the
+/// captured original*, not from the running transform: composing-
+/// from-original keeps long drags numerically clean (no float drift
+/// across hundreds of move events).
 #[derive(Copy, Clone, Debug)]
 pub(super) enum GizmoState {
     Idle,
@@ -36,7 +37,7 @@ pub(super) enum GizmoState {
         op: DragOp,
         original: Transform3D,
         pivot: Vec3,
-        object_idx: usize,
+        node_id: NodeId,
     },
 }
 
@@ -107,13 +108,13 @@ pub(super) struct ReanchorCtx<'a> {
 
 /// Per-op delta computation for a move event. Returns the new
 /// transform composed onto `original`, paired with the (possibly
-/// updated) `DragOp` state — Rotate's unwrap counter mutates per
+/// updated) `DragOp` state: Rotate's unwrap counter mutates per
 /// frame; the others are pure functions of the press capture and the
 /// current cursor.
 ///
 /// Returns `None` if the cursor produces no usable delta this frame
 /// (e.g. rotate ray slipped into the lock-out region between move
-/// events) — the controller leaves the running transform unchanged
+/// events): the controller leaves the running transform unchanged
 /// in that case rather than snapping the object.
 pub(super) fn apply_drag_move(
     op: DragOp,
@@ -211,7 +212,7 @@ pub(super) fn apply_drag_move(
 /// switch is visually snap-free.
 ///
 /// Returns `None` if the pivot's screen projection fails (degenerate
-/// camera) — the caller leaves the drag unchanged in that case.
+/// camera): the caller leaves the drag unchanged in that case.
 /// Defensive against op variants other than `ScaleAxis`: returns
 /// `None` so the move dispatch falls through to the regular path.
 pub(super) fn re_anchor_scale_axis(
@@ -246,7 +247,7 @@ pub(super) fn re_anchor_scale_axis(
 /// continuous angle. `last_raw` and `current_unwrapped` are the
 /// previous frame's raw atan2 reading and the cumulative unwrapped
 /// angle; `raw` is this frame's raw reading. When the per-frame raw
-/// difference exceeds π, atan2 has wrapped through ±π — adjust by
+/// difference exceeds π, atan2 has wrapped through ±π; adjust by
 /// 2π in the opposite direction so the unwrapped angle stays
 /// continuous.
 pub(super) fn unwrap_angle(last_raw: f32, current_unwrapped: f32, raw: f32) -> f32 {
@@ -261,7 +262,7 @@ pub(super) fn unwrap_angle(last_raw: f32, current_unwrapped: f32, raw: f32) -> f
 }
 
 /// Affine rotation about a world-aligned axis by `angle` radians,
-/// right-handed. Returns `None` if the axis happens to be zero —
+/// right-handed. Returns `None` if the axis happens to be zero:
 /// can't happen for `Axis::{X,Y,Z}` but the propagation keeps the
 /// caller's `?` chain typed.
 pub(super) fn axis_rotation(axis: Axis, angle: f32) -> Option<AffineTransform3D> {
@@ -427,7 +428,7 @@ mod apply_drag_move_tests {
             start_anchor: Vec3::new(1.0, 0.0, 0.0),
             current_anchor: Vec3::new(1.0, 0.0, 0.0),
             proportional: false,
-            // Unused in the per-axis branch — supply zeros.
+            // Unused in the per-axis branch; supply zeros.
             press_screen: (0.0, 0.0),
             pivot_screen: (0.0, 0.0),
         };
@@ -443,7 +444,7 @@ mod apply_drag_move_tests {
 
     #[test]
     fn scale_axis_op_with_proportional_uses_uniform_formula() {
-        // Same `ScaleAxis` op — the only difference is the
+        // Same `ScaleAxis` op; the only difference is the
         // `proportional` flag. With it set, the formula is the uniform
         // one: factor = current_dist / press_dist in screen pixels.
         // Press at 50 px from pivot, current at 100 px → factor 2.
@@ -452,7 +453,7 @@ mod apply_drag_move_tests {
         let op = DragOp::ScaleAxis {
             axis: Axis::X,
             // `start_anchor` becomes irrelevant in the proportional
-            // branch — supply something out-of-range to make the
+            // branch; supply something out-of-range to make the
             // contrast visible if a regression flips the dispatch
             // back to the per-axis formula.
             start_anchor: Vec3::new(99.0, 0.0, 0.0),
@@ -483,7 +484,7 @@ mod apply_drag_move_tests {
             last_raw: start,
             current_unwrapped: start,
         };
-        // Ray crosses the X arc plane at (0, 0, 1) — a point on +Z
+        // Ray crosses the X arc plane at (0, 0, 1): a point on +Z
         // → angle π/2 in the X-axis basis (u=Y, v=Z).
         let ray = ray_from(Vec3::new(5.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
         let (new_t, new_op) = apply_drag_move(op, &ray, pivot, &original, 0.0, 0.0).unwrap();

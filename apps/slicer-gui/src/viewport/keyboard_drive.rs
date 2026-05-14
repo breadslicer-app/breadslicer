@@ -14,6 +14,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use glam::Vec3;
+use sc_mesh_core::NodeId;
 use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
 
@@ -180,7 +181,7 @@ pub(super) struct IntegrationCtx<'a> {
     pub(super) document: &'a Rc<SceneDocument>,
     pub(super) camera: &'a RefCell<Option<OrbitCamera>>,
     pub(super) viewport: Option<ViewportSize>,
-    pub(super) selection_idx: Option<usize>,
+    pub(super) selection_id: Option<NodeId>,
     /// Build envelope used by the post-step clamp on `Translate`
     /// focus (rotate / scale focuses ignore it). Carried by value
     /// since `BuildVolume` is `Copy` and small.
@@ -198,7 +199,7 @@ pub(super) struct IntegrationCtx<'a> {
 /// release/re-press) can gate the flush from inside `take` without
 /// touching the public API.
 struct BurstTracker {
-    armed: Cell<Option<(usize, Transform3D)>>,
+    armed: Cell<Option<(NodeId, Transform3D)>>,
     last_event_at: Cell<Option<Instant>>,
 }
 
@@ -214,13 +215,13 @@ impl BurstTracker {
         self.armed.get().is_some()
     }
 
-    fn arm(&self, idx: usize, before: Transform3D) {
-        self.armed.set(Some((idx, before)));
+    fn arm(&self, node_id: NodeId, before: Transform3D) {
+        self.armed.set(Some((node_id, before)));
     }
 
     /// Returns the captured pre-image and clears the tracker. Returns
     /// `None` when nothing is armed.
-    fn take(&self) -> Option<(usize, Transform3D)> {
+    fn take(&self) -> Option<(NodeId, Transform3D)> {
         self.armed.take()
     }
 
@@ -313,7 +314,7 @@ impl KeyboardDriveState {
     pub(super) fn update_arrow(
         &self,
         document: &Rc<SceneDocument>,
-        selection_idx: Option<usize>,
+        selection_id: Option<NodeId>,
         code: i32,
         pressed: bool,
     ) -> bool {
@@ -333,7 +334,7 @@ impl KeyboardDriveState {
         self.burst.note_event();
 
         if !prev_any_held && now_any_held && pressed {
-            self.try_arm_burst(document, selection_idx);
+            self.try_arm_burst(document, selection_id);
         } else if prev_any_held && !now_any_held {
             self.flush_burst(document);
         }
@@ -348,20 +349,20 @@ impl KeyboardDriveState {
     /// burst's pre-image. No-op if the burst is already armed (a
     /// second key press during an existing burst), the selection is
     /// empty, or the scene isn't loaded.
-    fn try_arm_burst(&self, document: &Rc<SceneDocument>, selection_idx: Option<usize>) {
+    fn try_arm_burst(&self, document: &Rc<SceneDocument>, selection_id: Option<NodeId>) {
         if self.burst.is_armed() {
             return;
         }
-        let Some(idx) = selection_idx else {
+        let Some(node_id) = selection_id else {
             return;
         };
         let Some(before) = document
-            .with_scene(|s| s.scene().objects.get(idx).map(|o| o.transform))
+            .with_scene(|s| s.leaf(node_id).map(|q| q.local_transform()))
             .flatten()
         else {
             return;
         };
-        self.burst.arm(idx, before);
+        self.burst.arm(node_id, before);
     }
 
     /// Pushes the in-progress burst as one undo entry, using the
@@ -370,15 +371,15 @@ impl KeyboardDriveState {
     /// released without an integration tick), so we don't gate it
     /// here.
     fn flush_burst(&self, document: &Rc<SceneDocument>) {
-        let Some((object_idx, before)) = self.burst.take() else {
+        let Some((node_id, before)) = self.burst.take() else {
             return;
         };
         let after = document
-            .with_scene(|s| s.scene().objects.get(object_idx).map(|o| o.transform))
+            .with_scene(|s| s.leaf(node_id).map(|q| q.local_transform()))
             .flatten();
         if let Some(after) = after {
-            document.push_edit(SceneEdit::ObjectTransform {
-                object_idx,
+            document.push_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before,
                 after,
             });
@@ -400,7 +401,7 @@ impl KeyboardDriveState {
             self.last_tick.set(None);
             return false;
         }
-        let Some(idx) = ctx.selection_idx else {
+        let Some(node_id) = ctx.selection_id else {
             return false;
         };
         let Some(vp) = ctx.viewport else {
@@ -422,15 +423,12 @@ impl KeyboardDriveState {
         let prepared: Option<(Vec3, Transform3D, f32)> = ctx
             .document
             .with_scene(|spatial| {
+                let idx = spatial.leaf_index_of(node_id)?;
                 let pivot = crate::gizmo::pivot_for_object(spatial, idx)?;
-                let obj = spatial.scene().objects.get(idx)?;
+                let running = spatial.leaf(node_id)?.local_transform();
                 let camera_slot = ctx.camera.borrow();
                 let camera = camera_slot.as_ref()?;
-                Some((
-                    pivot,
-                    obj.transform,
-                    camera.world_per_pixel(default_fov_y(), h),
-                ))
+                Some((pivot, running, camera.world_per_pixel(default_fov_y(), h)))
             })
             .flatten();
         let Some((pivot, running, world_per_pixel)) = prepared else {
@@ -453,15 +451,15 @@ impl KeyboardDriveState {
         let new_transform = if focus == KbdFocus::Translate {
             ctx.document
                 .with_scene(|spatial| {
-                    clamp_translate_edit(spatial, idx, running, new_transform, ctx.build_volume)
+                    clamp_translate_edit(spatial, node_id, running, new_transform, ctx.build_volume)
                 })
                 .unwrap_or(new_transform)
         } else {
             new_transform
         };
 
-        ctx.document.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: idx,
+        ctx.document.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: running,
             after: new_transform,
         })
