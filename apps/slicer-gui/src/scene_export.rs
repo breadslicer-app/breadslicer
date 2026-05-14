@@ -65,13 +65,7 @@ pub(crate) fn export_scene_as(
 ) -> Result<Vec<FlattenWarning>> {
     let warnings = doc
         .with_scene(|spatial| -> Result<Vec<FlattenWarning>> {
-            // Bridge to SceneGraph at the writer boundary. The GUI's
-            // SceneSpatial still owns a Scene, and the format writers
-            // now speak SceneGraph; the clone is a temporary
-            // workspace-edge cost until SceneSpatial migrates.
-            let graph = sc_mesh_core::SceneGraph::try_from(spatial.scene().clone())
-                .map_err(|e| anyhow!("scene_export: cannot lift Scene into SceneGraph: {e}"))?;
-            scene_writer::write_scene(&graph, target, format).map_err(anyhow::Error::from)
+            scene_writer::write_scene(spatial.graph(), target, format).map_err(anyhow::Error::from)
         })
         .ok_or_else(|| anyhow!("No scene loaded"))??;
     Ok(warnings)
