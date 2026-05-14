@@ -22,7 +22,10 @@ impl NodeId {
         self.0.get()
     }
 
-    pub(crate) fn index(self) -> usize {
+    /// Zero-based index into the arena that backs the parent
+    /// `SceneGraph`. Stable for the lifetime of the id. Useful for
+    /// parallel-`Vec` caches indexed by `NodeId`.
+    pub fn index(self) -> usize {
         self.0.get() as usize - 1
     }
 }
@@ -40,7 +43,10 @@ impl MeshResourceId {
         self.0.get()
     }
 
-    pub(crate) fn index(self) -> usize {
+    /// Zero-based index into the arena that backs the parent
+    /// `SceneGraph`'s `mesh_resources`. Stable for the lifetime of
+    /// the id. Useful for parallel-`Vec` caches.
+    pub fn index(self) -> usize {
         self.0.get() as usize - 1
     }
 }

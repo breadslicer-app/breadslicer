@@ -104,7 +104,7 @@ impl SceneDocument {
     /// `SceneSpatial::primed(...)` built off the UI thread.
     #[cfg(test)]
     pub fn install_scene(&self, scene: Scene, source_path: PathBuf) {
-        self.install_spatial(SceneSpatial::new(scene), source_path);
+        self.install_spatial(SceneSpatial::new(scene).unwrap(), source_path);
     }
 
     /// Install a [`SceneSpatial`] (typically pre-primed by the load
@@ -339,6 +339,7 @@ impl Drop for SceneSubscription {
 #[cfg(test)]
 mod scene_document_tests {
     use super::*;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::scene::{SceneObject, SceneObjectContent, Transform3D};
     use sc_mesh_core::transform::AffineTransform3D;
 
@@ -359,7 +360,7 @@ mod scene_document_tests {
         s.objects.push(SceneObject {
             meta: None,
             transform: Transform3D::Identity,
-            content: SceneObjectContent::Resource(0),
+            content: SceneObjectContent::Mesh(IndexedMesh::new(None, Vec::new(), Vec::new())),
         });
         s
     }
@@ -414,7 +415,7 @@ mod scene_document_tests {
     #[test]
     fn install_spatial_uses_the_provided_spatial() {
         let doc = SceneDocument::new();
-        doc.install_spatial(SceneSpatial::primed(empty_scene()), fixture_path());
+        doc.install_spatial(SceneSpatial::primed(empty_scene()).unwrap(), fixture_path());
         assert!(doc.is_loaded());
         assert_eq!(doc.source_path(), Some(fixture_path()));
     }

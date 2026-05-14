@@ -12,11 +12,11 @@
 //! - Per-variant invalidation discipline for `SceneEdit` (basic enum
 //!   behaviour, `is_noop` and `inverse`, is tested in `mesh-core`).
 
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::{IndexedMesh, LeafPayload, NodeKind};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
 fn vertex(x: f32, y: f32, z: f32) -> Vertex {
@@ -67,15 +67,17 @@ mod object_query_binding {
             resources: vec![],
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         let q = spatial.object(0).expect("inline object exists");
-        let scene = spatial.scene();
-        let SceneObjectContent::Mesh(expected) = &scene.objects[0].content else {
-            panic!("expected inline mesh");
+        let leaf_id = spatial.leaf_id_at_index(0).expect("leaf exists");
+        let graph = spatial.graph();
+        let node = graph.node(leaf_id).expect("leaf node lives in arena");
+        let NodeKind::Leaf(LeafPayload::Mesh(expected)) = &node.kind else {
+            panic!("expected inline-mesh leaf");
         };
         assert!(
             std::ptr::eq(q.mesh(), expected),
-            "ObjectQuery::mesh must point at the inline mesh inside scene.objects[idx]"
+            "ObjectQuery::mesh must point at the inline mesh inside the leaf node"
         );
     }
 
@@ -86,12 +88,18 @@ mod object_query_binding {
             resources: vec![triangle_mesh(1.0)],
             objects: vec![resource_object(0, Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         let q = spatial.object(0).expect("object exists");
-        let scene = spatial.scene();
+        let leaf_id = spatial.leaf_id_at_index(0).expect("leaf exists");
+        let graph = spatial.graph();
+        let node = graph.node(leaf_id).expect("leaf node lives in arena");
+        let NodeKind::Leaf(LeafPayload::MeshResource(rid)) = &node.kind else {
+            panic!("expected resource-backed leaf");
+        };
+        let expected = graph.mesh_resource(*rid).expect("resource lives in arena");
         assert!(
-            std::ptr::eq(q.mesh(), &scene.resources[0]),
-            "ObjectQuery::mesh must point at scene.resources[r] when content is Resource(r)"
+            std::ptr::eq(q.mesh(), expected),
+            "ObjectQuery::mesh must point at the resource mesh when payload is MeshResource(_)"
         );
     }
 
@@ -102,19 +110,24 @@ mod object_query_binding {
             resources: vec![],
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         assert!(spatial.object(99).is_none());
     }
 
     #[test]
-    fn dangling_resource_index_returns_none() {
+    fn dangling_resource_index_rejects_construction() {
+        // Bridge contract: building a `SceneSpatial` from a `Scene`
+        // with a dangling `Resource(idx)` is reported via the typed
+        // error, replacing the historic silent-degrade-at-query
+        // behaviour. The graph builder enforces dangling-resource
+        // invariants at construction, so the failure surfaces here
+        // rather than masquerading as a missing leaf later.
         let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![resource_object(99, Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
-        assert!(spatial.object(0).is_none());
+        assert!(SceneSpatial::new(scene).is_err());
     }
 
     #[test]
@@ -131,7 +144,7 @@ mod object_query_binding {
                 resource_object(0, Transform3D::Identity),
             ],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         let a = spatial.object(0).unwrap();
         let b = spatial.object(1).unwrap();
         let aabb_a = a.local_aabb().unwrap();
@@ -153,7 +166,7 @@ mod object_query_binding {
             resources: vec![],
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         let first = spatial.object(0).unwrap().clusters().unwrap() as *const _;
         let second = spatial.object(0).unwrap().clusters().unwrap() as *const _;
         assert_eq!(
@@ -170,7 +183,7 @@ mod object_query_binding {
             resources: vec![],
             objects: vec![inline_object(empty_mesh, Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         let q = spatial.object(0).unwrap();
         assert!(q.local_aabb().is_none());
         assert!(q.clusters().is_none());
@@ -187,7 +200,7 @@ mod cache_priming {
             resources: vec![],
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         // First query yields the AABB; subsequent queries are
         // cache hits (same value, regardless of OnceLock state
         // visible from outside the crate).
@@ -206,8 +219,8 @@ mod cache_priming {
                 resource_object(0, Transform3D::Identity),
             ],
         };
-        let lazy = SceneSpatial::new(mk_scene());
-        let eager = SceneSpatial::primed(mk_scene());
+        let lazy = SceneSpatial::new(mk_scene()).unwrap();
+        let eager = SceneSpatial::primed(mk_scene()).unwrap();
         for idx in 0..2 {
             let l = lazy.object(idx).unwrap().local_aabb().unwrap();
             let e = eager.object(idx).unwrap().local_aabb().unwrap();
@@ -244,14 +257,14 @@ mod scene_aabb_consistency {
             ],
         };
         let uncached = scene.aabb().unwrap().unwrap();
-        let spatial = SceneSpatial::primed(scene);
+        let spatial = SceneSpatial::primed(scene).unwrap();
         let cached = scene_aabb(&spatial).unwrap();
         assert_eq!(uncached, cached);
     }
 
     #[test]
     fn cached_form_returns_none_for_empty_scene() {
-        let spatial = SceneSpatial::new(Scene::default());
+        let spatial = SceneSpatial::new(Scene::default()).unwrap();
         assert!(scene_aabb(&spatial).is_none());
     }
 
@@ -263,7 +276,7 @@ mod scene_aabb_consistency {
             resources: vec![],
             objects: vec![inline_object(empty, Transform3D::Identity)],
         };
-        let spatial = SceneSpatial::new(scene);
+        let spatial = SceneSpatial::new(scene).unwrap();
         assert!(scene_aabb(&spatial).is_none());
     }
 
@@ -275,7 +288,7 @@ mod scene_aabb_consistency {
     /// the two surfaces fails CI rather than picker / framing.
     fn assert_cached_matches_uncached(mut build: impl FnMut() -> Scene) {
         let uncached = build().aabb().unwrap();
-        let spatial = SceneSpatial::primed(build());
+        let spatial = SceneSpatial::primed(build()).unwrap();
         let cached = scene_aabb(&spatial);
         assert_eq!(uncached, cached);
     }
@@ -365,7 +378,7 @@ mod invalidation_discipline {
             resources: vec![],
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
-        let mut spatial = SceneSpatial::primed(scene);
+        let mut spatial = SceneSpatial::primed(scene).unwrap();
         let before = spatial.object(0).unwrap().local_aabb().unwrap();
         let new_transform =
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
@@ -384,34 +397,43 @@ mod invalidation_discipline {
     }
 
     #[test]
-    fn invalidate_object_clears_inline_cache() {
+    fn invalidate_leaf_clears_inline_cache() {
         let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
-        let mut spatial = SceneSpatial::primed(scene);
+        let mut spatial = SceneSpatial::primed(scene).unwrap();
         // Prime via a query, then invalidate, then assert the next
         // query still returns the right value (because the cache is
         // rebuilt lazily; invalidation should not corrupt
         // anything, just discard).
-        let before = spatial.object(0).unwrap().local_aabb().unwrap();
-        spatial.invalidate_object(0);
-        let after = spatial.object(0).unwrap().local_aabb().unwrap();
+        let leaf_id = spatial.leaf_id_at_index(0).unwrap();
+        let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
+        spatial.invalidate_leaf(leaf_id);
+        let after = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         assert_eq!(before, after);
     }
 
     #[test]
-    fn invalidate_resource_clears_resource_cache() {
+    fn invalidate_mesh_resource_clears_resource_cache() {
         let scene = Scene {
             meta: None,
             resources: vec![triangle_mesh(2.0)],
             objects: vec![resource_object(0, Transform3D::Identity)],
         };
-        let mut spatial = SceneSpatial::primed(scene);
-        let before = spatial.object(0).unwrap().local_aabb().unwrap();
-        spatial.invalidate_resource(0);
-        let after = spatial.object(0).unwrap().local_aabb().unwrap();
+        let mut spatial = SceneSpatial::primed(scene).unwrap();
+        let leaf_id = spatial.leaf_id_at_index(0).unwrap();
+        let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
+        let rid = {
+            let node = spatial.graph().node(leaf_id).unwrap();
+            let NodeKind::Leaf(LeafPayload::MeshResource(rid)) = &node.kind else {
+                panic!("expected resource-backed leaf");
+            };
+            *rid
+        };
+        spatial.invalidate_mesh_resource(rid);
+        let after = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         assert_eq!(before, after);
     }
 
@@ -441,9 +463,9 @@ mod invalidation_discipline {
         let mut headless_scene = scene.clone();
         edit.apply_to_scene(&mut headless_scene);
 
-        let mut spatial = SceneSpatial::new(scene);
+        let mut spatial = SceneSpatial::new(scene).unwrap();
         spatial.apply_edit(edit);
-        let cached_scene = spatial.into_scene();
+        let cached_scene = spatial.scene();
 
         assert_eq!(
             headless_scene.objects.len(),
@@ -461,18 +483,19 @@ mod invalidation_discipline {
     }
 
     #[test]
-    fn invalidate_object_on_resource_object_is_noop() {
-        // Resource objects don't have inline cache slots; calling
-        // `invalidate_object` on their idx must be a no-op rather
-        // than corrupting the inline vec layout.
+    fn invalidate_leaf_on_resource_backed_leaf_preserves_resource_cache() {
+        // A resource-backed leaf has no inline cache slot; calling
+        // `invalidate_leaf` on it is a no-op for that leaf and must
+        // not corrupt the resource cache the leaf reads from.
         let scene = Scene {
             meta: None,
             resources: vec![triangle_mesh(1.0)],
             objects: vec![resource_object(0, Transform3D::Identity)],
         };
-        let mut spatial = SceneSpatial::primed(scene);
-        spatial.invalidate_object(0);
-        assert!(spatial.object(0).unwrap().local_aabb().is_some());
+        let mut spatial = SceneSpatial::primed(scene).unwrap();
+        let leaf_id = spatial.leaf_id_at_index(0).unwrap();
+        spatial.invalidate_leaf(leaf_id);
+        assert!(spatial.leaf(leaf_id).unwrap().local_aabb().is_some());
     }
 }
 
@@ -532,6 +555,7 @@ mod transformed_aabb {
             resources: vec![],
             objects: vec![inline_object(mesh, transform)],
         })
+        .unwrap()
     }
 
     fn assert_aabb_approx(actual: sc_mesh_core::Aabb, min: [f32; 3], max: [f32; 3], eps: f32) {

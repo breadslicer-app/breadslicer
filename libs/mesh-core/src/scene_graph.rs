@@ -191,6 +191,20 @@ impl SceneGraph {
         &self.roots
     }
 
+    /// Number of slots in the node arena, including tombstones for
+    /// deleted nodes. Always `>=` the count of live nodes. Useful as
+    /// the size for parallel-`Vec` caches indexed by `NodeId::index()`.
+    pub fn nodes_len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Number of slots in the mesh-resource arena, including
+    /// tombstones for deleted resources. Useful as the size for
+    /// parallel-`Vec` caches indexed by `MeshResourceId::index()`.
+    pub fn mesh_resources_len(&self) -> usize {
+        self.mesh_resources.len()
+    }
+
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.index())?.as_ref()
     }

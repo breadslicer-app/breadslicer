@@ -164,7 +164,7 @@ pub fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<usize> {
         let Some(local) = query.local_aabb() else {
             continue;
         };
-        let (min, max) = world_aabb_from_local(local, &query.object().transform);
+        let (min, max) = world_aabb_from_local(local, &query.world_transform());
         if !ray_hits_aabb(ray, min, max) {
             continue;
         }
@@ -258,7 +258,7 @@ pub(crate) fn ray_hits_triangle_oriented(
 /// out-of-range face vertex indices). The picker treats every such
 /// case as a clean miss rather than surfacing an error.
 pub(crate) fn ray_hits_object_query(ray: &Ray, query: &ObjectQuery<'_>) -> Option<f32> {
-    let local = local_ray_for_object(ray, &query.object().transform)?;
+    let local = local_ray_for_object(ray, &query.world_transform())?;
     let local_ray = Ray {
         origin: local.origin,
         direction: local.direction,
@@ -618,7 +618,7 @@ mod pick_object_tests {
     }
 
     fn spatial_for(scene: Scene) -> SceneSpatial {
-        SceneSpatial::new(scene)
+        SceneSpatial::new(scene).unwrap()
     }
 
     #[test]
@@ -720,7 +720,7 @@ mod pick_object_tests {
         // Confirm the AABB rejector specifically rules out the
         // off-axis object: its world-space AABB should miss the ray.
         let q = spatial.object(0).unwrap();
-        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
+        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
             !ray_hits_aabb(&ray, min, max),
             "off-axis object's world AABB must miss the on-axis ray"
@@ -743,7 +743,7 @@ mod pick_object_tests {
             direction: Vec3::Z,
         };
         let q = spatial.object(0).unwrap();
-        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
+        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
             ray_hits_aabb(&ray, min, max),
             "AABB should be intersected: that's the whole point of this test"
@@ -780,7 +780,7 @@ mod pick_object_tests {
             direction: Vec3::Z,
         };
         let q = spatial.object(0).unwrap();
-        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.object().transform);
+        let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
             ray_hits_aabb(&from_above, min, max) && ray_hits_aabb(&from_below, min, max),
             "both rays must intersect the world AABB; otherwise the test isn't \
@@ -798,12 +798,13 @@ mod pick_object_tests {
     }
 
     #[test]
-    fn dangling_resource_index_is_treated_as_a_no_op() {
-        // The picker shouldn't surface errors for malformed scenes;
-        // it just skips the object. The renderer's scene-build path
-        // already errors on dangling indices, so the picker only sees
-        // such scenes if something else has gone wrong upstream.
-        let spatial = spatial_for(Scene {
+    fn dangling_resource_index_is_rejected_at_construction() {
+        // Scenes with dangling resource references are rejected by
+        // SceneSpatial construction, so the picker is structurally
+        // unable to receive one at runtime. This test pins the
+        // construction-time rejection rather than the silent-skip
+        // behaviour that used to live inside the picker loop.
+        let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -811,12 +812,8 @@ mod pick_object_tests {
                 transform: Transform3D::Identity,
                 content: SceneObjectContent::Resource(99),
             }],
-        });
-        let ray = Ray {
-            origin: Vec3::ZERO,
-            direction: Vec3::X,
         };
-        assert!(pick_object(&ray, &spatial).is_none());
+        assert!(SceneSpatial::new(scene).is_err());
     }
 
     #[test]

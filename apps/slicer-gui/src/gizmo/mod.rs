@@ -26,7 +26,7 @@ use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 /// World-space pivot for the gizmo: the local-AABB centre of the
 /// object, transformed by the object's `Transform3D`. Returns `None`
 /// when the object has no vertices, an out-of-bounds resource
-/// reference, or `idx` is out of range — all of which render the
+/// reference, or `idx` is out of range; all of which render the
 /// gizmo unattachable.
 pub fn pivot_for_object(spatial: &SceneSpatial, idx: usize) -> Option<Vec3> {
     let query = spatial.object(idx)?;
@@ -34,7 +34,7 @@ pub fn pivot_for_object(spatial: &SceneSpatial, idx: usize) -> Option<Vec3> {
     let lmin = Vec3::from(aabb.min().coords());
     let lmax = Vec3::from(aabb.max().coords());
     let local_centre = (lmin + lmax) * 0.5;
-    Some(match &query.object().transform {
+    Some(match &query.world_transform() {
         Transform3D::Identity => local_centre,
         Transform3D::Affine(a) => {
             let v = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new([
@@ -87,7 +87,7 @@ mod pivot_tests {
     }
 
     fn spatial_for(scene: Scene) -> SceneSpatial {
-        SceneSpatial::new(scene)
+        SceneSpatial::new(scene).unwrap()
     }
 
     #[test]
@@ -157,8 +157,14 @@ mod pivot_tests {
     }
 
     #[test]
-    fn pivot_for_dangling_resource_is_none() {
-        let spatial = spatial_for(Scene {
+    fn dangling_resource_index_is_rejected_at_construction() {
+        // Scenes with dangling resource references are rejected by
+        // SceneSpatial construction, so pivot_for_object is
+        // structurally unable to observe one at runtime. This test
+        // pins the construction-time rejection rather than the
+        // silent-`None` behaviour that used to live inside
+        // pivot_for_object.
+        let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![SceneObject {
@@ -166,8 +172,8 @@ mod pivot_tests {
                 transform: Transform3D::Identity,
                 content: SceneObjectContent::Resource(7),
             }],
-        });
-        assert!(pivot_for_object(&spatial, 0).is_none());
+        };
+        assert!(SceneSpatial::new(scene).is_err());
     }
 }
 

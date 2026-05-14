@@ -94,12 +94,12 @@ proptest! {
     /// might produce. Both arms walk the same data through the same
     /// Arvo formula; the only difference is whether per-mesh AABBs
     /// are recomputed each call or read from `OnceLock`. Equality
-    /// must be exact — the cache reads back the same `Aabb` it
+    /// must be exact: the cache reads back the same `Aabb` it
     /// stored.
     #[test]
     fn cached_and_uncached_aabb_agree(scene in scene_strategy()) {
         let uncached = scene.aabb().unwrap();
-        let spatial = SceneSpatial::primed(scene);
+        let spatial = SceneSpatial::primed(scene).unwrap();
         let cached = scene_aabb(&spatial);
         prop_assert_eq!(uncached, cached);
     }

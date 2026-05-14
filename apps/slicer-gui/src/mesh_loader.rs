@@ -18,7 +18,8 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use sc_mesh_core::scene::{Scene, Transform3D};
+use sc_mesh_core::scene::Transform3D;
+use sc_mesh_core::scene_graph::{SceneGraph, SceneGraphError};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_spatial::SceneSpatial;
@@ -116,30 +117,38 @@ pub(crate) fn start_load_with_ticket(
     spawn_load(ticket, path, device, build_volume);
 }
 
-/// Translates every object in `scene` by a single shared delta so the
-/// scene's world AABB lands centred on the envelope's XY centre with
-/// its bottom resting on the envelope's Z floor. A scene with no
+/// Translates every scene root in `graph` by a single shared delta so
+/// the graph's world AABB lands centred on the envelope's XY centre
+/// with its bottom resting on the envelope's Z floor. A graph with no
 /// geometry, or one already at the target, is a no-op.
 ///
 /// The translation is composed as an outer left-multiplication onto
-/// each object's existing transform, so the per-object relative layout
-/// the file author chose is preserved (multi-object OBJ groups stay
-/// in formation).
-pub(crate) fn place_on_plate(scene: &mut Scene, build_volume: BuildVolume) -> anyhow::Result<()> {
+/// each root's existing local transform, so the per-leaf relative
+/// layout the file author chose is preserved (multi-object OBJ groups
+/// stay in formation). The loader produces single-root graphs today,
+/// so the loop iterates once in practice; the multi-root path keeps
+/// the semantics well-defined for future graph shapes.
+pub(crate) fn place_on_plate(
+    graph: &mut SceneGraph,
+    build_volume: BuildVolume,
+) -> anyhow::Result<()> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let target_xy = [0.5 * (env_min.x + env_max.x), 0.5 * (env_min.y + env_max.y)];
     let floor_z = env_min.z;
-    let Some(delta) = scene.translation_to_drop_at(target_xy, floor_z)? else {
+    let Some(delta) = graph.translation_to_drop_at(target_xy, floor_z)? else {
         return Ok(());
     };
     if delta == [0.0, 0.0, 0.0] {
         return Ok(());
     }
-    let drop = AffineTransform3D::from_translation(delta);
-    for obj in &mut scene.objects {
-        let outer = Transform3D::Affine(drop);
-        obj.transform = outer.compose(&obj.transform);
+    let outer = Transform3D::Affine(AffineTransform3D::from_translation(delta));
+    for root_id in graph.roots().to_vec() {
+        let current = graph
+            .node(root_id)
+            .ok_or(SceneGraphError::DanglingNodeId { id: root_id })?
+            .local_transform;
+        graph.set_local_transform(root_id, outer.compose(&current))?;
     }
     Ok(())
 }
@@ -179,32 +188,35 @@ pub(crate) fn spawn_load(
                     Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
                 }
             };
-        let result = parsed.and_then(|LoadedMesh { graph, warnings }| {
-            // Flatten back to a Scene at the boundary: the GUI's
-            // GpuScene and SceneSpatial still speak Scene. When
-            // those migrate, this bridge collapses to passing the
-            // graph straight through.
-            let mut scene = graph
-                .try_flatten()
-                .map_err(|e| anyhow::anyhow!("loader output flattens: {e}"))?;
-            // Drop the parsed mesh onto the build plate before the GPU
-            // upload and cache priming run on it, so both observe the
-            // placed world coordinates.
-            place_on_plate(&mut scene, build_volume)?;
-            let gpu_scene = GpuScene::build(&device, &scene)?;
-            // Eager priming: build the per-mesh spatial caches on this
-            // worker thread, so the UI thread receives a fully-primed
-            // `SceneSpatial` and the first picker click / gizmo
-            // attachment doesn't pay the build cost synchronously.
-            let spatial = SceneSpatial::primed(scene);
-            Ok(PreparedScene {
-                spatial,
-                gpu_scene,
-                device: device.clone(),
-                warnings,
-                source_path: path.clone(),
-            })
-        });
+        let result = parsed.and_then(
+            |LoadedMesh {
+                 mut graph,
+                 warnings,
+             }| {
+                // Drop the parsed graph onto the build plate before the GPU
+                // upload and cache priming run on it, so both observe the
+                // placed world coordinates.
+                place_on_plate(&mut graph, build_volume)?;
+                // Eager priming: build the per-mesh spatial caches on this
+                // worker thread, so the UI thread receives a fully-primed
+                // `SceneSpatial` and the first picker click / gizmo
+                // attachment doesn't pay the build cost synchronously.
+                let spatial = SceneSpatial::primed_graph(graph)?;
+                // BRIDGE: GpuScene::build still takes &Scene. Feed it via
+                // the mirror SceneSpatial maintains alongside the graph.
+                // DELETE-ON-CLEANUP: when GpuScene::build flips to
+                // &SceneGraph (later in phase 4b), replace with
+                // `GpuScene::build(&device, spatial.graph())`.
+                let gpu_scene = GpuScene::build(&device, spatial.scene())?;
+                Ok(PreparedScene {
+                    spatial,
+                    gpu_scene,
+                    device: device.clone(),
+                    warnings,
+                    source_path: path.clone(),
+                })
+            },
+        );
         ticket.deposit(path, result);
     });
 }
@@ -337,6 +349,7 @@ mod place_on_plate_tests {
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene_graph_node::{LeafPayload, NodeKind};
 
     fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
         let v = |x, y, z| Vertex::new([x, y, z]);
@@ -378,10 +391,10 @@ mod place_on_plate_tests {
     }
 
     #[test]
-    fn empty_scene_is_a_no_op() {
-        let mut scene = Scene::default();
-        place_on_plate(&mut scene, small_envelope()).unwrap();
-        assert!(scene.objects.is_empty());
+    fn empty_graph_is_a_no_op() {
+        let mut graph = SceneGraph::try_from(Scene::default()).unwrap();
+        place_on_plate(&mut graph, small_envelope()).unwrap();
+        assert!(graph.aabb().unwrap().is_none());
     }
 
     #[test]
@@ -390,7 +403,7 @@ mod place_on_plate_tests {
         // transform. After placement the world AABB must be centred on
         // (0, 0) in XY and resting on Z=0: world min should be
         // (-5, -10, 0).
-        let mut scene = Scene {
+        let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(
@@ -398,18 +411,19 @@ mod place_on_plate_tests {
                 Transform3D::Identity,
             )],
         };
-        place_on_plate(&mut scene, small_envelope()).unwrap();
-        let world_aabb = scene.aabb().unwrap().unwrap();
+        let mut graph = SceneGraph::try_from(scene).unwrap();
+        place_on_plate(&mut graph, small_envelope()).unwrap();
+        let world_aabb = graph.aabb().unwrap().unwrap();
         assert_eq!(world_aabb.min().coords(), [-5.0, -10.0, 0.0]);
         assert_eq!(world_aabb.max().coords(), [5.0, 10.0, 10.0]);
     }
 
     #[test]
-    fn already_placed_scene_is_a_no_op() {
+    fn already_placed_graph_is_a_no_op() {
         // Cube already centred on origin with bottom at Z=0. Placement
-        // computes a zero translation and leaves every object's
+        // computes a zero translation and leaves the root's local
         // transform untouched (still Identity, not Affine(zero)).
-        let mut scene = Scene {
+        let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(
@@ -417,17 +431,23 @@ mod place_on_plate_tests {
                 Transform3D::Identity,
             )],
         };
-        place_on_plate(&mut scene, small_envelope()).unwrap();
-        assert!(matches!(scene.objects[0].transform, Transform3D::Identity));
+        let mut graph = SceneGraph::try_from(scene).unwrap();
+        let root_id = graph.roots()[0];
+        place_on_plate(&mut graph, small_envelope()).unwrap();
+        assert!(matches!(
+            graph.node(root_id).unwrap().local_transform,
+            Transform3D::Identity
+        ));
     }
 
     #[test]
-    fn multi_object_scene_keeps_relative_layout() {
-        // Two cubes 9 mm apart in X and Y. After placement, the
-        // union AABB lands centred on origin with bottom on Z=0; the
+    fn multi_object_graph_keeps_relative_layout() {
+        // Two cubes 9 mm apart in X and Y. After placement, the union
+        // AABB lands centred on origin with bottom on Z=0; the
         // individual cubes' relative offset is unchanged (still 9 mm
-        // apart on X and Y).
-        let mut scene = Scene {
+        // apart on X and Y) because the placement translates the root
+        // Group only, never the leaves.
+        let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![
@@ -441,20 +461,9 @@ mod place_on_plate_tests {
                 ),
             ],
         };
-        place_on_plate(&mut scene, small_envelope()).unwrap();
-        let aabb_0 = match &scene.objects[0].content {
-            SceneObjectContent::Mesh(m) => m.local_aabb().unwrap(),
-            SceneObjectContent::Resource(_) => unreachable!(),
-        };
-        let aabb_1 = match &scene.objects[1].content {
-            SceneObjectContent::Mesh(m) => m.local_aabb().unwrap(),
-            SceneObjectContent::Resource(_) => unreachable!(),
-        };
-        // The local AABBs are unchanged by placement (we only touch
-        // transforms). Verify world AABBs by applying each object's
-        // transform to its corners and checking the union sits on the
-        // plate.
-        let world = scene.aabb().unwrap().unwrap();
+        let mut graph = SceneGraph::try_from(scene).unwrap();
+        place_on_plate(&mut graph, small_envelope()).unwrap();
+        let world = graph.aabb().unwrap().unwrap();
         assert_eq!(world.min().coords()[2], 0.0, "union bottom rests on Z=0");
         // Union XY extent is 10 x 10 mm; centred on origin gives
         // [-5, 5] on both X and Y.
@@ -462,21 +471,40 @@ mod place_on_plate_tests {
         assert_eq!(world.min().coords()[1], -5.0);
         assert_eq!(world.max().coords()[0], 5.0);
         assert_eq!(world.max().coords()[1], 5.0);
-        // Sanity: the local AABBs were not mutated.
-        assert_eq!(aabb_0.min().coords(), [100.0, 200.0, 50.0]);
-        assert_eq!(aabb_1.min().coords(), [109.0, 209.0, 53.0]);
+        // Sanity: the leaves' local AABBs were not mutated; only the
+        // root's local transform moved.
+        let root_id = graph.roots()[0];
+        let children = match &graph.node(root_id).unwrap().kind {
+            NodeKind::Group { children } => children.clone(),
+            _ => unreachable!("try_from(Scene) builds a Group root"),
+        };
+        let mesh_for = |child_idx: usize| -> &IndexedMesh {
+            match &graph.node(children[child_idx]).unwrap().kind {
+                NodeKind::Leaf(LeafPayload::Mesh(m)) => m,
+                _ => unreachable!("try_from(Scene) builds Mesh leaves"),
+            }
+        };
+        assert_eq!(
+            mesh_for(0).local_aabb().unwrap().min().coords(),
+            [100.0, 200.0, 50.0]
+        );
+        assert_eq!(
+            mesh_for(1).local_aabb().unwrap().min().coords(),
+            [109.0, 209.0, 53.0]
+        );
     }
 
     #[test]
-    fn composes_with_existing_object_transform() {
+    fn composes_with_existing_leaf_transform() {
         // The parsed object already carries a non-identity transform
         // (synthetic: STL/OBJ readers don't produce these today, but
         // the helper must be correct under composition). Local cube
-        // [0, 0, 0] -> [1, 1, 1] under translation (10, 20, 5): world
-        // AABB [10, 20, 5] -> [11, 21, 6]; placement delta
-        // (-10.5, -20.5, -5). After placement the world AABB sits on
+        // [0, 0, 0] -> [1, 1, 1] under leaf translation (10, 20, 5):
+        // world AABB [10, 20, 5] -> [11, 21, 6]; placement delta
+        // (-10.5, -20.5, -5) is applied to the root Group's local
+        // transform. After placement the world AABB sits on
         // [-0.5, -0.5, 0] -> [0.5, 0.5, 1].
-        let mut scene = Scene {
+        let scene = Scene {
             meta: None,
             resources: vec![],
             objects: vec![inline_object(
@@ -484,8 +512,9 @@ mod place_on_plate_tests {
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),
             )],
         };
-        place_on_plate(&mut scene, small_envelope()).unwrap();
-        let world = scene.aabb().unwrap().unwrap();
+        let mut graph = SceneGraph::try_from(scene).unwrap();
+        place_on_plate(&mut graph, small_envelope()).unwrap();
+        let world = graph.aabb().unwrap().unwrap();
         assert_eq!(world.min().coords(), [-0.5, -0.5, 0.0]);
         assert_eq!(world.max().coords(), [0.5, 0.5, 1.0]);
     }

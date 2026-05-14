@@ -127,7 +127,7 @@ mod translation_clamp_tests {
                 content: SceneObjectContent::Mesh(mesh),
             }],
         };
-        SceneSpatial::new(scene)
+        SceneSpatial::new(scene).unwrap()
     }
 
     fn spatial_with_octahedron() -> SceneSpatial {
@@ -158,7 +158,7 @@ mod translation_clamp_tests {
                 content: SceneObjectContent::Mesh(mesh),
             }],
         };
-        SceneSpatial::new(scene)
+        SceneSpatial::new(scene).unwrap()
     }
 
     fn spatial_with_empty_mesh() -> SceneSpatial {
@@ -176,7 +176,7 @@ mod translation_clamp_tests {
                 content: SceneObjectContent::Mesh(mesh),
             }],
         };
-        SceneSpatial::new(scene)
+        SceneSpatial::new(scene).unwrap()
     }
 
     fn translate(d: [f64; 3]) -> Transform3D {
