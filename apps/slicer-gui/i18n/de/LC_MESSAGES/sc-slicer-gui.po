@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-08 17:09+0000\n"
-"PO-Revision-Date: 2026-05-01 06:44+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-05-19 11:18+0000\n"
+"Last-Translator: Cheesus42 <cheesus42@noreply.codeberg.org>\n"
 "Language-Team: German <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/de/>\n"
 "Language: de\n"
@@ -12,7 +12,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.17\n"
+"X-Generator: Weblate 2026.5\n"
 
 #: ui/about-window.slint:10
 msgctxt "AboutWindow"
@@ -47,7 +47,7 @@ msgstr "Schließen"
 #: ui/replace-scene-dialog.slint:14
 msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
-msgstr ""
+msgstr "Öffne neues Modell"
 
 #: ui/replace-scene-dialog.slint:61
 msgctxt "ReplaceSceneDialog"
@@ -57,7 +57,7 @@ msgstr ""
 #: ui/replace-scene-dialog.slint:67
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
-msgstr ""
+msgstr "Öffnet: {}"
 
 #: ui/replace-scene-dialog.slint:80
 msgctxt "ReplaceSceneDialog"
@@ -65,29 +65,28 @@ msgid ""
 "The current scene will be closed. Export it first to keep any changes you've "
 "made."
 msgstr ""
+"Die jetzige Szene wird geschlossen. Exportiere sie erst, um Änderungen zu "
+"behalten."
 
 #: ui/replace-scene-dialog.slint:84
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
-msgstr ""
+msgstr "Die jetzige Szene wird geschlossen."
 
 #: ui/replace-scene-dialog.slint:98
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
-msgstr ""
+msgstr "Verwerfen & Öffnen"
 
 #: ui/replace-scene-dialog.slint:105
-#, fuzzy
-#| msgctxt "MenuBar"
-#| msgid "Open…"
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
-msgstr "Öffnen…"
+msgstr "Exportieren und Öffnen…"
 
 #: ui/replace-scene-dialog.slint:112
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
-msgstr ""
+msgstr "Abbrechen"
 
 #: ui/preferences/preferences-window.slint:12
 msgctxt "PreferencesWindow"
@@ -117,12 +116,12 @@ msgstr "3D Ansicht"
 #: ui/preferences/3dview.slint:21
 msgctxt "PreferencesPage"
 msgid "Build volume (mm)"
-msgstr ""
+msgstr "Buildvolumen (mm)"
 
 #: ui/preferences/3dview.slint:31
 msgctxt "PreferencesPage"
 msgid "Width"
-msgstr ""
+msgstr "Breite"
 
 #: ui/preferences/3dview.slint:39
 msgctxt "PreferencesPage"
@@ -132,7 +131,7 @@ msgstr ""
 #: ui/preferences/3dview.slint:49
 msgctxt "PreferencesPage"
 msgid "Depth"
-msgstr ""
+msgstr "Tiefe"
 
 #: ui/preferences/3dview.slint:57
 msgctxt "PreferencesPage"
@@ -140,12 +139,9 @@ msgid "Build volume depth in millimetres"
 msgstr ""
 
 #: ui/preferences/3dview.slint:67
-#, fuzzy
-#| msgctxt "AppearancePreferences"
-#| msgid "Light"
 msgctxt "PreferencesPage"
 msgid "Height"
-msgstr "Hell"
+msgstr "Höhe"
 
 #: ui/preferences/3dview.slint:75
 msgctxt "PreferencesPage"
@@ -155,7 +151,7 @@ msgstr ""
 #: ui/preferences/3dview.slint:84
 msgctxt "PreferencesPage"
 msgid "Reset to default"
-msgstr ""
+msgstr "Zurücksetzen auf Standard"
 
 #: ui/preferences/appearance.slint:12
 msgctxt "PreferencesPage"
