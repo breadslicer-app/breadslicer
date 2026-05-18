@@ -81,6 +81,25 @@ impl SceneGraph {
                 .ok_or(SceneGraphError::DanglingMeshResource { id: *rid }),
         }
     }
+
+    /// Resolve the mesh a leaf addresses by stable [`NodeId`]: for
+    /// `LeafPayload::Mesh` returns the inline mesh; for
+    /// `LeafPayload::MeshResource` returns the resource it points at.
+    /// Errors with [`SceneGraphError::DanglingNodeId`] if `id` does
+    /// not name a live node, [`SceneGraphError::NotALeaf`] if the
+    /// addressed node is not a `Leaf`, and
+    /// [`SceneGraphError::DanglingMeshResource`] if the leaf
+    /// references a missing resource.
+    pub fn mesh_at_leaf(&self, id: NodeId) -> Result<&IndexedMesh, SceneGraphError> {
+        let node = self
+            .node(id)
+            .ok_or(SceneGraphError::DanglingNodeId { id })?;
+        let payload = match &node.kind {
+            NodeKind::Leaf(p) => p,
+            _ => return Err(SceneGraphError::NotALeaf { node_id: id }),
+        };
+        self.resolve_leaf_mesh(payload)
+    }
 }
 
 /// Bakes a single leaf into its ancestor-chain frame. For a leaf under

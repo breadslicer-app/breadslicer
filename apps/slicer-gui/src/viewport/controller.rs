@@ -406,17 +406,10 @@ impl ViewportController {
     /// in-progress drag on Tab; if that turns out to be wrong, the
     /// fix is to call `abort_gizmo_drag` here.
     pub fn on_selection_cycle(&self, delta: i32) {
-        // Count reachable leaves by walking the pre-order resolver
-        // until it returns `None`. Cycle is user-triggered (Tab), so
-        // the O(n^2) of repeated `leaf_id_at_index` calls is fine.
         let scene_len = self
             .session
             .document()
-            .with_scene(|s| {
-                (0usize..)
-                    .take_while(|&i| s.leaf_id_at_index(i).is_some())
-                    .count()
-            })
+            .with_scene(|s| s.graph().reachable_leaf_count())
             .unwrap_or(0);
         if scene_len == 0 {
             return;

@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::SceneGraph;
-use sc_mesh_core::{IndexedMesh, scene::Scene};
+use sc_mesh_core::{IndexedMesh, NodeId, NodeKind, SceneGraph, bake_leaf_to_world};
 
 use crate::error::WriteObjError;
 
@@ -32,15 +31,7 @@ pub fn write_obj<W>(graph: &SceneGraph, writer: &mut W) -> Result<(), WriteObjEr
 where
     W: std::io::Write,
 {
-    let scene = graph.try_flatten()?;
-    write_flat_scene(&scene, writer)
-}
-
-fn write_flat_scene<W>(scene: &Scene, writer: &mut W) -> Result<(), WriteObjError>
-where
-    W: std::io::Write,
-{
-    if let Some(meta) = &scene.meta
+    if let Some(meta) = graph.meta()
         && let Some(comment) = &meta.comment
     {
         // The reader joins multi-line headers with `\n`, so each
@@ -53,20 +44,18 @@ where
         }
     }
 
-    let write_object_markers = scene.objects.len() > 1;
+    let leaf_ids = collect_reachable_leaves(graph);
+    let write_object_markers = leaf_ids.len() > 1;
     let mut vertex_offset: u32 = 0;
 
-    for obj in &scene.objects {
-        // OBJ has no per-object transform, so we bake each object's
-        // transform into its vertices and face normals before writing.
-        // The source mesh's name is preserved via the `o` marker; the
-        // baked mesh drops metadata by design.
-        let name = obj
-            .resolve_mesh(&scene.resources)?
-            .meta()
-            .as_ref()
-            .and_then(|m| m.name.clone());
-        let baked = obj.baked_mesh(&scene.resources)?;
+    for id in leaf_ids {
+        // OBJ has no per-object transform, so each leaf's composed
+        // world transform is baked into its vertices and face
+        // normals. The source mesh's name is preserved via the `o`
+        // marker; the baked mesh drops metadata by design.
+        let mesh = graph.mesh_at_leaf(id)?;
+        let name = mesh.meta().as_ref().and_then(|m| m.name.clone());
+        let baked = bake_leaf_to_world(graph, id)?;
         write_mesh_section(
             &baked,
             name.as_deref(),
@@ -78,6 +67,30 @@ where
 
     writer.flush()?;
     Ok(())
+}
+
+/// Reachable leaves under `graph.roots()` in pre-order traversal.
+/// Groups, CSG and instance edges descend; `Instance` is currently
+/// skipped because production scenes do not construct them yet (the
+/// phase contract from the master plan).
+fn collect_reachable_leaves(graph: &SceneGraph) -> Vec<NodeId> {
+    let mut ids: Vec<NodeId> = Vec::new();
+    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let Some(node) = graph.node(id) else {
+            continue;
+        };
+        match &node.kind {
+            NodeKind::Leaf(_) => ids.push(id),
+            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NodeKind::Instance { .. } => {}
+        }
+    }
+    ids
 }
 
 fn write_mesh_section<W>(

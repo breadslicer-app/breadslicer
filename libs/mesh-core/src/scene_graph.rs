@@ -252,6 +252,30 @@ impl SceneGraph {
             })
     }
 
+    /// Count of reachable leaves under `roots()`, traversed in
+    /// pre-order. Mirrors what callers see if they enumerate via
+    /// repeated `leaf_id_at_index(0..)` calls but does it in a
+    /// single O(n) walk.
+    pub fn reachable_leaf_count(&self) -> usize {
+        let mut count = 0usize;
+        let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.node(id) else {
+                continue;
+            };
+            match &node.kind {
+                NodeKind::Leaf(_) => count += 1,
+                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                    for child in children.iter().rev() {
+                        stack.push(*child);
+                    }
+                }
+                NodeKind::Instance { .. } => {}
+            }
+        }
+        count
+    }
+
     /// Mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
     /// `None` for any other node kind (groups, CSG, instances,
     /// mesh-resource-backed leaves) or a dangling id. Focused
@@ -1172,6 +1196,31 @@ mod scene_graph_construction_tests {
         let mut g = SceneGraph::new();
         let bogus = NodeId(NonZeroU32::new(99).unwrap());
         assert!(g.inline_mesh_mut(bogus).is_none());
+    }
+
+    #[test]
+    fn reachable_leaf_count_matches_repeated_leaf_id_at_index() {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        for _ in 0..3 {
+            let leaf = g
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(unit_triangle()),
+                )
+                .unwrap();
+            g.add_child(root, leaf).unwrap();
+        }
+        // Groups are not leaves; only the three leaves count.
+        assert_eq!(g.reachable_leaf_count(), 3);
+    }
+
+    #[test]
+    fn reachable_leaf_count_is_zero_for_empty_graph() {
+        let g = SceneGraph::new();
+        assert_eq!(g.reachable_leaf_count(), 0);
     }
 }
 
