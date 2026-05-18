@@ -219,7 +219,7 @@ mod translation_clamp_tests {
             .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
             .unwrap();
         graph.add_child(root, leaf).unwrap();
-        SceneSpatial::primed_graph(graph).unwrap()
+        SceneSpatial::primed_graph(graph)
     }
 
     fn spatial_with_empty_mesh() -> SceneSpatial {

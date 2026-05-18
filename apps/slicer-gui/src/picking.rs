@@ -652,8 +652,12 @@ mod pick_object_tests {
             origin: Vec3::new(10.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        assert!(ray_hits_object_query(&ray, &id_spatial.object(0).unwrap()).is_none());
-        assert!(ray_hits_object_query(&ray, &shifted_spatial.object(0).unwrap()).is_some());
+        let id_leaf = id_spatial.leaf_id_at_index(0).unwrap();
+        let shifted_leaf = shifted_spatial.leaf_id_at_index(0).unwrap();
+        assert!(ray_hits_object_query(&ray, &id_spatial.leaf(id_leaf).unwrap()).is_none());
+        assert!(
+            ray_hits_object_query(&ray, &shifted_spatial.leaf(shifted_leaf).unwrap()).is_some()
+        );
     }
 
     #[test]
@@ -728,7 +732,7 @@ mod pick_object_tests {
 
         // Confirm the AABB rejector specifically rules out the
         // off-axis object: its world-space AABB should miss the ray.
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(spatial.leaf_id_at_index(0).unwrap()).unwrap();
         let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
             !ray_hits_aabb(&ray, min, max),
@@ -751,7 +755,7 @@ mod pick_object_tests {
             origin: Vec3::new(0.0, 0.0, -5.0),
             direction: Vec3::Z,
         };
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(spatial.leaf_id_at_index(0).unwrap()).unwrap();
         let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
             ray_hits_aabb(&ray, min, max),
@@ -788,7 +792,7 @@ mod pick_object_tests {
             origin: Vec3::new(0.0, 0.0, -5.0),
             direction: Vec3::Z,
         };
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(spatial.leaf_id_at_index(0).unwrap()).unwrap();
         let (min, max) = world_aabb_from_local(q.local_aabb().unwrap(), &q.world_transform());
         assert!(
             ray_hits_aabb(&from_above, min, max) && ray_hits_aabb(&from_below, min, max),

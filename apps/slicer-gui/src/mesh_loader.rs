@@ -201,7 +201,7 @@ pub(crate) fn spawn_load(
                 // worker thread, so the UI thread receives a fully-primed
                 // `SceneSpatial` and the first picker click / gizmo
                 // attachment doesn't pay the build cost synchronously.
-                let spatial = SceneSpatial::primed_graph(graph)?;
+                let spatial = SceneSpatial::primed_graph(graph);
                 let gpu_scene = GpuScene::build(&device, spatial.graph())?;
                 Ok(PreparedScene {
                     spatial,

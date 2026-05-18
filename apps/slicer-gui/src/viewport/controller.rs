@@ -406,10 +406,17 @@ impl ViewportController {
     /// in-progress drag on Tab; if that turns out to be wrong, the
     /// fix is to call `abort_gizmo_drag` here.
     pub fn on_selection_cycle(&self, delta: i32) {
+        // Count reachable leaves by walking the pre-order resolver
+        // until it returns `None`. Cycle is user-triggered (Tab), so
+        // the O(n^2) of repeated `leaf_id_at_index` calls is fine.
         let scene_len = self
             .session
             .document()
-            .with_scene(|s| s.scene().objects.len())
+            .with_scene(|s| {
+                (0usize..)
+                    .take_while(|&i| s.leaf_id_at_index(i).is_some())
+                    .count()
+            })
             .unwrap_or(0);
         if scene_len == 0 {
             return;
@@ -1252,13 +1259,18 @@ mod viewport_click_tests {
     fn read_translation(ctrl: &ViewportController) -> Vec3 {
         ctrl.session
             .document()
-            .with_scene(|spatial| match spatial.scene().objects[0].transform {
-                Transform3D::Identity => Vec3::ZERO,
-                Transform3D::Affine(a) => Vec3::new(
-                    a.translation()[0] as f32,
-                    a.translation()[1] as f32,
-                    a.translation()[2] as f32,
-                ),
+            .with_scene(|spatial| {
+                let id = spatial
+                    .leaf_id_at_index(0)
+                    .expect("test fixture has a leaf");
+                match spatial.leaf(id).unwrap().local_transform() {
+                    Transform3D::Identity => Vec3::ZERO,
+                    Transform3D::Affine(a) => Vec3::new(
+                        a.translation()[0] as f32,
+                        a.translation()[1] as f32,
+                        a.translation()[2] as f32,
+                    ),
+                }
             })
             .unwrap()
     }
@@ -1266,9 +1278,14 @@ mod viewport_click_tests {
     fn read_linear(ctrl: &ViewportController) -> [[f64; 3]; 3] {
         ctrl.session
             .document()
-            .with_scene(|spatial| match spatial.scene().objects[0].transform {
-                Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                Transform3D::Affine(a) => *a.linear(),
+            .with_scene(|spatial| {
+                let id = spatial
+                    .leaf_id_at_index(0)
+                    .expect("test fixture has a leaf");
+                match spatial.leaf(id).unwrap().local_transform() {
+                    Transform3D::Identity => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    Transform3D::Affine(a) => *a.linear(),
+                }
             })
             .unwrap()
     }
@@ -2009,7 +2026,10 @@ mod keyboard_focus_tests {
         let after_undo = ctrl
             .session
             .document()
-            .with_scene(|s| s.scene().objects[0].transform)
+            .with_scene(|s| {
+                let id = s.leaf_id_at_index(0).expect("test fixture has a leaf");
+                s.leaf(id).unwrap().local_transform()
+            })
             .unwrap();
         assert_eq!(after_undo, Transform3D::Identity);
     }
@@ -2057,7 +2077,10 @@ mod keyboard_focus_tests {
         let after_undo = ctrl
             .session
             .document()
-            .with_scene(|s| s.scene().objects[0].transform)
+            .with_scene(|s| {
+                let id = s.leaf_id_at_index(0).expect("test fixture has a leaf");
+                s.leaf(id).unwrap().local_transform()
+            })
             .unwrap();
         assert_eq!(after_undo, Transform3D::Identity);
     }
@@ -2227,7 +2250,10 @@ mod keyboard_focus_tests {
         let transform = ctrl
             .session
             .document()
-            .with_scene(|s| s.scene().objects[0].transform)
+            .with_scene(|s| {
+                let id = s.leaf_id_at_index(0).expect("test fixture has a leaf");
+                s.leaf(id).unwrap().local_transform()
+            })
             .unwrap();
         let translation = match transform {
             Transform3D::Identity => [0.0; 3],
@@ -2264,7 +2290,10 @@ mod keyboard_focus_tests {
         let transform = ctrl
             .session
             .document()
-            .with_scene(|s| s.scene().objects[0].transform)
+            .with_scene(|s| {
+                let id = s.leaf_id_at_index(0).expect("test fixture has a leaf");
+                s.leaf(id).unwrap().local_transform()
+            })
             .unwrap();
         match transform {
             Transform3D::Identity => panic!("rotate focus should have produced an affine"),

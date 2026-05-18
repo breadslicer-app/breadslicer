@@ -16,8 +16,24 @@ use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
 use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload, NodeKind};
+use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, NodeKind};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
+
+/// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
+/// The integration tests below operate on single- or two-leaf
+/// fixtures, so resolving once at the start is enough.
+fn first_leaf(spatial: &SceneSpatial) -> NodeId {
+    spatial
+        .leaf_id_at_index(0)
+        .expect("test fixture has at least one leaf")
+}
+
+/// `n`-th leaf in pre-order. Used by the few multi-leaf fixtures.
+fn nth_leaf(spatial: &SceneSpatial, n: usize) -> NodeId {
+    spatial
+        .leaf_id_at_index(n)
+        .expect("test fixture should expose enough leaves")
+}
 
 fn vertex(x: f32, y: f32, z: f32) -> Vertex {
     Vertex::new([x, y, z])
@@ -68,7 +84,9 @@ mod object_query_binding {
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
         let spatial = SceneSpatial::new(scene).unwrap();
-        let q = spatial.object(0).expect("inline object exists");
+        let q = spatial
+            .leaf(first_leaf(&spatial))
+            .expect("inline object exists");
         let leaf_id = spatial.leaf_id_at_index(0).expect("leaf exists");
         let graph = spatial.graph();
         let node = graph.node(leaf_id).expect("leaf node lives in arena");
@@ -89,7 +107,7 @@ mod object_query_binding {
             objects: vec![resource_object(0, Transform3D::Identity)],
         };
         let spatial = SceneSpatial::new(scene).unwrap();
-        let q = spatial.object(0).expect("object exists");
+        let q = spatial.leaf(first_leaf(&spatial)).expect("object exists");
         let leaf_id = spatial.leaf_id_at_index(0).expect("leaf exists");
         let graph = spatial.graph();
         let node = graph.node(leaf_id).expect("leaf node lives in arena");
@@ -111,7 +129,7 @@ mod object_query_binding {
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
         let spatial = SceneSpatial::new(scene).unwrap();
-        assert!(spatial.object(99).is_none());
+        assert!(spatial.leaf_id_at_index(99).is_none());
     }
 
     #[test]
@@ -145,8 +163,8 @@ mod object_query_binding {
             ],
         };
         let spatial = SceneSpatial::new(scene).unwrap();
-        let a = spatial.object(0).unwrap();
-        let b = spatial.object(1).unwrap();
+        let a = spatial.leaf(first_leaf(&spatial)).unwrap();
+        let b = spatial.leaf(nth_leaf(&spatial, 1)).unwrap();
         let aabb_a = a.local_aabb().unwrap();
         let aabb_b = b.local_aabb().unwrap();
         assert_eq!(aabb_a, aabb_b);
@@ -167,8 +185,16 @@ mod object_query_binding {
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
         let spatial = SceneSpatial::new(scene).unwrap();
-        let first = spatial.object(0).unwrap().clusters().unwrap() as *const _;
-        let second = spatial.object(0).unwrap().clusters().unwrap() as *const _;
+        let first = spatial
+            .leaf(first_leaf(&spatial))
+            .unwrap()
+            .clusters()
+            .unwrap() as *const _;
+        let second = spatial
+            .leaf(first_leaf(&spatial))
+            .unwrap()
+            .clusters()
+            .unwrap() as *const _;
         assert_eq!(
             first, second,
             "second lookup must hit the same cached value"
@@ -184,7 +210,7 @@ mod object_query_binding {
             objects: vec![inline_object(empty_mesh, Transform3D::Identity)],
         };
         let spatial = SceneSpatial::new(scene).unwrap();
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         assert!(q.local_aabb().is_none());
         assert!(q.clusters().is_none());
     }
@@ -204,7 +230,11 @@ mod cache_priming {
         // First query yields the AABB; subsequent queries are
         // cache hits (same value, regardless of OnceLock state
         // visible from outside the crate).
-        let aabb = spatial.object(0).unwrap().local_aabb().unwrap();
+        let aabb = spatial
+            .leaf(first_leaf(&spatial))
+            .unwrap()
+            .local_aabb()
+            .unwrap();
         assert_eq!(aabb.min().coords(), [-1.0, -1.0, 0.0]);
         assert_eq!(aabb.max().coords(), [1.0, 1.0, 0.0]);
     }
@@ -222,8 +252,16 @@ mod cache_priming {
         let lazy = SceneSpatial::new(mk_scene()).unwrap();
         let eager = SceneSpatial::primed(mk_scene()).unwrap();
         for idx in 0..2 {
-            let l = lazy.object(idx).unwrap().local_aabb().unwrap();
-            let e = eager.object(idx).unwrap().local_aabb().unwrap();
+            let l = lazy
+                .leaf(nth_leaf(&lazy, idx))
+                .unwrap()
+                .local_aabb()
+                .unwrap();
+            let e = eager
+                .leaf(nth_leaf(&eager, idx))
+                .unwrap()
+                .local_aabb()
+                .unwrap();
             assert_eq!(l, e);
         }
     }
@@ -529,14 +567,14 @@ mod transformed_aabb {
     #[test]
     fn identity_returns_local_aabb() {
         let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         assert_eq!(q.transformed_aabb(Transform3D::Identity), q.local_aabb());
     }
 
     #[test]
     fn pure_translation_shifts_local_aabb() {
         let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let t = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
         assert_aabb_approx(
             q.transformed_aabb(t).unwrap(),
@@ -555,7 +593,7 @@ mod transformed_aabb {
         // Z is unrotated, so it stays at ±1.
         let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
         let spatial = one_object(octahedron_mesh(), Transform3D::Affine(r));
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let aabb = q.transformed_aabb(Transform3D::Affine(r)).unwrap();
         let half = std::f32::consts::FRAC_1_SQRT_2; // = √2 / 2.
         assert_aabb_approx(aabb, [-half, -half, -1.0], [half, half, 1.0], 1e-5);
@@ -569,7 +607,7 @@ mod transformed_aabb {
         // unchanged.
         let r = AffineTransform3D::from_rotation_z(FRAC_PI_4);
         let spatial = one_object(cube_mesh(), Transform3D::Affine(r));
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let aabb = q.transformed_aabb(Transform3D::Affine(r)).unwrap();
         let s = std::f32::consts::SQRT_2;
         assert_aabb_approx(aabb, [-s, -s, -1.0], [s, s, 1.0], 1e-5);
@@ -583,7 +621,7 @@ mod transformed_aabb {
         let composed = AffineTransform3D::from_translation([10.0, 20.0, 30.0])
             .compose(&AffineTransform3D::from_rotation_z(FRAC_PI_4));
         let spatial = one_object(octahedron_mesh(), Transform3D::Affine(composed));
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let aabb = q.transformed_aabb(Transform3D::Affine(composed)).unwrap();
         let half = std::f32::consts::FRAC_1_SQRT_2;
         assert_aabb_approx(
@@ -600,7 +638,7 @@ mod transformed_aabb {
             IndexedMesh::new(None, vec![], vec![]),
             Transform3D::Identity,
         );
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         assert!(q.transformed_aabb(Transform3D::Identity).is_none());
         let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
         assert!(q.transformed_aabb(t).is_none());
@@ -620,7 +658,7 @@ mod transformed_aabb {
         let t2 =
             Transform3D::Affine(AffineTransform3D::from_translation([0.0, 1.0, 0.0]).compose(&r));
         let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let a1 = q.transformed_aabb(t1).unwrap();
         let a2 = q.transformed_aabb(t2).unwrap();
         // Each component of (a2 - a1) must equal (t2_translation - t1_translation).
@@ -644,7 +682,7 @@ mod transformed_aabb {
         // refactor that turns the slot into "remember the first
         // linear" by accident.
         let spatial = one_object(octahedron_mesh(), Transform3D::Identity);
-        let q = spatial.object(0).unwrap();
+        let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         let identity = Transform3D::Affine(AffineTransform3D::identity());
         let rotated = Transform3D::Affine(AffineTransform3D::from_rotation_z(FRAC_PI_4));
 

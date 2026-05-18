@@ -12,16 +12,9 @@
 //! [`NodeId`]). The query bundles the leaf node, the resolved mesh
 //! and the spatial cache that belongs to that mesh; mismatched
 //! pairings are structurally impossible.
-//!
-//! The type also keeps a flat [`Scene`] mirror alongside the graph;
-//! see the `mirror` field below. The mirror is a temporary bridge
-//! and is removed once every consumer of [`SceneSpatial::scene`]
-//! has been retargeted to [`SceneSpatial::graph`]; see the comments
-//! marked "BRIDGE" through this file for what to delete then.
 
 use sc_mesh_core::{
-    Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneGraph,
-    SceneGraphError, Vertex,
+    Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneGraph, Vertex,
     scene::{Scene, SceneError, Transform3D},
     scene_edit::SceneEdit,
 };
@@ -39,20 +32,6 @@ use crate::mesh_spatial::MeshSpatial;
 /// both; the only difference is when cache priming work runs.
 pub struct SceneSpatial {
     graph: SceneGraph,
-    /// BRIDGE: flat [`Scene`] mirror kept in sync with `graph` for
-    /// the duration of the migration that flips `SceneSpatial` to a
-    /// graph-shaped public surface. Some GUI callers still consume a
-    /// `&Scene` (sidebar list, GPU upload, viewport render struct)
-    /// and the mirror lets them stay unchanged commit-to-commit
-    /// while the graph-based accessors are added.
-    ///
-    /// DELETE-ON-CLEANUP: when the last consumer of
-    /// [`SceneSpatial::scene`] has been retargeted to
-    /// [`SceneSpatial::graph`], drop this field, drop the `scene()`
-    /// method, drop the mirror-allocation in `build` and the
-    /// mirror-sync in `apply_edit`, and make `from_graph` and
-    /// `primed_graph` infallible again.
-    mirror: Scene,
     /// Per-leaf spatial caches. Indexed by `NodeId::index()`. The
     /// vector is sized to [`SceneGraph::nodes_len`] so any live
     /// `NodeId` is always in bounds. `Some(_)` only for nodes whose
@@ -69,14 +48,8 @@ pub struct SceneSpatial {
 impl SceneSpatial {
     /// Wrap a [`SceneGraph`] without priming any caches. First query
     /// on each mesh will build the relevant cache lazily.
-    ///
-    /// Returns `Err(SceneGraphError)` when the bridge `Scene` mirror
-    /// cannot be built from the graph (i.e. the graph contains CSG
-    /// or `Instance` content). DELETE-ON-CLEANUP: drop the
-    /// `Result` wrapping and let this method be infallible.
-    pub fn from_graph(graph: SceneGraph) -> Result<Self, SceneGraphError> {
-        let mirror = graph.try_flatten()?;
-        Ok(Self::build(mirror, graph))
+    pub fn from_graph(graph: SceneGraph) -> Self {
+        Self::build(graph)
     }
 
     /// Wrap a [`SceneGraph`] and eagerly populate every per-mesh
@@ -88,38 +61,29 @@ impl SceneSpatial {
     /// them. A resource referenced by N leaves is primed N times;
     /// `MeshSpatial::prime` is idempotent, so the extra work is
     /// duplicated cache lookups, not duplicated computation.
-    ///
-    /// Returns `Err` for the same reason as [`Self::from_graph`].
-    /// DELETE-ON-CLEANUP: drop the `Result` wrapping when the
-    /// mirror is removed.
-    pub fn primed_graph(graph: SceneGraph) -> Result<Self, SceneGraphError> {
-        let s = Self::from_graph(graph)?;
+    pub fn primed_graph(graph: SceneGraph) -> Self {
+        let s = Self::from_graph(graph);
         s.prime_reachable_caches();
-        Ok(s)
+        s
     }
 
-    /// BRIDGE: build a [`SceneSpatial`] from a flat [`Scene`].
-    /// `scene` itself becomes the mirror (no flattening work
-    /// needed). The graph is built from a clone of `scene` because
-    /// `SceneGraph::try_from` consumes its input.
+    /// Build a [`SceneSpatial`] from a flat [`Scene`] for tests and
+    /// other ergonomic call sites that already hold a `Scene`.
+    /// Internally routes through [`SceneGraph::try_from`] then
+    /// [`Self::from_graph`].
     ///
     /// Returns `Err(SceneError)` when the input `Scene` is
     /// structurally invalid (notably a `Resource(idx)` reference
     /// past the resource vector).
-    ///
-    /// DELETE-ON-CLEANUP: drop this method when the last consumer
-    /// has flipped to [`Self::from_graph`].
     pub fn new(scene: Scene) -> Result<Self, SceneError> {
-        let graph = SceneGraph::try_from(scene.clone())?;
-        Ok(Self::build(scene, graph))
+        let graph = SceneGraph::try_from(scene)?;
+        Ok(Self::from_graph(graph))
     }
 
-    /// BRIDGE: eager-prime variant of [`Self::new`]. Same
-    /// fallibility, same DELETE-ON-CLEANUP applies.
+    /// Eager-prime variant of [`Self::new`].
     pub fn primed(scene: Scene) -> Result<Self, SceneError> {
-        let s = Self::new(scene)?;
-        s.prime_reachable_caches();
-        Ok(s)
+        let graph = SceneGraph::try_from(scene)?;
+        Ok(Self::primed_graph(graph))
     }
 
     /// Borrow the underlying graph for read-only access.
@@ -131,16 +95,6 @@ impl SceneSpatial {
     /// any cached state.
     pub fn into_graph(self) -> SceneGraph {
         self.graph
-    }
-
-    /// BRIDGE: borrow the flat [`Scene`] mirror of the underlying
-    /// graph. Kept in sync by [`Self::apply_edit`] for every
-    /// transform-only edit.
-    ///
-    /// DELETE-ON-CLEANUP: drop this method when the last consumer
-    /// has switched to [`Self::graph`].
-    pub fn scene(&self) -> &Scene {
-        &self.mirror
     }
 
     /// Look up a leaf by stable [`NodeId`]. Returns `None` when:
@@ -185,32 +139,12 @@ impl SceneSpatial {
         })
     }
 
-    /// BRIDGE: look up a leaf by its zero-based pre-order position
-    /// in the scene-root traversal. Equivalent to
-    /// `self.leaf(self.leaf_id_at_index(idx)?)`.
-    ///
-    /// DELETE-ON-CLEANUP: drop this method when the last consumer
-    /// has switched to [`Self::leaf`].
-    pub fn object(&self, idx: usize) -> Option<ObjectQuery<'_>> {
-        let id = self.leaf_id_at_index(idx)?;
-        self.leaf(id)
-    }
-
     /// Apply a typed scene edit and update caches accordingly.
     /// Transform-only edits do not invalidate the per-mesh caches,
     /// which are object-space (local AABB, clusters).
     pub fn apply_edit(&mut self, edit: SceneEdit) {
         let SceneEdit::SetLocalTransform { node_id, after, .. } = edit;
         let _ = self.graph.set_local_transform(node_id, after);
-        // BRIDGE: keep the `Scene` mirror in sync. Resolve the
-        // leaf's pre-order index in the (still-flat) graph and
-        // update the matching mirror entry. DELETE-ON-CLEANUP with
-        // the mirror field.
-        if let Some(idx) = self.leaf_index_of(node_id)
-            && let Some(obj) = self.mirror.objects.get_mut(idx)
-        {
-            obj.transform = after;
-        }
     }
 
     /// Clear cached state for the inline mesh on the leaf at `id`.
@@ -235,8 +169,9 @@ impl SceneSpatial {
 
     /// Resolve a zero-based pre-order leaf index against the scene
     /// roots, returning the addressed leaf's stable [`NodeId`]. Used
-    /// by the legacy idx-keyed bridge methods and by the GUI's
-    /// in-progress migration glue.
+    /// by the slicer-gui boundary code that translates a Slint `i32`
+    /// row index (sidebar click, Tab/Shift+Tab cycle) into a
+    /// [`NodeId`] before storing it on the selection.
     pub fn leaf_id_at_index(&self, target: usize) -> Option<NodeId> {
         let mut count = 0usize;
         let mut stack: Vec<NodeId> = self.graph.roots().iter().rev().copied().collect();
@@ -268,16 +203,12 @@ impl SceneSpatial {
         None
     }
 
-    /// BRIDGE: inverse of [`Self::leaf_id_at_index`]: walk the scene
-    /// roots in pre-order and return the leaf-index of `target`, or
-    /// `None` when the node is not a reachable leaf. Used by
-    /// `apply_edit` to update the [`Scene`] mirror by idx, and by
-    /// the slicer-gui selection bridge so that legacy idx-keyed
-    /// renderer / sidebar / FSM consumers keep working after the
-    /// selection switches to [`NodeId`] internally.
-    ///
-    /// DELETE-ON-CLEANUP with the mirror field and the legacy
-    /// idx-keyed selection bridge in `slicer-gui/src/selection.rs`.
+    /// Inverse of [`Self::leaf_id_at_index`]: walk the scene roots
+    /// in pre-order and return the leaf-index of `target`, or `None`
+    /// when the node is not a reachable leaf. Used by the slicer-gui
+    /// boundary code that resolves a [`NodeId`] back to a Slint
+    /// `i32` row index (the `selected_object_index` mirror and the
+    /// Tab/Shift+Tab cycle helpers).
     pub fn leaf_index_of(&self, target: NodeId) -> Option<usize> {
         let mut count = 0usize;
         let mut stack: Vec<NodeId> = self.graph.roots().iter().rev().copied().collect();
@@ -303,10 +234,8 @@ impl SceneSpatial {
         None
     }
 
-    /// Infallible inner constructor shared by all entry points.
-    /// `mirror` must already be a flat representation of `graph`;
-    /// the entry points enforce that contract.
-    fn build(mirror: Scene, graph: SceneGraph) -> Self {
+    /// Inner constructor shared by all entry points.
+    fn build(graph: SceneGraph) -> Self {
         let mut leaves: Vec<Option<MeshSpatial>> = (0..graph.nodes_len()).map(|_| None).collect();
         let mesh_resources: Vec<MeshSpatial> = (0..graph.mesh_resources_len())
             .map(|_| MeshSpatial::default())
@@ -314,7 +243,6 @@ impl SceneSpatial {
         Self::allocate_inline_cache_slots(&graph, &mut leaves);
         Self {
             graph,
-            mirror,
             leaves,
             mesh_resources,
         }
@@ -351,8 +279,7 @@ impl SceneSpatial {
 /// Per-query handle bundling a leaf [`Node`], its resolved
 /// [`IndexedMesh`], the spatial cache that belongs to that mesh and
 /// the leaf's world transform composed from the ancestor chain.
-/// Constructed only via [`SceneSpatial::leaf`] (or the legacy
-/// idx-keyed [`SceneSpatial::object`] bridge); the mesh and the
+/// Constructed only via [`SceneSpatial::leaf`]; the mesh and the
 /// cache cannot be separated by callers.
 pub struct ObjectQuery<'a> {
     node: &'a Node,

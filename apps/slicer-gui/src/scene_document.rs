@@ -312,8 +312,8 @@ impl SceneDocument {
     /// Runs `f` against the loaded [`SceneSpatial`], if any. Returns
     /// `None` when no scene is installed. Callers must keep the
     /// closure short: the internal borrow is held for its
-    /// duration. Use `spatial.scene()` inside the closure to access
-    /// the underlying [`Scene`] for read-only navigation.
+    /// duration. Use `spatial.graph()` for read-only navigation and
+    /// `spatial.leaf(id)` for per-leaf queries.
     pub fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
         self.spatial.borrow().as_ref().map(f)
     }
@@ -368,8 +368,16 @@ mod scene_document_tests {
     }
 
     fn obj_transform(doc: &SceneDocument, idx: usize) -> Transform3D {
-        doc.with_scene(|spatial| spatial.scene().objects[idx].transform)
-            .unwrap()
+        doc.with_scene(|spatial| {
+            let id = spatial
+                .leaf_id_at_index(idx)
+                .expect("test fixture leaf exists");
+            spatial
+                .leaf(id)
+                .expect("test fixture leaf is queryable")
+                .local_transform()
+        })
+        .unwrap()
     }
 
     #[test]
@@ -390,8 +398,9 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_scene(empty_scene(), fixture_path());
         assert!(doc.is_loaded());
-        let object_count = doc.with_scene(|s| s.scene().objects.len());
-        assert_eq!(object_count, Some(0));
+        // The empty scene flattens to a single identity-root Group
+        // with no leaves under it.
+        assert!(doc.with_scene(|s| s.leaf_id_at_index(0).is_none()).unwrap());
         assert_eq!(doc.source_path(), Some(fixture_path()));
     }
 
