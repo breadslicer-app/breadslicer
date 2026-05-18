@@ -16,6 +16,14 @@ use crate::scene_graph_node::{
 };
 use crate::transform::TransformError;
 
+/// Recover the [`MeshResourceId`] for the slot at index `i` in the
+/// resource arena. Slots are append-only and never reused, so the
+/// id at index `i` is always `MeshResourceId(NonZeroU32::new(i + 1))`.
+fn mesh_resource_id_at_index(i: usize) -> MeshResourceId {
+    let raw = u32::try_from(i + 1).expect("mesh resource index overflow");
+    MeshResourceId(NonZeroU32::new(raw).expect("index + 1 is non-zero"))
+}
+
 /// Failure modes of [`SceneGraph`] mutators, validators and queries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SceneGraphError {
@@ -211,6 +219,51 @@ impl SceneGraph {
 
     pub fn mesh_resource(&self, id: MeshResourceId) -> Option<&IndexedMesh> {
         self.mesh_resources.get(id.index())?.as_ref()
+    }
+
+    /// Mutable borrow into the addressed mesh resource. `None` on a
+    /// dangling or tombstoned id.
+    pub fn mesh_resource_mut(&mut self, id: MeshResourceId) -> Option<&mut IndexedMesh> {
+        self.mesh_resources.get_mut(id.index())?.as_mut()
+    }
+
+    /// Iterate every live mesh resource as `(id, &mesh)` pairs.
+    /// Tombstoned slots are skipped.
+    pub fn mesh_resources_iter(&self) -> impl Iterator<Item = (MeshResourceId, &IndexedMesh)> + '_ {
+        self.mesh_resources
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                slot.as_ref()
+                    .map(|mesh| (mesh_resource_id_at_index(i), mesh))
+            })
+    }
+
+    /// Mutable variant of [`Self::mesh_resources_iter`].
+    pub fn mesh_resources_iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (MeshResourceId, &mut IndexedMesh)> + '_ {
+        self.mesh_resources
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                slot.as_mut()
+                    .map(|mesh| (mesh_resource_id_at_index(i), mesh))
+            })
+    }
+
+    /// Mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
+    /// `None` for any other node kind (groups, CSG, instances,
+    /// mesh-resource-backed leaves) or a dangling id. Focused
+    /// accessor: callers can repair the mesh in place without being
+    /// handed `&mut Node` (which would let them change `kind` and
+    /// break parent / child invariants).
+    pub fn inline_mesh_mut(&mut self, id: NodeId) -> Option<&mut IndexedMesh> {
+        let node = self.nodes.get_mut(id.index())?.as_mut()?;
+        match &mut node.kind {
+            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => Some(mesh),
+            _ => None,
+        }
     }
 
     pub fn subtree_resource_root(&self, id: SubtreeResourceId) -> Option<NodeId> {
@@ -1039,6 +1092,86 @@ mod scene_graph_construction_tests {
         let bogus = NodeId(NonZeroU32::new(9).unwrap());
         let result = g.set_local_transform(bogus, Transform3D::Identity);
         assert_eq!(result, Err(SceneGraphError::DanglingNodeId { id: bogus }));
+    }
+
+    #[test]
+    fn mesh_resource_mut_returns_writable_borrow() {
+        let mut g = SceneGraph::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let mesh = g.mesh_resource_mut(rid).expect("resource lives");
+        mesh.vertices.push(Vertex::new([2.0, 2.0, 2.0]));
+        assert_eq!(g.mesh_resource(rid).unwrap().vertices.len(), 4);
+    }
+
+    #[test]
+    fn mesh_resource_mut_on_dangling_id_returns_none() {
+        let mut g = SceneGraph::new();
+        let bogus = MeshResourceId(NonZeroU32::new(42).unwrap());
+        assert!(g.mesh_resource_mut(bogus).is_none());
+    }
+
+    #[test]
+    fn mesh_resources_iter_yields_every_live_slot() {
+        let mut g = SceneGraph::new();
+        let a = g.add_mesh_resource(unit_triangle());
+        let b = g.add_mesh_resource(unit_triangle());
+        let collected: Vec<MeshResourceId> = g.mesh_resources_iter().map(|(id, _)| id).collect();
+        assert_eq!(collected, vec![a, b]);
+    }
+
+    #[test]
+    fn mesh_resources_iter_mut_allows_in_place_edit() {
+        let mut g = SceneGraph::new();
+        let _ = g.add_mesh_resource(unit_triangle());
+        let _ = g.add_mesh_resource(unit_triangle());
+        for (_id, mesh) in g.mesh_resources_iter_mut() {
+            mesh.vertices.clear();
+        }
+        for (_, mesh) in g.mesh_resources_iter() {
+            assert!(mesh.vertices.is_empty());
+        }
+    }
+
+    #[test]
+    fn inline_mesh_mut_returns_writable_leaf_payload() {
+        let mut g = SceneGraph::new();
+        let id = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .unwrap();
+        let mesh = g.inline_mesh_mut(id).expect("inline-mesh leaf is writable");
+        mesh.vertices.push(Vertex::new([3.0, 3.0, 3.0]));
+        match &g.node(id).unwrap().kind {
+            NodeKind::Leaf(LeafPayload::Mesh(m)) => assert_eq!(m.vertices.len(), 4),
+            _ => panic!("expected inline-mesh leaf"),
+        }
+    }
+
+    #[test]
+    fn inline_mesh_mut_returns_none_for_group() {
+        let mut g = SceneGraph::new();
+        let id = g.add_group(None, Transform3D::Identity);
+        assert!(g.inline_mesh_mut(id).is_none());
+    }
+
+    #[test]
+    fn inline_mesh_mut_returns_none_for_resource_backed_leaf() {
+        let mut g = SceneGraph::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let id = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        assert!(g.inline_mesh_mut(id).is_none());
+    }
+
+    #[test]
+    fn inline_mesh_mut_on_dangling_id_returns_none() {
+        let mut g = SceneGraph::new();
+        let bogus = NodeId(NonZeroU32::new(99).unwrap());
+        assert!(g.inline_mesh_mut(bogus).is_none());
     }
 }
 

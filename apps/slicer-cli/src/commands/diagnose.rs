@@ -12,7 +12,8 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
-use sc_mesh_core::scene::SceneObjectContent;
+use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_path;
 
@@ -23,36 +24,45 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) ->
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings);
-    let scene = loaded
-        .graph
-        .try_flatten()
-        .map_err(|e| anyhow!("loader output flattens: {e}"))?;
 
     let mut detected_problems = false;
 
-    for mesh in &scene.resources {
+    for (_id, mesh) in loaded.graph.mesh_resources_iter() {
         detected_problems |= diagnose_mesh(mesh);
     }
 
-    for obj in &scene.objects {
-        match &obj.content {
-            SceneObjectContent::Mesh(m) => {
-                detected_problems |= diagnose_mesh(m);
-            }
-            SceneObjectContent::Resource(idx) => {
-                if scene.resources.get(*idx).is_none() {
-                    eprintln!("\t-Resource index {} out of bounds", *idx);
-                    detected_problems = true;
-                }
-            }
-        };
-    }
+    for_each_inline_leaf_mesh(&loaded.graph, |mesh| {
+        detected_problems |= diagnose_mesh(mesh);
+    });
 
     if detected_problems {
         return Err(anyhow!("Found problems in diagnosed mesh"));
     }
 
     Ok(())
+}
+
+/// Walk every reachable inline-mesh leaf under `graph.roots()` in
+/// pre-order and invoke `f` with the leaf's mesh.
+/// Resource-backed leaves are skipped: their meshes live in the
+/// resource arena and are iterated through `mesh_resources_iter`.
+fn for_each_inline_leaf_mesh<F: FnMut(&IndexedMesh)>(graph: &SceneGraph, mut f: F) {
+    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let Some(node) = graph.node(id) else {
+            continue;
+        };
+        match &node.kind {
+            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => f(mesh),
+            NodeKind::Leaf(LeafPayload::MeshResource(_)) => {}
+            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NodeKind::Instance { .. } => {}
+        }
+    }
 }
 
 /// Returns `true` if any problems were detected.

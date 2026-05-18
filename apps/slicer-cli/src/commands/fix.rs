@@ -10,7 +10,8 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{FixFacesOptions, MeshFix};
-use sc_mesh_core::scene::SceneObjectContent;
+use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
 };
@@ -56,21 +57,22 @@ pub(crate) fn fix(
 
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings);
-    let mut scene = loaded
-        .graph
-        .try_flatten()
-        .map_err(|e| anyhow!("loader output flattens: {e}"))?;
+    let mut graph = loaded.graph;
 
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 
-    for mesh in &mut scene.resources {
+    for (_id, mesh) in graph.mesh_resources_iter_mut() {
         all_fixes.extend(fix_mesh(mesh, options)?);
     }
 
-    for obj in &mut scene.objects {
-        let SceneObjectContent::Mesh(ref mut mesh) = obj.content else {
-            continue;
-        };
+    // Two-phase walk: collect inline-mesh leaf ids while the borrow
+    // is shared, then mutate one at a time so each `inline_mesh_mut`
+    // call gets exclusive access.
+    let inline_leaf_ids = collect_inline_leaf_ids(&graph);
+    for id in inline_leaf_ids {
+        let mesh = graph
+            .inline_mesh_mut(id)
+            .expect("inline-mesh leaf was alive at enumeration time");
         all_fixes.extend(fix_mesh(mesh, options)?);
     }
 
@@ -80,9 +82,32 @@ pub(crate) fn fix(
         show_applied_fixes(&all_fixes);
     }
 
-    let graph = sc_mesh_core::SceneGraph::try_from(scene)
-        .map_err(|e| anyhow!("scene from fix path could not be converted to a graph: {e}"))?;
     write_scene(&graph, &target_path, target_format)
+}
+
+/// Collect every reachable inline-mesh leaf's [`NodeId`] in pre-order
+/// traversal of `graph.roots()`. Resource-backed leaves are skipped;
+/// their meshes live in the resource arena and are fixed through
+/// `mesh_resources_iter_mut`.
+fn collect_inline_leaf_ids(graph: &SceneGraph) -> Vec<NodeId> {
+    let mut ids: Vec<NodeId> = Vec::new();
+    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let Some(node) = graph.node(id) else {
+            continue;
+        };
+        match &node.kind {
+            NodeKind::Leaf(LeafPayload::Mesh(_)) => ids.push(id),
+            NodeKind::Leaf(LeafPayload::MeshResource(_)) => {}
+            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NodeKind::Instance { .. } => {}
+        }
+    }
+    ids
 }
 
 fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, options: FixOptions) -> Result<Vec<MeshFix>> {
