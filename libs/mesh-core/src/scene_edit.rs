@@ -5,13 +5,13 @@
 
 //! Typed scene mutation vocabulary.
 //!
-//! Every observable change to a [`Scene`] is one variant of
+//! Every observable change to a [`SceneGraph`] is one variant of
 //! [`SceneEdit`]. Headless callers apply edits directly with
-//! [`SceneEdit::apply_to_scene`]; cache layers (notably
+//! [`SceneEdit::apply_to_graph`]; cache layers (notably
 //! `sc_mesh_spatial::SceneSpatial`) dispatch the same enum and add
 //! invalidation hooks for the cached state that the variant affects.
 
-use crate::scene::{Scene, Transform3D};
+use crate::scene::Transform3D;
 use crate::scene_graph::SceneGraph;
 use crate::scene_graph_node::NodeId;
 
@@ -20,8 +20,7 @@ use crate::scene_graph_node::NodeId;
 /// cache layer's `apply_edit` all speak this enum.
 ///
 /// `SetLocalTransform` is keyed by a stable [`NodeId`] on a
-/// [`SceneGraph`]; applying it to a flat [`Scene`] is a no-op since
-/// `NodeId` has no analogue there.
+/// [`SceneGraph`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SceneEdit {
     /// `node.local_transform` for the node at `node_id` was changed
@@ -57,20 +56,12 @@ impl SceneEdit {
         }
     }
 
-    /// Apply this edit to a [`Scene`]. Cache-aware callers should go
+    /// Apply this edit to a [`SceneGraph`]. `SetLocalTransform`
+    /// writes the new transform onto the addressed node, silently
+    /// no-op on a dangling `NodeId`. Cache-aware callers should go
     /// through `sc_mesh_spatial::SceneSpatial::apply_edit` instead,
     /// which dispatches the same enum and updates spatial caches
     /// before delegating here.
-    ///
-    /// `SetLocalTransform` addresses by `NodeId`, which has no
-    /// analogue on a flat `Scene`; nothing to do.
-    pub fn apply_to_scene(&self, _scene: &mut Scene) {
-        let Self::SetLocalTransform { .. } = self;
-    }
-
-    /// Apply this edit to a [`SceneGraph`]. `SetLocalTransform`
-    /// writes the new transform onto the addressed node, silently
-    /// no-op on a dangling `NodeId`.
     pub fn apply_to_graph(&self, graph: &mut SceneGraph) {
         let Self::SetLocalTransform { node_id, after, .. } = self;
         let _ = graph.set_local_transform(*node_id, *after);
@@ -80,17 +71,7 @@ impl SceneEdit {
 #[cfg(test)]
 mod scene_edit_tests {
     use super::*;
-    use crate::indexed_mesh::IndexedMesh;
-    use crate::scene::{SceneObject, SceneObjectContent};
     use crate::transform::AffineTransform3D;
-
-    fn empty_mesh_object(transform: Transform3D) -> SceneObject {
-        SceneObject {
-            meta: None,
-            transform,
-            content: SceneObjectContent::Mesh(IndexedMesh::new(None, vec![], vec![])),
-        }
-    }
 
     #[test]
     fn set_local_transform_is_noop_when_before_equals_after() {
@@ -181,24 +162,5 @@ mod scene_edit_tests {
         .apply_to_graph(&mut g);
         // No nodes existed before and none exist after.
         assert!(g.node(bogus).is_none());
-    }
-
-    #[test]
-    fn set_local_transform_on_scene_is_noop() {
-        use std::num::NonZeroU32;
-        let bogus_node = NodeId(NonZeroU32::new(1).unwrap());
-        let mut scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![empty_mesh_object(Transform3D::Identity)],
-        };
-        let original = scene.objects[0].transform;
-        SceneEdit::SetLocalTransform {
-            node_id: bogus_node,
-            before: Transform3D::Identity,
-            after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
-        }
-        .apply_to_scene(&mut scene);
-        assert_eq!(scene.objects[0].transform, original);
     }
 }
