@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Property tests pinning the cross-layer agreement between
- * `Scene::aabb` (uncached, in `sc-mesh-core`) and `scene_aabb`
+ * `SceneGraph::aabb` (uncached, in `sc-mesh-core`) and `scene_aabb`
  * (cached, in `sc-mesh-spatial`). The two implement the same Arvo
  * loop at different caching layers; if they ever drift, framing /
  * picker / view-fit code that relies on either side breaks
@@ -11,10 +11,10 @@
  */
 
 use proptest::prelude::*;
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
 /// Bounded finite f32: avoid NaN / ±∞ / subnormals so the
@@ -70,26 +70,27 @@ fn transform_strategy() -> impl Strategy<Value = Transform3D> {
     ]
 }
 
-fn object_strategy() -> impl Strategy<Value = SceneObject> {
-    (mesh_strategy(), transform_strategy()).prop_map(|(mesh, transform)| SceneObject {
-        meta: None,
-        transform,
-        content: SceneObjectContent::Mesh(mesh),
-    })
+fn leaf_strategy() -> impl Strategy<Value = (IndexedMesh, Transform3D)> {
+    (mesh_strategy(), transform_strategy())
 }
 
-fn scene_strategy() -> impl Strategy<Value = Scene> {
-    prop::collection::vec(object_strategy(), 1..5usize).prop_map(|objects| Scene {
-        meta: None,
-        resources: vec![],
-        objects,
+fn graph_strategy() -> impl Strategy<Value = SceneGraph> {
+    prop::collection::vec(leaf_strategy(), 1..5usize).prop_map(|leaves| {
+        let mut g = SceneGraph::new();
+        for (mesh, transform) in leaves {
+            let leaf = g
+                .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+                .expect("inline leaf");
+            g.add_root(leaf).expect("inline leaf as root");
+        }
+        g
     })
 }
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
 
-    /// `Scene::aabb` (uncached) and `scene_aabb` (cached) compute the
+    /// `SceneGraph::aabb` (uncached) and `scene_aabb` (cached) compute the
     /// same envelope for any scene the renderer or framing camera
     /// might produce. Both arms walk the same data through the same
     /// Arvo formula; the only difference is whether per-mesh AABBs
@@ -97,9 +98,9 @@ proptest! {
     /// must be exact: the cache reads back the same `Aabb` it
     /// stored.
     #[test]
-    fn cached_and_uncached_aabb_agree(scene in scene_strategy()) {
-        let uncached = scene.aabb().unwrap();
-        let spatial = SceneSpatial::primed(scene).unwrap();
+    fn cached_and_uncached_aabb_agree(graph in graph_strategy()) {
+        let uncached = graph.aabb().unwrap();
+        let spatial = SceneSpatial::primed_graph(graph);
         let cached = scene_aabb(&spatial);
         prop_assert_eq!(uncached, cached);
     }
