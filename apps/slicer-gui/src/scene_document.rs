@@ -26,7 +26,7 @@ use std::rc::{Rc, Weak};
 
 use sc_mesh_core::NodeId;
 #[cfg(test)]
-use sc_mesh_core::scene::Scene;
+use sc_mesh_core::SceneGraph;
 use sc_mesh_spatial::SceneSpatial;
 
 pub(crate) use sc_mesh_core::scene_edit::SceneEdit;
@@ -98,19 +98,18 @@ impl SceneDocument {
         })
     }
 
-    /// Wrap a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and install
-    /// it. Convenience for callers that have a plain `Scene`,
-    /// primarily tests and future scripted construction. The
-    /// mesh-loader pipeline calls [`Self::install_spatial`] with a
-    /// `SceneSpatial::primed(...)` built off the UI thread.
+    /// Wrap a [`SceneGraph`] in a fresh (lazy) [`SceneSpatial`] and
+    /// install it. Test convenience; production code paths call
+    /// [`Self::install_spatial`] with a `SceneSpatial::primed_graph(...)`
+    /// built off the UI thread by the mesh-loader pipeline.
     #[cfg(test)]
-    pub fn install_scene(&self, scene: Scene, source_path: PathBuf) {
-        self.install_spatial(SceneSpatial::new(scene).unwrap(), source_path);
+    pub fn install_graph(&self, graph: SceneGraph, source_path: PathBuf) {
+        self.install_spatial(SceneSpatial::from_graph(graph), source_path);
     }
 
     /// Install a [`SceneSpatial`] (typically pre-primed by the load
     /// worker thread). Resets selection and clears history just like
-    /// [`Self::install_scene`].
+    /// [`Self::install_graph`].
     pub fn install_spatial(&self, spatial: SceneSpatial, source_path: PathBuf) {
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
@@ -341,12 +340,17 @@ impl Drop for SceneSubscription {
 #[cfg(test)]
 mod scene_document_tests {
     use super::*;
-    use sc_mesh_core::IndexedMesh;
-    use sc_mesh_core::scene::{SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::{IndexedMesh, LeafPayload};
 
-    fn empty_scene() -> Scene {
-        Scene::new(None, Vec::new(), Vec::new())
+    /// Mirrors what `SceneGraph::try_from(Scene::default())` produces:
+    /// a single identity-Group root with no children.
+    fn empty_graph() -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        g
     }
 
     fn fixture_path() -> PathBuf {
@@ -357,14 +361,22 @@ mod scene_document_tests {
         Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
     }
 
-    fn scene_with_one_object() -> Scene {
-        let mut s = empty_scene();
-        s.objects.push(SceneObject {
-            meta: None,
-            transform: Transform3D::Identity,
-            content: SceneObjectContent::Mesh(IndexedMesh::new(None, Vec::new(), Vec::new())),
-        });
-        s
+    /// Mirrors what `SceneGraph::try_from(Scene { objects: vec![one], .. })`
+    /// produces: a single inline-mesh leaf attached under the identity-Group
+    /// root.
+    fn graph_with_one_object() -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(IndexedMesh::new(None, Vec::new(), Vec::new())),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        g
     }
 
     fn obj_transform(doc: &SceneDocument, idx: usize) -> Transform3D {
@@ -394,9 +406,9 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn install_scene_makes_it_observable() {
+    fn install_graph_makes_it_observable() {
         let doc = SceneDocument::new();
-        doc.install_scene(empty_scene(), fixture_path());
+        doc.install_graph(empty_graph(), fixture_path());
         assert!(doc.is_loaded());
         // The empty scene flattens to a single identity-root Group
         // with no leaves under it.
@@ -407,7 +419,7 @@ mod scene_document_tests {
     #[test]
     fn clear_scene_removes_it() {
         let doc = SceneDocument::new();
-        doc.install_scene(empty_scene(), fixture_path());
+        doc.install_graph(empty_graph(), fixture_path());
         doc.clear_scene();
         assert!(!doc.is_loaded());
         assert!(doc.with_scene(|_| ()).is_none());
@@ -415,10 +427,10 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn install_scene_replaces_a_prior_scene() {
+    fn install_graph_replaces_a_prior_scene() {
         let doc = SceneDocument::new();
-        doc.install_scene(empty_scene(), PathBuf::from("/tmp/a.obj"));
-        doc.install_scene(empty_scene(), PathBuf::from("/tmp/b.obj"));
+        doc.install_graph(empty_graph(), PathBuf::from("/tmp/a.obj"));
+        doc.install_graph(empty_graph(), PathBuf::from("/tmp/b.obj"));
         assert!(doc.is_loaded());
         assert_eq!(doc.source_path(), Some(PathBuf::from("/tmp/b.obj")));
     }
@@ -426,7 +438,7 @@ mod scene_document_tests {
     #[test]
     fn install_spatial_uses_the_provided_spatial() {
         let doc = SceneDocument::new();
-        doc.install_spatial(SceneSpatial::primed(empty_scene()).unwrap(), fixture_path());
+        doc.install_spatial(SceneSpatial::primed_graph(empty_graph()), fixture_path());
         assert!(doc.is_loaded());
         assert_eq!(doc.source_path(), Some(fixture_path()));
     }
@@ -435,7 +447,7 @@ mod scene_document_tests {
     fn with_source_path_runs_only_when_a_path_is_set() {
         let doc = SceneDocument::new();
         assert!(doc.with_source_path(|_| 0_usize).is_none());
-        doc.install_scene(empty_scene(), fixture_path());
+        doc.install_graph(empty_graph(), fixture_path());
         let stem = doc.with_source_path(|p| p.file_stem().unwrap().to_owned());
         assert_eq!(stem.as_deref(), Some("scene_document_fixture".as_ref()));
     }
@@ -463,7 +475,7 @@ mod scene_document_tests {
     #[test]
     fn set_selection_round_trips() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let leaf = first_leaf_id(&doc);
         doc.set_selection(Selection::One(leaf));
         assert_eq!(doc.selection(), Selection::One(leaf));
@@ -471,21 +483,21 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn install_scene_resets_selection() {
+    fn install_graph_resets_selection() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let leaf = first_leaf_id(&doc);
         doc.set_selection(Selection::One(leaf));
         // Loading another scene drops the prior selection: its
         // NodeId belonged to the previous scene's arena.
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         assert_eq!(doc.selection(), Selection::None);
     }
 
     #[test]
     fn clear_scene_resets_selection() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let leaf = first_leaf_id(&doc);
         doc.set_selection(Selection::One(leaf));
         doc.clear_scene();
@@ -505,7 +517,7 @@ mod scene_document_tests {
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
-        doc.install_scene(empty_scene(), fixture_path());
+        doc.install_graph(empty_graph(), fixture_path());
         doc.clear_scene();
 
         assert_eq!(
@@ -517,7 +529,7 @@ mod scene_document_tests {
     #[test]
     fn set_selection_only_fires_on_actual_change() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let leaf = first_leaf_id(&doc);
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
@@ -540,8 +552,7 @@ mod scene_document_tests {
         // circuits before touching the edit when no scene is
         // loaded. A NodeId pulled from a throwaway spatial is the
         // cheapest way to produce a typed instance.
-        let some_node_id = SceneSpatial::primed(scene_with_one_object())
-            .unwrap()
+        let some_node_id = SceneSpatial::primed_graph(graph_with_one_object())
             .leaf_id_at_index(0)
             .unwrap();
         let result = doc.apply_edit(SceneEdit::SetLocalTransform {
@@ -558,7 +569,7 @@ mod scene_document_tests {
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         let applied = doc.apply_edit(SceneEdit::SetLocalTransform {
             node_id,
@@ -566,7 +577,7 @@ mod scene_document_tests {
             after: translation(1.0),
         });
         assert!(applied);
-        // Installed (from install_scene), then Mutated (from apply_edit).
+        // Installed (from install_graph), then Mutated (from apply_edit).
         assert_eq!(
             *log.borrow(),
             vec![SceneEvent::Installed, SceneEvent::Mutated]
@@ -576,7 +587,7 @@ mod scene_document_tests {
     #[test]
     fn apply_edit_writes_after_into_the_scene() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         let after = translation(5.0);
         doc.apply_edit(SceneEdit::SetLocalTransform {
@@ -593,7 +604,7 @@ mod scene_document_tests {
         let (log, listener) = capture_events();
         {
             let _sub = doc.subscribe(listener);
-            doc.install_scene(empty_scene(), fixture_path());
+            doc.install_graph(empty_graph(), fixture_path());
         } // subscription drops here
         doc.clear_scene();
 
@@ -610,7 +621,7 @@ mod scene_document_tests {
     #[test]
     fn push_edit_makes_undo_available() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
@@ -624,7 +635,7 @@ mod scene_document_tests {
     #[test]
     fn push_edit_skips_no_op() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
@@ -637,7 +648,7 @@ mod scene_document_tests {
     #[test]
     fn undo_restores_before_and_enables_redo() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         // Simulate a gesture: write `after`, then record the edit.
         let after = translation(5.0);
@@ -661,7 +672,7 @@ mod scene_document_tests {
     #[test]
     fn redo_replays_after_and_re_enables_undo() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         let after = translation(5.0);
         doc.apply_edit(SceneEdit::SetLocalTransform {
@@ -685,7 +696,7 @@ mod scene_document_tests {
     #[test]
     fn fresh_push_clears_redo_trail() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         let a = translation(1.0);
         doc.apply_edit(SceneEdit::SetLocalTransform {
@@ -722,7 +733,7 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         assert!(!doc.undo());
         assert!(!doc.redo());
-        doc.install_scene(empty_scene(), fixture_path());
+        doc.install_graph(empty_graph(), fixture_path());
         assert!(!doc.undo());
         assert!(!doc.redo());
     }
@@ -730,7 +741,7 @@ mod scene_document_tests {
     #[test]
     fn stack_caps_at_undo_stack_cap() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         // Push UNDO_STACK_CAP + 5 distinct edits; the oldest five
         // should be silently dropped by `pop_front`.
@@ -751,9 +762,9 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn install_scene_clears_undo_history() {
+    fn install_graph_clears_undo_history() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
@@ -761,7 +772,7 @@ mod scene_document_tests {
             after: translation(1.0),
         });
         assert!(doc.can_undo());
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         assert!(!doc.can_undo());
         assert!(!doc.can_redo());
     }
@@ -769,7 +780,7 @@ mod scene_document_tests {
     #[test]
     fn clear_scene_clears_undo_history() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
@@ -784,7 +795,7 @@ mod scene_document_tests {
     #[test]
     fn push_edit_fires_undo_stack_changed() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
@@ -800,7 +811,7 @@ mod scene_document_tests {
     #[test]
     fn undo_fires_mutated_then_undo_stack_changed() {
         let doc = SceneDocument::new();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
         let after = translation(1.0);
         doc.apply_edit(SceneEdit::SetLocalTransform {
@@ -824,13 +835,13 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn install_scene_emits_undo_stack_changed_only_when_history_was_non_empty() {
+    fn install_graph_emits_undo_stack_changed_only_when_history_was_non_empty() {
         let doc = SceneDocument::new();
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
         // Empty → empty: only `Installed`.
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
 
         // Push an edit, then install again: the second install must
@@ -842,7 +853,7 @@ mod scene_document_tests {
             after: translation(1.0),
         });
         log.borrow_mut().clear();
-        doc.install_scene(scene_with_one_object(), fixture_path());
+        doc.install_graph(graph_with_one_object(), fixture_path());
         assert_eq!(
             *log.borrow(),
             vec![SceneEvent::Installed, SceneEvent::UndoStackChanged]

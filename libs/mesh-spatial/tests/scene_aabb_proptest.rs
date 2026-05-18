@@ -75,13 +75,18 @@ fn leaf_strategy() -> impl Strategy<Value = (IndexedMesh, Transform3D)> {
 }
 
 fn graph_strategy() -> impl Strategy<Value = SceneGraph> {
+    // Mirrors what `SceneGraph::try_from(Scene { objects, .. })`
+    // produces: every object lands as a leaf under a single
+    // identity-Group root.
     prop::collection::vec(leaf_strategy(), 1..5usize).prop_map(|leaves| {
         let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
         for (mesh, transform) in leaves {
             let leaf = g
                 .add_leaf(None, transform, LeafPayload::Mesh(mesh))
                 .expect("inline leaf");
-            g.add_root(leaf).expect("inline leaf as root");
+            g.add_child(root, leaf).expect("attach leaf");
         }
         g
     })

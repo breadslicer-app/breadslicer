@@ -76,9 +76,9 @@ mod scene_export_tests {
     use super::*;
     use std::path::PathBuf;
 
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, SceneGraph, Vertex};
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {
@@ -95,37 +95,46 @@ mod scene_export_tests {
         }
     }
 
-    fn one_object_scene() -> Scene {
-        Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(unit_triangle()),
-            }],
-        }
+    /// Loader-shape one-object graph: a single inline-mesh leaf
+    /// under an identity-Group root.
+    fn one_object_graph() -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        g
     }
 
-    fn two_object_scene() -> Scene {
-        Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(unit_triangle()),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        10.0, 0.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(unit_triangle()),
-                },
-            ],
-        }
+    /// Loader-shape two-object graph: both leaves attached under a
+    /// shared identity-Group root.
+    fn two_object_graph() -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf_a = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .expect("add leaf A");
+        g.add_child(root, leaf_a).expect("attach leaf A");
+        let leaf_b = g
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .expect("add leaf B");
+        g.add_child(root, leaf_b).expect("attach leaf B");
+        g
     }
 
     fn tmp_path(suffix: &str) -> PathBuf {
@@ -147,14 +156,14 @@ mod scene_export_tests {
     #[test]
     fn default_export_stem_uses_source_path_stem() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.obj"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.obj"));
         assert_eq!(default_export_stem(&doc).as_deref(), Some("widget"));
     }
 
     #[test]
     fn default_export_stem_handles_no_extension() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget"));
         assert_eq!(default_export_stem(&doc).as_deref(), Some("widget"));
     }
 
@@ -167,34 +176,34 @@ mod scene_export_tests {
     #[test]
     fn default_export_extension_keeps_obj_source() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.obj"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.obj"));
         assert_eq!(default_export_extension(&doc), "obj");
     }
 
     #[test]
     fn default_export_extension_keeps_ascii_stl_source() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.stla"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stla"));
         assert_eq!(default_export_extension(&doc), "stla");
     }
 
     #[test]
     fn default_export_extension_normalises_stl_variants_to_binary() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.stlb"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stlb"));
         assert_eq!(default_export_extension(&doc), "stl");
 
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.STL"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.STL"));
         assert_eq!(default_export_extension(&doc), "stl");
     }
 
     #[test]
     fn default_export_extension_falls_back_for_unknown_or_missing_extension() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget.ply"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.ply"));
         assert_eq!(default_export_extension(&doc), "stl");
 
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/widget"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget"));
         assert_eq!(default_export_extension(&doc), "stl");
     }
 
@@ -209,7 +218,7 @@ mod scene_export_tests {
     #[test]
     fn export_single_object_stl_binary_writes_a_non_empty_file() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/single.obj"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/single.obj"));
         let target = tmp_path("single_stlb");
         let warnings =
             export_scene_as(&doc, &target, WriteFormat::StlBin).expect("write should succeed");
@@ -223,7 +232,7 @@ mod scene_export_tests {
     #[test]
     fn export_single_object_stl_ascii_starts_with_solid_keyword() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/single.obj"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/single.obj"));
         let target = tmp_path("single_stla");
         let warnings =
             export_scene_as(&doc, &target, WriteFormat::StlAscii).expect("write should succeed");
@@ -236,7 +245,7 @@ mod scene_export_tests {
     #[test]
     fn export_single_object_obj_writes_obj_keywords() {
         let doc = SceneDocument::new();
-        doc.install_scene(one_object_scene(), PathBuf::from("/tmp/single.obj"));
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/single.obj"));
         let target = tmp_path("single_obj");
         let warnings =
             export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");
@@ -250,7 +259,7 @@ mod scene_export_tests {
     #[test]
     fn export_multi_object_stl_emits_merge_warning() {
         let doc = SceneDocument::new();
-        doc.install_scene(two_object_scene(), PathBuf::from("/tmp/multi.obj"));
+        doc.install_graph(two_object_graph(), PathBuf::from("/tmp/multi.obj"));
         let target = tmp_path("multi_stlb");
         let warnings =
             export_scene_as(&doc, &target, WriteFormat::StlBin).expect("write should succeed");
@@ -267,7 +276,7 @@ mod scene_export_tests {
         // doesn't run and the warning vec is empty regardless of object
         // count.
         let doc = SceneDocument::new();
-        doc.install_scene(two_object_scene(), PathBuf::from("/tmp/multi.obj"));
+        doc.install_graph(two_object_graph(), PathBuf::from("/tmp/multi.obj"));
         let target = tmp_path("multi_obj");
         let warnings =
             export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");

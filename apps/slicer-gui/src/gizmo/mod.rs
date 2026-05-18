@@ -71,10 +71,9 @@ pub fn hit_radius_world(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f3
 mod pivot_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
         IndexedMesh::new(
@@ -87,8 +86,18 @@ mod pivot_tests {
         )
     }
 
-    fn spatial_for(scene: Scene) -> SceneSpatial {
-        SceneSpatial::new(scene).unwrap()
+    /// Single-leaf scene under a Group root, mirroring the shape the
+    /// loader pipeline produces (and what older tests built via
+    /// `SceneGraph::try_from(Scene { ... })`).
+    fn spatial_with_one_leaf(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        SceneSpatial::from_graph(g)
     }
 
     fn first_leaf(spatial: &SceneSpatial) -> NodeId {
@@ -99,19 +108,10 @@ mod pivot_tests {
 
     #[test]
     fn pivot_under_identity_is_local_aabb_centre() {
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(triangle_mesh(
-                    [-1.0, -2.0, -3.0],
-                    [3.0, 0.0, 0.0],
-                    [-1.0, 4.0, 5.0],
-                )),
-            }],
-        });
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh([-1.0, -2.0, -3.0], [3.0, 0.0, 0.0], [-1.0, 4.0, 5.0]),
+            Transform3D::Identity,
+        );
         let p = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
         // local AABB = ([-1, -2, -3], [3, 4, 5]) → centre (1, 1, 1)
         assert_approx_eq!(f32, p.x, 1.0);
@@ -121,21 +121,10 @@ mod pivot_tests {
 
     #[test]
     fn pivot_under_translation_shifts_with_object() {
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                    10.0, 20.0, 30.0,
-                ])),
-                content: SceneObjectContent::Mesh(triangle_mesh(
-                    [-1.0, -2.0, -3.0],
-                    [3.0, 0.0, 0.0],
-                    [-1.0, 4.0, 5.0],
-                )),
-            }],
-        });
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh([-1.0, -2.0, -3.0], [3.0, 0.0, 0.0], [-1.0, 4.0, 5.0]),
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 30.0])),
+        );
         let p = pivot_for_leaf(&spatial, first_leaf(&spatial)).unwrap();
         // Local centre (1, 1, 1) translated by (10, 20, 30).
         assert_approx_eq!(f32, p.x, 11.0, epsilon = 1e-5);
@@ -145,60 +134,24 @@ mod pivot_tests {
 
     #[test]
     fn pivot_for_empty_mesh_is_none() {
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(IndexedMesh::new(None, vec![], vec![])),
-            }],
-        });
+        let spatial = spatial_with_one_leaf(
+            IndexedMesh::new(None, vec![], vec![]),
+            Transform3D::Identity,
+        );
         assert!(pivot_for_leaf(&spatial, first_leaf(&spatial)).is_none());
     }
 
     #[test]
     fn pivot_for_non_leaf_node_is_none() {
-        // The Group root introduced by `SceneGraph::try_from(Scene)`
-        // is not a leaf; SceneSpatial::leaf rejects it, and
-        // pivot_for_leaf inherits that rejection. Replaces the old
-        // "out-of-range idx" test now that the helper is NodeId-keyed
-        // and there is no equivalent of an out-of-range usize.
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(triangle_mesh(
-                    [-1.0, -2.0, -3.0],
-                    [3.0, 0.0, 0.0],
-                    [-1.0, 4.0, 5.0],
-                )),
-            }],
-        });
+        // The Group root introduced by `spatial_with_one_leaf` is not
+        // a leaf; SceneSpatial::leaf rejects it, and pivot_for_leaf
+        // inherits that rejection.
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh([-1.0, -2.0, -3.0], [3.0, 0.0, 0.0], [-1.0, 4.0, 5.0]),
+            Transform3D::Identity,
+        );
         let root_id = spatial.graph().roots()[0];
         assert!(pivot_for_leaf(&spatial, root_id).is_none());
-    }
-
-    #[test]
-    fn dangling_resource_index_is_rejected_at_construction() {
-        // Scenes with dangling resource references are rejected by
-        // SceneSpatial construction, so pivot_for_leaf is
-        // structurally unable to observe one at runtime. This test
-        // pins the construction-time rejection rather than the
-        // silent-`None` behaviour that used to live inside
-        // pivot_for_leaf.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(7),
-            }],
-        };
-        assert!(SceneSpatial::new(scene).is_err());
     }
 }
 

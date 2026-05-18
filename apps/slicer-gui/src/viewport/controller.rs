@@ -76,14 +76,14 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(crate) fn install_scene_for_test(&self, scene: sc_mesh_core::scene::Scene) {
+    pub(crate) fn install_graph_for_test(&self, graph: sc_mesh_core::SceneGraph) {
         // Tests don't care about the source path; populate the slot
         // with a sentinel so the document's invariant ("scene present
         // ⇔ path present") holds and any future test assertion on
         // `source_path` is explicit about its synthetic origin.
         self.session
             .document()
-            .install_scene(scene, std::path::PathBuf::from("<test>"));
+            .install_graph(graph, std::path::PathBuf::from("<test>"));
     }
 
     #[cfg(test)]
@@ -830,9 +830,9 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
+    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
     /// `PointerModifiers::default()` with all flags off. The selection
     /// tests don't exercise modifier-driven branches, so every press
@@ -841,24 +841,31 @@ mod selection_tests {
         PointerModifiers::default()
     }
 
-    fn empty_obj() -> SceneObject {
-        SceneObject {
+    fn empty_leaf_mesh() -> IndexedMesh {
+        IndexedMesh {
             meta: None,
-            transform: Transform3D::Identity,
-            content: SceneObjectContent::Mesh(IndexedMesh {
-                meta: None,
-                vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-                faces: vec![],
-            }),
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![],
         }
     }
 
-    fn scene_with_n_objects(n: usize) -> Scene {
-        Scene {
-            meta: None,
-            resources: vec![],
-            objects: (0..n).map(|_| empty_obj()).collect(),
+    /// Mirrors `SceneGraph::try_from(Scene { objects: vec![...n], .. })`:
+    /// all leaves land under a single identity-Group root.
+    fn graph_with_n_objects(n: usize) -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        for _ in 0..n {
+            let leaf = g
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(empty_leaf_mesh()),
+                )
+                .expect("add leaf");
+            g.add_child(root, leaf).expect("attach leaf");
         }
+        g
     }
 
     #[test]
@@ -870,7 +877,7 @@ mod selection_tests {
     #[test]
     fn select_by_index_records_in_bounds_indices() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_select_by_index(1);
         assert_eq!(ctrl.selection(), Some(1));
         ctrl.on_select_by_index(2);
@@ -880,7 +887,7 @@ mod selection_tests {
     #[test]
     fn select_by_index_clamps_out_of_bounds_to_none() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.install_graph_for_test(graph_with_n_objects(2));
         // Pre-seed a valid selection so we can observe the reset.
         ctrl.on_select_by_index(0);
         ctrl.on_select_by_index(99);
@@ -902,7 +909,7 @@ mod selection_tests {
     #[test]
     fn clear_selection_resets_to_none() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.install_graph_for_test(graph_with_n_objects(2));
         ctrl.on_select_by_index(1);
         assert_eq!(ctrl.selection(), Some(1));
         ctrl.on_clear_selection();
@@ -912,7 +919,7 @@ mod selection_tests {
     #[test]
     fn close_scene_clears_selection() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_select_by_index(2);
         assert_eq!(ctrl.selection(), Some(2));
         ctrl.on_close_scene();
@@ -926,7 +933,7 @@ mod selection_tests {
     #[test]
     fn select_then_select_same_index_is_idempotent() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(2));
+        ctrl.install_graph_for_test(graph_with_n_objects(2));
         ctrl.on_select_by_index(0);
         ctrl.clear_frame_state_for_test();
         ctrl.on_select_by_index(0);
@@ -942,7 +949,7 @@ mod selection_tests {
         // first `RenderingSetup` (or after a teardown that dropped
         // the camera), we expect no panic and no selection change.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        ctrl.install_graph_for_test(graph_with_n_objects(1));
         // No camera installed.
         ctrl.on_pointer_down(50.0, 50.0, no_mods());
         ctrl.on_pointer_up(50.0, 50.0, no_mods());
@@ -954,7 +961,7 @@ mod selection_tests {
         // Width/height of zero means we have no projection to build a
         // ray from. Bail rather than divide-by-zeroing.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        ctrl.install_graph_for_test(graph_with_n_objects(1));
         // viewport defaults to (0.0, 0.0)
         ctrl.on_pointer_down(0.0, 0.0, no_mods());
         ctrl.on_pointer_up(0.0, 0.0, no_mods());
@@ -967,7 +974,7 @@ mod selection_tests {
         // press captured elsewhere, or our state out of sync), the
         // controller must not run the picker against an unset press.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        ctrl.install_graph_for_test(graph_with_n_objects(1));
         ctrl.on_pointer_up(50.0, 50.0, no_mods());
         assert_eq!(ctrl.selection(), None);
     }
@@ -978,7 +985,7 @@ mod selection_tests {
         // thing". Both directions land on index 0, the user's
         // mental model is "advance to the first item that exists".
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_selection_cycle(1);
         assert_eq!(ctrl.selection(), Some(0));
 
@@ -990,7 +997,7 @@ mod selection_tests {
     #[test]
     fn cycle_forward_advances_through_objects_and_wraps() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_select_by_index(0);
         ctrl.on_selection_cycle(1);
         assert_eq!(ctrl.selection(), Some(1));
@@ -1004,7 +1011,7 @@ mod selection_tests {
     #[test]
     fn cycle_backward_advances_in_reverse_and_wraps() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_select_by_index(0);
         // From index 0, Shift+Tab wraps to the last object.
         ctrl.on_selection_cycle(-1);
@@ -1022,12 +1029,8 @@ mod selection_tests {
         ctrl.on_selection_cycle(1);
         assert_eq!(ctrl.selection(), None);
 
-        // Empty scene installed.
-        ctrl.install_scene_for_test(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![],
-        });
+        // Empty scene installed (loader-shape: Group root with no leaves).
+        ctrl.install_graph_for_test(graph_with_n_objects(0));
         ctrl.on_selection_cycle(1);
         assert_eq!(ctrl.selection(), None);
     }
@@ -1038,7 +1041,7 @@ mod selection_tests {
         // index 0 every time. Mod-N arithmetic with N=1 collapses
         // to 0 cleanly.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(1));
+        ctrl.install_graph_for_test(graph_with_n_objects(1));
         ctrl.on_selection_cycle(1);
         assert_eq!(ctrl.selection(), Some(0));
         ctrl.on_selection_cycle(1);
@@ -1053,7 +1056,7 @@ mod selection_tests {
         // advance by exactly one step (or none for delta == 0)
         // rather than indexing past the array.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(scene_with_n_objects(3));
+        ctrl.install_graph_for_test(graph_with_n_objects(3));
         ctrl.on_select_by_index(0);
         ctrl.on_selection_cycle(99);
         assert_eq!(ctrl.selection(), Some(1));
@@ -1075,10 +1078,10 @@ mod viewport_click_tests {
     use crate::scene_document::SceneSubscription;
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, SceneGraph};
     use std::cell::Cell;
 
     /// `PointerModifiers::default()`, all four flags off.
@@ -1096,8 +1099,18 @@ mod viewport_click_tests {
         }
     }
 
-    fn front_facing_triangle_at(translation: [f32; 3]) -> SceneObject {
-        // CCW from +Z → front face faces +Z.
+    /// Fresh graph with a single identity-Group root, matching the
+    /// loader-pipeline topology these click tests expect to drive.
+    fn graph_with_group_root() -> (SceneGraph, NodeId) {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        (g, root)
+    }
+
+    /// CCW-from-+Z triangle at `translation`, attached as a leaf
+    /// under `parent` (the loader-shape Group root).
+    fn add_front_facing_triangle(g: &mut SceneGraph, parent: NodeId, translation: [f32; 3]) {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1110,15 +1123,15 @@ mod viewport_click_tests {
                 [0, 1, 2],
             )],
         };
-        SceneObject {
-            meta: None,
-            transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                translation[0] as f64,
-                translation[1] as f64,
-                translation[2] as f64,
-            ])),
-            content: SceneObjectContent::Mesh(mesh),
-        }
+        let transform = Transform3D::Affine(AffineTransform3D::from_translation([
+            translation[0] as f64,
+            translation[1] as f64,
+            translation[2] as f64,
+        ]));
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(parent, leaf).expect("attach leaf");
     }
 
     /// Camera looking at a target along `-Z` from `+Z` so the centre
@@ -1135,15 +1148,10 @@ mod viewport_click_tests {
     #[test]
     fn click_centre_picks_the_triangle_directly_under_the_cursor() {
         let ctrl = ViewportController::new_for_test();
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                front_facing_triangle_at([0.0, 0.0, 0.0]),
-                front_facing_triangle_at([10.0, 0.0, 0.0]),
-            ],
-        };
-        ctrl.install_scene_for_test(scene);
+        let (mut g, root) = graph_with_group_root();
+        add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
+        add_front_facing_triangle(&mut g, root, [10.0, 0.0, 0.0]);
+        ctrl.install_graph_for_test(g);
 
         // Camera framed on the first triangle, looking down -Z.
         // Centre pixel of the viewport casts a ray straight at it.
@@ -1159,12 +1167,9 @@ mod viewport_click_tests {
     #[test]
     fn click_in_empty_space_clears_the_selection() {
         let ctrl = ViewportController::new_for_test();
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
-        };
-        ctrl.install_scene_for_test(scene);
+        let (mut g, root) = graph_with_group_root();
+        add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
+        ctrl.install_graph_for_test(g);
         *ctrl.camera.camera_cell().borrow_mut() =
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         // A 200×100 viewport with the default gizmo size leaves no
@@ -1193,12 +1198,9 @@ mod viewport_click_tests {
         // not hand off to the picker, that would let large pointer
         // moves change the selection.
         let ctrl = ViewportController::new_for_test();
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
-        };
-        ctrl.install_scene_for_test(scene);
+        let (mut g, root) = graph_with_group_root();
+        add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
+        ctrl.install_graph_for_test(g);
         *ctrl.camera.camera_cell().borrow_mut() =
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
@@ -1230,12 +1232,9 @@ mod viewport_click_tests {
     const GIZMO_TEST_VIEWPORT: (f32, f32) = (400.0, 200.0);
 
     fn install_single_object_at_origin(ctrl: &ViewportController) {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
-        };
-        ctrl.install_scene_for_test(scene);
+        let (mut g, root) = graph_with_group_root();
+        add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
+        ctrl.install_graph_for_test(g);
         *ctrl.camera.camera_cell().borrow_mut() = Some(front_camera());
         let (vw, vh) = GIZMO_TEST_VIEWPORT;
         ctrl.set_viewport_for_test(vw, vh);
@@ -1527,12 +1526,9 @@ mod viewport_click_tests {
         // (trackpad jitter, debounced finger lift) must still be
         // treated as a click. Threshold is 4 logical pixels.
         let ctrl = ViewportController::new_for_test();
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![front_facing_triangle_at([0.0, 0.0, 0.0])],
-        };
-        ctrl.install_scene_for_test(scene);
+        let (mut g, root) = graph_with_group_root();
+        add_front_facing_triangle(&mut g, root, [0.0, 0.0, 0.0]);
+        ctrl.install_graph_for_test(g);
         *ctrl.camera.camera_cell().borrow_mut() =
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
@@ -1893,24 +1889,26 @@ mod keyboard_focus_tests {
     use crate::gizmo::axis::Axis;
     use crate::scene_document::SceneEdit;
     use glam::Vec3;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
+    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
-    fn one_object_scene() -> Scene {
-        Scene {
+    /// Loader-shape one-object graph: a single inline-mesh leaf
+    /// attached under an identity-Group root.
+    fn one_object_graph() -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let mesh = IndexedMesh {
             meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(IndexedMesh {
-                    meta: None,
-                    vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-                    faces: vec![],
-                }),
-            }],
-        }
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![],
+        };
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        g
     }
 
     #[test]
@@ -1919,7 +1917,7 @@ mod keyboard_focus_tests {
         // the integrator dereferences `selection`; a focus without a
         // selection would crash.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_gizmo_focus_translate();
         assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::None);
     }
@@ -1927,7 +1925,7 @@ mod keyboard_focus_tests {
     #[test]
     fn focus_set_with_selection_takes_effect() {
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::Translate);
@@ -1943,7 +1941,7 @@ mod keyboard_focus_tests {
         // focus must clear the held bit, the user's mental model
         // is "release on mode switch".
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
@@ -1964,7 +1962,7 @@ mod keyboard_focus_tests {
         // Rust handler still has to be defensive in case the
         // contract is ever violated.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         assert!(!ctrl.input.kbd_drive().current_arrows().any_held());
@@ -1976,7 +1974,7 @@ mod keyboard_focus_tests {
         // Esc) must still clear the bit, otherwise the next focus
         // session would inherit a phantom held key.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
@@ -1999,7 +1997,7 @@ mod keyboard_focus_tests {
         // simulates one or more integrator ticks; release flushes
         // the burst as a single undo entry.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
 
@@ -2033,7 +2031,7 @@ mod keyboard_focus_tests {
         // transform never changed, push_edit's no-op filter drops
         // the entry.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
 
@@ -2049,7 +2047,7 @@ mod keyboard_focus_tests {
         // current run as one undo entry rather than discarding it;
         // the user's translate work is preserved.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
 
@@ -2084,7 +2082,7 @@ mod keyboard_focus_tests {
         // one burst, only the first-press transition arms the
         // tracker, only the all-released transition flushes it.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
 
@@ -2114,7 +2112,7 @@ mod keyboard_focus_tests {
         // index it captured is about to become meaningless.
         let ctrl = std::rc::Rc::new(ViewportController::new_for_test());
         ctrl.register_document_listener();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
@@ -2135,7 +2133,7 @@ mod keyboard_focus_tests {
     fn esc_cascade_drag_then_focus_then_selection() {
         // Each Esc drops one level of the cascade.
         let ctrl = ViewportController::new_for_test();
-        ctrl.install_scene_for_test(one_object_scene());
+        ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         // No drag is possible without a camera; simulate the
@@ -2175,27 +2173,27 @@ mod keyboard_focus_tests {
     /// identity transform. Useful for clamp tests where the goal is
     /// "envelope is exactly flush with the object's +X face, so any
     /// +X delta clamps to zero".
-    fn cube_object_scene() -> Scene {
-        Scene {
+    fn cube_object_graph() -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let mesh = IndexedMesh {
             meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(IndexedMesh {
-                    meta: None,
-                    vertices: vec![Vertex::new([-1.0, -1.0, 0.0]), Vertex::new([1.0, 1.0, 2.0])],
-                    faces: vec![],
-                }),
-            }],
-        }
+            vertices: vec![Vertex::new([-1.0, -1.0, 0.0]), Vertex::new([1.0, 1.0, 2.0])],
+            faces: vec![],
+        };
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        g
     }
 
     /// Front-axis camera + 400 x 200 viewport. Mirrors the gizmo
     /// tests' setup so `world_per_pixel` is the same scale, and
     /// the keyboard integrator's translation rate is comparable.
     fn install_for_integration(ctrl: &ViewportController) {
-        ctrl.install_scene_for_test(cube_object_scene());
+        ctrl.install_graph_for_test(cube_object_graph());
         let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
         cam.set_axis_view(crate::camera::AxisView::Front);
         *ctrl.camera.camera_cell().borrow_mut() = Some(cam);

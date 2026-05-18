@@ -343,7 +343,7 @@ mod place_on_plate_tests {
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::scene_graph_node::{LeafPayload, NodeKind};
 
     fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
@@ -370,12 +370,21 @@ mod place_on_plate_tests {
         }
     }
 
-    fn inline_object(mesh: IndexedMesh, t: Transform3D) -> SceneObject {
-        SceneObject {
-            meta: None,
-            transform: t,
-            content: SceneObjectContent::Mesh(mesh),
+    /// Group-rooted graph wrapping the supplied leaves under a single
+    /// identity-Group root. Mirrors what the loader pipeline produces
+    /// at scene-install time and what `place_on_plate` is documented
+    /// to act on (it translates the root Group, never the leaves).
+    fn group_rooted_graph(leaves: Vec<(IndexedMesh, Transform3D)>) -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group as root");
+        for (mesh, transform) in leaves {
+            let leaf = g
+                .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+                .expect("add leaf");
+            g.add_child(root, leaf).expect("attach leaf under root");
         }
+        g
     }
 
     fn small_envelope() -> BuildVolume {
@@ -387,7 +396,7 @@ mod place_on_plate_tests {
 
     #[test]
     fn empty_graph_is_a_no_op() {
-        let mut graph = SceneGraph::try_from(Scene::default()).unwrap();
+        let mut graph = SceneGraph::new();
         place_on_plate(&mut graph, small_envelope()).unwrap();
         assert!(graph.aabb().unwrap().is_none());
     }
@@ -398,15 +407,10 @@ mod place_on_plate_tests {
         // transform. After placement the world AABB must be centred on
         // (0, 0) in XY and resting on Z=0: world min should be
         // (-5, -10, 0).
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(
-                cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
-                Transform3D::Identity,
-            )],
-        };
-        let mut graph = SceneGraph::try_from(scene).unwrap();
+        let mut graph = group_rooted_graph(vec![(
+            cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
+            Transform3D::Identity,
+        )]);
         place_on_plate(&mut graph, small_envelope()).unwrap();
         let world_aabb = graph.aabb().unwrap().unwrap();
         assert_eq!(world_aabb.min().coords(), [-5.0, -10.0, 0.0]);
@@ -418,15 +422,10 @@ mod place_on_plate_tests {
         // Cube already centred on origin with bottom at Z=0. Placement
         // computes a zero translation and leaves the root's local
         // transform untouched (still Identity, not Affine(zero)).
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(
-                cube_mesh([-5.0, -5.0, 0.0], [5.0, 5.0, 10.0]),
-                Transform3D::Identity,
-            )],
-        };
-        let mut graph = SceneGraph::try_from(scene).unwrap();
+        let mut graph = group_rooted_graph(vec![(
+            cube_mesh([-5.0, -5.0, 0.0], [5.0, 5.0, 10.0]),
+            Transform3D::Identity,
+        )]);
         let root_id = graph.roots()[0];
         place_on_plate(&mut graph, small_envelope()).unwrap();
         assert!(matches!(
@@ -442,21 +441,16 @@ mod place_on_plate_tests {
         // individual cubes' relative offset is unchanged (still 9 mm
         // apart on X and Y) because the placement translates the root
         // Group only, never the leaves.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                inline_object(
-                    cube_mesh([100.0, 200.0, 50.0], [101.0, 201.0, 51.0]),
-                    Transform3D::Identity,
-                ),
-                inline_object(
-                    cube_mesh([109.0, 209.0, 53.0], [110.0, 210.0, 54.0]),
-                    Transform3D::Identity,
-                ),
-            ],
-        };
-        let mut graph = SceneGraph::try_from(scene).unwrap();
+        let mut graph = group_rooted_graph(vec![
+            (
+                cube_mesh([100.0, 200.0, 50.0], [101.0, 201.0, 51.0]),
+                Transform3D::Identity,
+            ),
+            (
+                cube_mesh([109.0, 209.0, 53.0], [110.0, 210.0, 54.0]),
+                Transform3D::Identity,
+            ),
+        ]);
         place_on_plate(&mut graph, small_envelope()).unwrap();
         let world = graph.aabb().unwrap().unwrap();
         assert_eq!(world.min().coords()[2], 0.0, "union bottom rests on Z=0");
@@ -471,12 +465,12 @@ mod place_on_plate_tests {
         let root_id = graph.roots()[0];
         let children = match &graph.node(root_id).unwrap().kind {
             NodeKind::Group { children } => children.clone(),
-            _ => unreachable!("try_from(Scene) builds a Group root"),
+            _ => unreachable!("group_rooted_graph builds a Group root"),
         };
         let mesh_for = |child_idx: usize| -> &IndexedMesh {
             match &graph.node(children[child_idx]).unwrap().kind {
                 NodeKind::Leaf(LeafPayload::Mesh(m)) => m,
-                _ => unreachable!("try_from(Scene) builds Mesh leaves"),
+                _ => unreachable!("group_rooted_graph attaches inline-mesh leaves"),
             }
         };
         assert_eq!(
@@ -499,15 +493,10 @@ mod place_on_plate_tests {
         // (-10.5, -20.5, -5) is applied to the root Group's local
         // transform. After placement the world AABB sits on
         // [-0.5, -0.5, 0] -> [0.5, 0.5, 1].
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(
-                cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
-                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),
-            )],
-        };
-        let mut graph = SceneGraph::try_from(scene).unwrap();
+        let mut graph = group_rooted_graph(vec![(
+            cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),
+        )]);
         place_on_plate(&mut graph, small_envelope()).unwrap();
         let world = graph.aabb().unwrap().unwrap();
         assert_eq!(world.min().coords(), [-0.5, -0.5, 0.0]);

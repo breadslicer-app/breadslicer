@@ -52,22 +52,44 @@ fn triangle_mesh(scale: f32) -> IndexedMesh {
     )
 }
 
-/// Append an inline-mesh leaf as a new root. Returns the leaf id so
-/// tests can address it directly when they need to.
-fn add_inline_leaf(g: &mut SceneGraph, mesh: IndexedMesh, transform: Transform3D) -> NodeId {
+/// Fresh graph with a single identity-Group root. Mirrors the
+/// topology the loader pipeline installs (a flat `Scene` flowing
+/// through `SceneGraph::try_from` lands its objects as leaves under
+/// an identity-Group root). Returns the graph and the Group's id so
+/// helpers can attach leaves directly.
+fn graph_with_group_root() -> (SceneGraph, NodeId) {
+    let mut g = SceneGraph::new();
+    let root = g.add_group(None, Transform3D::Identity);
+    g.add_root(root).expect("group root");
+    (g, root)
+}
+
+/// Attach an inline-mesh leaf as a child of `parent`. Returns the
+/// leaf id so tests can address it directly.
+fn add_inline_leaf(
+    g: &mut SceneGraph,
+    parent: NodeId,
+    mesh: IndexedMesh,
+    transform: Transform3D,
+) -> NodeId {
     let leaf = g
         .add_leaf(None, transform, LeafPayload::Mesh(mesh))
         .expect("inline leaf");
-    g.add_root(leaf).expect("inline leaf as root");
+    g.add_child(parent, leaf).expect("attach inline leaf");
     leaf
 }
 
-/// Append a resource-backed leaf as a new root.
-fn add_resource_leaf(g: &mut SceneGraph, rid: MeshResourceId, transform: Transform3D) -> NodeId {
+/// Attach a resource-backed leaf as a child of `parent`.
+fn add_resource_leaf(
+    g: &mut SceneGraph,
+    parent: NodeId,
+    rid: MeshResourceId,
+    transform: Transform3D,
+) -> NodeId {
     let leaf = g
         .add_leaf(None, transform, LeafPayload::MeshResource(rid))
         .expect("resource leaf");
-    g.add_root(leaf).expect("resource leaf as root");
+    g.add_child(parent, leaf).expect("attach resource leaf");
     leaf
 }
 
@@ -81,8 +103,8 @@ mod object_query_binding {
 
     #[test]
     fn inline_object_returns_inline_mesh() {
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         let q = spatial
             .leaf(first_leaf(&spatial))
@@ -101,9 +123,9 @@ mod object_query_binding {
 
     #[test]
     fn resource_object_returns_resource_mesh() {
-        let mut graph = SceneGraph::new();
+        let (mut graph, root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(1.0));
-        add_resource_leaf(&mut graph, rid, Transform3D::Identity);
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         let q = spatial.leaf(first_leaf(&spatial)).expect("object exists");
         let leaf_id = spatial.leaf_id_at_index(0).expect("leaf exists");
@@ -121,8 +143,8 @@ mod object_query_binding {
 
     #[test]
     fn out_of_bounds_object_index_returns_none() {
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         assert!(spatial.leaf_id_at_index(99).is_none());
     }
@@ -133,10 +155,10 @@ mod object_query_binding {
         // for that resource must be built once and reused: both
         // ObjectQuery handles must observe identical AABB and the
         // same TriangleClusters reference.
-        let mut graph = SceneGraph::new();
+        let (mut graph, root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(2.0));
-        add_resource_leaf(&mut graph, rid, Transform3D::Identity);
-        add_resource_leaf(&mut graph, rid, Transform3D::Identity);
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         let a = spatial.leaf(first_leaf(&spatial)).unwrap();
         let b = spatial.leaf(nth_leaf(&spatial, 1)).unwrap();
@@ -154,8 +176,8 @@ mod object_query_binding {
 
     #[test]
     fn repeated_lookups_are_cache_stable() {
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         let first = spatial
             .leaf(first_leaf(&spatial))
@@ -176,8 +198,8 @@ mod object_query_binding {
     #[test]
     fn empty_mesh_has_no_local_aabb() {
         let empty_mesh = IndexedMesh::new(None, vec![], vec![]);
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, empty_mesh, Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, empty_mesh, Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         let q = spatial.leaf(first_leaf(&spatial)).unwrap();
         assert!(q.local_aabb().is_none());
@@ -190,8 +212,8 @@ mod cache_priming {
 
     #[test]
     fn new_starts_lazy_first_query_builds() {
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         // First query yields the AABB; subsequent queries are
         // cache hits (same value, regardless of OnceLock state
@@ -208,10 +230,10 @@ mod cache_priming {
     #[test]
     fn primed_returns_same_values_as_lazy() {
         let mk_graph = || {
-            let mut g = SceneGraph::new();
+            let (mut g, root) = graph_with_group_root();
             let rid = g.add_mesh_resource(triangle_mesh(2.0));
-            add_inline_leaf(&mut g, triangle_mesh(1.0), Transform3D::Identity);
-            add_resource_leaf(&mut g, rid, Transform3D::Identity);
+            add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
+            add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
             g
         };
         let lazy = SceneSpatial::from_graph(mk_graph());
@@ -248,10 +270,11 @@ mod scene_aabb_consistency {
 
     #[test]
     fn cached_form_agrees_with_uncached_for_identity_scene() {
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         add_inline_leaf(
             &mut graph,
+            root,
             triangle_mesh(0.5),
             Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
         );
@@ -263,15 +286,16 @@ mod scene_aabb_consistency {
 
     #[test]
     fn cached_form_returns_none_for_empty_scene() {
-        let spatial = SceneSpatial::from_graph(SceneGraph::new());
+        let (graph, _root) = graph_with_group_root();
+        let spatial = SceneSpatial::from_graph(graph);
         assert!(scene_aabb(&spatial).is_none());
     }
 
     #[test]
     fn cached_form_skips_empty_meshes() {
         let empty = IndexedMesh::new(None, vec![], vec![]);
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, empty, Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, empty, Transform3D::Identity);
         let spatial = SceneSpatial::from_graph(graph);
         assert!(scene_aabb(&spatial).is_none());
     }
@@ -292,9 +316,10 @@ mod scene_aabb_consistency {
     #[test]
     fn cached_form_agrees_under_pure_rotation() {
         assert_cached_matches_uncached(|| {
-            let mut g = SceneGraph::new();
+            let (mut g, root) = graph_with_group_root();
             add_inline_leaf(
                 &mut g,
+                root,
                 triangle_mesh(1.0),
                 Transform3D::Affine(AffineTransform3D::from_rotation_z(
                     std::f64::consts::FRAC_PI_4,
@@ -311,9 +336,10 @@ mod scene_aabb_consistency {
         // the uncached one bit-for-bit so the framing camera is
         // identical.
         assert_cached_matches_uncached(|| {
-            let mut g = SceneGraph::new();
+            let (mut g, root) = graph_with_group_root();
             add_inline_leaf(
                 &mut g,
+                root,
                 triangle_mesh(1.0),
                 Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0])),
             );
@@ -324,15 +350,17 @@ mod scene_aabb_consistency {
     #[test]
     fn cached_form_agrees_for_multi_object_scene() {
         assert_cached_matches_uncached(|| {
-            let mut g = SceneGraph::new();
-            add_inline_leaf(&mut g, triangle_mesh(1.0), Transform3D::Identity);
+            let (mut g, root) = graph_with_group_root();
+            add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
             add_inline_leaf(
                 &mut g,
+                root,
                 triangle_mesh(0.5),
                 Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
             );
             add_inline_leaf(
                 &mut g,
+                root,
                 triangle_mesh(2.0),
                 Transform3D::Affine(AffineTransform3D::from_rotation_z(0.7)),
             );
@@ -345,11 +373,12 @@ mod scene_aabb_consistency {
         // Two scene objects that share a single resource mesh;
         // exercises the cache slot merging path.
         assert_cached_matches_uncached(|| {
-            let mut g = SceneGraph::new();
+            let (mut g, root) = graph_with_group_root();
             let rid = g.add_mesh_resource(triangle_mesh(2.0));
-            add_resource_leaf(&mut g, rid, Transform3D::Identity);
+            add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
             add_resource_leaf(
                 &mut g,
+                root,
                 rid,
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
             );
@@ -371,8 +400,8 @@ mod invalidation_discipline {
         // Transform-only edits are object-relative; per-mesh caches
         // are object-space. Applying the edit must not change the
         // cached local AABB.
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let mut spatial = SceneSpatial::primed_graph(graph);
         let leaf_id = spatial.leaf_id_at_index(0).unwrap();
         let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
@@ -397,8 +426,8 @@ mod invalidation_discipline {
 
     #[test]
     fn invalidate_leaf_clears_inline_cache() {
-        let mut graph = SceneGraph::new();
-        add_inline_leaf(&mut graph, triangle_mesh(1.0), Transform3D::Identity);
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
         let mut spatial = SceneSpatial::primed_graph(graph);
         // Prime via a query, then invalidate, then assert the next
         // query still returns the right value (because the cache is
@@ -413,9 +442,9 @@ mod invalidation_discipline {
 
     #[test]
     fn invalidate_mesh_resource_clears_resource_cache() {
-        let mut graph = SceneGraph::new();
+        let (mut graph, root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(2.0));
-        add_resource_leaf(&mut graph, rid, Transform3D::Identity);
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
         let mut spatial = SceneSpatial::primed_graph(graph);
         let leaf_id = spatial.leaf_id_at_index(0).unwrap();
         let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
@@ -429,9 +458,9 @@ mod invalidation_discipline {
         // A resource-backed leaf has no inline cache slot; calling
         // `invalidate_leaf` on it is a no-op for that leaf and must
         // not corrupt the resource cache the leaf reads from.
-        let mut graph = SceneGraph::new();
+        let (mut graph, root) = graph_with_group_root();
         let rid = graph.add_mesh_resource(triangle_mesh(1.0));
-        add_resource_leaf(&mut graph, rid, Transform3D::Identity);
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
         let mut spatial = SceneSpatial::primed_graph(graph);
         let leaf_id = spatial.leaf_id_at_index(0).unwrap();
         spatial.invalidate_leaf(leaf_id);
@@ -490,8 +519,8 @@ mod transformed_aabb {
     }
 
     fn one_object(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
-        let mut g = SceneGraph::new();
-        add_inline_leaf(&mut g, mesh, transform);
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh, transform);
         SceneSpatial::from_graph(g)
     }
 

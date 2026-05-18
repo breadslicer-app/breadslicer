@@ -595,13 +595,12 @@ mod ray_hits_triangle_oriented_tests {
 #[cfg(test)]
 mod pick_object_tests {
     use super::*;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
-    fn unit_triangle_at(translation: [f32; 3]) -> SceneObject {
+    fn unit_triangle_mesh() -> IndexedMesh {
         // CCW when viewed from +Z, ~unit-sized.
-        let mesh = IndexedMesh::new(
+        IndexedMesh::new(
             None,
             vec![
                 Vertex::new([-0.5, -0.5, 0.0]),
@@ -612,20 +611,44 @@ mod pick_object_tests {
                 Normal::new([0.0, 0.0, 1.0]),
                 [0, 1, 2],
             )],
-        );
-        SceneObject {
-            meta: None,
-            transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                translation[0] as f64,
-                translation[1] as f64,
-                translation[2] as f64,
-            ])),
-            content: SceneObjectContent::Mesh(mesh),
-        }
+        )
     }
 
-    fn spatial_for(scene: Scene) -> SceneSpatial {
-        SceneSpatial::new(scene).unwrap()
+    fn translated(translation: [f32; 3]) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation([
+            translation[0] as f64,
+            translation[1] as f64,
+            translation[2] as f64,
+        ]))
+    }
+
+    /// Mirrors `SceneGraph::try_from(Scene { objects, .. })`: a single
+    /// identity-Group root that will host the leaves.
+    fn graph_with_group_root() -> (SceneGraph, NodeId) {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        (g, root)
+    }
+
+    fn add_leaf_under(
+        g: &mut SceneGraph,
+        parent: NodeId,
+        mesh: IndexedMesh,
+        transform: Transform3D,
+    ) {
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(parent, leaf).expect("attach leaf");
+    }
+
+    fn spatial_with_unit_triangles(translations: &[[f32; 3]]) -> SceneSpatial {
+        let (mut g, root) = graph_with_group_root();
+        for t in translations {
+            add_leaf_under(&mut g, root, unit_triangle_mesh(), translated(*t));
+        }
+        SceneSpatial::from_graph(g)
     }
 
     #[test]
@@ -633,20 +656,8 @@ mod pick_object_tests {
         // Same triangle, two scenes: one identity, one translated by
         // +X. Ray points at the +X position; only the translated copy
         // should be hit.
-        let id_spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: unit_triangle_at([0.0, 0.0, 0.0]).content,
-            }],
-        });
-        let shifted_spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_at([10.0, 0.0, 0.0])],
-        });
+        let id_spatial = spatial_with_unit_triangles(&[[0.0, 0.0, 0.0]]);
+        let shifted_spatial = spatial_with_unit_triangles(&[[10.0, 0.0, 0.0]]);
         // Ray goes through (10, 0, 0) toward -Z.
         let ray = Ray {
             origin: Vec3::new(10.0, 0.0, 5.0),
@@ -662,7 +673,7 @@ mod pick_object_tests {
 
     #[test]
     fn empty_scene_picks_nothing() {
-        let spatial = spatial_for(Scene::default());
+        let spatial = SceneSpatial::from_graph(SceneGraph::new());
         let ray = Ray {
             origin: Vec3::ZERO,
             direction: Vec3::X,
@@ -672,14 +683,7 @@ mod pick_object_tests {
 
     #[test]
     fn returns_none_when_ray_misses_every_object() {
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                unit_triangle_at([0.0, 0.0, 0.0]),
-                unit_triangle_at([10.0, 0.0, 0.0]),
-            ],
-        });
+        let spatial = spatial_with_unit_triangles(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]]);
         // Ray points to +Y from far above; no triangle is in its path.
         let ray = Ray {
             origin: Vec3::new(0.0, 100.0, 5.0),
@@ -691,15 +695,8 @@ mod pick_object_tests {
     #[test]
     fn closest_hit_wins_among_overlapping_along_ray() {
         // Three triangles along -Z at z = 0, z = -2, z = -4.
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                unit_triangle_at([0.0, 0.0, 0.0]),
-                unit_triangle_at([0.0, 0.0, -2.0]),
-                unit_triangle_at([0.0, 0.0, -4.0]),
-            ],
-        });
+        let spatial =
+            spatial_with_unit_triangles(&[[0.0, 0.0, 0.0], [0.0, 0.0, -2.0], [0.0, 0.0, -4.0]]);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
@@ -716,13 +713,7 @@ mod pick_object_tests {
         // the ray, so the picker eliminates it without running its
         // triangle test. Functionally we observe that the picked leaf
         // is the on-axis one.
-        let on_axis = unit_triangle_at([0.0, 0.0, 0.0]);
-        let off_axis = unit_triangle_at([0.0, 50.0, 0.0]);
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![off_axis, on_axis],
-        });
+        let spatial = spatial_with_unit_triangles(&[[0.0, 50.0, 0.0], [0.0, 0.0, 0.0]]);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
@@ -746,11 +737,7 @@ mod pick_object_tests {
         // ray approaching from the back side. The triangle test
         // rejects this, so the pick should return None even though
         // the AABB is intersected.
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![unit_triangle_at([0.0, 0.0, 0.0])],
-        });
+        let spatial = spatial_with_unit_triangles(&[[0.0, 0.0, 0.0]]);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, -5.0),
             direction: Vec3::Z,
@@ -776,14 +763,14 @@ mod pick_object_tests {
         // pick that up: a ray from +Z hits the world-space back face
         // and must be rejected; a ray from -Z hits the world-space
         // front face and must succeed.
-        let mut object = unit_triangle_at([0.0, 0.0, 0.0]);
-        object.transform =
-            Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![object],
-        });
+        let (mut g, root) = graph_with_group_root();
+        add_leaf_under(
+            &mut g,
+            root,
+            unit_triangle_mesh(),
+            Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0])),
+        );
+        let spatial = SceneSpatial::from_graph(g);
         let from_above = Ray {
             origin: Vec3::new(0.0, 0.0, 5.0),
             direction: -Vec3::Z,
@@ -812,25 +799,6 @@ mod pick_object_tests {
     }
 
     #[test]
-    fn dangling_resource_index_is_rejected_at_construction() {
-        // Scenes with dangling resource references are rejected by
-        // SceneSpatial construction, so the picker is structurally
-        // unable to receive one at runtime. This test pins the
-        // construction-time rejection rather than the silent-skip
-        // behaviour that used to live inside the picker loop.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(99),
-            }],
-        };
-        assert!(SceneSpatial::new(scene).is_err());
-    }
-
-    #[test]
     fn sub_millimetre_triangle_is_pickable() {
         // Regression: `ray_hits_triangle_oriented` rejects hits whose
         // MT determinant is below an absolute `EPSILON = 1e-7`. The
@@ -855,15 +823,9 @@ mod pick_object_tests {
                 [0, 1, 2],
             )],
         );
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        });
+        let (mut g, root) = graph_with_group_root();
+        add_leaf_under(&mut g, root, mesh, Transform3D::Identity);
+        let spatial = SceneSpatial::from_graph(g);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, 1.0),
             direction: -Vec3::Z,
@@ -892,15 +854,9 @@ mod pick_object_tests {
                 [0, 1, 2],
             )],
         );
-        let spatial = spatial_for(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        });
+        let (mut g, root) = graph_with_group_root();
+        add_leaf_under(&mut g, root, mesh, Transform3D::Identity);
+        let spatial = SceneSpatial::from_graph(g);
         let ray = Ray {
             origin: Vec3::new(0.0, 0.0, -1.0),
             direction: Vec3::Z,

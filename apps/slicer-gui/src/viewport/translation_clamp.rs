@@ -111,13 +111,28 @@ fn translation_of(t: Transform3D) -> [f64; 3] {
 mod translation_clamp_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
     fn vol() -> BuildVolume {
         // 100 x 60 x 80 mm, matching the BuildVolume tests' fixture.
         BuildVolume::new(100.0, 60.0, 80.0)
+    }
+
+    /// Single-leaf scene under a Group root, mirroring what the
+    /// loader pipeline installs (the loader funnels a flat `Scene`
+    /// through `SceneGraph::try_from`, which wraps it in an
+    /// identity-Group root). Tests that inspect `graph().roots()[0]`
+    /// rely on that wrapping Group being present.
+    fn one_leaf_spatial(mesh: IndexedMesh) -> SceneSpatial {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        SceneSpatial::from_graph(g)
     }
 
     fn spatial_with_centred_unit_cube() -> SceneSpatial {
@@ -125,7 +140,7 @@ mod translation_clamp_tests {
         // [-1, 1]^2 on X/Y, [0, 2] on Z. Vertices reach every AABB
         // corner, so per-vertex and Arvo agree under any rotation,
         // which is what the rotation-coverage tests below rely on.
-        let mesh = IndexedMesh {
+        one_leaf_spatial(IndexedMesh {
             meta: None,
             vertices: vec![
                 Vertex::new([-1.0, -1.0, 0.0]),
@@ -138,17 +153,7 @@ mod translation_clamp_tests {
                 Vertex::new([1.0, 1.0, 2.0]),
             ],
             faces: vec![],
-        };
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        };
-        SceneSpatial::new(scene).unwrap()
+        })
     }
 
     fn spatial_with_octahedron() -> SceneSpatial {
@@ -158,7 +163,7 @@ mod translation_clamp_tests {
         // Arvo-based clamp: after a 45° Z rotation, Arvo extends X
         // and Y by sqrt(2) while the true rotated-mesh AABB stays
         // at sqrt(2) / 2 on those axes.
-        let mesh = IndexedMesh {
+        one_leaf_spatial(IndexedMesh {
             meta: None,
             vertices: vec![
                 Vertex::new([1.0, 0.0, 0.0]),
@@ -169,17 +174,7 @@ mod translation_clamp_tests {
                 Vertex::new([0.0, 0.0, -1.0]),
             ],
             faces: vec![],
-        };
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        };
-        SceneSpatial::new(scene).unwrap()
+        })
     }
 
     /// Builds the same centred unit cube as
@@ -192,8 +187,6 @@ mod translation_clamp_tests {
     /// either over-block or fail to block the drag.
     fn spatial_with_unit_cube_under_root_translation(root_translation: [f64; 3]) -> SceneSpatial {
         use sc_mesh_core::NodeId;
-        use sc_mesh_core::scene_graph::SceneGraph;
-        use sc_mesh_core::scene_graph_node::LeafPayload;
 
         let mesh = IndexedMesh {
             meta: None,
@@ -223,21 +216,11 @@ mod translation_clamp_tests {
     }
 
     fn spatial_with_empty_mesh() -> SceneSpatial {
-        let mesh = IndexedMesh {
+        one_leaf_spatial(IndexedMesh {
             meta: None,
             vertices: vec![],
             faces: vec![],
-        };
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        };
-        SceneSpatial::new(scene).unwrap()
+        })
     }
 
     fn translate(d: [f64; 3]) -> Transform3D {
