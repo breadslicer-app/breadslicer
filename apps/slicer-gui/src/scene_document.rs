@@ -162,27 +162,11 @@ impl SceneDocument {
     }
 
     /// Currently-selected leaf's stable [`NodeId`], or `None` when no
-    /// selection exists. Permanent read API for consumers that carry
-    /// `NodeId` (viewport FSMs, scene-edit emitters); equivalent to
+    /// selection exists. Equivalent to
     /// `self.selection().primary().map(LeafId::node_id)` but cheaper
     /// to call repeatedly.
     pub fn selection_primary_node_id(&self) -> Option<NodeId> {
         self.selection.primary_node_id()
-    }
-
-    /// BRIDGE: currently-selected leaf's pre-order index, for legacy
-    /// idx-keyed consumers (renderer's `Option<usize>` selection,
-    /// sidebar list highlight). Internally resolves the selected
-    /// [`NodeId`] back to a pre-order leaf position by walking the
-    /// graph. Returns `None` when nothing is selected, no scene is
-    /// loaded, or the selected node no longer names a reachable leaf.
-    ///
-    /// DELETE-ON-CLEANUP when downstream consumers carry `NodeId`
-    /// directly; consumers then read [`Self::selection`] and call
-    /// [`Selection::primary`] for the stable handle.
-    pub fn selection_primary_idx(&self) -> Option<usize> {
-        self.with_scene(|spatial| self.selection.primary_legacy_idx(spatial))
-            .flatten()
     }
 
     /// Apply a typed scene edit. The single mutation choke-point on
@@ -451,7 +435,7 @@ mod scene_document_tests {
     fn fresh_document_has_no_selection() {
         let doc = SceneDocument::new();
         assert_eq!(doc.selection(), Selection::None);
-        assert_eq!(doc.selection_primary_idx(), None);
+        assert_eq!(doc.selection_primary_node_id(), None);
     }
 
     /// Pick the [`LeafId`] of the document's first leaf. The test
@@ -474,7 +458,7 @@ mod scene_document_tests {
         let leaf = first_leaf_id(&doc);
         doc.set_selection(Selection::One(leaf));
         assert_eq!(doc.selection(), Selection::One(leaf));
-        assert_eq!(doc.selection_primary_idx(), Some(0));
+        assert_eq!(doc.selection_primary_node_id(), Some(leaf.node_id()));
     }
 
     #[test]

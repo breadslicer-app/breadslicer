@@ -14,7 +14,6 @@
 use std::cell::Cell;
 
 use sc_mesh_core::NodeId;
-use sc_mesh_spatial::SceneSpatial;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct LeafId(pub(crate) NodeId);
@@ -59,24 +58,10 @@ impl SelectionState {
         self.cell.set(sel);
     }
 
-    /// Stable `NodeId` of the currently-selected leaf, or `None`. The
-    /// permanent read API: selection survives any graph mutation that
-    /// keeps the leaf alive, since `NodeId` is the arena's
-    /// never-reused identifier.
+    /// Stable `NodeId` of the currently-selected leaf, or `None`.
+    /// Selection survives any graph mutation that keeps the leaf
+    /// alive, since `NodeId` is the arena's never-reused identifier.
     pub(crate) fn primary_node_id(&self) -> Option<NodeId> {
         self.cell.get().primary().map(LeafId::node_id)
-    }
-
-    /// BRIDGE: pre-order leaf index of the currently-selected leaf, or
-    /// `None` when nothing is selected or the selected `NodeId` no
-    /// longer points at a reachable leaf. Used by every legacy
-    /// idx-keyed consumer (renderer's `selection: Option<usize>`,
-    /// sidebar list highlight, gizmo / keyboard FSMs, document tests)
-    /// while the migration to `NodeId` walks through `slicer-gui`.
-    ///
-    /// DELETE-ON-CLEANUP when those consumers carry `NodeId` directly.
-    pub(crate) fn primary_legacy_idx(&self, spatial: &SceneSpatial) -> Option<usize> {
-        let node_id = self.primary_node_id()?;
-        spatial.leaf_index_of(node_id)
     }
 }

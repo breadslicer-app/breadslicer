@@ -352,11 +352,15 @@ impl ViewportController {
         }
     }
 
-    /// Selection, in the document's authoritative form. Tests use
-    /// this to assert FSM transitions.
+    /// Selection, resolved to its pre-order leaf index against the
+    /// live graph. Test-only; the document's authoritative form is
+    /// [`SceneDocument::selection_primary_node_id`].
     #[cfg(test)]
     pub(crate) fn selection(&self) -> Option<usize> {
-        self.session.document().selection_primary_idx()
+        let document = self.session.document();
+        document
+            .selection_primary_node_id()
+            .and_then(|id| document.with_scene(|s| s.leaf_index_of(id)).flatten())
     }
 
     /// Slint-side selection-changed callback. Out-of-bounds indices map
@@ -411,7 +415,11 @@ impl ViewportController {
             return;
         }
         let step = delta.signum();
-        let next = match self.session.document().selection_primary_idx() {
+        let document = self.session.document();
+        let cur_idx = document
+            .selection_primary_node_id()
+            .and_then(|id| document.with_scene(|s| s.leaf_index_of(id)).flatten());
+        let next = match cur_idx {
             None => 0,
             Some(cur) => {
                 let len_i = scene_len as i32;
@@ -580,10 +588,10 @@ impl ViewportController {
 
     fn mirror_selection_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
-            let idx = self
-                .session
-                .document()
-                .selection_primary_idx()
+            let document = self.session.document();
+            let idx = document
+                .selection_primary_node_id()
+                .and_then(|id| document.with_scene(|s| s.leaf_index_of(id)).flatten())
                 .map_or(-1, |i| i as i32);
             ui.set_selected_object_index(idx);
         }
