@@ -276,6 +276,29 @@ impl SceneGraph {
         count
     }
 
+    /// The first reachable leaf in `roots()` pre-order traversal, or
+    /// `None` when the graph has no leaves. Format writers that walk
+    /// the graph and have already verified `reachable_leaf_count() == 1`
+    /// use this to grab the only leaf without re-walking via an index.
+    pub fn first_leaf_id(&self) -> Option<NodeId> {
+        let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.node(id) else {
+                continue;
+            };
+            match &node.kind {
+                NodeKind::Leaf(_) => return Some(id),
+                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                    for child in children.iter().rev() {
+                        stack.push(*child);
+                    }
+                }
+                NodeKind::Instance { .. } => {}
+            }
+        }
+        None
+    }
+
     /// Mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
     /// `None` for any other node kind (groups, CSG, instances,
     /// mesh-resource-backed leaves) or a dangling id. Focused
@@ -1221,6 +1244,46 @@ mod scene_graph_construction_tests {
     fn reachable_leaf_count_is_zero_for_empty_graph() {
         let g = SceneGraph::new();
         assert_eq!(g.reachable_leaf_count(), 0);
+    }
+
+    #[test]
+    fn first_leaf_id_returns_pre_order_first_leaf() {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let first_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .unwrap();
+        g.add_child(root, first_leaf).unwrap();
+        let second_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .unwrap();
+        g.add_child(root, second_leaf).unwrap();
+        assert_eq!(g.first_leaf_id(), Some(first_leaf));
+    }
+
+    #[test]
+    fn first_leaf_id_is_none_for_empty_graph() {
+        let g = SceneGraph::new();
+        assert_eq!(g.first_leaf_id(), None);
+    }
+
+    #[test]
+    fn first_leaf_id_is_none_when_only_groups_reachable() {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let child_group = g.add_group(None, Transform3D::Identity);
+        g.add_child(root, child_group).unwrap();
+        assert_eq!(g.first_leaf_id(), None);
     }
 }
 

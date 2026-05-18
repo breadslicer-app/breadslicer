@@ -24,7 +24,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sc_mesh_core::{IndexedMesh, SceneGraph};
+use sc_mesh_core::{IndexedMesh, SceneGraph, bake_leaf_to_world};
 
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
@@ -153,13 +153,14 @@ pub struct FlattenedScene {
 /// an unevaluated `Csg` node, since there is no kernel yet to reduce
 /// it.
 pub fn flatten_graph_to_mesh(graph: &SceneGraph) -> Result<FlattenedScene> {
-    let scene = graph.try_flatten()?;
-    match scene.objects.len() {
+    match graph.reachable_leaf_count() {
         0 => Err(WriteSceneError::EmptyScene),
         1 => {
-            let obj = &scene.objects[0];
-            let source_meta = obj.resolve_mesh(&scene.resources)?.meta().clone();
-            let mut baked = obj.baked_mesh(&scene.resources)?;
+            let id = graph
+                .first_leaf_id()
+                .expect("reachable_leaf_count == 1 implies a leaf exists");
+            let source_meta = graph.mesh_at_leaf(id)?.meta().clone();
+            let mut baked = bake_leaf_to_world(graph, id)?;
             baked.set_meta(source_meta);
             Ok(FlattenedScene {
                 mesh: baked,
@@ -167,7 +168,7 @@ pub fn flatten_graph_to_mesh(graph: &SceneGraph) -> Result<FlattenedScene> {
             })
         }
         n => {
-            let merged = scene.merge_meshes()?.ok_or(WriteSceneError::EmptyScene)?;
+            let merged = graph.merge_meshes()?.ok_or(WriteSceneError::EmptyScene)?;
             Ok(FlattenedScene {
                 mesh: merged,
                 warnings: vec![FlattenWarning::MultiObjectMerge { object_count: n }],
