@@ -5,8 +5,10 @@
 
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_mesh_core::scene::Transform3D;
+use sc_mesh_core::{
+    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, NodeId, NodeKind, SceneGraph, Vertex,
+};
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_formats::obj::{read_obj, write_obj};
 
@@ -28,41 +30,53 @@ fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
     )
 }
 
-fn make_scene(objects: Vec<IndexedMesh>) -> Scene {
-    Scene {
-        meta: None,
-        resources: vec![],
-        objects: objects
-            .into_iter()
-            .map(|mesh| SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            })
-            .collect(),
+fn make_graph(meshes: Vec<IndexedMesh>) -> SceneGraph {
+    let mut g = SceneGraph::new();
+    for mesh in meshes {
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_root(leaf).expect("add root");
     }
+    g
 }
 
-fn round_trip(scene: &Scene) -> (Scene, Vec<LoadMeshWarning>) {
+fn round_trip(graph: &SceneGraph) -> (SceneGraph, Vec<LoadMeshWarning>) {
     let mut buf: Vec<u8> = Vec::new();
-    let graph = sc_mesh_core::SceneGraph::try_from(scene.clone()).expect("test scene is valid");
-    write_obj(&graph, &mut buf).expect("write_obj failed");
+    write_obj(graph, &mut buf).expect("write_obj failed");
 
     let mut reader = std::io::Cursor::new(buf);
     let mut warnings = vec![];
-    let recovered = read_obj(&mut reader, &mut warnings)
-        .expect("read_obj failed")
-        .try_flatten()
-        .expect("OBJ reader output flattens");
+    let recovered = read_obj(&mut reader, &mut warnings).expect("read_obj failed");
     (recovered, warnings)
 }
 
-fn unwrap_single_mesh(scene: &Scene) -> &IndexedMesh {
-    assert_eq!(scene.objects.len(), 1);
-    match &scene.objects[0].content {
-        SceneObjectContent::Mesh(m) => m,
-        _ => panic!("Expected inline mesh"),
+fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+    assert_eq!(graph.reachable_leaf_count(), 1);
+    let id = graph
+        .first_leaf_id()
+        .expect("reachable_leaf_count == 1 implies a leaf exists");
+    graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
+}
+
+fn collect_leaf_ids(graph: &SceneGraph) -> Vec<NodeId> {
+    let mut ids = Vec::new();
+    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        let Some(node) = graph.node(id) else {
+            continue;
+        };
+        match &node.kind {
+            NodeKind::Leaf(_) => ids.push(id),
+            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                for c in children.iter().rev() {
+                    stack.push(*c);
+                }
+            }
+            NodeKind::Instance { .. } => {}
+        }
     }
+    ids
 }
 
 fn assert_mesh_vertices_eq(a: &IndexedMesh, b: &IndexedMesh) {
@@ -97,8 +111,8 @@ fn assert_mesh_faces_eq(a: &IndexedMesh, b: &IndexedMesh) {
 #[test]
 fn single_unnamed_mesh_round_trip() {
     let mesh = make_triangle_mesh(None);
-    let scene = make_scene(vec![mesh.clone()]);
-    let (recovered, warnings) = round_trip(&scene);
+    let graph = make_graph(vec![mesh.clone()]);
+    let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
     let recovered_mesh = unwrap_single_mesh(&recovered);
@@ -109,8 +123,8 @@ fn single_unnamed_mesh_round_trip() {
 #[test]
 fn single_named_mesh_round_trip() {
     let mesh = make_triangle_mesh(Some("TestObj"));
-    let scene = make_scene(vec![mesh.clone()]);
-    let (recovered, warnings) = round_trip(&scene);
+    let graph = make_graph(vec![mesh.clone()]);
+    let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
     let recovered_mesh = unwrap_single_mesh(&recovered);
@@ -148,17 +162,15 @@ fn two_objects_round_trip() {
             [0, 1, 2],
         )],
     );
-    let scene = make_scene(vec![mesh_a.clone(), mesh_b.clone()]);
-    let (recovered, warnings) = round_trip(&scene);
+    let graph = make_graph(vec![mesh_a.clone(), mesh_b.clone()]);
+    let (recovered, warnings) = round_trip(&graph);
 
     assert!(warnings.is_empty());
-    assert_eq!(recovered.objects.len(), 2);
+    let leaf_ids = collect_leaf_ids(&recovered);
+    assert_eq!(leaf_ids.len(), 2);
 
-    for (original, obj) in [&mesh_a, &mesh_b].iter().zip(recovered.objects.iter()) {
-        let recovered_mesh = match &obj.content {
-            SceneObjectContent::Mesh(m) => m,
-            _ => panic!("Expected inline mesh"),
-        };
+    for (original, leaf_id) in [&mesh_a, &mesh_b].iter().zip(leaf_ids) {
+        let recovered_mesh = recovered.mesh_at_leaf(leaf_id).expect("leaf has a mesh");
         assert_mesh_vertices_eq(original, recovered_mesh);
         assert_mesh_faces_eq(original, recovered_mesh);
     }
@@ -166,10 +178,10 @@ fn two_objects_round_trip() {
 
 #[test]
 fn empty_scene_round_trip() {
-    let scene = Scene::default();
-    let (recovered, warnings) = round_trip(&scene);
+    let graph = SceneGraph::new();
+    let (recovered, warnings) = round_trip(&graph);
 
-    assert!(recovered.objects.is_empty());
+    assert_eq!(recovered.reachable_leaf_count(), 0);
     assert!(warnings.iter().any(|w| matches!(
         w,
         LoadMeshWarning::Obj(sc_mesh_formats::messages::LoadObjWarning::NoVertices)

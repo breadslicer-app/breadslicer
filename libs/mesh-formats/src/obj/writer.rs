@@ -175,19 +175,12 @@ mod helper_tests {
 
 #[cfg(test)]
 mod tests {
-    use sc_mesh_core::SceneGraph;
-    use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::scene::{SceneMetadata, Transform3D};
+    use sc_mesh_core::{
+        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
+    };
 
     use super::write_obj;
-
-    fn write_obj_scene<W: std::io::Write>(
-        scene: &Scene,
-        writer: &mut W,
-    ) -> Result<(), super::WriteObjError> {
-        let graph = SceneGraph::try_from(scene.clone())?;
-        write_obj(&graph, writer)
-    }
 
     fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -207,46 +200,52 @@ mod tests {
         }
     }
 
-    fn scene_with_mesh(mesh: IndexedMesh) -> Scene {
-        Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        }
+    fn single_leaf_graph(transform: Transform3D, payload: LeafPayload) -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
+        g.add_root(leaf).expect("add root");
+        g
     }
 
-    fn write_to_string(scene: &Scene) -> String {
+    fn multi_mesh_graph(meshes: Vec<IndexedMesh>) -> SceneGraph {
+        let mut g = SceneGraph::new();
+        for mesh in meshes {
+            let leaf = g
+                .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+                .expect("add leaf");
+            g.add_root(leaf).expect("add root");
+        }
+        g
+    }
+
+    fn write_to_string(graph: &SceneGraph) -> String {
         let mut buf: Vec<u8> = Vec::new();
-        write_obj_scene(scene, &mut buf).expect("write_obj failed");
+        write_obj(graph, &mut buf).expect("write_obj failed");
         String::from_utf8(buf).expect("output is not valid UTF-8")
     }
 
     #[test]
     fn single_unnamed_mesh() {
-        let scene = scene_with_mesh(make_triangle_mesh(None));
-        let out = write_to_string(&scene);
+        let graph = SceneGraph::from(make_triangle_mesh(None));
+        let out = write_to_string(&graph);
         assert_eq!(out, "v 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
     }
 
     #[test]
     fn single_named_mesh() {
-        let scene = scene_with_mesh(make_triangle_mesh(Some("MyObj")));
-        let out = write_to_string(&scene);
+        let graph = SceneGraph::from(make_triangle_mesh(Some("MyObj")));
+        let out = write_to_string(&graph);
         assert_eq!(out, "o MyObj\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
     }
 
     #[test]
     fn scene_comment_is_written() {
-        let mut scene = scene_with_mesh(make_triangle_mesh(None));
-        scene.meta = Some(SceneMetadata {
+        let mut graph = SceneGraph::from(make_triangle_mesh(None));
+        graph.set_meta(Some(SceneMetadata {
             name: None,
             comment: Some("exported by test".to_string()),
-        });
-        let out = write_to_string(&scene);
+        }));
+        let out = write_to_string(&graph);
         assert!(out.starts_with("# exported by test\n"));
     }
 
@@ -256,36 +255,22 @@ mod tests {
         // The writer must re-prefix each segment so the output stays
         // a valid OBJ file; bare continuation lines fail the next
         // load with `unrecognized directive`.
-        let mut scene = scene_with_mesh(make_triangle_mesh(None));
-        scene.meta = Some(SceneMetadata {
+        let mut graph = SceneGraph::from(make_triangle_mesh(None));
+        graph.set_meta(Some(SceneMetadata {
             name: None,
             comment: Some("first line\nsecond line\nthird line".to_string()),
-        });
-        let out = write_to_string(&scene);
+        }));
+        let out = write_to_string(&graph);
         assert!(out.starts_with("# first line\n# second line\n# third line\n"));
     }
 
     #[test]
     fn two_objects_have_global_vertex_indices() {
-        let mesh_a = make_triangle_mesh(Some("A"));
-        let mesh_b = make_triangle_mesh(Some("B"));
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(mesh_a),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(mesh_b),
-                },
-            ],
-        };
-        let out = write_to_string(&scene);
+        let graph = multi_mesh_graph(vec![
+            make_triangle_mesh(Some("A")),
+            make_triangle_mesh(Some("B")),
+        ]);
+        let out = write_to_string(&graph);
         assert_eq!(
             out,
             "o A\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\no B\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 4 5 6\n"
@@ -294,23 +279,8 @@ mod tests {
 
     #[test]
     fn two_unnamed_objects_get_bare_o_markers() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(make_triangle_mesh(None)),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(make_triangle_mesh(None)),
-                },
-            ],
-        };
-        let out = write_to_string(&scene);
+        let graph = multi_mesh_graph(vec![make_triangle_mesh(None), make_triangle_mesh(None)]);
+        let out = write_to_string(&graph);
         assert_eq!(
             out,
             "o\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\no\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 4 5 6\n"
@@ -319,23 +289,11 @@ mod tests {
 
     #[test]
     fn two_objects_mixed_named_and_unnamed() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(make_triangle_mesh(Some("Named"))),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(make_triangle_mesh(None)),
-                },
-            ],
-        };
-        let out = write_to_string(&scene);
+        let graph = multi_mesh_graph(vec![
+            make_triangle_mesh(Some("Named")),
+            make_triangle_mesh(None),
+        ]);
+        let out = write_to_string(&graph);
         assert_eq!(
             out,
             "o Named\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\no\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 4 5 6\n"
@@ -352,59 +310,30 @@ mod tests {
             vertices: vec![],
             faces: vec![],
         };
-        let scene = scene_with_mesh(empty);
-        let out = write_to_string(&scene);
+        let graph = SceneGraph::from(empty);
+        let out = write_to_string(&graph);
         assert_eq!(out, "");
     }
 
     #[test]
     fn resource_reference_is_written() {
-        let mesh = make_triangle_mesh(Some("Shared"));
-        let scene = Scene {
-            meta: None,
-            resources: vec![mesh],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(0),
-            }],
-        };
-        let out = write_to_string(&scene);
+        let mut graph = SceneGraph::new();
+        let rid = graph.add_mesh_resource(make_triangle_mesh(Some("Shared")));
+        let leaf = graph
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .expect("add leaf");
+        graph.add_root(leaf).expect("add root");
+        let out = write_to_string(&graph);
         assert_eq!(out, "o Shared\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
-    }
-
-    #[test]
-    fn invalid_resource_index_returns_error() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(0),
-            }],
-        };
-        let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj_scene(&scene, &mut buf).is_err());
     }
 
     #[test]
     fn affine_translation_is_baked_into_vertex_positions() {
         use sc_mesh_core::transform::AffineTransform3D;
 
-        let mesh = make_triangle_mesh(None);
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                    10.0, 5.0, -2.0,
-                ])),
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        };
-        let out = write_to_string(&scene);
+        let transform = Transform3D::Affine(AffineTransform3D::from_translation([10.0, 5.0, -2.0]));
+        let graph = single_leaf_graph(transform, LeafPayload::Mesh(make_triangle_mesh(None)));
+        let out = write_to_string(&graph);
         // Original vertices were (1,0,0), (0,1,0), (0,0,1); after the
         // translation each becomes the original plus (10, 5, -2).
         assert_eq!(out, "v 11 5 -2\nv 10 6 -2\nv 10 5 -1\nf 1 2 3\n");
@@ -414,19 +343,10 @@ mod tests {
     fn affine_mirror_reverses_winding_in_face_indices() {
         use sc_mesh_core::transform::AffineTransform3D;
 
-        let mesh = make_triangle_mesh(None);
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([
-                    -1.0, 1.0, 1.0,
-                ])),
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        };
-        let out = write_to_string(&scene);
+        let transform =
+            Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
+        let graph = single_leaf_graph(transform, LeafPayload::Mesh(make_triangle_mesh(None)));
+        let out = write_to_string(&graph);
         // Vertex 0 was (1,0,0); after x→-x it's (-1,0,0). Winding goes
         // from [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
         assert_eq!(out, "v -1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\n");
@@ -436,19 +356,12 @@ mod tests {
     fn affine_object_keeps_source_mesh_name_in_o_marker() {
         use sc_mesh_core::transform::AffineTransform3D;
 
-        let mesh = make_triangle_mesh(Some("MyObj"));
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                    0.0, 0.0, 0.0,
-                ])),
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        };
-        let out = write_to_string(&scene);
+        let transform = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        let graph = single_leaf_graph(
+            transform,
+            LeafPayload::Mesh(make_triangle_mesh(Some("MyObj"))),
+        );
+        let out = write_to_string(&graph);
         // The `o MyObj` marker comes from the source mesh's metadata even
         // though `baked_mesh` strips its own metadata.
         assert!(out.starts_with("o MyObj\n"));
@@ -469,9 +382,9 @@ mod tests {
                 [u32::MAX, 0, 0],
             )],
         };
-        let scene = scene_with_mesh(mesh);
+        let graph = SceneGraph::from(mesh);
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj_scene(&scene, &mut buf).is_err());
+        assert!(write_obj(&graph, &mut buf).is_err());
     }
 
     // Same overflow shape, but split across two meshes: a small first
@@ -489,24 +402,9 @@ mod tests {
                 [u32::MAX - 2, 0, 0],
             )],
         };
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(first),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(second),
-                },
-            ],
-        };
+        let graph = multi_mesh_graph(vec![first, second]);
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj_scene(&scene, &mut buf).is_err());
+        assert!(write_obj(&graph, &mut buf).is_err());
     }
 
     #[test]
@@ -517,16 +415,11 @@ mod tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(singular),
-                content: SceneObjectContent::Mesh(make_triangle_mesh(None)),
-            }],
-        };
+        let graph = single_leaf_graph(
+            Transform3D::Affine(singular),
+            LeafPayload::Mesh(make_triangle_mesh(None)),
+        );
         let mut buf: Vec<u8> = Vec::new();
-        assert!(write_obj_scene(&scene, &mut buf).is_err());
+        assert!(write_obj(&graph, &mut buf).is_err());
     }
 }

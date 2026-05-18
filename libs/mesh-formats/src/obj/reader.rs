@@ -697,32 +697,46 @@ mod parse_face_vertex_index_tests {
 mod read_obj_tests {
     use std::io::Cursor;
 
-    use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObjectContent};
-    use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::scene::SceneMetadata;
+    use sc_mesh_core::{IndexedMesh, MeshMetadata, NodeId, NodeKind, Normal, SceneGraph, Vertex};
 
     use super::{LoadMeshWarning, LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadMeshWarning>), super::LoadObjError> {
+    fn read_obj_from_str(
+        s: &str,
+    ) -> Result<(SceneGraph, Vec<LoadMeshWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings = Vec::new();
         let graph = read_obj(&mut reader, &mut warnings)?;
-        // The reader builds a flat Scene internally and wraps it in a
-        // SceneGraph with one identity-Group root. Flattening back is
-        // round-trip-identity for any scene the reader can produce
-        // (no Csg, no Instance), and lets the test helpers keep
-        // asserting against the familiar Scene shape.
-        let scene = graph
-            .try_flatten()
-            .expect("reader output is a flat tree, try_flatten cannot fail");
-        Ok((scene, warnings))
+        Ok((graph, warnings))
     }
 
-    fn single_mesh(scene: &Scene) -> &IndexedMesh {
-        assert_eq!(scene.objects.len(), 1);
-        match &scene.objects[0].content {
-            SceneObjectContent::Mesh(m) => m,
-            SceneObjectContent::Resource(_) => panic!("expected inline mesh, got resource ref"),
+    fn single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+        assert_eq!(graph.reachable_leaf_count(), 1);
+        let id = graph
+            .first_leaf_id()
+            .expect("reachable_leaf_count == 1 implies a leaf exists");
+        graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
+    }
+
+    fn collect_leaf_ids(graph: &SceneGraph) -> Vec<NodeId> {
+        let mut ids = Vec::new();
+        let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let Some(node) = graph.node(id) else {
+                continue;
+            };
+            match &node.kind {
+                NodeKind::Leaf(_) => ids.push(id),
+                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                    for c in children.iter().rev() {
+                        stack.push(*c);
+                    }
+                }
+                NodeKind::Instance { .. } => {}
+            }
         }
+        ids
     }
 
     #[test]
@@ -733,11 +747,11 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert!(warnings.is_empty());
-        assert_eq!(scene.meta, None);
+        assert_eq!(graph.meta(), &None);
         assert_eq!(mesh.meta, None);
         assert_eq!(mesh.vertices().len(), 3);
         assert_eq!(mesh.faces().len(), 1);
@@ -759,11 +773,11 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert!(warnings.is_empty());
-        assert_eq!(scene.meta, None);
+        assert_eq!(graph.meta(), &None);
         assert_eq!(
             mesh.meta,
             Some(MeshMetadata {
@@ -783,13 +797,13 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert!(warnings.is_empty());
         assert_eq!(
-            scene.meta,
-            Some(SceneMetadata {
+            graph.meta(),
+            &Some(SceneMetadata {
                 name: None,
                 comment: Some("Exported from Blender\nCreated 2026-03-25".into()),
             })
@@ -807,8 +821,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert_eq!(
             warnings,
@@ -817,8 +831,8 @@ f 1 2 3
             })]
         );
         assert_eq!(
-            scene.meta,
-            Some(SceneMetadata {
+            graph.meta(),
+            &Some(SceneMetadata {
                 name: None,
                 comment: Some("Header".into()),
             })
@@ -836,13 +850,13 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert!(warnings.is_empty());
         assert_eq!(
-            scene.meta,
-            Some(SceneMetadata {
+            graph.meta(),
+            &Some(SceneMetadata {
                 name: None,
                 comment: Some("File header".into()),
             })
@@ -867,8 +881,8 @@ vt 1.0 0.0
 vt 0.0 1.0
 f 1/1 2/2 3/3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
             vec![
@@ -891,8 +905,8 @@ vt 0.0 0.0
 vn 0.0 0.0 1.0
 f 1/1/1 2/1/1 3/1/1
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
             vec![
@@ -913,8 +927,8 @@ v 0.0 1.0 0.0
 vn 0.0 0.0 1.0
 f 1//1 2//1 3//1
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
             vec![LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal {
@@ -934,8 +948,8 @@ v 1.0 1.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3 4
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert!(warnings.is_empty());
         assert_eq!(mesh.vertices().len(), 4);
@@ -955,8 +969,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f -3 -2 -1
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert!(warnings.is_empty());
         assert_eq!(mesh.faces().len(), 1);
         assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
@@ -977,8 +991,8 @@ s off
 g group1
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
             vec![
@@ -1016,8 +1030,8 @@ v 0.0 1.0 0.0
 l 1 2 3
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
             vec![LoadMeshWarning::Obj(
@@ -1045,8 +1059,8 @@ curv 0.0 1.0 1 2
 bevel on
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
             vec![
@@ -1070,7 +1084,7 @@ f 1 2 3
 
     #[test]
     fn empty_file() {
-        let (scene, warnings) = read_obj_from_str("").unwrap();
+        let (graph, warnings) = read_obj_from_str("").unwrap();
         assert_eq!(
             warnings,
             vec![
@@ -1078,8 +1092,8 @@ f 1 2 3
                 LoadMeshWarning::Obj(LoadObjWarning::NoFaces)
             ]
         );
-        assert_eq!(scene.meta, None);
-        assert!(scene.objects.is_empty());
+        assert_eq!(graph.meta(), &None);
+        assert_eq!(graph.reachable_leaf_count(), 0);
     }
 
     #[test]
@@ -1102,8 +1116,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, _) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(mesh.vertices()[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
@@ -1115,8 +1129,8 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 1 2 3
 ";
-        let (scene, _) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert_eq!(mesh.vertices()[0], Vertex::new([1.0, 2.0, 3.0]));
     }
 
@@ -1168,8 +1182,8 @@ v 1.0 1.0 0.0
 f 1 2 3
 f 2 4 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
 
         assert!(warnings.is_empty());
         assert_eq!(mesh.vertices().len(), 4);
@@ -1204,8 +1218,8 @@ v 1.0 0.0 0.0
 v 2.0 0.0 0.0
 f 1 2 3
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert!(warnings.is_empty());
         assert_eq!(mesh.faces().len(), 1);
         assert_eq!(mesh.faces()[0].normal, Normal::new([0.0, 0.0, 0.0]));
@@ -1240,8 +1254,8 @@ f 1 2 3
 f 1 2 4
 f 1 3 5
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        let mesh = single_mesh(&scene);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
         assert!(warnings.is_empty());
 
         // All three faces survive; only the middle one carries a zero
@@ -1284,23 +1298,18 @@ v 1.0 0.0 1.0
 v 0.0 1.0 1.0
 f 4 5 6
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(scene.objects.len(), 2);
+        let leaf_ids = collect_leaf_ids(&graph);
+        assert_eq!(leaf_ids.len(), 2);
 
-        let mesh_a = match &scene.objects[0].content {
-            SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected mesh"),
-        };
+        let mesh_a = graph.mesh_at_leaf(leaf_ids[0]).expect("leaf A has a mesh");
         assert_eq!(mesh_a.meta().as_ref().unwrap().name, Some("TriA".into()));
         assert_eq!(mesh_a.vertices().len(), 3);
         assert_eq!(mesh_a.faces().len(), 1);
         assert_eq!(mesh_a.faces()[0].vertices.map(u32::from), [0, 1, 2]);
 
-        let mesh_b = match &scene.objects[1].content {
-            SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected mesh"),
-        };
+        let mesh_b = graph.mesh_at_leaf(leaf_ids[1]).expect("leaf B has a mesh");
         assert_eq!(mesh_b.meta().as_ref().unwrap().name, Some("TriB".into()));
         assert_eq!(mesh_b.vertices().len(), 3);
         assert_eq!(mesh_b.faces().len(), 1);
@@ -1321,7 +1330,7 @@ v 1.0 1.0 0.0
 o ObjectB
 f 1 3 4
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
         // ObjectA uses global {0,1,2}; ObjectB uses global {0,2,3} → shared {0,2}.
         assert_eq!(
             warnings,
@@ -1330,12 +1339,10 @@ f 1 3 4
                 shared_indices: vec![0, 2],
             })]
         );
-        assert_eq!(scene.objects.len(), 2);
+        let leaf_ids = collect_leaf_ids(&graph);
+        assert_eq!(leaf_ids.len(), 2);
 
-        let mesh_a = match &scene.objects[0].content {
-            SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected mesh"),
-        };
+        let mesh_a = graph.mesh_at_leaf(leaf_ids[0]).expect("leaf A has a mesh");
         // ObjectA uses global vertices 0, 1, 2 → local 0, 1, 2
         assert_eq!(mesh_a.vertices().len(), 3);
         assert_eq!(mesh_a.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
@@ -1343,10 +1350,7 @@ f 1 3 4
         assert_eq!(mesh_a.vertices()[2], Vertex::new([0.0, 1.0, 0.0]));
         assert_eq!(mesh_a.faces()[0].vertices.map(u32::from), [0, 1, 2]);
 
-        let mesh_b = match &scene.objects[1].content {
-            SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected mesh"),
-        };
+        let mesh_b = graph.mesh_at_leaf(leaf_ids[1]).expect("leaf B has a mesh");
         // ObjectB's face `f 1 3 4` uses global vertices 0, 2, 3 → local 0, 1, 2
         assert_eq!(mesh_b.vertices().len(), 3);
         assert_eq!(mesh_b.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
@@ -1366,14 +1370,9 @@ v 1.0 0.0 0.0
 v 0.0 1.0 0.0
 f 2 3 1
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(scene.objects.len(), 1);
-
-        let mesh = match &scene.objects[0].content {
-            SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected mesh"),
-        };
+        let mesh = single_mesh(&graph);
         assert_eq!(mesh.meta().as_ref().unwrap().name, Some("Real".into()));
         // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
         assert_eq!(mesh.vertices().len(), 3);
@@ -1393,8 +1392,8 @@ o ObjectB
 v 1.0 1.0 0.0
 f 1 3 4
 ";
-        let (scene, warnings) = read_obj_from_str(obj).unwrap();
-        assert_eq!(scene.objects.len(), 2);
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        assert_eq!(collect_leaf_ids(&graph).len(), 2);
 
         // Global vertex 0 (first `v`) is shared: ObjectA uses {0,1,2},
         // ObjectB uses {0,2,3}.  Shared = {0, 2}.

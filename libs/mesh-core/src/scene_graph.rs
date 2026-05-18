@@ -745,6 +745,21 @@ impl SceneGraph {
     }
 }
 
+impl From<IndexedMesh> for SceneGraph {
+    /// Single-leaf graph carrying `mesh` under identity transform.
+    /// Used by format readers whose on-disk model is a single mesh
+    /// (STL) and by test fixtures that need a one-object scene.
+    fn from(mesh: IndexedMesh) -> Self {
+        let mut g = SceneGraph::new();
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .expect("freshly allocated graph has no resources to dangle");
+        g.add_root(leaf)
+            .expect("freshly allocated leaf has no parent and is not a root");
+        g
+    }
+}
+
 #[cfg(test)]
 mod scene_graph_construction_tests {
     use super::*;
@@ -1474,5 +1489,37 @@ mod scene_graph_validate_tests {
             g.validate(),
             Err(SceneGraphError::InstanceCycle { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod from_indexed_mesh_tests {
+    use super::*;
+    use crate::primitives::{IndexedTriangle, Normal, Vertex};
+
+    fn unit_triangle() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    #[test]
+    fn from_indexed_mesh_produces_single_leaf_root() {
+        let g = SceneGraph::from(unit_triangle());
+        assert_eq!(g.roots().len(), 1);
+        assert_eq!(g.reachable_leaf_count(), 1);
+        let id = g.first_leaf_id().unwrap();
+        let node = g.node(id).unwrap();
+        assert_eq!(node.local_transform, Transform3D::Identity);
+        assert!(node.meta.is_none());
     }
 }

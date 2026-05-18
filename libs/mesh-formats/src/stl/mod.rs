@@ -9,7 +9,6 @@ mod writers;
 
 use sc_mesh_core::SceneGraph;
 use sc_mesh_core::TriangleIterator;
-use sc_mesh_core::scene::Scene;
 
 use crate::error::LoadStlError;
 use stla::AsciiStlReader;
@@ -38,7 +37,7 @@ where
     }?;
 
     let mesh = stl_reader.as_indexed_mesh(Some(metadata))?;
-    Ok(SceneGraph::try_from(Scene::from(mesh))?)
+    Ok(SceneGraph::from(mesh))
 }
 
 pub fn read_stla<R>(read: &mut R) -> Result<SceneGraph>
@@ -47,7 +46,7 @@ where
 {
     let metadata = AsciiStlReader::extract_metadata(read)?;
     let mesh = AsciiStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))?;
-    Ok(SceneGraph::try_from(Scene::from(mesh))?)
+    Ok(SceneGraph::from(mesh))
 }
 
 pub fn read_stlb<R>(read: &mut R) -> Result<SceneGraph>
@@ -56,5 +55,5 @@ where
 {
     let metadata = BinaryStlReader::extract_metadata(read)?;
     let mesh = BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))?;
-    Ok(SceneGraph::try_from(Scene::from(mesh))?)
+    Ok(SceneGraph::from(mesh))
 }

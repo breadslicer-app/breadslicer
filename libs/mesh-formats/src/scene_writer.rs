@@ -218,15 +218,11 @@ pub fn write_scene(
 #[cfg(test)]
 mod flatten_scene_to_mesh_tests {
     use super::{FlattenWarning, flatten_graph_to_mesh};
-    use sc_mesh_core::SceneGraph;
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
-
-    fn flatten_scene(scene: Scene) -> super::Result<super::FlattenedScene> {
-        let graph = SceneGraph::try_from(scene)?;
-        flatten_graph_to_mesh(&graph)
-    }
+    use sc_mesh_core::{
+        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
+    };
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -246,32 +242,25 @@ mod flatten_scene_to_mesh_tests {
         }
     }
 
-    fn scene_with_object(mesh: IndexedMesh, t: Transform3D) -> Scene {
-        Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: t,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        }
+    fn single_leaf_graph(mesh: IndexedMesh, t: Transform3D) -> SceneGraph {
+        let mut g = SceneGraph::new();
+        let leaf = g
+            .add_leaf(None, t, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_root(leaf).expect("add root");
+        g
     }
 
     #[test]
     fn empty_scene_returns_error() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![],
-        };
-        assert!(flatten_scene(scene).is_err());
+        let graph = SceneGraph::new();
+        assert!(flatten_graph_to_mesh(&graph).is_err());
     }
 
     #[test]
     fn single_object_identity_preserves_vertices_and_name() {
-        let scene = scene_with_object(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
-        let result = flatten_scene(scene).unwrap();
+        let graph = single_leaf_graph(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
+        let result = flatten_graph_to_mesh(&graph).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [1.0, 0.0, 0.0]);
         assert_eq!(result.mesh.vertices()[1].coords(), [0.0, 1.0, 0.0]);
@@ -285,8 +274,8 @@ mod flatten_scene_to_mesh_tests {
     #[test]
     fn single_object_affine_bakes_translation() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
-        let scene = scene_with_object(unit_triangle_mesh(None), t);
-        let result = flatten_scene(scene).unwrap();
+        let graph = single_leaf_graph(unit_triangle_mesh(None), t);
+        let result = flatten_graph_to_mesh(&graph).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [11.0, -5.0, 2.0]);
         assert_eq!(result.mesh.vertices()[1].coords(), [10.0, -4.0, 2.0]);
@@ -296,8 +285,8 @@ mod flatten_scene_to_mesh_tests {
     #[test]
     fn single_object_affine_preserves_source_name() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
-        let scene = scene_with_object(unit_triangle_mesh(Some("Translated")), t);
-        let result = flatten_scene(scene).unwrap();
+        let graph = single_leaf_graph(unit_triangle_mesh(Some("Translated")), t);
+        let result = flatten_graph_to_mesh(&graph).unwrap();
         // The transform was baked into the vertices, but the source
         // mesh's name was preserved (so STL writers can put it in the
         // `solid <name>` / 80-byte header).
@@ -309,25 +298,25 @@ mod flatten_scene_to_mesh_tests {
 
     #[test]
     fn multi_object_scene_merges_and_emits_warning() {
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(unit_triangle_mesh(Some("A"))),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        10.0, 0.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(unit_triangle_mesh(Some("B"))),
-                },
-            ],
-        };
-        let result = flatten_scene(scene).unwrap();
+        let mut graph = SceneGraph::new();
+        let leaf_a = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle_mesh(Some("A"))),
+            )
+            .expect("add leaf A");
+        graph.add_root(leaf_a).expect("add root A");
+        let leaf_b = graph
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+                LeafPayload::Mesh(unit_triangle_mesh(Some("B"))),
+            )
+            .expect("add leaf B");
+        graph.add_root(leaf_b).expect("add root B");
+
+        let result = flatten_graph_to_mesh(&graph).unwrap();
         // Both objects' vertices are present; the second is translated.
         assert_eq!(result.mesh.vertices().len(), 6);
         assert_eq!(result.mesh.vertices()[3].coords(), [11.0, 0.0, 0.0]);
@@ -346,82 +335,55 @@ mod flatten_scene_to_mesh_tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        let scene = scene_with_object(unit_triangle_mesh(None), Transform3D::Affine(singular));
-        assert!(flatten_scene(scene).is_err());
+        let graph = single_leaf_graph(unit_triangle_mesh(None), Transform3D::Affine(singular));
+        assert!(flatten_graph_to_mesh(&graph).is_err());
     }
 }
 
 #[cfg(test)]
 mod write_scene_atomicity_tests {
-    use super::write_scene as write_scene_inner;
+    use super::write_scene;
     use crate::filetypes::WriteFormat;
-    use sc_mesh_core::SceneGraph;
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, SceneGraph, Vertex};
 
-    fn write_scene(
-        scene: &Scene,
-        target_path: &std::path::Path,
-        target_format: WriteFormat,
-    ) -> super::Result<Vec<super::FlattenWarning>> {
-        let graph = SceneGraph::try_from(scene.clone())?;
-        write_scene_inner(&graph, target_path, target_format)
-    }
-
-    fn valid_scene() -> Scene {
-        Scene {
+    fn valid_graph() -> SceneGraph {
+        SceneGraph::from(IndexedMesh {
             meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(IndexedMesh {
-                    meta: None,
-                    vertices: vec![
-                        Vertex::new([0.0, 0.0, 0.0]),
-                        Vertex::new([1.0, 0.0, 0.0]),
-                        Vertex::new([0.0, 1.0, 0.0]),
-                    ],
-                    faces: vec![IndexedTriangle::from_raw_indices(
-                        Normal::new([0.0, 0.0, 1.0]),
-                        [0, 1, 2],
-                    )],
-                }),
-            }],
-        }
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        })
     }
 
-    // A scene whose OBJ writer fails mid-stream. The face vertex index
+    // A graph whose OBJ writer fails mid-stream. The face vertex index
     // is deliberately set to `u32::MAX` so `write_obj` returns an
     // error after the `v` lines and `o` marker have already been
     // emitted to the underlying writer. With the buggy direct-create
     // path, that leaves the on-disk target truncated to the partial
     // bytes; the atomic-temp-and-rename fix must keep the original
     // file intact.
-    fn scene_that_fails_mid_obj_write() -> Scene {
-        Scene {
+    fn graph_that_fails_mid_obj_write() -> SceneGraph {
+        SceneGraph::from(IndexedMesh {
             meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(IndexedMesh {
-                    meta: None,
-                    vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
-                    faces: vec![IndexedTriangle::from_raw_indices(
-                        Normal::new([0.0, 0.0, 1.0]),
-                        [u32::MAX, 0, 0],
-                    )],
-                }),
-            }],
-        }
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [u32::MAX, 0, 0],
+            )],
+        })
     }
 
     #[test]
     fn happy_path_writes_target_and_leaves_no_temp_file() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("output.obj");
-        let warnings = write_scene(&valid_scene(), &target, WriteFormat::Obj).unwrap();
+        let warnings = write_scene(&valid_graph(), &target, WriteFormat::Obj).unwrap();
         assert!(warnings.is_empty());
 
         let contents = std::fs::read_to_string(&target).unwrap();
@@ -444,7 +406,7 @@ mod write_scene_atomicity_tests {
         let original: &[u8] = b"original contents that must survive\n";
         std::fs::write(&target, original).unwrap();
 
-        let result = write_scene(&scene_that_fails_mid_obj_write(), &target, WriteFormat::Obj);
+        let result = write_scene(&graph_that_fails_mid_obj_write(), &target, WriteFormat::Obj);
         assert!(
             result.is_err(),
             "writer must propagate the mid-stream error"
@@ -475,7 +437,7 @@ mod write_scene_atomicity_tests {
         let target = dir.path().join("output.obj");
         std::os::unix::fs::symlink(&secret, &target).unwrap();
 
-        write_scene(&valid_scene(), &target, WriteFormat::Obj).unwrap();
+        write_scene(&valid_graph(), &target, WriteFormat::Obj).unwrap();
 
         // The pointed-to file is untouched.
         assert_eq!(std::fs::read(&secret).unwrap(), secret_bytes);

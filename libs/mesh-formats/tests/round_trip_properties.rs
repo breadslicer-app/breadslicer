@@ -23,8 +23,7 @@
 use std::io::Cursor;
 
 use proptest::prelude::*;
-use sc_mesh_core::scene::SceneObjectContent;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, SceneGraph, Vertex};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 
 const NORMAL: Normal = Normal::new([1.0, 0.0, 0.0]);
@@ -90,12 +89,16 @@ fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
     out
 }
 
-fn unwrap_single_mesh(scene: &sc_mesh_core::scene::Scene) -> &IndexedMesh {
-    assert_eq!(scene.objects.len(), 1, "expected exactly one object");
-    match &scene.objects[0].content {
-        SceneObjectContent::Mesh(m) => m,
-        _ => panic!("expected an inline mesh"),
-    }
+fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+    assert_eq!(
+        graph.reachable_leaf_count(),
+        1,
+        "expected exactly one reachable leaf"
+    );
+    let id = graph
+        .first_leaf_id()
+        .expect("reachable_leaf_count == 1 implies a leaf exists");
+    graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
 }
 
 proptest! {
@@ -107,11 +110,8 @@ proptest! {
         write_stla(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stla(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let recovered = unwrap_single_mesh(&scene);
+        let graph = read_stla(&mut reader).unwrap();
+        let recovered = unwrap_single_mesh(&graph);
 
         prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
         prop_assert_eq!(triangle_multiset(recovered), triangle_multiset(&mesh));
@@ -123,11 +123,8 @@ proptest! {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let recovered = unwrap_single_mesh(&scene);
+        let graph = read_stlb(&mut reader).unwrap();
+        let recovered = unwrap_single_mesh(&graph);
 
         prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
         prop_assert_eq!(triangle_multiset(recovered), triangle_multiset(&mesh));
@@ -141,11 +138,8 @@ proptest! {
         let mut buf: Vec<u8> = Vec::new();
         write_stla(&mesh, &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
-        let scene = read_stla(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let recovered = unwrap_single_mesh(&scene);
+        let graph = read_stla(&mut reader).unwrap();
+        let recovered = unwrap_single_mesh(&graph);
 
         let distinct_input: std::collections::HashSet<[u32; 3]> = mesh
             .vertices()
@@ -162,11 +156,8 @@ proptest! {
         let mut buf: Vec<u8> = Vec::new();
         write_stlb(&mesh, &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let recovered = unwrap_single_mesh(&scene);
+        let graph = read_stlb(&mut reader).unwrap();
+        let recovered = unwrap_single_mesh(&graph);
 
         for face in recovered.faces() {
             prop_assert_eq!(face.normal, NORMAL);

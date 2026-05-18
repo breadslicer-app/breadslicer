@@ -15,8 +15,10 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use predicates::prelude::*;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::scene::Transform3D;
+use sc_mesh_core::{
+    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
+};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 use tempfile::TempDir;
 
@@ -215,29 +217,23 @@ fn no_panic_in_stderr() -> predicates::str::ContainsPredicate {
     predicate::str::contains("panicked at")
 }
 
-/// Writes a multi-object scene as ASCII STL by going through `Scene`
-/// and the writer-side flatten step. Used to drive the
-/// "MultiObjectMerge" warning when this scene is later read and
-/// converted back to STL.
+/// Writes a multi-object scene as an OBJ file. Used to drive the
+/// "MultiObjectMerge" warning when this OBJ is later read back and
+/// converted to STL.
 fn write_two_object_obj(path: &Path) {
-    let a = SceneObject {
-        meta: None,
-        transform: Transform3D::Identity,
-        content: SceneObjectContent::Mesh(tetrahedron_mesh(Some("A"))),
-    };
-    let b = SceneObject {
-        meta: None,
-        transform: Transform3D::Identity,
-        content: SceneObjectContent::Mesh(tetrahedron_mesh(Some("B"))),
-    };
-    let scene = Scene {
-        meta: None,
-        resources: vec![],
-        objects: vec![a, b],
-    };
+    let mut graph = SceneGraph::new();
+    for name in ["A", "B"] {
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(tetrahedron_mesh(Some(name))),
+            )
+            .expect("add leaf");
+        graph.add_root(leaf).expect("add root");
+    }
     let file = fs::File::create(path).expect("create obj");
     let mut writer = std::io::BufWriter::new(file);
-    let graph = sc_mesh_core::SceneGraph::try_from(scene).expect("test scene is valid");
     sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
 }
 

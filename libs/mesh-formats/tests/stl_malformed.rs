@@ -12,7 +12,20 @@
 
 use std::io::Cursor;
 
+use sc_mesh_core::{IndexedMesh, SceneGraph};
 use sc_mesh_formats::stl::{read_stla, read_stlb};
+
+fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+    assert_eq!(
+        graph.reachable_leaf_count(),
+        1,
+        "expected exactly one reachable leaf"
+    );
+    let id = graph
+        .first_leaf_id()
+        .expect("reachable_leaf_count == 1 implies a leaf exists");
+    graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
+}
 
 #[cfg(test)]
 mod ascii_stl_malformed_tests {
@@ -182,16 +195,10 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        let scene = read_stla(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
+        let graph = read_stla(&mut reader).unwrap();
         // The recomputed normal for a CCW triangle in the XY plane is
         // (0, 0, 1).
-        let mesh = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let mesh = unwrap_single_mesh(&graph);
         let n = mesh.faces()[0].normal;
         assert!((n[0]).abs() < 1e-6);
         assert!((n[1]).abs() < 1e-6);
@@ -230,14 +237,8 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        let scene = read_stla(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let mesh = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let graph = read_stla(&mut reader).unwrap();
+        let mesh = unwrap_single_mesh(&graph);
 
         // All three facets survive; only the middle one carries a zero
         // normal (the recompute couldn't produce a direction).
@@ -281,14 +282,8 @@ solid foo
 endsolid foo
 ";
         let mut reader = Cursor::new(buf.to_vec());
-        let scene = read_stla(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let mesh = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let graph = read_stla(&mut reader).unwrap();
+        let mesh = unwrap_single_mesh(&graph);
 
         // The zero normal is preserved verbatim.
         let n = mesh.faces()[0].normal;
@@ -353,15 +348,8 @@ mod binary_stl_malformed_tests {
         // erroring on the missing payload.
         let buf = make_binary_stl_with_count(0, &[]);
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        assert_eq!(scene.objects.len(), 1);
-        let mesh = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let graph = read_stlb(&mut reader).unwrap();
+        let mesh = unwrap_single_mesh(&graph);
         assert!(mesh.faces().is_empty());
     }
 
@@ -398,14 +386,8 @@ mod binary_stl_malformed_tests {
 
         let buf = make_binary_stl_with_count(1, &triangle);
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let mesh = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let graph = read_stlb(&mut reader).unwrap();
+        let mesh = unwrap_single_mesh(&graph);
         let n = mesh.faces()[0].normal;
         assert!((n[0]).abs() < 1e-6);
         assert!((n[1]).abs() < 1e-6);
@@ -441,14 +423,8 @@ mod binary_stl_malformed_tests {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let parsed = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let graph = read_stlb(&mut reader).unwrap();
+        let parsed = unwrap_single_mesh(&graph);
 
         // All three faces survive; only the middle one carries a zero
         // normal (the recompute couldn't produce a direction). The two
@@ -512,14 +488,8 @@ mod binary_stl_malformed_tests {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let scene = read_stlb(&mut reader)
-            .unwrap()
-            .try_flatten()
-            .expect("STL reader output flattens");
-        let parsed = match &scene.objects[0].content {
-            sc_mesh_core::scene::SceneObjectContent::Mesh(m) => m,
-            _ => panic!("expected an inline mesh"),
-        };
+        let graph = read_stlb(&mut reader).unwrap();
+        let parsed = unwrap_single_mesh(&graph);
 
         // The zero normal is preserved verbatim.
         let n = parsed.faces()[0].normal;
