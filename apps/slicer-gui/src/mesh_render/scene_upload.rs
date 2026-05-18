@@ -47,14 +47,21 @@ pub(super) const fn align_up(size: u64, alignment: u64) -> u64 {
 
 /// GPU-resident draw data for a single `SceneObject`: its local-space
 /// vertex+index buffers (the object's transform is *not* baked in; it
-/// arrives at draw time through the model storage buffer).
+/// arrives at draw time through the model storage buffer). The
+/// `node_id` lets the draw loop key per-leaf state (selection
+/// stencil) against the graph's stable id.
 pub(super) struct ObjectDraw {
+    node_id: NodeId,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
 }
 
 impl ObjectDraw {
+    pub(super) fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
     pub(super) fn vertex_buffer(&self) -> &wgpu::Buffer {
         &self.vertex_buffer
     }
@@ -109,6 +116,7 @@ impl GpuScene {
                 usage: wgpu::BufferUsages::INDEX,
             });
             objects.push(ObjectDraw {
+                node_id: obj.node_id,
                 vertex_buffer,
                 index_buffer,
                 index_count: obj.indices.len() as u32,
@@ -178,30 +186,28 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
     }
 }
 
-/// `selection` is the pre-order leaf index into `graph`'s reachable
-/// leaves; out-of-bounds values (or `None`) mean nothing is selected and
-/// every entry's `flags.x` stays 0. The shader reads `flags.x` and mixes
-/// a warm tint when it is 1; `flags.y` is set when the leaf has any
-/// vertex outside the build envelope, driving the mild interior wash
-/// that marks the whole object as "offending" even where individual
-/// fragments are still inside the envelope.
+/// `selection` is the [`NodeId`] of the selected leaf, or `None` for
+/// no selection. A `NodeId` that does not name a reachable leaf
+/// leaves every entry's `flags.x` at 0. The shader reads `flags.x`
+/// and mixes a warm tint when it is 1; `flags.y` is set when the
+/// leaf has any vertex outside the build envelope, driving the mild
+/// interior wash that marks the whole object as "offending" even
+/// where individual fragments are still inside the envelope.
 pub(super) fn build_model_entries(
     graph: &SceneGraph,
-    selection: Option<usize>,
+    selection: Option<NodeId>,
     build_volume: BuildVolume,
 ) -> Vec<ModelEntry> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let mut entries: Vec<ModelEntry> = Vec::new();
-    let mut idx: usize = 0;
-    let _ = for_each_leaf(graph, |_node_id, world_transform, mesh| {
-        let selected = selection == Some(idx);
+    let _ = for_each_leaf(graph, |node_id, world_transform, mesh| {
+        let selected = selection == Some(node_id);
         let breaches = leaf_breaches_envelope(mesh, &world_transform, env_min, env_max);
         entries.push(ModelEntry {
             model: transform_to_mat4(&world_transform).to_cols_array_2d(),
             flags: [u32::from(selected), u32::from(breaches), 0, 0],
         });
-        idx += 1;
         Ok(())
     });
     entries
@@ -358,6 +364,7 @@ where
 /// scene AABB. Kept separate from buffer creation so the transformation
 /// can be unit-tested without a `wgpu::Device`.
 struct ObjectData {
+    node_id: NodeId,
     vertices: Vec<GpuVertex>,
     indices: Vec<u32>,
 }
@@ -370,7 +377,7 @@ struct SceneData {
 
 fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
     let mut objects: Vec<ObjectData> = Vec::new();
-    for_each_leaf(graph, |_node_id, _world_transform, mesh| {
+    for_each_leaf(graph, |node_id, _world_transform, mesh| {
         if mesh.faces().is_empty() {
             // A leaf with no geometry contributes nothing to the
             // draw set, but we keep its slot in the model buffer so
@@ -379,6 +386,7 @@ fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
             // with the renderer's per-leaf draw loop. The slot is
             // drawn as a no-op (index_count = 0).
             objects.push(ObjectData {
+                node_id,
                 vertices: Vec::new(),
                 indices: Vec::new(),
             });
@@ -400,7 +408,11 @@ fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
             }
         }
 
-        objects.push(ObjectData { vertices, indices });
+        objects.push(ObjectData {
+            node_id,
+            vertices,
+            indices,
+        });
         Ok(())
     })?;
 
@@ -741,6 +753,20 @@ mod transform_to_mat4_tests {
         SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
     }
 
+    /// Resolve the `n`-th leaf's [`NodeId`] in pre-order traversal,
+    /// used by the selection tests to feed `build_model_entries` a
+    /// real id instead of a counter.
+    fn nth_leaf(graph: &SceneGraph, n: usize) -> NodeId {
+        let mut ids: Vec<NodeId> = Vec::new();
+        let _ = for_each_leaf(graph, |id, _, _| {
+            ids.push(id);
+            Ok(())
+        });
+        ids.into_iter()
+            .nth(n)
+            .expect("test fixture should expose enough leaves")
+    }
+
     #[test]
     fn build_model_entries_one_per_leaf() {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
@@ -822,17 +848,20 @@ mod transform_to_mat4_tests {
     }
 
     #[test]
-    fn selected_index_sets_only_that_entrys_flags_x() {
+    fn selected_node_id_sets_only_that_entrys_flags_x() {
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, Some(1), permissive_volume());
+        let entries = build_model_entries(&graph, Some(nth_leaf(&graph, 1)), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 1);
     }
 
     #[test]
-    fn out_of_bounds_selection_falls_back_to_no_highlight() {
+    fn non_leaf_selection_falls_back_to_no_highlight() {
+        // The implicit Group root added by `SceneGraph::try_from` is
+        // not a leaf, so the iterator never visits it; flags.x stays
+        // 0 on every entry.
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, Some(99), permissive_volume());
+        let entries = build_model_entries(&graph, Some(graph.roots()[0]), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }

@@ -721,14 +721,6 @@ impl ViewportController {
             .session
             .document()
             .with_scene(|spatial_for_render| {
-                // The renderer's outline post-pass keys on the
-                // pre-order leaf index of the GPU model buffer, so
-                // `SceneRender::selection` stays `Option<usize>`
-                // until the renderer flips its convention in a
-                // later phase. The gizmo-frame builder is
-                // `NodeId`-keyed end-to-end now, so it takes the
-                // document's selection directly.
-                let selection_idx = self.session.document().selection_primary_idx();
                 let selection_node_id = self.session.document().selection_primary_node_id();
                 let drag_state = self.input.gizmo_fsm().current();
                 let (visibility, drag_visual) = match drag_state {
@@ -783,7 +775,7 @@ impl ViewportController {
                 renderer.render(
                     Some(SceneRender {
                         graph: spatial_for_render.graph(),
-                        selection: selection_idx,
+                        selection: selection_node_id,
                         gizmo: gizmo_frame,
                     }),
                     build_volume,

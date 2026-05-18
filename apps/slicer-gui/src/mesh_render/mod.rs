@@ -8,6 +8,7 @@ use std::num::NonZeroU64;
 use anyhow::Result;
 use glam::Vec3;
 use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph_node::NodeId;
 use slint::wgpu_28::wgpu;
 
 use crate::build_volume::BuildVolume;
@@ -48,9 +49,10 @@ use targets::{MsaaTargets, TargetPool};
 #[derive(Clone, Copy)]
 pub struct SceneRender<'a> {
     pub graph: &'a SceneGraph,
-    /// Pre-order leaf index whose stencil mask the outline post-pass
-    /// dilates. `None` skips the outline pass.
-    pub selection: Option<usize>,
+    /// Stable [`NodeId`] whose stencil mask the outline post-pass
+    /// dilates. `None` skips the outline pass; a `NodeId` that does
+    /// not name a reachable leaf is treated the same as `None`.
+    pub selection: Option<NodeId>,
     /// Gizmo overlay parameters; the gizmo pass runs only when
     /// this is `Some`.
     pub gizmo: Option<GizmoFrame>,
@@ -437,7 +439,11 @@ impl Renderer {
                     );
                     pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
                     pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
-                    pass.set_stencil_reference(if Some(i) == selection { 1 } else { 0 });
+                    pass.set_stencil_reference(if Some(obj.node_id()) == selection {
+                        1
+                    } else {
+                        0
+                    });
                     pass.draw_indexed(0..obj.index_count(), 0, 0..1);
                 }
             }
@@ -772,6 +778,28 @@ mod gpu_integration_tests {
         Some((device, queue))
     }
 
+    /// First reachable leaf's [`NodeId`] in pre-order traversal. The
+    /// renderer's selection key is the leaf's stable id, so the
+    /// render tests resolve "the only leaf" through this helper
+    /// instead of fabricating an id.
+    fn first_leaf(graph: &SceneGraph) -> NodeId {
+        use sc_mesh_core::scene_graph_node::NodeKind;
+        let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let node = graph.node(id).expect("walked id should be live");
+            match &node.kind {
+                NodeKind::Leaf(_) => return id,
+                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
+                    for child in children.iter().rev() {
+                        stack.push(*child);
+                    }
+                }
+                NodeKind::Instance { .. } => {}
+            }
+        }
+        panic!("test fixture has no leaves");
+    }
+
     fn triangle_graph_with_translation(t: AffineTransform3D) -> SceneGraph {
         let mesh = IndexedMesh {
             meta: None,
@@ -890,7 +918,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: None,
                 }),
                 TEST_BV,
@@ -932,7 +960,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: None,
                 }),
                 TEST_BV,
@@ -945,7 +973,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: None,
                 }),
                 TEST_BV,
@@ -991,7 +1019,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
                 }),
                 TEST_BV,
@@ -1004,7 +1032,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
                 }),
                 TEST_BV,
@@ -1047,7 +1075,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
                 }),
                 TEST_BV,
@@ -1090,7 +1118,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
                 }),
                 TEST_BV,
@@ -1132,7 +1160,7 @@ mod gpu_integration_tests {
             .render(
                 Some(SceneRender {
                     graph: &graph,
-                    selection: Some(0),
+                    selection: Some(first_leaf(&graph)),
                     gizmo: Some(scale_axis),
                 }),
                 TEST_BV,
