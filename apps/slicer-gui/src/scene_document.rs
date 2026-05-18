@@ -527,8 +527,16 @@ mod scene_document_tests {
     #[test]
     fn apply_edit_returns_false_with_no_scene_loaded() {
         let doc = SceneDocument::new();
-        let result = doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        // The edit's contents are irrelevant: apply_edit short-
+        // circuits before touching the edit when no scene is
+        // loaded. A NodeId pulled from a throwaway spatial is the
+        // cheapest way to produce a typed instance.
+        let some_node_id = SceneSpatial::primed(scene_with_one_object())
+            .unwrap()
+            .leaf_id_at_index(0)
+            .unwrap();
+        let result = doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id: some_node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });
@@ -542,8 +550,9 @@ mod scene_document_tests {
         let _sub = doc.subscribe(listener);
 
         doc.install_scene(scene_with_one_object(), fixture_path());
-        let applied = doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        let node_id = first_leaf_id(&doc).node_id();
+        let applied = doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });
@@ -559,9 +568,10 @@ mod scene_document_tests {
     fn apply_edit_writes_after_into_the_scene() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         let after = translation(5.0);
-        doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
@@ -592,8 +602,9 @@ mod scene_document_tests {
     fn push_edit_makes_undo_available() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        let node_id = first_leaf_id(&doc).node_id();
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });
@@ -605,8 +616,9 @@ mod scene_document_tests {
     fn push_edit_skips_no_op() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        let node_id = first_leaf_id(&doc).node_id();
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: Transform3D::Identity,
         });
@@ -617,15 +629,16 @@ mod scene_document_tests {
     fn undo_restores_before_and_enables_redo() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         // Simulate a gesture: write `after`, then record the edit.
         let after = translation(5.0);
-        doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
@@ -640,14 +653,15 @@ mod scene_document_tests {
     fn redo_replays_after_and_re_enables_undo() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         let after = translation(5.0);
-        doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
@@ -663,14 +677,15 @@ mod scene_document_tests {
     fn fresh_push_clears_redo_trail() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         let a = translation(1.0);
-        doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: a,
         });
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: a,
         });
@@ -679,13 +694,13 @@ mod scene_document_tests {
 
         // A new branch of history invalidates the redo trail.
         let b = translation(2.0);
-        doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: b,
         });
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: b,
         });
@@ -707,12 +722,13 @@ mod scene_document_tests {
     fn stack_caps_at_undo_stack_cap() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         // Push UNDO_STACK_CAP + 5 distinct edits; the oldest five
         // should be silently dropped by `pop_front`.
         for i in 0..(UNDO_STACK_CAP + 5) {
             let dx = (i + 1) as f64;
-            doc.push_edit(SceneEdit::ObjectTransform {
-                object_idx: 0,
+            doc.push_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before: translation(dx - 1.0),
                 after: translation(dx),
             });
@@ -720,23 +736,18 @@ mod scene_document_tests {
         assert_eq!(doc.undo_stack.borrow().len(), UNDO_STACK_CAP);
         // Front of the deque is the oldest surviving entry; with
         // five entries dropped it should start at i = 5 (after = 6.0).
-        let oldest = doc.undo_stack.borrow().front().copied().unwrap();
-        match oldest {
-            SceneEdit::ObjectTransform { after, .. } => {
-                assert_eq!(after, translation(6.0));
-            }
-            SceneEdit::SetLocalTransform { .. } => {
-                panic!("only ObjectTransform was pushed in this test")
-            }
-        }
+        let SceneEdit::SetLocalTransform { after, .. } =
+            doc.undo_stack.borrow().front().copied().unwrap();
+        assert_eq!(after, translation(6.0));
     }
 
     #[test]
     fn install_scene_clears_undo_history() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        let node_id = first_leaf_id(&doc).node_id();
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });
@@ -750,8 +761,9 @@ mod scene_document_tests {
     fn clear_scene_clears_undo_history() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        let node_id = first_leaf_id(&doc).node_id();
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });
@@ -764,11 +776,12 @@ mod scene_document_tests {
     fn push_edit_fires_undo_stack_changed() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });
@@ -779,14 +792,15 @@ mod scene_document_tests {
     fn undo_fires_mutated_then_undo_stack_changed() {
         let doc = SceneDocument::new();
         doc.install_scene(scene_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
         let after = translation(1.0);
-        doc.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after,
         });
@@ -812,8 +826,9 @@ mod scene_document_tests {
 
         // Push an edit, then install again: the second install must
         // also report the history clear.
-        doc.push_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        let node_id = first_leaf_id(&doc).node_id();
+        doc.push_edit(SceneEdit::SetLocalTransform {
+            node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
         });

@@ -1994,10 +1994,11 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        let node_id = ctrl.session.document().selection_primary_node_id().unwrap();
         ctrl.session
             .document()
-            .apply_edit(SceneEdit::ObjectTransform {
-                object_idx: 0,
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before: Transform3D::Identity,
                 after: translation_x(2.0),
             });
@@ -2040,10 +2041,11 @@ mod keyboard_focus_tests {
         ctrl.on_gizmo_focus_translate();
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        let node_id = ctrl.session.document().selection_primary_node_id().unwrap();
         ctrl.session
             .document()
-            .apply_edit(SceneEdit::ObjectTransform {
-                object_idx: 0,
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before: Transform3D::Identity,
                 after: translation_x(3.0),
             });
@@ -2072,10 +2074,11 @@ mod keyboard_focus_tests {
 
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
         ctrl.on_gizmo_arrow_pressed(ARROW_Y_POS);
+        let node_id = ctrl.session.document().selection_primary_node_id().unwrap();
         ctrl.session
             .document()
-            .apply_edit(SceneEdit::ObjectTransform {
-                object_idx: 0,
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before: Transform3D::Identity,
                 after: translation_x(1.0),
             });
@@ -2099,10 +2102,11 @@ mod keyboard_focus_tests {
         ctrl.on_select_by_index(0);
         ctrl.on_gizmo_focus_translate();
         ctrl.on_gizmo_arrow_pressed(ARROW_X_POS);
+        let node_id = ctrl.session.document().selection_primary_node_id().unwrap();
         ctrl.session
             .document()
-            .apply_edit(SceneEdit::ObjectTransform {
-                object_idx: 0,
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
                 before: Transform3D::Identity,
                 after: translation_x(1.0),
             });

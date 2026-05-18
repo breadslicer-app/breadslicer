@@ -197,39 +197,19 @@ impl SceneSpatial {
     }
 
     /// Apply a typed scene edit and update caches accordingly.
-    ///
-    /// Both edit variants are accepted: `SetLocalTransform`
-    /// addresses by `NodeId` directly; `ObjectTransform` is the
-    /// legacy idx-keyed form, resolved here by pre-order leaf walk.
     /// Transform-only edits do not invalidate the per-mesh caches,
     /// which are object-space (local AABB, clusters).
     pub fn apply_edit(&mut self, edit: SceneEdit) {
-        match edit {
-            SceneEdit::SetLocalTransform { node_id, after, .. } => {
-                let _ = self.graph.set_local_transform(node_id, after);
-                // BRIDGE: keep the `Scene` mirror in sync. Resolve
-                // the leaf's pre-order index in the (still-flat)
-                // graph and update the matching mirror entry.
-                // DELETE-ON-CLEANUP with the mirror field.
-                if let Some(idx) = self.leaf_index_of(node_id)
-                    && let Some(obj) = self.mirror.objects.get_mut(idx)
-                {
-                    obj.transform = after;
-                }
-            }
-            SceneEdit::ObjectTransform {
-                object_idx, after, ..
-            } => {
-                if let Some(node_id) = self.leaf_id_at_index(object_idx) {
-                    let _ = self.graph.set_local_transform(node_id, after);
-                }
-                // BRIDGE: mirror update by idx directly, no walk
-                // needed. DELETE-ON-CLEANUP with the mirror field
-                // and the `ObjectTransform` enum variant.
-                if let Some(obj) = self.mirror.objects.get_mut(object_idx) {
-                    obj.transform = after;
-                }
-            }
+        let SceneEdit::SetLocalTransform { node_id, after, .. } = edit;
+        let _ = self.graph.set_local_transform(node_id, after);
+        // BRIDGE: keep the `Scene` mirror in sync. Resolve the
+        // leaf's pre-order index in the (still-flat) graph and
+        // update the matching mirror entry. DELETE-ON-CLEANUP with
+        // the mirror field.
+        if let Some(idx) = self.leaf_index_of(node_id)
+            && let Some(obj) = self.mirror.objects.get_mut(idx)
+        {
+            obj.transform = after;
         }
     }
 

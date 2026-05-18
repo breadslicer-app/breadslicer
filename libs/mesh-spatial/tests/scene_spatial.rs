@@ -369,7 +369,7 @@ mod invalidation_discipline {
     use super::*;
 
     #[test]
-    fn object_transform_does_not_invalidate() {
+    fn set_local_transform_does_not_invalidate() {
         // Transform-only edits are object-relative; per-mesh caches
         // are object-space. Applying the edit must not change the
         // cached local AABB.
@@ -379,21 +379,25 @@ mod invalidation_discipline {
             objects: vec![inline_object(triangle_mesh(1.0), Transform3D::Identity)],
         };
         let mut spatial = SceneSpatial::primed(scene).unwrap();
-        let before = spatial.object(0).unwrap().local_aabb().unwrap();
+        let leaf_id = spatial.leaf_id_at_index(0).unwrap();
+        let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         let new_transform =
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
-        spatial.apply_edit(SceneEdit::ObjectTransform {
-            object_idx: 0,
+        spatial.apply_edit(SceneEdit::SetLocalTransform {
+            node_id: leaf_id,
             before: Transform3D::Identity,
             after: new_transform,
         });
-        let after = spatial.object(0).unwrap().local_aabb().unwrap();
+        let after = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         assert_eq!(
             before, after,
-            "ObjectTransform must not invalidate the local AABB cache"
+            "SetLocalTransform must not invalidate the local AABB cache"
         );
-        // The scene's transform actually moved.
-        assert_eq!(spatial.scene().objects[0].transform, new_transform);
+        // The leaf's local transform actually moved.
+        assert_eq!(
+            spatial.graph().node(leaf_id).unwrap().local_transform,
+            new_transform
+        );
     }
 
     #[test]
@@ -435,51 +439,6 @@ mod invalidation_discipline {
         spatial.invalidate_mesh_resource(rid);
         let after = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         assert_eq!(before, after);
-    }
-
-    #[test]
-    fn apply_edit_matches_apply_to_scene() {
-        // The headless `SceneEdit::apply_to_scene` and the cache-aware
-        // `SceneSpatial::apply_edit` must produce equivalent scene
-        // states. Drift between the two would silently desync any
-        // future caller that mixes them.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                inline_object(triangle_mesh(1.0), Transform3D::Identity),
-                inline_object(
-                    triangle_mesh(2.0),
-                    Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
-                ),
-            ],
-        };
-        let edit = SceneEdit::ObjectTransform {
-            object_idx: 1,
-            before: Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
-            after: Transform3D::Affine(AffineTransform3D::from_translation([0.0, 7.0, -3.0])),
-        };
-
-        let mut headless_scene = scene.clone();
-        edit.apply_to_scene(&mut headless_scene);
-
-        let mut spatial = SceneSpatial::new(scene).unwrap();
-        spatial.apply_edit(edit);
-        let cached_scene = spatial.scene();
-
-        assert_eq!(
-            headless_scene.objects.len(),
-            cached_scene.objects.len(),
-            "object counts must agree"
-        );
-        for (i, (h, c)) in headless_scene
-            .objects
-            .iter()
-            .zip(cached_scene.objects.iter())
-            .enumerate()
-        {
-            assert_eq!(h.transform, c.transform, "object {i} transform mismatch");
-        }
     }
 
     #[test]
