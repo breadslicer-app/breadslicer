@@ -774,28 +774,45 @@ mod gpu_integration_tests {
     /// `render` without extra boilerplate.
     const TEST_BV: BuildVolume = HARDCODED_DEFAULT_BUILD_VOLUME;
 
-    /// Builds a wgpu (Device, Queue) with the default-limits profile
+    /// Returns a clone of the process-wide wgpu (Device, Queue) pair,
+    /// built lazily on first call with the default-limits profile
     /// Slint requests. Returns `None` if no adapter is available, the
     /// caller soft-skips so CI without a GPU isn't blocked.
-    fn make_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    ///
+    /// One shared Device across every GPU test, rather than one per
+    /// test: concurrent `wgpu::Instance::new` plus `request_adapter`
+    /// against the same Vulkan ICD raced and crashed RADV reliably at
+    /// `--test-threads=2`, intermittently at higher parallelism. wgpu's
+    /// Device and Queue are `Send + Sync` and `Arc`-shaped, so this
+    /// clone is cheap and concurrent test access is fine.
+    fn shared_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        static DEVICE: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
+            std::sync::OnceLock::new();
+        DEVICE
+            .get_or_init(|| {
+                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+                let adapter = pollster::block_on(
+                    instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+                )
                 .ok()?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("mesh-viewer test device"),
-            // Default-limits matches what Slint asks for. If a binding
-            // we declare exceeds these limits, `Renderer::new` will
-            // panic in `create_bind_group_layout`, that's the
-            // regression we want this test to catch.
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::default(),
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-            trace: wgpu::Trace::Off,
-        }))
-        .ok()?;
-        Some((device, queue))
+                let (device, queue) =
+                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                        label: Some("mesh-viewer test device"),
+                        // Default-limits matches what Slint asks for. If
+                        // a binding we declare exceeds these limits,
+                        // `Renderer::new` panics in
+                        // `create_bind_group_layout`; that's the
+                        // regression these tests catch.
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        experimental_features: wgpu::ExperimentalFeatures::default(),
+                        trace: wgpu::Trace::Off,
+                    }))
+                    .ok()?;
+                Some((device, queue))
+            })
+            .clone()
     }
 
     /// First reachable leaf's [`NodeId`] in pre-order traversal. The
@@ -844,7 +861,7 @@ mod gpu_integration_tests {
     /// `Renderer::new`.
     #[test]
     fn renderer_construction_under_default_limits_does_not_panic() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -855,7 +872,7 @@ mod gpu_integration_tests {
     /// for a non-trivial graph with a non-identity transform.
     #[test]
     fn gpu_scene_build_succeeds_under_default_limits() {
-        let Some((device, _queue)) = make_test_device() else {
+        let Some((device, _queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -877,7 +894,7 @@ mod gpu_integration_tests {
     /// would have caught the regression before runtime.
     #[test]
     fn render_succeeds_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -914,7 +931,7 @@ mod gpu_integration_tests {
     /// regression in the selection-flag path before runtime.
     #[test]
     fn render_with_selection_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -954,7 +971,7 @@ mod gpu_integration_tests {
     /// `texture_multisampled_2d<u32>` the outline shader expects.
     #[test]
     fn outline_post_pass_under_default_limits_is_validated() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1006,7 +1023,7 @@ mod gpu_integration_tests {
     /// reuse path.
     #[test]
     fn render_with_gizmo_under_default_limits_is_validated() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1062,7 +1079,7 @@ mod gpu_integration_tests {
     /// draws in a single frame.
     #[test]
     fn render_with_idle_gizmo_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1105,7 +1122,7 @@ mod gpu_integration_tests {
     /// under default-limits.
     #[test]
     fn render_with_rotate_gizmo_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1147,7 +1164,7 @@ mod gpu_integration_tests {
     /// scale-pass wiring under default-limits.
     #[test]
     fn render_with_scale_gizmo_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1191,7 +1208,7 @@ mod gpu_integration_tests {
     /// but it exercises the full draw loop with N > 1.
     #[test]
     fn render_multi_object_scene_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1247,7 +1264,7 @@ mod gpu_integration_tests {
     /// second exercises the cached `plate_buffers` path.
     #[test]
     fn render_plate_only_under_default_limits() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1269,7 +1286,7 @@ mod gpu_integration_tests {
     /// frames succeed and the cache key reflects the latest call.
     #[test]
     fn render_plate_buffers_rebuild_on_envelope_change() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
@@ -1408,7 +1425,7 @@ mod gpu_integration_tests {
     /// driver-specific blending rounding, and viewport jitter.
     #[test]
     fn envelope_breach_x_pos_paints_warning_stripe_pixels() {
-        let Some((device, queue)) = make_test_device() else {
+        let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
