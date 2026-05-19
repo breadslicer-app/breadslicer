@@ -121,11 +121,28 @@ impl SceneSpatial {
     }
 
     /// Apply a typed scene edit and update caches accordingly.
-    /// Transform-only edits do not invalidate the per-mesh caches,
-    /// which are object-space (local AABB, clusters).
+    /// `SetLocalTransform` leaves the per-mesh caches alone (they
+    /// are object-space: local AABB, clusters). `AddRootLeaf` /
+    /// `RemoveRootLeaf` operate only on mesh-resource-backed leaves,
+    /// whose caches live in `mesh_resources` (keyed by
+    /// [`MeshResourceId`]) and stay valid across the leaf's
+    /// installation / removal.
     pub fn apply_edit(&mut self, edit: SceneEdit) {
-        let SceneEdit::SetLocalTransform { node_id, after, .. } = edit;
-        let _ = self.graph.set_local_transform(node_id, after);
+        match edit {
+            SceneEdit::SetLocalTransform { node_id, after, .. } => {
+                let _ = self.graph.set_local_transform(node_id, after);
+            }
+            SceneEdit::AddRootLeaf {
+                node_id,
+                mesh,
+                local_transform,
+            } => {
+                let _ = self.graph.install_root_leaf(node_id, mesh, local_transform);
+            }
+            SceneEdit::RemoveRootLeaf { node_id, .. } => {
+                let _ = self.graph.remove_root_leaf(node_id);
+            }
+        }
     }
 
     /// Clear cached state for the inline mesh on the leaf at `id`.

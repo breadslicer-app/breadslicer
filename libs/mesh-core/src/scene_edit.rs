@@ -12,15 +12,16 @@
 //! invalidation hooks for the cached state that the variant affects.
 
 use crate::scene::Scene;
-use crate::scene_node::NodeId;
+use crate::scene_node::{MeshResourceId, NodeId};
 use crate::transform::Transform3D;
 
 /// Typed scene mutation. The shared edit shape across the workspace:
 /// the GUI's undo/redo stack, the headless apply paths, and any
 /// cache layer's `apply_edit` all speak this enum.
 ///
-/// `SetLocalTransform` is keyed by a stable [`NodeId`] on a
-/// [`Scene`].
+/// Every variant is keyed by a stable [`NodeId`] on a [`Scene`].
+/// `AddRootLeaf` and `RemoveRootLeaf` carry the same fields so each
+/// is the [`Self::inverse`] of the other.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SceneEdit {
     /// `node.local_transform` for the node at `node_id` was changed
@@ -31,40 +32,91 @@ pub enum SceneEdit {
         before: Transform3D,
         after: Transform3D,
     },
+    /// Install a mesh-resource-backed leaf at `node_id` and register
+    /// it as a scene root. The id must come from
+    /// [`Scene::allocate_unbound_node_id`] so the arena slot exists
+    /// and is empty when the edit is applied.
+    AddRootLeaf {
+        node_id: NodeId,
+        mesh: MeshResourceId,
+        local_transform: Transform3D,
+    },
+    /// Tombstone the mesh-resource-backed root leaf at `node_id`.
+    /// `mesh` and `local_transform` snapshot the payload so the
+    /// inverse [`Self::AddRootLeaf`] re-installs it identically.
+    RemoveRootLeaf {
+        node_id: NodeId,
+        mesh: MeshResourceId,
+        local_transform: Transform3D,
+    },
 }
 
 impl SceneEdit {
     /// True when applying this edit would not change the target.
     /// Useful for filtering no-op gestures from the undo stack.
     pub fn is_noop(&self) -> bool {
-        let Self::SetLocalTransform { before, after, .. } = self;
-        before == after
+        match self {
+            Self::SetLocalTransform { before, after, .. } => before == after,
+            Self::AddRootLeaf { .. } | Self::RemoveRootLeaf { .. } => false,
+        }
     }
 
     /// Inverse edit: applying `self` then `self.inverse()` returns
     /// the target to its pre-edit state.
     pub fn inverse(&self) -> Self {
-        let Self::SetLocalTransform {
-            node_id,
-            before,
-            after,
-        } = self;
-        Self::SetLocalTransform {
-            node_id: *node_id,
-            before: *after,
-            after: *before,
+        match self {
+            Self::SetLocalTransform {
+                node_id,
+                before,
+                after,
+            } => Self::SetLocalTransform {
+                node_id: *node_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AddRootLeaf {
+                node_id,
+                mesh,
+                local_transform,
+            } => Self::RemoveRootLeaf {
+                node_id: *node_id,
+                mesh: *mesh,
+                local_transform: *local_transform,
+            },
+            Self::RemoveRootLeaf {
+                node_id,
+                mesh,
+                local_transform,
+            } => Self::AddRootLeaf {
+                node_id: *node_id,
+                mesh: *mesh,
+                local_transform: *local_transform,
+            },
         }
     }
 
-    /// Apply this edit to a [`Scene`]. `SetLocalTransform`
-    /// writes the new transform onto the addressed node, silently
-    /// no-op on a dangling `NodeId`. Cache-aware callers should go
-    /// through `sc_mesh_spatial::SceneSpatial::apply_edit` instead,
-    /// which dispatches the same enum and updates spatial caches
-    /// before delegating here.
+    /// Apply this edit to a [`Scene`]. Each variant calls the
+    /// matching scene mutator and silently swallows precondition
+    /// errors (dangling id, occupied slot, kind mismatch); the only
+    /// way to reach a precondition violation here is a programming
+    /// bug, and a downstream cache layer (see
+    /// `sc_mesh_spatial::SceneSpatial::apply_edit`) is the next gate.
     pub fn apply_to_scene(&self, graph: &mut Scene) {
-        let Self::SetLocalTransform { node_id, after, .. } = self;
-        let _ = graph.set_local_transform(*node_id, *after);
+        match self {
+            Self::SetLocalTransform { node_id, after, .. } => {
+                let _ = graph.set_local_transform(*node_id, *after);
+            }
+            Self::AddRootLeaf {
+                node_id,
+                mesh,
+                local_transform,
+            } => {
+                let _ = graph.install_root_leaf(*node_id, *mesh, *local_transform);
+            }
+            Self::RemoveRootLeaf { node_id, .. } => {
+                let _ = graph.remove_root_leaf(*node_id);
+            }
+        }
     }
 }
 
@@ -162,5 +214,156 @@ mod scene_edit_tests {
         .apply_to_scene(&mut g);
         // No nodes existed before and none exist after.
         assert!(g.node(bogus).is_none());
+    }
+
+    fn fresh_scene_with_one_resource() -> (Scene, NodeId, MeshResourceId, Transform3D) {
+        use crate::indexed_mesh::IndexedMesh;
+        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        let mut g = Scene::new();
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        let rid = g.add_mesh_resource(mesh);
+        let id = g.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
+        (g, id, rid, xform)
+    }
+
+    #[test]
+    fn add_root_leaf_is_never_noop() {
+        let (_, id, rid, xform) = fresh_scene_with_one_resource();
+        let edit = SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        assert!(!edit.is_noop());
+    }
+
+    #[test]
+    fn remove_root_leaf_is_never_noop() {
+        let (_, id, rid, xform) = fresh_scene_with_one_resource();
+        let edit = SceneEdit::RemoveRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        assert!(!edit.is_noop());
+    }
+
+    #[test]
+    fn add_root_leaf_inverse_is_remove_root_leaf_with_same_fields() {
+        let (_, id, rid, xform) = fresh_scene_with_one_resource();
+        let add = SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        assert_eq!(
+            add.inverse(),
+            SceneEdit::RemoveRootLeaf {
+                node_id: id,
+                mesh: rid,
+                local_transform: xform,
+            }
+        );
+    }
+
+    #[test]
+    fn remove_root_leaf_inverse_is_add_root_leaf_with_same_fields() {
+        let (_, id, rid, xform) = fresh_scene_with_one_resource();
+        let remove = SceneEdit::RemoveRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        assert_eq!(
+            remove.inverse(),
+            SceneEdit::AddRootLeaf {
+                node_id: id,
+                mesh: rid,
+                local_transform: xform,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_add_root_leaf_installs_a_root() {
+        let (mut g, id, rid, xform) = fresh_scene_with_one_resource();
+        let edit = SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        edit.apply_to_scene(&mut g);
+        assert!(g.roots().contains(&id));
+        assert!(g.node(id).is_some());
+    }
+
+    #[test]
+    fn apply_add_then_inverse_round_trips_graph() {
+        let (mut g, id, rid, xform) = fresh_scene_with_one_resource();
+        let snapshot_before = g.clone();
+        let edit = SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        edit.apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g);
+        assert_eq!(g, snapshot_before);
+    }
+
+    #[test]
+    fn apply_remove_then_inverse_round_trips_graph() {
+        let (mut g, id, rid, xform) = fresh_scene_with_one_resource();
+        g.install_root_leaf(id, rid, xform).unwrap();
+        let snapshot_after_install = g.clone();
+        let edit = SceneEdit::RemoveRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        edit.apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g);
+        assert_eq!(g, snapshot_after_install);
+    }
+
+    #[test]
+    fn add_root_leaf_with_out_of_range_id_is_silent_noop() {
+        use std::num::NonZeroU32;
+        let mut g = Scene::new();
+        let bogus = NodeId(NonZeroU32::new(99).unwrap());
+        let bogus_rid = MeshResourceId(NonZeroU32::new(99).unwrap());
+        SceneEdit::AddRootLeaf {
+            node_id: bogus,
+            mesh: bogus_rid,
+            local_transform: Transform3D::Identity,
+        }
+        .apply_to_scene(&mut g);
+        assert!(g.node(bogus).is_none());
+        assert!(g.roots().is_empty());
+    }
+
+    #[test]
+    fn remove_root_leaf_on_empty_slot_is_silent_noop() {
+        let (mut g, id, rid, xform) = fresh_scene_with_one_resource();
+        SceneEdit::RemoveRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        }
+        .apply_to_scene(&mut g);
+        assert!(g.node(id).is_none());
+        assert!(!g.roots().contains(&id));
     }
 }

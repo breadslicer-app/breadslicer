@@ -756,8 +756,10 @@ mod scene_document_tests {
         assert_eq!(doc.undo_stack.borrow().len(), UNDO_STACK_CAP);
         // Front of the deque is the oldest surviving entry; with
         // five entries dropped it should start at i = 5 (after = 6.0).
-        let SceneEdit::SetLocalTransform { after, .. } =
-            doc.undo_stack.borrow().front().copied().unwrap();
+        let front = doc.undo_stack.borrow().front().copied().unwrap();
+        let SceneEdit::SetLocalTransform { after, .. } = front else {
+            panic!("front entry was not a SetLocalTransform: {front:?}");
+        };
         assert_eq!(after, translation(6.0));
     }
 

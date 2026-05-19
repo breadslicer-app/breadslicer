@@ -66,6 +66,14 @@ pub enum SceneError {
     NotABranch { node_id: NodeId },
     /// A query that expects a leaf was given a non-leaf node.
     NotALeaf { node_id: NodeId },
+    /// A mutator that expects to fill an empty arena slot found it
+    /// already populated.
+    NodeSlotOccupied { id: NodeId },
+    /// A mutator that expects a scene root was given a non-root node.
+    NotARoot { node_id: NodeId },
+    /// A mutator that expects a `Leaf(MeshResource(_))` was given a
+    /// leaf carrying an inline mesh instead.
+    NotAMeshResourceLeaf { node_id: NodeId },
     /// `merge_meshes` was asked to bake a graph that still contains an
     /// unevaluated CSG node.
     UnevaluatedCsg { node_id: NodeId },
@@ -127,6 +135,17 @@ impl fmt::Display for SceneError {
                 write!(f, "node {} is not a Group or Csg branch", node_id.get())
             }
             Self::NotALeaf { node_id } => write!(f, "node {} is not a Leaf", node_id.get()),
+            Self::NodeSlotOccupied { id } => {
+                write!(f, "node slot {} is already occupied", id.get())
+            }
+            Self::NotARoot { node_id } => {
+                write!(f, "node {} is not a scene root", node_id.get())
+            }
+            Self::NotAMeshResourceLeaf { node_id } => write!(
+                f,
+                "node {} is a leaf but not a mesh-resource leaf",
+                node_id.get()
+            ),
             Self::UnevaluatedCsg { node_id } => {
                 write!(f, "unevaluated CSG node {}", node_id.get())
             }
@@ -583,6 +602,90 @@ impl Scene {
             .ok_or(SceneError::DanglingNodeId { id })?;
         node.local_transform = local_transform;
         Ok(())
+    }
+
+    /// Install a mesh-resource-backed leaf at a previously-allocated,
+    /// currently-empty node slot, and register it as a scene root.
+    ///
+    /// Paired with [`Self::remove_root_leaf`] so a typed edit (see
+    /// `sc_mesh_core::scene_edit`) can round-trip a paste insertion
+    /// through the undo/redo machinery while keeping the same
+    /// [`NodeId`] across applies.
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingNodeId`] if `id` is past the arena's
+    ///   high-water mark.
+    /// - [`SceneError::NodeSlotOccupied`] if a node already lives at
+    ///   that id.
+    /// - [`SceneError::DanglingMeshResource`] if `mesh` is not a
+    ///   registered resource id.
+    ///
+    /// On error the scene is unchanged. The installed leaf has no
+    /// metadata; callers that need [`SceneMetadata`] on the new root
+    /// should go through [`Self::add_leaf`] + [`Self::add_root`].
+    pub fn install_root_leaf(
+        &mut self,
+        id: NodeId,
+        mesh: MeshResourceId,
+        local_transform: Transform3D,
+    ) -> Result<(), SceneError> {
+        if id.index() >= self.nodes.len() {
+            return Err(SceneError::DanglingNodeId { id });
+        }
+        if self.nodes[id.index()].is_some() {
+            return Err(SceneError::NodeSlotOccupied { id });
+        }
+        if self.mesh_resource(mesh).is_none() {
+            return Err(SceneError::DanglingMeshResource { id: mesh });
+        }
+        self.nodes[id.index()] = Some(Node {
+            meta: None,
+            local_transform,
+            kind: NodeKind::Leaf(LeafPayload::MeshResource(mesh)),
+        });
+        self.roots.push(id);
+        Ok(())
+    }
+
+    /// Tombstone a mesh-resource-backed root leaf: drop it from the
+    /// roots list and clear its arena slot. Returns the
+    /// [`MeshResourceId`] and [`Transform3D`] that were attached, so
+    /// the paired [`Self::install_root_leaf`] can re-install the same
+    /// payload at the same id.
+    ///
+    /// Any [`SceneMetadata`] on the removed leaf is dropped; callers
+    /// that need to round-trip metadata must snapshot it before
+    /// calling.
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingNodeId`] if no live node lives at `id`.
+    /// - [`SceneError::NotALeaf`] if the node is not a Leaf.
+    /// - [`SceneError::NotAMeshResourceLeaf`] if the leaf's payload is
+    ///   an inline mesh rather than a [`LeafPayload::MeshResource`].
+    /// - [`SceneError::NotARoot`] if the leaf is parented rather than
+    ///   a scene root.
+    ///
+    /// On error the scene is unchanged.
+    pub fn remove_root_leaf(
+        &mut self,
+        id: NodeId,
+    ) -> Result<(MeshResourceId, Transform3D), SceneError> {
+        let node = self.node(id).ok_or(SceneError::DanglingNodeId { id })?;
+        let (mesh, local_transform) = match &node.kind {
+            NodeKind::Leaf(LeafPayload::MeshResource(rid)) => (*rid, node.local_transform),
+            NodeKind::Leaf(LeafPayload::Mesh(_)) => {
+                return Err(SceneError::NotAMeshResourceLeaf { node_id: id });
+            }
+            _ => return Err(SceneError::NotALeaf { node_id: id }),
+        };
+        let root_pos = self
+            .roots
+            .iter()
+            .position(|&r| r == id)
+            .ok_or(SceneError::NotARoot { node_id: id })?;
+        self.roots.remove(root_pos);
+        self.nodes[id.index()] = None;
+        Ok((mesh, local_transform))
     }
 
     pub(crate) fn expansion_successor(&self, node_idx: usize, child_i: usize) -> Option<NodeId> {
@@ -1334,6 +1437,133 @@ mod scene_construction_tests {
         let child_group = g.add_group(None, Transform3D::Identity);
         g.add_child(root, child_group).unwrap();
         assert_eq!(g.first_leaf_id(), None);
+    }
+
+    #[test]
+    fn install_root_leaf_at_freshly_allocated_id_succeeds() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let id = g.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
+        g.install_root_leaf(id, rid, xform).unwrap();
+        assert!(g.roots().contains(&id));
+        let node = g.node(id).expect("installed node visible");
+        assert_eq!(node.local_transform, xform);
+        assert!(matches!(
+            node.kind,
+            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+        ));
+    }
+
+    #[test]
+    fn install_root_leaf_on_out_of_range_id_errors() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let bogus = NodeId(NonZeroU32::new(42).unwrap());
+        let result = g.install_root_leaf(bogus, rid, Transform3D::Identity);
+        assert_eq!(result, Err(SceneError::DanglingNodeId { id: bogus }));
+        assert!(g.roots().is_empty());
+    }
+
+    #[test]
+    fn install_root_leaf_on_occupied_slot_errors() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let occupied = g.add_group(None, Transform3D::Identity);
+        let result = g.install_root_leaf(occupied, rid, Transform3D::Identity);
+        assert_eq!(result, Err(SceneError::NodeSlotOccupied { id: occupied }));
+        assert!(!g.roots().contains(&occupied));
+    }
+
+    #[test]
+    fn install_root_leaf_with_dangling_mesh_resource_errors() {
+        let mut g = Scene::new();
+        let id = g.allocate_unbound_node_id();
+        let bogus = MeshResourceId(NonZeroU32::new(99).unwrap());
+        let result = g.install_root_leaf(id, bogus, Transform3D::Identity);
+        assert_eq!(result, Err(SceneError::DanglingMeshResource { id: bogus }));
+        assert!(g.node(id).is_none());
+        assert!(g.roots().is_empty());
+    }
+
+    #[test]
+    fn remove_root_leaf_returns_payload_and_clears_slot() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let id = g.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([4.0, 5.0, 6.0]));
+        g.install_root_leaf(id, rid, xform).unwrap();
+        let (out_rid, out_xform) = g.remove_root_leaf(id).unwrap();
+        assert_eq!(out_rid, rid);
+        assert_eq!(out_xform, xform);
+        assert!(g.node(id).is_none());
+        assert!(!g.roots().contains(&id));
+    }
+
+    #[test]
+    fn remove_root_leaf_on_empty_slot_errors() {
+        let mut g = Scene::new();
+        let id = g.allocate_unbound_node_id();
+        let result = g.remove_root_leaf(id);
+        assert_eq!(result, Err(SceneError::DanglingNodeId { id }));
+    }
+
+    #[test]
+    fn remove_root_leaf_on_group_errors() {
+        let mut g = Scene::new();
+        let group = g.add_group(None, Transform3D::Identity);
+        g.add_root(group).unwrap();
+        let result = g.remove_root_leaf(group);
+        assert_eq!(result, Err(SceneError::NotALeaf { node_id: group }));
+        assert!(g.roots().contains(&group));
+    }
+
+    #[test]
+    fn remove_root_leaf_on_inline_mesh_leaf_errors() {
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        let result = g.remove_root_leaf(leaf);
+        assert_eq!(
+            result,
+            Err(SceneError::NotAMeshResourceLeaf { node_id: leaf })
+        );
+        assert!(g.roots().contains(&leaf));
+        assert!(g.node(leaf).is_some());
+    }
+
+    #[test]
+    fn remove_root_leaf_on_parented_leaf_errors() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let parent = g.add_group(None, Transform3D::Identity);
+        g.add_root(parent).unwrap();
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        g.add_child(parent, leaf).unwrap();
+        let result = g.remove_root_leaf(leaf);
+        assert_eq!(result, Err(SceneError::NotARoot { node_id: leaf }));
+        assert_eq!(g.parent_of(leaf), Some(parent));
+    }
+
+    #[test]
+    fn install_remove_install_round_trips_at_same_id() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let id = g.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([7.0, 8.0, 9.0]));
+        g.install_root_leaf(id, rid, xform).unwrap();
+        let snapshot_after_first = g.clone();
+        let (out_rid, out_xform) = g.remove_root_leaf(id).unwrap();
+        g.install_root_leaf(id, out_rid, out_xform).unwrap();
+        assert_eq!(g, snapshot_after_first);
     }
 }
 
