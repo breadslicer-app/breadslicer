@@ -4,7 +4,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-08 17:09+0000\n"
 "PO-Revision-Date: 2026-05-19 11:18+0000\n"
-"Last-Translator: gallegonovato <gallegonovato@noreply.codeberg.org>\n"
+"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/es/>\n"
 "Language: es\n"
@@ -121,12 +121,12 @@ msgstr "Volumen de impresión (mm)"
 #: ui/preferences/3dview.slint:31
 msgctxt "PreferencesPage"
 msgid "Width"
-msgstr "Ancho"
+msgstr "Anchura"
 
 #: ui/preferences/3dview.slint:39
 msgctxt "PreferencesPage"
 msgid "Build volume width in millimetres"
-msgstr "Ancho del volumen de impresión en milímetros"
+msgstr "Anchura del volumen de impresión en milímetros"
 
 #: ui/preferences/3dview.slint:49
 msgctxt "PreferencesPage"
@@ -348,7 +348,7 @@ msgstr "Abrir modelo 3D para visualizarlo aquí"
 #: ui/main-window.slint:364
 msgctxt "MainWindow"
 msgid "Drop to open"
-msgstr "Desliza hacia abajo para abrir"
+msgstr "Suelta para abrir"
 
 #: ui/mesh-viewer.slint:83
 msgctxt "MeshViewer"
