@@ -357,6 +357,23 @@ impl Scene {
         id
     }
 
+    /// Allocate a fresh [`NodeId`] without installing any node. The
+    /// returned id's arena slot is `None` and the id is not registered
+    /// as a scene root.
+    ///
+    /// Use this when the id needs to exist before the node it will
+    /// reference does, typically so the id can be embedded in a typed
+    /// edit (see `sc_mesh_core::scene_edit`) that the undo/redo
+    /// machinery replays against the same slot.
+    ///
+    /// The slot is permanently consumed: dropping the id without
+    /// later installing a node at it leaks one arena slot. Slots are
+    /// tombstoned but never reused, so this is benign at the scale of
+    /// user-driven editing.
+    pub fn allocate_unbound_node_id(&mut self) -> NodeId {
+        self.allocate_node_slot()
+    }
+
     pub fn add_mesh_resource(&mut self, mesh: IndexedMesh) -> MeshResourceId {
         let id = self.allocate_mesh_resource_slot();
         self.mesh_resources[id.index()] = Some(mesh);
@@ -799,6 +816,49 @@ mod scene_construction_tests {
         assert_eq!(a.get(), 1);
         assert_eq!(b.get(), 2);
         assert_eq!(c.get(), 3);
+    }
+
+    #[test]
+    fn allocate_unbound_node_id_returns_fresh_ids() {
+        let mut g = Scene::new();
+        let a = g.allocate_unbound_node_id();
+        let b = g.allocate_unbound_node_id();
+        assert_ne!(a, b);
+        assert_eq!(a.get(), 1);
+        assert_eq!(b.get(), 2);
+    }
+
+    #[test]
+    fn allocate_unbound_node_id_leaves_slot_empty() {
+        let mut g = Scene::new();
+        let id = g.allocate_unbound_node_id();
+        assert!(g.node(id).is_none());
+        assert!(g.parent_of(id).is_none());
+        assert!(!g.roots().contains(&id));
+    }
+
+    #[test]
+    fn allocate_unbound_node_id_grows_arena_by_one_slot() {
+        let mut g = Scene::new();
+        let before = g.nodes_len();
+        let _ = g.allocate_unbound_node_id();
+        assert_eq!(g.nodes_len(), before + 1);
+    }
+
+    #[test]
+    fn allocate_unbound_node_id_shares_counter_with_installers() {
+        // Mixing the unbound allocator with installer paths must not
+        // collide: each call bumps the same monotonic counter.
+        let mut g = Scene::new();
+        let a = g.add_group(None, Transform3D::Identity);
+        let b = g.allocate_unbound_node_id();
+        let c = g.add_group(None, Transform3D::Identity);
+        assert_eq!(a.get(), 1);
+        assert_eq!(b.get(), 2);
+        assert_eq!(c.get(), 3);
+        assert!(g.node(a).is_some());
+        assert!(g.node(b).is_none());
+        assert!(g.node(c).is_some());
     }
 
     #[test]
