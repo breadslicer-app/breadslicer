@@ -276,9 +276,9 @@ impl<'a> ObjectQuery<'a> {
         self.mesh
     }
 
-    /// Leaf's parent-relative transform. For a graph produced from a
-    /// flat `Scene` (a single identity-root Group), this equals the
-    /// world transform.
+    /// Leaf's parent-relative transform. For a loader-shape graph
+    /// (a single identity-Group root with leaves attached directly),
+    /// this equals the world transform.
     pub fn local_transform(&self) -> Transform3D {
         self.node.local_transform
     }

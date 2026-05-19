@@ -494,8 +494,8 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn empty_graph_returns_error() {
-        // Loader-faithful empty graph: a Group root with no children
-        // mirrors what `try_from(Scene::default())` used to produce.
+        // Loader-faithful empty graph: a Group root with no children,
+        // the same shape an empty-file load produces.
         let (graph, _root) = graph_with_group_root();
         assert!(build_gpu_scene_data(&graph).is_err());
     }
