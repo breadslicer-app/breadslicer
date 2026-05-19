@@ -7,11 +7,13 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 
 use float_cmp::approx_eq;
-use sc_mesh_core::SceneGraph;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
-use sc_mesh_core::scene::{Scene, SceneMetadata, SceneObject, SceneObjectContent, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_mesh_core::scene::{SceneMetadata, Transform3D};
+use sc_mesh_core::scene_graph_node::LeafPayload;
+use sc_mesh_core::{
+    IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, Normal, SceneGraph, Vertex,
+};
 
 use crate::error::LoadObjError;
 use crate::messages::{LoadMeshWarning, LoadObjWarning};
@@ -44,14 +46,14 @@ impl Caps {
 }
 
 /// Finalises a pending object by extracting only the vertices it references,
-/// re-indexing the faces to use local (per-object) indices, and returning a
-/// `SceneObject`.  Returns `None` and leaves `current_faces` empty if there
+/// re-indexing the faces to use local (per-object) indices, and returning an
+/// [`IndexedMesh`]. Returns `None` and leaves `current_faces` empty if there
 /// are no faces to flush.
-fn flush_pending_object(
+fn flush_pending_object_as_mesh(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
-) -> Option<SceneObject> {
+) -> Option<IndexedMesh> {
     if current_faces.is_empty() {
         return None;
     }
@@ -88,26 +90,24 @@ fn flush_pending_object(
         ..Default::default()
     });
 
-    Some(SceneObject {
-        meta: None,
-        transform: Transform3D::Identity,
-        content: SceneObjectContent::Mesh(IndexedMesh::new(meta, local_vertices, remapped_faces)),
-    })
+    Some(IndexedMesh::new(meta, local_vertices, remapped_faces))
 }
 
 /// Checks for shared global vertex indices between the pending object and
 /// already-flushed objects, emits a warning if any are found, then flushes
-/// the pending object and records its indices as used.
-fn check_sharing_and_flush(
+/// the pending object as an inline-mesh leaf under `root` and records its
+/// indices as used. Returns `true` when a leaf was attached.
+fn check_sharing_and_attach(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
     used_global_indices: &mut HashSet<VertexIndex>,
-    objects: &mut Vec<SceneObject>,
+    graph: &mut SceneGraph,
+    root: NodeId,
     warnings: &mut Vec<LoadMeshWarning>,
-) {
+) -> bool {
     if current_faces.is_empty() {
-        return;
+        return false;
     }
 
     let face_global_indices: HashSet<VertexIndex> = current_faces
@@ -131,10 +131,18 @@ fn check_sharing_and_flush(
         }));
     }
 
-    if let Some(obj) = flush_pending_object(global_vertices, current_faces, current_name) {
-        objects.push(obj);
-        used_global_indices.extend(face_global_indices);
-    }
+    let Some(mesh) = flush_pending_object_as_mesh(global_vertices, current_faces, current_name)
+    else {
+        return false;
+    };
+    let leaf = graph
+        .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+        .expect("inline-mesh leaf payload cannot fail construction");
+    graph
+        .add_child(root, leaf)
+        .expect("freshly allocated leaf has no parent and is not a root");
+    used_global_indices.extend(face_global_indices);
+    true
 }
 
 pub fn read_obj<R>(
@@ -144,18 +152,26 @@ pub fn read_obj<R>(
 where
     R: std::io::Read,
 {
-    let scene = read_obj_with_caps(read, warnings, Caps::DEFAULT)?;
-    Ok(SceneGraph::try_from(scene)?)
+    read_obj_with_caps(read, warnings, Caps::DEFAULT)
 }
 
 fn read_obj_with_caps<R>(
     read: &mut R,
     warnings: &mut Vec<LoadMeshWarning>,
     caps: Caps,
-) -> Result<Scene, LoadObjError>
+) -> Result<SceneGraph, LoadObjError>
 where
     R: std::io::Read,
 {
+    // Loader-faithful topology: every leaf attaches under one
+    // identity-Group root, matching the shape downstream tests and
+    // viewport code expect.
+    let mut graph = SceneGraph::new();
+    let root = graph.add_group(None, Transform3D::Identity);
+    graph
+        .add_root(root)
+        .expect("freshly allocated group is not yet a root");
+
     // OBJ vertices are global: any face in any object can reference any vertex
     // defined earlier in the file.
     let mut global_vertices: Vec<Vertex> = Vec::new();
@@ -166,7 +182,9 @@ where
     // Name from the most recent `o` directive.
     let mut current_name: Option<String> = None;
 
-    let mut objects: Vec<SceneObject> = Vec::new();
+    // Count of leaves actually attached to the graph; drives the
+    // empty-file NoVertices / NoFaces warnings emitted at the end.
+    let mut leaf_count: usize = 0;
 
     // Global vertex indices consumed by already-flushed objects, used to detect
     // cross-object vertex sharing.
@@ -215,14 +233,17 @@ where
                 header_ended = true;
 
                 // Finalise the previous pending object (if it has faces).
-                check_sharing_and_flush(
+                if check_sharing_and_attach(
                     &global_vertices,
                     &mut current_faces,
                     current_name.take(),
                     &mut used_global_indices,
-                    &mut objects,
+                    &mut graph,
+                    root,
                     warnings,
-                );
+                ) {
+                    leaf_count += 1;
+                }
 
                 // Begin accumulating for the new object.
                 let obj_name = line.strip_prefix("o").unwrap_or("").trim();
@@ -383,32 +404,33 @@ where
     }
 
     // Finalise the last pending object.
-    check_sharing_and_flush(
+    if check_sharing_and_attach(
         &global_vertices,
         &mut current_faces,
         current_name,
         &mut used_global_indices,
-        &mut objects,
+        &mut graph,
+        root,
         warnings,
-    );
+    ) {
+        leaf_count += 1;
+    }
 
-    if objects.is_empty() {
+    if leaf_count == 0 {
         if global_vertices.is_empty() {
             warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoVertices));
         }
         warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoFaces));
     }
 
-    let scene_meta = header_comment.map(|comment| SceneMetadata {
-        name: None,
-        comment: Some(comment),
-    });
+    if let Some(comment) = header_comment {
+        graph.set_meta(Some(SceneMetadata {
+            name: None,
+            comment: Some(comment),
+        }));
+    }
 
-    Ok(Scene {
-        meta: scene_meta,
-        resources: vec![],
-        objects,
-    })
+    Ok(graph)
 }
 
 fn parse_f32(token: &str, line_num: usize) -> Result<f32, LoadObjError> {
@@ -1361,7 +1383,7 @@ f 1 3 4
 
     #[test]
     fn object_with_no_faces_is_skipped() {
-        // `o Empty` has no faces and must not produce a SceneObject.
+        // `o Empty` has no faces and must not produce a leaf.
         let obj = "\
 o Empty
 v 0.0 0.0 0.0
@@ -1411,17 +1433,15 @@ f 1 3 4
 mod caps_tests {
     use std::io::Cursor;
 
-    use sc_mesh_core::scene::SceneObjectContent;
-
     use super::{Caps, LoadMeshWarning, MAX_FACE_TOKENS, MAX_OBJ_VERTICES, read_obj_with_caps};
 
     fn parse_with_caps(s: &str, caps: Caps) -> Result<usize, super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings: Vec<LoadMeshWarning> = Vec::new();
-        let scene = read_obj_with_caps(&mut reader, &mut warnings, caps)?;
-        Ok(match scene.objects.first().map(|o| &o.content) {
-            Some(SceneObjectContent::Mesh(m)) => m.faces().len(),
-            _ => 0,
+        let graph = read_obj_with_caps(&mut reader, &mut warnings, caps)?;
+        Ok(match graph.first_leaf_id() {
+            Some(id) => graph.mesh_at_leaf(id).map(|m| m.faces().len()).unwrap_or(0),
+            None => 0,
         })
     }
 
