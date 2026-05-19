@@ -101,7 +101,7 @@ impl Scene {
 }
 
 #[cfg(test)]
-mod scene_graph_aabb_tests {
+mod scene_aabb_tests {
     use super::*;
     use crate::indexed_mesh::IndexedMesh;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};

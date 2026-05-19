@@ -208,7 +208,7 @@ fn bake_into_affine(
 }
 
 #[cfg(test)]
-mod scene_graph_bake_tests {
+mod scene_bake_tests {
     use super::*;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
     use crate::scene_node::{CsgOp, LeafPayload};

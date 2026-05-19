@@ -3,7 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Aggregate scene-graph type and its mutation / validation API.
+//! Hierarchical [`Scene`] aggregate and its mutation / validation
+//! API. Arena-backed; per-mesh AABB and bake helpers live in the
+//! sibling `scene_aabb` / `scene_bake` modules; typed edits in
+//! `scene_edit`.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -760,7 +763,7 @@ impl From<IndexedMesh> for Scene {
 }
 
 #[cfg(test)]
-mod scene_graph_construction_tests {
+mod scene_construction_tests {
     use super::*;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
     use crate::transform::AffineTransform3D;
@@ -1275,7 +1278,7 @@ mod scene_graph_construction_tests {
 }
 
 #[cfg(test)]
-mod scene_graph_validate_tests {
+mod scene_validate_tests {
     use super::*;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
 

@@ -7,7 +7,7 @@
 //!
 //! Every observable change to a [`Scene`] is one variant of
 //! [`SceneEdit`]. Headless callers apply edits directly with
-//! [`SceneEdit::apply_to_graph`]; cache layers (notably
+//! [`SceneEdit::apply_to_scene`]; cache layers (notably
 //! `sc_mesh_spatial::SceneSpatial`) dispatch the same enum and add
 //! invalidation hooks for the cached state that the variant affects.
 
@@ -62,7 +62,7 @@ impl SceneEdit {
     /// through `sc_mesh_spatial::SceneSpatial::apply_edit` instead,
     /// which dispatches the same enum and updates spatial caches
     /// before delegating here.
-    pub fn apply_to_graph(&self, graph: &mut Scene) {
+    pub fn apply_to_scene(&self, graph: &mut Scene) {
         let Self::SetLocalTransform { node_id, after, .. } = self;
         let _ = graph.set_local_transform(*node_id, *after);
     }
@@ -127,7 +127,7 @@ mod scene_edit_tests {
             before: Transform3D::Identity,
             after,
         }
-        .apply_to_graph(&mut g);
+        .apply_to_scene(&mut g);
         assert_eq!(g.node(id).unwrap().local_transform, after);
     }
 
@@ -142,8 +142,8 @@ mod scene_edit_tests {
             before,
             after,
         };
-        edit.apply_to_graph(&mut g);
-        edit.inverse().apply_to_graph(&mut g);
+        edit.apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g);
         assert_eq!(g.node(id).unwrap().local_transform, before);
     }
 
@@ -159,7 +159,7 @@ mod scene_edit_tests {
             before: Transform3D::Identity,
             after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
         }
-        .apply_to_graph(&mut g);
+        .apply_to_scene(&mut g);
         // No nodes existed before and none exist after.
         assert!(g.node(bogus).is_none());
     }

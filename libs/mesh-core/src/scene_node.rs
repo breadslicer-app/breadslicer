@@ -145,7 +145,7 @@ impl NodeKind {
 }
 
 #[cfg(test)]
-mod scene_graph_node_tests {
+mod scene_node_tests {
     use super::*;
 
     #[test]
