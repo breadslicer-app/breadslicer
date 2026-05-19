@@ -10,11 +10,10 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use crate::indexed_mesh::IndexedMesh;
-use crate::scene::{SceneMetadata, Transform3D};
 use crate::scene_graph_node::{
-    CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SubtreeResourceId,
+    CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
-use crate::transform::TransformError;
+use crate::transform::{Transform3D, TransformError};
 
 /// Recover the [`MeshResourceId`] for the slot at index `i` in the
 /// resource arena. Slots are append-only and never reused, so the

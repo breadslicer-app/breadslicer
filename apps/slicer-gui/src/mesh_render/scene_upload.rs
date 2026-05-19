@@ -7,10 +7,10 @@ use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::scene_graph::SceneGraph;
 use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::transform::Transform3D;
 use slint::wgpu_28::wgpu;
 use wgpu::util::DeviceExt;
 

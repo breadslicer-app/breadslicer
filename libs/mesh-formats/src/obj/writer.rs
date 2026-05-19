@@ -175,9 +175,10 @@ mod helper_tests {
 
 #[cfg(test)]
 mod tests {
-    use sc_mesh_core::scene::{SceneMetadata, Transform3D};
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{
-        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
+        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, SceneMetadata,
+        Vertex,
     };
 
     use super::write_obj;

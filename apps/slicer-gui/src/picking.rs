@@ -37,8 +37,8 @@ use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
 use sc_mesh_core::NodeId;
 use sc_mesh_core::aabb::arvo_transformed_aabb;
-use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
 
 use crate::camera::OrbitCamera;

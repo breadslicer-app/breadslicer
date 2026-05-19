@@ -116,8 +116,8 @@ pub(super) fn push_object_list(ui: &MainWindow, names: Vec<String>) {
 mod build_object_list_names_tests {
     use super::*;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::scene::{SceneMetadata, Transform3D};
-    use sc_mesh_core::{IndexedMesh, MeshMetadata};
+    use sc_mesh_core::transform::Transform3D;
+    use sc_mesh_core::{IndexedMesh, MeshMetadata, SceneMetadata};
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
     fn graph_with_group_root() -> (SceneGraph, NodeId) {

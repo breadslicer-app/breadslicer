@@ -8,7 +8,17 @@
 use std::num::NonZeroU32;
 
 use crate::indexed_mesh::IndexedMesh;
-use crate::scene::{SceneMetadata, Transform3D};
+use crate::transform::Transform3D;
+
+/// Optional human-readable name and free-form comment carried by a
+/// graph node and by the graph's top-level metadata. Loaders attach
+/// `name` from on-disk object directives (e.g. OBJ's `o`), and
+/// `comment` from leading header comments.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SceneMetadata {
+    pub name: Option<String>,
+    pub comment: Option<String>,
+}
 
 /// Stable, never-reused identifier of a node in a `SceneGraph`.
 ///

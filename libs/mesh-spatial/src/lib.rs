@@ -20,7 +20,8 @@ mod scene_spatial;
 pub use clusters::TriangleClusters;
 pub use scene_spatial::{ObjectQuery, SceneSpatial};
 
-use sc_mesh_core::{Aabb, NodeId, NodeKind, scene::Transform3D};
+use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::{Aabb, NodeId, NodeKind};
 
 /// World-space AABB of a scene, computed through cached per-mesh
 /// AABBs and unioned via Arvo's transformed-AABB formula. Returns

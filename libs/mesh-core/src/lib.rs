@@ -23,7 +23,6 @@ pub mod aabb;
 pub mod geometry;
 pub mod indexed_mesh;
 pub mod primitives;
-pub mod scene;
 pub mod scene_edit;
 pub mod scene_graph;
 pub mod scene_graph_aabb;
@@ -40,7 +39,7 @@ pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex}
 pub use crate::scene_graph::{SceneGraph, SceneGraphError};
 pub use crate::scene_graph_bake::bake_leaf_to_world;
 pub use crate::scene_graph_node::{
-    CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SubtreeResourceId,
+    CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
 
 /// Fallible streaming iterator of triangles, used by format readers as the

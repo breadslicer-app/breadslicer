@@ -340,8 +340,8 @@ impl Drop for SceneSubscription {
 #[cfg(test)]
 mod scene_document_tests {
     use super::*;
-    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, LeafPayload};
 
     /// Loader-faithful empty graph: a single identity-Group root

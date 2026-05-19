@@ -6,9 +6,9 @@
 //! Axis-aligned bounding box queries for [`SceneGraph`].
 
 use crate::aabb::Aabb;
-use crate::scene::Transform3D;
 use crate::scene_graph::{SceneGraph, SceneGraphError};
 use crate::scene_graph_node::{LeafPayload, NodeId, NodeKind};
+use crate::transform::Transform3D;
 
 impl SceneGraph {
     /// Axis-aligned bounding box over every scene root in world space.

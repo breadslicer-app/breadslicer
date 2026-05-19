@@ -11,9 +11,9 @@
 //! `sc_mesh_spatial::SceneSpatial`) dispatch the same enum and add
 //! invalidation hooks for the cached state that the variant affects.
 
-use crate::scene::Transform3D;
 use crate::scene_graph::SceneGraph;
 use crate::scene_graph_node::NodeId;
+use crate::transform::Transform3D;
 
 /// Typed scene mutation. The shared edit shape across the workspace:
 /// the GUI's undo/redo stack, the headless apply paths, and any

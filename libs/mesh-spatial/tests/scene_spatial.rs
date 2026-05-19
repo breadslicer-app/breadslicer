@@ -13,9 +13,9 @@
 //!   behaviour, `is_noop` and `inverse`, is tested in `mesh-core`).
 
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, LeafPayload, MeshResourceId, NodeId, NodeKind, SceneGraph};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 

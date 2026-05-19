@@ -831,7 +831,7 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
 mod selection_tests {
     use super::*;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::scene::Transform3D;
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
     /// `PointerModifiers::default()` with all flags off. The selection
@@ -1079,8 +1079,8 @@ mod viewport_click_tests {
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, SceneGraph};
     use std::cell::Cell;
 
@@ -1890,7 +1890,7 @@ mod keyboard_focus_tests {
     use crate::scene_document::SceneEdit;
     use glam::Vec3;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::scene::Transform3D;
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 
     /// Loader-shape one-object graph: a single inline-mesh leaf

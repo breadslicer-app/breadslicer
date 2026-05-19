@@ -218,8 +218,8 @@ pub fn write_scene(
 #[cfg(test)]
 mod flatten_scene_to_mesh_tests {
     use super::{FlattenWarning, flatten_graph_to_mesh};
-    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{
         IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
     };

@@ -36,8 +36,8 @@
 
 use glam::Vec3;
 use sc_mesh_core::NodeId;
-use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
 
 use crate::build_volume::BuildVolume;

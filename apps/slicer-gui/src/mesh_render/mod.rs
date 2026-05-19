@@ -742,9 +742,9 @@ mod gpu_integration_tests {
     use crate::gizmo::axis::Axis;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::scene_graph_node::LeafPayload;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::transform::Transform3D;
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
     fn graph_with_group_root() -> (SceneGraph, NodeId) {

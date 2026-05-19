@@ -76,8 +76,8 @@ mod scene_export_tests {
     use super::*;
     use std::path::PathBuf;
 
-    use sc_mesh_core::scene::Transform3D;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, SceneGraph, Vertex};
 
     fn unit_triangle() -> IndexedMesh {

@@ -7,10 +7,10 @@
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
-use crate::scene::Transform3D;
 use crate::scene_graph::{SceneGraph, SceneGraphError};
 use crate::scene_graph_node::{LeafPayload, Node, NodeId, NodeKind};
 use crate::transform::AffineTransform3D;
+use crate::transform::Transform3D;
 
 impl SceneGraph {
     /// Merges all leaf meshes reachable from scene roots into a single

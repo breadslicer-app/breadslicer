@@ -12,8 +12,8 @@
 
 use proptest::prelude::*;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::Transform3D;
 use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
