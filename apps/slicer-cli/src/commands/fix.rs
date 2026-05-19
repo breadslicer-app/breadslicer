@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{FixFacesOptions, MeshFix};
-use sc_mesh_core::scene_graph::Scene;
-use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
 };

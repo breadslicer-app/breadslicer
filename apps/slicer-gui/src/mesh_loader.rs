@@ -18,7 +18,7 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use sc_mesh_core::scene_graph::{Scene, SceneError};
+use sc_mesh_core::scene::{Scene, SceneError};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::LoadedMesh;
@@ -340,7 +340,7 @@ mod place_on_plate_tests {
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene_graph_node::{LeafPayload, NodeKind};
+    use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
     use sc_mesh_core::transform::Transform3D;
 
     fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {

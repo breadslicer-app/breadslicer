@@ -7,8 +7,8 @@ use std::num::NonZeroU64;
 
 use anyhow::Result;
 use glam::Vec3;
-use sc_mesh_core::scene_graph::Scene;
-use sc_mesh_core::scene_graph_node::NodeId;
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene_node::NodeId;
 use slint::wgpu_28::wgpu;
 
 use crate::build_volume::BuildVolume;
@@ -742,7 +742,7 @@ mod gpu_integration_tests {
     use crate::gizmo::axis::Axis;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene_graph_node::LeafPayload;
+    use sc_mesh_core::scene_node::LeafPayload;
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
 
@@ -803,7 +803,7 @@ mod gpu_integration_tests {
     /// render tests resolve "the only leaf" through this helper
     /// instead of fabricating an id.
     fn first_leaf(graph: &Scene) -> NodeId {
-        use sc_mesh_core::scene_graph_node::NodeKind;
+        use sc_mesh_core::scene_node::NodeKind;
         let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
             let node = graph.node(id).expect("walked id should be live");

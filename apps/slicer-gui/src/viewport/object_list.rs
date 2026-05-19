@@ -8,8 +8,8 @@
 //! and pushing the resulting list to the Slint window.
 
 use sc_mesh_core::NodeId;
-use sc_mesh_core::scene_graph::Scene;
-use sc_mesh_core::scene_graph_node::{LeafPayload, NodeKind};
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
 use crate::MainWindow;

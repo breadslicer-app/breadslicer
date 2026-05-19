@@ -10,7 +10,7 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use crate::indexed_mesh::IndexedMesh;
-use crate::scene_graph_node::{
+use crate::scene_node::{
     CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
 use crate::transform::{Transform3D, TransformError};

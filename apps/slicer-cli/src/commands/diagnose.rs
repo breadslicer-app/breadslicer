@@ -12,8 +12,8 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
-use sc_mesh_core::scene_graph::Scene;
-use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_path;
 

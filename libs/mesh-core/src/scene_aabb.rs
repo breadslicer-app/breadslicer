@@ -6,8 +6,8 @@
 //! Axis-aligned bounding box queries for [`Scene`].
 
 use crate::aabb::Aabb;
-use crate::scene_graph::{Scene, SceneError};
-use crate::scene_graph_node::{LeafPayload, NodeId, NodeKind};
+use crate::scene::{Scene, SceneError};
+use crate::scene_node::{LeafPayload, NodeId, NodeKind};
 use crate::transform::Transform3D;
 
 impl Scene {
@@ -105,7 +105,7 @@ mod scene_graph_aabb_tests {
     use super::*;
     use crate::indexed_mesh::IndexedMesh;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene_graph_node::{CsgOp, LeafPayload};
+    use crate::scene_node::{CsgOp, LeafPayload};
     use crate::transform::AffineTransform3D;
     use float_cmp::assert_approx_eq;
 

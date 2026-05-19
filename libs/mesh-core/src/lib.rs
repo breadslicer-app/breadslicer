@@ -23,11 +23,11 @@ pub mod aabb;
 pub mod geometry;
 pub mod indexed_mesh;
 pub mod primitives;
+pub mod scene;
+pub mod scene_aabb;
+pub mod scene_bake;
 pub mod scene_edit;
-pub mod scene_graph;
-pub mod scene_graph_aabb;
-pub mod scene_graph_bake;
-pub mod scene_graph_node;
+pub mod scene_node;
 pub mod transform;
 
 use std::collections::HashMap;
@@ -36,9 +36,9 @@ use std::collections::HashMap;
 pub use crate::aabb::Aabb;
 pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
-pub use crate::scene_graph::{Scene, SceneError};
-pub use crate::scene_graph_bake::bake_leaf_to_world;
-pub use crate::scene_graph_node::{
+pub use crate::scene::{Scene, SceneError};
+pub use crate::scene_bake::bake_leaf_to_world;
+pub use crate::scene_node::{
     CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
 

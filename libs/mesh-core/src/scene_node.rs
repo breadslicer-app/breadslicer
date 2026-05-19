@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Node-level types of [`crate::scene_graph::Scene`].
+//! Node-level types of [`crate::scene::Scene`].
 
 use std::num::NonZeroU32;
 
