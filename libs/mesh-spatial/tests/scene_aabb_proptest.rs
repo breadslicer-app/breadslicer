@@ -75,9 +75,8 @@ fn leaf_strategy() -> impl Strategy<Value = (IndexedMesh, Transform3D)> {
 }
 
 fn graph_strategy() -> impl Strategy<Value = SceneGraph> {
-    // Mirrors what `SceneGraph::try_from(Scene { objects, .. })`
-    // produces: every object lands as a leaf under a single
-    // identity-Group root.
+    // Mirrors the loader topology (e.g. `read_obj`): every object
+    // lands as a leaf under a single identity-Group root.
     prop::collection::vec(leaf_strategy(), 1..5usize).prop_map(|leaves| {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);

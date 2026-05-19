@@ -120,10 +120,9 @@ mod translation_clamp_tests {
     }
 
     /// Single-leaf scene under a Group root, mirroring what the
-    /// loader pipeline installs (the loader funnels a flat `Scene`
-    /// through `SceneGraph::try_from`, which wraps it in an
-    /// identity-Group root). Tests that inspect `graph().roots()[0]`
-    /// rely on that wrapping Group being present.
+    /// loader pipeline installs: every file-format reader funnels its
+    /// objects under an identity-Group root. Tests that inspect
+    /// `graph().roots()[0]` rely on that wrapping Group being present.
     fn one_leaf_spatial(mesh: IndexedMesh) -> SceneSpatial {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);

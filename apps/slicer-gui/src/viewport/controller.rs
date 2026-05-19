@@ -849,8 +849,8 @@ mod selection_tests {
         }
     }
 
-    /// Mirrors `SceneGraph::try_from(Scene { objects: vec![...n], .. })`:
-    /// all leaves land under a single identity-Group root.
+    /// Loader-faithful multi-object graph: all `n` leaves land under
+    /// a single identity-Group root.
     fn graph_with_n_objects(n: usize) -> SceneGraph {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);

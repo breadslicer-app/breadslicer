@@ -622,8 +622,8 @@ mod pick_object_tests {
         ]))
     }
 
-    /// Mirrors `SceneGraph::try_from(Scene { objects, .. })`: a single
-    /// identity-Group root that will host the leaves.
+    /// Loader-faithful empty graph: a single identity-Group root
+    /// that will host the leaves attached by helpers below.
     fn graph_with_group_root() -> (SceneGraph, NodeId) {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);

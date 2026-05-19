@@ -53,10 +53,10 @@ fn triangle_mesh(scale: f32) -> IndexedMesh {
 }
 
 /// Fresh graph with a single identity-Group root. Mirrors the
-/// topology the loader pipeline installs (a flat `Scene` flowing
-/// through `SceneGraph::try_from` lands its objects as leaves under
-/// an identity-Group root). Returns the graph and the Group's id so
-/// helpers can attach leaves directly.
+/// topology the loader pipeline installs (`read_obj` and friends
+/// land their objects as leaves under an identity-Group root).
+/// Returns the graph and the Group's id so helpers can attach
+/// leaves directly.
 fn graph_with_group_root() -> (SceneGraph, NodeId) {
     let mut g = SceneGraph::new();
     let root = g.add_group(None, Transform3D::Identity);

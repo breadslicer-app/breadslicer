@@ -87,8 +87,8 @@ mod pivot_tests {
     }
 
     /// Single-leaf scene under a Group root, mirroring the shape the
-    /// loader pipeline produces (and what older tests built via
-    /// `SceneGraph::try_from(Scene { ... })`).
+    /// loader pipeline produces (one inline-mesh leaf attached under
+    /// an identity-Group root).
     fn spatial_with_one_leaf(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);

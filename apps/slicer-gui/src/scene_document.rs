@@ -344,8 +344,8 @@ mod scene_document_tests {
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::{IndexedMesh, LeafPayload};
 
-    /// Mirrors what `SceneGraph::try_from(Scene::default())` produces:
-    /// a single identity-Group root with no children.
+    /// Loader-faithful empty graph: a single identity-Group root
+    /// with no children, the same shape an empty-file load produces.
     fn empty_graph() -> SceneGraph {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);
@@ -361,9 +361,9 @@ mod scene_document_tests {
         Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
     }
 
-    /// Mirrors what `SceneGraph::try_from(Scene { objects: vec![one], .. })`
-    /// produces: a single inline-mesh leaf attached under the identity-Group
-    /// root.
+    /// Loader-faithful single-object graph: one inline-mesh leaf
+    /// attached under the identity-Group root, mirroring the shape a
+    /// one-object file produces.
     fn graph_with_one_object() -> SceneGraph {
         let mut g = SceneGraph::new();
         let root = g.add_group(None, Transform3D::Identity);

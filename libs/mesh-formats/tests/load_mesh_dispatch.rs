@@ -43,15 +43,7 @@ mod stl_dispatch_tests {
         let mut reader = Cursor::new(buf);
         let loaded = load_mesh_from_reader(MeshFileType::Stl, &mut reader).unwrap();
 
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
         assert!(loaded.warnings.is_empty());
     }
 
@@ -63,15 +55,7 @@ mod stl_dispatch_tests {
         let mut reader = Cursor::new(buf);
         let loaded = load_mesh_from_reader(MeshFileType::Stl, &mut reader).unwrap();
 
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
         assert!(loaded.warnings.is_empty());
     }
 
@@ -82,15 +66,7 @@ mod stl_dispatch_tests {
 
         let mut reader = Cursor::new(buf);
         let loaded = load_mesh_from_reader(MeshFileType::StlAscii, &mut reader).unwrap();
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
     }
 
     #[test]
@@ -100,15 +76,7 @@ mod stl_dispatch_tests {
 
         let mut reader = Cursor::new(buf);
         let loaded = load_mesh_from_reader(MeshFileType::StlBin, &mut reader).unwrap();
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
     }
 }
 
@@ -130,13 +98,8 @@ mod obj_dispatch_tests {
         let loaded = load_mesh_from_reader(MeshFileType::Obj, &mut reader).unwrap();
 
         assert!(
-            !loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .is_empty(),
-            "expected at least one object in the loaded scene"
+            loaded.graph.reachable_leaf_count() > 0,
+            "expected at least one leaf in the loaded graph"
         );
         let has_tex_warning = loaded.warnings.iter().any(|w| {
             matches!(
@@ -194,15 +157,7 @@ mod path_loading_tests {
         drop(file);
 
         let loaded = load_mesh_from_path(&path, None, None).unwrap();
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
         assert!(loaded.warnings.is_empty());
 
         let _ = std::fs::remove_file(&path);
@@ -219,15 +174,7 @@ mod path_loading_tests {
 
         assert!(load_mesh_from_path(&path, None, None).is_err());
         let loaded = load_mesh_from_path(&path, Some(MeshFileType::StlAscii), None).unwrap();
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -269,15 +216,7 @@ mod path_loading_tests {
         drop(file);
 
         let loaded = load_mesh_from_path(&path, None, Some(u64::MAX)).unwrap();
-        assert_eq!(
-            loaded
-                .graph
-                .try_flatten()
-                .expect("loader output flattens")
-                .objects
-                .len(),
-            1
-        );
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
 
         let _ = std::fs::remove_file(&path);
     }
