@@ -548,6 +548,41 @@ mod invalidation_discipline {
             "the mesh-resource cache survives the round-trip so the local AABB matches"
         );
     }
+
+    #[test]
+    fn convert_inline_leaf_grows_mesh_resources_and_clears_inline_cache() {
+        let (mut graph, root) = graph_with_group_root();
+        let leaf = add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        // Prime: query forces the inline cache slot to be Some.
+        assert!(spatial.leaf(leaf).unwrap().local_aabb().is_some());
+        let resources_before = spatial.graph().mesh_resources_len();
+        let rid = spatial.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
+        assert_eq!(spatial.graph().mesh_resources_len(), resources_before + 1);
+        // After the conversion the leaf still queries cleanly through
+        // the resource path, so the cache plumbing is intact.
+        let q = spatial
+            .leaf(leaf)
+            .expect("leaf still queryable as resource-backed");
+        assert!(q.local_aabb().is_some());
+        // Sanity: the leaf now reports MeshResource(rid) in the graph.
+        assert!(matches!(
+            spatial.graph().node(leaf).unwrap().kind,
+            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+        ));
+    }
+
+    #[test]
+    fn convert_resource_leaf_is_idempotent_and_does_not_grow_caches() {
+        let (mut graph, root) = graph_with_group_root();
+        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        let leaf = add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let resources_before = spatial.graph().mesh_resources_len();
+        let returned = spatial.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
+        assert_eq!(returned, rid);
+        assert_eq!(spatial.graph().mesh_resources_len(), resources_before);
+    }
 }
 
 mod transformed_aabb {

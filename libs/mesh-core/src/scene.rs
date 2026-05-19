@@ -334,6 +334,55 @@ impl Scene {
         }
     }
 
+    /// Move a `Leaf(Mesh(_))` node's inline mesh into the
+    /// mesh-resource arena, rewriting the leaf to reference the new
+    /// resource. Idempotent on a `Leaf(MeshResource(_))`: returns the
+    /// already-registered id without mutating.
+    ///
+    /// The leaf's parent / child wiring, [`SceneMetadata`] and
+    /// `local_transform` are preserved; only the payload variant
+    /// changes.
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingNodeId`] if no live node lives at
+    ///   `leaf_id`.
+    /// - [`SceneError::NotALeaf`] if the node is not a `Leaf`.
+    ///
+    /// On error the scene is unchanged.
+    pub fn convert_leaf_inline_to_mesh_resource(
+        &mut self,
+        leaf_id: NodeId,
+    ) -> Result<MeshResourceId, SceneError> {
+        let mesh = {
+            let node = self
+                .nodes
+                .get_mut(leaf_id.index())
+                .and_then(|slot| slot.as_mut())
+                .ok_or(SceneError::DanglingNodeId { id: leaf_id })?;
+            match &node.kind {
+                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => return Ok(*rid),
+                NodeKind::Leaf(LeafPayload::Mesh(_)) => {}
+                _ => return Err(SceneError::NotALeaf { node_id: leaf_id }),
+            }
+            let kind = std::mem::replace(
+                &mut node.kind,
+                NodeKind::Group {
+                    children: Vec::new(),
+                },
+            );
+            let NodeKind::Leaf(LeafPayload::Mesh(mesh)) = kind else {
+                unreachable!("kind was just checked to be Leaf(Mesh(_))");
+            };
+            mesh
+        };
+        let rid = self.add_mesh_resource(mesh);
+        let node = self.nodes[leaf_id.index()]
+            .as_mut()
+            .expect("node existed at the start of the call");
+        node.kind = NodeKind::Leaf(LeafPayload::MeshResource(rid));
+        Ok(rid)
+    }
+
     pub fn subtree_resource_root(&self, id: SubtreeResourceId) -> Option<NodeId> {
         self.subtree_resources.get(id.index())?.as_ref().copied()
     }
@@ -1564,6 +1613,90 @@ mod scene_construction_tests {
         let (out_rid, out_xform) = g.remove_root_leaf(id).unwrap();
         g.install_root_leaf(id, out_rid, out_xform).unwrap();
         assert_eq!(g, snapshot_after_first);
+    }
+
+    #[test]
+    fn convert_inline_leaf_to_resource_returns_fresh_rid_and_rewrites_kind() {
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .unwrap();
+        assert_eq!(g.mesh_resources_len(), 0);
+        let rid = g.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
+        assert_eq!(g.mesh_resources_len(), 1);
+        let node = g.node(leaf).expect("leaf still lives");
+        assert!(matches!(
+            node.kind,
+            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+        ));
+        assert_eq!(g.mesh_resource(rid).unwrap().vertices.len(), 3);
+    }
+
+    #[test]
+    fn convert_inline_leaf_to_resource_preserves_meta_and_transform() {
+        let mut g = Scene::new();
+        let meta = SceneMetadata {
+            name: Some("source".to_owned()),
+            comment: None,
+        };
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([2.0, 0.0, 0.0]));
+        let leaf = g
+            .add_leaf(
+                Some(meta.clone()),
+                xform,
+                LeafPayload::Mesh(unit_triangle()),
+            )
+            .unwrap();
+        let _ = g.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
+        let node = g.node(leaf).unwrap();
+        assert_eq!(node.meta.as_ref(), Some(&meta));
+        assert_eq!(node.local_transform, xform);
+    }
+
+    #[test]
+    fn convert_leaf_inline_to_resource_is_idempotent_for_resource_leaves() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        let resources_before = g.mesh_resources_len();
+        let returned = g.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
+        assert_eq!(returned, rid);
+        assert_eq!(g.mesh_resources_len(), resources_before);
+        assert!(matches!(
+            g.node(leaf).unwrap().kind,
+            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+        ));
+    }
+
+    #[test]
+    fn convert_leaf_inline_to_resource_on_dangling_id_errors() {
+        let mut g = Scene::new();
+        let bogus = NodeId(NonZeroU32::new(99).unwrap());
+        assert_eq!(
+            g.convert_leaf_inline_to_mesh_resource(bogus),
+            Err(SceneError::DanglingNodeId { id: bogus })
+        );
+        assert_eq!(g.mesh_resources_len(), 0);
+    }
+
+    #[test]
+    fn convert_leaf_inline_to_resource_on_group_errors() {
+        let mut g = Scene::new();
+        let group = g.add_group(None, Transform3D::Identity);
+        assert_eq!(
+            g.convert_leaf_inline_to_mesh_resource(group),
+            Err(SceneError::NotALeaf { node_id: group })
+        );
+        assert!(matches!(
+            g.node(group).unwrap().kind,
+            NodeKind::Group { .. }
+        ));
     }
 }
 

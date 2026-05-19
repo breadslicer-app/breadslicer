@@ -24,9 +24,10 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
-use sc_mesh_core::NodeId;
 #[cfg(test)]
 use sc_mesh_core::Scene;
+use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::{MeshResourceId, NodeId, SceneError};
 use sc_mesh_spatial::SceneSpatial;
 
 pub(crate) use sc_mesh_core::scene_edit::SceneEdit;
@@ -186,7 +187,26 @@ impl SceneDocument {
         };
         spatial.apply_edit(edit);
         drop(slot);
+        // If the edit tombstoned the currently-selected leaf, drop
+        // the now-dangling selection so observers don't keep pointing
+        // at an empty arena slot. Fires SelectionChanged after the
+        // Mutated event so listeners that recompute on mutation see
+        // the updated selection.
+        let selection_cleared = match edit {
+            SceneEdit::RemoveRootLeaf { node_id, .. } => {
+                if self.selection.primary_node_id() == Some(node_id) {
+                    self.selection.set(Selection::None);
+                    true
+                } else {
+                    false
+                }
+            }
+            SceneEdit::SetLocalTransform { .. } | SceneEdit::AddRootLeaf { .. } => false,
+        };
         self.notify(SceneEvent::Mutated);
+        if selection_cleared {
+            self.notify(SceneEvent::SelectionChanged);
+        }
         true
     }
 
@@ -208,6 +228,60 @@ impl SceneDocument {
         }
         self.redo_stack.borrow_mut().clear();
         self.notify(SceneEvent::UndoStackChanged);
+    }
+
+    /// Allocate a fresh [`NodeId`] and install a mesh-resource-backed
+    /// leaf at it as a scene root. Combines the `allocate +
+    /// AddRootLeaf + push_edit` dance into the single call paste
+    /// needs, returning the new id (or `None` when no scene is
+    /// loaded).
+    ///
+    /// The corresponding edit goes onto the undo stack: a subsequent
+    /// `undo` pops it as a `RemoveRootLeaf` and tombstones the leaf.
+    #[allow(dead_code)]
+    pub(crate) fn add_root_leaf(
+        &self,
+        mesh: MeshResourceId,
+        local_transform: Transform3D,
+    ) -> Option<NodeId> {
+        let node_id = {
+            let mut slot = self.spatial.borrow_mut();
+            let spatial = slot.as_mut()?;
+            spatial.allocate_unbound_node_id()
+        };
+        let edit = SceneEdit::AddRootLeaf {
+            node_id,
+            mesh,
+            local_transform,
+        };
+        if !self.apply_edit(edit) {
+            return None;
+        }
+        self.push_edit(edit);
+        Some(node_id)
+    }
+
+    /// Move the inline mesh on the leaf at `leaf_id` into the
+    /// mesh-resource arena, rewriting the leaf to reference the new
+    /// resource. Idempotent for an already-resource-backed leaf,
+    /// which returns its existing id without mutating.
+    ///
+    /// Not recorded on the undo stack: the change has no visual
+    /// effect, and surfacing it as an undo step would interleave
+    /// representation bookkeeping with the user's gestures.
+    ///
+    /// Returns `Err(SceneError::DanglingNodeId)` when no scene is
+    /// loaded, since the leaf id then names no live node.
+    #[allow(dead_code)]
+    pub(crate) fn promote_inline_mesh_to_resource(
+        &self,
+        leaf_id: NodeId,
+    ) -> Result<MeshResourceId, SceneError> {
+        let mut slot = self.spatial.borrow_mut();
+        let Some(spatial) = slot.as_mut() else {
+            return Err(SceneError::DanglingNodeId { id: leaf_id });
+        };
+        spatial.convert_leaf_inline_to_mesh_resource(leaf_id)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -342,7 +416,7 @@ mod scene_document_tests {
     use super::*;
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeKind};
 
     /// Loader-faithful empty graph: a single identity-Group root
     /// with no children, the same shape an empty-file load produces.
@@ -859,6 +933,195 @@ mod scene_document_tests {
         assert_eq!(
             *log.borrow(),
             vec![SceneEvent::Installed, SceneEvent::UndoStackChanged]
+        );
+    }
+
+    /// Loader-faithful single-resource graph: an identity-Group root
+    /// plus one mesh resource pre-registered for paste tests to
+    /// reference.
+    fn graph_with_one_resource() -> (Scene, MeshResourceId) {
+        let mut g = empty_graph();
+        let rid = g.add_mesh_resource(IndexedMesh::new(None, Vec::new(), Vec::new()));
+        (g, rid)
+    }
+
+    #[test]
+    fn add_root_leaf_with_no_scene_loaded_returns_none() {
+        // Build, install, then clear so we have a syntactically
+        // valid MeshResourceId left over from a gone scene; the
+        // method must still bail.
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        doc.clear_scene();
+        assert!(doc.add_root_leaf(rid, Transform3D::Identity).is_none());
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn add_root_leaf_installs_the_leaf_and_returns_its_id() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let xform = translation(5.0);
+        let id = doc.add_root_leaf(rid, xform).expect("scene is loaded");
+        let observed = doc.with_scene(|s| {
+            let node = s.graph().node(id).expect("new node lives");
+            (
+                node.local_transform,
+                matches!(
+                    node.kind,
+                    NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+                ),
+                s.graph().roots().contains(&id),
+            )
+        });
+        assert_eq!(observed, Some((xform, true, true)));
+    }
+
+    #[test]
+    fn add_root_leaf_records_an_undoable_edit() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        assert!(!doc.can_undo());
+        let _ = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .expect("scene is loaded");
+        assert!(doc.can_undo());
+    }
+
+    #[test]
+    fn add_root_leaf_undo_round_trip_restores_scene() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let id = doc
+            .add_root_leaf(rid, translation(3.0))
+            .expect("scene is loaded");
+        assert_eq!(doc.with_scene(|s| s.graph().node(id).is_some()), Some(true));
+        doc.undo();
+        assert_eq!(
+            doc.with_scene(|s| s.graph().node(id).is_some()),
+            Some(false)
+        );
+        doc.redo();
+        let kind_ok = doc.with_scene(|s| {
+            let node = s.graph().node(id).expect("redo restores the node");
+            matches!(node.kind, NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid)
+        });
+        assert_eq!(kind_ok, Some(true));
+    }
+
+    #[test]
+    fn promote_inline_mesh_to_resource_with_no_scene_loaded_errors() {
+        // The leaf id is captured from a previously-installed-and-cleared
+        // scene so it parses syntactically; the call must still error.
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let leaf_id = first_leaf_id(&doc).node_id();
+        doc.clear_scene();
+        assert_eq!(
+            doc.promote_inline_mesh_to_resource(leaf_id),
+            Err(SceneError::DanglingNodeId { id: leaf_id })
+        );
+    }
+
+    #[test]
+    fn promote_inline_mesh_to_resource_converts_inline_leaf() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let leaf_id = first_leaf_id(&doc).node_id();
+        let rid = doc
+            .promote_inline_mesh_to_resource(leaf_id)
+            .expect("inline conversion succeeds");
+        let kind_ok = doc.with_scene(|s| {
+            matches!(
+                s.graph().node(leaf_id).unwrap().kind,
+                NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+            )
+        });
+        assert_eq!(kind_ok, Some(true));
+    }
+
+    #[test]
+    fn promote_inline_mesh_to_resource_is_idempotent() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let leaf_id = first_leaf_id(&doc).node_id();
+        let first = doc.promote_inline_mesh_to_resource(leaf_id).unwrap();
+        let second = doc.promote_inline_mesh_to_resource(leaf_id).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn promote_inline_mesh_to_resource_does_not_record_an_undo_entry() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let leaf_id = first_leaf_id(&doc).node_id();
+        assert!(!doc.can_undo());
+        let _ = doc.promote_inline_mesh_to_resource(leaf_id).unwrap();
+        assert!(
+            !doc.can_undo(),
+            "representational promotions must not pollute the undo stack"
+        );
+    }
+
+    #[test]
+    fn remove_root_leaf_clears_selection_when_pointing_at_removed_node() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        doc.set_selection(Selection::One(crate::selection::LeafId(id)));
+        assert_eq!(doc.selection_primary_node_id(), Some(id));
+        // Undo the AddRootLeaf so the inverse RemoveRootLeaf fires.
+        doc.undo();
+        assert_eq!(
+            doc.selection_primary_node_id(),
+            None,
+            "undo of paste must drop a selection pointing at the gone leaf"
+        );
+    }
+
+    #[test]
+    fn remove_root_leaf_does_not_clear_selection_pointing_at_other_node() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        // Add two roots so removing one leaves the other selectable.
+        let kept = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let to_remove = doc.add_root_leaf(rid, translation(5.0)).unwrap();
+        doc.set_selection(Selection::One(crate::selection::LeafId(kept)));
+        // Apply the RemoveRootLeaf directly (skip the undo stack so
+        // the selection-clear logic is exercised on a non-matching id).
+        let edit = SceneEdit::RemoveRootLeaf {
+            node_id: to_remove,
+            mesh: rid,
+            local_transform: translation(5.0),
+        };
+        assert!(doc.apply_edit(edit));
+        assert_eq!(doc.selection_primary_node_id(), Some(kept));
+    }
+
+    #[test]
+    fn remove_root_leaf_fires_selection_changed_when_selection_dropped() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        doc.set_selection(Selection::One(crate::selection::LeafId(id)));
+        let events: Rc<RefCell<Vec<SceneEvent>>> = Rc::default();
+        let log = events.clone();
+        let _sub = doc.subscribe(move |ev| log.borrow_mut().push(ev));
+        doc.undo();
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                SceneEvent::Mutated,
+                SceneEvent::SelectionChanged,
+                SceneEvent::UndoStackChanged,
+            ]
         );
     }
 }
