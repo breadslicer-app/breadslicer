@@ -112,7 +112,7 @@ mod translation_clamp_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 
     fn vol() -> BuildVolume {
         // 100 x 60 x 80 mm, matching the BuildVolume tests' fixture.
@@ -124,7 +124,7 @@ mod translation_clamp_tests {
     /// objects under an identity-Group root. Tests that inspect
     /// `graph().roots()[0]` rely on that wrapping Group being present.
     fn one_leaf_spatial(mesh: IndexedMesh) -> SceneSpatial {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf = g
@@ -201,7 +201,7 @@ mod translation_clamp_tests {
             ],
             faces: vec![],
         };
-        let mut graph = SceneGraph::new();
+        let mut graph = Scene::new();
         let root: NodeId = graph.add_group(
             None,
             Transform3D::Affine(AffineTransform3D::from_translation(root_translation)),

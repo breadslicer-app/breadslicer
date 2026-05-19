@@ -26,7 +26,7 @@ use std::rc::{Rc, Weak};
 
 use sc_mesh_core::NodeId;
 #[cfg(test)]
-use sc_mesh_core::SceneGraph;
+use sc_mesh_core::Scene;
 use sc_mesh_spatial::SceneSpatial;
 
 pub(crate) use sc_mesh_core::scene_edit::SceneEdit;
@@ -98,12 +98,12 @@ impl SceneDocument {
         })
     }
 
-    /// Wrap a [`SceneGraph`] in a fresh (lazy) [`SceneSpatial`] and
+    /// Wrap a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and
     /// install it. Test convenience; production code paths call
     /// [`Self::install_spatial`] with a `SceneSpatial::primed_graph(...)`
     /// built off the UI thread by the mesh-loader pipeline.
     #[cfg(test)]
-    pub fn install_graph(&self, graph: SceneGraph, source_path: PathBuf) {
+    pub fn install_graph(&self, graph: Scene, source_path: PathBuf) {
         self.install_spatial(SceneSpatial::from_graph(graph), source_path);
     }
 
@@ -346,8 +346,8 @@ mod scene_document_tests {
 
     /// Loader-faithful empty graph: a single identity-Group root
     /// with no children, the same shape an empty-file load produces.
-    fn empty_graph() -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn empty_graph() -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         g
@@ -364,8 +364,8 @@ mod scene_document_tests {
     /// Loader-faithful single-object graph: one inline-mesh leaf
     /// attached under the identity-Group root, mirroring the shape a
     /// one-object file produces.
-    fn graph_with_one_object() -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn graph_with_one_object() -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf = g

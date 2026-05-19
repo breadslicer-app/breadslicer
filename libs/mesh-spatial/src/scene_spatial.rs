@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scene-level spatial layer. Owns a [`SceneGraph`] and the per-mesh
+//! Scene-level spatial layer. Owns a [`Scene`] and the per-mesh
 //! caches it needs.
 //!
 //! Co-ownership is the load-bearing design choice. A [`SceneSpatial`]
-//! holds the [`SceneGraph`] by value; readers obtain an
+//! holds the [`Scene`] by value; readers obtain an
 //! [`ObjectQuery<'_>`] handle via [`SceneSpatial::leaf`] (by stable
 //! [`NodeId`]). The query bundles the leaf node, the resolved mesh
 //! and the spatial cache that belongs to that mesh; mismatched
@@ -16,14 +16,14 @@
 use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
-    Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneGraph, Vertex,
+    Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, Scene, Vertex,
 };
 
 use crate::clusters::TriangleClusters;
 use crate::mesh_spatial::MeshSpatial;
 
-/// SceneGraph plus per-mesh spatial caches. The cache crate's main
-/// public type. Callers in the GUI swap their `SceneGraph` storage
+/// Scene plus per-mesh spatial caches. The cache crate's main
+/// public type. Callers in the GUI swap their `Scene` storage
 /// for this when they need cached spatial queries; headless callers
 /// (`mesh-formats`, `slicer-cli`) never construct one.
 ///
@@ -31,9 +31,9 @@ use crate::mesh_spatial::MeshSpatial;
 /// ([`SceneSpatial::primed_graph`]). The query API is identical for
 /// both; the only difference is when cache priming work runs.
 pub struct SceneSpatial {
-    graph: SceneGraph,
+    graph: Scene,
     /// Per-leaf spatial caches. Indexed by `NodeId::index()`. The
-    /// vector is sized to [`SceneGraph::nodes_len`] so any live
+    /// vector is sized to [`Scene::nodes_len`] so any live
     /// `NodeId` is always in bounds. `Some(_)` only for nodes whose
     /// kind is `Leaf(LeafPayload::Mesh(_))`; `None` for groups, CSG
     /// nodes, instances, mesh-resource-backed leaves (whose cache
@@ -41,18 +41,18 @@ pub struct SceneSpatial {
     leaves: Vec<Option<MeshSpatial>>,
     /// Per-mesh-resource spatial caches. Indexed by
     /// `MeshResourceId::index()`, sized to
-    /// [`SceneGraph::mesh_resources_len`].
+    /// [`Scene::mesh_resources_len`].
     mesh_resources: Vec<MeshSpatial>,
 }
 
 impl SceneSpatial {
-    /// Wrap a [`SceneGraph`] without priming any caches. First query
+    /// Wrap a [`Scene`] without priming any caches. First query
     /// on each mesh will build the relevant cache lazily.
-    pub fn from_graph(graph: SceneGraph) -> Self {
+    pub fn from_graph(graph: Scene) -> Self {
         Self::build(graph)
     }
 
-    /// Wrap a [`SceneGraph`] and eagerly populate every per-mesh
+    /// Wrap a [`Scene`] and eagerly populate every per-mesh
     /// cache reachable from the scene roots. `Send`-safe; intended
     /// to run on the worker thread that already hosts parsing and
     /// GPU upload.
@@ -61,20 +61,20 @@ impl SceneSpatial {
     /// them. A resource referenced by N leaves is primed N times;
     /// `MeshSpatial::prime` is idempotent, so the extra work is
     /// duplicated cache lookups, not duplicated computation.
-    pub fn primed_graph(graph: SceneGraph) -> Self {
+    pub fn primed_graph(graph: Scene) -> Self {
         let s = Self::from_graph(graph);
         s.prime_reachable_caches();
         s
     }
 
     /// Borrow the underlying graph for read-only access.
-    pub fn graph(&self) -> &SceneGraph {
+    pub fn graph(&self) -> &Scene {
         &self.graph
     }
 
     /// Consume the spatial and return the inner graph, discarding
     /// any cached state.
-    pub fn into_graph(self) -> SceneGraph {
+    pub fn into_graph(self) -> Scene {
         self.graph
     }
 
@@ -216,7 +216,7 @@ impl SceneSpatial {
     }
 
     /// Inner constructor shared by all entry points.
-    fn build(graph: SceneGraph) -> Self {
+    fn build(graph: Scene) -> Self {
         let mut leaves: Vec<Option<MeshSpatial>> = (0..graph.nodes_len()).map(|_| None).collect();
         let mesh_resources: Vec<MeshSpatial> = (0..graph.mesh_resources_len())
             .map(|_| MeshSpatial::default())
@@ -229,7 +229,7 @@ impl SceneSpatial {
         }
     }
 
-    fn allocate_inline_cache_slots(graph: &SceneGraph, leaves: &mut [Option<MeshSpatial>]) {
+    fn allocate_inline_cache_slots(graph: &Scene, leaves: &mut [Option<MeshSpatial>]) {
         for_each_reachable_node(graph, |id, node| {
             if let NodeKind::Leaf(LeafPayload::Mesh(_)) = &node.kind {
                 leaves[id.index()] = Some(MeshSpatial::default());
@@ -343,7 +343,7 @@ impl<'a> ObjectQuery<'a> {
 /// root-applied-last: `world = root.compose(parent).compose(self)`,
 /// which matches the convention in [`Transform3D::compose`] where
 /// `self.compose(other)` applies `other` first and `self` second.
-fn compose_world_transform(graph: &SceneGraph, leaf: NodeId) -> Transform3D {
+fn compose_world_transform(graph: &Scene, leaf: NodeId) -> Transform3D {
     let mut chain: Vec<Transform3D> = Vec::new();
     let mut current = Some(leaf);
     while let Some(id) = current {
@@ -363,7 +363,7 @@ fn compose_world_transform(graph: &SceneGraph, leaf: NodeId) -> Transform3D {
 /// Pre-order traversal of every node reachable from the scene roots
 /// without expanding `Instance` edges. `visit` is called once per
 /// reachable node.
-fn for_each_reachable_node<F>(graph: &SceneGraph, mut visit: F)
+fn for_each_reachable_node<F>(graph: &Scene, mut visit: F)
 where
     F: FnMut(NodeId, &Node),
 {

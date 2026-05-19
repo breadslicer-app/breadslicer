@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Node-level types of [`crate::scene_graph::SceneGraph`].
+//! Node-level types of [`crate::scene_graph::Scene`].
 
 use std::num::NonZeroU32;
 
@@ -20,7 +20,7 @@ pub struct SceneMetadata {
     pub comment: Option<String>,
 }
 
-/// Stable, never-reused identifier of a node in a `SceneGraph`.
+/// Stable, never-reused identifier of a node in a `Scene`.
 ///
 /// `NonZeroU32` so `Option<NodeId>` is one machine word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -33,7 +33,7 @@ impl NodeId {
     }
 
     /// Zero-based index into the arena that backs the parent
-    /// `SceneGraph`. Stable for the lifetime of the id. Useful for
+    /// `Scene`. Stable for the lifetime of the id. Useful for
     /// parallel-`Vec` caches indexed by `NodeId`.
     pub fn index(self) -> usize {
         self.0.get() as usize - 1
@@ -54,7 +54,7 @@ impl MeshResourceId {
     }
 
     /// Zero-based index into the arena that backs the parent
-    /// `SceneGraph`'s `mesh_resources`. Stable for the lifetime of
+    /// `Scene`'s `mesh_resources`. Stable for the lifetime of
     /// the id. Useful for parallel-`Vec` caches.
     pub fn index(self) -> usize {
         self.0.get() as usize - 1
@@ -64,9 +64,9 @@ impl MeshResourceId {
 /// Stable, never-reused identifier of a shared subtree resource.
 ///
 /// Resolves to the `NodeId` of the subtree's root inside the parent
-/// `SceneGraph::nodes` arena. The subtree root and its descendants live
+/// `Scene::nodes` arena. The subtree root and its descendants live
 /// in the same arena as the scene's own nodes but are unreachable from
-/// `SceneGraph::roots`.
+/// `Scene::roots`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct SubtreeResourceId(pub(crate) NonZeroU32);
 
@@ -113,7 +113,7 @@ pub enum NodeKind {
 pub enum LeafPayload {
     /// Mesh stored inline on the node.
     Mesh(IndexedMesh),
-    /// Reference to a shared mesh in `SceneGraph::mesh_resources`.
+    /// Reference to a shared mesh in `Scene::mesh_resources`.
     MeshResource(MeshResourceId),
 }
 

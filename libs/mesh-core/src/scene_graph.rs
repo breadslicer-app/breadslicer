@@ -23,9 +23,9 @@ fn mesh_resource_id_at_index(i: usize) -> MeshResourceId {
     MeshResourceId(NonZeroU32::new(raw).expect("index + 1 is non-zero"))
 }
 
-/// Failure modes of [`SceneGraph`] mutators, validators and queries.
+/// Failure modes of [`Scene`] mutators, validators and queries.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SceneGraphError {
+pub enum SceneError {
     /// A `NodeId` references a slot that is empty or out of range.
     DanglingNodeId { id: NodeId },
     /// A `MeshResourceId` references a slot that is empty or out of range.
@@ -70,7 +70,7 @@ pub enum SceneGraphError {
     Transform(TransformError),
 }
 
-impl fmt::Display for SceneGraphError {
+impl fmt::Display for SceneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DanglingNodeId { id } => write!(f, "dangling node id {}", id.get()),
@@ -132,7 +132,7 @@ impl fmt::Display for SceneGraphError {
     }
 }
 
-impl std::error::Error for SceneGraphError {
+impl std::error::Error for SceneError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Transform(err) => Some(err),
@@ -141,7 +141,7 @@ impl std::error::Error for SceneGraphError {
     }
 }
 
-impl From<TransformError> for SceneGraphError {
+impl From<TransformError> for SceneError {
     fn from(err: TransformError) -> Self {
         Self::Transform(err)
     }
@@ -153,7 +153,7 @@ impl From<TransformError> for SceneGraphError {
 /// reused, so handles held across mutations stay valid (or surface a
 /// dangling-id error rather than silently aliasing a different entity).
 #[derive(Clone, Debug, PartialEq)]
-pub struct SceneGraph {
+pub struct Scene {
     pub(crate) meta: Option<SceneMetadata>,
     pub(crate) nodes: Vec<Option<Node>>,
     pub(crate) mesh_resources: Vec<Option<IndexedMesh>>,
@@ -165,13 +165,13 @@ pub struct SceneGraph {
     next_subtree_resource: NonZeroU32,
 }
 
-impl Default for SceneGraph {
+impl Default for Scene {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SceneGraph {
+impl Scene {
     pub fn new() -> Self {
         Self {
             meta: None,
@@ -381,11 +381,11 @@ impl SceneGraph {
         meta: Option<SceneMetadata>,
         local_transform: Transform3D,
         payload: LeafPayload,
-    ) -> Result<NodeId, SceneGraphError> {
+    ) -> Result<NodeId, SceneError> {
         if let LeafPayload::MeshResource(rid) = payload
             && self.mesh_resource(rid).is_none()
         {
-            return Err(SceneGraphError::DanglingMeshResource { id: rid });
+            return Err(SceneError::DanglingMeshResource { id: rid });
         }
         let id = self.allocate_node_slot();
         self.nodes[id.index()] = Some(Node {
@@ -402,34 +402,34 @@ impl SceneGraph {
         local_transform: Transform3D,
         op: CsgOp,
         children: Vec<NodeId>,
-    ) -> Result<NodeId, SceneGraphError> {
+    ) -> Result<NodeId, SceneError> {
         if op == CsgOp::Intersection && children.is_empty() {
-            return Err(SceneGraphError::EmptyIntersection {
+            return Err(SceneError::EmptyIntersection {
                 node_id: NodeId(self.next_node),
             });
         }
         let mut seen: HashSet<NodeId> = HashSet::with_capacity(children.len());
         for &cid in &children {
             if self.node(cid).is_none() {
-                return Err(SceneGraphError::DanglingNodeId { id: cid });
+                return Err(SceneError::DanglingNodeId { id: cid });
             }
             if !seen.insert(cid) {
-                return Err(SceneGraphError::DuplicateChild {
+                return Err(SceneError::DuplicateChild {
                     parent: NodeId(self.next_node),
                     child: cid,
                 });
             }
             if let Some(p) = self.parent_of(cid) {
-                return Err(SceneGraphError::AlreadyHasParent {
+                return Err(SceneError::AlreadyHasParent {
                     node_id: cid,
                     parent: p,
                 });
             }
             if self.roots.contains(&cid) {
-                return Err(SceneGraphError::AlreadyARoot { node_id: cid });
+                return Err(SceneError::AlreadyARoot { node_id: cid });
             }
             if self.is_subtree_resource_root(cid) {
-                return Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: cid });
+                return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: cid });
             }
         }
         let id = self.allocate_node_slot();
@@ -449,9 +449,9 @@ impl SceneGraph {
         meta: Option<SceneMetadata>,
         local_transform: Transform3D,
         resource: SubtreeResourceId,
-    ) -> Result<NodeId, SceneGraphError> {
+    ) -> Result<NodeId, SceneError> {
         if self.subtree_resource_root(resource).is_none() {
-            return Err(SceneGraphError::DanglingSubtreeResource { id: resource });
+            return Err(SceneError::DanglingSubtreeResource { id: resource });
         }
         let id = self.allocate_node_slot();
         self.nodes[id.index()] = Some(Node {
@@ -465,69 +465,69 @@ impl SceneGraph {
     pub fn register_subtree_resource(
         &mut self,
         root: NodeId,
-    ) -> Result<SubtreeResourceId, SceneGraphError> {
+    ) -> Result<SubtreeResourceId, SceneError> {
         if self.node(root).is_none() {
-            return Err(SceneGraphError::DanglingNodeId { id: root });
+            return Err(SceneError::DanglingNodeId { id: root });
         }
         if let Some(p) = self.parent_of(root) {
-            return Err(SceneGraphError::AlreadyHasParent {
+            return Err(SceneError::AlreadyHasParent {
                 node_id: root,
                 parent: p,
             });
         }
         if self.roots.contains(&root) {
-            return Err(SceneGraphError::AlreadyARoot { node_id: root });
+            return Err(SceneError::AlreadyARoot { node_id: root });
         }
         if self.is_subtree_resource_root(root) {
-            return Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: root });
+            return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: root });
         }
         let id = self.allocate_subtree_resource_slot();
         self.subtree_resources[id.index()] = Some(root);
         Ok(id)
     }
 
-    pub fn add_root(&mut self, id: NodeId) -> Result<(), SceneGraphError> {
+    pub fn add_root(&mut self, id: NodeId) -> Result<(), SceneError> {
         if self.node(id).is_none() {
-            return Err(SceneGraphError::DanglingNodeId { id });
+            return Err(SceneError::DanglingNodeId { id });
         }
         if let Some(p) = self.parent_of(id) {
-            return Err(SceneGraphError::AlreadyHasParent {
+            return Err(SceneError::AlreadyHasParent {
                 node_id: id,
                 parent: p,
             });
         }
         if self.roots.contains(&id) {
-            return Err(SceneGraphError::AlreadyARoot { node_id: id });
+            return Err(SceneError::AlreadyARoot { node_id: id });
         }
         if self.is_subtree_resource_root(id) {
-            return Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: id });
+            return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: id });
         }
         self.roots.push(id);
         Ok(())
     }
 
-    pub fn add_child(&mut self, parent: NodeId, child: NodeId) -> Result<(), SceneGraphError> {
+    pub fn add_child(&mut self, parent: NodeId, child: NodeId) -> Result<(), SceneError> {
         if self.node(parent).is_none() {
-            return Err(SceneGraphError::DanglingNodeId { id: parent });
+            return Err(SceneError::DanglingNodeId { id: parent });
         }
         if self.node(child).is_none() {
-            return Err(SceneGraphError::DanglingNodeId { id: child });
+            return Err(SceneError::DanglingNodeId { id: child });
         }
         match self.node(parent).map(|n| &n.kind) {
             Some(NodeKind::Group { .. }) | Some(NodeKind::Csg { .. }) => {}
-            _ => return Err(SceneGraphError::NotABranch { node_id: parent }),
+            _ => return Err(SceneError::NotABranch { node_id: parent }),
         }
         if let Some(p) = self.parent_of(child) {
-            return Err(SceneGraphError::AlreadyHasParent {
+            return Err(SceneError::AlreadyHasParent {
                 node_id: child,
                 parent: p,
             });
         }
         if self.roots.contains(&child) {
-            return Err(SceneGraphError::AlreadyARoot { node_id: child });
+            return Err(SceneError::AlreadyARoot { node_id: child });
         }
         if self.is_subtree_resource_root(child) {
-            return Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: child });
+            return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: child });
         }
         let parent_node = self.nodes[parent.index()].as_mut().expect("checked above");
         match &mut parent_node.kind {
@@ -546,7 +546,7 @@ impl SceneGraph {
                 _ => unreachable!(),
             }
             self.parents[child.index()] = None;
-            return Err(SceneGraphError::InstanceCycle { node_id: cycle_id });
+            return Err(SceneError::InstanceCycle { node_id: cycle_id });
         }
         Ok(())
     }
@@ -555,12 +555,12 @@ impl SceneGraph {
         &mut self,
         id: NodeId,
         local_transform: Transform3D,
-    ) -> Result<(), SceneGraphError> {
+    ) -> Result<(), SceneError> {
         let node = self
             .nodes
             .get_mut(id.index())
             .and_then(|slot| slot.as_mut())
-            .ok_or(SceneGraphError::DanglingNodeId { id })?;
+            .ok_or(SceneError::DanglingNodeId { id })?;
         node.local_transform = local_transform;
         Ok(())
     }
@@ -626,7 +626,7 @@ impl SceneGraph {
     /// Re-check every structural invariant of this graph: live ids in
     /// every reference, intersection non-empty, parent/child agreement,
     /// expansion-graph acyclicity.
-    pub fn validate(&self) -> Result<(), SceneGraphError> {
+    pub fn validate(&self) -> Result<(), SceneError> {
         // (1) Every NodeId referenced exists. (2)(3) Likewise for
         // resource ids. (5) Intersection has >= 1 child.
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
@@ -638,17 +638,17 @@ impl SceneGraph {
                 NodeKind::Group { children } => {
                     for &cid in children {
                         if self.node(cid).is_none() {
-                            return Err(SceneGraphError::DanglingNodeId { id: cid });
+                            return Err(SceneError::DanglingNodeId { id: cid });
                         }
                     }
                 }
                 NodeKind::Csg { op, children } => {
                     if *op == CsgOp::Intersection && children.is_empty() {
-                        return Err(SceneGraphError::EmptyIntersection { node_id: id });
+                        return Err(SceneError::EmptyIntersection { node_id: id });
                     }
                     for &cid in children {
                         if self.node(cid).is_none() {
-                            return Err(SceneGraphError::DanglingNodeId { id: cid });
+                            return Err(SceneError::DanglingNodeId { id: cid });
                         }
                     }
                 }
@@ -656,13 +656,13 @@ impl SceneGraph {
                     LeafPayload::Mesh(_) => {}
                     LeafPayload::MeshResource(rid) => {
                         if self.mesh_resource(*rid).is_none() {
-                            return Err(SceneGraphError::DanglingMeshResource { id: *rid });
+                            return Err(SceneError::DanglingMeshResource { id: *rid });
                         }
                     }
                 },
                 NodeKind::Instance { resource } => {
                     if self.subtree_resource_root(*resource).is_none() {
-                        return Err(SceneGraphError::DanglingSubtreeResource { id: *resource });
+                        return Err(SceneError::DanglingSubtreeResource { id: *resource });
                     }
                 }
             }
@@ -673,7 +673,7 @@ impl SceneGraph {
             if let Some(root) = slot
                 && self.node(*root).is_none()
             {
-                return Err(SceneGraphError::DanglingNodeId { id: *root });
+                return Err(SceneError::DanglingNodeId { id: *root });
             }
         }
 
@@ -681,10 +681,10 @@ impl SceneGraph {
         // subtree-resource roots.
         for &root in &self.roots {
             if self.node(root).is_none() {
-                return Err(SceneGraphError::DanglingNodeId { id: root });
+                return Err(SceneError::DanglingNodeId { id: root });
             }
             if self.is_subtree_resource_root(root) {
-                return Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: root });
+                return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: root });
             }
         }
 
@@ -700,13 +700,13 @@ impl SceneGraph {
             let mut seen: HashSet<NodeId> = HashSet::new();
             for &cid in node.kind.children() {
                 if !seen.insert(cid) {
-                    return Err(SceneGraphError::DuplicateChild {
+                    return Err(SceneError::DuplicateChild {
                         parent: pid,
                         child: cid,
                     });
                 }
                 if expected[cid.index()].is_some() {
-                    return Err(SceneGraphError::ParentMismatch {
+                    return Err(SceneError::ParentMismatch {
                         node_id: cid,
                         recorded: self.parents.get(cid.index()).copied().flatten(),
                     });
@@ -720,7 +720,7 @@ impl SceneGraph {
             }
             let actual = self.parents[idx];
             if actual != *exp {
-                return Err(SceneGraphError::ParentMismatch {
+                return Err(SceneError::ParentMismatch {
                     node_id: self.node_id_at(idx),
                     recorded: actual,
                 });
@@ -732,7 +732,7 @@ impl SceneGraph {
             // The children-only graph cannot cycle under the parent
             // bookkeeping above, so any cycle witnessed here must
             // involve an Instance edge.
-            return Err(SceneGraphError::InstanceCycle { node_id: witness });
+            return Err(SceneError::InstanceCycle { node_id: witness });
         }
 
         Ok(())
@@ -744,12 +744,12 @@ impl SceneGraph {
     }
 }
 
-impl From<IndexedMesh> for SceneGraph {
+impl From<IndexedMesh> for Scene {
     /// Single-leaf graph carrying `mesh` under identity transform.
     /// Used by format readers whose on-disk model is a single mesh
     /// (STL) and by test fixtures that need a one-object scene.
     fn from(mesh: IndexedMesh) -> Self {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
             .expect("freshly allocated graph has no resources to dangle");
@@ -782,14 +782,14 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn new_is_empty() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert!(g.roots().is_empty());
         assert!(g.meta().is_none());
     }
 
     #[test]
     fn node_ids_strictly_increase() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let a = g.add_group(None, Transform3D::Identity);
         let b = g.add_group(None, Transform3D::Identity);
         let c = g.add_group(None, Transform3D::Identity);
@@ -800,7 +800,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_leaf_with_inline_mesh_succeeds() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g
             .add_leaf(
                 None,
@@ -816,7 +816,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_leaf_with_valid_mesh_resource_succeeds() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let rid = g.add_mesh_resource(unit_triangle());
         let id = g
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
@@ -827,22 +827,19 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_leaf_with_dangling_mesh_resource_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = MeshResourceId(NonZeroU32::new(99).unwrap());
         let result = g.add_leaf(
             None,
             Transform3D::Identity,
             LeafPayload::MeshResource(bogus),
         );
-        assert_eq!(
-            result,
-            Err(SceneGraphError::DanglingMeshResource { id: bogus })
-        );
+        assert_eq!(result, Err(SceneError::DanglingMeshResource { id: bogus }));
     }
 
     #[test]
     fn add_csg_union_with_no_children_succeeds() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g
             .add_csg(None, Transform3D::Identity, CsgOp::Union, Vec::new())
             .unwrap();
@@ -854,17 +851,14 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_csg_intersection_with_no_children_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let result = g.add_csg(None, Transform3D::Identity, CsgOp::Intersection, Vec::new());
-        assert!(matches!(
-            result,
-            Err(SceneGraphError::EmptyIntersection { .. })
-        ));
+        assert!(matches!(result, Err(SceneError::EmptyIntersection { .. })));
     }
 
     #[test]
     fn add_csg_intersection_with_one_child_succeeds() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -880,7 +874,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_csg_with_duplicate_child_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -889,24 +883,21 @@ mod scene_graph_construction_tests {
             )
             .unwrap();
         let result = g.add_csg(None, Transform3D::Identity, CsgOp::Union, vec![leaf, leaf]);
-        assert!(matches!(
-            result,
-            Err(SceneGraphError::DuplicateChild { .. })
-        ));
+        assert!(matches!(result, Err(SceneError::DuplicateChild { .. })));
         assert_eq!(g.parent_of(leaf), None);
     }
 
     #[test]
     fn add_csg_with_dangling_child_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = NodeId(NonZeroU32::new(99).unwrap());
         let result = g.add_csg(None, Transform3D::Identity, CsgOp::Union, vec![bogus]);
-        assert_eq!(result, Err(SceneGraphError::DanglingNodeId { id: bogus }));
+        assert_eq!(result, Err(SceneError::DanglingNodeId { id: bogus }));
     }
 
     #[test]
     fn add_csg_with_already_parented_child_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -917,15 +908,12 @@ mod scene_graph_construction_tests {
         let group = g.add_group(None, Transform3D::Identity);
         g.add_child(group, leaf).unwrap();
         let result = g.add_csg(None, Transform3D::Identity, CsgOp::Union, vec![leaf]);
-        assert!(matches!(
-            result,
-            Err(SceneGraphError::AlreadyHasParent { .. })
-        ));
+        assert!(matches!(result, Err(SceneError::AlreadyHasParent { .. })));
     }
 
     #[test]
     fn add_root_happy_path() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let group = g.add_group(None, Transform3D::Identity);
         g.add_root(group).unwrap();
         assert_eq!(g.roots(), &[group]);
@@ -933,44 +921,38 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_root_twice_on_same_node_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let group = g.add_group(None, Transform3D::Identity);
         g.add_root(group).unwrap();
         let result = g.add_root(group);
-        assert_eq!(
-            result,
-            Err(SceneGraphError::AlreadyARoot { node_id: group })
-        );
+        assert_eq!(result, Err(SceneError::AlreadyARoot { node_id: group }));
     }
 
     #[test]
     fn add_root_on_parented_node_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
         let result = g.add_root(child);
-        assert!(matches!(
-            result,
-            Err(SceneGraphError::AlreadyHasParent { .. })
-        ));
+        assert!(matches!(result, Err(SceneError::AlreadyHasParent { .. })));
     }
 
     #[test]
     fn add_root_on_subtree_resource_root_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.register_subtree_resource(root).unwrap();
         let result = g.add_root(root);
         assert_eq!(
             result,
-            Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: root })
+            Err(SceneError::AlreadyASubtreeResourceRoot { node_id: root })
         );
     }
 
     #[test]
     fn add_child_under_group() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
@@ -984,7 +966,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_child_under_csg() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g
             .add_csg(None, Transform3D::Identity, CsgOp::Union, Vec::new())
             .unwrap();
@@ -1001,7 +983,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn add_child_under_leaf_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g
             .add_leaf(
                 None,
@@ -1011,56 +993,50 @@ mod scene_graph_construction_tests {
             .unwrap();
         let child = g.add_group(None, Transform3D::Identity);
         let result = g.add_child(parent, child);
-        assert_eq!(result, Err(SceneGraphError::NotABranch { node_id: parent }));
+        assert_eq!(result, Err(SceneError::NotABranch { node_id: parent }));
     }
 
     #[test]
     fn add_child_under_instance_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
         let parent = g.add_instance(None, Transform3D::Identity, rid).unwrap();
         let child = g.add_group(None, Transform3D::Identity);
         let result = g.add_child(parent, child);
-        assert_eq!(result, Err(SceneGraphError::NotABranch { node_id: parent }));
+        assert_eq!(result, Err(SceneError::NotABranch { node_id: parent }));
     }
 
     #[test]
     fn add_child_with_already_parented_child_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let p1 = g.add_group(None, Transform3D::Identity);
         let p2 = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(p1, child).unwrap();
         let result = g.add_child(p2, child);
-        assert!(matches!(
-            result,
-            Err(SceneGraphError::AlreadyHasParent { .. })
-        ));
+        assert!(matches!(result, Err(SceneError::AlreadyHasParent { .. })));
     }
 
     #[test]
     fn add_child_with_scene_root_child_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_root(child).unwrap();
         let result = g.add_child(parent, child);
-        assert_eq!(
-            result,
-            Err(SceneGraphError::AlreadyARoot { node_id: child })
-        );
+        assert_eq!(result, Err(SceneError::AlreadyARoot { node_id: child }));
     }
 
     #[test]
     fn add_child_direct_instance_cycle_rejected() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
         let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
         // Try to put the Instance inside its own subtree.
         let result = g.add_child(res_root, inst);
-        assert!(matches!(result, Err(SceneGraphError::InstanceCycle { .. })));
+        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
         // Rollback worked: instance still parent-less, res_root has no children.
         assert_eq!(g.parent_of(inst), None);
         assert!(matches!(
@@ -1073,7 +1049,7 @@ mod scene_graph_construction_tests {
     fn add_child_indirect_instance_cycle_rejected() {
         // S1 root contains instance to S2; S2 root would then need to
         // contain instance to S1 to close the loop.
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let s1_root = g.add_group(None, Transform3D::Identity);
         let s2_root = g.add_group(None, Transform3D::Identity);
         let s1_id = g.register_subtree_resource(s1_root).unwrap();
@@ -1082,12 +1058,12 @@ mod scene_graph_construction_tests {
         g.add_child(s1_root, inst_to_s2).unwrap();
         let inst_to_s1 = g.add_instance(None, Transform3D::Identity, s1_id).unwrap();
         let result = g.add_child(s2_root, inst_to_s1);
-        assert!(matches!(result, Err(SceneGraphError::InstanceCycle { .. })));
+        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
     }
 
     #[test]
     fn register_subtree_resource_happy_path() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(root).unwrap();
         assert_eq!(g.subtree_resource_root(rid), Some(root));
@@ -1095,52 +1071,49 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn register_subtree_resource_for_scene_root_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();
         let result = g.register_subtree_resource(root);
-        assert_eq!(result, Err(SceneGraphError::AlreadyARoot { node_id: root }));
+        assert_eq!(result, Err(SceneError::AlreadyARoot { node_id: root }));
     }
 
     #[test]
     fn register_subtree_resource_for_parented_node_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
         let result = g.register_subtree_resource(child);
-        assert!(matches!(
-            result,
-            Err(SceneGraphError::AlreadyHasParent { .. })
-        ));
+        assert!(matches!(result, Err(SceneError::AlreadyHasParent { .. })));
     }
 
     #[test]
     fn register_subtree_resource_twice_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.register_subtree_resource(root).unwrap();
         let result = g.register_subtree_resource(root);
         assert_eq!(
             result,
-            Err(SceneGraphError::AlreadyASubtreeResourceRoot { node_id: root })
+            Err(SceneError::AlreadyASubtreeResourceRoot { node_id: root })
         );
     }
 
     #[test]
     fn add_instance_with_dangling_resource_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = SubtreeResourceId(NonZeroU32::new(7).unwrap());
         let result = g.add_instance(None, Transform3D::Identity, bogus);
         assert_eq!(
             result,
-            Err(SceneGraphError::DanglingSubtreeResource { id: bogus })
+            Err(SceneError::DanglingSubtreeResource { id: bogus })
         );
     }
 
     #[test]
     fn set_local_transform_changes_node_transform() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         let new_t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
         g.set_local_transform(id, new_t).unwrap();
@@ -1149,15 +1122,15 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn set_local_transform_on_dangling_id_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = NodeId(NonZeroU32::new(9).unwrap());
         let result = g.set_local_transform(bogus, Transform3D::Identity);
-        assert_eq!(result, Err(SceneGraphError::DanglingNodeId { id: bogus }));
+        assert_eq!(result, Err(SceneError::DanglingNodeId { id: bogus }));
     }
 
     #[test]
     fn mesh_resource_mut_returns_writable_borrow() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let rid = g.add_mesh_resource(unit_triangle());
         let mesh = g.mesh_resource_mut(rid).expect("resource lives");
         mesh.vertices.push(Vertex::new([2.0, 2.0, 2.0]));
@@ -1166,14 +1139,14 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn mesh_resource_mut_on_dangling_id_returns_none() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = MeshResourceId(NonZeroU32::new(42).unwrap());
         assert!(g.mesh_resource_mut(bogus).is_none());
     }
 
     #[test]
     fn mesh_resources_iter_yields_every_live_slot() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let a = g.add_mesh_resource(unit_triangle());
         let b = g.add_mesh_resource(unit_triangle());
         let collected: Vec<MeshResourceId> = g.mesh_resources_iter().map(|(id, _)| id).collect();
@@ -1182,7 +1155,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn mesh_resources_iter_mut_allows_in_place_edit() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let _ = g.add_mesh_resource(unit_triangle());
         let _ = g.add_mesh_resource(unit_triangle());
         for (_id, mesh) in g.mesh_resources_iter_mut() {
@@ -1195,7 +1168,7 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn inline_mesh_mut_returns_writable_leaf_payload() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g
             .add_leaf(
                 None,
@@ -1213,14 +1186,14 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn inline_mesh_mut_returns_none_for_group() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         assert!(g.inline_mesh_mut(id).is_none());
     }
 
     #[test]
     fn inline_mesh_mut_returns_none_for_resource_backed_leaf() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let rid = g.add_mesh_resource(unit_triangle());
         let id = g
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
@@ -1230,14 +1203,14 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn inline_mesh_mut_on_dangling_id_returns_none() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = NodeId(NonZeroU32::new(99).unwrap());
         assert!(g.inline_mesh_mut(bogus).is_none());
     }
 
     #[test]
     fn reachable_leaf_count_matches_repeated_leaf_id_at_index() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();
         for _ in 0..3 {
@@ -1256,13 +1229,13 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn reachable_leaf_count_is_zero_for_empty_graph() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert_eq!(g.reachable_leaf_count(), 0);
     }
 
     #[test]
     fn first_leaf_id_returns_pre_order_first_leaf() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();
         let first_leaf = g
@@ -1286,13 +1259,13 @@ mod scene_graph_construction_tests {
 
     #[test]
     fn first_leaf_id_is_none_for_empty_graph() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert_eq!(g.first_leaf_id(), None);
     }
 
     #[test]
     fn first_leaf_id_is_none_when_only_groups_reachable() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();
         let child_group = g.add_group(None, Transform3D::Identity);
@@ -1323,13 +1296,13 @@ mod scene_graph_validate_tests {
 
     #[test]
     fn validate_passes_on_empty_graph() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert_eq!(g.validate(), Ok(()));
     }
 
     #[test]
     fn validate_passes_on_simple_tree() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         let leaf = g
             .add_leaf(
@@ -1345,7 +1318,7 @@ mod scene_graph_validate_tests {
 
     #[test]
     fn validate_passes_on_subtree_instance_graph() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let res_leaf = g
             .add_leaf(
@@ -1369,7 +1342,7 @@ mod scene_graph_validate_tests {
 
     #[test]
     fn validate_detects_dangling_child() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
@@ -1377,15 +1350,12 @@ mod scene_graph_validate_tests {
         let cidx = child.index();
         g.nodes[cidx] = None;
         g.parents[cidx] = None;
-        assert_eq!(
-            g.validate(),
-            Err(SceneGraphError::DanglingNodeId { id: child })
-        );
+        assert_eq!(g.validate(), Err(SceneError::DanglingNodeId { id: child }));
     }
 
     #[test]
     fn validate_detects_empty_intersection() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -1405,13 +1375,13 @@ mod scene_graph_validate_tests {
         g.parents[leaf.index()] = None;
         assert_eq!(
             g.validate(),
-            Err(SceneGraphError::EmptyIntersection { node_id: csg })
+            Err(SceneError::EmptyIntersection { node_id: csg })
         );
     }
 
     #[test]
     fn validate_detects_parent_mismatch() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
@@ -1420,13 +1390,13 @@ mod scene_graph_validate_tests {
         g.parents[child.index()] = None;
         assert!(matches!(
             g.validate(),
-            Err(SceneGraphError::ParentMismatch { node_id: cid, .. }) if cid == child
+            Err(SceneError::ParentMismatch { node_id: cid, .. }) if cid == child
         ));
     }
 
     #[test]
     fn validate_detects_dangling_mesh_resource() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let rid = g.add_mesh_resource(unit_triangle());
         g.add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
             .unwrap();
@@ -1434,13 +1404,13 @@ mod scene_graph_validate_tests {
         g.mesh_resources[rid.index()] = None;
         assert_eq!(
             g.validate(),
-            Err(SceneGraphError::DanglingMeshResource { id: rid })
+            Err(SceneError::DanglingMeshResource { id: rid })
         );
     }
 
     #[test]
     fn validate_detects_dangling_subtree_resource() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(root).unwrap();
         g.add_instance(None, Transform3D::Identity, rid).unwrap();
@@ -1448,13 +1418,13 @@ mod scene_graph_validate_tests {
         g.subtree_resources[rid.index()] = None;
         assert_eq!(
             g.validate(),
-            Err(SceneGraphError::DanglingSubtreeResource { id: rid })
+            Err(SceneError::DanglingSubtreeResource { id: rid })
         );
     }
 
     #[test]
     fn validate_detects_duplicate_child() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let parent = g.add_group(None, Transform3D::Identity);
         let child = g.add_group(None, Transform3D::Identity);
         g.add_child(parent, child).unwrap();
@@ -1466,13 +1436,13 @@ mod scene_graph_validate_tests {
         }
         assert!(matches!(
             g.validate(),
-            Err(SceneGraphError::DuplicateChild { .. })
+            Err(SceneError::DuplicateChild { .. })
         ));
     }
 
     #[test]
     fn validate_detects_instance_cycle() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
         let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
@@ -1486,7 +1456,7 @@ mod scene_graph_validate_tests {
         g.parents[inst.index()] = Some(res_root);
         assert!(matches!(
             g.validate(),
-            Err(SceneGraphError::InstanceCycle { .. })
+            Err(SceneError::InstanceCycle { .. })
         ));
     }
 }
@@ -1513,7 +1483,7 @@ mod from_indexed_mesh_tests {
 
     #[test]
     fn from_indexed_mesh_produces_single_leaf_root() {
-        let g = SceneGraph::from(unit_triangle());
+        let g = Scene::from(unit_triangle());
         assert_eq!(g.roots().len(), 1);
         assert_eq!(g.reachable_leaf_count(), 1);
         let id = g.first_leaf_id().unwrap();

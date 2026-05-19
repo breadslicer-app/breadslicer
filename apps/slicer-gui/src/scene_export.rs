@@ -78,7 +78,7 @@ mod scene_export_tests {
 
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, SceneGraph, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, Scene, Vertex};
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {
@@ -97,8 +97,8 @@ mod scene_export_tests {
 
     /// Loader-shape one-object graph: a single inline-mesh leaf
     /// under an identity-Group root.
-    fn one_object_graph() -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn one_object_graph() -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf = g
@@ -114,8 +114,8 @@ mod scene_export_tests {
 
     /// Loader-shape two-object graph: both leaves attached under a
     /// shared identity-Group root.
-    fn two_object_graph() -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn two_object_graph() -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf_a = g

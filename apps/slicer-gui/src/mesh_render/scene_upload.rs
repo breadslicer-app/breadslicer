@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph::Scene;
 use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
@@ -75,12 +75,12 @@ impl ObjectDraw {
     }
 }
 
-/// GPU mirror of a `SceneGraph`. Holds one [`ObjectDraw`] per leaf in
+/// GPU mirror of a `Scene`. Holds one [`ObjectDraw`] per leaf in
 /// pre-order traversal of the graph's roots, plus a uniform buffer of
 /// [`ModelEntry`] slots, padded to the device's
 /// `min_uniform_buffer_offset_alignment` so the render loop can address
 /// each slot via a dynamic-offset bind. The world-space AABB is captured
-/// at build time from `SceneGraph::aabb`; it is used once for camera
+/// at build time from `Scene::aabb`; it is used once for camera
 /// framing and is not refreshed on per-frame transform updates (the
 /// camera persists across edits, so a post-edit AABB is irrelevant for
 /// framing).
@@ -101,7 +101,7 @@ pub(crate) struct GpuScene {
 }
 
 impl GpuScene {
-    pub(crate) fn build(device: &wgpu::Device, graph: &SceneGraph) -> Result<Self> {
+    pub(crate) fn build(device: &wgpu::Device, graph: &Scene) -> Result<Self> {
         let data = build_gpu_scene_data(graph)?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
@@ -194,7 +194,7 @@ fn transform_to_mat4(t: &Transform3D) -> Mat4 {
 /// interior wash that marks the whole object as "offending" even
 /// where individual fragments are still inside the envelope.
 pub(super) fn build_model_entries(
-    graph: &SceneGraph,
+    graph: &Scene,
     selection: Option<NodeId>,
     build_volume: BuildVolume,
 ) -> Vec<ModelEntry> {
@@ -261,7 +261,7 @@ pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 /// envelope: a vertex outside on axis `a` is the only way for the
 /// mesh's `a`-face to be breached, since the convex hull of the
 /// vertices contains the mesh and the envelope is convex.
-pub(super) fn build_envelope_warning_mask(graph: &SceneGraph, build_volume: BuildVolume) -> u32 {
+pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolume) -> u32 {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let mut mask = 0u32;
@@ -297,7 +297,7 @@ pub(super) fn build_envelope_warning_mask(graph: &SceneGraph, build_volume: Buil
 /// the count [`build_gpu_scene_data`] and [`build_model_entries`]
 /// produce; the renderer uses it to debug-assert that an installed
 /// `GpuScene` matches the graph it draws against.
-pub(super) fn graph_leaf_count(graph: &SceneGraph) -> usize {
+pub(super) fn graph_leaf_count(graph: &Scene) -> usize {
     let mut count: usize = 0;
     let _ = for_each_leaf(graph, |_node_id, _world_transform, _mesh| {
         count += 1;
@@ -312,7 +312,7 @@ pub(super) fn graph_leaf_count(graph: &SceneGraph) -> usize {
 /// `NodeId`, its composed world transform, and a borrow of the leaf's
 /// mesh. Propagates the closure's error and any dangling-id error from
 /// the walk.
-fn for_each_leaf<F>(graph: &SceneGraph, mut f: F) -> Result<()>
+fn for_each_leaf<F>(graph: &Scene, mut f: F) -> Result<()>
 where
     F: FnMut(NodeId, Transform3D, &IndexedMesh) -> Result<()>,
 {
@@ -323,7 +323,7 @@ where
 }
 
 fn descend_leaves<F>(
-    graph: &SceneGraph,
+    graph: &Scene,
     node_id: NodeId,
     parent_world: Transform3D,
     f: &mut F,
@@ -375,7 +375,7 @@ struct SceneData {
     aabb_max: Vec3,
 }
 
-fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
+fn build_gpu_scene_data(graph: &Scene) -> Result<SceneData> {
     let mut objects: Vec<ObjectData> = Vec::new();
     for_each_leaf(graph, |node_id, _world_transform, mesh| {
         if mesh.faces().is_empty() {
@@ -420,7 +420,7 @@ fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
         return Err(anyhow!("Graph has no leaves to render"));
     }
 
-    // World-space scene AABB via `SceneGraph::aabb`, which composes
+    // World-space scene AABB via `Scene::aabb`, which composes
     // each leaf's ancestor chain via Arvo. If every leaf is empty,
     // fall back to a degenerate bbox at the origin (the renderer's
     // diagonal-clamp `.max(1e-3)` keeps the projection matrix
@@ -448,15 +448,15 @@ mod build_gpu_scene_data_tests {
     use sc_mesh_core::transform::AffineTransform3D;
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
-    fn graph_with_group_root() -> (SceneGraph, NodeId) {
-        let mut g = SceneGraph::new();
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         (g, root)
     }
 
     fn add_inline_leaf(
-        g: &mut SceneGraph,
+        g: &mut Scene,
         parent: NodeId,
         mesh: IndexedMesh,
         transform: Transform3D,
@@ -469,7 +469,7 @@ mod build_gpu_scene_data_tests {
     }
 
     fn add_resource_leaf(
-        g: &mut SceneGraph,
+        g: &mut Scene,
         parent: NodeId,
         rid: MeshResourceId,
         transform: Transform3D,
@@ -642,7 +642,7 @@ mod build_gpu_scene_data_tests {
 
     #[test]
     fn singular_transform_is_accepted() {
-        // `SceneGraph::aabb` doesn't fail on singular linear parts
+        // `Scene::aabb` doesn't fail on singular linear parts
         // (it uses Arvo), so this currently succeeds. The check here
         // pins the behaviour: the per-leaf data is built without
         // touching `apply_to_normal`, so even a degenerate transform
@@ -726,15 +726,15 @@ mod transform_to_mat4_tests {
     }
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
-    fn graph_with_group_root() -> (SceneGraph, NodeId) {
-        let mut g = SceneGraph::new();
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         (g, root)
     }
 
     fn add_inline_leaf(
-        g: &mut SceneGraph,
+        g: &mut Scene,
         parent: NodeId,
         mesh: IndexedMesh,
         transform: Transform3D,
@@ -749,7 +749,7 @@ mod transform_to_mat4_tests {
     /// Resolve the `n`-th leaf's [`NodeId`] in pre-order traversal,
     /// used by the selection tests to feed `build_model_entries` a
     /// real id instead of a counter.
-    fn nth_leaf(graph: &SceneGraph, n: usize) -> NodeId {
+    fn nth_leaf(graph: &Scene, n: usize) -> NodeId {
         let mut ids: Vec<NodeId> = Vec::new();
         let _ = for_each_leaf(graph, |id, _, _| {
             ids.push(id);
@@ -791,7 +791,7 @@ mod transform_to_mat4_tests {
         assert_approx_eq!(f32, entries[1].model[3][2], 0.0);
     }
 
-    fn two_object_graph() -> SceneGraph {
+    fn two_object_graph() -> Scene {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 
         let mesh = IndexedMesh {
@@ -836,7 +836,7 @@ mod transform_to_mat4_tests {
         assert_eq!(entries[1].flags[0], 0);
     }
 
-    fn unit_triangle_graph_at(translation: [f64; 3]) -> SceneGraph {
+    fn unit_triangle_graph_at(translation: [f64; 3]) -> Scene {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 
         let mesh = IndexedMesh {

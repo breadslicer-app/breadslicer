@@ -13,12 +13,12 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sc_mesh_core::SceneGraph;
+use sc_mesh_core::Scene;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer;
 
 pub(crate) fn write_scene(
-    graph: &SceneGraph,
+    graph: &Scene,
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<()> {

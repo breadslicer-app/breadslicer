@@ -3,23 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! World-space mesh baking for [`SceneGraph`].
+//! World-space mesh baking for [`Scene`].
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
-use crate::scene_graph::{SceneGraph, SceneGraphError};
+use crate::scene_graph::{Scene, SceneError};
 use crate::scene_graph_node::{LeafPayload, Node, NodeId, NodeKind};
 use crate::transform::AffineTransform3D;
 use crate::transform::Transform3D;
 
-impl SceneGraph {
+impl Scene {
     /// Merges all leaf meshes reachable from scene roots into a single
     /// [`IndexedMesh`], baking the composed ancestor-chain transform
     /// into each leaf's vertices and normals. `Group` and `Instance`
     /// nodes are traversed. `Csg` nodes are an error: there is no
     /// evaluator yet, so any caller that wants to flatten a graph
     /// containing CSG must first resolve those nodes through a kernel.
-    pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>, SceneGraphError> {
+    pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>, SceneError> {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut faces: Vec<IndexedTriangle> = Vec::new();
         for &root in self.roots() {
@@ -42,10 +42,10 @@ impl SceneGraph {
         parent_world: Transform3D,
         vertices: &mut Vec<Vertex>,
         faces: &mut Vec<IndexedTriangle>,
-    ) -> Result<(), SceneGraphError> {
+    ) -> Result<(), SceneError> {
         let node = self
             .node(node_id)
-            .ok_or(SceneGraphError::DanglingNodeId { id: node_id })?;
+            .ok_or(SceneError::DanglingNodeId { id: node_id })?;
         let world_from_self = parent_world.compose(&node.local_transform);
         match &node.kind {
             NodeKind::Group { children } => {
@@ -54,7 +54,7 @@ impl SceneGraph {
                 }
             }
             NodeKind::Csg { .. } => {
-                return Err(SceneGraphError::UnevaluatedCsg { node_id });
+                return Err(SceneError::UnevaluatedCsg { node_id });
             }
             NodeKind::Leaf(payload) => {
                 let mesh = self.resolve_leaf_mesh(payload)?;
@@ -63,7 +63,7 @@ impl SceneGraph {
             NodeKind::Instance { resource } => {
                 let root = self
                     .subtree_resource_root(*resource)
-                    .ok_or(SceneGraphError::DanglingSubtreeResource { id: *resource })?;
+                    .ok_or(SceneError::DanglingSubtreeResource { id: *resource })?;
                 self.bake_subtree(root, world_from_self, vertices, faces)?;
             }
         }
@@ -73,30 +73,28 @@ impl SceneGraph {
     fn resolve_leaf_mesh<'a>(
         &'a self,
         payload: &'a LeafPayload,
-    ) -> Result<&'a IndexedMesh, SceneGraphError> {
+    ) -> Result<&'a IndexedMesh, SceneError> {
         match payload {
             LeafPayload::Mesh(m) => Ok(m),
             LeafPayload::MeshResource(rid) => self
                 .mesh_resource(*rid)
-                .ok_or(SceneGraphError::DanglingMeshResource { id: *rid }),
+                .ok_or(SceneError::DanglingMeshResource { id: *rid }),
         }
     }
 
     /// Resolve the mesh a leaf addresses by stable [`NodeId`]: for
     /// `LeafPayload::Mesh` returns the inline mesh; for
     /// `LeafPayload::MeshResource` returns the resource it points at.
-    /// Errors with [`SceneGraphError::DanglingNodeId`] if `id` does
-    /// not name a live node, [`SceneGraphError::NotALeaf`] if the
+    /// Errors with [`SceneError::DanglingNodeId`] if `id` does
+    /// not name a live node, [`SceneError::NotALeaf`] if the
     /// addressed node is not a `Leaf`, and
-    /// [`SceneGraphError::DanglingMeshResource`] if the leaf
+    /// [`SceneError::DanglingMeshResource`] if the leaf
     /// references a missing resource.
-    pub fn mesh_at_leaf(&self, id: NodeId) -> Result<&IndexedMesh, SceneGraphError> {
-        let node = self
-            .node(id)
-            .ok_or(SceneGraphError::DanglingNodeId { id })?;
+    pub fn mesh_at_leaf(&self, id: NodeId) -> Result<&IndexedMesh, SceneError> {
+        let node = self.node(id).ok_or(SceneError::DanglingNodeId { id })?;
         let payload = match &node.kind {
             NodeKind::Leaf(p) => p,
-            _ => return Err(SceneGraphError::NotALeaf { node_id: id }),
+            _ => return Err(SceneError::NotALeaf { node_id: id }),
         };
         self.resolve_leaf_mesh(payload)
     }
@@ -109,22 +107,19 @@ impl SceneGraph {
 /// per-leaf invariant of stable [`NodeId`] addressing.
 ///
 /// Errors if `node_id` does not resolve to a `Leaf`.
-pub fn bake_leaf_to_world(
-    graph: &SceneGraph,
-    node_id: NodeId,
-) -> Result<IndexedMesh, SceneGraphError> {
+pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh, SceneError> {
     let leaf_node = graph
         .node(node_id)
-        .ok_or(SceneGraphError::DanglingNodeId { id: node_id })?;
+        .ok_or(SceneError::DanglingNodeId { id: node_id })?;
     let payload = match &leaf_node.kind {
         NodeKind::Leaf(p) => p,
-        _ => return Err(SceneGraphError::NotALeaf { node_id }),
+        _ => return Err(SceneError::NotALeaf { node_id }),
     };
     let mesh = match payload {
         LeafPayload::Mesh(m) => m,
         LeafPayload::MeshResource(rid) => graph
             .mesh_resource(*rid)
-            .ok_or(SceneGraphError::DanglingMeshResource { id: *rid })?,
+            .ok_or(SceneError::DanglingMeshResource { id: *rid })?,
     };
     let world = world_from_ancestor_chain(graph, leaf_node, node_id)?;
     let mut vertices = Vec::with_capacity(mesh.vertices.len());
@@ -138,16 +133,14 @@ pub fn bake_leaf_to_world(
 }
 
 fn world_from_ancestor_chain(
-    graph: &SceneGraph,
+    graph: &Scene,
     leaf_node: &Node,
     leaf_id: NodeId,
-) -> Result<Transform3D, SceneGraphError> {
+) -> Result<Transform3D, SceneError> {
     let mut chain: Vec<Transform3D> = vec![leaf_node.local_transform];
     let mut current = leaf_id;
     while let Some(p) = graph.parent_of(current) {
-        let pnode = graph
-            .node(p)
-            .ok_or(SceneGraphError::DanglingNodeId { id: p })?;
+        let pnode = graph.node(p).ok_or(SceneError::DanglingNodeId { id: p })?;
         chain.push(pnode.local_transform);
         current = p;
     }
@@ -163,7 +156,7 @@ fn bake_into(
     world: &Transform3D,
     vertices: &mut Vec<Vertex>,
     faces: &mut Vec<IndexedTriangle>,
-) -> Result<(), SceneGraphError> {
+) -> Result<(), SceneError> {
     let offset = u32::try_from(vertices.len()).expect("vertex index fits in u32");
     match world {
         Transform3D::Identity => {
@@ -192,7 +185,7 @@ fn bake_into_affine(
     offset: u32,
     vertices: &mut Vec<Vertex>,
     faces: &mut Vec<IndexedTriangle>,
-) -> Result<(), SceneGraphError> {
+) -> Result<(), SceneError> {
     vertices.extend(mesh.vertices.iter().map(|v| a.apply_to_vertex(*v)));
     let reverse_winding = a.determinant() < 0.0;
     for face in &mesh.faces {
@@ -250,13 +243,13 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn merge_meshes_on_empty_graph_returns_none() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert_eq!(g.merge_meshes().unwrap(), None);
     }
 
     #[test]
     fn merge_meshes_on_single_leaf_identity_passes_through() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let mesh = triangle_mesh(
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
@@ -273,7 +266,7 @@ mod scene_graph_bake_tests {
     #[test]
     fn merge_meshes_composes_group_and_leaf_translations() {
         // Group T1 + leaf T2 should give T1 + T2 baked into vertices.
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -298,7 +291,7 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn merge_meshes_errors_on_csg_node() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(cube_mesh()))
             .unwrap();
@@ -308,7 +301,7 @@ mod scene_graph_bake_tests {
         g.add_root(csg).unwrap();
         assert_eq!(
             g.merge_meshes(),
-            Err(SceneGraphError::UnevaluatedCsg { node_id: csg })
+            Err(SceneError::UnevaluatedCsg { node_id: csg })
         );
     }
 
@@ -316,7 +309,7 @@ mod scene_graph_bake_tests {
     fn merge_meshes_duplicates_geometry_for_two_instances() {
         // Subtree contains one triangle. Two instances at different
         // translations should each contribute a baked copy.
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let res_leaf = g
             .add_leaf(
                 None,
@@ -356,7 +349,7 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn bake_leaf_to_world_under_identity_root_matches_mesh() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let mesh = triangle_mesh(
             vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
             [0, 1, 2],
@@ -372,7 +365,7 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn bake_leaf_to_world_composes_ancestor_chain_translations() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -403,7 +396,7 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn bake_leaf_to_world_reverses_winding_under_mirror() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -421,7 +414,7 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn bake_leaf_to_world_rotates_normal() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -451,12 +444,12 @@ mod scene_graph_bake_tests {
 
     #[test]
     fn bake_leaf_to_world_on_non_leaf_errors() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let group = g.add_group(None, Transform3D::Identity);
         g.add_root(group).unwrap();
         assert_eq!(
             bake_leaf_to_world(&g, group),
-            Err(SceneGraphError::NotALeaf { node_id: group })
+            Err(SceneError::NotALeaf { node_id: group })
         );
     }
 }

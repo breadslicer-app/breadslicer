@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 
 use anyhow::Result;
 use glam::Vec3;
-use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph::Scene;
 use sc_mesh_core::scene_graph_node::NodeId;
 use slint::wgpu_28::wgpu;
 
@@ -48,7 +48,7 @@ use targets::{MsaaTargets, TargetPool};
 /// `scene: None`.
 #[derive(Clone, Copy)]
 pub struct SceneRender<'a> {
-    pub graph: &'a SceneGraph,
+    pub graph: &'a Scene,
     /// Stable [`NodeId`] whose stencil mask the outline post-pass
     /// dilates. `None` skips the outline pass; a `NodeId` that does
     /// not name a reachable leaf is treated the same as `None`.
@@ -160,7 +160,7 @@ impl Renderer {
     /// `Renderer` and a worker-built `GpuScene` from the previous device
     /// would be unusable. New scene loads go through the worker via
     /// [`GpuScene::build`] + [`Renderer::install_scene`] instead.
-    pub fn upload_scene(&mut self, graph: &SceneGraph) -> Result<()> {
+    pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
         let gpu = GpuScene::build(&self.device, graph)?;
         self.attach_scene(gpu);
         Ok(())
@@ -267,7 +267,7 @@ impl Renderer {
 
         // Per-frame upload of model matrices when a `GpuScene` is
         // installed AND the caller passed the matching CPU
-        // `SceneGraph`. The CPU graph is the source of truth; the GPU
+        // `Scene`. The CPU graph is the source of truth; the GPU
         // uniform buffer is a mirror that lives long enough to be
         // sampled across the next draw. The renderer's `GpuScene`
         // must match the graph's reachable-leaf count 1:1; caller-side
@@ -277,7 +277,7 @@ impl Renderer {
             debug_assert_eq!(
                 inst.gpu.object_count(),
                 graph_leaf_count(graph_data),
-                "GpuScene and SceneGraph have diverged in leaf count"
+                "GpuScene and Scene have diverged in leaf count"
             );
             let entries = build_model_entries(graph_data, selection, build_volume);
             // Each entry lives at `i * model_stride`. The stride is
@@ -320,7 +320,7 @@ impl Renderer {
 
         // Per-frame envelope-wall warning mask: which side walls (and
         // the top) some leaf breaches. Recomputed each frame from
-        // the CPU `SceneGraph`; cheap (a single per-vertex scan) and
+        // the CPU `Scene`; cheap (a single per-vertex scan) and
         // keeps the breach signal in lockstep with the per-leaf
         // `flags.y` bit. `None` for an empty graph leaves the mask
         // at 0 so all wall fragments are discarded.
@@ -747,8 +747,8 @@ mod gpu_integration_tests {
     use sc_mesh_core::transform::Transform3D;
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
-    fn graph_with_group_root() -> (SceneGraph, NodeId) {
-        let mut g = SceneGraph::new();
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         (g, root)
@@ -757,7 +757,7 @@ mod gpu_integration_tests {
     /// Attaches an inline-mesh leaf under `parent` with the given
     /// local transform and returns the leaf's [`NodeId`].
     fn add_inline_leaf(
-        g: &mut SceneGraph,
+        g: &mut Scene,
         parent: NodeId,
         mesh: IndexedMesh,
         transform: Transform3D,
@@ -802,7 +802,7 @@ mod gpu_integration_tests {
     /// renderer's selection key is the leaf's stable id, so the
     /// render tests resolve "the only leaf" through this helper
     /// instead of fabricating an id.
-    fn first_leaf(graph: &SceneGraph) -> NodeId {
+    fn first_leaf(graph: &Scene) -> NodeId {
         use sc_mesh_core::scene_graph_node::NodeKind;
         let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
@@ -820,7 +820,7 @@ mod gpu_integration_tests {
         panic!("test fixture has no leaves");
     }
 
-    fn triangle_graph_with_translation(t: AffineTransform3D) -> SceneGraph {
+    fn triangle_graph_with_translation(t: AffineTransform3D) -> Scene {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1294,7 +1294,7 @@ mod gpu_integration_tests {
     /// `TEST_BV`'s +X envelope wall at x = +96 mm. Two anchor
     /// vertices stay inside the envelope so the graph's AABB
     /// straddles the wall (and the camera framing centres on it).
-    fn x_pos_breaching_graph() -> SceneGraph {
+    fn x_pos_breaching_graph() -> Scene {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![

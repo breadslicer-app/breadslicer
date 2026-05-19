@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Flatten a `SceneGraph` and write it to a single-mesh file format
+//! Flatten a `Scene` and write it to a single-mesh file format
 //! (`.stl` binary / ASCII, `.obj`).
 //!
 //! Two layers:
@@ -12,7 +12,7 @@
 //!   the merged mesh plus any non-fatal warnings (currently only
 //!   [`FlattenWarning::MultiObjectMerge`]).
 //! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
-//!   appropriate format. OBJ goes through `write_obj(&SceneGraph, ...)`
+//!   appropriate format. OBJ goes through `write_obj(&Scene, ...)`
 //!   (preserving per-object boundaries), while the STL variants
 //!   route through `flatten_graph_to_mesh` first.
 //!
@@ -24,7 +24,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sc_mesh_core::{IndexedMesh, SceneGraph, bake_leaf_to_world};
+use sc_mesh_core::{IndexedMesh, Scene, bake_leaf_to_world};
 
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
@@ -145,14 +145,14 @@ pub struct FlattenedScene {
 ///   source mesh's metadata (notably its name, which the ASCII STL
 ///   writer puts in the `solid <name>` header) preserved.
 /// - For a multi-leaf graph, returns the result of
-///   `SceneGraph::merge_meshes`, which concatenates baked
+///   `Scene::merge_meshes`, which concatenates baked
 ///   vertices/faces and drops per-leaf names, plus a
 ///   `MultiObjectMerge` warning so the caller can inform the user.
 ///
 /// Errors out with [`WriteSceneError::Graph`] on a graph containing
 /// an unevaluated `Csg` node, since there is no kernel yet to reduce
 /// it.
-pub fn flatten_graph_to_mesh(graph: &SceneGraph) -> Result<FlattenedScene> {
+pub fn flatten_graph_to_mesh(graph: &Scene) -> Result<FlattenedScene> {
     match graph.reachable_leaf_count() {
         0 => Err(WriteSceneError::EmptyScene),
         1 => {
@@ -184,7 +184,7 @@ pub fn flatten_graph_to_mesh(graph: &SceneGraph) -> Result<FlattenedScene> {
 /// log). For OBJ the per-leaf boundaries are preserved, so no
 /// flatten happens and the warning vec is always empty.
 pub fn write_scene(
-    graph: &SceneGraph,
+    graph: &Scene,
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
@@ -221,7 +221,7 @@ mod flatten_scene_to_mesh_tests {
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{
-        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
+        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, Vertex,
     };
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
@@ -242,8 +242,8 @@ mod flatten_scene_to_mesh_tests {
         }
     }
 
-    fn single_leaf_graph(mesh: IndexedMesh, t: Transform3D) -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn single_leaf_graph(mesh: IndexedMesh, t: Transform3D) -> Scene {
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(None, t, LeafPayload::Mesh(mesh))
             .expect("add leaf");
@@ -253,7 +253,7 @@ mod flatten_scene_to_mesh_tests {
 
     #[test]
     fn empty_scene_returns_error() {
-        let graph = SceneGraph::new();
+        let graph = Scene::new();
         assert!(flatten_graph_to_mesh(&graph).is_err());
     }
 
@@ -298,7 +298,7 @@ mod flatten_scene_to_mesh_tests {
 
     #[test]
     fn multi_object_scene_merges_and_emits_warning() {
-        let mut graph = SceneGraph::new();
+        let mut graph = Scene::new();
         let leaf_a = graph
             .add_leaf(
                 None,
@@ -344,10 +344,10 @@ mod flatten_scene_to_mesh_tests {
 mod write_scene_atomicity_tests {
     use super::write_scene;
     use crate::filetypes::WriteFormat;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, SceneGraph, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
 
-    fn valid_graph() -> SceneGraph {
-        SceneGraph::from(IndexedMesh {
+    fn valid_graph() -> Scene {
+        Scene::from(IndexedMesh {
             meta: None,
             vertices: vec![
                 Vertex::new([0.0, 0.0, 0.0]),
@@ -368,8 +368,8 @@ mod write_scene_atomicity_tests {
     // path, that leaves the on-disk target truncated to the partial
     // bytes; the atomic-temp-and-rename fix must keep the original
     // file intact.
-    fn graph_that_fails_mid_obj_write() -> SceneGraph {
-        SceneGraph::from(IndexedMesh {
+    fn graph_that_fails_mid_obj_write() -> Scene {
+        Scene::from(IndexedMesh {
             meta: None,
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
             faces: vec![IndexedTriangle::from_raw_indices(

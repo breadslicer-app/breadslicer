@@ -17,7 +17,7 @@ use predicates::prelude::*;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, Vertex,
+    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, Vertex,
 };
 use sc_mesh_formats::stl::{write_stla, write_stlb};
 use tempfile::TempDir;
@@ -221,7 +221,7 @@ fn no_panic_in_stderr() -> predicates::str::ContainsPredicate {
 /// "MultiObjectMerge" warning when this OBJ is later read back and
 /// converted to STL.
 fn write_two_object_obj(path: &Path) {
-    let mut graph = SceneGraph::new();
+    let mut graph = Scene::new();
     for name in ["A", "B"] {
         let leaf = graph
             .add_leaf(

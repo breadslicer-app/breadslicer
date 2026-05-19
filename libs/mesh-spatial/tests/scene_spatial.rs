@@ -16,7 +16,7 @@ use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload, MeshResourceId, NodeId, NodeKind, SceneGraph};
+use sc_mesh_core::{IndexedMesh, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
 /// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
@@ -57,8 +57,8 @@ fn triangle_mesh(scale: f32) -> IndexedMesh {
 /// land their objects as leaves under an identity-Group root).
 /// Returns the graph and the Group's id so helpers can attach
 /// leaves directly.
-fn graph_with_group_root() -> (SceneGraph, NodeId) {
-    let mut g = SceneGraph::new();
+fn graph_with_group_root() -> (Scene, NodeId) {
+    let mut g = Scene::new();
     let root = g.add_group(None, Transform3D::Identity);
     g.add_root(root).expect("group root");
     (g, root)
@@ -67,7 +67,7 @@ fn graph_with_group_root() -> (SceneGraph, NodeId) {
 /// Attach an inline-mesh leaf as a child of `parent`. Returns the
 /// leaf id so tests can address it directly.
 fn add_inline_leaf(
-    g: &mut SceneGraph,
+    g: &mut Scene,
     parent: NodeId,
     mesh: IndexedMesh,
     transform: Transform3D,
@@ -81,7 +81,7 @@ fn add_inline_leaf(
 
 /// Attach a resource-backed leaf as a child of `parent`.
 fn add_resource_leaf(
-    g: &mut SceneGraph,
+    g: &mut Scene,
     parent: NodeId,
     rid: MeshResourceId,
     transform: Transform3D,
@@ -300,13 +300,13 @@ mod scene_aabb_consistency {
         assert!(scene_aabb(&spatial).is_none());
     }
 
-    /// `SceneGraph::aabb` (in `mesh-core`) and `scene_aabb` (in
+    /// `Scene::aabb` (in `mesh-core`) and `scene_aabb` (in
     /// `mesh-spatial`) implement the same Arvo loop at different
     /// caching layers; review §3.4 flagged the duplication. These
     /// cases pin the cross-layer equivalence on every transform
     /// shape the renderer is likely to produce, so a drift between
     /// the two surfaces fails CI rather than picker / framing.
-    fn assert_cached_matches_uncached(mut build: impl FnMut() -> SceneGraph) {
+    fn assert_cached_matches_uncached(mut build: impl FnMut() -> Scene) {
         let uncached = build().aabb().unwrap();
         let spatial = SceneSpatial::primed_graph(build());
         let cached = scene_aabb(&spatial);

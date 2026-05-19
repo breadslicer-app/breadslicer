@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Axis-aligned bounding box queries for [`SceneGraph`].
+//! Axis-aligned bounding box queries for [`Scene`].
 
 use crate::aabb::Aabb;
-use crate::scene_graph::{SceneGraph, SceneGraphError};
+use crate::scene_graph::{Scene, SceneError};
 use crate::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use crate::transform::Transform3D;
 
-impl SceneGraph {
+impl Scene {
     /// Axis-aligned bounding box over every scene root in world space.
     ///
     /// `Group` contributes via the union of its children. `Csg`
@@ -23,7 +23,7 @@ impl SceneGraph {
     ///
     /// Returns `None` for a scene whose roots collectively contribute
     /// no geometry, and propagates dangling-id errors.
-    pub fn aabb(&self) -> Result<Option<Aabb>, SceneGraphError> {
+    pub fn aabb(&self) -> Result<Option<Aabb>, SceneError> {
         let mut accum = Aabb::empty();
         let mut has_any = false;
         for &root in self.roots() {
@@ -40,7 +40,7 @@ impl SceneGraph {
         &self,
         target_xy: [f32; 2],
         floor_z: f32,
-    ) -> Result<Option<[f64; 3]>, SceneGraphError> {
+    ) -> Result<Option<[f64; 3]>, SceneError> {
         let Some(aabb) = self.aabb()? else {
             return Ok(None);
         };
@@ -61,10 +61,10 @@ impl SceneGraph {
         parent_world: Transform3D,
         accum: &mut Aabb,
         has_any: &mut bool,
-    ) -> Result<(), SceneGraphError> {
+    ) -> Result<(), SceneError> {
         let node = self
             .node(node_id)
-            .ok_or(SceneGraphError::DanglingNodeId { id: node_id })?;
+            .ok_or(SceneError::DanglingNodeId { id: node_id })?;
         let world_from_self = parent_world.compose(&node.local_transform);
         match &node.kind {
             NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
@@ -77,7 +77,7 @@ impl SceneGraph {
                     LeafPayload::Mesh(m) => m,
                     LeafPayload::MeshResource(rid) => self
                         .mesh_resource(*rid)
-                        .ok_or(SceneGraphError::DanglingMeshResource { id: *rid })?,
+                        .ok_or(SceneError::DanglingMeshResource { id: *rid })?,
                 };
                 let Some(local) = mesh.local_aabb() else {
                     return Ok(());
@@ -92,7 +92,7 @@ impl SceneGraph {
             NodeKind::Instance { resource } => {
                 let root = self
                     .subtree_resource_root(*resource)
-                    .ok_or(SceneGraphError::DanglingSubtreeResource { id: *resource })?;
+                    .ok_or(SceneError::DanglingSubtreeResource { id: *resource })?;
                 self.fold_world_aabb(root, world_from_self, accum, has_any)?;
             }
         }
@@ -140,13 +140,13 @@ mod scene_graph_aabb_tests {
 
     #[test]
     fn aabb_of_empty_graph_is_none() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert_eq!(g.aabb().unwrap(), None);
     }
 
     #[test]
     fn aabb_of_single_leaf_at_identity_matches_mesh() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -163,7 +163,7 @@ mod scene_graph_aabb_tests {
     fn aabb_composes_group_and_leaf_transforms() {
         // Group with translation T1 contains a leaf with translation T2.
         // Leaf's world AABB is at T1 + T2 + local AABB.
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -183,7 +183,7 @@ mod scene_graph_aabb_tests {
 
     #[test]
     fn aabb_unions_two_roots() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf_a = g
             .add_leaf(
                 None,
@@ -208,7 +208,7 @@ mod scene_graph_aabb_tests {
     fn aabb_treats_csg_children_as_union_conservatively() {
         // A CSG Difference of two cubes. Conservative bound is the
         // union of both children's world AABBs, regardless of operator.
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let big = g
             .add_leaf(
                 None,
@@ -241,7 +241,7 @@ mod scene_graph_aabb_tests {
     fn aabb_two_instances_of_same_subtree_resource() {
         // A subtree contains a single unit cube. Instantiated twice
         // under different transforms; AABB unions both occurrences.
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let res_leaf = g
             .add_leaf(
                 None,
@@ -281,7 +281,7 @@ mod scene_graph_aabb_tests {
 
     #[test]
     fn translation_to_drop_at_centres_xy_and_sets_floor_z() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let leaf = g
             .add_leaf(
                 None,
@@ -301,7 +301,7 @@ mod scene_graph_aabb_tests {
 
     #[test]
     fn translation_to_drop_at_on_empty_returns_none() {
-        let g = SceneGraph::new();
+        let g = Scene::new();
         assert_eq!(g.translation_to_drop_at([0.0, 0.0], 0.0).unwrap(), None);
     }
 }

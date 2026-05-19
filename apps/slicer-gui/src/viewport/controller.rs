@@ -76,7 +76,7 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(crate) fn install_graph_for_test(&self, graph: sc_mesh_core::SceneGraph) {
+    pub(crate) fn install_graph_for_test(&self, graph: sc_mesh_core::Scene) {
         // Tests don't care about the source path; populate the slot
         // with a sentinel so the document's invariant ("scene present
         // ⇔ path present") holds and any future test assertion on
@@ -832,7 +832,7 @@ mod selection_tests {
     use super::*;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 
     /// `PointerModifiers::default()` with all flags off. The selection
     /// tests don't exercise modifier-driven branches, so every press
@@ -851,8 +851,8 @@ mod selection_tests {
 
     /// Loader-faithful multi-object graph: all `n` leaves land under
     /// a single identity-Group root.
-    fn graph_with_n_objects(n: usize) -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn graph_with_n_objects(n: usize) -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         for _ in 0..n {
@@ -1081,7 +1081,7 @@ mod viewport_click_tests {
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, SceneGraph};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
     use std::cell::Cell;
 
     /// `PointerModifiers::default()`, all four flags off.
@@ -1101,8 +1101,8 @@ mod viewport_click_tests {
 
     /// Fresh graph with a single identity-Group root, matching the
     /// loader-pipeline topology these click tests expect to drive.
-    fn graph_with_group_root() -> (SceneGraph, NodeId) {
-        let mut g = SceneGraph::new();
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         (g, root)
@@ -1110,7 +1110,7 @@ mod viewport_click_tests {
 
     /// CCW-from-+Z triangle at `translation`, attached as a leaf
     /// under `parent` (the loader-shape Group root).
-    fn add_front_facing_triangle(g: &mut SceneGraph, parent: NodeId, translation: [f32; 3]) {
+    fn add_front_facing_triangle(g: &mut Scene, parent: NodeId, translation: [f32; 3]) {
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1891,12 +1891,12 @@ mod keyboard_focus_tests {
     use glam::Vec3;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 
     /// Loader-shape one-object graph: a single inline-mesh leaf
     /// attached under an identity-Group root.
-    fn one_object_graph() -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn one_object_graph() -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let mesh = IndexedMesh {
@@ -2173,8 +2173,8 @@ mod keyboard_focus_tests {
     /// identity transform. Useful for clamp tests where the goal is
     /// "envelope is exactly flush with the object's +X face, so any
     /// +X delta clamps to zero".
-    fn cube_object_graph() -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn cube_object_graph() -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let mesh = IndexedMesh {

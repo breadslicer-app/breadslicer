@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Property tests pinning the cross-layer agreement between
- * `SceneGraph::aabb` (uncached, in `sc-mesh-core`) and `scene_aabb`
+ * `Scene::aabb` (uncached, in `sc-mesh-core`) and `scene_aabb`
  * (cached, in `sc-mesh-spatial`). The two implement the same Arvo
  * loop at different caching layers; if they ever drift, framing /
  * picker / view-fit code that relies on either side breaks
@@ -14,7 +14,7 @@ use proptest::prelude::*;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
+use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
 /// Bounded finite f32: avoid NaN / ±∞ / subnormals so the
@@ -74,11 +74,11 @@ fn leaf_strategy() -> impl Strategy<Value = (IndexedMesh, Transform3D)> {
     (mesh_strategy(), transform_strategy())
 }
 
-fn graph_strategy() -> impl Strategy<Value = SceneGraph> {
+fn graph_strategy() -> impl Strategy<Value = Scene> {
     // Mirrors the loader topology (e.g. `read_obj`): every object
     // lands as a leaf under a single identity-Group root.
     prop::collection::vec(leaf_strategy(), 1..5usize).prop_map(|leaves| {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         for (mesh, transform) in leaves {
@@ -94,7 +94,7 @@ fn graph_strategy() -> impl Strategy<Value = SceneGraph> {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
 
-    /// `SceneGraph::aabb` (uncached) and `scene_aabb` (cached) compute the
+    /// `Scene::aabb` (uncached) and `scene_aabb` (cached) compute the
     /// same envelope for any scene the renderer or framing camera
     /// might produce. Both arms walk the same data through the same
     /// Arvo formula; the only difference is whether per-mesh AABBs

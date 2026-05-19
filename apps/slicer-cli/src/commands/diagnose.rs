@@ -12,7 +12,7 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
 };
-use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph::Scene;
 use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_path;
@@ -46,7 +46,7 @@ pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) ->
 /// pre-order and invoke `f` with the leaf's mesh.
 /// Resource-backed leaves are skipped: their meshes live in the
 /// resource arena and are iterated through `mesh_resources_iter`.
-fn for_each_inline_leaf_mesh<F: FnMut(&IndexedMesh)>(graph: &SceneGraph, mut f: F) {
+fn for_each_inline_leaf_mesh<F: FnMut(&IndexedMesh)>(graph: &Scene, mut f: F) {
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
         let Some(node) = graph.node(id) else {

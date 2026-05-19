@@ -12,10 +12,10 @@
 
 use std::io::Cursor;
 
-use sc_mesh_core::{IndexedMesh, SceneGraph};
+use sc_mesh_core::{IndexedMesh, Scene};
 use sc_mesh_formats::stl::{read_stla, read_stlb};
 
-fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+fn unwrap_single_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(
         graph.reachable_leaf_count(),
         1,

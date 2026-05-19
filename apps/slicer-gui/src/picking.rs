@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! CPU ray-pick from a logical viewport pixel to a `SceneGraph` leaf
+//! CPU ray-pick from a logical viewport pixel to a `Scene` leaf
 //! identifier.
 //!
 //! Three-stage strategy:
@@ -596,7 +596,7 @@ mod ray_hits_triangle_oriented_tests {
 mod pick_object_tests {
     use super::*;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 
     fn unit_triangle_mesh() -> IndexedMesh {
         // CCW when viewed from +Z, ~unit-sized.
@@ -624,19 +624,14 @@ mod pick_object_tests {
 
     /// Loader-faithful empty graph: a single identity-Group root
     /// that will host the leaves attached by helpers below.
-    fn graph_with_group_root() -> (SceneGraph, NodeId) {
-        let mut g = SceneGraph::new();
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         (g, root)
     }
 
-    fn add_leaf_under(
-        g: &mut SceneGraph,
-        parent: NodeId,
-        mesh: IndexedMesh,
-        transform: Transform3D,
-    ) {
+    fn add_leaf_under(g: &mut Scene, parent: NodeId, mesh: IndexedMesh, transform: Transform3D) {
         let leaf = g
             .add_leaf(None, transform, LeafPayload::Mesh(mesh))
             .expect("add leaf");
@@ -673,7 +668,7 @@ mod pick_object_tests {
 
     #[test]
     fn empty_scene_picks_nothing() {
-        let spatial = SceneSpatial::from_graph(SceneGraph::new());
+        let spatial = SceneSpatial::from_graph(Scene::new());
         let ray = Ray {
             origin: Vec3::ZERO,
             direction: Vec3::X,

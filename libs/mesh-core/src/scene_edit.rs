@@ -5,13 +5,13 @@
 
 //! Typed scene mutation vocabulary.
 //!
-//! Every observable change to a [`SceneGraph`] is one variant of
+//! Every observable change to a [`Scene`] is one variant of
 //! [`SceneEdit`]. Headless callers apply edits directly with
 //! [`SceneEdit::apply_to_graph`]; cache layers (notably
 //! `sc_mesh_spatial::SceneSpatial`) dispatch the same enum and add
 //! invalidation hooks for the cached state that the variant affects.
 
-use crate::scene_graph::SceneGraph;
+use crate::scene_graph::Scene;
 use crate::scene_graph_node::NodeId;
 use crate::transform::Transform3D;
 
@@ -20,7 +20,7 @@ use crate::transform::Transform3D;
 /// cache layer's `apply_edit` all speak this enum.
 ///
 /// `SetLocalTransform` is keyed by a stable [`NodeId`] on a
-/// [`SceneGraph`].
+/// [`Scene`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SceneEdit {
     /// `node.local_transform` for the node at `node_id` was changed
@@ -56,13 +56,13 @@ impl SceneEdit {
         }
     }
 
-    /// Apply this edit to a [`SceneGraph`]. `SetLocalTransform`
+    /// Apply this edit to a [`Scene`]. `SetLocalTransform`
     /// writes the new transform onto the addressed node, silently
     /// no-op on a dangling `NodeId`. Cache-aware callers should go
     /// through `sc_mesh_spatial::SceneSpatial::apply_edit` instead,
     /// which dispatches the same enum and updates spatial caches
     /// before delegating here.
-    pub fn apply_to_graph(&self, graph: &mut SceneGraph) {
+    pub fn apply_to_graph(&self, graph: &mut Scene) {
         let Self::SetLocalTransform { node_id, after, .. } = self;
         let _ = graph.set_local_transform(*node_id, *after);
     }
@@ -75,7 +75,7 @@ mod scene_edit_tests {
 
     #[test]
     fn set_local_transform_is_noop_when_before_equals_after() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         let edit = SceneEdit::SetLocalTransform {
             node_id: id,
@@ -87,7 +87,7 @@ mod scene_edit_tests {
 
     #[test]
     fn set_local_transform_is_not_noop_when_transforms_differ() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         let edit = SceneEdit::SetLocalTransform {
             node_id: id,
@@ -99,7 +99,7 @@ mod scene_edit_tests {
 
     #[test]
     fn set_local_transform_inverse_swaps_before_and_after() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         let after = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
         let edit = SceneEdit::SetLocalTransform {
@@ -119,7 +119,7 @@ mod scene_edit_tests {
 
     #[test]
     fn apply_set_local_transform_writes_after_to_graph() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         let after = Transform3D::Affine(AffineTransform3D::from_translation([5.0, 6.0, 7.0]));
         SceneEdit::SetLocalTransform {
@@ -133,7 +133,7 @@ mod scene_edit_tests {
 
     #[test]
     fn apply_then_inverse_round_trips_graph() {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let id = g.add_group(None, Transform3D::Identity);
         let before = Transform3D::Identity;
         let after = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
@@ -150,7 +150,7 @@ mod scene_edit_tests {
     #[test]
     fn set_local_transform_on_dangling_node_id_is_silent_noop() {
         use std::num::NonZeroU32;
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let bogus = NodeId(NonZeroU32::new(99).unwrap());
         // Should not panic; the underlying graph mutator returns an
         // error and we discard it.

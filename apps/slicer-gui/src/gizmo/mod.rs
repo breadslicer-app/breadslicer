@@ -73,7 +73,7 @@ mod pivot_tests {
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, SceneGraph};
+    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
         IndexedMesh::new(
@@ -90,7 +90,7 @@ mod pivot_tests {
     /// loader pipeline produces (one inline-mesh leaf attached under
     /// an identity-Group root).
     fn spatial_with_one_leaf(mesh: IndexedMesh, transform: Transform3D) -> SceneSpatial {
-        let mut g = SceneGraph::new();
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf = g

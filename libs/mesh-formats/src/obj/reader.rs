@@ -12,7 +12,7 @@ use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::scene_graph_node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, Normal, SceneGraph, SceneMetadata, Vertex,
+    IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, Normal, Scene, SceneMetadata, Vertex,
 };
 
 use crate::error::LoadObjError;
@@ -102,7 +102,7 @@ fn check_sharing_and_attach(
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
     used_global_indices: &mut HashSet<VertexIndex>,
-    graph: &mut SceneGraph,
+    graph: &mut Scene,
     root: NodeId,
     warnings: &mut Vec<LoadMeshWarning>,
 ) -> bool {
@@ -145,10 +145,7 @@ fn check_sharing_and_attach(
     true
 }
 
-pub fn read_obj<R>(
-    read: &mut R,
-    warnings: &mut Vec<LoadMeshWarning>,
-) -> Result<SceneGraph, LoadObjError>
+pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene, LoadObjError>
 where
     R: std::io::Read,
 {
@@ -159,14 +156,14 @@ fn read_obj_with_caps<R>(
     read: &mut R,
     warnings: &mut Vec<LoadMeshWarning>,
     caps: Caps,
-) -> Result<SceneGraph, LoadObjError>
+) -> Result<Scene, LoadObjError>
 where
     R: std::io::Read,
 {
     // Loader-faithful topology: every leaf attaches under one
     // identity-Group root, matching the shape downstream tests and
     // viewport code expect.
-    let mut graph = SceneGraph::new();
+    let mut graph = Scene::new();
     let root = graph.add_group(None, Transform3D::Identity);
     graph
         .add_root(root)
@@ -720,20 +717,18 @@ mod read_obj_tests {
     use std::io::Cursor;
 
     use sc_mesh_core::SceneMetadata;
-    use sc_mesh_core::{IndexedMesh, MeshMetadata, NodeId, NodeKind, Normal, SceneGraph, Vertex};
+    use sc_mesh_core::{IndexedMesh, MeshMetadata, NodeId, NodeKind, Normal, Scene, Vertex};
 
     use super::{LoadMeshWarning, LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(
-        s: &str,
-    ) -> Result<(SceneGraph, Vec<LoadMeshWarning>), super::LoadObjError> {
+    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadMeshWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         let mut warnings = Vec::new();
         let graph = read_obj(&mut reader, &mut warnings)?;
         Ok((graph, warnings))
     }
 
-    fn single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+    fn single_mesh(graph: &Scene) -> &IndexedMesh {
         assert_eq!(graph.reachable_leaf_count(), 1);
         let id = graph
             .first_leaf_id()
@@ -741,7 +736,7 @@ mod read_obj_tests {
         graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
     }
 
-    fn collect_leaf_ids(graph: &SceneGraph) -> Vec<NodeId> {
+    fn collect_leaf_ids(graph: &Scene) -> Vec<NodeId> {
         let mut ids = Vec::new();
         let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
         while let Some(id) = stack.pop() {

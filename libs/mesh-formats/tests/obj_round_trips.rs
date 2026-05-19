@@ -7,7 +7,7 @@ use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, NodeId, NodeKind, SceneGraph, Vertex,
+    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, NodeId, NodeKind, Scene, Vertex,
 };
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_formats::obj::{read_obj, write_obj};
@@ -30,8 +30,8 @@ fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
     )
 }
 
-fn make_graph(meshes: Vec<IndexedMesh>) -> SceneGraph {
-    let mut g = SceneGraph::new();
+fn make_graph(meshes: Vec<IndexedMesh>) -> Scene {
+    let mut g = Scene::new();
     for mesh in meshes {
         let leaf = g
             .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
@@ -41,7 +41,7 @@ fn make_graph(meshes: Vec<IndexedMesh>) -> SceneGraph {
     g
 }
 
-fn round_trip(graph: &SceneGraph) -> (SceneGraph, Vec<LoadMeshWarning>) {
+fn round_trip(graph: &Scene) -> (Scene, Vec<LoadMeshWarning>) {
     let mut buf: Vec<u8> = Vec::new();
     write_obj(graph, &mut buf).expect("write_obj failed");
 
@@ -51,7 +51,7 @@ fn round_trip(graph: &SceneGraph) -> (SceneGraph, Vec<LoadMeshWarning>) {
     (recovered, warnings)
 }
 
-fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+fn unwrap_single_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(graph.reachable_leaf_count(), 1);
     let id = graph
         .first_leaf_id()
@@ -59,7 +59,7 @@ fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
     graph.mesh_at_leaf(id).expect("leaf resolves to a mesh")
 }
 
-fn collect_leaf_ids(graph: &SceneGraph) -> Vec<NodeId> {
+fn collect_leaf_ids(graph: &Scene) -> Vec<NodeId> {
     let mut ids = Vec::new();
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
@@ -178,7 +178,7 @@ fn two_objects_round_trip() {
 
 #[test]
 fn empty_scene_round_trip() {
-    let graph = SceneGraph::new();
+    let graph = Scene::new();
     let (recovered, warnings) = round_trip(&graph);
 
     assert_eq!(recovered.reachable_leaf_count(), 0);

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{FixFacesOptions, MeshFix};
-use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph::Scene;
 use sc_mesh_core::scene_graph_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
@@ -89,7 +89,7 @@ pub(crate) fn fix(
 /// traversal of `graph.roots()`. Resource-backed leaves are skipped;
 /// their meshes live in the resource arena and are fixed through
 /// `mesh_resources_iter_mut`.
-fn collect_inline_leaf_ids(graph: &SceneGraph) -> Vec<NodeId> {
+fn collect_inline_leaf_ids(graph: &Scene) -> Vec<NodeId> {
     let mut ids: Vec<NodeId> = Vec::new();
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
     while let Some(id) = stack.pop() {

@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
-use sc_mesh_core::SceneGraph;
+use sc_mesh_core::Scene;
 
 use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
@@ -16,7 +16,7 @@ use crate::obj::read_obj;
 use crate::stl::{read_stl, read_stla, read_stlb};
 
 pub struct LoadedMesh {
-    pub graph: SceneGraph,
+    pub graph: Scene,
     pub warnings: Vec<LoadMeshWarning>,
 }
 

@@ -18,7 +18,7 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use sc_mesh_core::scene_graph::{SceneGraph, SceneGraphError};
+use sc_mesh_core::scene_graph::{Scene, SceneError};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::LoadedMesh;
@@ -128,10 +128,7 @@ pub(crate) fn start_load_with_ticket(
 /// stay in formation). The loader produces single-root graphs today,
 /// so the loop iterates once in practice; the multi-root path keeps
 /// the semantics well-defined for future graph shapes.
-pub(crate) fn place_on_plate(
-    graph: &mut SceneGraph,
-    build_volume: BuildVolume,
-) -> anyhow::Result<()> {
+pub(crate) fn place_on_plate(graph: &mut Scene, build_volume: BuildVolume) -> anyhow::Result<()> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let target_xy = [0.5 * (env_min.x + env_max.x), 0.5 * (env_min.y + env_max.y)];
@@ -146,7 +143,7 @@ pub(crate) fn place_on_plate(
     for root_id in graph.roots().to_vec() {
         let current = graph
             .node(root_id)
-            .ok_or(SceneGraphError::DanglingNodeId { id: root_id })?
+            .ok_or(SceneError::DanglingNodeId { id: root_id })?
             .local_transform;
         graph.set_local_transform(root_id, outer.compose(&current))?;
     }
@@ -374,8 +371,8 @@ mod place_on_plate_tests {
     /// identity-Group root. Mirrors what the loader pipeline produces
     /// at scene-install time and what `place_on_plate` is documented
     /// to act on (it translates the root Group, never the leaves).
-    fn group_rooted_graph(leaves: Vec<(IndexedMesh, Transform3D)>) -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn group_rooted_graph(leaves: Vec<(IndexedMesh, Transform3D)>) -> Scene {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group as root");
         for (mesh, transform) in leaves {
@@ -396,7 +393,7 @@ mod place_on_plate_tests {
 
     #[test]
     fn empty_graph_is_a_no_op() {
-        let mut graph = SceneGraph::new();
+        let mut graph = Scene::new();
         place_on_plate(&mut graph, small_envelope()).unwrap();
         assert!(graph.aabb().unwrap().is_none());
     }

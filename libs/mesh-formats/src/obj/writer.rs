@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::{IndexedMesh, NodeId, NodeKind, SceneGraph, bake_leaf_to_world};
+use sc_mesh_core::{IndexedMesh, NodeId, NodeKind, Scene, bake_leaf_to_world};
 
 use crate::error::WriteObjError;
 
@@ -27,7 +27,7 @@ fn advance_vertex_offset(offset: u32, vertex_count: usize) -> Result<u32, WriteO
         .ok_or(WriteObjError::VertexOffsetOverflow { offset, added })
 }
 
-pub fn write_obj<W>(graph: &SceneGraph, writer: &mut W) -> Result<(), WriteObjError>
+pub fn write_obj<W>(graph: &Scene, writer: &mut W) -> Result<(), WriteObjError>
 where
     W: std::io::Write,
 {
@@ -73,7 +73,7 @@ where
 /// Groups, CSG and instance edges descend; `Instance` is currently
 /// skipped because production scenes do not construct them yet (the
 /// phase contract from the master plan).
-fn collect_reachable_leaves(graph: &SceneGraph) -> Vec<NodeId> {
+fn collect_reachable_leaves(graph: &Scene) -> Vec<NodeId> {
     let mut ids: Vec<NodeId> = Vec::new();
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
@@ -177,7 +177,7 @@ mod helper_tests {
 mod tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{
-        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, SceneGraph, SceneMetadata,
+        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, SceneMetadata,
         Vertex,
     };
 
@@ -201,15 +201,15 @@ mod tests {
         }
     }
 
-    fn single_leaf_graph(transform: Transform3D, payload: LeafPayload) -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn single_leaf_graph(transform: Transform3D, payload: LeafPayload) -> Scene {
+        let mut g = Scene::new();
         let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
         g.add_root(leaf).expect("add root");
         g
     }
 
-    fn multi_mesh_graph(meshes: Vec<IndexedMesh>) -> SceneGraph {
-        let mut g = SceneGraph::new();
+    fn multi_mesh_graph(meshes: Vec<IndexedMesh>) -> Scene {
+        let mut g = Scene::new();
         for mesh in meshes {
             let leaf = g
                 .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
@@ -219,7 +219,7 @@ mod tests {
         g
     }
 
-    fn write_to_string(graph: &SceneGraph) -> String {
+    fn write_to_string(graph: &Scene) -> String {
         let mut buf: Vec<u8> = Vec::new();
         write_obj(graph, &mut buf).expect("write_obj failed");
         String::from_utf8(buf).expect("output is not valid UTF-8")
@@ -227,21 +227,21 @@ mod tests {
 
     #[test]
     fn single_unnamed_mesh() {
-        let graph = SceneGraph::from(make_triangle_mesh(None));
+        let graph = Scene::from(make_triangle_mesh(None));
         let out = write_to_string(&graph);
         assert_eq!(out, "v 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
     }
 
     #[test]
     fn single_named_mesh() {
-        let graph = SceneGraph::from(make_triangle_mesh(Some("MyObj")));
+        let graph = Scene::from(make_triangle_mesh(Some("MyObj")));
         let out = write_to_string(&graph);
         assert_eq!(out, "o MyObj\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
     }
 
     #[test]
     fn scene_comment_is_written() {
-        let mut graph = SceneGraph::from(make_triangle_mesh(None));
+        let mut graph = Scene::from(make_triangle_mesh(None));
         graph.set_meta(Some(SceneMetadata {
             name: None,
             comment: Some("exported by test".to_string()),
@@ -256,7 +256,7 @@ mod tests {
         // The writer must re-prefix each segment so the output stays
         // a valid OBJ file; bare continuation lines fail the next
         // load with `unrecognized directive`.
-        let mut graph = SceneGraph::from(make_triangle_mesh(None));
+        let mut graph = Scene::from(make_triangle_mesh(None));
         graph.set_meta(Some(SceneMetadata {
             name: None,
             comment: Some("first line\nsecond line\nthird line".to_string()),
@@ -311,14 +311,14 @@ mod tests {
             vertices: vec![],
             faces: vec![],
         };
-        let graph = SceneGraph::from(empty);
+        let graph = Scene::from(empty);
         let out = write_to_string(&graph);
         assert_eq!(out, "");
     }
 
     #[test]
     fn resource_reference_is_written() {
-        let mut graph = SceneGraph::new();
+        let mut graph = Scene::new();
         let rid = graph.add_mesh_resource(make_triangle_mesh(Some("Shared")));
         let leaf = graph
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
@@ -383,7 +383,7 @@ mod tests {
                 [u32::MAX, 0, 0],
             )],
         };
-        let graph = SceneGraph::from(mesh);
+        let graph = Scene::from(mesh);
         let mut buf: Vec<u8> = Vec::new();
         assert!(write_obj(&graph, &mut buf).is_err());
     }

@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, SceneGraph, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 
 /// STL readers wrap the on-disk mesh in a single-leaf graph
-/// (`SceneGraph::from<IndexedMesh>`). Pull that mesh back out by
+/// (`Scene::from<IndexedMesh>`). Pull that mesh back out by
 /// reading the first reachable leaf; round-trip tests then compare
 /// the recovered `IndexedMesh` to the input directly.
-fn single_leaf_mesh(graph: &SceneGraph) -> &IndexedMesh {
+fn single_leaf_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(graph.reachable_leaf_count(), 1);
     let id = graph
         .first_leaf_id()

@@ -14,7 +14,7 @@
 //!   per-format [`LoadStlError`] / [`LoadObjError`].
 //! - [`WriteSceneError`] aggregates every failure mode of
 //!   `write_scene`: I/O, filesystem atomic-write steps, empty-scene,
-//!   the graph's [`SceneGraphError`], and per-format
+//!   the graph's [`SceneError`], and per-format
 //!   [`WriteStlError`] / [`WriteObjError`].
 //! - [`InferFileTypeError`] is also exposed standalone for callers
 //!   that drive `infer_mesh_file_format_from_extension` directly.
@@ -24,7 +24,7 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 use std::str::Utf8Error;
 
-use sc_mesh_core::SceneGraphError;
+use sc_mesh_core::SceneError;
 
 use crate::filetypes::MeshFileType;
 
@@ -111,7 +111,7 @@ pub enum WriteSceneError {
         to: PathBuf,
         source: std::io::Error,
     },
-    Graph(SceneGraphError),
+    Graph(SceneError),
     Stl(WriteStlError),
     Obj(WriteObjError),
 }
@@ -159,8 +159,8 @@ impl From<std::io::Error> for WriteSceneError {
     }
 }
 
-impl From<SceneGraphError> for WriteSceneError {
-    fn from(e: SceneGraphError) -> Self {
+impl From<SceneError> for WriteSceneError {
+    fn from(e: SceneError) -> Self {
         Self::Graph(e)
     }
 }
@@ -485,7 +485,7 @@ impl From<std::io::Error> for WriteStlError {
 #[derive(Debug)]
 pub enum WriteObjError {
     Io(std::io::Error),
-    Graph(SceneGraphError),
+    Graph(SceneError),
     FaceIndexOverflow { local: u32, offset: u32 },
     VertexCountExceedsU32 { vertex_count: usize },
     VertexOffsetOverflow { offset: u32, added: u32 },
@@ -528,8 +528,8 @@ impl From<std::io::Error> for WriteObjError {
     }
 }
 
-impl From<SceneGraphError> for WriteObjError {
-    fn from(e: SceneGraphError) -> Self {
+impl From<SceneError> for WriteObjError {
+    fn from(e: SceneError) -> Self {
         Self::Graph(e)
     }
 }

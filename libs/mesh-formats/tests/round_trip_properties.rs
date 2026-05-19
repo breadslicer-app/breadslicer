@@ -23,7 +23,7 @@
 use std::io::Cursor;
 
 use proptest::prelude::*;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, SceneGraph, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 
 const NORMAL: Normal = Normal::new([1.0, 0.0, 0.0]);
@@ -89,7 +89,7 @@ fn triangle_multiset(mesh: &IndexedMesh) -> Vec<[[u32; 3]; 3]> {
     out
 }
 
-fn unwrap_single_mesh(graph: &SceneGraph) -> &IndexedMesh {
+fn unwrap_single_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(
         graph.reachable_leaf_count(),
         1,

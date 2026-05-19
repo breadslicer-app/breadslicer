@@ -8,7 +8,7 @@
 //! and pushing the resulting list to the Slint window.
 
 use sc_mesh_core::NodeId;
-use sc_mesh_core::scene_graph::SceneGraph;
+use sc_mesh_core::scene_graph::Scene;
 use sc_mesh_core::scene_graph_node::{LeafPayload, NodeKind};
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
@@ -28,7 +28,7 @@ use crate::i18n::ctr;
 ///
 /// The traversal order matches `SceneSpatial::leaf_id_at_index`: row
 /// `i` in the returned list maps to the leaf at pre-order index `i`.
-pub(super) fn build_object_list_names(graph: &SceneGraph) -> Vec<String> {
+pub(super) fn build_object_list_names(graph: &Scene) -> Vec<String> {
     let raw: Vec<String> = pre_order_leaves(graph)
         .into_iter()
         .enumerate()
@@ -80,7 +80,7 @@ pub(super) fn build_object_list_names(graph: &SceneGraph) -> Vec<String> {
 /// `SceneSpatial::leaf_id_at_index`. Groups and CSG nodes recurse;
 /// `Instance` nodes are skipped (the current phase does not produce
 /// them, and expansion semantics get their own resolver later).
-fn pre_order_leaves(graph: &SceneGraph) -> Vec<NodeId> {
+fn pre_order_leaves(graph: &Scene) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
@@ -120,8 +120,8 @@ mod build_object_list_names_tests {
     use sc_mesh_core::{IndexedMesh, MeshMetadata, SceneMetadata};
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
-    fn graph_with_group_root() -> (SceneGraph, NodeId) {
-        let mut g = SceneGraph::new();
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         (g, root)
@@ -156,7 +156,7 @@ mod build_object_list_names_tests {
     /// Attach an inline-mesh leaf under `parent` with the given node
     /// meta and mesh meta (either may be `None`).
     fn add_leaf_under(
-        g: &mut SceneGraph,
+        g: &mut Scene,
         parent: NodeId,
         node_meta: Option<SceneMetadata>,
         mesh: IndexedMesh,
@@ -168,15 +168,15 @@ mod build_object_list_names_tests {
         leaf
     }
 
-    fn add_named(g: &mut SceneGraph, parent: NodeId, name: &str) -> NodeId {
+    fn add_named(g: &mut Scene, parent: NodeId, name: &str) -> NodeId {
         add_leaf_under(g, parent, Some(scene_meta(name)), empty_mesh())
     }
 
-    fn add_anonymous(g: &mut SceneGraph, parent: NodeId) -> NodeId {
+    fn add_anonymous(g: &mut Scene, parent: NodeId) -> NodeId {
         add_leaf_under(g, parent, None, empty_mesh())
     }
 
-    fn add_mesh_named(g: &mut SceneGraph, parent: NodeId, name: &str) -> NodeId {
+    fn add_mesh_named(g: &mut Scene, parent: NodeId, name: &str) -> NodeId {
         add_leaf_under(g, parent, None, mesh_with_name(name))
     }
 
@@ -243,7 +243,7 @@ mod build_object_list_names_tests {
     fn empty_scene_yields_empty_name_list() {
         // Empty graph (no Group root, no leaves) matches the
         // "no scene loaded" case.
-        let g = SceneGraph::new();
+        let g = Scene::new();
         let names = build_object_list_names(&g);
         assert!(names.is_empty());
     }

@@ -221,7 +221,7 @@ impl VertexIndex {
 
     /// Adds an integer offset to the index. Used when re-basing a
     /// face's vertex indices into a merged vertex array (see
-    /// `SceneGraph::merge_meshes`).
+    /// `Scene::merge_meshes`).
     #[inline]
     pub fn offset(self, by: u32) -> Self {
         Self::from(u32::from(self) + by)

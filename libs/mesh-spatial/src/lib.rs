@@ -6,7 +6,7 @@
 //! Spatial-query acceleration over [`sc_mesh_core`] types.
 //!
 //! This crate caches the results of geometric queries over
-//! [`IndexedMesh`] and [`SceneGraph`]: object-space AABBs and
+//! [`IndexedMesh`] and [`Scene`]: object-space AABBs and
 //! [`TriangleClusters`] today; future spatial structures (BVH,
 //! half-edge, slab buckets, distance fields) live here too.
 //!
@@ -28,7 +28,7 @@ use sc_mesh_core::{Aabb, NodeId, NodeKind};
 /// `None` for a scene with no geometry.
 ///
 /// This is the cached counterpart to the uncached
-/// [`sc_mesh_core::SceneGraph`] AABB walk, which recomputes from
+/// [`sc_mesh_core::Scene`] AABB walk, which recomputes from
 /// vertex data each call. Callers that query repeatedly should
 /// construct a [`SceneSpatial`] and use this function; one-shot
 /// callers may use the uncached form directly.
