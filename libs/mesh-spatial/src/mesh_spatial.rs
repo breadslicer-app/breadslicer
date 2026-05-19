@@ -101,9 +101,9 @@ impl MeshSpatial {
     }
 
     /// Eagerly populate every cache in this slot. Used by
-    /// [`SceneSpatial::primed`](crate::SceneSpatial::primed) to do
-    /// the work off the UI thread before the mesh ever reaches a
-    /// query site.
+    /// [`SceneSpatial::primed_graph`](crate::SceneSpatial::primed_graph)
+    /// to do the work off the UI thread before the mesh ever reaches
+    /// a query site.
     ///
     /// `linear_aabb` is intentionally not primed: its key depends on
     /// the object's current transform, which is not known until a

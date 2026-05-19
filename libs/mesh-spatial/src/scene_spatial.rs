@@ -15,8 +15,7 @@
 
 use sc_mesh_core::{
     Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneGraph, Vertex,
-    scene::{Scene, SceneError, Transform3D},
-    scene_edit::SceneEdit,
+    scene::Transform3D, scene_edit::SceneEdit,
 };
 
 use crate::clusters::TriangleClusters;
@@ -65,25 +64,6 @@ impl SceneSpatial {
         let s = Self::from_graph(graph);
         s.prime_reachable_caches();
         s
-    }
-
-    /// Build a [`SceneSpatial`] from a flat [`Scene`] for tests and
-    /// other ergonomic call sites that already hold a `Scene`.
-    /// Internally routes through [`SceneGraph::try_from`] then
-    /// [`Self::from_graph`].
-    ///
-    /// Returns `Err(SceneError)` when the input `Scene` is
-    /// structurally invalid (notably a `Resource(idx)` reference
-    /// past the resource vector).
-    pub fn new(scene: Scene) -> Result<Self, SceneError> {
-        let graph = SceneGraph::try_from(scene)?;
-        Ok(Self::from_graph(graph))
-    }
-
-    /// Eager-prime variant of [`Self::new`].
-    pub fn primed(scene: Scene) -> Result<Self, SceneError> {
-        let graph = SceneGraph::try_from(scene)?;
-        Ok(Self::primed_graph(graph))
     }
 
     /// Borrow the underlying graph for read-only access.
