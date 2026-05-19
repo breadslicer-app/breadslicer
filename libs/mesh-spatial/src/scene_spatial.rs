@@ -78,6 +78,21 @@ impl SceneSpatial {
         self.graph
     }
 
+    /// Allocate a fresh [`NodeId`] without installing any node, and
+    /// extend the per-leaf cache vector to keep
+    /// `self.leaves.len() == self.graph.nodes_len()`. The new cache
+    /// slot stays `None`: only inline-mesh leaves carry an entry
+    /// here, and a node installed at an unbound id through a typed
+    /// scene edit is always a mesh-resource leaf.
+    ///
+    /// See [`Scene::allocate_unbound_node_id`] for the underlying
+    /// arena contract and its one-slot leak warning.
+    pub fn allocate_unbound_node_id(&mut self) -> NodeId {
+        let id = self.graph.allocate_unbound_node_id();
+        self.leaves.push(None);
+        id
+    }
+
     /// Look up a leaf by stable [`NodeId`]. Returns `None` when:
     ///
     /// * the id is dangling or names a tombstone,

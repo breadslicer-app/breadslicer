@@ -466,6 +466,88 @@ mod invalidation_discipline {
         spatial.invalidate_leaf(leaf_id);
         assert!(spatial.leaf(leaf_id).unwrap().local_aabb().is_some());
     }
+
+    #[test]
+    fn allocate_unbound_node_id_keeps_leaves_cache_in_sync() {
+        let (mut graph, _root) = graph_with_group_root();
+        let _rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let before = spatial.graph().nodes_len();
+        let id = spatial.allocate_unbound_node_id();
+        assert_eq!(spatial.graph().nodes_len(), before + 1);
+        // The new id is not a live node, not in roots, and the
+        // spatial query path returns None for it.
+        assert!(spatial.graph().node(id).is_none());
+        assert!(!spatial.graph().roots().contains(&id));
+        assert!(spatial.leaf(id).is_none());
+    }
+
+    #[test]
+    fn add_root_leaf_edit_makes_the_new_leaf_queryable() {
+        // Walks the full paste flow at the spatial layer: allocate
+        // an unbound id, build an AddRootLeaf edit, apply it, then
+        // query the new leaf through the cache-aware path.
+        let (mut graph, _root) = graph_with_group_root();
+        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let id = spatial.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([7.0, 8.0, 9.0]));
+        spatial.apply_edit(SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        });
+        assert!(spatial.graph().roots().contains(&id));
+        let q = spatial.leaf(id).expect("new leaf is queryable");
+        assert!(q.local_aabb().is_some());
+    }
+
+    #[test]
+    fn remove_root_leaf_edit_undoes_a_prior_add() {
+        let (mut graph, _root) = graph_with_group_root();
+        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let id = spatial.allocate_unbound_node_id();
+        let xform = Transform3D::Identity;
+        spatial.apply_edit(SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        });
+        assert!(spatial.leaf(id).is_some());
+        spatial.apply_edit(SceneEdit::RemoveRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        });
+        assert!(spatial.leaf(id).is_none());
+        assert!(!spatial.graph().roots().contains(&id));
+    }
+
+    #[test]
+    fn add_remove_add_round_trips_through_the_spatial() {
+        let (mut graph, _root) = graph_with_group_root();
+        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let id = spatial.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([3.0, 4.0, 5.0]));
+        let add = SceneEdit::AddRootLeaf {
+            node_id: id,
+            mesh: rid,
+            local_transform: xform,
+        };
+        let remove = add.inverse();
+        spatial.apply_edit(add);
+        let aabb_first = spatial.leaf(id).unwrap().local_aabb().unwrap();
+        spatial.apply_edit(remove);
+        assert!(spatial.leaf(id).is_none());
+        spatial.apply_edit(add);
+        let aabb_redo = spatial.leaf(id).unwrap().local_aabb().unwrap();
+        assert_eq!(
+            aabb_first, aabb_redo,
+            "the mesh-resource cache survives the round-trip so the local AABB matches"
+        );
+    }
 }
 
 mod transformed_aabb {
