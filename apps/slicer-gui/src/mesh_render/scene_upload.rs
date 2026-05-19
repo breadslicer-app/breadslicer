@@ -45,8 +45,8 @@ pub(super) const fn align_up(size: u64, alignment: u64) -> u64 {
     (size + alignment - 1) & !(alignment - 1)
 }
 
-/// GPU-resident draw data for a single `SceneObject`: its local-space
-/// vertex+index buffers (the object's transform is *not* baked in; it
+/// GPU-resident draw data for a single graph leaf: its local-space
+/// vertex+index buffers (the leaf's transform is *not* baked in; it
 /// arrives at draw time through the model storage buffer). The
 /// `node_id` lets the draw loop key per-leaf state (selection
 /// stencil) against the graph's stable id.
@@ -443,9 +443,43 @@ fn build_gpu_scene_data(graph: &SceneGraph) -> Result<SceneData> {
 mod build_gpu_scene_data_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
+    use sc_mesh_core::MeshResourceId;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
     use sc_mesh_core::transform::AffineTransform3D;
+
+    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    fn graph_with_group_root() -> (SceneGraph, NodeId) {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        (g, root)
+    }
+
+    fn add_inline_leaf(
+        g: &mut SceneGraph,
+        parent: NodeId,
+        mesh: IndexedMesh,
+        transform: Transform3D,
+    ) -> NodeId {
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .expect("add inline leaf");
+        g.add_child(parent, leaf).expect("attach inline leaf");
+        leaf
+    }
+
+    fn add_resource_leaf(
+        g: &mut SceneGraph,
+        parent: NodeId,
+        rid: MeshResourceId,
+        transform: Transform3D,
+    ) -> NodeId {
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::MeshResource(rid))
+            .expect("add resource leaf");
+        g.add_child(parent, leaf).expect("attach resource leaf");
+        leaf
+    }
 
     fn triangle_mesh(vertices: Vec<[f32; 3]>, face_vertices: [u32; 3]) -> IndexedMesh {
         IndexedMesh {
@@ -458,49 +492,12 @@ mod build_gpu_scene_data_tests {
         }
     }
 
-    fn inline_object(mesh: IndexedMesh) -> SceneObject {
-        SceneObject {
-            meta: None,
-            transform: Transform3D::Identity,
-            content: SceneObjectContent::Mesh(mesh),
-        }
-    }
-
-    fn affine_object(mesh: IndexedMesh, t: AffineTransform3D) -> SceneObject {
-        SceneObject {
-            meta: None,
-            transform: Transform3D::Affine(t),
-            content: SceneObjectContent::Mesh(mesh),
-        }
-    }
-
-    fn graph_from(scene: Scene) -> SceneGraph {
-        SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
-    }
-
     #[test]
     fn empty_graph_returns_error() {
-        let graph = graph_from(Scene::default());
+        // Loader-faithful empty graph: a Group root with no children
+        // mirrors what `try_from(Scene::default())` used to produce.
+        let (graph, _root) = graph_with_group_root();
         assert!(build_gpu_scene_data(&graph).is_err());
-    }
-
-    #[test]
-    fn dangling_resource_index_is_rejected_at_construction() {
-        // `SceneGraph::try_from` validates resource references, so a
-        // scene with a dangling `Resource(7)` cannot enter the
-        // renderer's input. The old silent-fallback path inside
-        // `build_gpu_scene_data` is gone; the rejection moves up to
-        // graph construction.
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(7),
-            }],
-        };
-        assert!(SceneGraph::try_from(scene).is_err());
     }
 
     #[test]
@@ -509,17 +506,10 @@ mod build_gpu_scene_data_tests {
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
         );
-        let scene = Scene {
-            meta: None,
-            resources: vec![mesh.clone()],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(0),
-            }],
-        };
-        let graph = graph_from(scene);
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        let rid = g.add_mesh_resource(mesh);
+        add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
+        let data = build_gpu_scene_data(&g).unwrap();
         assert_eq!(data.objects.len(), 1);
         assert_eq!(data.objects[0].vertices.len(), 3);
         assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
@@ -531,12 +521,9 @@ mod build_gpu_scene_data_tests {
             vec![[1.0, -2.0, 3.0], [4.0, 5.0, -6.0], [0.0, 0.0, 0.0]],
             [0, 1, 2],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(mesh)],
-        });
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
+        let data = build_gpu_scene_data(&g).unwrap();
         assert_eq!(data.objects.len(), 1);
         assert_eq!(data.objects[0].vertices[0].position, [1.0, -2.0, 3.0]);
         assert_eq!(data.objects[0].vertices[1].position, [4.0, 5.0, -6.0]);
@@ -553,15 +540,14 @@ mod build_gpu_scene_data_tests {
             vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             [0, 1, 2],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![affine_object(
-                mesh,
-                AffineTransform3D::from_translation([100.0, -50.0, 25.0]),
-            )],
-        });
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(
+            &mut g,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation([100.0, -50.0, 25.0])),
+        );
+        let data = build_gpu_scene_data(&g).unwrap();
         assert_eq!(data.objects[0].vertices[0].position, [1.0, 0.0, 0.0]);
         assert_eq!(data.objects[0].vertices[1].position, [0.0, 1.0, 0.0]);
         assert_eq!(data.objects[0].vertices[2].position, [0.0, 0.0, 1.0]);
@@ -580,12 +566,10 @@ mod build_gpu_scene_data_tests {
             vec![[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
             [0, 1, 2],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(a), inline_object(b)],
-        });
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, a, Transform3D::Identity);
+        add_inline_leaf(&mut g, root, b, Transform3D::Identity);
+        let data = build_gpu_scene_data(&g).unwrap();
         assert_eq!(data.objects.len(), 2);
         assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
         assert_eq!(data.objects[1].indices, vec![0, 1, 2]);
@@ -597,15 +581,14 @@ mod build_gpu_scene_data_tests {
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             [0, 1, 2],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![affine_object(
-                mesh,
-                AffineTransform3D::from_translation([10.0, 20.0, 30.0]),
-            )],
-        });
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(
+            &mut g,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 30.0])),
+        );
+        let data = build_gpu_scene_data(&g).unwrap();
         // World AABB = local AABB ([0,0,0]..[1,1,0]) translated by (10,20,30).
         assert_approx_eq!(f32, data.aabb_min.x, 10.0, epsilon = 1e-5);
         assert_approx_eq!(f32, data.aabb_min.y, 20.0, epsilon = 1e-5);
@@ -625,12 +608,10 @@ mod build_gpu_scene_data_tests {
             vec![[-7.0, 8.0, 0.5], [0.0, 0.0, 9.0], [2.0, 2.0, 2.0]],
             [0, 1, 2],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(a), inline_object(b)],
-        });
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, a, Transform3D::Identity);
+        add_inline_leaf(&mut g, root, b, Transform3D::Identity);
+        let data = build_gpu_scene_data(&g).unwrap();
         assert_eq!(data.aabb_min, Vec3::new(-7.0, -2.0, -6.0));
         assert_eq!(data.aabb_max, Vec3::new(4.0, 8.0, 9.0));
     }
@@ -650,12 +631,10 @@ mod build_gpu_scene_data_tests {
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             [0, 1, 2],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![inline_object(empty), inline_object(nonempty)],
-        });
-        let data = build_gpu_scene_data(&graph).unwrap();
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, empty, Transform3D::Identity);
+        add_inline_leaf(&mut g, root, nonempty, Transform3D::Identity);
+        let data = build_gpu_scene_data(&g).unwrap();
         assert_eq!(data.objects.len(), 2);
         assert!(data.objects[0].indices.is_empty());
         assert_eq!(data.objects[1].indices.len(), 3);
@@ -677,16 +656,13 @@ mod build_gpu_scene_data_tests {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
             [0.0, 0.0, 0.0],
         );
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![affine_object(mesh, singular)],
-        });
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh, Transform3D::Affine(singular));
         // Singular transforms aren't rejected here; the GPU path is
         // fine with a singular model matrix (it just collapses the
         // mesh to a plane). Mirror this in the assertion so the test
         // fails loudly if the behaviour changes.
-        assert!(build_gpu_scene_data(&graph).is_ok());
+        assert!(build_gpu_scene_data(&g).is_ok());
     }
 }
 
@@ -749,8 +725,25 @@ mod transform_to_mat4_tests {
         BuildVolume::new(1000.0, 1000.0, 1000.0)
     }
 
-    fn graph_from(scene: sc_mesh_core::scene::Scene) -> SceneGraph {
-        SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
+    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    fn graph_with_group_root() -> (SceneGraph, NodeId) {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        (g, root)
+    }
+
+    fn add_inline_leaf(
+        g: &mut SceneGraph,
+        parent: NodeId,
+        mesh: IndexedMesh,
+        transform: Transform3D,
+    ) -> NodeId {
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .expect("add inline leaf");
+        g.add_child(parent, leaf).expect("attach inline leaf");
+        leaf
     }
 
     /// Resolve the `n`-th leaf's [`NodeId`] in pre-order traversal,
@@ -770,7 +763,6 @@ mod transform_to_mat4_tests {
     #[test]
     fn build_model_entries_one_per_leaf() {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
         let mesh = IndexedMesh {
             meta: None,
@@ -780,25 +772,15 @@ mod transform_to_mat4_tests {
                 [0, 0, 0],
             )],
         };
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(mesh.clone()),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        7.0, 0.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(mesh),
-                },
-            ],
-        });
-        let entries = build_model_entries(&graph, None, permissive_volume());
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh.clone(), Transform3D::Identity);
+        add_inline_leaf(
+            &mut g,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation([7.0, 0.0, 0.0])),
+        );
+        let entries = build_model_entries(&g, None, permissive_volume());
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -811,7 +793,6 @@ mod transform_to_mat4_tests {
 
     fn two_object_graph() -> SceneGraph {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
         let mesh = IndexedMesh {
             meta: None,
@@ -821,22 +802,10 @@ mod transform_to_mat4_tests {
                 [0, 0, 0],
             )],
         };
-        graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(mesh.clone()),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(mesh),
-                },
-            ],
-        })
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh.clone(), Transform3D::Identity);
+        add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
+        g
     }
 
     #[test]
@@ -857,9 +826,10 @@ mod transform_to_mat4_tests {
 
     #[test]
     fn non_leaf_selection_falls_back_to_no_highlight() {
-        // The implicit Group root added by `SceneGraph::try_from` is
-        // not a leaf, so the iterator never visits it; flags.x stays
-        // 0 on every entry.
+        // The loader-faithful Group root that wraps the leaves is not
+        // a leaf itself, so the iterator never visits it; flags.x
+        // stays 0 on every entry when the selection points at the
+        // root.
         let graph = two_object_graph();
         let entries = build_model_entries(&graph, Some(graph.roots()[0]), permissive_volume());
         assert_eq!(entries[0].flags[0], 0);
@@ -868,7 +838,6 @@ mod transform_to_mat4_tests {
 
     fn unit_triangle_graph_at(translation: [f64; 3]) -> SceneGraph {
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
 
         let mesh = IndexedMesh {
             meta: None,
@@ -882,15 +851,14 @@ mod transform_to_mat4_tests {
                 [0, 1, 2],
             )],
         };
-        graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(AffineTransform3D::from_translation(translation)),
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        })
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(
+            &mut g,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation(translation)),
+        );
+        g
     }
 
     /// 100 mm x 60 mm plate, 80 mm tall: envelope is X in [-50, 50],
@@ -946,24 +914,6 @@ mod transform_to_mat4_tests {
     }
 
     #[test]
-    fn dangling_resource_reference_is_rejected_at_construction() {
-        // The old per-frame `flags.y` silent-fallback path is gone:
-        // `SceneGraph::try_from` rejects dangling resources upfront,
-        // so the renderer never sees an unresolvable leaf.
-        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
-        let scene = Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Resource(7),
-            }],
-        };
-        assert!(SceneGraph::try_from(scene).is_err());
-    }
-
-    #[test]
     fn warning_mask_is_zero_when_every_leaf_fits() {
         let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
         assert_eq!(build_envelope_warning_mask(&graph, snug_volume()), 0);
@@ -1014,10 +964,8 @@ mod transform_to_mat4_tests {
     #[test]
     fn warning_mask_unions_bits_across_leaves() {
         // First leaf breaches +X, second breaches -Y. The mask
-        // collects both bits. Build a two-leaf graph by hand so we
-        // don't pay a second `try_from` round-trip.
+        // collects both bits.
         use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-        use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent};
         let mesh = IndexedMesh {
             meta: None,
             vertices: vec![
@@ -1030,27 +978,20 @@ mod transform_to_mat4_tests {
                 [0, 1, 2],
             )],
         };
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        60.0, 0.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(mesh.clone()),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        0.0, -40.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(mesh),
-                },
-            ],
-        });
-        let mask = build_envelope_warning_mask(&graph, snug_volume());
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(
+            &mut g,
+            root,
+            mesh.clone(),
+            Transform3D::Affine(AffineTransform3D::from_translation([60.0, 0.0, 0.0])),
+        );
+        add_inline_leaf(
+            &mut g,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation([0.0, -40.0, 0.0])),
+        );
+        let mask = build_envelope_warning_mask(&g, snug_volume());
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
     }

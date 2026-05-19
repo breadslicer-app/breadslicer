@@ -742,11 +742,31 @@ mod gpu_integration_tests {
     use crate::gizmo::axis::Axis;
     use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::{Scene, SceneObject, SceneObjectContent, Transform3D};
+    use sc_mesh_core::scene::Transform3D;
+    use sc_mesh_core::scene_graph_node::LeafPayload;
     use sc_mesh_core::transform::AffineTransform3D;
 
-    fn graph_from(scene: Scene) -> SceneGraph {
-        SceneGraph::try_from(scene).expect("test fixtures construct valid scenes")
+    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    fn graph_with_group_root() -> (SceneGraph, NodeId) {
+        let mut g = SceneGraph::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        (g, root)
+    }
+
+    /// Attaches an inline-mesh leaf under `parent` with the given
+    /// local transform and returns the leaf's [`NodeId`].
+    fn add_inline_leaf(
+        g: &mut SceneGraph,
+        parent: NodeId,
+        mesh: IndexedMesh,
+        transform: Transform3D,
+    ) -> NodeId {
+        let leaf = g
+            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .expect("add leaf");
+        g.add_child(parent, leaf).expect("attach leaf");
+        leaf
     }
 
     /// Build envelope used by the render tests below. Held as a
@@ -813,15 +833,9 @@ mod gpu_integration_tests {
                 [0, 1, 2],
             )],
         };
-        graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Affine(t),
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        })
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh, Transform3D::Affine(t));
+        g
     }
 
     /// Smoke test: `Renderer::new` succeeds against the default-limits
@@ -1193,31 +1207,20 @@ mod gpu_integration_tests {
                 [0, 1, 2],
             )],
         };
-        let graph = graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Identity,
-                    content: SceneObjectContent::Mesh(mesh.clone()),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        10.0, 0.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(mesh.clone()),
-                },
-                SceneObject {
-                    meta: None,
-                    transform: Transform3D::Affine(AffineTransform3D::from_translation([
-                        0.0, 10.0, 0.0,
-                    ])),
-                    content: SceneObjectContent::Mesh(mesh),
-                },
-            ],
-        });
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root, mesh.clone(), Transform3D::Identity);
+        add_inline_leaf(
+            &mut graph,
+            root,
+            mesh.clone(),
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+        );
+        add_inline_leaf(
+            &mut graph,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation([0.0, 10.0, 0.0])),
+        );
         let mut renderer = Renderer::new(device.clone(), queue);
         renderer.upload_scene(&graph).expect("upload");
         let bounds = renderer.scene_bounds().expect("bounds");
@@ -1304,15 +1307,9 @@ mod gpu_integration_tests {
                 [0, 1, 2],
             )],
         };
-        graph_from(Scene {
-            meta: None,
-            resources: vec![],
-            objects: vec![SceneObject {
-                meta: None,
-                transform: Transform3D::Identity,
-                content: SceneObjectContent::Mesh(mesh),
-            }],
-        })
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
+        g
     }
 
     /// Counts pixels whose RGB signature matches the wall warning
