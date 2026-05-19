@@ -4,7 +4,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-08 17:09+0000\n"
 "PO-Revision-Date: 2026-05-19 11:18+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"Last-Translator: Cheesus42 <cheesus42@noreply.codeberg.org>\n"
 "Language-Team: German <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/de/>\n"
 "Language: de\n"
@@ -57,7 +57,7 @@ msgstr ""
 #: ui/replace-scene-dialog.slint:67
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
-msgstr "Öffnet: {}"
+msgstr "Öffnen: {}"
 
 #: ui/replace-scene-dialog.slint:80
 msgctxt "ReplaceSceneDialog"
@@ -81,7 +81,7 @@ msgstr "Verwerfen & Öffnen"
 #: ui/replace-scene-dialog.slint:105
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
-msgstr "Exportieren und Öffnen…"
+msgstr "Exportieren & Öffnen…"
 
 #: ui/replace-scene-dialog.slint:112
 msgctxt "ReplaceSceneDialog"
