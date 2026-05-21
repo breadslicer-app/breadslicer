@@ -20,13 +20,16 @@
 //! decide what to invalidate.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
 #[cfg(test)]
 use sc_mesh_core::Scene;
-use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::SceneFragment;
+use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 
@@ -262,6 +265,124 @@ impl SceneDocument {
         Some(node_id)
     }
 
+    /// Paste a [`SceneFragment`] into the current scene as a new root.
+    /// `placement_translation` overrides the fragment root's
+    /// translation component (the caller's mouse-projection /
+    /// placement-search result); rotation + scale carried by the
+    /// fragment root are preserved.
+    ///
+    /// Mesh resources in the fragment are deduped against the target
+    /// scene by `Arc::as_ptr` identity: a resource that's already
+    /// registered (same-scene paste, repeated paste after one
+    /// AddMeshResource has landed) is reused without emitting a new
+    /// edit; otherwise an `AddMeshResource` joins the compound. The
+    /// whole paste reaches the undo stack as one entry so a single
+    /// `Ctrl+Z` reverses the entire gesture.
+    ///
+    /// Returns the new root leaf's `NodeId`, or `None` when no scene
+    /// is loaded or the fragment carries no mesh-resource leaf roots
+    /// (Phase 6 only handles that shape; future variants extend the
+    /// match in [`Self::paste_fragment_compound`]).
+    #[allow(dead_code)]
+    pub(crate) fn paste_fragment(
+        &self,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+    ) -> Option<NodeId> {
+        let (compound, new_root) = self.paste_fragment_compound(fragment, placement_translation)?;
+        if !self.apply_edit(compound.clone()) {
+            return None;
+        }
+        self.push_edit(compound);
+        self.set_selection(Selection::One(crate::selection::LeafId(new_root)));
+        Some(new_root)
+    }
+
+    fn paste_fragment_compound(
+        &self,
+        fragment: &SceneFragment,
+        placement_translation: [f64; 3],
+    ) -> Option<(SceneEdit, NodeId)> {
+        let mut slot = self.spatial.borrow_mut();
+        let spatial = slot.as_mut()?;
+        let frag_scene = fragment.scene();
+        let mut rid_map: HashMap<MeshResourceId, MeshResourceId> = HashMap::new();
+        let mut edits: Vec<SceneEdit> = Vec::new();
+
+        // Step 1: dedupe fragment's mesh resources against the target
+        // scene by Arc pointer identity. Snapshot the rid list first so
+        // the immutable mesh_resources_iter borrow on `frag_scene`
+        // doesn't fight subsequent mutable spatial calls.
+        let frag_rids: Vec<MeshResourceId> = frag_scene
+            .mesh_resources_iter()
+            .map(|(rid, _)| rid)
+            .collect();
+        for frag_rid in frag_rids {
+            let frag_arc = frag_scene
+                .mesh_resource_arc(frag_rid)
+                .expect("frag_scene yielded a live rid");
+            let target_rid = match spatial.graph().find_mesh_resource_by_arc(frag_arc) {
+                Some(existing) => existing,
+                None => {
+                    let new_rid = spatial.allocate_unbound_mesh_resource_id();
+                    edits.push(SceneEdit::AddMeshResource {
+                        rid: new_rid,
+                        mesh: Arc::clone(frag_arc),
+                    });
+                    new_rid
+                }
+            };
+            rid_map.insert(frag_rid, target_rid);
+        }
+
+        // Step 2: walk the fragment's roots, allocate target node ids,
+        // emit AddRootLeaf for each mesh-resource leaf root. Future
+        // CSG / multi-select phases extend this match with AddGroup /
+        // AddCsg / AddInstance branches.
+        let mut first_new_root: Option<NodeId> = None;
+        for &frag_root in frag_scene.roots() {
+            let frag_node = frag_scene
+                .node(frag_root)
+                .expect("frag_scene.roots() yielded a live id");
+            let frag_rid = match &frag_node.kind {
+                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => *rid,
+                NodeKind::Leaf(LeafPayload::Mesh(_))
+                | NodeKind::Group { .. }
+                | NodeKind::Csg { .. }
+                | NodeKind::Instance { .. } => {
+                    // Phase 6 only handles fragments built by
+                    // SceneFragment::from_leaf_snapshot, which
+                    // registers the mesh as a resource and adds it as
+                    // a single-leaf root. Skipping the unsupported
+                    // shape rather than erroring keeps the contract
+                    // additive: later phases handle these without
+                    // breaking existing callers.
+                    continue;
+                }
+            };
+            let target_rid = rid_map[&frag_rid];
+            let target_node_id = spatial.allocate_unbound_node_id();
+            if first_new_root.is_none() {
+                first_new_root = Some(target_node_id);
+            }
+            let final_xform =
+                substitute_translation(frag_node.local_transform, placement_translation);
+            edits.push(SceneEdit::AddRootLeaf {
+                node_id: target_node_id,
+                mesh: target_rid,
+                local_transform: final_xform,
+            });
+        }
+
+        let new_root = first_new_root?;
+        let compound = if edits.len() == 1 {
+            edits.into_iter().next().expect("len == 1")
+        } else {
+            SceneEdit::Compound(edits)
+        };
+        Some((compound, new_root))
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.borrow().is_empty()
     }
@@ -371,6 +492,22 @@ impl SceneDocument {
 
     pub fn is_loaded(&self) -> bool {
         self.spatial.borrow().is_some()
+    }
+}
+
+/// Return `xform` with its translation component replaced by
+/// `translation`, preserving the linear (rotation + scale) part.
+/// Used by the paste primitive: the clipboard's fragment carries
+/// the source leaf's rotation + scale on its root's local transform,
+/// and paste re-anchors that root at the placement-chosen translation.
+fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transform3D {
+    match xform {
+        Transform3D::Identity => {
+            Transform3D::Affine(AffineTransform3D::from_translation(translation))
+        }
+        Transform3D::Affine(a) => Transform3D::Affine(
+            AffineTransform3D::from_linear_and_translation(*a.linear(), translation),
+        ),
     }
 }
 
@@ -1070,5 +1207,181 @@ mod scene_document_tests {
                 SceneEvent::UndoStackChanged,
             ]
         );
+    }
+
+    fn triangle_arc() -> Arc<IndexedMesh> {
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+        Arc::new(IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        })
+    }
+
+    #[test]
+    fn paste_fragment_with_no_scene_loaded_returns_none() {
+        let doc = SceneDocument::new();
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        assert!(doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).is_none());
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn paste_fragment_into_fresh_scene_emits_compound_and_installs_root() {
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let mesh = triangle_arc();
+        let fragment = SceneFragment::from_leaf_snapshot(Arc::clone(&mesh), Transform3D::Identity);
+        let new_root = doc
+            .paste_fragment(&fragment, [5.0, 0.0, 0.0])
+            .expect("paste into loaded scene");
+        // Both AddMeshResource and AddRootLeaf landed: the scene has
+        // a new root leaf referencing a new resource that shares the
+        // same Arc bytes as the clipboard's mesh.
+        let observed = doc.with_scene(|s| {
+            let node = s.graph().node(new_root).expect("new root lives");
+            let NodeKind::Leaf(LeafPayload::MeshResource(rid)) = node.kind else {
+                panic!("expected mesh-resource leaf");
+            };
+            let arc_match = std::ptr::eq(
+                Arc::as_ptr(&mesh),
+                Arc::as_ptr(s.graph().mesh_resource_arc(rid).unwrap()),
+            );
+            (
+                arc_match,
+                s.graph().roots().contains(&new_root),
+                node.local_transform,
+            )
+        });
+        let (arc_match, is_root, xform) = observed.unwrap();
+        assert!(
+            arc_match,
+            "target scene must share the Arc with the clipboard"
+        );
+        assert!(is_root);
+        let Transform3D::Affine(a) = xform else {
+            panic!("paste must materialise an Affine transform");
+        };
+        assert_eq!(*a.translation(), [5.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn paste_fragment_into_scene_that_shares_the_arc_skips_add_mesh_resource() {
+        // Same-scene paste: register the mesh resource ahead of time
+        // (mimicking what a prior paste landed) and confirm a second
+        // paste with a fragment built from the same Arc reuses that
+        // rid via the find_mesh_resource_by_arc dedup.
+        let doc = SceneDocument::new();
+        let mesh = triangle_arc();
+        let mut graph = empty_graph();
+        let existing_rid = graph.add_mesh_resource_arc(Arc::clone(&mesh));
+        doc.install_graph(graph, fixture_path());
+        let resources_before = doc.with_scene(|s| s.graph().mesh_resources_len()).unwrap();
+        let fragment = SceneFragment::from_leaf_snapshot(Arc::clone(&mesh), Transform3D::Identity);
+        let new_root = doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        let (resources_after, leaf_rid) = doc
+            .with_scene(|s| {
+                let NodeKind::Leaf(LeafPayload::MeshResource(rid)) =
+                    s.graph().node(new_root).unwrap().kind
+                else {
+                    panic!("expected mesh-resource leaf");
+                };
+                (s.graph().mesh_resources_len(), rid)
+            })
+            .unwrap();
+        assert_eq!(
+            resources_after, resources_before,
+            "dedupe path must not grow the mesh-resource arena"
+        );
+        assert_eq!(
+            leaf_rid, existing_rid,
+            "the pasted leaf must reuse the existing rid"
+        );
+    }
+
+    #[test]
+    fn paste_fragment_records_a_single_undoable_compound() {
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        assert!(!doc.can_undo());
+        let new_root = doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        assert!(doc.can_undo());
+        // One undo reverses the entire paste: leaf and resource both
+        // tombstoned, no stranded entry left on the stack. Counts use
+        // the live-only iterators because the arena Vecs keep their
+        // length even when every entry is `None`.
+        doc.undo();
+        let observed = doc.with_scene(|s| {
+            (
+                s.graph().node(new_root).is_some(),
+                s.graph().mesh_resources_iter().count(),
+            )
+        });
+        assert_eq!(observed, Some((false, 0)));
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn paste_fragment_selects_the_new_root() {
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        let new_root = doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        assert_eq!(doc.selection_primary_node_id(), Some(new_root));
+    }
+
+    #[test]
+    fn paste_fragment_redo_replays_the_compound() {
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        let new_root = doc.paste_fragment(&fragment, [1.0, 2.0, 3.0]).unwrap();
+        doc.undo();
+        doc.redo();
+        let observed = doc.with_scene(|s| {
+            let node = s.graph().node(new_root).expect("redo restores the leaf");
+            (
+                matches!(node.kind, NodeKind::Leaf(LeafPayload::MeshResource(_))),
+                node.local_transform,
+            )
+        });
+        let (kind_ok, xform) = observed.unwrap();
+        assert!(kind_ok);
+        let Transform3D::Affine(a) = xform else {
+            panic!();
+        };
+        assert_eq!(*a.translation(), [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn substitute_translation_preserves_linear_part() {
+        let linear = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let original = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+            linear,
+            [9.0, 9.0, 9.0],
+        ));
+        let updated = substitute_translation(original, [1.0, 2.0, 3.0]);
+        let Transform3D::Affine(a) = updated else {
+            panic!();
+        };
+        assert_eq!(*a.linear(), linear);
+        assert_eq!(*a.translation(), [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn substitute_translation_promotes_identity_to_pure_translation() {
+        let updated = substitute_translation(Transform3D::Identity, [4.0, 5.0, 6.0]);
+        let Transform3D::Affine(a) = updated else {
+            panic!();
+        };
+        assert_eq!(*a.translation(), [4.0, 5.0, 6.0]);
     }
 }
