@@ -25,7 +25,7 @@
 //! coordinator that it should mark dirty manually since those state
 //! changes do not route through `apply_command`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use sc_mesh_core::NodeId;
@@ -73,6 +73,20 @@ pub(super) struct InputDispatch {
     /// Keyboard-driven gizmo state: focus, held-arrow bitset, burst
     /// tracker.
     kbd_drive: KeyboardDriveState,
+    /// Last cursor position reported by `on_pointer_move`. `None`
+    /// before the very first move event reaches this dispatcher.
+    /// Survives across `pointer-leave` so a Ctrl+V right after the
+    /// cursor briefly exited the viewport still has a position to
+    /// fall back on; `last_hover_cursor` gates the read on the
+    /// `hovering` flag.
+    last_cursor: Cell<Option<ScreenPoint>>,
+    /// `true` while the cursor sits inside the viewport. Flipped by
+    /// `on_pointer_move` (true) and `on_pointer_leave` (false). The
+    /// paste path reads this through `last_hover_cursor` so a copy /
+    /// paste with the cursor outside the viewport falls back to the
+    /// viewport-centre placement rather than landing where the
+    /// cursor was when it left.
+    hovering: Cell<bool>,
 }
 
 impl InputDispatch {
@@ -81,6 +95,8 @@ impl InputDispatch {
             input_state: InputState::new(),
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
+            last_cursor: Cell::new(None),
+            hovering: Cell::new(false),
         }
     }
 
@@ -105,6 +121,30 @@ impl InputDispatch {
         self.gizmo_fsm.clear_hover();
         self.input_state.set_idle();
         self.kbd_drive.reset();
+        self.last_cursor.set(None);
+        self.hovering.set(false);
+    }
+
+    /// Records that the cursor has left the viewport. The paste path
+    /// reads `hovering` through `last_hover_cursor` to decide whether
+    /// to anchor on the cached cursor or fall back to the viewport
+    /// centre.
+    #[allow(dead_code)]
+    pub(super) fn on_pointer_leave(&self) {
+        self.hovering.set(false);
+    }
+
+    /// Last cursor position, gated on the cursor still hovering the
+    /// viewport. Returns `None` when the cursor has left the viewport
+    /// since the last move event or no move has ever fired, so paste
+    /// fallbacks (e.g. viewport-centre placement) can branch on it.
+    #[allow(dead_code)]
+    pub(super) fn last_hover_cursor(&self) -> Option<ScreenPoint> {
+        if self.hovering.get() {
+            self.last_cursor.get()
+        } else {
+            None
+        }
     }
 
     /// Records the press and, if the cursor hits a gizmo handle,
@@ -148,6 +188,8 @@ impl InputDispatch {
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
     ) -> bool {
+        self.last_cursor.set(Some(cursor));
+        self.hovering.set(true);
         let move_ctx = GizmoMoveCtx {
             document,
             camera,
@@ -343,5 +385,63 @@ mod input_dispatch_tests {
         let id = InputDispatch::new();
         let doc = SceneDocument::new();
         assert!(!id.on_gizmo_arrow_pressed(&doc, 0));
+    }
+
+    #[test]
+    fn last_hover_cursor_is_none_before_any_move() {
+        let id = InputDispatch::new();
+        assert!(id.last_hover_cursor().is_none());
+    }
+
+    #[test]
+    fn pointer_move_records_cursor_and_marks_hovering() {
+        let id = InputDispatch::new();
+        let doc = SceneDocument::new();
+        let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
+        let cursor = ScreenPoint { x: 12.0, y: 34.0 };
+        let _ = id.on_pointer_move(
+            &doc,
+            &camera,
+            None,
+            crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME,
+            cursor,
+            PointerModifiers::default(),
+        );
+        assert_eq!(id.last_hover_cursor(), Some(cursor));
+    }
+
+    #[test]
+    fn pointer_leave_hides_cached_cursor_from_paste_path() {
+        let id = InputDispatch::new();
+        let doc = SceneDocument::new();
+        let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
+        let cursor = ScreenPoint { x: 7.0, y: 9.0 };
+        let _ = id.on_pointer_move(
+            &doc,
+            &camera,
+            None,
+            crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME,
+            cursor,
+            PointerModifiers::default(),
+        );
+        id.on_pointer_leave();
+        assert!(id.last_hover_cursor().is_none());
+    }
+
+    #[test]
+    fn reset_drops_cached_hover_cursor() {
+        let id = InputDispatch::new();
+        let doc = SceneDocument::new();
+        let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
+        let _ = id.on_pointer_move(
+            &doc,
+            &camera,
+            None,
+            crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME,
+            ScreenPoint { x: 1.0, y: 2.0 },
+            PointerModifiers::default(),
+        );
+        id.reset();
+        assert!(id.last_hover_cursor().is_none());
     }
 }
