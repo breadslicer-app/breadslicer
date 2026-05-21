@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-05-08 17:09+0000\n"
+"POT-Creation-Date: 2026-05-21 18:10+0000\n"
 "PO-Revision-Date: 2026-05-19 11:18+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
@@ -113,42 +113,42 @@ msgctxt "PreferencesPage"
 msgid "3D View"
 msgstr "Vista 3D"
 
-#: ui/preferences/3dview.slint:21
+#: ui/preferences/3dview.slint:37
 msgctxt "PreferencesPage"
 msgid "Build volume (mm)"
 msgstr "Volumen de impresión (mm)"
 
-#: ui/preferences/3dview.slint:31
+#: ui/preferences/3dview.slint:47
 msgctxt "PreferencesPage"
 msgid "Width"
 msgstr "Anchura"
 
-#: ui/preferences/3dview.slint:39
+#: ui/preferences/3dview.slint:55
 msgctxt "PreferencesPage"
 msgid "Build volume width in millimetres"
 msgstr "Anchura del volumen de impresión en milímetros"
 
-#: ui/preferences/3dview.slint:49
+#: ui/preferences/3dview.slint:73
 msgctxt "PreferencesPage"
 msgid "Depth"
 msgstr "Profundidad"
 
-#: ui/preferences/3dview.slint:57
+#: ui/preferences/3dview.slint:81
 msgctxt "PreferencesPage"
 msgid "Build volume depth in millimetres"
 msgstr "Profundidad del volumen de impresión en milímetros"
 
-#: ui/preferences/3dview.slint:67
+#: ui/preferences/3dview.slint:96
 msgctxt "PreferencesPage"
 msgid "Height"
 msgstr "Altura"
 
-#: ui/preferences/3dview.slint:75
+#: ui/preferences/3dview.slint:104
 msgctxt "PreferencesPage"
 msgid "Build volume height in millimetres"
 msgstr "Altura del volumen de impresión en milímetros"
 
-#: ui/preferences/3dview.slint:84
+#: ui/preferences/3dview.slint:118
 msgctxt "PreferencesPage"
 msgid "Reset to default"
 msgstr "Restablecer los valores predeterminados"
@@ -235,132 +235,132 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:127
+#: ui/main-window.slint:154
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Archivo"
 
-#: ui/main-window.slint:130
+#: ui/main-window.slint:157
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr "Nueva ventana"
 
-#: ui/main-window.slint:140
+#: ui/main-window.slint:167
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr "Abrir…"
 
-#: ui/main-window.slint:149
+#: ui/main-window.slint:176
 msgctxt "MenuBar"
 msgid "Close"
 msgstr "Cerrar"
 
-#: ui/main-window.slint:160
+#: ui/main-window.slint:187
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Guardar"
 
-#: ui/main-window.slint:166
+#: ui/main-window.slint:193
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr "Guardar como…"
 
-#: ui/main-window.slint:174
+#: ui/main-window.slint:201
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr "Exportar como…"
 
-#: ui/main-window.slint:184
+#: ui/main-window.slint:211
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr "Editar"
 
-#: ui/main-window.slint:186
+#: ui/main-window.slint:213
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr "Deshacer"
 
-#: ui/main-window.slint:195
+#: ui/main-window.slint:222
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr "Rehacer"
 
-#: ui/main-window.slint:206
+#: ui/main-window.slint:233
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr "Ajustes"
 
-#: ui/main-window.slint:215
+#: ui/main-window.slint:242
 msgctxt "MenuBar"
 msgid "View"
 msgstr "Vista"
 
-#: ui/main-window.slint:219
+#: ui/main-window.slint:246
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr "Ocultar la lista de objetos"
 
-#: ui/main-window.slint:220
+#: ui/main-window.slint:247
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr "Mostrar lista de objetos"
 
-#: ui/main-window.slint:230
+#: ui/main-window.slint:257
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Ayuda"
 
-#: ui/main-window.slint:232
+#: ui/main-window.slint:259
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentación"
 
-#: ui/main-window.slint:237
+#: ui/main-window.slint:264
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Mostrar notas de lanzamiento"
 
-#: ui/main-window.slint:244
+#: ui/main-window.slint:271
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Informar de un problema"
 
-#: ui/main-window.slint:251
+#: ui/main-window.slint:278
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Comprobar actualizaciones…"
 
-#: ui/main-window.slint:258
+#: ui/main-window.slint:285
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Acerca de"
 
-#: ui/main-window.slint:265
+#: ui/main-window.slint:292
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Ver licencia"
 
-#: ui/main-window.slint:277
+#: ui/main-window.slint:304
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Abrir modelo 3D para visualizarlo aquí"
 
-#: ui/main-window.slint:364
+#: ui/main-window.slint:412
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr "Suelta para abrir"
 
-#: ui/mesh-viewer.slint:83
+#: ui/mesh-viewer.slint:129
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr "Visor de modelos 3D, vacío"
 
-#: ui/mesh-viewer.slint:84
+#: ui/mesh-viewer.slint:130
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr "Visor de modelos 3D"
 
-#: ui/mesh-viewer.slint:85
+#: ui/mesh-viewer.slint:131
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Shift with right-click drag, "
@@ -375,6 +375,16 @@ msgstr ""
 "encuadrar el modelo. Presione 1, 3 o 7 para vistas frontal, derecha o "
 "superior; mantenga presionada la tecla Control para vista trasera, izquierda "
 "o inferior."
+
+#: ui/mesh-viewer.slint:464
+msgctxt "MeshViewer"
+msgid "Copy"
+msgstr ""
+
+#: ui/mesh-viewer.slint:490
+msgctxt "MeshViewer"
+msgid "Paste"
+msgstr ""
 
 #: src/viewport/controller.rs:944
 msgctxt "ErrorDialog"

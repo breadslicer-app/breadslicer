@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-05-08 17:09+0000\n"
+"POT-Creation-Date: 2026-05-21 18:10+0000\n"
 "PO-Revision-Date: 2026-04-27 08:55+0000\n"
 "Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Romanian <https://translate.codeberg.org/projects/soulcrafted-"
@@ -115,32 +115,32 @@ msgctxt "PreferencesPage"
 msgid "3D View"
 msgstr "Vizualizare 3D"
 
-#: ui/preferences/3dview.slint:21
+#: ui/preferences/3dview.slint:37
 msgctxt "PreferencesPage"
 msgid "Build volume (mm)"
 msgstr ""
 
-#: ui/preferences/3dview.slint:31
+#: ui/preferences/3dview.slint:47
 msgctxt "PreferencesPage"
 msgid "Width"
 msgstr ""
 
-#: ui/preferences/3dview.slint:39
+#: ui/preferences/3dview.slint:55
 msgctxt "PreferencesPage"
 msgid "Build volume width in millimetres"
 msgstr ""
 
-#: ui/preferences/3dview.slint:49
+#: ui/preferences/3dview.slint:73
 msgctxt "PreferencesPage"
 msgid "Depth"
 msgstr ""
 
-#: ui/preferences/3dview.slint:57
+#: ui/preferences/3dview.slint:81
 msgctxt "PreferencesPage"
 msgid "Build volume depth in millimetres"
 msgstr ""
 
-#: ui/preferences/3dview.slint:67
+#: ui/preferences/3dview.slint:96
 #, fuzzy
 #| msgctxt "AppearancePreferences"
 #| msgid "Light"
@@ -148,12 +148,12 @@ msgctxt "PreferencesPage"
 msgid "Height"
 msgstr "Luminoasă"
 
-#: ui/preferences/3dview.slint:75
+#: ui/preferences/3dview.slint:104
 msgctxt "PreferencesPage"
 msgid "Build volume height in millimetres"
 msgstr ""
 
-#: ui/preferences/3dview.slint:84
+#: ui/preferences/3dview.slint:118
 msgctxt "PreferencesPage"
 msgid "Reset to default"
 msgstr ""
@@ -240,62 +240,62 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr "SoulCrafted Slicer"
 
-#: ui/main-window.slint:127
+#: ui/main-window.slint:154
 msgctxt "MenuBar"
 msgid "File"
 msgstr "Fişier"
 
-#: ui/main-window.slint:130
+#: ui/main-window.slint:157
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr "Fereastră nouă"
 
-#: ui/main-window.slint:140
+#: ui/main-window.slint:167
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr "Deschide…"
 
-#: ui/main-window.slint:149
+#: ui/main-window.slint:176
 msgctxt "MenuBar"
 msgid "Close"
 msgstr "Închide"
 
-#: ui/main-window.slint:160
+#: ui/main-window.slint:187
 msgctxt "MenuBar"
 msgid "Save"
 msgstr "Salvează"
 
-#: ui/main-window.slint:166
+#: ui/main-window.slint:193
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr "Salvare ca…"
 
-#: ui/main-window.slint:174
+#: ui/main-window.slint:201
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:184
+#: ui/main-window.slint:211
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr "Editare"
 
-#: ui/main-window.slint:186
+#: ui/main-window.slint:213
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr "Anulează"
 
-#: ui/main-window.slint:195
+#: ui/main-window.slint:222
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr "Repetă"
 
-#: ui/main-window.slint:206
+#: ui/main-window.slint:233
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr "Preferințe"
 
-#: ui/main-window.slint:215
+#: ui/main-window.slint:242
 #, fuzzy
 #| msgctxt "PreferencesMenu"
 #| msgid "3D View"
@@ -303,72 +303,72 @@ msgctxt "MenuBar"
 msgid "View"
 msgstr "Vizualizare 3D"
 
-#: ui/main-window.slint:219
+#: ui/main-window.slint:246
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:220
+#: ui/main-window.slint:247
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:230
+#: ui/main-window.slint:257
 msgctxt "MenuBar"
 msgid "Help"
 msgstr "Ajutor"
 
-#: ui/main-window.slint:232
+#: ui/main-window.slint:259
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr "Documentaţie"
 
-#: ui/main-window.slint:237
+#: ui/main-window.slint:264
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr "Vezi noutățile"
 
-#: ui/main-window.slint:244
+#: ui/main-window.slint:271
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr "Raportează o problemă"
 
-#: ui/main-window.slint:251
+#: ui/main-window.slint:278
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr "Caută actualizări…"
 
-#: ui/main-window.slint:258
+#: ui/main-window.slint:285
 msgctxt "MenuBar"
 msgid "About"
 msgstr "Despre"
 
-#: ui/main-window.slint:265
+#: ui/main-window.slint:292
 msgctxt "MenuBar"
 msgid "View License"
 msgstr "Vezi licența"
 
-#: ui/main-window.slint:277
+#: ui/main-window.slint:304
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr "Deschide un model 3D pentru a-l vizualiza aici"
 
-#: ui/main-window.slint:364
+#: ui/main-window.slint:412
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr ""
 
-#: ui/mesh-viewer.slint:83
+#: ui/mesh-viewer.slint:129
 msgctxt "MeshViewer"
 msgid "3D model viewer, empty"
 msgstr "Vizualizator 3D, Gol"
 
-#: ui/mesh-viewer.slint:84
+#: ui/mesh-viewer.slint:130
 msgctxt "MeshViewer"
 msgid "3D model viewer"
 msgstr "Vizualizator modele 3D"
 
-#: ui/mesh-viewer.slint:85
+#: ui/mesh-viewer.slint:131
 msgctxt "MeshViewer"
 msgid ""
 "Right-click drag or arrow keys to rotate. Shift with right-click drag, "
@@ -382,6 +382,16 @@ msgstr ""
 "Pentru a încadra modelul, apasă F sau Home. Pentru a schimba perspectiva, "
 "apasă 1, 3 sau 7 pentru față, dreapta sau sus; ține apăsat Control pentru "
 "spate, stânga sau jos."
+
+#: ui/mesh-viewer.slint:464
+msgctxt "MeshViewer"
+msgid "Copy"
+msgstr ""
+
+#: ui/mesh-viewer.slint:490
+msgctxt "MeshViewer"
+msgid "Paste"
+msgstr ""
 
 #: src/viewport/controller.rs:944
 msgctxt "ErrorDialog"
