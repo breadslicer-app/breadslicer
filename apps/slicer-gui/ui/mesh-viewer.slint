@@ -107,7 +107,7 @@ export component MeshViewer inherits Rectangle {
         root.context-anchor-y = y;
         root.context-can-copy = copy;
         root.context-can-paste = paste;
-        ctx-menu.show();
+        ctx-menu.show({ x: x, y: y });
     }
     callback context-copy-pressed();
     // Paste from the context menu carries the anchor pixel so
@@ -436,66 +436,30 @@ export component MeshViewer inherits Rectangle {
             }
         }
 
-        ctx-menu := PopupWindow {
-            x: root.context-anchor-x;
-            y: root.context-anchor-y;
-            close-policy: close-on-click-outside;
-            Rectangle {
-                background: Palette.background;
-                border-color: Palette.border;
-                border-width: 1px;
-                border-radius: 4px;
-                VerticalLayout {
-                    padding: 4px;
-                    spacing: 0px;
-                    if (root.context-can-copy): copy-area := TouchArea {
-                        min-width: 140px;
-                        min-height: 24px;
-                        clicked => {
-                            ctx-menu.close();
-                            root.context-copy-pressed();
-                        }
-                        Rectangle {
-                            background: copy-area.has-hover
-                                ? Palette.selection-background
-                                : transparent;
-                            border-radius: 2px;
-                            Text {
-                                text: @tr("MeshViewer" => "Copy");
-                                color: copy-area.has-hover
-                                    ? Palette.selection-foreground
-                                    : Palette.foreground;
-                                vertical-alignment: center;
-                                horizontal-alignment: left;
-                                x: 8px;
-                            }
-                        }
+        // ContextMenuArea owns the popup lifecycle natively: it
+        // renders the items as platform-styled menu entries,
+        // dismisses on click-outside or Escape, and routes
+        // selection through the MenuItem `activated` callback.
+        // `enabled: false` disables its built-in right-click
+        // trigger; the click-vs-drag detection lives in Rust and
+        // calls `show({x, y})` explicitly when the gesture is a
+        // click.
+        ctx-menu := ContextMenuArea {
+            enabled: false;
+            Menu {
+                if (root.context-can-copy): MenuItem {
+                    title: @tr("MeshViewer" => "Copy");
+                    activated => {
+                        root.context-copy-pressed();
                     }
-                    if (root.context-can-paste): paste-area := TouchArea {
-                        min-width: 140px;
-                        min-height: 24px;
-                        clicked => {
-                            ctx-menu.close();
-                            root.context-paste-pressed(
-                                root.context-anchor-x,
-                                root.context-anchor-y,
-                            );
-                        }
-                        Rectangle {
-                            background: paste-area.has-hover
-                                ? Palette.selection-background
-                                : transparent;
-                            border-radius: 2px;
-                            Text {
-                                text: @tr("MeshViewer" => "Paste");
-                                color: paste-area.has-hover
-                                    ? Palette.selection-foreground
-                                    : Palette.foreground;
-                                vertical-alignment: center;
-                                horizontal-alignment: left;
-                                x: 8px;
-                            }
-                        }
+                }
+                if (root.context-can-paste): MenuItem {
+                    title: @tr("MeshViewer" => "Paste");
+                    activated => {
+                        root.context-paste-pressed(
+                            root.context-anchor-x,
+                            root.context-anchor-y,
+                        );
                     }
                 }
             }
