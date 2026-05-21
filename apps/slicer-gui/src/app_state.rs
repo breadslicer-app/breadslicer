@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
@@ -14,6 +14,7 @@ use slint::{CloseRequestResponse, ComponentHandle};
 use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
+use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::i18n::ctr;
 use crate::mesh_loader::{
     SUPPORTED_MESH_EXTENSIONS, is_supported_mesh_extension, start_load_with_ticket,
@@ -133,6 +134,12 @@ pub(crate) struct AppState {
     main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
     prefs: Rc<PreferencesBus>,
+    /// App-wide copy / paste clipboard. Populated from any window's
+    /// current selection by `copy_selection`; consumed by the paste
+    /// path which lives on the viewport controller. `None` until the
+    /// user has performed the first copy.
+    #[allow(dead_code)]
+    clipboard: RefCell<Option<Clipboard>>,
     // Bus subscriptions owned by AppState. They run on every
     // `bus.update`; dropping them unregisters. Stored here so they
     // live as long as `AppState`. The settings subscription owns the
@@ -193,6 +200,7 @@ impl AppState {
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
             prefs,
+            clipboard: RefCell::new(None),
             _settings_sub: settings_sub,
             _language_apply_sub: language_apply_sub,
         })
@@ -376,6 +384,37 @@ impl AppState {
                 );
             }
         }
+    }
+
+    /// Read-only borrow of the app-wide clipboard slot. `None` until
+    /// the first successful `copy_selection`; once populated, a later
+    /// copy replaces the entry wholesale and resets the cascade.
+    #[allow(dead_code)]
+    pub(crate) fn clipboard(&self) -> Ref<'_, Option<Clipboard>> {
+        self.clipboard.borrow()
+    }
+
+    /// Capture the currently-selected leaf from the focused window's
+    /// [`SceneDocument`] into the app-wide clipboard. Silently does
+    /// nothing if the window id is unknown (window closed since the
+    /// keystroke fired), no scene is loaded, or no leaf is selected;
+    /// in those cases the previous clipboard contents survive,
+    /// matching the convention that only a successful copy
+    /// overwrites the clipboard.
+    #[allow(dead_code)]
+    pub(crate) fn copy_selection(&self, window_id: u64) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+        let doc = controller.document();
+        let Some(fragment) = fragment_from_document_selection(&doc) else {
+            return;
+        };
+        *self.clipboard.borrow_mut() = Some(Clipboard::new(fragment));
     }
 
     /// Inner queue-or-load step. Called from `open_path_in_window`
