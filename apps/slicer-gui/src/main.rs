@@ -14,6 +14,7 @@ mod app_settings;
 mod app_state;
 mod build_volume;
 mod camera;
+mod clipboard;
 mod error_dialog;
 mod gizmo;
 mod gizmo_geometry;

@@ -391,6 +391,24 @@ impl Scene {
         }
     }
 
+    /// Borrow the `Arc<IndexedMesh>` that backs the leaf at `id`,
+    /// regardless of whether the leaf stores its mesh inline or by
+    /// resource id. `None` for any non-leaf node, a dangling id, or a
+    /// resource-backed leaf whose resource slot was tombstoned (which
+    /// would be a graph invariant violation, not a routine case).
+    /// Used by the copy primitive: the clipboard needs the live `Arc`
+    /// itself, so a later same-scene paste can dedupe by
+    /// `Arc::as_ptr` identity instead of registering a duplicate
+    /// resource.
+    pub fn leaf_mesh_arc(&self, id: NodeId) -> Option<&Arc<IndexedMesh>> {
+        let node = self.nodes.get(id.index())?.as_ref()?;
+        match &node.kind {
+            NodeKind::Leaf(LeafPayload::Mesh(arc)) => Some(arc),
+            NodeKind::Leaf(LeafPayload::MeshResource(rid)) => self.mesh_resource_arc(*rid),
+            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => None,
+        }
+    }
+
     pub fn subtree_resource_root(&self, id: SubtreeResourceId) -> Option<NodeId> {
         self.subtree_resources.get(id.index())?.as_ref().copied()
     }
@@ -1530,6 +1548,45 @@ mod scene_construction_tests {
         let mut g = Scene::new();
         let bogus = NodeId(NonZeroU32::new(99).unwrap());
         assert!(g.inline_mesh_mut(bogus).is_none());
+    }
+
+    #[test]
+    fn leaf_mesh_arc_returns_the_inline_payload_arc() {
+        let mut g = Scene::new();
+        let arc = Arc::new(unit_triangle());
+        let id = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(arc.clone()))
+            .unwrap();
+        let got = g.leaf_mesh_arc(id).expect("inline-mesh leaf is reachable");
+        assert!(std::ptr::eq(Arc::as_ptr(&arc), Arc::as_ptr(got)));
+    }
+
+    #[test]
+    fn leaf_mesh_arc_follows_resource_indirection() {
+        let mut g = Scene::new();
+        let arc = Arc::new(unit_triangle());
+        let rid = g.add_mesh_resource_arc(arc.clone());
+        let id = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        let got = g
+            .leaf_mesh_arc(id)
+            .expect("resource-backed leaf resolves to the resource arc");
+        assert!(std::ptr::eq(Arc::as_ptr(&arc), Arc::as_ptr(got)));
+    }
+
+    #[test]
+    fn leaf_mesh_arc_returns_none_for_group() {
+        let mut g = Scene::new();
+        let group = g.add_group(None, Transform3D::Identity);
+        assert!(g.leaf_mesh_arc(group).is_none());
+    }
+
+    #[test]
+    fn leaf_mesh_arc_returns_none_on_dangling_id() {
+        let g = Scene::new();
+        let bogus = NodeId(NonZeroU32::new(99).unwrap());
+        assert!(g.leaf_mesh_arc(bogus).is_none());
     }
 
     #[test]
