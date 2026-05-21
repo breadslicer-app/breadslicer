@@ -131,6 +131,23 @@ export component MainWindow inherits Window {
     // clears its cached hover-cursor on this event so a subsequent
     // `Ctrl+V` falls back to the viewport-centre placement.
     callback viewport-pointer-leave();
+    // Right-click context menu. `show-context-menu` is invoked
+    // from Rust after the right-click is classified as a click
+    // (not an orbit drag); it forwards the call into the embedded
+    // MeshViewer which positions and shows the PopupWindow.
+    // `context-copy-pressed` / `context-paste-pressed` surface the
+    // menu-item activations so the Rust wiring can route them to
+    // the AppState clipboard methods.
+    callback show-context-menu(length, length, bool, bool);
+    show-context-menu(x, y, copy, paste) => {
+        mv.show-context-menu(x, y, copy, paste);
+    }
+    callback context-copy-pressed();
+    callback context-paste-pressed(length, length);
+    // Right-button press / release positions for the context-menu
+    // click-vs-orbit classifier on the Rust side.
+    callback viewport-right-pointer-down(length, length);
+    callback viewport-right-pointer-up(length, length);
 
     MenuBar {
         Menu {
@@ -281,7 +298,7 @@ export component MainWindow inherits Window {
     HorizontalLayout {
         spacing: 0px;
 
-        MeshViewer {
+        mv := MeshViewer {
             horizontal-stretch: 1;
             rendering: root.mesh-rendering;
             placeholder-text: @tr("Open a 3D model to visualize it here");
@@ -347,6 +364,18 @@ export component MainWindow inherits Window {
             }
             viewport-pointer-leave() => {
                 root.viewport-pointer-leave();
+            }
+            context-copy-pressed() => {
+                root.context-copy-pressed();
+            }
+            context-paste-pressed(x, y) => {
+                root.context-paste-pressed(x, y);
+            }
+            viewport-right-pointer-down(x, y) => {
+                root.viewport-right-pointer-down(x, y);
+            }
+            viewport-right-pointer-up(x, y) => {
+                root.viewport-right-pointer-up(x, y);
             }
         }
 

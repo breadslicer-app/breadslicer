@@ -601,6 +601,42 @@ impl ViewportController {
         self.input.on_pointer_leave();
     }
 
+    /// Latch a right-button press position. The release path
+    /// classifies the gesture as click (context menu) or drag
+    /// (camera orbit) by comparing displacement against the
+    /// click threshold.
+    pub fn on_right_pointer_down(&self, x: f32, y: f32) {
+        self.input.on_right_pointer_down(ScreenPoint { x, y });
+    }
+
+    /// Classify a right-button release. `Some(press_origin)` when
+    /// the gesture stayed within the click threshold (caller opens
+    /// the context menu at that pixel); `None` for a drag the
+    /// orbit gesture already consumed or a release without a
+    /// matching press.
+    pub fn on_right_pointer_up(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        self.input
+            .on_right_pointer_up(ScreenPoint { x, y })
+            .map(|p| (p.x, p.y))
+    }
+
+    /// Run the picker at `(x, y)` without mutating the document's
+    /// selection. Returns the hit leaf's `NodeId` on success, or
+    /// `None` on a miss / no scene loaded / no camera ready.
+    /// Context-menu orchestration uses this to decide whether to
+    /// move the selection to the right-clicked object and whether
+    /// to surface the Copy item.
+    pub fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_mesh_core::NodeId> {
+        self.input
+            .pick_at(
+                self.session.document(),
+                self.camera.camera_cell(),
+                self.render.viewport(),
+                ScreenPoint { x, y },
+            )
+            .flatten()
+    }
+
     /// Picker dispatch: hand the pixel coordinates to InputDispatch
     /// (which builds the ray and runs `pick_object`) and apply the
     /// pick result through the document's selection setters. The
@@ -640,21 +676,46 @@ impl ViewportController {
         let Some(viewport) = self.render.viewport() else {
             return false;
         };
+        let anchor = self.input.last_hover_cursor().unwrap_or(ScreenPoint {
+            x: viewport.width() * 0.5,
+            y: viewport.height() * 0.5,
+        });
+        self.paste_clipboard_with_anchor(clipboard, anchor, viewport)
+    }
+
+    /// Paste anchored on an explicit logical-pixel position. The
+    /// context-menu path remembers the right-click pixel and pipes
+    /// it back here so the paste lands where the user clicked, not
+    /// where the cursor drifted to while moving to the menu entry.
+    pub(crate) fn paste_clipboard_at_pixel(&self, clipboard: &Clipboard, x: f32, y: f32) -> bool {
+        let Some(viewport) = self.render.viewport() else {
+            return false;
+        };
+        self.paste_clipboard_with_anchor(clipboard, ScreenPoint { x, y }, viewport)
+    }
+
+    /// Shared paste implementation: build the ray from `anchor`,
+    /// project onto `Z = 0`, compute the placement against the
+    /// destination scene's obstacles, and push the resulting
+    /// compound through the document. Returns `true` only when
+    /// the paste landed.
+    fn paste_clipboard_with_anchor(
+        &self,
+        clipboard: &Clipboard,
+        anchor: ScreenPoint,
+        viewport: super::types::ViewportSize,
+    ) -> bool {
         let camera_slot = self.camera.camera_cell().borrow();
         let Some(camera) = camera_slot.as_ref() else {
             return false;
         };
-        let cursor = self.input.last_hover_cursor().unwrap_or(ScreenPoint {
-            x: viewport.width() * 0.5,
-            y: viewport.height() * 0.5,
-        });
         let ray = picking::ray_from_pixel(
             camera,
             crate::mesh_render::default_fov_y(),
             viewport.width(),
             viewport.height(),
-            cursor.x,
-            cursor.y,
+            anchor.x,
+            anchor.y,
         );
         let Some((world_x, world_y)) = picking::ray_z_plane_intersection(&ray, 0.0) else {
             return false;

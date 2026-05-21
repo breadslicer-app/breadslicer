@@ -26,6 +26,7 @@ use crate::preferences_bus::{
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
 use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
+use crate::selection::{LeafId, Selection};
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
@@ -100,7 +101,6 @@ use replace_scene_policy::{
 /// points (path-driven loads from argv / drag-and-drop) can resolve
 /// the window's `SceneLoader` from the window id.
 struct WiredMainWindow {
-    #[allow(dead_code)]
     window: MainWindow,
     controller: Rc<ViewportController>,
     // Shared with the controller. Writer side: external entry points
@@ -247,6 +247,44 @@ impl AppState {
             ui.on_paste_pressed(move || {
                 if let Some(app) = app_weak.upgrade() {
                     app.paste_at_cursor(id);
+                }
+            });
+        }
+
+        // Right-button context menu. Down latches the press
+        // position on the controller; up classifies the gesture
+        // and, if it was a click (no drag), asks AppState to open
+        // the menu at the press position.
+        {
+            let ctrl = ctrl.clone();
+            ui.on_viewport_right_pointer_down(move |x, y| {
+                ctrl.on_right_pointer_down(x, y);
+            });
+        }
+        {
+            let ctrl = ctrl.clone();
+            let app_weak = Rc::downgrade(self);
+            ui.on_viewport_right_pointer_up(move |x, y| {
+                if let Some((press_x, press_y)) = ctrl.on_right_pointer_up(x, y)
+                    && let Some(app) = app_weak.upgrade()
+                {
+                    app.open_context_menu(id, press_x, press_y);
+                }
+            });
+        }
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_context_copy_pressed(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.copy_selection(id);
+                }
+            });
+        }
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_context_paste_pressed(move |x, y| {
+                if let Some(app) = app_weak.upgrade() {
+                    app.paste_at_pixel(id, x, y);
                 }
             });
         }
@@ -449,6 +487,61 @@ impl AppState {
             return;
         };
         if controller.paste_clipboard_at_cursor(cb) {
+            cb.bump_cascade();
+        }
+    }
+
+    /// Right-click context-menu orchestration. Runs the picker at
+    /// `(x, y)`; on a hit, moves the selection to that leaf so
+    /// the existing `copy_selection` path applies to the hit
+    /// object. Selection stays untouched on a miss, per the
+    /// agreed UX. Computes the menu's visibility flags (Copy
+    /// when something was hit, Paste when the clipboard has
+    /// content) and asks the MainWindow to show the popup. Silent
+    /// no-op when neither item would be visible (so a right-click
+    /// on empty space with an empty clipboard doesn't pop an
+    /// empty menu).
+    pub(crate) fn open_context_menu(&self, window_id: u64, x: f32, y: f32) {
+        let main_windows = self.main_windows.borrow();
+        let Some(wired) = main_windows.get(&window_id) else {
+            return;
+        };
+        let hit = wired.controller.pick_node_at(x, y);
+        if let Some(node_id) = hit {
+            wired
+                .controller
+                .document()
+                .set_selection(Selection::One(LeafId(node_id)));
+        }
+        let can_copy = hit.is_some();
+        let can_paste = self.clipboard.borrow().is_some();
+        if !can_copy && !can_paste {
+            return;
+        }
+        wired
+            .window
+            .invoke_show_context_menu(x, y, can_copy, can_paste);
+    }
+
+    /// Paste anchored on an explicit logical pixel (the position
+    /// where the right-click opened the context menu). Counterpart
+    /// of `paste_at_cursor` for the menu-driven path: the cursor
+    /// may have drifted inside the menu by the time the user
+    /// clicks Paste, but the placement should still land at the
+    /// original anchor pixel.
+    pub(crate) fn paste_at_pixel(&self, window_id: u64, x: f32, y: f32) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+        let mut slot = self.clipboard.borrow_mut();
+        let Some(cb) = slot.as_mut() else {
+            return;
+        };
+        if controller.paste_clipboard_at_pixel(cb, x, y) {
             cb.bump_cascade();
         }
     }

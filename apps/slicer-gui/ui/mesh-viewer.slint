@@ -91,6 +91,39 @@ export component MeshViewer inherits Rectangle {
     // last-known position.
     callback viewport-pointer-leave();
 
+    // Right-click context menu. The Rust side classifies the
+    // right-button press / release as a click (menu) or a drag
+    // (camera orbit, kept on `pointer-event`) and, on a click,
+    // invokes `show-context-menu` with the press pixel + the two
+    // visibility flags. Menu-item clicks fire the matching
+    // *-pressed callback; the popup auto-closes on click outside.
+    property <length> context-anchor-x: 0px;
+    property <length> context-anchor-y: 0px;
+    property <bool> context-can-copy: false;
+    property <bool> context-can-paste: false;
+    callback show-context-menu(length, length, bool, bool);
+    show-context-menu(x, y, copy, paste) => {
+        root.context-anchor-x = x;
+        root.context-anchor-y = y;
+        root.context-can-copy = copy;
+        root.context-can-paste = paste;
+        ctx-menu.show();
+    }
+    callback context-copy-pressed();
+    // Paste from the context menu carries the anchor pixel so
+    // Rust can place the new object at the right-click position
+    // rather than at the (drifted) cursor when the menu entry was
+    // clicked.
+    callback context-paste-pressed(length, length);
+    // Right-button press / release events. The Rust side
+    // classifies the gesture as click (context menu) or drag
+    // (camera orbit / pan, also driven by the existing
+    // active-gesture state in this component); these callbacks
+    // give Rust the press / release positions it needs to make
+    // the classification.
+    callback viewport-right-pointer-down(length, length);
+    callback viewport-right-pointer-up(length, length);
+
     accessible-role: image;
     accessible-label: root.rendering.width == 0
         ? (root.placeholder-text != "" ? root.placeholder-text : @tr("MeshViewer" => "3D model viewer, empty"))
@@ -344,6 +377,7 @@ export component MeshViewer inherits Rectangle {
                         });
                     } else if (event.button == PointerEventButton.right) {
                         root.active-gesture = event.modifiers.shift ? 2 : 1;
+                        root.viewport-right-pointer-down(ta.mouse-x, ta.mouse-y);
                     } else if (event.button == PointerEventButton.middle) {
                         root.active-gesture = 2;
                     }
@@ -356,7 +390,10 @@ export component MeshViewer inherits Rectangle {
                             alt: event.modifiers.alt,
                             meta: event.modifiers.meta,
                         });
-                    } else if (event.button == PointerEventButton.right || event.button == PointerEventButton.middle) {
+                    } else if (event.button == PointerEventButton.right) {
+                        root.active-gesture = 0;
+                        root.viewport-right-pointer-up(ta.mouse-x, ta.mouse-y);
+                    } else if (event.button == PointerEventButton.middle) {
                         root.active-gesture = 0;
                     }
                 } else if (event.kind == PointerEventKind.move && root.active-gesture == 0) {
@@ -396,6 +433,71 @@ export component MeshViewer inherits Rectangle {
             scroll-event(event) => {
                 root.zoom-at(event.delta-y, ta.mouse-x, ta.mouse-y);
                 return accept;
+            }
+        }
+
+        ctx-menu := PopupWindow {
+            x: root.context-anchor-x;
+            y: root.context-anchor-y;
+            close-policy: close-on-click-outside;
+            Rectangle {
+                background: Palette.background;
+                border-color: Palette.border;
+                border-width: 1px;
+                border-radius: 4px;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 0px;
+                    if (root.context-can-copy): copy-area := TouchArea {
+                        min-width: 140px;
+                        min-height: 24px;
+                        clicked => {
+                            ctx-menu.close();
+                            root.context-copy-pressed();
+                        }
+                        Rectangle {
+                            background: copy-area.has-hover
+                                ? Palette.selection-background
+                                : transparent;
+                            border-radius: 2px;
+                            Text {
+                                text: @tr("MeshViewer" => "Copy");
+                                color: copy-area.has-hover
+                                    ? Palette.selection-foreground
+                                    : Palette.foreground;
+                                vertical-alignment: center;
+                                horizontal-alignment: left;
+                                x: 8px;
+                            }
+                        }
+                    }
+                    if (root.context-can-paste): paste-area := TouchArea {
+                        min-width: 140px;
+                        min-height: 24px;
+                        clicked => {
+                            ctx-menu.close();
+                            root.context-paste-pressed(
+                                root.context-anchor-x,
+                                root.context-anchor-y,
+                            );
+                        }
+                        Rectangle {
+                            background: paste-area.has-hover
+                                ? Palette.selection-background
+                                : transparent;
+                            border-radius: 2px;
+                            Text {
+                                text: @tr("MeshViewer" => "Paste");
+                                color: paste-area.has-hover
+                                    ? Palette.selection-foreground
+                                    : Palette.foreground;
+                                vertical-alignment: center;
+                                horizontal-alignment: left;
+                                x: 8px;
+                            }
+                        }
+                    }
+                }
             }
         }
     }

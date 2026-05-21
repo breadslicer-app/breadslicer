@@ -33,7 +33,7 @@ use sc_mesh_core::NodeId;
 use super::gizmo_fsm::{
     GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,
 };
-use super::input_state::{ClickOrDrag, InputState};
+use super::input_state::{ClickOrDrag, InputState, RightUpOutcome};
 use super::keyboard_drive::{IntegrationCtx, KbdFocus, KeyboardDriveState};
 use super::types::{ScreenPoint, ViewportSize};
 use crate::PointerModifiers;
@@ -120,9 +120,30 @@ impl InputDispatch {
         self.gizmo_fsm.set_idle();
         self.gizmo_fsm.clear_hover();
         self.input_state.set_idle();
+        self.input_state.set_right_idle();
         self.kbd_drive.reset();
         self.last_cursor.set(None);
         self.hovering.set(false);
+    }
+
+    /// Latch a right-button press position. The release path
+    /// classifies it as click (context menu) or drag (camera
+    /// orbit) by comparing the press / release displacement
+    /// against `CLICK_DRAG_THRESHOLD`.
+    pub(super) fn on_right_pointer_down(&self, cursor: ScreenPoint) {
+        self.input_state.set_right_pressed(cursor);
+    }
+
+    /// Classify a right-button release. `Some(press_origin)` if
+    /// the gesture stayed within the click threshold (the caller
+    /// opens the context menu at `press_origin`); `None` if the
+    /// gesture moved beyond the threshold (the camera orbit
+    /// already consumed it) or no matching press was latched.
+    pub(super) fn on_right_pointer_up(&self, cursor: ScreenPoint) -> Option<ScreenPoint> {
+        match self.input_state.right_click_or_drag(cursor) {
+            RightUpOutcome::Click(origin) => Some(origin),
+            RightUpOutcome::Drag | RightUpOutcome::NoPress => None,
+        }
     }
 
     /// Records that the cursor has left the viewport. The paste path
