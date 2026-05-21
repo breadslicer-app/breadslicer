@@ -594,6 +594,8 @@ mod ray_hits_triangle_oriented_tests {
 
 #[cfg(test)]
 mod pick_object_tests {
+    use std::sync::Arc;
+
     use super::*;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
@@ -633,7 +635,7 @@ mod pick_object_tests {
 
     fn add_leaf_under(g: &mut Scene, parent: NodeId, mesh: IndexedMesh, transform: Transform3D) {
         let leaf = g
-            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add leaf");
         g.add_child(parent, leaf).expect("attach leaf");
     }

@@ -337,6 +337,8 @@ mod panic_message_tests {
 
 #[cfg(test)]
 mod place_on_plate_tests {
+    use std::sync::Arc;
+
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
@@ -377,7 +379,7 @@ mod place_on_plate_tests {
         g.add_root(root).expect("group as root");
         for (mesh, transform) in leaves {
             let leaf = g
-                .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+                .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
                 .expect("add leaf");
             g.add_child(root, leaf).expect("attach leaf under root");
         }
@@ -466,7 +468,7 @@ mod place_on_plate_tests {
         };
         let mesh_for = |child_idx: usize| -> &IndexedMesh {
             match &graph.node(children[child_idx]).unwrap().kind {
-                NodeKind::Leaf(LeafPayload::Mesh(m)) => m,
+                NodeKind::Leaf(LeafPayload::Mesh(m)) => m.as_ref(),
                 _ => unreachable!("group_rooted_graph attaches inline-mesh leaves"),
             }
         };

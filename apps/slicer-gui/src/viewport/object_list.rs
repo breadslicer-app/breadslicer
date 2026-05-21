@@ -114,6 +114,8 @@ pub(super) fn push_object_list(ui: &MainWindow, names: Vec<String>) {
 
 #[cfg(test)]
 mod build_object_list_names_tests {
+    use std::sync::Arc;
+
     use super::*;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
@@ -162,7 +164,11 @@ mod build_object_list_names_tests {
         mesh: IndexedMesh,
     ) -> NodeId {
         let leaf = g
-            .add_leaf(node_meta, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                node_meta,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .expect("add leaf");
         g.add_child(parent, leaf).expect("attach leaf");
         leaf

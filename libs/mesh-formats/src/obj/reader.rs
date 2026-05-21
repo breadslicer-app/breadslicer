@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
+use std::sync::Arc;
 
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
@@ -136,7 +137,11 @@ fn check_sharing_and_attach(
         return false;
     };
     let leaf = graph
-        .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(mesh)),
+        )
         .expect("inline-mesh leaf payload cannot fail construction");
     graph
         .add_child(root, leaf)

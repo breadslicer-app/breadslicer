@@ -27,7 +27,7 @@ use std::rc::{Rc, Weak};
 #[cfg(test)]
 use sc_mesh_core::Scene;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{MeshResourceId, NodeId, SceneError};
+use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 
 pub(crate) use sc_mesh_core::scene_edit::SceneEdit;
@@ -185,6 +185,12 @@ impl SceneDocument {
         let Some(spatial) = slot.as_mut() else {
             return false;
         };
+        // Decide selection-clearing BEFORE moving the edit into
+        // spatial.apply_edit: the typed-edit enum is no longer `Copy`,
+        // and `RemoveRootLeaf` may be nested under a `Compound`
+        // produced by paste-undo, so a plain `match` post-apply is
+        // not enough.
+        let drops_selection = edit_removes_selected_leaf(&edit, &self.selection);
         spatial.apply_edit(edit);
         drop(slot);
         // If the edit tombstoned the currently-selected leaf, drop
@@ -192,16 +198,11 @@ impl SceneDocument {
         // at an empty arena slot. Fires SelectionChanged after the
         // Mutated event so listeners that recompute on mutation see
         // the updated selection.
-        let selection_cleared = match edit {
-            SceneEdit::RemoveRootLeaf { node_id, .. } => {
-                if self.selection.primary_node_id() == Some(node_id) {
-                    self.selection.set(Selection::None);
-                    true
-                } else {
-                    false
-                }
-            }
-            SceneEdit::SetLocalTransform { .. } | SceneEdit::AddRootLeaf { .. } => false,
+        let selection_cleared = if drops_selection {
+            self.selection.set(Selection::None);
+            true
+        } else {
+            false
         };
         self.notify(SceneEvent::Mutated);
         if selection_cleared {
@@ -254,34 +255,11 @@ impl SceneDocument {
             mesh,
             local_transform,
         };
-        if !self.apply_edit(edit) {
+        if !self.apply_edit(edit.clone()) {
             return None;
         }
         self.push_edit(edit);
         Some(node_id)
-    }
-
-    /// Move the inline mesh on the leaf at `leaf_id` into the
-    /// mesh-resource arena, rewriting the leaf to reference the new
-    /// resource. Idempotent for an already-resource-backed leaf,
-    /// which returns its existing id without mutating.
-    ///
-    /// Not recorded on the undo stack: the change has no visual
-    /// effect, and surfacing it as an undo step would interleave
-    /// representation bookkeeping with the user's gestures.
-    ///
-    /// Returns `Err(SceneError::DanglingNodeId)` when no scene is
-    /// loaded, since the leaf id then names no live node.
-    #[allow(dead_code)]
-    pub(crate) fn promote_inline_mesh_to_resource(
-        &self,
-        leaf_id: NodeId,
-    ) -> Result<MeshResourceId, SceneError> {
-        let mut slot = self.spatial.borrow_mut();
-        let Some(spatial) = slot.as_mut() else {
-            return Err(SceneError::DanglingNodeId { id: leaf_id });
-        };
-        spatial.convert_leaf_inline_to_mesh_resource(leaf_id)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -322,7 +300,7 @@ impl SceneDocument {
         let Some(edit) = self.redo_stack.borrow_mut().pop_back() else {
             return false;
         };
-        if !self.apply_edit(edit) {
+        if !self.apply_edit(edit.clone()) {
             self.redo_stack.borrow_mut().push_back(edit);
             return false;
         }
@@ -396,6 +374,27 @@ impl SceneDocument {
     }
 }
 
+/// True when applying `edit` would tombstone the leaf the document's
+/// `selection` currently points at. Handles the nested case where a
+/// `RemoveRootLeaf` is inside a `Compound` (the shape paste-undo
+/// produces).
+fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> bool {
+    let Some(selected) = selection.primary_node_id() else {
+        return false;
+    };
+    fn touches(edit: &SceneEdit, selected: NodeId) -> bool {
+        match edit {
+            SceneEdit::RemoveRootLeaf { node_id, .. } => *node_id == selected,
+            SceneEdit::Compound(edits) => edits.iter().any(|e| touches(e, selected)),
+            SceneEdit::SetLocalTransform { .. }
+            | SceneEdit::AddRootLeaf { .. }
+            | SceneEdit::AddMeshResource { .. }
+            | SceneEdit::RemoveMeshResource { .. } => false,
+        }
+    }
+    touches(edit, selected)
+}
+
 /// RAII handle to a `SceneDocument` subscription. Drop to
 /// unsubscribe.
 pub(crate) struct SceneSubscription {
@@ -413,6 +412,8 @@ impl Drop for SceneSubscription {
 
 #[cfg(test)]
 mod scene_document_tests {
+    use std::sync::Arc;
+
     use super::*;
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
@@ -446,7 +447,7 @@ mod scene_document_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(IndexedMesh::new(None, Vec::new(), Vec::new())),
+                LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
             )
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
@@ -830,7 +831,7 @@ mod scene_document_tests {
         assert_eq!(doc.undo_stack.borrow().len(), UNDO_STACK_CAP);
         // Front of the deque is the oldest surviving entry; with
         // five entries dropped it should start at i = 5 (after = 6.0).
-        let front = doc.undo_stack.borrow().front().copied().unwrap();
+        let front = doc.undo_stack.borrow().front().cloned().unwrap();
         let SceneEdit::SetLocalTransform { after, .. } = front else {
             panic!("front entry was not a SetLocalTransform: {front:?}");
         };
@@ -1011,60 +1012,6 @@ mod scene_document_tests {
             matches!(node.kind, NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid)
         });
         assert_eq!(kind_ok, Some(true));
-    }
-
-    #[test]
-    fn promote_inline_mesh_to_resource_with_no_scene_loaded_errors() {
-        // The leaf id is captured from a previously-installed-and-cleared
-        // scene so it parses syntactically; the call must still error.
-        let doc = SceneDocument::new();
-        doc.install_graph(graph_with_one_object(), fixture_path());
-        let leaf_id = first_leaf_id(&doc).node_id();
-        doc.clear_scene();
-        assert_eq!(
-            doc.promote_inline_mesh_to_resource(leaf_id),
-            Err(SceneError::DanglingNodeId { id: leaf_id })
-        );
-    }
-
-    #[test]
-    fn promote_inline_mesh_to_resource_converts_inline_leaf() {
-        let doc = SceneDocument::new();
-        doc.install_graph(graph_with_one_object(), fixture_path());
-        let leaf_id = first_leaf_id(&doc).node_id();
-        let rid = doc
-            .promote_inline_mesh_to_resource(leaf_id)
-            .expect("inline conversion succeeds");
-        let kind_ok = doc.with_scene(|s| {
-            matches!(
-                s.graph().node(leaf_id).unwrap().kind,
-                NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
-            )
-        });
-        assert_eq!(kind_ok, Some(true));
-    }
-
-    #[test]
-    fn promote_inline_mesh_to_resource_is_idempotent() {
-        let doc = SceneDocument::new();
-        doc.install_graph(graph_with_one_object(), fixture_path());
-        let leaf_id = first_leaf_id(&doc).node_id();
-        let first = doc.promote_inline_mesh_to_resource(leaf_id).unwrap();
-        let second = doc.promote_inline_mesh_to_resource(leaf_id).unwrap();
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn promote_inline_mesh_to_resource_does_not_record_an_undo_entry() {
-        let doc = SceneDocument::new();
-        doc.install_graph(graph_with_one_object(), fixture_path());
-        let leaf_id = first_leaf_id(&doc).node_id();
-        assert!(!doc.can_undo());
-        let _ = doc.promote_inline_mesh_to_resource(leaf_id).unwrap();
-        assert!(
-            !doc.can_undo(),
-            "representational promotions must not pollute the undo stack"
-        );
     }
 
     #[test]

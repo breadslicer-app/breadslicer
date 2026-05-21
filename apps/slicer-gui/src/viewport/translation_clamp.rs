@@ -109,6 +109,8 @@ fn translation_of(t: Transform3D) -> [f64; 3] {
 
 #[cfg(test)]
 mod translation_clamp_tests {
+    use std::sync::Arc;
+
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::primitives::Vertex;
@@ -128,7 +130,11 @@ mod translation_clamp_tests {
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
         SceneSpatial::from_graph(g)
@@ -208,7 +214,11 @@ mod translation_clamp_tests {
         );
         graph.add_root(root).unwrap();
         let leaf = graph
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .unwrap();
         graph.add_child(root, leaf).unwrap();
         SceneSpatial::primed_graph(graph)

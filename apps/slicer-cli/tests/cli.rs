@@ -11,6 +11,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -227,7 +228,7 @@ fn write_two_object_obj(path: &Path) {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(tetrahedron_mesh(Some(name))),
+                LeafPayload::Mesh(Arc::new(tetrahedron_mesh(Some(name)))),
             )
             .expect("add leaf");
         graph.add_root(leaf).expect("add root");

@@ -217,6 +217,8 @@ pub fn write_scene(
 
 #[cfg(test)]
 mod flatten_scene_to_mesh_tests {
+    use std::sync::Arc;
+
     use super::{FlattenWarning, flatten_graph_to_mesh};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
@@ -245,7 +247,7 @@ mod flatten_scene_to_mesh_tests {
     fn single_leaf_graph(mesh: IndexedMesh, t: Transform3D) -> Scene {
         let mut g = Scene::new();
         let leaf = g
-            .add_leaf(None, t, LeafPayload::Mesh(mesh))
+            .add_leaf(None, t, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add leaf");
         g.add_root(leaf).expect("add root");
         g
@@ -303,7 +305,7 @@ mod flatten_scene_to_mesh_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle_mesh(Some("A"))),
+                LeafPayload::Mesh(Arc::new(unit_triangle_mesh(Some("A")))),
             )
             .expect("add leaf A");
         graph.add_root(leaf_a).expect("add root A");
@@ -311,7 +313,7 @@ mod flatten_scene_to_mesh_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
-                LeafPayload::Mesh(unit_triangle_mesh(Some("B"))),
+                LeafPayload::Mesh(Arc::new(unit_triangle_mesh(Some("B")))),
             )
             .expect("add leaf B");
         graph.add_root(leaf_b).expect("add root B");

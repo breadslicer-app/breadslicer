@@ -75,7 +75,7 @@ impl Scene {
         payload: &'a LeafPayload,
     ) -> Result<&'a IndexedMesh, SceneError> {
         match payload {
-            LeafPayload::Mesh(m) => Ok(m),
+            LeafPayload::Mesh(m) => Ok(m.as_ref()),
             LeafPayload::MeshResource(rid) => self
                 .mesh_resource(*rid)
                 .ok_or(SceneError::DanglingMeshResource { id: *rid }),
@@ -116,7 +116,7 @@ pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh,
         _ => return Err(SceneError::NotALeaf { node_id }),
     };
     let mesh = match payload {
-        LeafPayload::Mesh(m) => m,
+        LeafPayload::Mesh(m) => m.as_ref(),
         LeafPayload::MeshResource(rid) => graph
             .mesh_resource(*rid)
             .ok_or(SceneError::DanglingMeshResource { id: *rid })?,
@@ -214,6 +214,7 @@ mod scene_bake_tests {
     use crate::scene_node::{CsgOp, LeafPayload};
     use float_cmp::assert_approx_eq;
     use std::f64::consts::FRAC_PI_2;
+    use std::sync::Arc;
 
     fn triangle_mesh(vertices: Vec<[f32; 3]>, face: [u32; 3]) -> IndexedMesh {
         IndexedMesh {
@@ -255,7 +256,11 @@ mod scene_bake_tests {
             [0, 1, 2],
         );
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh.clone()))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh.clone())),
+            )
             .unwrap();
         g.add_root(leaf).unwrap();
         let merged = g.merge_meshes().unwrap().unwrap();
@@ -271,10 +276,10 @@ mod scene_bake_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
-                LeafPayload::Mesh(triangle_mesh(
+                LeafPayload::Mesh(Arc::new(triangle_mesh(
                     vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
                     [0, 1, 2],
-                )),
+                ))),
             )
             .unwrap();
         let group = g.add_group(
@@ -293,7 +298,11 @@ mod scene_bake_tests {
     fn merge_meshes_errors_on_csg_node() {
         let mut g = Scene::new();
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(cube_mesh()))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(cube_mesh())),
+            )
             .unwrap();
         let csg = g
             .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![leaf])
@@ -314,10 +323,10 @@ mod scene_bake_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(triangle_mesh(
+                LeafPayload::Mesh(Arc::new(triangle_mesh(
                     vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
                     [0, 1, 2],
-                )),
+                ))),
             )
             .unwrap();
         let res_root = g.add_group(None, Transform3D::Identity);
@@ -355,7 +364,11 @@ mod scene_bake_tests {
             [0, 1, 2],
         );
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh.clone()))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh.clone())),
+            )
             .unwrap();
         g.add_root(leaf).unwrap();
         let baked = bake_leaf_to_world(&g, leaf).unwrap();
@@ -370,10 +383,10 @@ mod scene_bake_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
-                LeafPayload::Mesh(triangle_mesh(
+                LeafPayload::Mesh(Arc::new(triangle_mesh(
                     vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                     [0, 1, 2],
-                )),
+                ))),
             )
             .unwrap();
         let parent = g.add_group(
@@ -401,10 +414,10 @@ mod scene_bake_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0])),
-                LeafPayload::Mesh(triangle_mesh(
+                LeafPayload::Mesh(Arc::new(triangle_mesh(
                     vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                     [0, 1, 2],
-                )),
+                ))),
             )
             .unwrap();
         g.add_root(leaf).unwrap();
@@ -431,7 +444,7 @@ mod scene_bake_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_rotation_z(FRAC_PI_2)),
-                LeafPayload::Mesh(mesh),
+                LeafPayload::Mesh(Arc::new(mesh)),
             )
             .unwrap();
         g.add_root(leaf).unwrap();

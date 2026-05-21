@@ -829,6 +829,8 @@ fn axis_from_ui(view: crate::AxisView) -> AxisView {
 
 #[cfg(test)]
 mod selection_tests {
+    use std::sync::Arc;
+
     use super::*;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
@@ -860,7 +862,7 @@ mod selection_tests {
                 .add_leaf(
                     None,
                     Transform3D::Identity,
-                    LeafPayload::Mesh(empty_leaf_mesh()),
+                    LeafPayload::Mesh(Arc::new(empty_leaf_mesh())),
                 )
                 .expect("add leaf");
             g.add_child(root, leaf).expect("attach leaf");
@@ -1083,6 +1085,7 @@ mod viewport_click_tests {
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
     use std::cell::Cell;
+    use std::sync::Arc;
 
     /// `PointerModifiers::default()`, all four flags off.
     fn no_mods() -> PointerModifiers {
@@ -1129,7 +1132,7 @@ mod viewport_click_tests {
             translation[2] as f64,
         ]));
         let leaf = g
-            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add leaf");
         g.add_child(parent, leaf).expect("attach leaf");
     }
@@ -1883,6 +1886,8 @@ mod viewport_click_tests {
 
 #[cfg(test)]
 mod keyboard_focus_tests {
+    use std::sync::Arc;
+
     use super::super::keyboard_drive::{ARROW_X_POS, ARROW_Y_POS, IntegrationCtx};
     use super::*;
     use crate::camera::OrbitCamera;
@@ -1905,7 +1910,11 @@ mod keyboard_focus_tests {
             faces: vec![],
         };
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
         g
@@ -2183,7 +2192,11 @@ mod keyboard_focus_tests {
             faces: vec![],
         };
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
         g

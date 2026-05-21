@@ -11,6 +11,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::scene_node::{
@@ -74,6 +75,12 @@ pub enum SceneError {
     /// A mutator that expects a `Leaf(MeshResource(_))` was given a
     /// leaf carrying an inline mesh instead.
     NotAMeshResourceLeaf { node_id: NodeId },
+    /// A mutator that expects to fill an empty mesh-resource slot
+    /// found it already populated.
+    MeshResourceSlotOccupied { id: MeshResourceId },
+    /// A mutator that was asked to remove a mesh resource that at
+    /// least one live leaf still references.
+    MeshResourceInUse { id: MeshResourceId },
     /// `merge_meshes` was asked to bake a graph that still contains an
     /// unevaluated CSG node.
     UnevaluatedCsg { node_id: NodeId },
@@ -146,6 +153,14 @@ impl fmt::Display for SceneError {
                 "node {} is a leaf but not a mesh-resource leaf",
                 node_id.get()
             ),
+            Self::MeshResourceSlotOccupied { id } => {
+                write!(f, "mesh resource slot {} is already occupied", id.get())
+            }
+            Self::MeshResourceInUse { id } => write!(
+                f,
+                "mesh resource {} is still referenced by at least one leaf",
+                id.get()
+            ),
             Self::UnevaluatedCsg { node_id } => {
                 write!(f, "unevaluated CSG node {}", node_id.get())
             }
@@ -178,7 +193,7 @@ impl From<TransformError> for SceneError {
 pub struct Scene {
     pub(crate) meta: Option<SceneMetadata>,
     pub(crate) nodes: Vec<Option<Node>>,
-    pub(crate) mesh_resources: Vec<Option<IndexedMesh>>,
+    pub(crate) mesh_resources: Vec<Option<Arc<IndexedMesh>>>,
     pub(crate) subtree_resources: Vec<Option<NodeId>>,
     pub(crate) roots: Vec<NodeId>,
     pub(crate) parents: Vec<Option<NodeId>>,
@@ -239,13 +254,26 @@ impl Scene {
     }
 
     pub fn mesh_resource(&self, id: MeshResourceId) -> Option<&IndexedMesh> {
+        self.mesh_resources.get(id.index())?.as_deref()
+    }
+
+    /// Borrow the `Arc<IndexedMesh>` itself for the addressed mesh
+    /// resource, not the inner mesh. Used by the copy / paste path
+    /// when it needs to dedupe by `Arc::as_ptr` identity or pipe the
+    /// `Arc` straight into a new scene without deep-cloning.
+    pub fn mesh_resource_arc(&self, id: MeshResourceId) -> Option<&Arc<IndexedMesh>> {
         self.mesh_resources.get(id.index())?.as_ref()
     }
 
     /// Mutable borrow into the addressed mesh resource. `None` on a
-    /// dangling or tombstoned id.
+    /// dangling or tombstoned id. Uses [`Arc::make_mut`] semantics:
+    /// if the `Arc` is shared (refcount > 1, e.g. an inline leaf or
+    /// the clipboard also holds it), the call deep-clones the mesh
+    /// into a fresh `Arc` first, leaving every other holder pointing
+    /// at the original bytes.
     pub fn mesh_resource_mut(&mut self, id: MeshResourceId) -> Option<&mut IndexedMesh> {
-        self.mesh_resources.get_mut(id.index())?.as_mut()
+        let slot = self.mesh_resources.get_mut(id.index())?.as_mut()?;
+        Some(Arc::make_mut(slot))
     }
 
     /// Iterate every live mesh resource as `(id, &mesh)` pairs.
@@ -255,12 +283,14 @@ impl Scene {
             .iter()
             .enumerate()
             .filter_map(|(i, slot)| {
-                slot.as_ref()
+                slot.as_deref()
                     .map(|mesh| (mesh_resource_id_at_index(i), mesh))
             })
     }
 
-    /// Mutable variant of [`Self::mesh_resources_iter`].
+    /// Mutable variant of [`Self::mesh_resources_iter`]. Each yielded
+    /// `&mut IndexedMesh` is obtained through [`Arc::make_mut`], so a
+    /// shared mesh is forked into a unique `Arc` on first mutation.
     pub fn mesh_resources_iter_mut(
         &mut self,
     ) -> impl Iterator<Item = (MeshResourceId, &mut IndexedMesh)> + '_ {
@@ -269,7 +299,28 @@ impl Scene {
             .enumerate()
             .filter_map(|(i, slot)| {
                 slot.as_mut()
-                    .map(|mesh| (mesh_resource_id_at_index(i), mesh))
+                    .map(|arc| (mesh_resource_id_at_index(i), Arc::make_mut(arc)))
+            })
+    }
+
+    /// Search the mesh-resource arena for a slot whose `Arc` shares
+    /// pointer identity with `arc`. Returns the resource id of the
+    /// match, or `None` if no live slot holds the same `Arc`. Used
+    /// by the cross-scene paste path to dedupe a mesh that's already
+    /// registered in the target scene.
+    pub fn find_mesh_resource_by_arc(&self, arc: &Arc<IndexedMesh>) -> Option<MeshResourceId> {
+        let target = Arc::as_ptr(arc);
+        self.mesh_resources
+            .iter()
+            .enumerate()
+            .find_map(|(i, slot)| {
+                slot.as_ref().and_then(|stored| {
+                    if Arc::as_ptr(stored) == target {
+                        Some(mesh_resource_id_at_index(i))
+                    } else {
+                        None
+                    }
+                })
             })
     }
 
@@ -326,61 +377,18 @@ impl Scene {
     /// accessor: callers can repair the mesh in place without being
     /// handed `&mut Node` (which would let them change `kind` and
     /// break parent / child invariants).
+    ///
+    /// Uses [`Arc::make_mut`] semantics: if the inline `Arc` is
+    /// shared with another holder (clipboard, mesh-resource arena,
+    /// another inline leaf), the first mutation forks a fresh copy
+    /// for this leaf so the other holders keep observing the
+    /// pre-mutation bytes.
     pub fn inline_mesh_mut(&mut self, id: NodeId) -> Option<&mut IndexedMesh> {
         let node = self.nodes.get_mut(id.index())?.as_mut()?;
         match &mut node.kind {
-            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => Some(mesh),
+            NodeKind::Leaf(LeafPayload::Mesh(arc)) => Some(Arc::make_mut(arc)),
             _ => None,
         }
-    }
-
-    /// Move a `Leaf(Mesh(_))` node's inline mesh into the
-    /// mesh-resource arena, rewriting the leaf to reference the new
-    /// resource. Idempotent on a `Leaf(MeshResource(_))`: returns the
-    /// already-registered id without mutating.
-    ///
-    /// The leaf's parent / child wiring, [`SceneMetadata`] and
-    /// `local_transform` are preserved; only the payload variant
-    /// changes.
-    ///
-    /// Errors:
-    /// - [`SceneError::DanglingNodeId`] if no live node lives at
-    ///   `leaf_id`.
-    /// - [`SceneError::NotALeaf`] if the node is not a `Leaf`.
-    ///
-    /// On error the scene is unchanged.
-    pub fn convert_leaf_inline_to_mesh_resource(
-        &mut self,
-        leaf_id: NodeId,
-    ) -> Result<MeshResourceId, SceneError> {
-        let mesh = {
-            let node = self
-                .nodes
-                .get_mut(leaf_id.index())
-                .and_then(|slot| slot.as_mut())
-                .ok_or(SceneError::DanglingNodeId { id: leaf_id })?;
-            match &node.kind {
-                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => return Ok(*rid),
-                NodeKind::Leaf(LeafPayload::Mesh(_)) => {}
-                _ => return Err(SceneError::NotALeaf { node_id: leaf_id }),
-            }
-            let kind = std::mem::replace(
-                &mut node.kind,
-                NodeKind::Group {
-                    children: Vec::new(),
-                },
-            );
-            let NodeKind::Leaf(LeafPayload::Mesh(mesh)) = kind else {
-                unreachable!("kind was just checked to be Leaf(Mesh(_))");
-            };
-            mesh
-        };
-        let rid = self.add_mesh_resource(mesh);
-        let node = self.nodes[leaf_id.index()]
-            .as_mut()
-            .expect("node existed at the start of the call");
-        node.kind = NodeKind::Leaf(LeafPayload::MeshResource(rid));
-        Ok(rid)
     }
 
     pub fn subtree_resource_root(&self, id: SubtreeResourceId) -> Option<NodeId> {
@@ -442,10 +450,107 @@ impl Scene {
         self.allocate_node_slot()
     }
 
+    /// Register `mesh` as a shared resource and return its handle.
+    /// The mesh is wrapped in an `Arc` internally; callers that
+    /// already hold an `Arc<IndexedMesh>` and want to share storage
+    /// (typically the paste path) should use
+    /// [`Self::add_mesh_resource_arc`] instead.
     pub fn add_mesh_resource(&mut self, mesh: IndexedMesh) -> MeshResourceId {
+        self.add_mesh_resource_arc(Arc::new(mesh))
+    }
+
+    /// `Arc`-handoff variant of [`Self::add_mesh_resource`]. The
+    /// arena stores the exact `Arc` the caller passed in (refcount
+    /// bumped, no mesh-content clone), so a later
+    /// [`Self::find_mesh_resource_by_arc`] with the same `Arc`
+    /// returns the id allocated here.
+    pub fn add_mesh_resource_arc(&mut self, arc: Arc<IndexedMesh>) -> MeshResourceId {
         let id = self.allocate_mesh_resource_slot();
-        self.mesh_resources[id.index()] = Some(mesh);
+        self.mesh_resources[id.index()] = Some(arc);
         id
+    }
+
+    /// Allocate a fresh [`MeshResourceId`] without populating its
+    /// slot. The returned id's arena slot is `None`.
+    ///
+    /// Use this when the id needs to exist before the resource it
+    /// will reference does, typically so the id can be embedded in a
+    /// typed edit (see `sc_mesh_core::scene_edit`) that the
+    /// undo/redo machinery replays against the same slot. Mirrors
+    /// [`Self::allocate_unbound_node_id`] for mesh-resource ids.
+    ///
+    /// The slot is permanently consumed: dropping the id without
+    /// later installing a resource at it leaks one arena slot.
+    /// Slots are tombstoned but never reused, so this is benign at
+    /// the scale of user-driven editing.
+    pub fn allocate_unbound_mesh_resource_id(&mut self) -> MeshResourceId {
+        self.allocate_mesh_resource_slot()
+    }
+
+    /// Install a mesh resource at a previously-allocated, currently-
+    /// empty slot. Pairs with [`Self::remove_mesh_resource`] so a
+    /// typed edit can round-trip a paste's mesh-resource creation
+    /// through undo/redo while keeping the same [`MeshResourceId`].
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingMeshResource`] if `rid` is past the
+    ///   arena's high-water mark.
+    /// - [`SceneError::MeshResourceSlotOccupied`] if a resource
+    ///   already lives at that id.
+    ///
+    /// On error the scene is unchanged.
+    pub fn install_mesh_resource_at(
+        &mut self,
+        rid: MeshResourceId,
+        arc: Arc<IndexedMesh>,
+    ) -> Result<(), SceneError> {
+        if rid.index() >= self.mesh_resources.len() {
+            return Err(SceneError::DanglingMeshResource { id: rid });
+        }
+        if self.mesh_resources[rid.index()].is_some() {
+            return Err(SceneError::MeshResourceSlotOccupied { id: rid });
+        }
+        self.mesh_resources[rid.index()] = Some(arc);
+        Ok(())
+    }
+
+    /// Tombstone the mesh resource at `rid`, returning the `Arc`
+    /// that lived there so the paired
+    /// [`Self::install_mesh_resource_at`] can re-install the same
+    /// content.
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingMeshResource`] if no live resource
+    ///   lives at `rid`.
+    /// - [`SceneError::MeshResourceInUse`] if at least one live
+    ///   `Leaf(MeshResource(rid))` still references the resource.
+    ///   Callers must remove every referencing leaf first (the
+    ///   compound paste-undo path orders edits accordingly).
+    ///
+    /// On error the scene is unchanged.
+    pub fn remove_mesh_resource(
+        &mut self,
+        rid: MeshResourceId,
+    ) -> Result<Arc<IndexedMesh>, SceneError> {
+        if self.mesh_resource(rid).is_none() {
+            return Err(SceneError::DanglingMeshResource { id: rid });
+        }
+        if self.any_live_leaf_references(rid) {
+            return Err(SceneError::MeshResourceInUse { id: rid });
+        }
+        let arc = self.mesh_resources[rid.index()]
+            .take()
+            .expect("checked Some above");
+        Ok(arc)
+    }
+
+    fn any_live_leaf_references(&self, rid: MeshResourceId) -> bool {
+        self.nodes.iter().any(|slot| {
+            matches!(
+                slot.as_ref().map(|n| &n.kind),
+                Some(NodeKind::Leaf(LeafPayload::MeshResource(r))) if *r == rid
+            )
+        })
     }
 
     pub fn add_group(
@@ -923,7 +1028,11 @@ impl From<IndexedMesh> for Scene {
     fn from(mesh: IndexedMesh) -> Self {
         let mut g = Scene::new();
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .expect("freshly allocated graph has no resources to dangle");
         g.add_root(leaf)
             .expect("freshly allocated leaf has no parent and is not a root");
@@ -1020,7 +1129,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         assert!(matches!(
@@ -1078,7 +1187,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         let csg = g
@@ -1094,7 +1203,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         let result = g.add_csg(None, Transform3D::Identity, CsgOp::Union, vec![leaf, leaf]);
@@ -1117,7 +1226,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         let group = g.add_group(None, Transform3D::Identity);
@@ -1189,7 +1298,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         g.add_child(parent, child).unwrap();
@@ -1203,7 +1312,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         let child = g.add_group(None, Transform3D::Identity);
@@ -1388,7 +1497,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         let mesh = g.inline_mesh_mut(id).expect("inline-mesh leaf is writable");
@@ -1433,7 +1542,7 @@ mod scene_construction_tests {
                 .add_leaf(
                     None,
                     Transform3D::Identity,
-                    LeafPayload::Mesh(unit_triangle()),
+                    LeafPayload::Mesh(Arc::new(unit_triangle())),
                 )
                 .unwrap();
             g.add_child(root, leaf).unwrap();
@@ -1457,7 +1566,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         g.add_child(root, first_leaf).unwrap();
@@ -1465,7 +1574,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         g.add_child(root, second_leaf).unwrap();
@@ -1574,7 +1683,7 @@ mod scene_construction_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         g.add_root(leaf).unwrap();
@@ -1616,87 +1725,92 @@ mod scene_construction_tests {
     }
 
     #[test]
-    fn convert_inline_leaf_to_resource_returns_fresh_rid_and_rewrites_kind() {
+    fn allocate_unbound_mesh_resource_id_leaves_slot_empty() {
         let mut g = Scene::new();
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
-            )
-            .unwrap();
-        assert_eq!(g.mesh_resources_len(), 0);
-        let rid = g.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
+        let rid = g.allocate_unbound_mesh_resource_id();
+        assert!(g.mesh_resource(rid).is_none());
         assert_eq!(g.mesh_resources_len(), 1);
-        let node = g.node(leaf).expect("leaf still lives");
-        assert!(matches!(
-            node.kind,
-            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
-        ));
-        assert_eq!(g.mesh_resource(rid).unwrap().vertices.len(), 3);
     }
 
     #[test]
-    fn convert_inline_leaf_to_resource_preserves_meta_and_transform() {
+    fn install_mesh_resource_at_freshly_allocated_id_succeeds() {
         let mut g = Scene::new();
-        let meta = SceneMetadata {
-            name: Some("source".to_owned()),
-            comment: None,
-        };
-        let xform = Transform3D::Affine(AffineTransform3D::from_translation([2.0, 0.0, 0.0]));
-        let leaf = g
-            .add_leaf(
-                Some(meta.clone()),
-                xform,
-                LeafPayload::Mesh(unit_triangle()),
-            )
-            .unwrap();
-        let _ = g.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
-        let node = g.node(leaf).unwrap();
-        assert_eq!(node.meta.as_ref(), Some(&meta));
-        assert_eq!(node.local_transform, xform);
+        let rid = g.allocate_unbound_mesh_resource_id();
+        let arc = Arc::new(unit_triangle());
+        g.install_mesh_resource_at(rid, Arc::clone(&arc)).unwrap();
+        assert_eq!(g.mesh_resource(rid).unwrap().vertices.len(), 3);
+        assert!(std::ptr::eq(
+            Arc::as_ptr(&arc),
+            Arc::as_ptr(g.mesh_resource_arc(rid).unwrap())
+        ));
     }
 
     #[test]
-    fn convert_leaf_inline_to_resource_is_idempotent_for_resource_leaves() {
+    fn install_mesh_resource_at_out_of_range_id_errors() {
+        let mut g = Scene::new();
+        let bogus = MeshResourceId(NonZeroU32::new(99).unwrap());
+        let arc = Arc::new(unit_triangle());
+        assert_eq!(
+            g.install_mesh_resource_at(bogus, arc),
+            Err(SceneError::DanglingMeshResource { id: bogus })
+        );
+    }
+
+    #[test]
+    fn install_mesh_resource_at_occupied_slot_errors() {
         let mut g = Scene::new();
         let rid = g.add_mesh_resource(unit_triangle());
-        let leaf = g
+        let arc = Arc::new(unit_triangle());
+        assert_eq!(
+            g.install_mesh_resource_at(rid, arc),
+            Err(SceneError::MeshResourceSlotOccupied { id: rid })
+        );
+    }
+
+    #[test]
+    fn remove_mesh_resource_returns_arc_and_clears_slot() {
+        let mut g = Scene::new();
+        let arc = Arc::new(unit_triangle());
+        let rid = g.add_mesh_resource_arc(Arc::clone(&arc));
+        let removed = g.remove_mesh_resource(rid).unwrap();
+        assert!(std::ptr::eq(Arc::as_ptr(&arc), Arc::as_ptr(&removed)));
+        assert!(g.mesh_resource(rid).is_none());
+    }
+
+    #[test]
+    fn remove_mesh_resource_on_dangling_id_errors() {
+        let mut g = Scene::new();
+        let bogus = MeshResourceId(NonZeroU32::new(99).unwrap());
+        assert_eq!(
+            g.remove_mesh_resource(bogus),
+            Err(SceneError::DanglingMeshResource { id: bogus })
+        );
+    }
+
+    #[test]
+    fn remove_mesh_resource_with_live_referencing_leaf_errors() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let _leaf = g
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
             .unwrap();
-        let resources_before = g.mesh_resources_len();
-        let returned = g.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
-        assert_eq!(returned, rid);
-        assert_eq!(g.mesh_resources_len(), resources_before);
-        assert!(matches!(
-            g.node(leaf).unwrap().kind,
-            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
-        ));
+        assert_eq!(
+            g.remove_mesh_resource(rid),
+            Err(SceneError::MeshResourceInUse { id: rid })
+        );
+        assert!(g.mesh_resource(rid).is_some());
     }
 
     #[test]
-    fn convert_leaf_inline_to_resource_on_dangling_id_errors() {
+    fn allocate_install_remove_install_round_trips_mesh_resource_at_same_id() {
         let mut g = Scene::new();
-        let bogus = NodeId(NonZeroU32::new(99).unwrap());
-        assert_eq!(
-            g.convert_leaf_inline_to_mesh_resource(bogus),
-            Err(SceneError::DanglingNodeId { id: bogus })
-        );
-        assert_eq!(g.mesh_resources_len(), 0);
-    }
-
-    #[test]
-    fn convert_leaf_inline_to_resource_on_group_errors() {
-        let mut g = Scene::new();
-        let group = g.add_group(None, Transform3D::Identity);
-        assert_eq!(
-            g.convert_leaf_inline_to_mesh_resource(group),
-            Err(SceneError::NotALeaf { node_id: group })
-        );
-        assert!(matches!(
-            g.node(group).unwrap().kind,
-            NodeKind::Group { .. }
-        ));
+        let arc = Arc::new(unit_triangle());
+        let rid = g.allocate_unbound_mesh_resource_id();
+        g.install_mesh_resource_at(rid, Arc::clone(&arc)).unwrap();
+        let snapshot_after_first = g.clone();
+        let removed = g.remove_mesh_resource(rid).unwrap();
+        g.install_mesh_resource_at(rid, removed).unwrap();
+        assert_eq!(g, snapshot_after_first);
     }
 }
 
@@ -1734,7 +1848,7 @@ mod scene_validate_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         g.add_child(root, leaf).unwrap();
@@ -1750,7 +1864,7 @@ mod scene_validate_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         g.add_child(res_root, res_leaf).unwrap();
@@ -1786,7 +1900,7 @@ mod scene_validate_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .unwrap();
         let csg = g

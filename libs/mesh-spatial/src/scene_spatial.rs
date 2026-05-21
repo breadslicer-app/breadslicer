@@ -93,33 +93,6 @@ impl SceneSpatial {
         id
     }
 
-    /// Cache-aware wrapper around
-    /// [`Scene::convert_leaf_inline_to_mesh_resource`]. On a real
-    /// conversion (the leaf was inline-mesh-backed before the call),
-    /// pushes a fresh `MeshSpatial` slot onto `self.mesh_resources`
-    /// to mirror the new entry in the underlying mesh-resource
-    /// arena, and clears the leaf's now-stale inline cache slot in
-    /// `self.leaves`. Idempotent on resource-backed leaves: the
-    /// underlying scene call short-circuits and no cache vectors
-    /// change.
-    pub fn convert_leaf_inline_to_mesh_resource(
-        &mut self,
-        leaf_id: NodeId,
-    ) -> Result<MeshResourceId, sc_mesh_core::SceneError> {
-        let was_inline = matches!(
-            self.graph.node(leaf_id).map(|n| &n.kind),
-            Some(NodeKind::Leaf(LeafPayload::Mesh(_))),
-        );
-        let rid = self.graph.convert_leaf_inline_to_mesh_resource(leaf_id)?;
-        if was_inline {
-            if let Some(slot) = self.leaves.get_mut(leaf_id.index()) {
-                *slot = None;
-            }
-            self.mesh_resources.push(MeshSpatial::default());
-        }
-        Ok(rid)
-    }
-
     /// Look up a leaf by stable [`NodeId`]. Returns `None` when:
     ///
     /// * the id is dangling or names a tombstone,
@@ -140,7 +113,7 @@ impl SceneSpatial {
         let (mesh, cache) = match payload {
             LeafPayload::Mesh(mesh) => {
                 let cache = self.leaves.get(id.index())?.as_ref()?;
-                (mesh, cache)
+                (mesh.as_ref(), cache)
             }
             LeafPayload::MeshResource(rid) => {
                 let mesh = self.graph.mesh_resource(*rid)?;
@@ -168,7 +141,13 @@ impl SceneSpatial {
     /// `RemoveRootLeaf` operate only on mesh-resource-backed leaves,
     /// whose caches live in `mesh_resources` (keyed by
     /// [`MeshResourceId`]) and stay valid across the leaf's
-    /// installation / removal.
+    /// installation / removal. `AddMeshResource` /
+    /// `RemoveMeshResource` install / tombstone the underlying
+    /// resource at a previously-allocated slot; the per-resource
+    /// cache slot is already sized to match because it was extended
+    /// at allocation time. `Compound` recurses through the inner
+    /// edits in order so each one observes the side-effects of the
+    /// previous ones.
     pub fn apply_edit(&mut self, edit: SceneEdit) {
         match edit {
             SceneEdit::SetLocalTransform { node_id, after, .. } => {
@@ -184,7 +163,29 @@ impl SceneSpatial {
             SceneEdit::RemoveRootLeaf { node_id, .. } => {
                 let _ = self.graph.remove_root_leaf(node_id);
             }
+            SceneEdit::AddMeshResource { rid, mesh } => {
+                let _ = self.graph.install_mesh_resource_at(rid, mesh);
+            }
+            SceneEdit::RemoveMeshResource { rid, .. } => {
+                let _ = self.graph.remove_mesh_resource(rid);
+            }
+            SceneEdit::Compound(edits) => {
+                for edit in edits {
+                    self.apply_edit(edit);
+                }
+            }
         }
+    }
+
+    /// Allocate a fresh [`MeshResourceId`] without populating its
+    /// slot, and extend the per-resource cache vector to keep
+    /// `self.mesh_resources.len() == self.graph.mesh_resources_len()`.
+    /// Mirrors [`Self::allocate_unbound_node_id`] for the
+    /// mesh-resource arena.
+    pub fn allocate_unbound_mesh_resource_id(&mut self) -> MeshResourceId {
+        let rid = self.graph.allocate_unbound_mesh_resource_id();
+        self.mesh_resources.push(MeshSpatial::default());
+        rid
     }
 
     /// Clear cached state for the inline mesh on the leaf at `id`.

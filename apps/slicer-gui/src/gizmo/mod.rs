@@ -69,6 +69,8 @@ pub fn hit_radius_world(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f3
 
 #[cfg(test)]
 mod pivot_tests {
+    use std::sync::Arc;
+
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
@@ -94,7 +96,7 @@ mod pivot_tests {
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         let leaf = g
-            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
         SceneSpatial::from_graph(g)

@@ -737,6 +737,8 @@ impl Renderer {
 /// writes, and a real draw call against a tiny scene.
 #[cfg(test)]
 mod gpu_integration_tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
     use crate::gizmo::axis::Axis;
@@ -763,7 +765,7 @@ mod gpu_integration_tests {
         transform: Transform3D,
     ) -> NodeId {
         let leaf = g
-            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add leaf");
         g.add_child(parent, leaf).expect("attach leaf");
         leaf

@@ -6,6 +6,7 @@
 //! Node-level types of [`crate::scene::Scene`].
 
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::transform::Transform3D;
@@ -111,8 +112,13 @@ pub enum NodeKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LeafPayload {
-    /// Mesh stored inline on the node.
-    Mesh(IndexedMesh),
+    /// Mesh stored inline on the node. The `Arc` lets the same mesh
+    /// bytes flow across scene boundaries (notably copy/paste) and be
+    /// shared between an inline leaf and a [`MeshResource`] entry
+    /// without deep-cloning the vertex / index buffers; the leaf still
+    /// "owns" the storage in the sense that no other leaf references
+    /// this `Arc` via a [`MeshResourceId`] handle.
+    Mesh(Arc<IndexedMesh>),
     /// Reference to a shared mesh in `Scene::mesh_resources`.
     MeshResource(MeshResourceId),
 }

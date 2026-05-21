@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::sync::Arc;
+
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
@@ -34,7 +36,11 @@ fn make_graph(meshes: Vec<IndexedMesh>) -> Scene {
     let mut g = Scene::new();
     for mesh in meshes {
         let leaf = g
-            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
             .expect("add leaf");
         g.add_root(leaf).expect("add root");
     }

@@ -12,6 +12,8 @@
 //! - Per-variant invalidation discipline for `SceneEdit` (basic enum
 //!   behaviour, `is_noop` and `inverse`, is tested in `mesh-core`).
 
+use std::sync::Arc;
+
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene_edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
@@ -73,7 +75,7 @@ fn add_inline_leaf(
     transform: Transform3D,
 ) -> NodeId {
     let leaf = g
-        .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+        .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
         .expect("inline leaf");
     g.add_child(parent, leaf).expect("attach inline leaf");
     leaf
@@ -116,7 +118,7 @@ mod object_query_binding {
             panic!("expected inline-mesh leaf");
         };
         assert!(
-            std::ptr::eq(q.mesh(), expected),
+            std::ptr::eq(q.mesh(), Arc::as_ptr(expected)),
             "ObjectQuery::mesh must point at the inline mesh inside the leaf node"
         );
     }
@@ -537,7 +539,7 @@ mod invalidation_discipline {
             local_transform: xform,
         };
         let remove = add.inverse();
-        spatial.apply_edit(add);
+        spatial.apply_edit(add.clone());
         let aabb_first = spatial.leaf(id).unwrap().local_aabb().unwrap();
         spatial.apply_edit(remove);
         assert!(spatial.leaf(id).is_none());
@@ -550,38 +552,59 @@ mod invalidation_discipline {
     }
 
     #[test]
-    fn convert_inline_leaf_grows_mesh_resources_and_clears_inline_cache() {
-        let (mut graph, root) = graph_with_group_root();
-        let leaf = add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
+    fn allocate_unbound_mesh_resource_id_extends_per_resource_cache() {
+        let (graph, _root) = graph_with_group_root();
         let mut spatial = SceneSpatial::primed_graph(graph);
-        // Prime: query forces the inline cache slot to be Some.
-        assert!(spatial.leaf(leaf).unwrap().local_aabb().is_some());
-        let resources_before = spatial.graph().mesh_resources_len();
-        let rid = spatial.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
-        assert_eq!(spatial.graph().mesh_resources_len(), resources_before + 1);
-        // After the conversion the leaf still queries cleanly through
-        // the resource path, so the cache plumbing is intact.
-        let q = spatial
-            .leaf(leaf)
-            .expect("leaf still queryable as resource-backed");
-        assert!(q.local_aabb().is_some());
-        // Sanity: the leaf now reports MeshResource(rid) in the graph.
-        assert!(matches!(
-            spatial.graph().node(leaf).unwrap().kind,
-            NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid
+        let before = spatial.graph().mesh_resources_len();
+        let _rid = spatial.allocate_unbound_mesh_resource_id();
+        assert_eq!(spatial.graph().mesh_resources_len(), before + 1);
+    }
+
+    #[test]
+    fn add_mesh_resource_edit_installs_at_allocated_slot() {
+        let (graph, _root) = graph_with_group_root();
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let rid = spatial.allocate_unbound_mesh_resource_id();
+        let arc = Arc::new(triangle_mesh(1.0));
+        spatial.apply_edit(SceneEdit::AddMeshResource {
+            rid,
+            mesh: Arc::clone(&arc),
+        });
+        assert!(std::ptr::eq(
+            Arc::as_ptr(&arc),
+            Arc::as_ptr(spatial.graph().mesh_resource_arc(rid).unwrap())
         ));
     }
 
     #[test]
-    fn convert_resource_leaf_is_idempotent_and_does_not_grow_caches() {
-        let (mut graph, root) = graph_with_group_root();
-        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
-        let leaf = add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
+    fn compound_paste_shape_round_trips_through_spatial() {
+        // The minimal paste compound: Add the mesh, then add the
+        // root leaf referencing it. Undo (Compound's inverse) must
+        // remove the leaf first, then the mesh resource (the
+        // RemoveMeshResource precondition rejects in-use ids).
+        let (graph, _root) = graph_with_group_root();
         let mut spatial = SceneSpatial::primed_graph(graph);
-        let resources_before = spatial.graph().mesh_resources_len();
-        let returned = spatial.convert_leaf_inline_to_mesh_resource(leaf).unwrap();
-        assert_eq!(returned, rid);
-        assert_eq!(spatial.graph().mesh_resources_len(), resources_before);
+        let rid = spatial.allocate_unbound_mesh_resource_id();
+        let nid = spatial.allocate_unbound_node_id();
+        let arc = Arc::new(triangle_mesh(1.0));
+        let xform = Transform3D::Identity;
+        let compound = SceneEdit::Compound(vec![
+            SceneEdit::AddMeshResource {
+                rid,
+                mesh: Arc::clone(&arc),
+            },
+            SceneEdit::AddRootLeaf {
+                node_id: nid,
+                mesh: rid,
+                local_transform: xform,
+            },
+        ]);
+        spatial.apply_edit(compound.clone());
+        assert!(spatial.leaf(nid).is_some());
+        assert!(spatial.graph().mesh_resource(rid).is_some());
+        spatial.apply_edit(compound.inverse());
+        assert!(spatial.leaf(nid).is_none());
+        assert!(spatial.graph().mesh_resource(rid).is_none());
     }
 }
 

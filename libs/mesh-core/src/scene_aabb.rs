@@ -5,6 +5,9 @@
 
 //! Axis-aligned bounding box queries for [`Scene`].
 
+#[cfg(test)]
+use std::sync::Arc;
+
 use crate::aabb::Aabb;
 use crate::scene::{Scene, SceneError};
 use crate::scene_node::{LeafPayload, NodeId, NodeKind};
@@ -74,7 +77,7 @@ impl Scene {
             }
             NodeKind::Leaf(payload) => {
                 let mesh = match payload {
-                    LeafPayload::Mesh(m) => m,
+                    LeafPayload::Mesh(m) => m.as_ref(),
                     LeafPayload::MeshResource(rid) => self
                         .mesh_resource(*rid)
                         .ok_or(SceneError::DanglingMeshResource { id: *rid })?,
@@ -151,7 +154,7 @@ mod scene_aabb_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         g.add_root(leaf).unwrap();
@@ -168,7 +171,7 @@ mod scene_aabb_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0])),
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         let group = g.add_group(
@@ -188,14 +191,14 @@ mod scene_aabb_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         let leaf_b = g
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         g.add_root(leaf_a).unwrap();
@@ -213,14 +216,14 @@ mod scene_aabb_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         let small = g
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([0.25, 0.25, 0.25])),
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         let csg = g
@@ -246,7 +249,7 @@ mod scene_aabb_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         let res_root = g.add_group(None, Transform3D::Identity);
@@ -286,7 +289,7 @@ mod scene_aabb_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([100.0, 200.0, 50.0])),
-                LeafPayload::Mesh(unit_cube_mesh()),
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
             )
             .unwrap();
         g.add_root(leaf).unwrap();

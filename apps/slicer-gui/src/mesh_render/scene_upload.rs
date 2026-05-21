@@ -349,7 +349,7 @@ where
         }
         NodeKind::Leaf(payload) => {
             let mesh = match payload {
-                LeafPayload::Mesh(m) => m,
+                LeafPayload::Mesh(m) => m.as_ref(),
                 LeafPayload::MeshResource(rid) => graph
                     .mesh_resource(*rid)
                     .ok_or_else(|| anyhow!("dangling mesh resource id {}", rid.get()))?,
@@ -441,6 +441,8 @@ fn build_gpu_scene_data(graph: &Scene) -> Result<SceneData> {
 }
 #[cfg(test)]
 mod build_gpu_scene_data_tests {
+    use std::sync::Arc;
+
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::MeshResourceId;
@@ -462,7 +464,7 @@ mod build_gpu_scene_data_tests {
         transform: Transform3D,
     ) -> NodeId {
         let leaf = g
-            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add inline leaf");
         g.add_child(parent, leaf).expect("attach inline leaf");
         leaf
@@ -668,6 +670,8 @@ mod build_gpu_scene_data_tests {
 
 #[cfg(test)]
 mod transform_to_mat4_tests {
+    use std::sync::Arc;
+
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::transform::AffineTransform3D;
@@ -740,7 +744,7 @@ mod transform_to_mat4_tests {
         transform: Transform3D,
     ) -> NodeId {
         let leaf = g
-            .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+            .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
             .expect("add inline leaf");
         g.add_child(parent, leaf).expect("attach inline leaf");
         leaf

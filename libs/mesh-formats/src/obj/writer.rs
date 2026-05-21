@@ -175,6 +175,8 @@ mod helper_tests {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{
         IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, SceneMetadata,
@@ -212,7 +214,11 @@ mod tests {
         let mut g = Scene::new();
         for mesh in meshes {
             let leaf = g
-                .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(mesh))
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(mesh)),
+                )
                 .expect("add leaf");
             g.add_root(leaf).expect("add root");
         }
@@ -333,7 +339,10 @@ mod tests {
         use sc_mesh_core::transform::AffineTransform3D;
 
         let transform = Transform3D::Affine(AffineTransform3D::from_translation([10.0, 5.0, -2.0]));
-        let graph = single_leaf_graph(transform, LeafPayload::Mesh(make_triangle_mesh(None)));
+        let graph = single_leaf_graph(
+            transform,
+            LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
+        );
         let out = write_to_string(&graph);
         // Original vertices were (1,0,0), (0,1,0), (0,0,1); after the
         // translation each becomes the original plus (10, 5, -2).
@@ -346,7 +355,10 @@ mod tests {
 
         let transform =
             Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
-        let graph = single_leaf_graph(transform, LeafPayload::Mesh(make_triangle_mesh(None)));
+        let graph = single_leaf_graph(
+            transform,
+            LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
+        );
         let out = write_to_string(&graph);
         // Vertex 0 was (1,0,0); after x→-x it's (-1,0,0). Winding goes
         // from [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
@@ -360,7 +372,7 @@ mod tests {
         let transform = Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         let graph = single_leaf_graph(
             transform,
-            LeafPayload::Mesh(make_triangle_mesh(Some("MyObj"))),
+            LeafPayload::Mesh(Arc::new(make_triangle_mesh(Some("MyObj")))),
         );
         let out = write_to_string(&graph);
         // The `o MyObj` marker comes from the source mesh's metadata even
@@ -418,7 +430,7 @@ mod tests {
         );
         let graph = single_leaf_graph(
             Transform3D::Affine(singular),
-            LeafPayload::Mesh(make_triangle_mesh(None)),
+            LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
         );
         let mut buf: Vec<u8> = Vec::new();
         assert!(write_obj(&graph, &mut buf).is_err());

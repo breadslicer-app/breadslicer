@@ -75,6 +75,7 @@ pub(crate) fn export_scene_as(
 mod scene_export_tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
@@ -105,7 +106,7 @@ mod scene_export_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
@@ -122,7 +123,7 @@ mod scene_export_tests {
             .add_leaf(
                 None,
                 Transform3D::Identity,
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .expect("add leaf A");
         g.add_child(root, leaf_a).expect("attach leaf A");
@@ -130,7 +131,7 @@ mod scene_export_tests {
             .add_leaf(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
-                LeafPayload::Mesh(unit_triangle()),
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
             )
             .expect("add leaf B");
         g.add_child(root, leaf_b).expect("attach leaf B");

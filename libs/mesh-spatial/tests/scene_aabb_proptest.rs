@@ -10,6 +10,8 @@
  * silently. This test fails CI instead.
  */
 
+use std::sync::Arc;
+
 use proptest::prelude::*;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
@@ -83,7 +85,7 @@ fn graph_strategy() -> impl Strategy<Value = Scene> {
         g.add_root(root).expect("group root");
         for (mesh, transform) in leaves {
             let leaf = g
-                .add_leaf(None, transform, LeafPayload::Mesh(mesh))
+                .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
                 .expect("inline leaf");
             g.add_child(root, leaf).expect("attach leaf");
         }

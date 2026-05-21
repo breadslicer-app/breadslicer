@@ -11,6 +11,9 @@
 //! `sc_mesh_spatial::SceneSpatial`) dispatch the same enum and add
 //! invalidation hooks for the cached state that the variant affects.
 
+use std::sync::Arc;
+
+use crate::indexed_mesh::IndexedMesh;
 use crate::scene::Scene;
 use crate::scene_node::{MeshResourceId, NodeId};
 use crate::transform::Transform3D;
@@ -19,10 +22,20 @@ use crate::transform::Transform3D;
 /// the GUI's undo/redo stack, the headless apply paths, and any
 /// cache layer's `apply_edit` all speak this enum.
 ///
-/// Every variant is keyed by a stable [`NodeId`] on a [`Scene`].
-/// `AddRootLeaf` and `RemoveRootLeaf` carry the same fields so each
-/// is the [`Self::inverse`] of the other.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Every variant is keyed by a stable [`NodeId`] or
+/// [`MeshResourceId`] on a [`Scene`]. Variants come in `Add` / `Remove`
+/// pairs that carry the same fields, so each is the
+/// [`Self::inverse`] of the other; [`Self::Compound`] bundles several
+/// edits as a single undo / redo unit (used for paste, which adds
+/// both a mesh resource and a root leaf atomically).
+///
+/// `Clone` rather than `Copy`: variants like
+/// [`Self::AddMeshResource`] carry `Arc<IndexedMesh>` so the
+/// underlying mesh storage can be shared across undo / redo states
+/// and across scenes without deep-cloning vertex / index buffers; an
+/// `Arc` is `Clone` but never `Copy`. Existing call sites pass edits
+/// by value and clone them explicitly when needed.
+#[derive(Clone, Debug, PartialEq)]
 pub enum SceneEdit {
     /// `node.local_transform` for the node at `node_id` was changed
     /// from `before` to `after`. Stable id, so the edit stays valid
@@ -49,6 +62,28 @@ pub enum SceneEdit {
         mesh: MeshResourceId,
         local_transform: Transform3D,
     },
+    /// Install a mesh resource at `rid` carrying the given `Arc`.
+    /// The id must come from
+    /// [`Scene::allocate_unbound_mesh_resource_id`] so the arena
+    /// slot exists and is empty when the edit is applied.
+    AddMeshResource {
+        rid: MeshResourceId,
+        mesh: Arc<IndexedMesh>,
+    },
+    /// Tombstone the mesh resource at `rid`. `mesh` snapshots the
+    /// `Arc` so the inverse [`Self::AddMeshResource`] re-installs the
+    /// same storage.
+    RemoveMeshResource {
+        rid: MeshResourceId,
+        mesh: Arc<IndexedMesh>,
+    },
+    /// Apply a sequence of edits as a single undo / redo unit. The
+    /// inverse is the reversed sequence of inverses, so e.g. a paste
+    /// that emits `Compound([AddMeshResource, AddRootLeaf])` undoes
+    /// as `Compound([RemoveRootLeaf, RemoveMeshResource])` (which
+    /// is the order that satisfies the
+    /// [`SceneError::MeshResourceInUse`] precondition).
+    Compound(Vec<SceneEdit>),
 }
 
 impl SceneEdit {
@@ -57,7 +92,11 @@ impl SceneEdit {
     pub fn is_noop(&self) -> bool {
         match self {
             Self::SetLocalTransform { before, after, .. } => before == after,
-            Self::AddRootLeaf { .. } | Self::RemoveRootLeaf { .. } => false,
+            Self::AddRootLeaf { .. }
+            | Self::RemoveRootLeaf { .. }
+            | Self::AddMeshResource { .. }
+            | Self::RemoveMeshResource { .. } => false,
+            Self::Compound(edits) => edits.iter().all(Self::is_noop),
         }
     }
 
@@ -92,6 +131,17 @@ impl SceneEdit {
                 mesh: *mesh,
                 local_transform: *local_transform,
             },
+            Self::AddMeshResource { rid, mesh } => Self::RemoveMeshResource {
+                rid: *rid,
+                mesh: Arc::clone(mesh),
+            },
+            Self::RemoveMeshResource { rid, mesh } => Self::AddMeshResource {
+                rid: *rid,
+                mesh: Arc::clone(mesh),
+            },
+            Self::Compound(edits) => {
+                Self::Compound(edits.iter().rev().map(Self::inverse).collect())
+            }
         }
     }
 
@@ -115,6 +165,17 @@ impl SceneEdit {
             }
             Self::RemoveRootLeaf { node_id, .. } => {
                 let _ = graph.remove_root_leaf(*node_id);
+            }
+            Self::AddMeshResource { rid, mesh } => {
+                let _ = graph.install_mesh_resource_at(*rid, Arc::clone(mesh));
+            }
+            Self::RemoveMeshResource { rid, .. } => {
+                let _ = graph.remove_mesh_resource(*rid);
+            }
+            Self::Compound(edits) => {
+                for edit in edits {
+                    edit.apply_to_scene(graph);
+                }
             }
         }
     }
@@ -365,5 +426,175 @@ mod scene_edit_tests {
         .apply_to_scene(&mut g);
         assert!(g.node(id).is_none());
         assert!(!g.roots().contains(&id));
+    }
+
+    fn fresh_scene_with_unbound_mesh_slot() -> (Scene, MeshResourceId, Arc<IndexedMesh>) {
+        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        let mut g = Scene::new();
+        let mesh = Arc::new(IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        });
+        let rid = g.allocate_unbound_mesh_resource_id();
+        (g, rid, mesh)
+    }
+
+    #[test]
+    fn add_mesh_resource_is_never_noop() {
+        let (_, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let edit = SceneEdit::AddMeshResource { rid, mesh };
+        assert!(!edit.is_noop());
+    }
+
+    #[test]
+    fn remove_mesh_resource_is_never_noop() {
+        let (_, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let edit = SceneEdit::RemoveMeshResource { rid, mesh };
+        assert!(!edit.is_noop());
+    }
+
+    #[test]
+    fn add_mesh_resource_inverse_is_remove_with_same_arc() {
+        let (_, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let add = SceneEdit::AddMeshResource {
+            rid,
+            mesh: Arc::clone(&mesh),
+        };
+        let inverse = add.inverse();
+        let SceneEdit::RemoveMeshResource {
+            rid: out_rid,
+            mesh: out_mesh,
+        } = inverse
+        else {
+            panic!("inverse of AddMeshResource must be RemoveMeshResource");
+        };
+        assert_eq!(out_rid, rid);
+        assert!(std::ptr::eq(Arc::as_ptr(&mesh), Arc::as_ptr(&out_mesh)));
+    }
+
+    #[test]
+    fn apply_add_mesh_resource_installs_at_the_allocated_slot() {
+        let (mut g, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        SceneEdit::AddMeshResource {
+            rid,
+            mesh: Arc::clone(&mesh),
+        }
+        .apply_to_scene(&mut g);
+        assert!(std::ptr::eq(
+            Arc::as_ptr(&mesh),
+            Arc::as_ptr(g.mesh_resource_arc(rid).unwrap())
+        ));
+    }
+
+    #[test]
+    fn apply_add_mesh_then_inverse_round_trips_scene() {
+        let (mut g, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let snapshot_before = g.clone();
+        let edit = SceneEdit::AddMeshResource {
+            rid,
+            mesh: Arc::clone(&mesh),
+        };
+        edit.apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g);
+        assert_eq!(g, snapshot_before);
+    }
+
+    #[test]
+    fn compound_is_noop_iff_all_inner_are_noop() {
+        // Identity-only SetLocalTransform is the only noop variant
+        // in the enum's vocabulary; everything else is unconditionally
+        // mutating.
+        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        let mut g = Scene::new();
+        let nid = g.add_group(None, Transform3D::Identity);
+        let noop = SceneEdit::SetLocalTransform {
+            node_id: nid,
+            before: Transform3D::Identity,
+            after: Transform3D::Identity,
+        };
+        assert!(SceneEdit::Compound(vec![noop.clone(), noop.clone()]).is_noop());
+        let mesh = Arc::new(IndexedMesh {
+            meta: None,
+            vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 0, 0],
+            )],
+        });
+        let rid = g.allocate_unbound_mesh_resource_id();
+        let mutating = SceneEdit::AddMeshResource { rid, mesh };
+        assert!(!SceneEdit::Compound(vec![noop, mutating]).is_noop());
+    }
+
+    #[test]
+    fn compound_inverse_reverses_and_inverts_each_inner_edit() {
+        let (_, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let mut g = Scene::new();
+        let nid = g.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
+        let compound = SceneEdit::Compound(vec![
+            SceneEdit::AddMeshResource {
+                rid,
+                mesh: Arc::clone(&mesh),
+            },
+            SceneEdit::AddRootLeaf {
+                node_id: nid,
+                mesh: rid,
+                local_transform: xform,
+            },
+        ]);
+        let inverse = compound.inverse();
+        let SceneEdit::Compound(parts) = inverse else {
+            panic!("inverse of Compound must be Compound");
+        };
+        assert!(matches!(
+            parts[0],
+            SceneEdit::RemoveRootLeaf {
+                node_id,
+                mesh: m,
+                ..
+            } if node_id == nid && m == rid
+        ));
+        assert!(matches!(
+            parts[1],
+            SceneEdit::RemoveMeshResource {
+                rid: r,
+                ..
+            } if r == rid
+        ));
+    }
+
+    #[test]
+    fn compound_apply_runs_edits_in_order_and_round_trips_via_inverse() {
+        // The paste shape: AddMeshResource then AddRootLeaf. The
+        // first edit's id allocations are visible to the second.
+        let (mut g, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let nid = g.allocate_unbound_node_id();
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([4.0, 5.0, 6.0]));
+        let compound = SceneEdit::Compound(vec![
+            SceneEdit::AddMeshResource {
+                rid,
+                mesh: Arc::clone(&mesh),
+            },
+            SceneEdit::AddRootLeaf {
+                node_id: nid,
+                mesh: rid,
+                local_transform: xform,
+            },
+        ]);
+        let snapshot_before = g.clone();
+        compound.apply_to_scene(&mut g);
+        assert!(g.roots().contains(&nid));
+        assert!(g.mesh_resource(rid).is_some());
+        compound.inverse().apply_to_scene(&mut g);
+        assert_eq!(g, snapshot_before);
     }
 }
