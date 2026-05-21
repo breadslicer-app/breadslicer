@@ -158,9 +158,21 @@ impl ViewportController {
                 self.mark_dirty();
             }
             SceneEvent::Mutated => {
-                // Every scene mutation routes through `apply_command`,
-                // so this is the single place that schedules a redraw
-                // for them.
+                // Every non-structural scene mutation routes
+                // through `apply_edit`, so this is the single place
+                // that schedules a redraw for them. The per-frame
+                // model-matrix upload reads the live graph each
+                // frame, so a transform tick needs no extra upload.
+                self.mark_dirty();
+            }
+            SceneEvent::Restructured => {
+                // A structural edit (leaf added or removed, mesh
+                // resource added or removed) just landed. The
+                // renderer's GpuScene mirrors the arena one-to-one,
+                // so it needs a fresh upload before the next draw
+                // or the leaf-count assertion at the top of `render`
+                // will trip. `mark_dirty` also flips redraw-owed.
+                self.render.update_frame(FrameState::with_upload_owed);
                 self.mark_dirty();
             }
             SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),

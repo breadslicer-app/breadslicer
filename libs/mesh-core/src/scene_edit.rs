@@ -100,6 +100,27 @@ impl SceneEdit {
         }
     }
 
+    /// True when applying this edit changes the node or
+    /// mesh-resource arena membership (a leaf appears or
+    /// disappears, or a mesh resource is registered or removed).
+    /// `SetLocalTransform` is non-structural: it perturbs an
+    /// existing leaf's transform without touching arena slots.
+    ///
+    /// Downstream caches that mirror the arena (the GPU scene's
+    /// per-leaf model buffer, the spatial caches' parallel vecs)
+    /// use this to decide whether they need a re-upload after the
+    /// edit lands.
+    pub fn is_structural(&self) -> bool {
+        match self {
+            Self::SetLocalTransform { .. } => false,
+            Self::AddRootLeaf { .. }
+            | Self::RemoveRootLeaf { .. }
+            | Self::AddMeshResource { .. }
+            | Self::RemoveMeshResource { .. } => true,
+            Self::Compound(edits) => edits.iter().any(Self::is_structural),
+        }
+    }
+
     /// Inverse edit: applying `self` then `self.inverse()` returns
     /// the target to its pre-edit state.
     pub fn inverse(&self) -> Self {
@@ -196,6 +217,53 @@ mod scene_edit_tests {
             after: Transform3D::Identity,
         };
         assert!(edit.is_noop());
+    }
+
+    #[test]
+    fn set_local_transform_is_not_structural() {
+        let mut g = Scene::new();
+        let id = g.add_group(None, Transform3D::Identity);
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: id,
+            before: Transform3D::Identity,
+            after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
+        };
+        assert!(!edit.is_structural());
+    }
+
+    #[test]
+    fn add_root_leaf_is_structural() {
+        use std::num::NonZeroU32;
+        let edit = SceneEdit::AddRootLeaf {
+            node_id: crate::scene_node::NodeId(NonZeroU32::new(1).unwrap()),
+            mesh: crate::scene_node::MeshResourceId(NonZeroU32::new(1).unwrap()),
+            local_transform: Transform3D::Identity,
+        };
+        assert!(edit.is_structural());
+    }
+
+    #[test]
+    fn compound_is_structural_iff_any_inner_is() {
+        let nid = crate::scene_node::NodeId(std::num::NonZeroU32::new(1).unwrap());
+        let only_set = SceneEdit::Compound(vec![SceneEdit::SetLocalTransform {
+            node_id: nid,
+            before: Transform3D::Identity,
+            after: Transform3D::Identity,
+        }]);
+        assert!(!only_set.is_structural());
+        let mixed = SceneEdit::Compound(vec![
+            SceneEdit::SetLocalTransform {
+                node_id: nid,
+                before: Transform3D::Identity,
+                after: Transform3D::Identity,
+            },
+            SceneEdit::AddRootLeaf {
+                node_id: nid,
+                mesh: crate::scene_node::MeshResourceId(std::num::NonZeroU32::new(1).unwrap()),
+                local_transform: Transform3D::Identity,
+            },
+        ]);
+        assert!(mixed.is_structural());
     }
 
     #[test]

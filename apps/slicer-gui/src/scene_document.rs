@@ -55,8 +55,17 @@ pub(crate) enum SceneEvent {
     SelectionChanged,
     /// The scene's contents were mutated through
     /// [`SceneDocument::apply_edit`] (also the path used internally
-    /// by `undo` and `redo`).
+    /// by `undo` and `redo`) WITHOUT changing arena membership.
+    /// Fires for transform-only edits (gizmo drag, keyboard-driven
+    /// arrow nudges, etc.); the listener marks the renderer dirty
+    /// so the per-frame model-matrix update covers the change.
     Mutated,
+    /// A structural mutation landed: a leaf was added or removed,
+    /// or a mesh resource was registered or removed. The GPU
+    /// scene's per-leaf model buffer and the spatial caches need
+    /// a re-upload to mirror the new arena shape, so listeners
+    /// schedule that on top of the usual redraw.
+    Restructured,
     /// The undo or redo stack changed (push, undo, redo, or
     /// install/clear when the stacks were non-empty). Listeners that
     /// only care about scene contents can ignore this; the controller
@@ -188,18 +197,23 @@ impl SceneDocument {
         let Some(spatial) = slot.as_mut() else {
             return false;
         };
-        // Decide selection-clearing BEFORE moving the edit into
-        // spatial.apply_edit: the typed-edit enum is no longer `Copy`,
-        // and `RemoveRootLeaf` may be nested under a `Compound`
-        // produced by paste-undo, so a plain `match` post-apply is
-        // not enough.
+        // Decide selection-clearing and the post-mutation event
+        // kind BEFORE moving the edit into spatial.apply_edit: the
+        // typed-edit enum is no longer `Copy`, and `RemoveRootLeaf`
+        // may be nested under a `Compound` produced by paste-undo,
+        // so a plain `match` post-apply is not enough.
         let drops_selection = edit_removes_selected_leaf(&edit, &self.selection);
+        let event = if edit.is_structural() {
+            SceneEvent::Restructured
+        } else {
+            SceneEvent::Mutated
+        };
         spatial.apply_edit(edit);
         drop(slot);
         // If the edit tombstoned the currently-selected leaf, drop
         // the now-dangling selection so observers don't keep pointing
         // at an empty arena slot. Fires SelectionChanged after the
-        // Mutated event so listeners that recompute on mutation see
+        // mutation event so listeners that recompute on mutation see
         // the updated selection.
         let selection_cleared = if drops_selection {
             self.selection.set(Selection::None);
@@ -207,7 +221,7 @@ impl SceneDocument {
         } else {
             false
         };
-        self.notify(SceneEvent::Mutated);
+        self.notify(event);
         if selection_cleared {
             self.notify(SceneEvent::SelectionChanged);
         }
@@ -1200,7 +1214,7 @@ mod scene_document_tests {
         assert_eq!(
             *events.borrow(),
             vec![
-                SceneEvent::Mutated,
+                SceneEvent::Restructured,
                 SceneEvent::SelectionChanged,
                 SceneEvent::UndoStackChanged,
             ]
@@ -1325,6 +1339,44 @@ mod scene_document_tests {
         });
         assert_eq!(observed, Some((false, 0)));
         assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn paste_fragment_fires_restructured_event() {
+        // Regression guard: paste lands a compound that grows the
+        // node + mesh-resource arenas, so the document must signal
+        // the structural change so the renderer's GpuScene mirror
+        // is re-uploaded. A bare `Mutated` event would skip the
+        // upload and the next render would trip the leaf-count
+        // assertion in mesh_render::render.
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+        doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        assert!(log.borrow().contains(&SceneEvent::Restructured));
+        assert!(!log.borrow().contains(&SceneEvent::Mutated));
+    }
+
+    #[test]
+    fn set_local_transform_still_fires_mutated_not_restructured() {
+        // Counterpart guard: a non-structural edit (gizmo tick)
+        // must keep firing `Mutated` so the upload-owed flag is
+        // not flipped on every transform frame, which would burn
+        // GPU bandwidth on a hot path that needs none.
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+        doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        assert!(log.borrow().contains(&SceneEvent::Mutated));
+        assert!(!log.borrow().contains(&SceneEvent::Restructured));
     }
 
     #[test]
