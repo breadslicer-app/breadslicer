@@ -171,8 +171,13 @@ impl ViewportController {
                 // renderer's GpuScene mirrors the arena one-to-one,
                 // so it needs a fresh upload before the next draw
                 // or the leaf-count assertion at the top of `render`
-                // will trip. `mark_dirty` also flips redraw-owed.
+                // will trip. The object-list side panel also mirrors
+                // the arena and needs the same refresh. `mark_dirty`
+                // flips redraw-owed for the redraw.
                 self.render.update_frame(FrameState::with_upload_owed);
+                if let Some(ui) = self.ui.upgrade() {
+                    self.refresh_object_list_on(&ui);
+                }
                 self.mark_dirty();
             }
             SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),
@@ -194,17 +199,27 @@ impl ViewportController {
         self.camera.reset();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_has_scene(true);
-            let names = self
-                .session
-                .document()
-                .with_scene(|spatial| build_object_list_names(spatial.graph()))
-                .unwrap_or_default();
-            push_object_list(&ui, names);
+            self.refresh_object_list_on(&ui);
             ui.set_selected_object_index(-1);
             ui.set_gizmo_keyboard_focus_active(false);
         }
         self.mirror_undo_state_to_ui();
         self.mark_dirty();
+    }
+
+    /// Rebuild the object-list panel from the live graph and push
+    /// it to `ui`. Called on scene install (initial population) and
+    /// after every structural mutation (paste, undo of paste, future
+    /// add / remove flows) so the side panel stays in sync with
+    /// the arena. Non-structural edits (gizmo drag, keyboard nudge)
+    /// don't grow or shrink the list, so they skip this.
+    fn refresh_object_list_on(&self, ui: &MainWindow) {
+        let names = self
+            .session
+            .document()
+            .with_scene(|spatial| build_object_list_names(spatial.graph()))
+            .unwrap_or_default();
+        push_object_list(ui, names);
     }
 
     /// Full viewport reset on scene close. Mirror of the inline body
