@@ -17,8 +17,9 @@
 
 pub(crate) mod placement;
 
-use sc_mesh_core::SceneFragment;
+use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_core::{Aabb, SceneFragment};
 
 use crate::scene_document::SceneDocument;
 
@@ -86,6 +87,35 @@ pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<Sc
         arc,
         drop_translation(world_xform),
     ))
+}
+
+/// World-space AABB of the fragment's single root leaf, after
+/// applying the root's local transform (rotation + scale) to the
+/// mesh's local AABB via Arvo's method. Returns `None` when the
+/// fragment is empty, the root is not a mesh-backed leaf, or the
+/// mesh has no vertices.
+///
+/// "World-space" here means fragment-space: the AABB the placement
+/// function feeds into the cursor-centring math, before any
+/// paste-side translation is added. Arvo's method over-reports for
+/// tilted meshes (the conservative AABB-of-the-rotated-local-AABB);
+/// the paste pipeline accepts this since the collision search is
+/// already a heuristic.
+#[allow(dead_code)]
+pub(crate) fn fragment_world_aabb(fragment: &SceneFragment) -> Option<Aabb> {
+    let scene = fragment.scene();
+    let root_id = scene.roots().first().copied()?;
+    let node = scene.node(root_id)?;
+    let mesh_arc = match &node.kind {
+        NodeKind::Leaf(LeafPayload::Mesh(arc)) => arc.clone(),
+        NodeKind::Leaf(LeafPayload::MeshResource(rid)) => scene.mesh_resource_arc(*rid)?.clone(),
+        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => return None,
+    };
+    let local_aabb = mesh_arc.local_aabb()?;
+    Some(match node.local_transform {
+        Transform3D::Identity => local_aabb,
+        Transform3D::Affine(a) => local_aabb.transformed_arvo(&a),
+    })
 }
 
 /// Return `xform` with its translation component set to the origin,
@@ -279,5 +309,45 @@ mod clipboard_tests {
         cb.bump_cascade();
         cb.bump_cascade();
         assert_eq!(cb.cascade_count(), 3);
+    }
+
+    #[test]
+    fn fragment_world_aabb_with_identity_returns_local_aabb() {
+        let mesh = triangle_arc();
+        let fragment = SceneFragment::from_leaf_snapshot(Arc::clone(&mesh), Transform3D::Identity);
+        let aabb = fragment_world_aabb(&fragment).expect("triangle has an AABB");
+        let local = mesh.local_aabb().unwrap();
+        assert_eq!(aabb.min().coords(), local.min().coords());
+        assert_eq!(aabb.max().coords(), local.max().coords());
+    }
+
+    #[test]
+    fn fragment_world_aabb_applies_root_local_transform() {
+        // 90 degree rotation around +Z: the triangle's footprint
+        // changes from x in [0, 1] to y in [0, 1] (and x in [-1, 0]).
+        let mesh = triangle_arc();
+        let rot = Transform3D::Affine(AffineTransform3D::from_rotation_z(
+            std::f64::consts::FRAC_PI_2,
+        ));
+        let fragment = SceneFragment::from_leaf_snapshot(mesh, rot);
+        let aabb = fragment_world_aabb(&fragment).expect("rotated triangle has an AABB");
+        // After rotating, the original local-AABB (x in [0,1], y in
+        // [0,1]) becomes (x in [-1,0], y in [0,1]). Arvo applies the
+        // |M[i][j]| rule to the centre + half-extents formulation, so
+        // the result is slightly over-conservative but should still
+        // bracket those coordinates.
+        let min = aabb.min().coords();
+        let max = aabb.max().coords();
+        assert!(min[0] <= -1.0 + 1e-5 && min[0] >= -1.0 - 1e-5);
+        assert!(max[0] <= 0.0 + 1e-5 && max[0] >= 0.0 - 1e-5);
+        assert!(min[1] <= 0.0 + 1e-5 && min[1] >= 0.0 - 1e-5);
+        assert!(max[1] <= 1.0 + 1e-5 && max[1] >= 1.0 - 1e-5);
+    }
+
+    #[test]
+    fn fragment_world_aabb_returns_none_for_empty_mesh() {
+        let empty = Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()));
+        let fragment = SceneFragment::from_leaf_snapshot(empty, Transform3D::Identity);
+        assert!(fragment_world_aabb(&fragment).is_none());
     }
 }

@@ -154,6 +154,32 @@ pub fn project_world_to_screen(
     Some((screen_x, screen_y))
 }
 
+/// Intersect a ray with the axis-aligned plane `Z = z` and return
+/// the `(x, y)` world coordinates of the hit. `None` when the ray
+/// is parallel to the plane (no intersection) or when the plane
+/// sits behind the ray origin (intersection at `t < 0`, which the
+/// paste path treats as "the cursor is pointed away from the build
+/// platform").
+///
+/// `EPSILON_DIR_Z` filters direction vectors that round to zero on
+/// the Z axis. The ray's `direction` is unit length, so this is a
+/// scale-invariant guard: a `direction.z` of 1e-7 means the ray is
+/// pointed roughly along the plane and the intersection is too
+/// far away to be useful as a placement anchor.
+#[allow(dead_code)]
+pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> {
+    const EPSILON_DIR_Z: f32 = 1e-7;
+    if ray.direction.z.abs() < EPSILON_DIR_Z {
+        return None;
+    }
+    let t = (z - ray.origin.z) / ray.direction.z;
+    if t < 0.0 {
+        return None;
+    }
+    let hit = ray.origin + ray.direction * t;
+    Some((hit.x, hit.y))
+}
+
 /// Picks the closest leaf the ray hits, by stable [`NodeId`]. Returns
 /// `None` if every reachable leaf misses (whether by AABB pre-pass or
 /// triangle test). The walk is pre-order over `spatial.graph().roots()`
@@ -980,5 +1006,67 @@ mod arvo_consistency_tests {
         let t = AffineTransform3D::from_rotation_z(std::f64::consts::FRAC_PI_3)
             .compose(&AffineTransform3D::from_non_uniform_scale([1.5, 1.5, 1.5]));
         assert_arvo_agrees(off_origin, t);
+    }
+}
+
+#[cfg(test)]
+mod ray_z_plane_intersection_tests {
+    use super::*;
+    use float_cmp::assert_approx_eq;
+
+    #[test]
+    fn vertical_ray_hits_z_plane_at_xy_of_origin() {
+        let ray = Ray {
+            origin: Vec3::new(3.0, 4.0, 10.0),
+            direction: Vec3::new(0.0, 0.0, -1.0),
+        };
+        let (x, y) = ray_z_plane_intersection(&ray, 0.0).expect("vertical ray hits Z=0");
+        assert_approx_eq!(f32, x, 3.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, y, 4.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn forward_diagonal_ray_finds_correct_xy() {
+        // Origin 10 units above plane, direction (1, 0, -1)/sqrt(2):
+        // t = (0 - 10) / (-1/sqrt(2)) = 10*sqrt(2). hit.x = 10.
+        let dir = Vec3::new(1.0, 0.0, -1.0).normalize();
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 10.0),
+            direction: dir,
+        };
+        let (x, y) = ray_z_plane_intersection(&ray, 0.0).expect("diagonal ray hits Z=0");
+        assert_approx_eq!(f32, x, 10.0, epsilon = 1e-4);
+        assert_approx_eq!(f32, y, 0.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn ray_parallel_to_plane_returns_none() {
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 5.0),
+            direction: Vec3::new(1.0, 0.0, 0.0),
+        };
+        assert!(ray_z_plane_intersection(&ray, 0.0).is_none());
+    }
+
+    #[test]
+    fn plane_behind_camera_returns_none() {
+        // Origin below plane and aimed downward: the plane sits behind
+        // the ray, so the intersection is at t < 0.
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, -2.0),
+            direction: Vec3::new(0.0, 0.0, -1.0),
+        };
+        assert!(ray_z_plane_intersection(&ray, 0.0).is_none());
+    }
+
+    #[test]
+    fn arbitrary_z_plane_is_honoured() {
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 0.0),
+            direction: Vec3::new(0.0, 0.0, 1.0),
+        };
+        let (x, y) = ray_z_plane_intersection(&ray, 7.5).expect("upward ray hits Z=7.5");
+        assert_approx_eq!(f32, x, 0.0, epsilon = 1e-5);
+        assert_approx_eq!(f32, y, 0.0, epsilon = 1e-5);
     }
 }

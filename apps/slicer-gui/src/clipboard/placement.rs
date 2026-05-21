@@ -34,6 +34,7 @@
 //! build plate and never crosses it.
 
 use sc_mesh_core::Aabb;
+use sc_mesh_spatial::SceneSpatial;
 
 /// XY offset added per consecutive paste, in millimetres. Small
 /// enough to keep the cascade visible without scattering copies
@@ -118,6 +119,32 @@ pub(crate) fn paste_translation_for_fragment(
     initial
 }
 
+/// Gather the world-space AABBs of every reachable leaf in
+/// `spatial`. The paste path hands the result to
+/// [`paste_translation_for_fragment`] as the obstacle list, so the
+/// pasted fragment lands somewhere that does not collide with
+/// existing geometry.
+///
+/// Leaves whose mesh has no vertices are skipped: an empty leaf has
+/// no AABB to overlap against. The walk uses the same pre-order
+/// leaf enumerator the picker relies on, so the obstacle order
+/// matches the picker's iteration order even though the placement
+/// algorithm does not care about ordering.
+#[allow(dead_code)]
+pub(crate) fn obstacle_aabbs_for_scene(spatial: &SceneSpatial) -> Vec<Aabb> {
+    let mut obstacles = Vec::new();
+    let mut idx = 0usize;
+    while let Some(node_id) = spatial.leaf_id_at_index(idx) {
+        idx += 1;
+        if let Some(query) = spatial.leaf(node_id)
+            && let Some(aabb) = query.transformed_aabb(query.world_transform())
+        {
+            obstacles.push(aabb);
+        }
+    }
+    obstacles
+}
+
 /// Promote an `Aabb`'s f32 corners to f64, matching the precision
 /// used by the placement algorithm and the destination scene's
 /// transform matrices.
@@ -162,7 +189,13 @@ fn overlaps_any(
 
 #[cfg(test)]
 mod placement_tests {
-    use sc_mesh_core::primitives::Vertex;
+    use std::sync::Arc;
+
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::scene_node::LeafPayload;
+    use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+    use sc_mesh_core::{IndexedMesh, Scene};
+    use sc_mesh_spatial::SceneSpatial;
 
     use super::*;
 
@@ -260,6 +293,92 @@ mod placement_tests {
         let touching = aabb([-3.0, -1.0, 0.0], [-1.0, 1.0, 2.0]);
         let t = paste_translation_for_fragment(&frag, [0.0, 0.0], 0, &[touching]);
         assert_eq!(t, [0.0, 0.0, 0.0]);
+    }
+
+    fn unit_cube_mesh() -> Arc<IndexedMesh> {
+        // Eight-vertex cube spanning [-0.5, 0.5] on each axis. The
+        // obstacle helper relies on local_aabb being Some, which
+        // requires at least one vertex; a single triangle would do,
+        // but a cube makes the assertions readable.
+        Arc::new(IndexedMesh::new(
+            None,
+            vec![
+                Vertex::new([-0.5, -0.5, -0.5]),
+                Vertex::new([0.5, -0.5, -0.5]),
+                Vertex::new([-0.5, 0.5, -0.5]),
+                Vertex::new([0.5, 0.5, -0.5]),
+                Vertex::new([-0.5, -0.5, 0.5]),
+                Vertex::new([0.5, -0.5, 0.5]),
+                Vertex::new([-0.5, 0.5, 0.5]),
+                Vertex::new([0.5, 0.5, 0.5]),
+            ],
+            vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        ))
+    }
+
+    fn empty_mesh() -> Arc<IndexedMesh> {
+        Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))
+    }
+
+    fn translation_xform(x: f64, y: f64, z: f64) -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation([x, y, z]))
+    }
+
+    #[test]
+    fn obstacle_aabbs_for_empty_scene_is_empty() {
+        let spatial = SceneSpatial::primed_graph(Scene::new());
+        assert!(obstacle_aabbs_for_scene(&spatial).is_empty());
+    }
+
+    #[test]
+    fn obstacle_aabbs_for_scene_yields_one_aabb_per_leaf() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        for dx in [0.0, 10.0, 20.0] {
+            let leaf = g
+                .add_leaf(
+                    None,
+                    translation_xform(dx, 0.0, 0.0),
+                    LeafPayload::Mesh(unit_cube_mesh()),
+                )
+                .unwrap();
+            g.add_child(root, leaf).unwrap();
+        }
+        let spatial = SceneSpatial::primed_graph(g);
+        let obstacles = obstacle_aabbs_for_scene(&spatial);
+        assert_eq!(obstacles.len(), 3);
+        let xs: Vec<f32> = obstacles.iter().map(|a| a.min().coords()[0]).collect();
+        assert_eq!(xs, vec![-0.5, 9.5, 19.5]);
+    }
+
+    #[test]
+    fn obstacle_aabbs_skip_empty_meshes() {
+        // A leaf with an empty mesh has no AABB to overlap against:
+        // the helper must drop it from the obstacle list so the
+        // placement search treats it as nonexistent rather than
+        // surfacing the Aabb::empty() sentinel.
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let real = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(unit_cube_mesh()),
+            )
+            .unwrap();
+        g.add_child(root, real).unwrap();
+        let empty = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(empty_mesh()))
+            .unwrap();
+        g.add_child(root, empty).unwrap();
+        let spatial = SceneSpatial::primed_graph(g);
+        let obstacles = obstacle_aabbs_for_scene(&spatial);
+        assert_eq!(obstacles.len(), 1);
     }
 
     #[test]

@@ -417,6 +417,31 @@ impl AppState {
         *self.clipboard.borrow_mut() = Some(Clipboard::new(fragment));
     }
 
+    /// Paste the app-wide clipboard's fragment into the focused
+    /// window. Silent no-op when the window id is unknown, the
+    /// clipboard is empty, or the controller's paste path bails
+    /// (no scene loaded, no camera ready, fragment empty, cursor
+    /// ray missed the build plate). On a successful paste the
+    /// cascade counter is bumped so the next `Ctrl+V` offsets
+    /// further; on failure the cascade stays untouched.
+    #[allow(dead_code)]
+    pub(crate) fn paste_at_cursor(&self, window_id: u64) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+        let mut slot = self.clipboard.borrow_mut();
+        let Some(cb) = slot.as_mut() else {
+            return;
+        };
+        if controller.paste_clipboard_at_cursor(cb) {
+            cb.bump_cascade();
+        }
+    }
+
     /// Inner queue-or-load step. Called from `open_path_in_window`
     /// after extension validation and the replace-confirm branch, and
     /// from the post-Discard / post-Export callbacks below. Caller is

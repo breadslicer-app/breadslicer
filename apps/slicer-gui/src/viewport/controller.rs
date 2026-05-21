@@ -20,12 +20,15 @@ use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
+use crate::clipboard;
+use crate::clipboard::Clipboard;
 use crate::error_dialog::DialogManager;
 use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, SceneRender};
 use crate::pending_load::PendingLoad;
+use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
@@ -584,6 +587,73 @@ impl ViewportController {
                 .set_selection(Selection::One(LeafId(node_id))),
             None => self.on_clear_selection(),
         }
+    }
+
+    /// Paste the clipboard's fragment into the current scene near
+    /// the cursor's projection on the build plate. Returns `true`
+    /// on success so the caller (AppState) can bump the cascade
+    /// counter, `false` when any precondition fails (no scene
+    /// loaded, no camera or viewport ready, fragment empty, the
+    /// cursor ray misses the Z=0 plane).
+    ///
+    /// Cursor anchor: the last cached pointer-move position if the
+    /// cursor still hovers the viewport; otherwise the viewport
+    /// centre. The world ray is built from that pixel, intersected
+    /// with `Z = 0`, and the result feeds the cascade-aware
+    /// collision-avoidance placement search.
+    #[allow(dead_code)]
+    pub(crate) fn paste_clipboard_at_cursor(&self, clipboard: &Clipboard) -> bool {
+        let Some(viewport) = self.render.viewport() else {
+            return false;
+        };
+        let camera_slot = self.camera.camera_cell().borrow();
+        let Some(camera) = camera_slot.as_ref() else {
+            return false;
+        };
+        let cursor = self.input.last_hover_cursor().unwrap_or(ScreenPoint {
+            x: viewport.width() * 0.5,
+            y: viewport.height() * 0.5,
+        });
+        let ray = picking::ray_from_pixel(
+            camera,
+            crate::mesh_render::default_fov_y(),
+            viewport.width(),
+            viewport.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let Some((world_x, world_y)) = picking::ray_z_plane_intersection(&ray, 0.0) else {
+            return false;
+        };
+        // The camera borrow ends here; the spatial walk below needs
+        // its own borrow chain on the document.
+        drop(camera_slot);
+        let Some(fragment_aabb) = clipboard::fragment_world_aabb(clipboard.fragment()) else {
+            return false;
+        };
+        let Some(obstacles) = self
+            .session
+            .document()
+            .with_scene(clipboard::placement::obstacle_aabbs_for_scene)
+        else {
+            return false;
+        };
+        let translation = clipboard::placement::paste_translation_for_fragment(
+            &fragment_aabb,
+            [world_x as f64, world_y as f64],
+            clipboard.cascade_count(),
+            &obstacles,
+        );
+        if self
+            .session
+            .document()
+            .paste_fragment(clipboard.fragment(), translation)
+            .is_none()
+        {
+            return false;
+        }
+        self.mark_dirty();
+        true
     }
 
     fn mirror_selection_to_ui(&self) {
@@ -2315,5 +2385,53 @@ mod keyboard_focus_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod paste_clipboard_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::Transform3D;
+    use sc_mesh_core::{IndexedMesh, SceneFragment};
+
+    fn triangle_clipboard() -> Clipboard {
+        let mesh = Arc::new(IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        });
+        Clipboard::new(SceneFragment::from_leaf_snapshot(
+            mesh,
+            Transform3D::Identity,
+        ))
+    }
+
+    #[test]
+    fn paste_without_viewport_returns_false() {
+        // No set_viewport_for_test: the render host's viewport is
+        // None, so the controller bails before reaching the camera.
+        let ctrl = ViewportController::new_for_test();
+        let cb = triangle_clipboard();
+        assert!(!ctrl.paste_clipboard_at_cursor(&cb));
+    }
+
+    #[test]
+    fn paste_without_camera_returns_false() {
+        let ctrl = ViewportController::new_for_test();
+        ctrl.set_viewport_for_test(800.0, 600.0);
+        // No on_scene_load_finished / handle_rendering_setup ever
+        // installed a camera, so the camera cell is still None.
+        let cb = triangle_clipboard();
+        assert!(!ctrl.paste_clipboard_at_cursor(&cb));
     }
 }
