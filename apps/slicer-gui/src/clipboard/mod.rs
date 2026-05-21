@@ -15,6 +15,8 @@
 //! inside the fragment keeps the source mesh alive on its own, so the
 //! source scene can be closed and the clipboard stays valid.
 
+pub(crate) mod placement;
+
 use sc_mesh_core::SceneFragment;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
