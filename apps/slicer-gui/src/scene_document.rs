@@ -281,9 +281,8 @@ impl SceneDocument {
     ///
     /// Returns the new root leaf's `NodeId`, or `None` when no scene
     /// is loaded or the fragment carries no mesh-resource leaf roots
-    /// (Phase 6 only handles that shape; future variants extend the
-    /// match in [`Self::paste_fragment_compound`]).
-    #[allow(dead_code)]
+    /// (the only shape the current builder produces; future variants
+    /// extend the match in [`Self::paste_fragment_compound`]).
     pub(crate) fn paste_fragment(
         &self,
         fragment: &SceneFragment,
@@ -350,13 +349,12 @@ impl SceneDocument {
                 | NodeKind::Group { .. }
                 | NodeKind::Csg { .. }
                 | NodeKind::Instance { .. } => {
-                    // Phase 6 only handles fragments built by
-                    // SceneFragment::from_leaf_snapshot, which
-                    // registers the mesh as a resource and adds it as
-                    // a single-leaf root. Skipping the unsupported
-                    // shape rather than erroring keeps the contract
-                    // additive: later phases handle these without
-                    // breaking existing callers.
+                    // The current SceneFragment builder only emits
+                    // mesh-resource leaf roots, so skipping the other
+                    // shapes here keeps the contract additive:
+                    // future CSG / Group / inline-leaf fragments can
+                    // grow new branches without breaking existing
+                    // callers.
                     continue;
                 }
             };

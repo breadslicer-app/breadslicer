@@ -181,6 +181,10 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_viewport_pointer_leave(move || ctrl.on_pointer_leave());
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_gizmo_focus_translate_pressed(move || ctrl.on_gizmo_focus_translate());
     }
     {

@@ -116,11 +116,21 @@ export component MainWindow inherits Window {
     callback gizmo-focus-scale-pressed();
     callback gizmo-arrow-pressed(int);
     callback gizmo-arrow-released(int);
-    // Tab / Shift+Tab selection cycling — the property gates whether
+    // Tab / Shift+Tab selection cycling, the property gates whether
     // the viewport's FocusScope accepts Tab or lets it fall through
     // to native focus traversal. True iff a scene with at least one
     // object is loaded.
     callback selection-cycle(int);
+    // Copy / paste: forwarded from the embedded MeshViewer's
+    // `Ctrl+C` / `Ctrl+V` handler. The Rust wiring layer routes
+    // these to the app-wide clipboard so a copy in one window is
+    // pasteable in any other.
+    callback copy-pressed();
+    callback paste-pressed();
+    // Cursor left the viewport rectangle. The Rust paste path
+    // clears its cached hover-cursor on this event so a subsequent
+    // `Ctrl+V` falls back to the viewport-centre placement.
+    callback viewport-pointer-leave();
 
     MenuBar {
         Menu {
@@ -328,6 +338,15 @@ export component MainWindow inherits Window {
             }
             selection-cycle(delta) => {
                 root.selection-cycle(delta);
+            }
+            copy-pressed() => {
+                root.copy-pressed();
+            }
+            paste-pressed() => {
+                root.paste-pressed();
+            }
+            viewport-pointer-leave() => {
+                root.viewport-pointer-leave();
             }
         }
 

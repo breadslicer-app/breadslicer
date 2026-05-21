@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-use std::cell::{Cell, Ref, RefCell};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
@@ -138,7 +138,6 @@ pub(crate) struct AppState {
     /// current selection by `copy_selection`; consumed by the paste
     /// path which lives on the viewport controller. `None` until the
     /// user has performed the first copy.
-    #[allow(dead_code)]
     clipboard: RefCell<Option<Clipboard>>,
     // Bus subscriptions owned by AppState. They run on every
     // `bus.update`; dropping them unregisters. Stored here so they
@@ -229,6 +228,28 @@ impl AppState {
 
         let id = self.next_window_id.get();
         self.next_window_id.set(id.wrapping_add(1));
+
+        // Copy / paste live at the AppState level (the clipboard
+        // is app-wide, not per-window) but the keystrokes arrive
+        // through the per-window MeshViewer FocusScope. Bind them
+        // here so the closure captures the window id and a Weak
+        // back to AppState.
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_copy_pressed(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.copy_selection(id);
+                }
+            });
+        }
+        {
+            let app_weak = Rc::downgrade(self);
+            ui.on_paste_pressed(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.paste_at_cursor(id);
+                }
+            });
+        }
 
         let ui_weak = ui.as_weak();
         let ctrl_for_listener = ctrl.clone();
@@ -386,14 +407,6 @@ impl AppState {
         }
     }
 
-    /// Read-only borrow of the app-wide clipboard slot. `None` until
-    /// the first successful `copy_selection`; once populated, a later
-    /// copy replaces the entry wholesale and resets the cascade.
-    #[allow(dead_code)]
-    pub(crate) fn clipboard(&self) -> Ref<'_, Option<Clipboard>> {
-        self.clipboard.borrow()
-    }
-
     /// Capture the currently-selected leaf from the focused window's
     /// [`SceneDocument`] into the app-wide clipboard. Silently does
     /// nothing if the window id is unknown (window closed since the
@@ -401,7 +414,6 @@ impl AppState {
     /// in those cases the previous clipboard contents survive,
     /// matching the convention that only a successful copy
     /// overwrites the clipboard.
-    #[allow(dead_code)]
     pub(crate) fn copy_selection(&self, window_id: u64) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -424,7 +436,6 @@ impl AppState {
     /// ray missed the build plate). On a successful paste the
     /// cascade counter is bumped so the next `Ctrl+V` offsets
     /// further; on failure the cascade stays untouched.
-    #[allow(dead_code)]
     pub(crate) fn paste_at_cursor(&self, window_id: u64) {
         let controller = {
             let main_windows = self.main_windows.borrow();

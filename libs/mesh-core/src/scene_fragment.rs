@@ -14,12 +14,11 @@
 //! `AddGroup` / `AddCsg` / `AddInstance`) typed edits, and wraps the
 //! whole thing in a single [`crate::scene_edit::SceneEdit::Compound`].
 //!
-//! Phase 4 of the copy / paste plan only populates the fragment with
-//! a single root leaf and a single mesh resource. The same type
-//! generalises to subtrees (group / CSG / instances) without a
-//! redesign: the wrapper exposes the underlying `Scene` for reads,
-//! and growth on the paste side is variant-additive rather than
-//! shape-changing.
+//! The current builder only populates the fragment with a single
+//! root leaf and a single mesh resource. The same type generalises
+//! to subtrees (group / CSG / instances) without a redesign: the
+//! wrapper exposes the underlying `Scene` for reads, and growth on
+//! the paste side is variant-additive rather than shape-changing.
 
 use std::sync::Arc;
 

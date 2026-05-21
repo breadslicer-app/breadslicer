@@ -166,7 +166,6 @@ pub fn project_world_to_screen(
 /// scale-invariant guard: a `direction.z` of 1e-7 means the ray is
 /// pointed roughly along the plane and the intersection is too
 /// far away to be useful as a placement anchor.
-#[allow(dead_code)]
 pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> {
     const EPSILON_DIR_Z: f32 = 1e-7;
     if ray.direction.z.abs() < EPSILON_DIR_Z {

@@ -26,7 +26,6 @@ use crate::scene_document::SceneDocument;
 /// Clipboard payload + cascade state. Constructed by
 /// [`fragment_from_document_selection`] (wrapped on the AppState
 /// side) and consumed by the paste path.
-#[allow(dead_code)]
 pub(crate) struct Clipboard {
     fragment: SceneFragment,
     /// Number of consecutive pastes since the fragment was captured.
@@ -36,7 +35,6 @@ pub(crate) struct Clipboard {
     cascade_count: u32,
 }
 
-#[allow(dead_code)]
 impl Clipboard {
     pub(crate) fn new(fragment: SceneFragment) -> Self {
         Self {
@@ -73,7 +71,6 @@ impl Clipboard {
 /// by identity, so a later same-scene paste can dedupe via
 /// [`sc_mesh_core::Scene::find_mesh_resource_by_arc`] instead of
 /// pushing a fresh `AddMeshResource` edit.
-#[allow(dead_code)]
 pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<SceneFragment> {
     let node_id = doc.selection_primary_node_id()?;
     let (arc, world_xform) = doc
@@ -101,7 +98,6 @@ pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<Sc
 /// tilted meshes (the conservative AABB-of-the-rotated-local-AABB);
 /// the paste pipeline accepts this since the collision search is
 /// already a heuristic.
-#[allow(dead_code)]
 pub(crate) fn fragment_world_aabb(fragment: &SceneFragment) -> Option<Aabb> {
     let scene = fragment.scene();
     let root_id = scene.roots().first().copied()?;
@@ -125,7 +121,6 @@ pub(crate) fn fragment_world_aabb(fragment: &SceneFragment) -> Option<Aabb> {
 /// dropping it here keeps the clipboard's invariant clean (the
 /// fragment's root sits at the origin in fragment-space) and avoids
 /// surprising callers who inspect the fragment for rotation / scale.
-#[allow(dead_code)]
 fn drop_translation(xform: Transform3D) -> Transform3D {
     match xform {
         Transform3D::Identity => Transform3D::Identity,

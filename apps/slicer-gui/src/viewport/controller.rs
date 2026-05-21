@@ -566,6 +566,14 @@ impl ViewportController {
         }
     }
 
+    /// Cursor left the viewport. Clears the dispatcher's cached
+    /// hover-cursor so the paste path falls back to the
+    /// viewport-centre placement instead of anchoring on a stale
+    /// last-known pixel.
+    pub fn on_pointer_leave(&self) {
+        self.input.on_pointer_leave();
+    }
+
     /// Picker dispatch: hand the pixel coordinates to InputDispatch
     /// (which builds the ray and runs `pick_object`) and apply the
     /// pick result through the document's selection setters. The
@@ -601,7 +609,6 @@ impl ViewportController {
     /// centre. The world ray is built from that pixel, intersected
     /// with `Z = 0`, and the result feeds the cascade-aware
     /// collision-avoidance placement search.
-    #[allow(dead_code)]
     pub(crate) fn paste_clipboard_at_cursor(&self, clipboard: &Clipboard) -> bool {
         let Some(viewport) = self.render.viewport() else {
             return false;

@@ -129,7 +129,6 @@ impl InputDispatch {
     /// reads `hovering` through `last_hover_cursor` to decide whether
     /// to anchor on the cached cursor or fall back to the viewport
     /// centre.
-    #[allow(dead_code)]
     pub(super) fn on_pointer_leave(&self) {
         self.hovering.set(false);
     }
@@ -138,7 +137,6 @@ impl InputDispatch {
     /// viewport. Returns `None` when the cursor has left the viewport
     /// since the last move event or no move has ever fired, so paste
     /// fallbacks (e.g. viewport-centre placement) can branch on it.
-    #[allow(dead_code)]
     pub(super) fn last_hover_cursor(&self) -> Option<ScreenPoint> {
         if self.hovering.get() {
             self.last_cursor.get()

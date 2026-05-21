@@ -77,7 +77,6 @@ const RING_ANGLE_COUNT: usize = 8;
 /// Empty obstacles (e.g. an empty-mesh root or the `Aabb::empty()`
 /// sentinel from an unprimed cache) are ignored: they cannot
 /// overlap anything by definition.
-#[allow(dead_code)]
 pub(crate) fn paste_translation_for_fragment(
     fragment_aabb: &Aabb,
     target_world_xy: [f64; 2],
@@ -130,7 +129,6 @@ pub(crate) fn paste_translation_for_fragment(
 /// leaf enumerator the picker relies on, so the obstacle order
 /// matches the picker's iteration order even though the placement
 /// algorithm does not care about ordering.
-#[allow(dead_code)]
 pub(crate) fn obstacle_aabbs_for_scene(spatial: &SceneSpatial) -> Vec<Aabb> {
     let mut obstacles = Vec::new();
     let mut idx = 0usize;

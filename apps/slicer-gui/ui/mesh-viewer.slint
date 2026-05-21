@@ -33,7 +33,7 @@ export component MeshViewer inherits Rectangle {
     // 0 = none, 1 = rotating, 2 = panning
     property <int> active-gesture: 0;
     // Whether the left button is currently pressed (for selection /
-    // gizmo drag — see the pointer-down/move/up callbacks). Tracked
+    // gizmo drag, see the pointer-down/move/up callbacks). Tracked
     // separately from `active-gesture` so a left-press doesn't stop
     // the user from also right-dragging to rotate the camera.
     property <bool> left-pressed: false;
@@ -77,6 +77,19 @@ export component MeshViewer inherits Rectangle {
     // focus traversal.
     in property <bool> can-cycle-selection: false;
     callback selection-cycle(int);
+    // Copy / paste of the current selection. Bound from the
+    // FocusScope's key-pressed handler on `Ctrl+C` / `Ctrl+V` (and
+    // `Cmd+C` / `Cmd+V` on macOS). The Rust side decides whether
+    // there is anything to copy or paste; the callbacks fire even
+    // on empty selections and the controller bails silently.
+    callback copy-pressed();
+    callback paste-pressed();
+    // Fires when the cursor leaves the viewport rectangle. The
+    // paste path uses this to clear its cached hover-cursor so a
+    // `Ctrl+V` after the cursor has left falls back to the
+    // viewport-centre placement instead of anchoring on a stale
+    // last-known position.
+    callback viewport-pointer-leave();
 
     accessible-role: image;
     accessible-label: root.rendering.width == 0
@@ -84,7 +97,7 @@ export component MeshViewer inherits Rectangle {
         : @tr("MeshViewer" => "3D model viewer");
     accessible-description: @tr("MeshViewer" => "Right-click drag or arrow keys to rotate. Shift with right-click drag, middle-click drag, or Shift and arrow keys to pan. Scroll, Plus/Minus, or Page Up/Down to zoom. Press F or Home to frame the model. Press 1, 3, or 7 for front, right, or top views; hold Control for back, left, or bottom.");
 
-    // Viewport background stays dark regardless of OS theme — the CAD/DCC
+    // Viewport background stays dark regardless of OS theme: the CAD/DCC
     // convention, keeps the light-grey mesh legible under both light and
     // dark app chrome. The border follows the Palette so it blends with the
     // surrounding chrome.
@@ -224,7 +237,7 @@ export component MeshViewer inherits Rectangle {
                 return accept;
             }
             // `+` / `=` / `-` keep their zoom binding regardless of
-            // focus — they aren't axis keys, so there's nothing to
+            // focus, they aren't axis keys, so there's nothing to
             // hijack.
             if (event.text == "+" || event.text == "=") {
                 root.zoom-at(120px, root.width / 2, root.height / 2);
@@ -234,9 +247,24 @@ export component MeshViewer inherits Rectangle {
                 root.zoom-at(-120px, root.width / 2, root.height / 2);
                 return accept;
             }
+            // Ctrl+C / Ctrl+V (and Cmd+C / Cmd+V on macOS) copy /
+            // paste the current selection. The branches are gated
+            // on `control || meta` so both Linux/Windows and macOS
+            // conventions work; modifier-less C / V are reserved for
+            // future plain-key bindings and fall through.
+            if ((event.text == "c" || event.text == "C")
+                && (event.modifiers.control || event.modifiers.meta)) {
+                root.copy-pressed();
+                return accept;
+            }
+            if ((event.text == "v" || event.text == "V")
+                && (event.modifiers.control || event.modifiers.meta)) {
+                root.paste-pressed();
+                return accept;
+            }
             // Tab / Shift+Tab cycle through the scene's objects when
             // anything is loaded. Only accepted when there's
-            // something to cycle — an empty viewport leaves Tab to
+            // something to cycle, an empty viewport leaves Tab to
             // native focus traversal so the user can leave the
             // viewport with the keyboard. `Key.Backtab` is the X11 /
             // Qt convention for Shift+Tab; on Mac / Win the same
@@ -291,6 +319,16 @@ export component MeshViewer inherits Rectangle {
             height: parent.height;
             mouse-cursor: root.active-gesture == 1 ? MouseCursor.grabbing : (root.active-gesture == 2 ? MouseCursor.move : MouseCursor.default);
 
+            // The paste path's cursor anchor caches the last move
+            // position; when the cursor leaves the viewport, drop
+            // that cache so `Ctrl+V` falls back to the viewport
+            // centre instead of anchoring on a stale pixel.
+            changed has-hover => {
+                if (!self.has-hover) {
+                    root.viewport-pointer-leave();
+                }
+            }
+
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     fs.focus();
@@ -323,7 +361,7 @@ export component MeshViewer inherits Rectangle {
                     }
                 } else if (event.kind == PointerEventKind.move && root.active-gesture == 0) {
                     // Camera gestures (right/middle drag) take priority
-                    // over the move stream — when one is active we
+                    // over the move stream, when one is active we
                     // suppress moves entirely so the gizmo drag FSM
                     // doesn't fight the camera. Otherwise the same
                     // callback drives both the left-pressed drag-update
