@@ -208,6 +208,13 @@ fn fire_replace_choice(
     }
 }
 
+/// Renders the `caused by:` tail of an anyhow error chain as a
+/// multi-line string for display in error dialogs.
+///
+/// Returns an empty string for a single-level error (no source chain
+/// to render); callers typically pair this output with the error's
+/// own `Display` rendering and skip the chain section when the
+/// returned string is empty.
 pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
     let mut chain = err.chain();
     let Some(first) = chain.next() else {
@@ -221,4 +228,49 @@ pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
         out.push_str(&format!("\n  caused by: {cause}"));
     }
     out
+}
+
+#[cfg(test)]
+mod format_anyhow_chain_tests {
+    use super::*;
+
+    #[test]
+    fn single_level_chain_returns_empty_string() {
+        let err = anyhow::Error::msg("alone");
+        // Chain has one item: the error itself. The function deliberately
+        // returns "" so the dialog can skip the chain section.
+        assert_eq!(format_anyhow_chain(&err), "");
+    }
+
+    #[test]
+    fn two_level_chain_formats_first_and_caused_by_second() {
+        let err = anyhow::Error::msg("inner").context("outer");
+        assert_eq!(format_anyhow_chain(&err), "outer\n  caused by: inner");
+    }
+
+    #[test]
+    fn three_level_chain_appends_each_cause() {
+        let err = anyhow::Error::msg("inner")
+            .context("middle")
+            .context("outer");
+        assert_eq!(
+            format_anyhow_chain(&err),
+            "outer\n  caused by: middle\n  caused by: inner"
+        );
+    }
+
+    #[test]
+    fn deep_chain_formats_every_cause() {
+        let err = anyhow::Error::msg("L0")
+            .context("L1")
+            .context("L2")
+            .context("L3")
+            .context("L4");
+        // anyhow renders the outermost context first, then walks
+        // sources, so the chain reads L4 -> L3 -> L2 -> L1 -> L0.
+        assert_eq!(
+            format_anyhow_chain(&err),
+            "L4\n  caused by: L3\n  caused by: L2\n  caused by: L1\n  caused by: L0"
+        );
+    }
 }

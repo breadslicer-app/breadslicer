@@ -69,3 +69,51 @@ impl WindowPreferences for AboutWindow {
         // Language: `@tr` bindings re-evaluate automatically.
     }
 }
+
+#[cfg(test)]
+mod format_dim_tests {
+    use super::*;
+
+    #[test]
+    fn whole_millimetres_render_as_integer() {
+        assert_eq!(format_dim(100.0).as_str(), "100");
+        assert_eq!(format_dim(1.0).as_str(), "1");
+        assert_eq!(format_dim(192.0).as_str(), "192");
+    }
+
+    #[test]
+    fn zero_renders_as_integer() {
+        assert_eq!(format_dim(0.0).as_str(), "0");
+    }
+
+    #[test]
+    fn fractional_values_render_with_one_decimal() {
+        assert_eq!(format_dim(100.5).as_str(), "100.5");
+        assert_eq!(format_dim(1.7).as_str(), "1.7");
+    }
+
+    #[test]
+    fn near_integer_within_threshold_renders_as_integer() {
+        // 1e-3 is the cutoff and the comparison is strict (`<`), so
+        // anything inside the open interval (n - 1e-3, n + 1e-3)
+        // formats as the integer `n`. 100.0005 sits comfortably
+        // inside.
+        assert_eq!(format_dim(100.0005).as_str(), "100");
+    }
+
+    #[test]
+    fn beyond_integer_threshold_renders_with_one_decimal() {
+        // 100.002 lies outside the integer window, so it takes the
+        // one-decimal path and rounds to "100.0".
+        assert_eq!(format_dim(100.002).as_str(), "100.0");
+    }
+
+    #[test]
+    fn negative_values_format_with_sign() {
+        // BuildVolume should never carry negative dimensions in
+        // practice, but format_dim is a pure formatter: the negative
+        // sign survives both code paths.
+        assert_eq!(format_dim(-50.0).as_str(), "-50");
+        assert_eq!(format_dim(-50.5).as_str(), "-50.5");
+    }
+}
