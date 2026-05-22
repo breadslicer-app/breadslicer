@@ -14,4 +14,19 @@ pub mod obj;
 pub mod scene_writer;
 pub mod stl;
 
+#[cfg(test)]
+mod tests_infer_file_type_error;
+#[cfg(test)]
+mod tests_load_mesh_error;
+#[cfg(test)]
+mod tests_load_obj_error;
+#[cfg(test)]
+mod tests_load_stl_error;
+#[cfg(test)]
+mod tests_write_obj_error;
+#[cfg(test)]
+mod tests_write_scene_error;
+#[cfg(test)]
+mod tests_write_stl_error;
+
 pub use loader::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};

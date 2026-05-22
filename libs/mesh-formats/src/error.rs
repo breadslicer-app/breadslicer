@@ -198,30 +198,6 @@ impl fmt::Display for InferFileTypeError {
 
 impl std::error::Error for InferFileTypeError {}
 
-#[cfg(test)]
-mod infer_file_type_error_tests {
-    use super::*;
-    use std::error::Error;
-
-    #[test]
-    fn unknown_extension_display_names_the_path() {
-        let err = InferFileTypeError::UnknownExtension {
-            path: PathBuf::from("/tmp/foo.xyz"),
-        };
-        let s = err.to_string();
-        assert!(s.contains("Unable to infer file format"));
-        assert!(s.contains("/tmp/foo.xyz"));
-    }
-
-    #[test]
-    fn unknown_extension_has_no_source() {
-        let err = InferFileTypeError::UnknownExtension {
-            path: PathBuf::from("/tmp/foo.xyz"),
-        };
-        assert!(err.source().is_none());
-    }
-}
-
 // --- per-format: STL load --------------------------------------------
 
 #[derive(Debug)]
@@ -501,44 +477,6 @@ impl std::error::Error for WriteStlError {
 impl From<std::io::Error> for WriteStlError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
-    }
-}
-
-#[cfg(test)]
-mod write_stl_error_tests {
-    use super::*;
-    use std::error::Error;
-    use std::io;
-
-    #[test]
-    fn io_display_includes_marker_and_inner_message() {
-        let err = WriteStlError::Io(io::Error::other("disk full"));
-        let s = err.to_string();
-        assert!(s.contains("STL writer I/O error"));
-        assert!(s.contains("disk full"));
-    }
-
-    #[test]
-    fn io_source_returns_the_wrapped_io_error() {
-        let err = WriteStlError::Io(io::Error::other("disk full"));
-        let source = err.source().expect("Io variant must expose a source");
-        assert!(source.to_string().contains("disk full"));
-    }
-
-    #[test]
-    fn face_count_exceeds_u32_display_names_the_count_and_cap() {
-        let err = WriteStlError::FaceCountExceedsU32 {
-            count: 5_000_000_000,
-        };
-        let s = err.to_string();
-        assert!(s.contains("5000000000"));
-        assert!(s.contains("u32::MAX"));
-    }
-
-    #[test]
-    fn face_count_exceeds_u32_has_no_source() {
-        let err = WriteStlError::FaceCountExceedsU32 { count: 42 };
-        assert!(err.source().is_none());
     }
 }
 
