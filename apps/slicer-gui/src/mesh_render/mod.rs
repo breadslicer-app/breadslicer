@@ -22,7 +22,7 @@ mod gizmo_entries;
 pub(crate) mod mock;
 mod pipelines;
 mod renderer_trait;
-mod scene_upload;
+pub mod scene_upload;
 mod targets;
 
 use frame::Uniforms;

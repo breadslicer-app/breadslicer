@@ -89,7 +89,7 @@ impl ObjectDraw {
 /// the UI loop, so it can run on the worker thread that parsed the
 /// scene; the UI thread then attaches the matching bind group via
 /// [`Renderer::install_scene`].
-pub(crate) struct GpuScene {
+pub struct GpuScene {
     objects: Vec<ObjectDraw>,
     model_buffer: wgpu::Buffer,
     /// Distance in bytes between consecutive `ModelEntry` slots in
@@ -101,7 +101,7 @@ pub(crate) struct GpuScene {
 }
 
 impl GpuScene {
-    pub(crate) fn build(device: &wgpu::Device, graph: &Scene) -> Result<Self> {
+    pub fn build(device: &wgpu::Device, graph: &Scene) -> Result<Self> {
         let data = build_gpu_scene_data(graph)?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {

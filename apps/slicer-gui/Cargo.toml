@@ -3,8 +3,13 @@ name = "sc-slicer-gui"
 version = "0.0.12"
 edition = "2024"
 
+[lib]
+name = "sc_slicer_gui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sc-slicer-gui"
+path = "src/main.rs"
 
 [dependencies]
 sc-mesh-core = { workspace = true }
