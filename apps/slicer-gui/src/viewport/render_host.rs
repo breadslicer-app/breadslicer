@@ -28,7 +28,7 @@ use slint::{ComponentHandle, Weak};
 use super::render_scheduler;
 use super::types::{FrameState, ViewportSize};
 use crate::MainWindow;
-use crate::mesh_render::{MeshRenderer, Renderer};
+use crate::mesh_render::{DeviceToken, MeshRenderer, Renderer};
 
 pub(super) struct RenderHost {
     ui: Weak<MainWindow>,
@@ -158,9 +158,10 @@ impl RenderHost {
     pub(super) fn handle_rendering_setup(
         &self,
         device: slint::wgpu_28::wgpu::Device,
+        device_token: DeviceToken,
         queue: slint::wgpu_28::wgpu::Queue,
     ) {
-        *self.renderer.borrow_mut() = Some(Box::new(Renderer::new(device, queue)));
+        *self.renderer.borrow_mut() = Some(Box::new(Renderer::new(device, device_token, queue)));
     }
 
     /// `RenderingTeardown` callback handler. Drops the GPU renderer

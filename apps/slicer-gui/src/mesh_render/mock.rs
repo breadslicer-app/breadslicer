@@ -106,7 +106,7 @@ impl MeshRenderer for MockRenderer {
         s.next_upload_results.pop_front().unwrap_or(Ok(()))
     }
 
-    fn install_scene(&mut self, _gpu: GpuScene, _built_with: &wgpu::Device) -> bool {
+    fn install_scene(&mut self, _gpu: GpuScene) -> bool {
         let mut s = self.state.borrow_mut();
         s.install_scene_calls += 1;
         s.install_scene_returns

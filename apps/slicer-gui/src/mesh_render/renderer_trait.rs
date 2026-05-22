@@ -25,10 +25,10 @@ pub(crate) trait MeshRenderer {
     fn upload_scene(&mut self, graph: &Scene) -> Result<()>;
 
     /// Install a [`GpuScene`] built on a worker thread, but only when
-    /// it was built against this renderer's device. Returns `false`
-    /// if the device has rotated since the worker started, in which
-    /// case the caller falls back to [`MeshRenderer::upload_scene`].
-    fn install_scene(&mut self, gpu: GpuScene, built_with: &wgpu::Device) -> bool;
+    /// its `device_token` matches this renderer's. Returns `false` if
+    /// the device has rotated since the worker started, in which case
+    /// the caller falls back to [`MeshRenderer::upload_scene`].
+    fn install_scene(&mut self, gpu: GpuScene) -> bool;
 
     /// World-space AABB of the currently installed scene, or `None`
     /// when no scene has been installed yet.
@@ -58,8 +58,8 @@ impl MeshRenderer for Renderer {
         Renderer::upload_scene(self, graph)
     }
 
-    fn install_scene(&mut self, gpu: GpuScene, built_with: &wgpu::Device) -> bool {
-        Renderer::install_scene(self, gpu, built_with)
+    fn install_scene(&mut self, gpu: GpuScene) -> bool {
+        Renderer::install_scene(self, gpu)
     }
 
     fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {

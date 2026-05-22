@@ -103,7 +103,7 @@ pub(crate) fn start_load_with_ticket(
         ticket.deposit(path, Err(err));
         return;
     }
-    let Some((device, _queue)) = loader.gpu_snapshot() else {
+    let Some((device, device_token, _queue)) = loader.gpu_snapshot() else {
         // RenderingSetup hasn't fired (or a teardown cleared the
         // slot between ticket acquisition and now). `begin_load` does
         // not gate on this; bail with a synthetic error so the user
@@ -114,7 +114,7 @@ pub(crate) fn start_load_with_ticket(
         );
         return;
     };
-    spawn_load(ticket, path, device, build_volume);
+    spawn_load(ticket, path, device, device_token, build_volume);
 }
 
 /// Translates every scene root in `graph` by a single shared delta so
@@ -172,6 +172,7 @@ pub(crate) fn spawn_load(
     ticket: LoadTicket,
     path: PathBuf,
     device: wgpu::Device,
+    device_token: crate::mesh_render::DeviceToken,
     build_volume: BuildVolume,
 ) {
     std::thread::spawn(move || {
@@ -199,11 +200,10 @@ pub(crate) fn spawn_load(
                 // `SceneSpatial` and the first picker click / gizmo
                 // attachment doesn't pay the build cost synchronously.
                 let spatial = SceneSpatial::primed_graph(graph);
-                let gpu_scene = GpuScene::build(&device, spatial.graph())?;
+                let gpu_scene = GpuScene::build(&device, device_token, spatial.graph())?;
                 Ok(PreparedScene {
                     spatial,
                     gpu_scene,
-                    device: device.clone(),
                     warnings,
                     source_path: path.clone(),
                 })

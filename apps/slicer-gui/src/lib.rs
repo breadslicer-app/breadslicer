@@ -17,7 +17,7 @@ mod about_window;
 mod app_settings;
 mod app_state;
 pub mod build_volume;
-mod camera;
+pub mod camera;
 mod clipboard;
 mod error_dialog;
 mod gizmo;

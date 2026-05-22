@@ -96,12 +96,20 @@ pub struct GpuScene {
     /// `model_buffer`. Always ≥ `MODEL_ENTRY_SIZE` and a multiple of
     /// the device's `min_uniform_buffer_offset_alignment`.
     model_stride: u64,
+    /// Identity token of the device this scene's GPU resources were
+    /// built against. `Renderer::install_scene` checks this against
+    /// the renderer's own token before attaching the scene.
+    device_token: super::DeviceToken,
     aabb_min: Vec3,
     aabb_max: Vec3,
 }
 
 impl GpuScene {
-    pub fn build(device: &wgpu::Device, graph: &Scene) -> Result<Self> {
+    pub fn build(
+        device: &wgpu::Device,
+        device_token: super::DeviceToken,
+        graph: &Scene,
+    ) -> Result<Self> {
         let data = build_gpu_scene_data(graph)?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
@@ -139,9 +147,17 @@ impl GpuScene {
             objects,
             model_buffer,
             model_stride,
+            device_token,
             aabb_min: data.aabb_min,
             aabb_max: data.aabb_max,
         })
+    }
+
+    /// Identity token of the device this scene was built against.
+    /// `Renderer::install_scene` matches it against the renderer's
+    /// own token before attaching.
+    pub fn device_token(&self) -> super::DeviceToken {
+        self.device_token
     }
 
     pub(super) fn object_count(&self) -> usize {

@@ -52,16 +52,15 @@ use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_render::GpuScene;
 
-/// Worker-built bundle handed to the UI thread. The `GpuScene` is
-/// pre-uploaded against `device`; the [`SceneSpatial`] owns the
-/// scene plus pre-primed spatial caches and is retained for
-/// device-loss recovery (a fresh `RenderingSetup` re-uploads via
-/// `Renderer::upload_scene`, which reads the scene through the
-/// document's `SceneSpatial`).
+/// Worker-built bundle handed to the UI thread. The `GpuScene`
+/// carries the `device_token` identifying the device pairing it was
+/// built against; the [`SceneSpatial`] owns the scene plus pre-primed
+/// spatial caches and is retained for device-loss recovery (a fresh
+/// `RenderingSetup` re-uploads via `Renderer::upload_scene`, which
+/// reads the scene through the document's `SceneSpatial`).
 pub(crate) struct PreparedScene {
     pub spatial: SceneSpatial,
     pub gpu_scene: GpuScene,
-    pub device: wgpu::Device,
     pub warnings: Vec<LoadMeshWarning>,
     /// The filesystem path the scene was loaded from. Threaded into
     /// the document at install time so callers can derive default
@@ -183,7 +182,7 @@ pub struct SceneLoader {
     // cleared by `RenderingTeardown`. A clone is handed to the worker at
     // `spawn_load` time so parse + GPU upload both run off the UI
     // thread; the UI thread only installs the finished `MeshGpu`.
-    gpu: Mutex<Option<(wgpu::Device, wgpu::Queue)>>,
+    gpu: Mutex<Option<(wgpu::Device, crate::mesh_render::DeviceToken, wgpu::Queue)>>,
 }
 
 impl SceneLoader {
@@ -259,8 +258,14 @@ impl SceneLoader {
     /// `handle_rendering_setup`; the worker clones this pair at
     /// `spawn_load` time so parsing + upload both happen off the UI
     /// thread.
-    pub fn set_gpu(&self, device: wgpu::Device, queue: wgpu::Queue) {
-        *self.gpu.lock().unwrap_or_else(PoisonError::into_inner) = Some((device, queue));
+    pub fn set_gpu(
+        &self,
+        device: wgpu::Device,
+        device_token: crate::mesh_render::DeviceToken,
+        queue: wgpu::Queue,
+    ) {
+        *self.gpu.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((device, device_token, queue));
     }
 
     /// Clears the graphics device/queue. Called on
@@ -274,7 +279,9 @@ impl SceneLoader {
 
     /// Snapshot of the current device/queue. `None` if
     /// `RenderingSetup` hasn't fired yet (or a teardown cleared it).
-    pub fn gpu_snapshot(&self) -> Option<(wgpu::Device, wgpu::Queue)> {
+    pub fn gpu_snapshot(
+        &self,
+    ) -> Option<(wgpu::Device, crate::mesh_render::DeviceToken, wgpu::Queue)> {
         self.gpu
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

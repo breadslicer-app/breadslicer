@@ -371,7 +371,6 @@ impl ViewportController {
         let PreparedScene {
             spatial,
             gpu_scene,
-            device: built_with,
             warnings: _,
             source_path,
         } = prepared;
@@ -379,13 +378,16 @@ impl ViewportController {
         // Try to install the worker-built buffers directly. Falls
         // through to the UI-thread upload path if the renderer is
         // gone (post-teardown) or has rotated to a different device
-        // than the worker built against (mid-load device loss).
+        // since the worker started (mid-load device loss); the
+        // `device_token` carried by `gpu_scene` is what tells
+        // `install_scene` whether the worker's snapshot still
+        // matches.
         let scene_installed = self
             .render
             .renderer_cell()
             .borrow_mut()
             .as_mut()
-            .map(|r| r.install_scene(gpu_scene, &built_with))
+            .map(|r| r.install_scene(gpu_scene))
             .unwrap_or(false);
 
         // Fires `SceneEvent::Installed`; the listener resets the
@@ -799,8 +801,19 @@ impl ViewportController {
     }
 
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
-        self.session.loader().set_gpu(device.clone(), queue.clone());
-        self.render.handle_rendering_setup(device, queue);
+        // Mint a fresh token for this setup edition. Both the loader
+        // snapshot (consumed by the worker-side `GpuScene::build`) and
+        // the renderer (built below) carry it. The two values match
+        // for the entire lifetime of this setup; the next
+        // teardown -> setup cycle mints a different token, which is
+        // how `Renderer::install_scene` detects an out-of-date
+        // worker-built scene.
+        let device_token = crate::mesh_render::DeviceToken::next();
+        self.session
+            .loader()
+            .set_gpu(device.clone(), device_token, queue.clone());
+        self.render
+            .handle_rendering_setup(device, device_token, queue);
         self.post_renderer_install();
     }
 
