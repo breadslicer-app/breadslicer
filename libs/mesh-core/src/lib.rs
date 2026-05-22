@@ -31,6 +31,9 @@ pub mod scene_fragment;
 pub mod scene_node;
 pub mod transform;
 
+#[cfg(test)]
+mod tests_scene_error;
+
 use std::collections::HashMap;
 
 // Re-exporting "core" symbols for ease of use
