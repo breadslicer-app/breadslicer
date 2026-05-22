@@ -30,6 +30,10 @@ mod scene_document;
 mod scene_export;
 mod scene_loader;
 mod selection;
+#[cfg(test)]
+mod tests_mesh_loader;
+#[cfg(test)]
+mod tests_scene_loader;
 mod viewport;
 mod window_prefs;
 mod wiring;

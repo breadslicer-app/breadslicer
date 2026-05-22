@@ -382,6 +382,19 @@ impl SceneLoader {
     /// dialog. Split from `take_finished_load` so the FSM-only
     /// behaviour (drain + stamp + gate release) is unit-testable
     /// without a `wgpu::Device` or a Slint event loop.
+    /// Drain the result slot, applying the stamp check, without going
+    /// through `take_finished_load`'s `DialogManager::show_error` path.
+    /// Tests need this so the Err arm can be asserted on without
+    /// requiring a live Slint event loop. Returns the raw
+    /// `(path, result)` exactly like the private
+    /// `drain_matching_deposit` does.
+    #[cfg(test)]
+    pub(crate) fn drain_deposit_for_test(
+        &self,
+    ) -> Option<(PathBuf, anyhow::Result<PreparedScene>)> {
+        self.drain_matching_deposit()
+    }
+
     fn drain_matching_deposit(&self) -> Option<(PathBuf, anyhow::Result<PreparedScene>)> {
         let taken = self
             .load_slot
@@ -411,7 +424,7 @@ fn log_load_warnings(path: &Path, warnings: &[LoadMeshWarning]) {
     }
 }
 
-fn describe_obj_warning(warning: &LoadObjWarning) -> String {
+pub(crate) fn describe_obj_warning(warning: &LoadObjWarning) -> String {
     match warning {
         LoadObjWarning::NoVertices => "OBJ file has no vertices".to_string(),
         LoadObjWarning::NoFaces => "OBJ file has no faces".to_string(),
