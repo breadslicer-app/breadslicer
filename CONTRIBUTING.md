@@ -139,3 +139,27 @@ We can visualize interfaces by loading the `.slint` files with `slint-viewer`:
 ```bash
 slint-viewer ./path/to/gui-file.slint
 ```
+
+### Measuring test coverage
+
+This project uses [`cargo-tarpaulin`](https://github.com/xd009642/tarpaulin)
+to measure line-level test coverage across the workspace.
+
+```bash
+cargo install cargo-tarpaulin   # one-time
+sh scripts/coverage.sh
+```
+
+The script prints a per-file table to stdout (sorted ascending, so the
+worst-covered files surface first) and writes the full tarpaulin
+output to `target/coverage/tarpaulin-run.log` plus a JSON report to
+`target/coverage/tarpaulin-report.json`.
+
+The wrapper passes `--follow-exec` so the `sc-slicer-cli` binary's
+coverage is captured even though the integration tests in
+`apps/slicer-cli/tests/cli.rs` invoke it as a subprocess.
+
+Note: tests in `apps/slicer-gui/src/mesh_render/` require a working
+wgpu adapter (any modern GPU with a Vulkan, Metal, or DX12 driver). On
+machines without one, those tests soft-skip and the mesh-render
+coverage numbers will read lower than on a GPU-equipped machine.
