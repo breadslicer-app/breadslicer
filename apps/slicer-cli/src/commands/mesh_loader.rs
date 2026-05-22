@@ -5,75 +5,71 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-use sc_mesh_formats::messages::LoadMeshWarning;
+use std::io::Write;
 
-pub(crate) fn display_warnings(warnings: &[LoadMeshWarning]) {
+use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
+
+pub(crate) fn display_warnings(warnings: &[LoadMeshWarning], out: &mut dyn Write) {
     for warning in warnings {
-        match warning {
-            LoadMeshWarning::Obj(obj_warning) => match obj_warning {
-                sc_mesh_formats::messages::LoadObjWarning::NoVertices => {
-                    eprintln!("WARNING: Loaded OBJ file has no vertices");
-                }
-                sc_mesh_formats::messages::LoadObjWarning::NoFaces => {
-                    eprintln!("WARNING: Loaded OBJ file has no faces");
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedTextureCoordinates { line } => {
-                    eprintln!("WARNING (line {}): skipped texture coordinates", line);
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedVertexNormal { line } => {
-                    eprintln!("WARNING (line {}): skipped vertex normal", line);
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedGroup { line, name } => {
-                    eprintln!("WARNING (line {}): Skipped group '{}'", line, name);
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedSmoothingGroup { line } => {
-                    eprintln!("WARNING (line {}): Skipped smoothing group", line);
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedMaterialReference {
-                    line,
-                    material,
-                } => {
-                    eprintln!(
-                        "WARNING (line {}): Skipped material reference '{}'",
-                        line, material
+        let LoadMeshWarning::Obj(obj_warning) = warning;
+        match obj_warning {
+            LoadObjWarning::NoVertices => {
+                let _ = writeln!(out, "WARNING: Loaded OBJ file has no vertices");
+            }
+            LoadObjWarning::NoFaces => {
+                let _ = writeln!(out, "WARNING: Loaded OBJ file has no faces");
+            }
+            LoadObjWarning::SkippedTextureCoordinates { line } => {
+                let _ = writeln!(out, "WARNING (line {line}): skipped texture coordinates");
+            }
+            LoadObjWarning::SkippedVertexNormal { line } => {
+                let _ = writeln!(out, "WARNING (line {line}): skipped vertex normal");
+            }
+            LoadObjWarning::SkippedGroup { line, name } => {
+                let _ = writeln!(out, "WARNING (line {line}): Skipped group '{name}'");
+            }
+            LoadObjWarning::SkippedSmoothingGroup { line } => {
+                let _ = writeln!(out, "WARNING (line {line}): Skipped smoothing group");
+            }
+            LoadObjWarning::SkippedMaterialReference { line, material } => {
+                let _ = writeln!(
+                    out,
+                    "WARNING (line {line}): Skipped material reference '{material}'"
+                );
+            }
+            LoadObjWarning::SkippedMaterialLibrary { line, path } => {
+                let _ = writeln!(
+                    out,
+                    "WARNING (line {line}): Skipped material library '{path}'"
+                );
+            }
+            LoadObjWarning::SkippedComment { line } => {
+                let _ = writeln!(out, "WARNING (line {line}): Skipped comment");
+            }
+            LoadObjWarning::SkippedUnknownDirective { line, directive } => {
+                let _ = writeln!(
+                    out,
+                    "WARNING (line {line}): Skipped OBJ directive '{directive}'"
+                );
+            }
+            LoadObjWarning::SharedVertices {
+                object_name,
+                shared_indices,
+            } => match object_name {
+                Some(name) => {
+                    let _ = writeln!(
+                        out,
+                        "WARNING: Object '{name}' shares global vertex indices with previously \
+                         loaded objects: {shared_indices:?}"
                     );
                 }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedMaterialLibrary {
-                    line,
-                    path,
-                } => {
-                    eprintln!(
-                        "WARNING (line {}): Skipped material library '{}'",
-                        line, path
-                    );
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedComment { line } => {
-                    eprintln!("WARNING (line {}): Skipped comment", line);
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SkippedUnknownDirective {
-                    line,
-                    directive,
-                } => {
-                    eprintln!(
-                        "WARNING (line {}): Skipped OBJ directive '{}'",
-                        line, directive
-                    );
-                }
-                sc_mesh_formats::messages::LoadObjWarning::SharedVertices {
-                    object_name,
-                    shared_indices,
-                } => match object_name {
-                    Some(name) => eprintln!(
-                        "WARNING: Object '{}' shares global vertex indices with previously \
-                         loaded objects: {:?}",
-                        name, shared_indices
-                    ),
-                    None => eprintln!(
+                None => {
+                    let _ = writeln!(
+                        out,
                         "WARNING: An unnamed object shares global vertex indices with \
-                         previously loaded objects: {:?}",
-                        shared_indices
-                    ),
-                },
+                         previously loaded objects: {shared_indices:?}"
+                    );
+                }
             },
         }
     }

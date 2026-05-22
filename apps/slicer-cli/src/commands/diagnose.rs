@@ -23,7 +23,7 @@ use crate::filesystem::{MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path};
 pub(crate) fn diagnose(source: OsString, source_format: Option<MeshFileType>) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
-    display_warnings(&loaded.warnings);
+    display_warnings(&loaded.warnings, &mut std::io::stderr());
 
     let mut detected_problems = false;
 

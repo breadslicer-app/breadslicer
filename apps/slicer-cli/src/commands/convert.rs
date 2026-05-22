@@ -61,7 +61,7 @@ pub(crate) fn convert(
         Some(source_format),
         Some(MAX_INPUT_FILE_SIZE_BYTES),
     )?;
-    display_warnings(&loaded.warnings);
+    display_warnings(&loaded.warnings, &mut std::io::stderr());
 
     write_scene(&loaded.graph, &target_path, target_write_format)
 }

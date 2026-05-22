@@ -56,7 +56,7 @@ pub(crate) fn fix(
     })?;
 
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
-    display_warnings(&loaded.warnings);
+    display_warnings(&loaded.warnings, &mut std::io::stderr());
     let mut graph = loaded.graph;
 
     let mut all_fixes: Vec<MeshFix> = Vec::new();
