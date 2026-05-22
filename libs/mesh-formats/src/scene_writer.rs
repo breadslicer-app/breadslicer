@@ -343,6 +343,41 @@ mod flatten_scene_to_mesh_tests {
 }
 
 #[cfg(test)]
+mod atomic_temp_path_tests {
+    use std::path::Path;
+
+    use super::atomic_temp_path;
+    use crate::error::WriteSceneError;
+
+    #[test]
+    fn parent_less_target_resolves_parent_to_dot() {
+        let temp = atomic_temp_path(Path::new("foo.stl")).expect("temp path");
+        // The helper must use `.` as the parent when the target has no
+        // parent directory component, so the temp file lands next to
+        // where the caller will eventually rename it (the cwd).
+        assert_eq!(temp.parent(), Some(Path::new(".")));
+        let file_name = temp
+            .file_name()
+            .expect("temp path must have a file name")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            file_name.starts_with(".foo.stl.tmp."),
+            "unexpected temp file name: {file_name}"
+        );
+    }
+
+    #[test]
+    fn missing_file_name_returns_path_has_no_file_name() {
+        let err = atomic_temp_path(Path::new("/")).expect_err("root has no file name");
+        assert!(
+            matches!(&err, WriteSceneError::PathHasNoFileName(p) if p == Path::new("/")),
+            "expected PathHasNoFileName, got {err}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod write_scene_atomicity_tests {
     use super::write_scene;
     use crate::filetypes::WriteFormat;
@@ -419,6 +454,45 @@ mod write_scene_atomicity_tests {
         // Only the original target remains in the dir.
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(entries.len(), 1);
+    }
+
+    // A read-only parent directory must surface as
+    // `WriteSceneError::CreateTempFile` (the `OpenOptions::create_new`
+    // call inside `write_atomically` fails with EACCES), and the
+    // attached `path` must point at the temp file the helper tried to
+    // create inside that read-only directory.
+    #[cfg(unix)]
+    #[test]
+    fn readonly_parent_dir_yields_create_temp_file_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::error::WriteSceneError;
+
+        let dir = tempfile::tempdir().unwrap();
+        let readonly = dir.path().join("readonly");
+        std::fs::create_dir(&readonly).unwrap();
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let target = readonly.join("output.obj");
+
+        let result = write_scene(&valid_graph(), &target, WriteFormat::Obj);
+
+        // Restore write permissions so `tempdir` cleanup succeeds.
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let err = result.expect_err("read-only parent must fail the temp-file create");
+        let WriteSceneError::CreateTempFile { path, source } = &err else {
+            panic!("expected CreateTempFile, got {err}");
+        };
+        assert_eq!(
+            path.parent(),
+            Some(readonly.as_path()),
+            "temp file should have been placed inside the read-only parent"
+        );
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+
+        // The read-only dir must still be empty: no half-created temp.
+        let entries: Vec<_> = std::fs::read_dir(&readonly).unwrap().collect();
+        assert!(entries.is_empty(), "no temp file should remain");
     }
 
     // CLI-H-1: a symlink planted at the target path between validation
