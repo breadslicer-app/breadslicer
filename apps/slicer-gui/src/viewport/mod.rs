@@ -14,6 +14,8 @@ mod object_list;
 mod render_host;
 mod render_scheduler;
 mod session_state;
+#[cfg(test)]
+mod tests_controller_handle_before_rendering;
 mod translation_clamp;
 mod types;
 

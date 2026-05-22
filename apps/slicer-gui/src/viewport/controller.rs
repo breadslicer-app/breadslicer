@@ -78,6 +78,27 @@ impl ViewportController {
         }
     }
 
+    /// Install a pre-built `Box<dyn MeshRenderer>` into the
+    /// render-host's renderer slot. Used by tests that need to drive
+    /// `handle_before_rendering` and the lifecycle hooks against a
+    /// `MockRenderer` instead of the wgpu-backed `Renderer`.
+    #[cfg(test)]
+    pub(crate) fn set_renderer_for_test(
+        &self,
+        renderer: Box<dyn crate::mesh_render::MeshRenderer>,
+    ) {
+        *self.render.renderer_cell().borrow_mut() = Some(renderer);
+    }
+
+    /// Set the per-frame flag set to an arbitrary [`FrameState`].
+    /// Used by `handle_before_rendering` phase tests that need the
+    /// upload-owed / redraw-owed combinations the production code
+    /// reaches through document events.
+    #[cfg(test)]
+    pub(super) fn set_frame_state_for_test(&self, state: super::types::FrameState) {
+        self.render.set_frame(state);
+    }
+
     #[cfg(test)]
     pub(crate) fn install_graph_for_test(&self, graph: sc_mesh_core::Scene) {
         // Tests don't care about the source path; populate the slot
@@ -97,6 +118,16 @@ impl ViewportController {
     #[cfg(test)]
     pub(crate) fn redraw_owed_for_test(&self) -> bool {
         self.render.redraw_owed()
+    }
+
+    #[cfg(test)]
+    pub(super) fn frame_state_for_test(&self) -> super::types::FrameState {
+        self.render.frame()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn camera_is_initialised_for_test(&self) -> bool {
+        self.camera.is_initialised()
     }
 
     #[cfg(test)]

@@ -305,6 +305,15 @@ impl SceneLoader {
         self.upload_failures.set(0);
     }
 
+    /// Test-only accessor for the upload-failure counter, used to
+    /// assert that `note_upload_success` / `note_upload_failure` /
+    /// `reset_upload_failures` fired the expected number of times
+    /// during a `handle_before_rendering` cycle.
+    #[cfg(test)]
+    pub(crate) fn upload_failures_for_test(&self) -> u32 {
+        self.upload_failures.get()
+    }
+
     /// A scene upload just succeeded. Rearms the 0 → 1 dialog gate so
     /// the next failure can surface an error.
     pub fn note_upload_success(&self) {
