@@ -19,6 +19,7 @@ mod frame;
 mod gizmo_buffers;
 mod gizmo_entries;
 mod pipelines;
+mod renderer_trait;
 mod scene_upload;
 mod targets;
 
@@ -33,6 +34,7 @@ use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
+pub(crate) use renderer_trait::MeshRenderer;
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{
     MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries, graph_leaf_count,

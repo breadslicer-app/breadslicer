@@ -28,11 +28,11 @@ use slint::{ComponentHandle, Weak};
 use super::render_scheduler;
 use super::types::{FrameState, ViewportSize};
 use crate::MainWindow;
-use crate::mesh_render::Renderer;
+use crate::mesh_render::{MeshRenderer, Renderer};
 
 pub(super) struct RenderHost {
     ui: Weak<MainWindow>,
-    renderer: RefCell<Option<Renderer>>,
+    renderer: RefCell<Option<Box<dyn MeshRenderer>>>,
     viewport: Cell<Option<ViewportSize>>,
     /// Per-frame work owed: a redraw (something visual changed) and/or
     /// a GPU upload (CPU-side scene differs from the renderer's
@@ -79,7 +79,7 @@ impl RenderHost {
     /// `handle_before_rendering` (which keeps the borrow live across
     /// upload, scene-bounds query, and render) and by the
     /// scene-install path.
-    pub(super) fn renderer_cell(&self) -> &RefCell<Option<Renderer>> {
+    pub(super) fn renderer_cell(&self) -> &RefCell<Option<Box<dyn MeshRenderer>>> {
         &self.renderer
     }
 
@@ -160,7 +160,7 @@ impl RenderHost {
         device: slint::wgpu_28::wgpu::Device,
         queue: slint::wgpu_28::wgpu::Queue,
     ) {
-        *self.renderer.borrow_mut() = Some(Renderer::new(device, queue));
+        *self.renderer.borrow_mut() = Some(Box::new(Renderer::new(device, queue)));
     }
 
     /// `RenderingTeardown` callback handler. Drops the GPU renderer
