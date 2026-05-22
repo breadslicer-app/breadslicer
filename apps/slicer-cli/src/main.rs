@@ -29,7 +29,7 @@ fn main() -> Result<()> {
         CmdOptions::Diagnose {
             source,
             source_format,
-        } => diagnose(source, source_format),
+        } => diagnose(source, source_format, &mut std::io::stderr()),
         CmdOptions::Fix {
             source,
             source_format,
@@ -48,6 +48,7 @@ fn main() -> Result<()> {
                 flipped_faces: fix_flipped_faces,
                 face_normals: fix_face_normals,
             },
+            &mut std::io::stderr(),
         ),
         CmdOptions::Help => {
             let help_text = get_cmd_options()

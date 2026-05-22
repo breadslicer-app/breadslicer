@@ -866,7 +866,7 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stdout(predicate::str::contains("No fixes needed"));
+            .stderr(predicate::str::contains("No fixes needed"));
         assert!(target.exists());
     }
 
@@ -894,8 +894,8 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Applied fixes"))
-            .stdout(predicate::str::contains("Flipped orientation"));
+            .stderr(predicate::str::contains("Applied fixes"))
+            .stderr(predicate::str::contains("Flipped orientation"));
         assert!(target.exists());
     }
 

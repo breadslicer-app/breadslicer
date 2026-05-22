@@ -6,6 +6,7 @@
  */
 
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
@@ -40,6 +41,7 @@ pub(crate) fn fix(
     target: OsString,
     target_format: Option<MeshFileType>,
     options: FixOptions,
+    out: &mut dyn Write,
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let target_path = validate_targetfile_path(PathBuf::from(target))?;
@@ -56,13 +58,13 @@ pub(crate) fn fix(
     })?;
 
     let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
-    display_warnings(&loaded.warnings, &mut std::io::stderr());
+    display_warnings(&loaded.warnings, out);
     let mut graph = loaded.graph;
 
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     for (_id, mesh) in graph.mesh_resources_iter_mut() {
-        all_fixes.extend(fix_mesh(mesh, options)?);
+        all_fixes.extend(fix_mesh(mesh, options, out)?);
     }
 
     // Two-phase walk: collect inline-mesh leaf ids while the borrow
@@ -73,13 +75,13 @@ pub(crate) fn fix(
         let mesh = graph
             .inline_mesh_mut(id)
             .expect("inline-mesh leaf was alive at enumeration time");
-        all_fixes.extend(fix_mesh(mesh, options)?);
+        all_fixes.extend(fix_mesh(mesh, options, out)?);
     }
 
     if all_fixes.is_empty() {
-        println!("No fixes needed.");
+        let _ = writeln!(out, "No fixes needed.");
     } else {
-        show_applied_fixes(&all_fixes);
+        show_applied_fixes(&all_fixes, out);
     }
 
     write_scene(&graph, &target_path, target_format)
@@ -110,9 +112,13 @@ fn collect_inline_leaf_ids(graph: &Scene) -> Vec<NodeId> {
     ids
 }
 
-fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, options: FixOptions) -> Result<Vec<MeshFix>> {
+fn fix_mesh(
+    mesh: &mut sc_mesh_core::IndexedMesh,
+    options: FixOptions,
+    out: &mut dyn Write,
+) -> Result<Vec<MeshFix>> {
     if let Err(errors) = mesh.validate_vertices() {
-        show_vertex_errors(&errors);
+        show_vertex_errors(&errors, out);
         return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
     }
 
@@ -168,27 +174,27 @@ fn fix_mesh(mesh: &mut sc_mesh_core::IndexedMesh, options: FixOptions) -> Result
     Ok(fixes)
 }
 
-fn show_applied_fixes(fixes: &[MeshFix]) {
-    println!("Applied fixes ({}):", fixes.len());
+pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {
+    let _ = writeln!(out, "Applied fixes ({}):", fixes.len());
     for fix in fixes {
         match fix {
             MeshFix::RemovedZeroLengthEdgeFace { face_idx } => {
-                println!(
-                    "\t- Removed face with ID '{}' (had zero-length edge)",
-                    face_idx
+                let _ = writeln!(
+                    out,
+                    "\t- Removed face with ID '{face_idx}' (had zero-length edge)"
                 );
             }
             MeshFix::FlippedFaceOrientation { face_idx } => {
-                println!("\t- Flipped orientation of face with ID '{}'", face_idx);
+                let _ = writeln!(out, "\t- Flipped orientation of face with ID '{face_idx}'");
             }
             MeshFix::RecomputedNormal {
                 face_idx,
                 old_normal,
                 new_normal,
             } => {
-                println!(
-                    "\t- Recomputed normal vector for face with ID '{}', from {:?} (with norm {}) to {:?} (with norm {})",
-                    face_idx,
+                let _ = writeln!(
+                    out,
+                    "\t- Recomputed normal vector for face with ID '{face_idx}', from {:?} (with norm {}) to {:?} (with norm {})",
                     old_normal.coords(),
                     old_normal.norm(),
                     new_normal.coords(),
@@ -196,5 +202,63 @@ fn show_applied_fixes(fixes: &[MeshFix]) {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod show_applied_fixes_tests {
+    use sc_mesh_core::indexed_mesh::MeshFix;
+    use sc_mesh_core::primitives::{FaceIndex, Normal};
+
+    use super::show_applied_fixes;
+
+    fn render(fixes: &[MeshFix]) -> String {
+        let mut buf = Vec::new();
+        show_applied_fixes(fixes, &mut buf);
+        String::from_utf8(buf).expect("show_applied_fixes emits valid UTF-8")
+    }
+
+    #[test]
+    fn empty_input_only_writes_header() {
+        assert_eq!(render(&[]).trim(), "Applied fixes (0):");
+    }
+
+    #[test]
+    fn covers_every_mesh_fix_variant() {
+        let fixes = vec![
+            MeshFix::RemovedZeroLengthEdgeFace {
+                face_idx: FaceIndex::from(4_usize),
+            },
+            MeshFix::FlippedFaceOrientation {
+                face_idx: FaceIndex::from(5_usize),
+            },
+            MeshFix::RecomputedNormal {
+                face_idx: FaceIndex::from(6_usize),
+                old_normal: Normal::new([1.0, 0.0, 0.0]),
+                new_normal: Normal::new([0.0, 1.0, 0.0]),
+            },
+        ];
+        let out = render(&fixes);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 4, "header + 3 entries; got: {out}");
+        assert!(lines[0].contains("Applied fixes (3)"));
+        assert!(
+            lines[1].contains("Removed face") && lines[1].contains("'4'"),
+            "{}",
+            lines[1]
+        );
+        assert!(
+            lines[2].contains("Flipped orientation") && lines[2].contains("'5'"),
+            "{}",
+            lines[2]
+        );
+        assert!(
+            lines[3].contains("Recomputed normal")
+                && lines[3].contains("'6'")
+                && lines[3].contains("[1.0, 0.0, 0.0]")
+                && lines[3].contains("[0.0, 1.0, 0.0]"),
+            "{}",
+            lines[3]
+        );
     }
 }
