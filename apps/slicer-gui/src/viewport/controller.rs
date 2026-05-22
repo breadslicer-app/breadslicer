@@ -131,6 +131,11 @@ impl ViewportController {
     }
 
     #[cfg(test)]
+    pub(super) fn renderer_installed_for_test(&self) -> bool {
+        self.render.renderer_cell().borrow().is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_viewport_for_test(&self, w: f32, h: f32) {
         self.render.set_viewport(w, h);
     }
@@ -796,6 +801,16 @@ impl ViewportController {
     pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
         self.session.loader().set_gpu(device.clone(), queue.clone());
         self.render.handle_rendering_setup(device, queue);
+        self.post_renderer_install();
+    }
+
+    /// Post-install side effects that are independent of the wgpu
+    /// device / queue: rearm the loader's upload-failure counter,
+    /// flag an upload if a scene is already loaded, request a redraw,
+    /// and drain any queued pending-load. Split out of
+    /// `handle_rendering_setup` so tests can drive the post-install
+    /// transitions without constructing a real `wgpu::Device`.
+    pub(super) fn post_renderer_install(&self) {
         self.session.loader().reset_upload_failures();
         if self.session.document().is_loaded() {
             self.render.update_frame(FrameState::with_upload_owed);

@@ -1500,4 +1500,57 @@ mod gpu_integration_tests {
             "breach must dominate safe in warning-colour pixel count: breach={breach_warning}, safe={safe_warning}"
         );
     }
+
+    /// `install_scene` with a `GpuScene` built against the same device
+    /// as the renderer must report success and leave the renderer with
+    /// a populated scene (observable through `scene_bounds`).
+    #[test]
+    fn install_scene_with_matching_device_succeeds() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), queue);
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        let gpu = GpuScene::build(&device, &graph).expect("gpu scene build");
+        let installed = renderer.install_scene(gpu, &device);
+        assert!(installed);
+        assert!(renderer.scene_bounds().is_some());
+    }
+
+    /// `clear_scene` drops the installed scene; subsequent
+    /// `scene_bounds` reads return `None`.
+    #[test]
+    fn clear_scene_drops_the_installed_scene() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, queue);
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer.upload_scene(&graph).expect("upload");
+        assert!(renderer.scene_bounds().is_some());
+        renderer.clear_scene();
+        assert!(renderer.scene_bounds().is_none());
+    }
+
+    /// `invalidate_sizing` drops only the viewport-sized allocations;
+    /// the installed scene survives (still reports bounds).
+    #[test]
+    fn invalidate_sizing_keeps_the_installed_scene() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, queue);
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer.upload_scene(&graph).expect("upload");
+        let bounds_before = renderer.scene_bounds().expect("bounds populated");
+        renderer.invalidate_sizing();
+        let bounds_after = renderer.scene_bounds().expect("bounds preserved");
+        assert_eq!(bounds_before, bounds_after);
+    }
 }
