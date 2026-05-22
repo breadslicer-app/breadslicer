@@ -198,6 +198,30 @@ impl fmt::Display for InferFileTypeError {
 
 impl std::error::Error for InferFileTypeError {}
 
+#[cfg(test)]
+mod infer_file_type_error_tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn unknown_extension_display_names_the_path() {
+        let err = InferFileTypeError::UnknownExtension {
+            path: PathBuf::from("/tmp/foo.xyz"),
+        };
+        let s = err.to_string();
+        assert!(s.contains("Unable to infer file format"));
+        assert!(s.contains("/tmp/foo.xyz"));
+    }
+
+    #[test]
+    fn unknown_extension_has_no_source() {
+        let err = InferFileTypeError::UnknownExtension {
+            path: PathBuf::from("/tmp/foo.xyz"),
+        };
+        assert!(err.source().is_none());
+    }
+}
+
 // --- per-format: STL load --------------------------------------------
 
 #[derive(Debug)]
