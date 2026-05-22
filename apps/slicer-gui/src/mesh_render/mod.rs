@@ -18,6 +18,8 @@ use crate::gizmo::axis::ALL_AXES;
 mod frame;
 mod gizmo_buffers;
 mod gizmo_entries;
+#[cfg(test)]
+pub(crate) mod mock;
 mod pipelines;
 mod renderer_trait;
 mod scene_upload;
