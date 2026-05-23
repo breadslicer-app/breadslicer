@@ -6,7 +6,9 @@
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
+use sc_mesh_core::Aabb;
 use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene_node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
@@ -214,12 +216,10 @@ pub(super) fn build_model_entries(
     selection: Option<NodeId>,
     build_volume: BuildVolume,
 ) -> Vec<ModelEntry> {
-    let env_min = build_volume.envelope_min_mm();
-    let env_max = build_volume.envelope_max_mm();
     let mut entries: Vec<ModelEntry> = Vec::new();
     let _ = for_each_leaf(graph, |node_id, world_transform, mesh| {
         let selected = selection == Some(node_id);
-        let breaches = leaf_breaches_envelope(mesh, &world_transform, env_min, env_max);
+        let breaches = leaf_breaches_envelope(mesh, &world_transform, &build_volume);
         entries.push(ModelEntry {
             model: transform_to_mat4(&world_transform).to_cols_array_2d(),
             flags: [u32::from(selected), u32::from(breaches), 0, 0],
@@ -229,32 +229,24 @@ pub(super) fn build_model_entries(
     entries
 }
 
-/// Returns `true` if any vertex of `mesh`, after `world_transform` is
-/// applied, falls strictly outside the axis-aligned envelope
-/// `[env_min, env_max]`. A convex envelope contains a mesh iff it
-/// contains every vertex, so this per-vertex test is exact for "is any
-/// part of the mesh outside the envelope" (no triangle interior can
-/// escape an envelope that already encloses all of its vertices).
+/// Returns `true` if `mesh`, after `world_transform` is applied, has
+/// any part outside `build_volume`'s envelope. Computes the
+/// transformed AABB of the mesh vertices and asks
+/// [`BuildVolume::contains_aabb`]: containment of the AABB is
+/// equivalent to containment of every vertex (and therefore of every
+/// triangle interior) when the envelope is convex.
 fn leaf_breaches_envelope(
     mesh: &IndexedMesh,
     world_transform: &Transform3D,
-    env_min: Vec3,
-    env_max: Vec3,
+    build_volume: &BuildVolume,
 ) -> bool {
     let transform_mat = transform_to_mat4(world_transform);
+    let mut aabb = Aabb::empty();
     for v in mesh.vertices() {
         let p = transform_mat.transform_point3(Vec3::from(v.coords()));
-        if p.x < env_min.x
-            || p.x > env_max.x
-            || p.y < env_min.y
-            || p.y > env_max.y
-            || p.z < env_min.z
-            || p.z > env_max.z
-        {
-            return true;
-        }
+        aabb.extend(Vertex::new([p.x, p.y, p.z]));
     }
-    false
+    !build_volume.contains_aabb(aabb)
 }
 
 /// Bit positions for the per-face breach mask consumed by the plate

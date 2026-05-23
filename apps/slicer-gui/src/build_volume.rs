@@ -66,13 +66,49 @@ impl BuildVolume {
     }
 
     /// Envelope minimum corner: `(-W/2, -D/2, 0)`.
+    ///
+    /// For "is geometry inside the envelope" checks, prefer
+    /// [`Self::contains_aabb`] over comparing against the raw
+    /// corner.
     pub fn envelope_min_mm(&self) -> Vec3 {
         Vec3::new(-0.5 * self.width_mm, -0.5 * self.depth_mm, 0.0)
     }
 
     /// Envelope maximum corner: `(W/2, D/2, H)`.
+    ///
+    /// For "is geometry inside the envelope" checks, prefer
+    /// [`Self::contains_aabb`] over comparing against the raw
+    /// corner.
     pub fn envelope_max_mm(&self) -> Vec3 {
         Vec3::new(0.5 * self.width_mm, 0.5 * self.depth_mm, self.height_mm)
+    }
+
+    /// Returns `true` iff `aabb` is fully inside the build envelope,
+    /// i.e. every coordinate of `aabb.min()` is at or above the
+    /// envelope's minimum corner and every coordinate of `aabb.max()`
+    /// is at or below the envelope's maximum corner. An empty AABB
+    /// returns `true` (vacuously contained: it has no extent to
+    /// breach a wall).
+    ///
+    /// Use this as the single source of truth for "does this geometry
+    /// fit on the printer's plate". A convex envelope contains a mesh
+    /// iff it contains the mesh's AABB, so the per-vertex shape test
+    /// reduces to one call against the mesh's (post-transform)
+    /// bounding box.
+    pub fn contains_aabb(&self, aabb: Aabb) -> bool {
+        if aabb.is_empty() {
+            return true;
+        }
+        let lo = aabb.min().coords();
+        let hi = aabb.max().coords();
+        let env_lo = self.envelope_min_mm();
+        let env_hi = self.envelope_max_mm();
+        lo[0] >= env_lo.x
+            && hi[0] <= env_hi.x
+            && lo[1] >= env_lo.y
+            && hi[1] <= env_hi.y
+            && lo[2] >= env_lo.z
+            && hi[2] <= env_hi.z
     }
 
     /// Largest fraction of `delta` (per axis) that keeps `aabb_pre +
@@ -294,6 +330,57 @@ mod build_volume_tests {
         let pre = aabb([-50.0, -1.0, 0.0], [50.0, 1.0, 2.0]);
         let out = v.clamp_translation_delta(pre, Vec3::new(7.0, 0.0, 0.0));
         assert_approx_eq!(f32, out.x, 0.0);
+    }
+
+    #[test]
+    fn contains_aabb_returns_true_for_aabb_strictly_inside() {
+        let v = vol();
+        let inside = aabb([-10.0, -10.0, 1.0], [10.0, 10.0, 50.0]);
+        assert!(v.contains_aabb(inside));
+    }
+
+    #[test]
+    fn contains_aabb_returns_true_when_aabb_touches_walls() {
+        // Faces flush against every wall; still contained
+        // (contains is inclusive on the boundary).
+        let v = vol();
+        let flush = aabb([-50.0, -30.0, 0.0], [50.0, 30.0, 80.0]);
+        assert!(v.contains_aabb(flush));
+    }
+
+    #[test]
+    fn contains_aabb_returns_false_when_extending_past_plus_x() {
+        let v = vol();
+        let past_plus_x = aabb([0.0, 0.0, 1.0], [60.0, 10.0, 10.0]);
+        assert!(!v.contains_aabb(past_plus_x));
+    }
+
+    #[test]
+    fn contains_aabb_returns_false_when_extending_past_minus_x() {
+        let v = vol();
+        let past_minus_x = aabb([-60.0, 0.0, 1.0], [0.0, 10.0, 10.0]);
+        assert!(!v.contains_aabb(past_minus_x));
+    }
+
+    #[test]
+    fn contains_aabb_returns_false_when_extending_below_plate() {
+        let v = vol();
+        let below_plate = aabb([-10.0, -10.0, -1.0], [10.0, 10.0, 10.0]);
+        assert!(!v.contains_aabb(below_plate));
+    }
+
+    #[test]
+    fn contains_aabb_returns_false_when_extending_above_ceiling() {
+        let v = vol();
+        let above_ceiling = aabb([-10.0, -10.0, 1.0], [10.0, 10.0, 100.0]);
+        assert!(!v.contains_aabb(above_ceiling));
+    }
+
+    #[test]
+    fn contains_aabb_returns_true_for_empty_aabb() {
+        // Vacuously contained: no extent to breach a wall.
+        let v = vol();
+        assert!(v.contains_aabb(Aabb::empty()));
     }
 
     #[test]
