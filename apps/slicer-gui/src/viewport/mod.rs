@@ -6,6 +6,7 @@
 mod camera_controller;
 mod controller;
 mod gizmo_drag;
+mod gizmo_frame_composer;
 mod gizmo_fsm;
 mod input_dispatch;
 mod input_state;

@@ -23,7 +23,10 @@ use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
 
 use super::camera_controller::CameraController;
-use super::gizmo_drag::{DragOp, GizmoState};
+#[cfg(test)]
+use super::gizmo_drag::DragOp;
+use super::gizmo_drag::GizmoState;
+use super::gizmo_frame_composer::GizmoFrameComposer;
 use super::input_dispatch::{InputDispatch, PointerUpOutcome};
 use super::keyboard_drive::KbdFocus;
 use super::object_list::{build_object_list_names, push_object_list};
@@ -37,10 +40,11 @@ use crate::camera::AxisView;
 use crate::clipboard;
 use crate::clipboard::Clipboard;
 use crate::error_dialog::DialogManager;
+#[cfg(test)]
 use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::{GizmoDragVisual, GizmoVisibility, SceneRender};
+use crate::mesh_render::SceneRender;
 use crate::pending_load::PendingLoad;
 use crate::picking;
 use crate::scene_document::{SceneDocument, SceneEvent};
@@ -985,7 +989,7 @@ impl ViewportController {
         let build_volume = self.session.build_volume();
 
         // Render path. With a scene installed, the closure inside
-        // `with_scene` builds the gizmo frame against the live scene
+        // `with_scene` composes the gizmo frame against the live scene
         // and renders the union (plate + objects). With no scene,
         // `with_scene` returns `None` and the fallback below renders
         // the plate alone with neither selection nor gizmo.
@@ -994,55 +998,13 @@ impl ViewportController {
             .document()
             .with_scene(|spatial_for_render| {
                 let selection_node_id = self.session.document().selection_primary_node_id();
-                let drag_state = self.input.gizmo_fsm().current();
-                let (visibility, drag_visual) = match drag_state {
-                    GizmoState::Drag { op, pivot, .. } => match op {
-                        DragOp::Translate { axis, .. } => {
-                            (GizmoVisibility::DraggingTranslate { axis }, None)
-                        }
-                        DragOp::Rotate { axis, last_raw, .. } => (
-                            GizmoVisibility::DraggingRotate { axis },
-                            Some(GizmoDragVisual::Rotate {
-                                axis,
-                                angle: last_raw,
-                            }),
-                        ),
-                        DragOp::ScaleAxis {
-                            axis,
-                            current_anchor,
-                            proportional,
-                            ..
-                        } => {
-                            // Proportional (Shift) is a uniform scale
-                            // that doesn't have a per-axis cursor
-                            // projection, the cube stays put and the
-                            // object grows uniformly.
-                            let drag_visual = if proportional {
-                                None
-                            } else {
-                                let axial_distance = (current_anchor - pivot).dot(axis.world_dir());
-                                Some(GizmoDragVisual::ScaleAxis {
-                                    axis,
-                                    axial_distance,
-                                })
-                            };
-                            (GizmoVisibility::DraggingScaleAxis { axis }, drag_visual)
-                        }
-                    },
-                    GizmoState::Idle => (GizmoVisibility::Idle, None),
-                };
-                let hover = self.input.gizmo_fsm().current_hover();
-                let gizmo_frame = selection_node_id.and_then(|sel| {
-                    gizmo::frame::build_gizmo_frame(
-                        spatial_for_render,
-                        camera,
-                        sel,
-                        h_logical,
-                        visibility,
-                        hover,
-                        drag_visual,
-                    )
-                });
+                let gizmo_frame = GizmoFrameComposer::compose(
+                    &self.input,
+                    spatial_for_render,
+                    camera,
+                    selection_node_id,
+                    h_logical,
+                );
 
                 renderer.render(
                     Some(SceneRender {
