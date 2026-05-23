@@ -3,6 +3,20 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+//! Coordinator for the per-viewport sub-controllers (`SessionState`,
+//! `CameraController`, `RenderHost`, `InputDispatch`). Most public
+//! methods are thin delegations to one of those.
+//!
+//! `handle_rendering_setup` is the exception: it is genuinely
+//! cross-concern (it touches both `SessionState`, to publish the GPU
+//! device into the loader and drain any queued pending load, and
+//! `RenderHost`, to install the renderer and flag a redraw). The wgpu
+//! types live at this seam because Slint hands them to whichever
+//! method is registered as the `rendering-setup` callback, and
+//! coordinating across session and render is exactly what the
+//! coordinator exists for, so the wgpu import below is not an
+//! abstraction leak.
+
 use std::rc::Rc;
 
 use slint::ComponentHandle;
@@ -863,11 +877,22 @@ impl ViewportController {
         self.render.handle_rendering_teardown();
     }
 
-    pub fn handle_before_rendering(&self) {
-        // Step the keyboard-focus integrator before borrowing the
-        // renderer, the integrator mutates the scene's transform
-        // and marks dirty, which is exactly the input the renderer
-        // pass below needs to read in this same frame.
+    /// Steps the keyboard-focus integrator (which can mutate the
+    /// scene transform), drains any pending GPU upload, and lazily
+    /// initialises the orbit camera the first time a renderer is
+    /// available. Runs before the paint work in
+    /// [`Self::handle_before_rendering`] so the paint reads a
+    /// consistent view of the scene.
+    ///
+    /// Returns `false` when paint should be skipped: either the
+    /// renderer is absent (the device is gone), or a pending GPU
+    /// upload failed and the renderer's scene state is in an
+    /// indeterminate shape that should not be drawn from.
+    fn on_scene_change(&self) -> bool {
+        // Step the keyboard-focus integrator first, the integrator
+        // mutates the scene's transform and marks dirty, which is
+        // exactly the input the paint pass below needs to read in
+        // this same frame.
         self.input.integrate_keyboard_arrows(
             self.session.document(),
             self.camera.camera_cell(),
@@ -877,7 +902,7 @@ impl ViewportController {
 
         let mut renderer_slot = self.render.renderer_cell().borrow_mut();
         let Some(renderer) = renderer_slot.as_mut() else {
-            return;
+            return false;
         };
 
         if self.render.frame().upload_owed() {
@@ -897,7 +922,7 @@ impl ViewportController {
                     // loader's failure counter) will drive a retry
                     // without relying on coincidental side effects.
                     self.session.loader().note_upload_failure(&err);
-                    return;
+                    return false;
                 }
                 None => {
                     // Flag set but the scene was cleared before we got to it.
@@ -917,9 +942,24 @@ impl ViewportController {
                 .replace_with_framing(scene_bounds, self.session.build_volume());
         }
 
+        true
+    }
+
+    /// Paints the current frame: snapshots the viewport size, builds
+    /// the gizmo frame against the live scene, renders, and hands the
+    /// resulting texture to Slint via `set_mesh_rendering`. Bails
+    /// early when no paint is owed, when any of the required pieces
+    /// are missing (renderer, UI handle, viewport, or camera), or
+    /// when the effective render-target size collapses to zero.
+    fn on_paint(&self) {
         if !self.render.frame().redraw_owed() {
             return;
         }
+
+        let mut renderer_slot = self.render.renderer_cell().borrow_mut();
+        let Some(renderer) = renderer_slot.as_mut() else {
+            return;
+        };
 
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -1037,6 +1077,13 @@ impl ViewportController {
                 format!("{err:?}"),
             ),
         }
+    }
+
+    pub fn handle_before_rendering(&self) {
+        if !self.on_scene_change() {
+            return;
+        }
+        self.on_paint();
     }
 }
 
