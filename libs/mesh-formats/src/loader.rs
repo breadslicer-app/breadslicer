@@ -13,7 +13,8 @@ use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 use crate::messages::LoadMeshWarning;
 use crate::obj::read_obj;
-use crate::stl::{read_stl, read_stla, read_stlb};
+use crate::ports::MeshReader;
+use crate::stl::{StlBin, read_stl, read_stla};
 
 pub struct LoadedMesh {
     pub graph: Scene,
@@ -67,7 +68,11 @@ where
     let graph = match kind {
         MeshFileType::Stl => read_stl(reader)?,
         MeshFileType::StlAscii => read_stla(reader)?,
-        MeshFileType::StlBin => read_stlb(reader)?,
+        MeshFileType::StlBin => {
+            let (graph, stl_warnings) = StlBin::read(reader)?;
+            warnings.extend(stl_warnings.into_iter().map(LoadMeshWarning::Stl));
+            graph
+        }
         MeshFileType::Obj => {
             let (graph, obj_warnings) = read_obj(reader)?;
             warnings.extend(obj_warnings.into_iter().map(LoadMeshWarning::Obj));

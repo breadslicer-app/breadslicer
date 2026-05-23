@@ -21,7 +21,7 @@ use std::io::{Read, Seek, Write};
 
 use sc_mesh_core::Scene;
 
-mod sealed {
+pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
