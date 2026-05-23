@@ -11,7 +11,10 @@ use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
 
 pub(crate) fn display_warnings(warnings: &[LoadMeshWarning], out: &mut dyn Write) {
     for warning in warnings {
-        let LoadMeshWarning::Obj(obj_warning) = warning;
+        let obj_warning = match warning {
+            LoadMeshWarning::Obj(w) => w,
+            LoadMeshWarning::Stl(stl) => match *stl {},
+        };
         match obj_warning {
             LoadObjWarning::NoVertices => {
                 let _ = writeln!(out, "WARNING: Loaded OBJ file has no vertices");

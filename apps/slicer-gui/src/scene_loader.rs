@@ -427,6 +427,7 @@ fn log_load_warnings(path: &Path, warnings: &[LoadMeshWarning]) {
             LoadMeshWarning::Obj(w) => {
                 eprintln!("WARNING [{}]: {}", path.display(), describe_obj_warning(w));
             }
+            LoadMeshWarning::Stl(stl) => match *stl {},
         }
     }
 }

@@ -48,7 +48,19 @@ pub enum LoadObjWarning {
     },
 }
 
+/// Warnings emitted by the STL readers (binary and ASCII).
+///
+/// The enum is currently empty: STL parsing produces no advisory
+/// messages. The type exists so the workspace warning channel has a
+/// place for future STL-specific notes (e.g., non-zero attribute
+/// bytes in the binary header, atypical solid-name capitalisation),
+/// and so the dispatcher in `loader.rs` can wrap per-format STL
+/// warnings into `LoadMeshWarning::Stl` once any are added.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadStlWarning {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadMeshWarning {
     Obj(LoadObjWarning),
+    Stl(LoadStlWarning),
 }
