@@ -11,6 +11,7 @@ pub mod filetypes;
 pub mod loader;
 pub mod messages;
 pub mod obj;
+pub mod ports;
 pub mod scene_writer;
 pub mod stl;
 
