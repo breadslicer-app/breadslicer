@@ -63,12 +63,16 @@ pub fn load_mesh_from_reader<R>(
 where
     R: Read + Seek,
 {
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<LoadMeshWarning> = Vec::new();
     let graph = match kind {
         MeshFileType::Stl => read_stl(reader)?,
         MeshFileType::StlAscii => read_stla(reader)?,
         MeshFileType::StlBin => read_stlb(reader)?,
-        MeshFileType::Obj => read_obj(reader, &mut warnings)?,
+        MeshFileType::Obj => {
+            let (graph, obj_warnings) = read_obj(reader)?;
+            warnings.extend(obj_warnings.into_iter().map(LoadMeshWarning::Obj));
+            graph
+        }
         other => return Err(LoadMeshError::UnsupportedFormat(other)),
     };
     Ok(LoadedMesh { graph, warnings })

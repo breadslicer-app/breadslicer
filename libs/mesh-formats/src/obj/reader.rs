@@ -17,7 +17,7 @@ use sc_mesh_core::{
 };
 
 use crate::error::LoadObjError;
-use crate::messages::{LoadMeshWarning, LoadObjWarning};
+use crate::messages::LoadObjWarning;
 
 /// Hard ceiling on the number of vertices a single OBJ file may declare.
 /// Matches the binary STL triangle cap so all our format readers share
@@ -105,7 +105,7 @@ fn check_sharing_and_attach(
     used_global_indices: &mut HashSet<VertexIndex>,
     graph: &mut Scene,
     root: NodeId,
-    warnings: &mut Vec<LoadMeshWarning>,
+    warnings: &mut Vec<LoadObjWarning>,
 ) -> bool {
     if current_faces.is_empty() {
         return false;
@@ -126,10 +126,10 @@ fn check_sharing_and_attach(
         // The warning carries raw `u32`s for presentation. Convert
         // at the boundary so the warning's wire shape stays
         // unchanged for callers that print it (CLI / GUI).
-        warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
+        warnings.push(LoadObjWarning::SharedVertices {
             object_name: current_name.clone(),
             shared_indices: shared.into_iter().map(u32::from).collect(),
-        }));
+        });
     }
 
     let Some(mesh) = flush_pending_object_as_mesh(global_vertices, current_faces, current_name)
@@ -150,21 +150,21 @@ fn check_sharing_and_attach(
     true
 }
 
-pub fn read_obj<R>(read: &mut R, warnings: &mut Vec<LoadMeshWarning>) -> Result<Scene, LoadObjError>
+pub fn read_obj<R>(read: &mut R) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError>
 where
     R: std::io::Read,
 {
-    read_obj_with_caps(read, warnings, Caps::DEFAULT)
+    read_obj_with_caps(read, Caps::DEFAULT)
 }
 
 fn read_obj_with_caps<R>(
     read: &mut R,
-    warnings: &mut Vec<LoadMeshWarning>,
     caps: Caps,
-) -> Result<Scene, LoadObjError>
+) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError>
 where
     R: std::io::Read,
 {
+    let mut warnings: Vec<LoadObjWarning> = Vec::new();
     // Loader-faithful topology: every leaf attaches under one
     // identity-Group root, matching the shape downstream tests and
     // viewport code expect.
@@ -214,9 +214,7 @@ where
         match first_token {
             t if t.starts_with('#') => {
                 if header_ended {
-                    warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedComment {
-                        line: line_num + 1,
-                    }));
+                    warnings.push(LoadObjWarning::SkippedComment { line: line_num + 1 });
                     continue;
                 }
 
@@ -242,7 +240,7 @@ where
                     &mut used_global_indices,
                     &mut graph,
                     root,
-                    warnings,
+                    &mut warnings,
                 ) {
                     leaf_count += 1;
                 }
@@ -348,53 +346,41 @@ where
                 }
             }
             "vt" => {
-                warnings.push(LoadMeshWarning::Obj(
-                    LoadObjWarning::SkippedTextureCoordinates { line: line_num + 1 },
-                ));
+                warnings.push(LoadObjWarning::SkippedTextureCoordinates { line: line_num + 1 });
             }
             "vn" => {
-                warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal {
-                    line: line_num + 1,
-                }));
+                warnings.push(LoadObjWarning::SkippedVertexNormal { line: line_num + 1 });
             }
             "g" => {
                 let name = line.strip_prefix("g").unwrap_or("").trim().to_string();
-                warnings.push(LoadMeshWarning::Obj(LoadObjWarning::SkippedGroup {
+                warnings.push(LoadObjWarning::SkippedGroup {
                     line: line_num + 1,
                     name,
-                }));
+                });
             }
             "s" => {
-                warnings.push(LoadMeshWarning::Obj(
-                    LoadObjWarning::SkippedSmoothingGroup { line: line_num + 1 },
-                ));
+                warnings.push(LoadObjWarning::SkippedSmoothingGroup { line: line_num + 1 });
             }
             "usemtl" => {
                 let material = line.strip_prefix("usemtl").unwrap_or("").trim().to_string();
-                warnings.push(LoadMeshWarning::Obj(
-                    LoadObjWarning::SkippedMaterialReference {
-                        line: line_num + 1,
-                        material,
-                    },
-                ));
+                warnings.push(LoadObjWarning::SkippedMaterialReference {
+                    line: line_num + 1,
+                    material,
+                });
             }
             "mtllib" => {
                 let path = line.strip_prefix("mtllib").unwrap_or("").trim().to_string();
-                warnings.push(LoadMeshWarning::Obj(
-                    LoadObjWarning::SkippedMaterialLibrary {
-                        line: line_num + 1,
-                        path,
-                    },
-                ));
+                warnings.push(LoadObjWarning::SkippedMaterialLibrary {
+                    line: line_num + 1,
+                    path,
+                });
             }
             other => {
                 if is_known_obj_spec_directive(other) {
-                    warnings.push(LoadMeshWarning::Obj(
-                        LoadObjWarning::SkippedUnknownDirective {
-                            line: line_num + 1,
-                            directive: other.to_string(),
-                        },
-                    ));
+                    warnings.push(LoadObjWarning::SkippedUnknownDirective {
+                        line: line_num + 1,
+                        directive: other.to_string(),
+                    });
                 } else {
                     return Err(LoadObjError::UnrecognizedDirective {
                         line: line_num + 1,
@@ -413,16 +399,16 @@ where
         &mut used_global_indices,
         &mut graph,
         root,
-        warnings,
+        &mut warnings,
     ) {
         leaf_count += 1;
     }
 
     if leaf_count == 0 {
         if global_vertices.is_empty() {
-            warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoVertices));
+            warnings.push(LoadObjWarning::NoVertices);
         }
-        warnings.push(LoadMeshWarning::Obj(LoadObjWarning::NoFaces));
+        warnings.push(LoadObjWarning::NoFaces);
     }
 
     if let Some(comment) = header_comment {
@@ -432,7 +418,7 @@ where
         }));
     }
 
-    Ok(graph)
+    Ok((graph, warnings))
 }
 
 fn parse_f32(token: &str, line_num: usize) -> Result<f32, LoadObjError> {
@@ -724,13 +710,11 @@ mod read_obj_tests {
     use sc_mesh_core::SceneMetadata;
     use sc_mesh_core::{IndexedMesh, MeshMetadata, NodeId, NodeKind, Normal, Scene, Vertex};
 
-    use super::{LoadMeshWarning, LoadObjWarning, read_obj};
+    use super::{LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadMeshWarning>), super::LoadObjError> {
+    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadObjWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
-        let mut warnings = Vec::new();
-        let graph = read_obj(&mut reader, &mut warnings)?;
-        Ok((graph, warnings))
+        read_obj(&mut reader)
     }
 
     fn single_mesh(graph: &Scene) -> &IndexedMesh {
@@ -846,12 +830,7 @@ f 1 2 3
         let (graph, warnings) = read_obj_from_str(obj).unwrap();
         let mesh = single_mesh(&graph);
 
-        assert_eq!(
-            warnings,
-            vec![LoadMeshWarning::Obj(LoadObjWarning::SkippedComment {
-                line: 3
-            })]
-        );
+        assert_eq!(warnings, vec![LoadObjWarning::SkippedComment { line: 3 }]);
         assert_eq!(
             graph.meta(),
             &Some(SceneMetadata {
@@ -908,9 +887,9 @@ f 1/1 2/2 3/3
         assert_eq!(
             warnings,
             vec![
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 4 }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 5 }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 6 }),
+                LoadObjWarning::SkippedTextureCoordinates { line: 4 },
+                LoadObjWarning::SkippedTextureCoordinates { line: 5 },
+                LoadObjWarning::SkippedTextureCoordinates { line: 6 },
             ]
         );
         assert_eq!(mesh.faces().len(), 1);
@@ -932,8 +911,8 @@ f 1/1/1 2/1/1 3/1/1
         assert_eq!(
             warnings,
             vec![
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 4 }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal { line: 5 }),
+                LoadObjWarning::SkippedTextureCoordinates { line: 4 },
+                LoadObjWarning::SkippedVertexNormal { line: 5 },
             ]
         );
         assert_eq!(mesh.faces().len(), 1);
@@ -953,9 +932,7 @@ f 1//1 2//1 3//1
         let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
-            vec![LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal {
-                line: 4
-            })]
+            vec![LoadObjWarning::SkippedVertexNormal { line: 4 }]
         );
         assert_eq!(mesh.faces().len(), 1);
         assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
@@ -1018,21 +995,21 @@ f 1 2 3
         assert_eq!(
             warnings,
             vec![
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedMaterialLibrary {
+                LoadObjWarning::SkippedMaterialLibrary {
                     line: 1,
                     path: "material.mtl".into()
-                }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedTextureCoordinates { line: 6 }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedVertexNormal { line: 7 }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedMaterialReference {
+                },
+                LoadObjWarning::SkippedTextureCoordinates { line: 6 },
+                LoadObjWarning::SkippedVertexNormal { line: 7 },
+                LoadObjWarning::SkippedMaterialReference {
                     line: 8,
                     material: "DefaultMaterial".into()
-                }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedSmoothingGroup { line: 9 }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedGroup {
+                },
+                LoadObjWarning::SkippedSmoothingGroup { line: 9 },
+                LoadObjWarning::SkippedGroup {
                     line: 10,
                     name: "group1".into()
-                }),
+                },
             ]
         );
         assert_eq!(mesh.vertices().len(), 3);
@@ -1056,12 +1033,10 @@ f 1 2 3
         let mesh = single_mesh(&graph);
         assert_eq!(
             warnings,
-            vec![LoadMeshWarning::Obj(
-                LoadObjWarning::SkippedUnknownDirective {
-                    line: 4,
-                    directive: "l".into(),
-                }
-            )]
+            vec![LoadObjWarning::SkippedUnknownDirective {
+                line: 4,
+                directive: "l".into(),
+            }]
         );
         assert_eq!(mesh.vertices().len(), 3);
         assert_eq!(mesh.faces().len(), 1);
@@ -1086,18 +1061,18 @@ f 1 2 3
         assert_eq!(
             warnings,
             vec![
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedUnknownDirective {
+                LoadObjWarning::SkippedUnknownDirective {
                     line: 4,
                     directive: "p".into(),
-                }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedUnknownDirective {
+                },
+                LoadObjWarning::SkippedUnknownDirective {
                     line: 5,
                     directive: "curv".into(),
-                }),
-                LoadMeshWarning::Obj(LoadObjWarning::SkippedUnknownDirective {
+                },
+                LoadObjWarning::SkippedUnknownDirective {
                     line: 6,
                     directive: "bevel".into(),
-                }),
+                },
             ]
         );
         assert_eq!(mesh.vertices().len(), 3);
@@ -1109,10 +1084,7 @@ f 1 2 3
         let (graph, warnings) = read_obj_from_str("").unwrap();
         assert_eq!(
             warnings,
-            vec![
-                LoadMeshWarning::Obj(LoadObjWarning::NoVertices),
-                LoadMeshWarning::Obj(LoadObjWarning::NoFaces)
-            ]
+            vec![LoadObjWarning::NoVertices, LoadObjWarning::NoFaces]
         );
         assert_eq!(graph.meta(), &None);
         assert_eq!(graph.reachable_leaf_count(), 0);
@@ -1356,10 +1328,10 @@ f 1 3 4
         // ObjectA uses global {0,1,2}; ObjectB uses global {0,2,3} → shared {0,2}.
         assert_eq!(
             warnings,
-            vec![LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
+            vec![LoadObjWarning::SharedVertices {
                 object_name: Some("ObjectB".into()),
                 shared_indices: vec![0, 2],
-            })]
+            }]
         );
         let leaf_ids = collect_leaf_ids(&graph);
         assert_eq!(leaf_ids.len(), 2);
@@ -1421,10 +1393,10 @@ f 1 3 4
         // ObjectB uses {0,2,3}.  Shared = {0, 2}.
         assert_eq!(
             warnings,
-            vec![LoadMeshWarning::Obj(LoadObjWarning::SharedVertices {
+            vec![LoadObjWarning::SharedVertices {
                 object_name: Some("ObjectB".into()),
                 shared_indices: vec![0, 2],
-            })]
+            }]
         );
     }
 }
@@ -1433,12 +1405,11 @@ f 1 3 4
 mod caps_tests {
     use std::io::Cursor;
 
-    use super::{Caps, LoadMeshWarning, MAX_FACE_TOKENS, MAX_OBJ_VERTICES, read_obj_with_caps};
+    use super::{Caps, MAX_FACE_TOKENS, MAX_OBJ_VERTICES, read_obj_with_caps};
 
     fn parse_with_caps(s: &str, caps: Caps) -> Result<usize, super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
-        let mut warnings: Vec<LoadMeshWarning> = Vec::new();
-        let graph = read_obj_with_caps(&mut reader, &mut warnings, caps)?;
+        let (graph, _warnings) = read_obj_with_caps(&mut reader, caps)?;
         Ok(match graph.first_leaf_id() {
             Some(id) => graph.mesh_at_leaf(id).map(|m| m.faces().len()).unwrap_or(0),
             None => 0,

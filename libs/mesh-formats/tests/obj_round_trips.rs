@@ -11,7 +11,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
     IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, NodeId, NodeKind, Scene, Vertex,
 };
-use sc_mesh_formats::messages::LoadMeshWarning;
+use sc_mesh_formats::messages::LoadObjWarning;
 use sc_mesh_formats::obj::{read_obj, write_obj};
 
 fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
@@ -47,14 +47,12 @@ fn make_graph(meshes: Vec<IndexedMesh>) -> Scene {
     g
 }
 
-fn round_trip(graph: &Scene) -> (Scene, Vec<LoadMeshWarning>) {
+fn round_trip(graph: &Scene) -> (Scene, Vec<LoadObjWarning>) {
     let mut buf: Vec<u8> = Vec::new();
     write_obj(graph, &mut buf).expect("write_obj failed");
 
     let mut reader = std::io::Cursor::new(buf);
-    let mut warnings = vec![];
-    let recovered = read_obj(&mut reader, &mut warnings).expect("read_obj failed");
-    (recovered, warnings)
+    read_obj(&mut reader).expect("read_obj failed")
 }
 
 fn unwrap_single_mesh(graph: &Scene) -> &IndexedMesh {
@@ -188,8 +186,9 @@ fn empty_scene_round_trip() {
     let (recovered, warnings) = round_trip(&graph);
 
     assert_eq!(recovered.reachable_leaf_count(), 0);
-    assert!(warnings.iter().any(|w| matches!(
-        w,
-        LoadMeshWarning::Obj(sc_mesh_formats::messages::LoadObjWarning::NoVertices)
-    )));
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, LoadObjWarning::NoVertices))
+    );
 }
