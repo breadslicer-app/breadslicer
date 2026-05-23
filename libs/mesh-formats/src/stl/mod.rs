@@ -7,14 +7,15 @@ mod stla;
 mod stlb;
 mod writers;
 
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
 
 use sc_mesh_core::Scene;
 use sc_mesh_core::TriangleIterator;
 
-use crate::error::LoadStlError;
+use crate::error::{LoadStlError, WriteSceneError};
 use crate::messages::LoadStlWarning;
-use crate::ports::{MeshReader, sealed};
+use crate::ports::{MeshReader, MeshWriter, sealed};
+use crate::scene_writer::{FlattenWarning, flatten_graph_to_mesh};
 use stla::AsciiStlReader;
 use stlb::BinaryStlReader;
 
@@ -38,6 +39,20 @@ impl MeshReader for StlBin {
     }
 }
 
+impl MeshWriter for StlBin {
+    type Error = WriteSceneError;
+    type Warning = FlattenWarning;
+
+    fn write<W: Write>(
+        scene: &Scene,
+        writer: &mut W,
+    ) -> std::result::Result<Vec<FlattenWarning>, WriteSceneError> {
+        let flattened = flatten_graph_to_mesh(scene)?;
+        write_stlb(&flattened.mesh, writer)?;
+        Ok(flattened.warnings)
+    }
+}
+
 /// Format marker for the ASCII STL format. Like [`StlBin`], it
 /// implements [`MeshReader`] via static dispatch.
 pub struct StlAscii;
@@ -50,6 +65,20 @@ impl MeshReader for StlAscii {
 
     fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
         read_stla(reader).map(|scene| (scene, Vec::new()))
+    }
+}
+
+impl MeshWriter for StlAscii {
+    type Error = WriteSceneError;
+    type Warning = FlattenWarning;
+
+    fn write<W: Write>(
+        scene: &Scene,
+        writer: &mut W,
+    ) -> std::result::Result<Vec<FlattenWarning>, WriteSceneError> {
+        let flattened = flatten_graph_to_mesh(scene)?;
+        write_stla(&flattened.mesh, writer)?;
+        Ok(flattened.warnings)
     }
 }
 

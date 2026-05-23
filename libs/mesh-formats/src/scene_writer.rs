@@ -28,8 +28,9 @@ use sc_mesh_core::{IndexedMesh, Scene, bake_leaf_to_world};
 
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
-use crate::obj::write_obj;
-use crate::stl::{write_stla, write_stlb};
+use crate::obj::Obj;
+use crate::ports::MeshWriter;
+use crate::stl::{StlAscii, StlBin};
 
 type Result<T> = std::result::Result<T, WriteSceneError>;
 
@@ -188,31 +189,16 @@ pub fn write_scene(
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
-    match target_format {
-        WriteFormat::Obj => {
-            write_atomically(target_path, |writer| {
-                write_obj(graph, writer)?;
-                Ok(())
-            })?;
-            Ok(Vec::new())
-        }
-        WriteFormat::StlBin => {
-            let flattened = flatten_graph_to_mesh(graph)?;
-            write_atomically(target_path, |writer| {
-                write_stlb(&flattened.mesh, writer)?;
-                Ok(())
-            })?;
-            Ok(flattened.warnings)
-        }
-        WriteFormat::StlAscii => {
-            let flattened = flatten_graph_to_mesh(graph)?;
-            write_atomically(target_path, |writer| {
-                write_stla(&flattened.mesh, writer)?;
-                Ok(())
-            })?;
-            Ok(flattened.warnings)
-        }
-    }
+    let mut warnings: Vec<FlattenWarning> = Vec::new();
+    write_atomically(target_path, |writer| {
+        warnings = match target_format {
+            WriteFormat::Obj => Obj::write(graph, writer)?,
+            WriteFormat::StlBin => StlBin::write(graph, writer)?,
+            WriteFormat::StlAscii => StlAscii::write(graph, writer)?,
+        };
+        Ok(())
+    })?;
+    Ok(warnings)
 }
 
 #[cfg(test)]

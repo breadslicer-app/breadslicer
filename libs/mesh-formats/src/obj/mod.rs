@@ -6,13 +6,14 @@
 mod reader;
 mod writer;
 
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
 
 use sc_mesh_core::Scene;
 
-use crate::error::LoadObjError;
+use crate::error::{LoadObjError, WriteSceneError};
 use crate::messages::LoadObjWarning;
-use crate::ports::{MeshReader, sealed};
+use crate::ports::{MeshReader, MeshWriter, sealed};
+use crate::scene_writer::FlattenWarning;
 
 pub use reader::read_obj;
 pub use writer::write_obj;
@@ -30,5 +31,18 @@ impl MeshReader for Obj {
 
     fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
         read_obj(reader)
+    }
+}
+
+impl MeshWriter for Obj {
+    type Error = WriteSceneError;
+    type Warning = FlattenWarning;
+
+    fn write<W: Write>(
+        scene: &Scene,
+        writer: &mut W,
+    ) -> Result<Vec<FlattenWarning>, WriteSceneError> {
+        write_obj(scene, writer)?;
+        Ok(Vec::new())
     }
 }

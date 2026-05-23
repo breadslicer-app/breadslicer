@@ -44,12 +44,14 @@ pub trait MeshReader: sealed::Sealed {
 /// A format-specific mesh serialiser.
 ///
 /// Like [`MeshReader`], implementors are unit structs and `write` is
-/// an associated function. The trait does not declare warnings
-/// because the existing writers do not emit any; if a future format
-/// needs them, the trait can grow a `type Warning` associated type at
-/// that point.
+/// an associated function. `Warning` is the per-format warning enum
+/// surfaced by the write step (for STL formats this is
+/// [`crate::scene_writer::FlattenWarning`], emitted when the scene
+/// must be merged before serialisation; OBJ returns an empty vec
+/// because it preserves per-leaf object boundaries on disk).
 pub trait MeshWriter: sealed::Sealed {
     type Error: std::error::Error + Send + Sync + 'static;
+    type Warning;
 
-    fn write<W: Write>(scene: &Scene, writer: &mut W) -> Result<(), Self::Error>;
+    fn write<W: Write>(scene: &Scene, writer: &mut W) -> Result<Vec<Self::Warning>, Self::Error>;
 }
