@@ -12,9 +12,9 @@ use sc_mesh_core::Scene;
 use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
 use crate::messages::LoadMeshWarning;
-use crate::obj::read_obj;
+use crate::obj::Obj;
 use crate::ports::MeshReader;
-use crate::stl::{StlBin, read_stl, read_stla};
+use crate::stl::{Stl, StlAscii, StlBin};
 
 pub struct LoadedMesh {
     pub graph: Scene,
@@ -66,15 +66,23 @@ where
 {
     let mut warnings: Vec<LoadMeshWarning> = Vec::new();
     let graph = match kind {
-        MeshFileType::Stl => read_stl(reader)?,
-        MeshFileType::StlAscii => read_stla(reader)?,
+        MeshFileType::Stl => {
+            let (graph, stl_warnings) = Stl::read(reader)?;
+            warnings.extend(stl_warnings.into_iter().map(LoadMeshWarning::Stl));
+            graph
+        }
+        MeshFileType::StlAscii => {
+            let (graph, stl_warnings) = StlAscii::read(reader)?;
+            warnings.extend(stl_warnings.into_iter().map(LoadMeshWarning::Stl));
+            graph
+        }
         MeshFileType::StlBin => {
             let (graph, stl_warnings) = StlBin::read(reader)?;
             warnings.extend(stl_warnings.into_iter().map(LoadMeshWarning::Stl));
             graph
         }
         MeshFileType::Obj => {
-            let (graph, obj_warnings) = read_obj(reader)?;
+            let (graph, obj_warnings) = Obj::read(reader)?;
             warnings.extend(obj_warnings.into_iter().map(LoadMeshWarning::Obj));
             graph
         }

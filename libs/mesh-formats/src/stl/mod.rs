@@ -38,6 +38,38 @@ impl MeshReader for StlBin {
     }
 }
 
+/// Format marker for the ASCII STL format. Like [`StlBin`], it
+/// implements [`MeshReader`] via static dispatch.
+pub struct StlAscii;
+
+impl sealed::Sealed for StlAscii {}
+
+impl MeshReader for StlAscii {
+    type Error = LoadStlError;
+    type Warning = LoadStlWarning;
+
+    fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
+        read_stla(reader).map(|scene| (scene, Vec::new()))
+    }
+}
+
+/// Format marker for the auto-detecting STL reader. Probes the first
+/// bytes of `reader` to decide between ASCII and binary, then
+/// dispatches internally. Use [`StlBin`] or [`StlAscii`] directly when
+/// the variant is known.
+pub struct Stl;
+
+impl sealed::Sealed for Stl {}
+
+impl MeshReader for Stl {
+    type Error = LoadStlError;
+    type Warning = LoadStlWarning;
+
+    fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
+        read_stl(reader).map(|scene| (scene, Vec::new()))
+    }
+}
+
 pub fn read_stl<R>(read: &mut R) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
