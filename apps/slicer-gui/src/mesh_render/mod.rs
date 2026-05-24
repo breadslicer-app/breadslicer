@@ -470,31 +470,7 @@ impl Renderer {
                 self.record_mesh_objects(&mut pass, inst, selection);
             }
 
-            // Envelope-warning walls: 5 invisible quads coplanar with
-            // the build-volume side faces and top. The plate shader
-            // discards a wall fragment unless the matching bit of
-            // `face_breach_mask` is set; on a set bit it emits the
-            // diagonal red stripe pattern. Drawn after the mesh pass
-            // so the mesh's depth-write gates wall visibility: stripes
-            // appear over the part of the mesh that lies on the far
-            // side of the envelope wall from the camera, while
-            // closer-to-camera mesh pixels occlude the wall as they
-            // should. `top_pipeline` matches the needs here
-            // (TriangleList, depth-test Less, depth-write off,
-            // cull none, alpha blending). Stencil stays at 0.
-            pass.set_pipeline(&self.pipelines.plate.top_pipeline);
-            pass.set_bind_group(
-                PlateBindGroup::Uniforms.idx(),
-                &self.pipelines.plate.uniforms_bind_group,
-                &[],
-            );
-            pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
-            pass.set_index_buffer(
-                plate_buffers.wall_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.set_stencil_reference(0);
-            pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..1);
+            self.record_envelope_walls(&mut pass, plate_buffers);
 
             // Plate bottom: drawn last in the main pass with alpha
             // blending and back-face culling. Cage edges and any
@@ -883,6 +859,33 @@ impl Renderer {
             });
             pass.draw_indexed(0..obj.index_count(), 0, 0..1);
         }
+    }
+
+    /// Envelope-warning walls: 5 invisible quads coplanar with the
+    /// build-volume side faces and top. The plate shader discards a
+    /// wall fragment unless the matching bit of `face_breach_mask` is
+    /// set; on a set bit it emits the diagonal red stripe pattern.
+    /// Drawn after the mesh pass so the mesh's depth-write gates wall
+    /// visibility: stripes appear over the part of the mesh that lies
+    /// on the far side of the envelope wall from the camera, while
+    /// closer-to-camera mesh pixels occlude the wall as they should.
+    /// `top_pipeline` matches the needs here (TriangleList, depth-test
+    /// Less, depth-write off, cull none, alpha blending). Stencil
+    /// stays at 0.
+    fn record_envelope_walls(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        pass.set_pipeline(&self.pipelines.plate.top_pipeline);
+        pass.set_bind_group(
+            PlateBindGroup::Uniforms.idx(),
+            &self.pipelines.plate.uniforms_bind_group,
+            &[],
+        );
+        pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+        pass.set_index_buffer(
+            plate_buffers.wall_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        pass.set_stencil_reference(0);
+        pass.draw_indexed(0..plate_buffers.wall_index_count, 0, 0..1);
     }
 }
 
