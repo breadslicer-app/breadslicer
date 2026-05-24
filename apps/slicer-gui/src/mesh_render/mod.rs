@@ -462,24 +462,7 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // Plate solid (sides + bottom): drawn first with
-            // depth-write on so the slab's interior occludes
-            // content behind it when the camera orbits low.
-            // Stencil reference stays at 0 so the outline post-pass
-            // leaves the plate untouched.
-            pass.set_pipeline(&self.pipelines.plate.solid_pipeline);
-            pass.set_bind_group(
-                PlateBindGroup::Uniforms.idx(),
-                &self.pipelines.plate.uniforms_bind_group,
-                &[],
-            );
-            pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
-            pass.set_index_buffer(
-                plate_buffers.solid_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.set_stencil_reference(0);
-            pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
+            self.record_plate_solid(&mut pass, plate_buffers);
 
             // Plate top: inner grid + outer rounded border at Z = 0.
             // Depth-write off so a model resting at Z = 0 always
@@ -864,6 +847,26 @@ impl Renderer {
         self.core.queue.submit(std::iter::once(encoder.finish()));
 
         Some(target)
+    }
+
+    /// Plate solid (sides + bottom): drawn first with depth-write on
+    /// so the slab's interior occludes content behind it when the
+    /// camera orbits low. Stencil reference stays at 0 so the outline
+    /// post-pass leaves the plate untouched.
+    fn record_plate_solid(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        pass.set_pipeline(&self.pipelines.plate.solid_pipeline);
+        pass.set_bind_group(
+            PlateBindGroup::Uniforms.idx(),
+            &self.pipelines.plate.uniforms_bind_group,
+            &[],
+        );
+        pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
+        pass.set_index_buffer(
+            plate_buffers.solid_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        pass.set_stencil_reference(0);
+        pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
     }
 }
 
