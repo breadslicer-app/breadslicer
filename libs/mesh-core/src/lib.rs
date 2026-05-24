@@ -29,6 +29,7 @@ pub mod scene_bake;
 pub mod scene_edit;
 pub mod scene_fragment;
 pub mod scene_node;
+pub mod scene_validate;
 pub mod transform;
 
 #[cfg(test)]
