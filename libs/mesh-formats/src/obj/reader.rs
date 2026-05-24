@@ -16,13 +16,9 @@ use sc_mesh_core::{
     IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, Normal, Scene, SceneMetadata, Vertex,
 };
 
+use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadObjError;
 use crate::messages::LoadObjWarning;
-
-/// Hard ceiling on the number of vertices a single OBJ file may declare.
-/// Matches the binary STL triangle cap so all our format readers share
-/// the same memory-exhaustion ceiling.
-const MAX_OBJ_VERTICES: usize = 200_000_000;
 
 /// Hard ceiling on the number of vertex tokens a single `f` directive
 /// may carry. Bounds the fan-triangulation amplification for one
@@ -41,7 +37,7 @@ struct Caps {
 
 impl Caps {
     const DEFAULT: Self = Self {
-        max_vertices: MAX_OBJ_VERTICES,
+        max_vertices: MAX_MESH_ELEMENT_COUNT,
         max_face_tokens: MAX_FACE_TOKENS,
     };
 }
@@ -1405,7 +1401,7 @@ f 1 3 4
 mod caps_tests {
     use std::io::Cursor;
 
-    use super::{Caps, MAX_FACE_TOKENS, MAX_OBJ_VERTICES, read_obj_with_caps};
+    use super::{Caps, MAX_FACE_TOKENS, MAX_MESH_ELEMENT_COUNT, read_obj_with_caps};
 
     fn parse_with_caps(s: &str, caps: Caps) -> Result<usize, super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
@@ -1456,7 +1452,7 @@ v 0.0 1.0 0.0
         // Cap of 4 admits an `f` with exactly 4 tokens; the fan emits
         // 2 triangles.
         let caps = Caps {
-            max_vertices: MAX_OBJ_VERTICES,
+            max_vertices: MAX_MESH_ELEMENT_COUNT,
             max_face_tokens: 4,
         };
         let obj = "\
@@ -1474,7 +1470,7 @@ f 1 2 3 4
     fn face_token_count_above_cap_is_error() {
         // Cap of 3 admits triangles but rejects the 4-token quad.
         let caps = Caps {
-            max_vertices: MAX_OBJ_VERTICES,
+            max_vertices: MAX_MESH_ELEMENT_COUNT,
             max_face_tokens: 3,
         };
         let obj = "\
@@ -1498,7 +1494,7 @@ f 1 2 3 4
         // possible from a test, but we can at least confirm the
         // error fires before any allocation could explode.
         let caps = Caps {
-            max_vertices: MAX_OBJ_VERTICES,
+            max_vertices: MAX_MESH_ELEMENT_COUNT,
             max_face_tokens: 3,
         };
         // 50 tokens, well above the cap; with `take(4)` the parser sees

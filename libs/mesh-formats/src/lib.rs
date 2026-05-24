@@ -40,3 +40,12 @@ pub use loader::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};
 /// [`load_mesh_from_path`](crate::loader::load_mesh_from_path) if
 /// their use case warrants it.
 pub const DEFAULT_MAX_MESH_FILE_SIZE_BYTES: u64 = 2048 * 1024 * 1024;
+
+/// Hard ceiling on the count of a single mesh-element kind a format
+/// reader will allow before refusing the input: declared-triangle
+/// count for binary STL, vertex count for OBJ, etc. Shared across the
+/// readers so every format imposes the same memory-exhaustion
+/// backstop. 200M elements is well above any legitimate engineering
+/// or scan mesh; the cap is a defence against malicious or corrupt
+/// inputs whose upstream file-size gate is absent or set higher.
+pub const MAX_MESH_ELEMENT_COUNT: usize = 200_000_000;

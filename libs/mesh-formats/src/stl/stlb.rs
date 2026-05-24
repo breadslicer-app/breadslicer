@@ -9,24 +9,11 @@ use std::io::{BufReader, ErrorKind, Read, Seek};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
+use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadStlError;
 use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES};
 
 type Result<T> = std::result::Result<T, LoadStlError>;
-
-/// Hard ceiling on the declared triangle count in a binary STL
-/// header. Files claiming more than this are refused at construction
-/// time, before any payload bytes are read.
-///
-/// 200M triangles is ~10 GB of payload (50 bytes per triangle), well
-/// above any legitimate engineering or scan mesh. The cap is a backstop
-/// against a malicious or corrupt header for consumers that operate
-/// without an earlier file-size gate (CLI, direct API). Most callers
-/// pass [`DEFAULT_MAX_MESH_FILE_SIZE_BYTES`](crate::DEFAULT_MAX_MESH_FILE_SIZE_BYTES)
-/// (2 GiB) to `load_mesh_from_path`, which gates upstream of this
-/// parser cap; the cap only fires when that gate is absent or set
-/// higher.
-const MAX_BINARY_STL_TRIANGLES: usize = 200_000_000;
 
 fn read_exact_section<R: Read>(reader: &mut R, buf: &mut [u8], what: &'static str) -> Result<()> {
     match reader.read_exact(buf) {
@@ -96,10 +83,10 @@ impl<'a> BinaryStlReader<'a> {
         let mut count_buf = [0u8; STL_TRIANGLE_COUNT_BYTES];
         read_exact_section(&mut reader, &mut count_buf, "the triangle count")?;
         let num_faces = u32::from_le_bytes(count_buf) as usize;
-        if num_faces > MAX_BINARY_STL_TRIANGLES {
+        if num_faces > MAX_MESH_ELEMENT_COUNT {
             return Err(LoadStlError::DeclaredTriangleCountExceedsCap {
                 declared: num_faces,
-                cap: MAX_BINARY_STL_TRIANGLES,
+                cap: MAX_MESH_ELEMENT_COUNT,
             });
         }
         Ok(Box::new(BinaryStlReader {
@@ -172,7 +159,7 @@ mod binary_stl_reader_tests {
     use std::io::Cursor;
 
     use super::{
-        BinaryStlReader, MAX_BINARY_STL_TRIANGLES, STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES,
+        BinaryStlReader, MAX_MESH_ELEMENT_COUNT, STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES,
     };
 
     const PREAMBLE_BYTES: usize = STL_HEADER_BYTES + STL_TRIANGLE_COUNT_BYTES;
@@ -189,7 +176,7 @@ mod binary_stl_reader_tests {
 
     #[test]
     fn rejects_declared_count_just_above_cap() {
-        let bytes = header_with_declared_count((MAX_BINARY_STL_TRIANGLES as u32) + 1);
+        let bytes = header_with_declared_count((MAX_MESH_ELEMENT_COUNT as u32) + 1);
         let mut cursor = Cursor::new(bytes);
         let err = BinaryStlReader::create_triangles_iterator(&mut cursor)
             .err()
@@ -220,7 +207,7 @@ mod binary_stl_reader_tests {
         // is `>`, not `>=`). The iterator is constructible; the body
         // is empty, so the first `next()` call surfaces a truncated
         // read, but construction itself succeeds.
-        let bytes = header_with_declared_count(MAX_BINARY_STL_TRIANGLES as u32);
+        let bytes = header_with_declared_count(MAX_MESH_ELEMENT_COUNT as u32);
         let mut cursor = Cursor::new(bytes);
         assert!(
             BinaryStlReader::create_triangles_iterator(&mut cursor).is_ok(),
