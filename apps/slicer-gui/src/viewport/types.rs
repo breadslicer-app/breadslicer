@@ -3,10 +3,37 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+/// A logical-pixel position in the viewport's coordinate system (Slint
+/// hands these to the controller as raw `f32` pairs). The constructor
+/// keeps the type opaque at the public callback boundary so a future
+/// validation step (NaN rejection, scale-factor application) has a
+/// single seam to land on.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct ScreenPoint {
+pub(crate) struct ScreenPoint {
     pub(super) x: f32,
     pub(super) y: f32,
+}
+
+impl ScreenPoint {
+    pub(crate) fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// A logical-pixel drag delta in the viewport's coordinate system: how
+/// far the pointer moved between two events, not where it sits. Kept
+/// distinct from [`ScreenPoint`] so the type system rejects e.g.
+/// passing a cursor position where a drag delta is expected.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ScreenDelta {
+    pub(super) dx: f32,
+    pub(super) dy: f32,
+}
+
+impl ScreenDelta {
+    pub(crate) fn new(dx: f32, dy: f32) -> Self {
+        Self { dx, dy }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

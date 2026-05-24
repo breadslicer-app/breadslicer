@@ -32,7 +32,7 @@ use super::keyboard_drive::KbdFocus;
 use super::object_list::{build_object_list_names, push_object_list};
 use super::render_host::RenderHost;
 use super::session_state::SessionState;
-use super::types::{FrameState, ScreenPoint};
+use super::types::{FrameState, ScreenDelta, ScreenPoint};
 use crate::MainWindow;
 use crate::PointerModifiers;
 use crate::build_volume::BuildVolume;
@@ -338,22 +338,22 @@ impl ViewportController {
         self.render.on_resize_settled();
     }
 
-    pub fn on_rotate(&self, dx: f32, dy: f32) {
-        if self.camera.on_rotate(dx, dy, self.render.viewport()) {
+    pub fn on_rotate(&self, delta: ScreenDelta) {
+        if self.camera.on_rotate(delta, self.render.viewport()) {
             self.mark_dirty();
         }
     }
 
-    pub fn on_pan(&self, dx: f32, dy: f32) {
-        if self.camera.on_pan(dx, dy, self.render.viewport()) {
+    pub fn on_pan(&self, delta: ScreenDelta) {
+        if self.camera.on_pan(delta, self.render.viewport()) {
             self.mark_dirty();
         }
     }
 
-    pub fn on_zoom(&self, delta: f32, cursor_x: f32, cursor_y: f32) {
+    pub fn on_zoom(&self, wheel_delta: f32, cursor: ScreenPoint) {
         if self
             .camera
-            .on_zoom(delta, cursor_x, cursor_y, self.render.viewport())
+            .on_zoom(wheel_delta, cursor, self.render.viewport())
         {
             self.mark_dirty();
         }
@@ -615,34 +615,31 @@ impl ViewportController {
         }
     }
 
-    pub fn on_pointer_down(&self, x: f32, y: f32, modifiers: PointerModifiers) {
+    pub fn on_pointer_down(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
         self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
-            ScreenPoint { x, y },
+            cursor,
             modifiers,
         );
     }
 
-    pub fn on_pointer_move(&self, x: f32, y: f32, modifiers: PointerModifiers) {
+    pub fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
         if self.input.on_pointer_move(
             self.session.document(),
             self.camera.camera_cell(),
             self.render.viewport(),
             self.session.build_volume(),
-            ScreenPoint { x, y },
+            cursor,
             modifiers,
         ) {
             self.mark_dirty();
         }
     }
 
-    pub fn on_pointer_up(&self, x: f32, y: f32, _modifiers: PointerModifiers) {
-        match self
-            .input
-            .on_pointer_up(self.session.document(), ScreenPoint { x, y })
-        {
+    pub fn on_pointer_up(&self, cursor: ScreenPoint, _modifiers: PointerModifiers) {
+        match self.input.on_pointer_up(self.session.document(), cursor) {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => self.run_pick_at(cursor),
             PointerUpOutcome::Nothing => (),
@@ -1186,8 +1183,8 @@ mod selection_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
         // No camera installed.
-        ctrl.on_pointer_down(50.0, 50.0, no_mods());
-        ctrl.on_pointer_up(50.0, 50.0, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(50.0, 50.0), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(50.0, 50.0), no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1198,8 +1195,8 @@ mod selection_tests {
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
         // viewport defaults to (0.0, 0.0)
-        ctrl.on_pointer_down(0.0, 0.0, no_mods());
-        ctrl.on_pointer_up(0.0, 0.0, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(0.0, 0.0), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(0.0, 0.0), no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1210,7 +1207,7 @@ mod selection_tests {
         // controller must not run the picker against an unset press.
         let ctrl = ViewportController::new_for_test();
         ctrl.install_graph_for_test(graph_with_n_objects(1));
-        ctrl.on_pointer_up(50.0, 50.0, no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(50.0, 50.0), no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1395,8 +1392,8 @@ mod viewport_click_tests {
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
 
-        ctrl.on_pointer_down(100.0, 50.0, no_mods());
-        ctrl.on_pointer_up(100.0, 50.0, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(100.0, 50.0), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(100.0, 50.0), no_mods());
         assert_eq!(ctrl.selection(), Some(0));
     }
 
@@ -1421,8 +1418,8 @@ mod viewport_click_tests {
         assert_eq!(ctrl.selection(), Some(0));
 
         // Click at the corner, no triangle there.
-        ctrl.on_pointer_down(0.0, 0.0, no_mods());
-        ctrl.on_pointer_up(0.0, 0.0, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(0.0, 0.0), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(0.0, 0.0), no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1442,8 +1439,8 @@ mod viewport_click_tests {
         ctrl.set_viewport_for_test(200.0, 100.0);
 
         // Press over the triangle, release 50 px away → drag.
-        ctrl.on_pointer_down(100.0, 50.0, no_mods());
-        ctrl.on_pointer_up(150.0, 50.0, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(100.0, 50.0), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(150.0, 50.0), no_mods());
         assert_eq!(ctrl.selection(), None);
     }
 
@@ -1539,7 +1536,7 @@ mod viewport_click_tests {
         // active translate handle (the shaft line is decorative).
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
         match ctrl.input.gizmo_fsm().current() {
             GizmoState::Drag {
                 op: DragOp::Translate { axis, .. },
@@ -1555,7 +1552,7 @@ mod viewport_click_tests {
         // candidate, the FSM stays Idle.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(0.0, 0.0, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(0.0, 0.0), no_mods());
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
     }
 
@@ -1579,13 +1576,13 @@ mod viewport_click_tests {
             gizmo::drag_math::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
         let expected = release_anchor - press_anchor;
 
-        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
         // Drag must have started, otherwise the move is a no-op.
         assert!(matches!(
             ctrl.input.gizmo_fsm().current(),
             GizmoState::Drag { .. }
         ));
-        ctrl.on_pointer_move(release.0, release.1, no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(release.0, release.1), no_mods());
 
         let actual = read_translation(&ctrl);
         assert_approx_eq!(f32, actual.x, expected.x, epsilon = 1e-4);
@@ -1622,9 +1619,9 @@ mod viewport_click_tests {
         );
         let expected = release_anchor - press_anchor;
 
-        ctrl.on_pointer_down(press.0, press.1, no_mods());
-        ctrl.on_pointer_move(mid.0, mid.1, no_mods());
-        ctrl.on_pointer_move(release.0, release.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(mid.0, mid.1), no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(release.0, release.1), no_mods());
 
         let actual = read_translation(&ctrl);
         assert_approx_eq!(f32, actual.x, expected.x, epsilon = 1e-4);
@@ -1635,10 +1632,16 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         let mid_drag = read_translation(&ctrl);
-        ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_up(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
 
         // Drag state cleared.
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
@@ -1655,9 +1658,15 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_up(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
+        ctrl.on_pointer_up(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
 
         assert!(ctrl.session.document().can_undo());
         assert!(!ctrl.session.document().can_redo());
@@ -1684,8 +1693,8 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_up(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
 
         assert!(!ctrl.session.document().can_undo());
     }
@@ -1698,8 +1707,11 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         ctrl.on_clear_selection();
 
         assert!(!ctrl.session.document().can_undo());
@@ -1710,8 +1722,11 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         // Object has moved.
         assert!(read_translation(&ctrl).x.abs() > 1e-4);
 
@@ -1748,8 +1763,11 @@ mod viewport_click_tests {
         ctrl.register_document_listener();
         install_single_object_at_origin(&ctrl);
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         ctrl.on_close_scene();
 
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
@@ -1769,8 +1787,8 @@ mod viewport_click_tests {
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
 
-        ctrl.on_pointer_down(100.0, 50.0, no_mods());
-        ctrl.on_pointer_up(101.5, 51.5, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(100.0, 50.0), no_mods());
+        ctrl.on_pointer_up(ScreenPoint::new(101.5, 51.5), no_mods());
         assert_eq!(ctrl.selection(), Some(0));
     }
 
@@ -1782,7 +1800,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
-        ctrl.on_pointer_down(press.0, press.1, shift_held());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), shift_held());
         match ctrl.input.gizmo_fsm().current() {
             GizmoState::Drag {
                 op: DragOp::ScaleAxis {
@@ -1808,7 +1826,7 @@ mod viewport_click_tests {
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
-        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
         match ctrl.input.gizmo_fsm().current() {
             GizmoState::Drag {
                 op: DragOp::ScaleAxis { proportional, .. },
@@ -1835,9 +1853,12 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
 
-        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
         let move_no_shift = (press.0 + 20.0, press.1);
-        ctrl.on_pointer_move(move_no_shift.0, move_no_shift.1, no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(move_no_shift.0, move_no_shift.1),
+            no_mods(),
+        );
         let m_axis = read_linear(&ctrl);
         assert!(
             m_axis[0][0] > 1.0 + 1e-3,
@@ -1850,12 +1871,12 @@ mod viewport_click_tests {
         // Shift toggles on at the same cursor position, re-anchors
         // without changing the running transform.
         let toggle = (move_no_shift.0, move_no_shift.1);
-        ctrl.on_pointer_move(toggle.0, toggle.1, shift_held());
+        ctrl.on_pointer_move(ScreenPoint::new(toggle.0, toggle.1), shift_held());
 
         // Move further with Shift held, uniform formula runs against
         // the re-anchored press at `toggle`.
         let further = (toggle.0 + 20.0, toggle.1);
-        ctrl.on_pointer_move(further.0, further.1, shift_held());
+        ctrl.on_pointer_move(ScreenPoint::new(further.0, further.1), shift_held());
         let m_uniform = read_linear(&ctrl);
 
         // Uniform formula → Y and Z scale by the same factor.
@@ -1886,16 +1907,16 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         let press = x_midpoint_press_screen(&ctrl);
 
-        ctrl.on_pointer_down(press.0, press.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
         let move1 = (press.0 + 20.0, press.1);
-        ctrl.on_pointer_move(move1.0, move1.1, no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), no_mods());
         let before_toggle = read_linear(&ctrl);
         let translation_before = read_translation(&ctrl);
 
         // Same cursor position, Shift toggles on. Re-anchor must
         // preserve the running transform, a "toggle without cursor
         // motion" is the easiest snap-bug to write a test for.
-        ctrl.on_pointer_move(move1.0, move1.1, shift_held());
+        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), shift_held());
         let after_toggle = read_linear(&ctrl);
         let translation_after = read_translation(&ctrl);
 
@@ -1936,17 +1957,17 @@ mod viewport_click_tests {
         let press = x_midpoint_press_screen(&ctrl);
 
         // Start uniform.
-        ctrl.on_pointer_down(press.0, press.1, shift_held());
+        ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), shift_held());
         let move1 = (press.0 + 20.0, press.1);
-        ctrl.on_pointer_move(move1.0, move1.1, shift_held());
+        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), shift_held());
 
         // Release Shift, re-anchor. Frozen Y/Z factors persist.
-        ctrl.on_pointer_move(move1.0, move1.1, no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(move1.0, move1.1), no_mods());
         let frozen = read_linear(&ctrl);
 
         // Move further along X, only m[0][0] should change.
         let move2 = (move1.0 + 10.0, move1.1);
-        ctrl.on_pointer_move(move2.0, move2.1, no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(move2.0, move2.1), no_mods());
         let after = read_linear(&ctrl);
 
         assert!(
@@ -1982,10 +2003,13 @@ mod viewport_click_tests {
         // SelectionChanged from `install_single_object_at_origin`.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
 
         let (count, _sub) = subscribe_mutated_counter(ctrl.session.document());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         assert_eq!(count.get(), 1);
     }
 
@@ -2000,8 +2024,11 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
 
         let (count, _sub) = subscribe_mutated_counter(ctrl.session.document());
-        ctrl.on_pointer_move(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         assert_eq!(count.get(), 0);
     }
 
@@ -2012,7 +2039,7 @@ mod viewport_click_tests {
         // Mutated exactly once.
         let ctrl = ViewportController::new_for_test();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
         assert!(matches!(
             ctrl.input.gizmo_fsm().current(),
             GizmoState::Drag { .. }
@@ -2048,11 +2075,14 @@ mod viewport_click_tests {
         let ctrl = Rc::new(ViewportController::new_for_test());
         ctrl.register_document_listener();
         install_single_object_at_origin(&ctrl);
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
         ctrl.clear_frame_state_for_test();
         assert!(!ctrl.redraw_owed_for_test());
 
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
         assert!(ctrl.redraw_owed_for_test());
     }
 
@@ -2107,8 +2137,11 @@ mod viewport_click_tests {
         ctrl.session
             .set_build_volume(BuildVolume::new(1.0, 4.0, 4.0));
 
-        ctrl.on_pointer_down(X_CONE_PRESS.0, X_CONE_PRESS.1, no_mods());
-        ctrl.on_pointer_move(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1, no_mods());
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 50.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
 
         let actual = read_translation(&ctrl);
         assert_approx_eq!(f32, actual.x, 0.0, epsilon = 1e-6);

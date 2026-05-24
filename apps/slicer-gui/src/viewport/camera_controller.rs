@@ -19,7 +19,7 @@ use std::cell::RefCell;
 
 use glam::Vec3;
 
-use super::types::ViewportSize;
+use super::types::{ScreenDelta, ScreenPoint, ViewportSize};
 use crate::build_volume::BuildVolume;
 use crate::camera::{AxisView, OrbitCamera};
 use crate::mesh_render::default_fov_y;
@@ -95,7 +95,7 @@ impl CameraController {
     /// Orbits the camera around its target. Returns `true` if a
     /// camera and viewport were present (and the caller should mark
     /// the frame dirty).
-    pub(super) fn on_rotate(&self, dx: f32, dy: f32, viewport: Option<ViewportSize>) -> bool {
+    pub(super) fn on_rotate(&self, delta: ScreenDelta, viewport: Option<ViewportSize>) -> bool {
         let Some(vp) = viewport else {
             return false;
         };
@@ -103,13 +103,13 @@ impl CameraController {
         let Some(cam) = slot.as_mut() else {
             return false;
         };
-        cam.orbit(dx, dy, vp.height());
+        cam.orbit(delta.dx, delta.dy, vp.height());
         true
     }
 
     /// Pans the camera in the view plane. Returns `true` if a camera
     /// and viewport were present.
-    pub(super) fn on_pan(&self, dx: f32, dy: f32, viewport: Option<ViewportSize>) -> bool {
+    pub(super) fn on_pan(&self, delta: ScreenDelta, viewport: Option<ViewportSize>) -> bool {
         let Some(vp) = viewport else {
             return false;
         };
@@ -117,13 +117,13 @@ impl CameraController {
         let Some(cam) = slot.as_mut() else {
             return false;
         };
-        cam.pan(dx, dy, default_fov_y(), vp.height());
+        cam.pan(delta.dx, delta.dy, default_fov_y(), vp.height());
         true
     }
 
     /// Zooms the camera at the cursor position. The raw scroll
-    /// `delta` is converted to a multiplicative factor via
-    /// `exp(-delta * ZOOM_RATE_PER_DELTA)` and then clamped to
+    /// `wheel_delta` is converted to a multiplicative factor via
+    /// `exp(-wheel_delta * ZOOM_RATE_PER_DELTA)` and then clamped to
     /// `[1.0 / ZOOM_FACTOR_MAX_STEP, ZOOM_FACTOR_MAX_STEP]` so a
     /// pathological delta cannot drive `factor` to 0 or infinity.
     /// `OrbitCamera::zoom_at` clamps again internally with the same
@@ -131,15 +131,14 @@ impl CameraController {
     /// further arithmetic.
     pub(super) fn on_zoom(
         &self,
-        delta: f32,
-        cursor_x: f32,
-        cursor_y: f32,
+        wheel_delta: f32,
+        cursor: ScreenPoint,
         viewport: Option<ViewportSize>,
     ) -> bool {
         let Some(vp) = viewport else {
             return false;
         };
-        let factor = (-delta * ZOOM_RATE_PER_DELTA)
+        let factor = (-wheel_delta * ZOOM_RATE_PER_DELTA)
             .exp()
             .clamp(1.0 / ZOOM_FACTOR_MAX_STEP, ZOOM_FACTOR_MAX_STEP);
         let mut slot = self.camera.borrow_mut();
@@ -148,8 +147,8 @@ impl CameraController {
         };
         cam.zoom_at(
             factor,
-            cursor_x,
-            cursor_y,
+            cursor.x,
+            cursor.y,
             default_fov_y(),
             vp.width(),
             vp.height(),
@@ -255,13 +254,13 @@ mod camera_controller_tests {
     fn on_rotate_without_viewport_returns_false() {
         let cc = CameraController::new();
         frame(&cc);
-        assert!(!cc.on_rotate(10.0, 5.0, None));
+        assert!(!cc.on_rotate(ScreenDelta::new(10.0, 5.0), None));
     }
 
     #[test]
     fn on_rotate_without_camera_returns_false() {
         let cc = CameraController::new();
-        assert!(!cc.on_rotate(10.0, 5.0, fhd_viewport()));
+        assert!(!cc.on_rotate(ScreenDelta::new(10.0, 5.0), fhd_viewport()));
     }
 
     #[test]
@@ -269,7 +268,7 @@ mod camera_controller_tests {
         let cc = CameraController::new();
         frame(&cc);
         let yaw_before = cc.camera_cell().borrow().as_ref().unwrap().yaw;
-        assert!(cc.on_rotate(50.0, 0.0, fhd_viewport()));
+        assert!(cc.on_rotate(ScreenDelta::new(50.0, 0.0), fhd_viewport()));
         let yaw_after = cc.camera_cell().borrow().as_ref().unwrap().yaw;
         assert!((yaw_after - yaw_before).abs() > 0.0);
     }
@@ -278,13 +277,13 @@ mod camera_controller_tests {
     fn on_pan_without_viewport_returns_false() {
         let cc = CameraController::new();
         frame(&cc);
-        assert!(!cc.on_pan(10.0, 5.0, None));
+        assert!(!cc.on_pan(ScreenDelta::new(10.0, 5.0), None));
     }
 
     #[test]
     fn on_pan_without_camera_returns_false() {
         let cc = CameraController::new();
-        assert!(!cc.on_pan(10.0, 5.0, fhd_viewport()));
+        assert!(!cc.on_pan(ScreenDelta::new(10.0, 5.0), fhd_viewport()));
     }
 
     #[test]
@@ -292,7 +291,7 @@ mod camera_controller_tests {
         let cc = CameraController::new();
         frame(&cc);
         let target_before = cc.camera_cell().borrow().as_ref().unwrap().target;
-        assert!(cc.on_pan(10.0, 5.0, fhd_viewport()));
+        assert!(cc.on_pan(ScreenDelta::new(10.0, 5.0), fhd_viewport()));
         let target_after = cc.camera_cell().borrow().as_ref().unwrap().target;
         assert_ne!(target_before, target_after);
     }
@@ -301,13 +300,13 @@ mod camera_controller_tests {
     fn on_zoom_without_viewport_returns_false() {
         let cc = CameraController::new();
         frame(&cc);
-        assert!(!cc.on_zoom(120.0, 100.0, 100.0, None));
+        assert!(!cc.on_zoom(120.0, ScreenPoint::new(100.0, 100.0), None));
     }
 
     #[test]
     fn on_zoom_without_camera_returns_false() {
         let cc = CameraController::new();
-        assert!(!cc.on_zoom(120.0, 100.0, 100.0, fhd_viewport()));
+        assert!(!cc.on_zoom(120.0, ScreenPoint::new(100.0, 100.0), fhd_viewport()));
     }
 
     #[test]
@@ -315,23 +314,24 @@ mod camera_controller_tests {
         let cc = CameraController::new();
         frame(&cc);
         let dist_before = cc.camera_cell().borrow().as_ref().unwrap().distance;
-        // Positive delta is a wheel-down step; the controller maps it
-        // through `exp(-delta * RATE)` to a factor < 1, which dollies in.
-        assert!(cc.on_zoom(120.0, 960.0, 540.0, fhd_viewport()));
+        // Positive wheel_delta is a wheel-down step; the controller maps
+        // it through `exp(-wheel_delta * RATE)` to a factor < 1, which
+        // dollies in.
+        assert!(cc.on_zoom(120.0, ScreenPoint::new(960.0, 540.0), fhd_viewport()));
         let dist_after = cc.camera_cell().borrow().as_ref().unwrap().distance;
         assert!(dist_after < dist_before);
     }
 
     #[test]
     fn on_zoom_clamps_pathological_positive_delta_to_finite_step() {
-        // A huge positive delta would let `exp(-delta * RATE)` round
-        // to 0 without the outer clamp; the camera's distance would
-        // then collapse to its lower bound in one event. The clamp
-        // caps the per-event ratio at `1 / ZOOM_FACTOR_MAX_STEP`.
+        // A huge positive wheel_delta would let `exp(-wheel_delta * RATE)`
+        // round to 0 without the outer clamp; the camera's distance
+        // would then collapse to its lower bound in one event. The
+        // clamp caps the per-event ratio at `1 / ZOOM_FACTOR_MAX_STEP`.
         let cc = CameraController::new();
         frame(&cc);
         let dist_before = cc.camera_cell().borrow().as_ref().unwrap().distance;
-        assert!(cc.on_zoom(1.0e6, 960.0, 540.0, fhd_viewport()));
+        assert!(cc.on_zoom(1.0e6, ScreenPoint::new(960.0, 540.0), fhd_viewport()));
         let dist_after = cc.camera_cell().borrow().as_ref().unwrap().distance;
         // Per-event factor floors at 1/10; the camera applies its own
         // floor below that, but the final distance must be finite and
@@ -346,7 +346,7 @@ mod camera_controller_tests {
         let cc = CameraController::new();
         frame(&cc);
         let dist_before = cc.camera_cell().borrow().as_ref().unwrap().distance;
-        assert!(cc.on_zoom(-1.0e6, 960.0, 540.0, fhd_viewport()));
+        assert!(cc.on_zoom(-1.0e6, ScreenPoint::new(960.0, 540.0), fhd_viewport()));
         let dist_after = cc.camera_cell().borrow().as_ref().unwrap().distance;
         assert!(dist_after.is_finite());
         assert!(dist_after >= dist_before);
@@ -362,7 +362,7 @@ mod camera_controller_tests {
     fn on_frame_view_resets_to_defaults() {
         let cc = CameraController::new();
         frame(&cc);
-        cc.on_rotate(120.0, 60.0, fhd_viewport());
+        cc.on_rotate(ScreenDelta::new(120.0, 60.0), fhd_viewport());
         let before = cc.camera_cell().borrow().as_ref().unwrap().clone();
         assert!(cc.on_frame_view());
         let after = cc.camera_cell().borrow().as_ref().unwrap().clone();

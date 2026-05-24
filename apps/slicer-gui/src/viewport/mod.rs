@@ -24,3 +24,4 @@ mod types;
 
 pub(crate) use controller::ViewportController;
 pub(crate) use render_scheduler::RESIZE_SETTLE;
+pub(crate) use types::{ScreenDelta, ScreenPoint};

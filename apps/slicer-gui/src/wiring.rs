@@ -20,7 +20,7 @@ use crate::mesh_loader;
 use crate::scene_document::SceneDocument;
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
-use crate::viewport::{RESIZE_SETTLE, ViewportController};
+use crate::viewport::{RESIZE_SETTLE, ScreenDelta, ScreenPoint, ViewportController};
 
 mod export_flow_dispatch {
     use std::path::PathBuf;
@@ -135,15 +135,15 @@ fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     {
         let ctrl = ctrl.clone();
-        ui.on_rotate_drag(move |dx, dy| ctrl.on_rotate(dx, dy));
+        ui.on_rotate_drag(move |dx, dy| ctrl.on_rotate(ScreenDelta::new(dx, dy)));
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_pan_drag(move |dx, dy| ctrl.on_pan(dx, dy));
+        ui.on_pan_drag(move |dx, dy| ctrl.on_pan(ScreenDelta::new(dx, dy)));
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_zoom_at(move |delta, x, y| ctrl.on_zoom(delta, x, y));
+        ui.on_zoom_at(move |delta, x, y| ctrl.on_zoom(delta, ScreenPoint::new(x, y)));
     }
     {
         let ctrl = ctrl.clone();
@@ -169,15 +169,15 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_viewport_pointer_down(move |x, y, m| ctrl.on_pointer_down(x, y, m));
+        ui.on_viewport_pointer_down(move |x, y, m| ctrl.on_pointer_down(ScreenPoint::new(x, y), m));
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_viewport_pointer_move(move |x, y, m| ctrl.on_pointer_move(x, y, m));
+        ui.on_viewport_pointer_move(move |x, y, m| ctrl.on_pointer_move(ScreenPoint::new(x, y), m));
     }
     {
         let ctrl = ctrl.clone();
-        ui.on_viewport_pointer_up(move |x, y, m| ctrl.on_pointer_up(x, y, m));
+        ui.on_viewport_pointer_up(move |x, y, m| ctrl.on_pointer_up(ScreenPoint::new(x, y), m));
     }
     {
         let ctrl = ctrl.clone();
