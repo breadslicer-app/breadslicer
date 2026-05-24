@@ -10,6 +10,7 @@ use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Triangle, TriangleIterator, Vertex};
 
 use crate::error::LoadStlError;
+use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES};
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
@@ -58,12 +59,14 @@ impl<'a> Iterator for BinaryStlReader<'a> {
 impl<'a> BinaryStlReader<'a> {
     pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
         let mut reader = Box::new(BufReader::new(&mut *read));
-        let mut header = [0u8; 81]; // 1 byte extra for null-termination
+        // 1 byte extra for null-termination
+        let mut header = [0u8; STL_HEADER_BYTES + 1];
 
         read_exact_section(&mut reader, &mut header, "the 80-byte STL header")?;
         read.seek(std::io::SeekFrom::Start(0))?;
 
-        header[80] = 0u8; // To ensure we have a null-terminated string
+        // Ensure we have a null-terminated string
+        header[STL_HEADER_BYTES] = 0u8;
         let mesh_name_cstr = CStr::from_bytes_until_nul(&header)
             .map_err(|_| LoadStlError::HeaderNotNulTerminated)?;
         let mesh_name = mesh_name_cstr
@@ -88,9 +91,9 @@ impl<'a> BinaryStlReader<'a> {
         read: &'a mut dyn Read,
     ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError> + 'a>> {
         let mut reader = Box::new(BufReader::new(read));
-        let mut header = [0u8; 80];
+        let mut header = [0u8; STL_HEADER_BYTES];
         read_exact_section(&mut reader, &mut header, "the 80-byte STL header")?;
-        let mut count_buf = [0u8; 4];
+        let mut count_buf = [0u8; STL_TRIANGLE_COUNT_BYTES];
         read_exact_section(&mut reader, &mut count_buf, "the triangle count")?;
         let num_faces = u32::from_le_bytes(count_buf) as usize;
         if num_faces > MAX_BINARY_STL_TRIANGLES {
@@ -110,8 +113,7 @@ impl<'a> BinaryStlReader<'a> {
     }
 
     fn next_face(&mut self) -> Result<Triangle> {
-        // Each triangle: 12 floats (normal + 3 vertices) * 4 bytes + 2 bytes attribute = 50 bytes
-        let mut buf = [0u8; 50];
+        let mut buf = [0u8; STL_TRIANGLE_RECORD_BYTES];
         read_exact_section(&mut self.reader, &mut buf, "a triangle record")?;
 
         let f = |offset: usize, what: &'static str| -> Result<f32> {
@@ -169,15 +171,19 @@ impl<'a> TriangleIterator for BinaryStlReader<'a> {
 mod binary_stl_reader_tests {
     use std::io::Cursor;
 
-    use super::{BinaryStlReader, MAX_BINARY_STL_TRIANGLES};
+    use super::{
+        BinaryStlReader, MAX_BINARY_STL_TRIANGLES, STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES,
+    };
 
-    /// Builds an 84-byte binary STL header: 80 zero-padded name bytes
-    /// followed by a 4-byte little-endian declared triangle count. The
-    /// payload is left empty so the reader sees an EOF the first time
-    /// it tries to consume a triangle record.
+    const PREAMBLE_BYTES: usize = STL_HEADER_BYTES + STL_TRIANGLE_COUNT_BYTES;
+
+    /// Builds an 84-byte binary STL preamble: a zero-padded name field
+    /// followed by a little-endian declared triangle count. The payload
+    /// is left empty so the reader sees an EOF the first time it tries
+    /// to consume a triangle record.
     fn header_with_declared_count(count: u32) -> Vec<u8> {
-        let mut buf = vec![0u8; 84];
-        buf[80..84].copy_from_slice(&count.to_le_bytes());
+        let mut buf = vec![0u8; PREAMBLE_BYTES];
+        buf[STL_HEADER_BYTES..PREAMBLE_BYTES].copy_from_slice(&count.to_le_bytes());
         buf
     }
 

@@ -7,6 +7,13 @@ mod stla;
 mod stlb;
 mod writers;
 
+// Binary STL spec byte sizes. Shared by the reader and writer to keep
+// header / triangle-record layout aligned on one source.
+pub(crate) const STL_HEADER_BYTES: usize = 80;
+pub(crate) const STL_TRIANGLE_COUNT_BYTES: usize = 4;
+// 3*4 normal + 3*(3*4) verts + 2 attr
+pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
+
 use std::io::{Read, Seek, Write};
 
 use sc_mesh_core::Scene;

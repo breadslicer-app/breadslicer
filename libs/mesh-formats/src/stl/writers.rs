@@ -6,13 +6,14 @@
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 
 use crate::error::WriteStlError;
+use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES};
 
-// Binary STL stores the triangle count in a fixed 4-byte little-endian
-// header field. Centralising the encode lets us pin the contract: any
-// face count beyond `u32::MAX` must surface a clean error rather than
-// silently truncate to the low 32 bits (which would produce an STL
-// file whose header lies about the body).
-fn encode_triangle_count(count: usize) -> Result<[u8; 4], WriteStlError> {
+// Binary STL stores the triangle count in a fixed STL_TRIANGLE_COUNT_BYTES
+// little-endian header field. Centralising the encode lets us pin the
+// contract: any face count beyond `u32::MAX` must surface a clean error
+// rather than silently truncate to the low 32 bits (which would produce
+// an STL file whose header lies about the body).
+fn encode_triangle_count(count: usize) -> Result<[u8; STL_TRIANGLE_COUNT_BYTES], WriteStlError> {
     u32::try_from(count)
         .map(|n| n.to_le_bytes())
         .map_err(|_| WriteStlError::FaceCountExceedsU32 { count })
@@ -71,14 +72,14 @@ pub fn write_stlb<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlE
 where
     W: std::io::Write,
 {
-    // 80-byte header: mesh name (zero-padded)
-    let mut header = [0u8; 80];
+    // Header: mesh name (zero-padded) in STL_HEADER_BYTES.
+    let mut header = [0u8; STL_HEADER_BYTES];
     if let Some(MeshMetadata {
         name: Some(name), ..
     }) = &mesh.meta()
     {
         let bytes = name.as_bytes();
-        let len = bytes.len().min(80);
+        let len = bytes.len().min(STL_HEADER_BYTES);
         header[..len].copy_from_slice(&bytes[..len]);
     }
     writer.write_all(&header)?;
@@ -297,7 +298,11 @@ endsolid my_mesh",
 #[cfg(test)]
 mod test_write_stlb {
     use crate::stl::write_stlb;
+    use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES};
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+
+    const PREAMBLE_BYTES: usize = STL_HEADER_BYTES + STL_TRIANGLE_COUNT_BYTES;
+    const RECORD_TOTAL_BYTES: usize = PREAMBLE_BYTES + STL_TRIANGLE_RECORD_BYTES;
 
     fn make_mesh(meta: Option<MeshMetadata>) -> IndexedMesh {
         IndexedMesh {
@@ -320,13 +325,16 @@ mod test_write_stlb {
         let mut out: Vec<u8> = vec![];
         write_stlb(&mesh, &mut out).unwrap();
 
-        assert_eq!(out.len(), 80 + 4 + 50);
+        assert_eq!(out.len(), RECORD_TOTAL_BYTES);
 
         // Header must be all zeros
-        assert!(out[..80].iter().all(|&b| b == 0));
+        assert!(out[..STL_HEADER_BYTES].iter().all(|&b| b == 0));
 
         // Triangle count = 1
-        assert_eq!(u32::from_le_bytes(out[80..84].try_into().unwrap()), 1);
+        assert_eq!(
+            u32::from_le_bytes(out[STL_HEADER_BYTES..PREAMBLE_BYTES].try_into().unwrap()),
+            1
+        );
 
         // Normal: [-1.0, 0.0, 0.0]
         assert_eq!(f32::from_le_bytes(out[84..88].try_into().unwrap()), -1.0f32);
@@ -357,11 +365,11 @@ mod test_write_stlb {
         let mut out: Vec<u8> = vec![];
         write_stlb(&mesh, &mut out).unwrap();
 
-        assert_eq!(out.len(), 80 + 4 + 50);
+        assert_eq!(out.len(), RECORD_TOTAL_BYTES);
 
         // Header starts with "my_mesh", rest is zeros
         assert_eq!(&out[..7], b"my_mesh");
-        assert!(out[7..80].iter().all(|&b| b == 0));
+        assert!(out[7..STL_HEADER_BYTES].iter().all(|&b| b == 0));
     }
 
     #[test]
@@ -378,9 +386,9 @@ mod test_write_stlb {
         let mut out: Vec<u8> = vec![];
         write_stlb(&mesh, &mut out).unwrap();
 
-        assert_eq!(out.len(), 80 + 4 + 50);
+        assert_eq!(out.len(), RECORD_TOTAL_BYTES);
         assert!(
-            out[..80].iter().all(|&b| b == b'a'),
+            out[..STL_HEADER_BYTES].iter().all(|&b| b == b'a'),
             "every header byte must be 'a' when the name fills it completely",
         );
     }
@@ -396,9 +404,12 @@ mod test_write_stlb {
         };
         let mut out: Vec<u8> = vec![];
         write_stlb(&mesh, &mut out).expect("write_stlb succeeds on empty mesh");
-        assert_eq!(out.len(), 84);
-        assert!(out[..80].iter().all(|&b| b == 0));
-        assert_eq!(u32::from_le_bytes(out[80..84].try_into().unwrap()), 0);
+        assert_eq!(out.len(), PREAMBLE_BYTES);
+        assert!(out[..STL_HEADER_BYTES].iter().all(|&b| b == 0));
+        assert_eq!(
+            u32::from_le_bytes(out[STL_HEADER_BYTES..PREAMBLE_BYTES].try_into().unwrap()),
+            0
+        );
 
         // Reading back must produce an empty triangle iterator.
         let mut cursor = std::io::Cursor::new(out);
