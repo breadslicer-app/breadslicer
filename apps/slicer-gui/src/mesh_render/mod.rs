@@ -467,37 +467,7 @@ impl Renderer {
             self.record_cage(&mut pass, plate_buffers);
 
             if scene_for_draws && let Some(inst) = installed {
-                pass.set_pipeline(&self.pipelines.mesh.pipeline);
-                pass.set_bind_group(
-                    MeshBindGroup::Uniforms.idx(),
-                    &self.pipelines.mesh.uniforms_bind_group,
-                    &[],
-                );
-                // One draw call per object. The models bind group
-                // is rebound at each step with the dynamic offset
-                // of the matching ModelEntry slot, so the vertex
-                // shader's `model_entry` uniform reads that
-                // object's matrix. The stencil reference is `1`
-                // only for the selected object, so after this pass
-                // the stencil holds 1 over its visible silhouette
-                // and 0 everywhere else, what the outline
-                // post-pass dilates.
-                for (i, obj) in inst.gpu.objects().iter().enumerate() {
-                    let offset = (i as u64 * inst.gpu.model_stride()) as u32;
-                    pass.set_bind_group(
-                        MeshBindGroup::Models.idx(),
-                        &inst.models_bind_group,
-                        &[offset],
-                    );
-                    pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
-                    pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
-                    pass.set_stencil_reference(if Some(obj.node_id()) == selection {
-                        1
-                    } else {
-                        0
-                    });
-                    pass.draw_indexed(0..obj.index_count(), 0, 0..1);
-                }
+                self.record_mesh_objects(&mut pass, inst, selection);
             }
 
             // Envelope-warning walls: 5 invisible quads coplanar with
@@ -876,6 +846,43 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+    }
+
+    /// One draw call per installed scene object. The models bind
+    /// group is rebound at each step with the dynamic offset of the
+    /// matching ModelEntry slot, so the vertex shader's `model_entry`
+    /// uniform reads that object's matrix. The stencil reference is
+    /// `1` only for the selected object, so after this pass the
+    /// stencil holds 1 over its visible silhouette and 0 everywhere
+    /// else, what the outline post-pass dilates.
+    fn record_mesh_objects(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        inst: &InstalledScene,
+        selection: Option<NodeId>,
+    ) {
+        pass.set_pipeline(&self.pipelines.mesh.pipeline);
+        pass.set_bind_group(
+            MeshBindGroup::Uniforms.idx(),
+            &self.pipelines.mesh.uniforms_bind_group,
+            &[],
+        );
+        for (i, obj) in inst.gpu.objects().iter().enumerate() {
+            let offset = (i as u64 * inst.gpu.model_stride()) as u32;
+            pass.set_bind_group(
+                MeshBindGroup::Models.idx(),
+                &inst.models_bind_group,
+                &[offset],
+            );
+            pass.set_vertex_buffer(0, obj.vertex_buffer().slice(..));
+            pass.set_index_buffer(obj.index_buffer().slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_stencil_reference(if Some(obj.node_id()) == selection {
+                1
+            } else {
+                0
+            });
+            pass.draw_indexed(0..obj.index_count(), 0, 0..1);
+        }
     }
 }
 
