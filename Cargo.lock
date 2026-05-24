@@ -4504,7 +4504,6 @@ dependencies = [
 name = "sc-mesh-spatial"
 version = "0.0.12"
 dependencies = [
- "anyhow",
  "float-cmp 0.10.0",
  "proptest",
  "sc-mesh-core",
