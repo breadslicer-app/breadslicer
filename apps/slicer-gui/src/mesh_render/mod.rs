@@ -74,6 +74,10 @@ const GIZMO_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Floa
 // reads that stencil aspect in a fullscreen edge-detect. Default-limits
 // supported on every wgpu backend Slint may pick.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+// 4x MSAA: each pixel rasterises 4 samples and resolves to one colour,
+// costing ~4x colour/depth/stencil attachment bandwidth in exchange for
+// smooth mesh silhouettes and grid lines. Default-limits supported on
+// every wgpu backend; 8x adds little visible benefit on this geometry.
 const SAMPLE_COUNT: u32 = 4;
 const FIT_FRACTION: f32 = 0.75;
 
