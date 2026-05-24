@@ -473,37 +473,8 @@ impl Renderer {
             self.record_envelope_walls(&mut pass, plate_buffers);
             self.record_plate_bottom(&mut pass, plate_buffers);
         }
-        // Outline post-pass: only run when something is selected
-        // and at least one mesh draw wrote stencil = 1 (i.e. a
-        // scene is installed). Without a scene, the stencil is all
-        // zeroes and the dilate would be a no-op.
         if selection.is_some() && scene_for_draws {
-            let mut outline_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("mesh-viewer outline pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        // Preserve the resolved colour from the main
-                        // pass; non-edge fragments `discard` so the
-                        // existing pixels survive.
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            outline_pass.set_pipeline(&self.pipelines.outline.pipeline);
-            outline_pass.set_bind_group(
-                OutlineBindGroup::Stencil.idx(),
-                &msaa.outline_bind_group,
-                &[],
-            );
-            outline_pass.draw(0..3, 0..1);
+            self.record_outline_post_pass(&mut encoder, &target_view, msaa);
         }
         // Gizmo pass: drawn last so it sits on top of the mesh + the
         // outline. Depth is cleared at pass start so the gizmo is
@@ -888,6 +859,44 @@ impl Renderer {
         );
         pass.set_stencil_reference(0);
         pass.draw_indexed(0..plate_buffers.bottom_index_count, 0, 0..1);
+    }
+
+    /// Outline post-pass: dilate the stencil set by the mesh pass to
+    /// draw a one-pixel halo around the selected leaf. Caller must
+    /// gate on `selection.is_some() && scene_for_draws`: without a
+    /// scene the stencil is all zeroes and the dilate would be a
+    /// no-op; without a selection the mesh pass left the stencil at
+    /// 0 too. Loads the resolved colour from the main pass and
+    /// discards non-edge fragments, so existing pixels survive.
+    fn record_outline_post_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target_view: &wgpu::TextureView,
+        msaa: &MsaaTargets,
+    ) {
+        let mut outline_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("mesh-viewer outline pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        outline_pass.set_pipeline(&self.pipelines.outline.pipeline);
+        outline_pass.set_bind_group(
+            OutlineBindGroup::Stencil.idx(),
+            &msaa.outline_bind_group,
+            &[],
+        );
+        outline_pass.draw(0..3, 0..1);
     }
 }
 
