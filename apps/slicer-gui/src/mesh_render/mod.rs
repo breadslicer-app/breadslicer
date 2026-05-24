@@ -107,10 +107,23 @@ impl DeviceToken {
     }
 }
 
-pub struct Renderer {
+/// GPU device pairing plus the identity token used to detect a
+/// cross-device install. Grouped so the [`Renderer`] struct does not
+/// expose three loose fields whose lifetime is tied together (the
+/// device, the queue, and the token are minted together at
+/// `RenderingSetup` and dropped together at `RenderingTeardown`).
+struct RendererCore {
     device: wgpu::Device,
-    device_token: DeviceToken,
     queue: wgpu::Queue,
+    device_token: DeviceToken,
+}
+
+/// Per-pipeline GPU state. The mesh / outline / gizmo / plate
+/// pipelines are immutable after construction; `gizmo_buffers` holds
+/// the gizmo pass's vertex/index data, also immutable, while
+/// `plate_buffers` is cached lazily because the plate geometry
+/// depends on the runtime `BuildVolume`.
+struct Pipelines {
     mesh: MeshPipeline,
     outline: OutlinePipeline,
     gizmo: GizmoPipeline,
@@ -120,9 +133,22 @@ pub struct Renderer {
     /// until the first render call; rebuilt when the per-frame
     /// `BuildVolume` differs from the cached one.
     plate_buffers: Option<PlateBuffers>,
-    scene: Option<InstalledScene>,
+}
+
+/// Viewport-sized GPU allocations that are dropped and recreated when
+/// the render-target size changes. Both fields are `None` until the
+/// first render call and after [`Renderer::invalidate_sizing`] /
+/// [`Renderer::clear_scene`].
+struct TargetManager {
     msaa: Option<MsaaTargets>,
     targets: Option<TargetPool>,
+}
+
+pub struct Renderer {
+    core: RendererCore,
+    pipelines: Pipelines,
+    scene: Option<InstalledScene>,
+    target_manager: TargetManager,
 }
 
 /// Vertical field of view in radians.
@@ -145,18 +171,24 @@ impl Renderer {
         let plate = PlatePipeline::create(&device, &mesh);
 
         Self {
-            device,
-            device_token,
-            queue,
-            mesh,
-            outline,
-            gizmo,
-            gizmo_buffers,
-            plate,
-            plate_buffers: None,
+            core: RendererCore {
+                device,
+                queue,
+                device_token,
+            },
+            pipelines: Pipelines {
+                mesh,
+                outline,
+                gizmo,
+                gizmo_buffers,
+                plate,
+                plate_buffers: None,
+            },
             scene: None,
-            msaa: None,
-            targets: None,
+            target_manager: TargetManager {
+                msaa: None,
+                targets: None,
+            },
         }
     }
 
@@ -165,13 +197,13 @@ impl Renderer {
     /// `GpuScene::build` so the eventual `install_scene` can match
     /// the worker's snapshot against the renderer's current device.
     pub fn device_token(&self) -> DeviceToken {
-        self.device_token
+        self.core.device_token
     }
 
     pub fn clear_scene(&mut self) {
         self.scene = None;
-        self.msaa = None;
-        self.targets = None;
+        self.target_manager.msaa = None;
+        self.target_manager.targets = None;
     }
 
     /// Drops the viewport-sized allocations (MSAA + target pool) so the
@@ -180,8 +212,8 @@ impl Renderer {
     /// bucketed drag-resize sizing to exact pixel sizing once the user
     /// stops resizing.
     pub fn invalidate_sizing(&mut self) {
-        self.msaa = None;
-        self.targets = None;
+        self.target_manager.msaa = None;
+        self.target_manager.targets = None;
     }
 
     /// World-space AABB of the currently uploaded scene, captured at
@@ -197,7 +229,7 @@ impl Renderer {
     /// would be unusable. New scene loads go through the worker via
     /// [`GpuScene::build`] + [`Renderer::install_scene`] instead.
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
-        let gpu = GpuScene::build(&self.device, self.device_token, graph)?;
+        let gpu = GpuScene::build(&self.core.device, self.core.device_token, graph)?;
         self.attach_scene(gpu);
         Ok(())
     }
@@ -207,7 +239,7 @@ impl Renderer {
     /// device has rotated since the worker started (mid-load device
     /// loss); the caller falls back to the recovery upload path.
     pub fn install_scene(&mut self, gpu: GpuScene) -> bool {
-        if self.device_token != gpu.device_token() {
+        if self.core.device_token != gpu.device_token() {
             return false;
         }
         self.attach_scene(gpu);
@@ -219,18 +251,21 @@ impl Renderer {
         // the per-scene uniform buffer; the dynamic offset shifts that
         // window to the right slot per draw call. The window size must
         // match `min_binding_size` declared in the layout.
-        let models_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh-viewer models bg"),
-            layout: &self.mesh.models_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: gpu.model_buffer(),
-                    offset: 0,
-                    size: NonZeroU64::new(MODEL_ENTRY_SIZE),
-                }),
-            }],
-        });
+        let models_bind_group = self
+            .core
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mesh-viewer models bg"),
+                layout: &self.pipelines.mesh.models_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: gpu.model_buffer(),
+                        offset: 0,
+                        size: NonZeroU64::new(MODEL_ENTRY_SIZE),
+                    }),
+                }],
+            });
         self.scene = Some(InstalledScene {
             gpu,
             models_bind_group,
@@ -238,12 +273,17 @@ impl Renderer {
     }
 
     fn ensure_msaa(&mut self, width: u32, height: u32) {
-        if self.msaa.as_ref().is_some_and(|m| m.matches(width, height)) {
+        if self
+            .target_manager
+            .msaa
+            .as_ref()
+            .is_some_and(|m| m.matches(width, height))
+        {
             return;
         }
-        self.msaa = Some(MsaaTargets::create(
-            &self.device,
-            &self.outline.bind_group_layout,
+        self.target_manager.msaa = Some(MsaaTargets::create(
+            &self.core.device,
+            &self.pipelines.outline.bind_group_layout,
             width,
             height,
         ));
@@ -251,13 +291,14 @@ impl Renderer {
 
     fn ensure_targets(&mut self, width: u32, height: u32) {
         if self
+            .target_manager
             .targets
             .as_ref()
             .is_some_and(|t| t.matches(width, height))
         {
             return;
         }
-        self.targets = Some(TargetPool::create(&self.device, width, height));
+        self.target_manager.targets = Some(TargetPool::create(&self.core.device, width, height));
     }
 
     /// Lazily create or rebuild the plate's GPU buffers. The cache
@@ -265,13 +306,14 @@ impl Renderer {
     /// rebuild so a runtime envelope change reaches the next frame.
     fn ensure_plate_buffers(&mut self, build_volume: BuildVolume) {
         if self
+            .pipelines
             .plate_buffers
             .as_ref()
             .is_some_and(|b| b.build_volume == build_volume)
         {
             return;
         }
-        self.plate_buffers = Some(PlateBuffers::create(&self.device, build_volume));
+        self.pipelines.plate_buffers = Some(PlateBuffers::create(&self.core.device, build_volume));
     }
 
     pub fn render(
@@ -295,8 +337,9 @@ impl Renderer {
         self.ensure_targets(width, height);
         self.ensure_plate_buffers(build_volume);
         let installed = self.scene.as_ref();
-        let msaa = self.msaa.as_ref().unwrap();
+        let msaa = self.target_manager.msaa.as_ref().unwrap();
         let plate_buffers = self
+            .pipelines
             .plate_buffers
             .as_ref()
             .expect("ensure_plate_buffers populated the cache");
@@ -323,8 +366,11 @@ impl Renderer {
             // and must be written individually.
             for (i, entry) in entries.iter().enumerate() {
                 let offset = i as u64 * inst.gpu.model_stride();
-                self.queue
-                    .write_buffer(inst.gpu.model_buffer(), offset, bytemuck::bytes_of(entry));
+                self.core.queue.write_buffer(
+                    inst.gpu.model_buffer(),
+                    offset,
+                    bytemuck::bytes_of(entry),
+                );
             }
             !entries.is_empty()
         } else {
@@ -368,21 +414,26 @@ impl Renderer {
             env_max: [env_max.x, env_max.y, env_max.z, 0.0],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
         };
-        self.queue
-            .write_buffer(&self.mesh.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.core.queue.write_buffer(
+            &self.pipelines.mesh.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
 
         let target = self
+            .target_manager
             .targets
             .as_mut()
             .expect("ensure_targets populated the pool")
             .acquire();
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("mesh-viewer encoder"),
-            });
+        let mut encoder =
+            self.core
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("mesh-viewer encoder"),
+                });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh-viewer pass"),
@@ -416,10 +467,10 @@ impl Renderer {
             // content behind it when the camera orbits low.
             // Stencil reference stays at 0 so the outline post-pass
             // leaves the plate untouched.
-            pass.set_pipeline(&self.plate.solid_pipeline);
+            pass.set_pipeline(&self.pipelines.plate.solid_pipeline);
             pass.set_bind_group(
                 PlateBindGroup::Uniforms.idx(),
-                &self.plate.uniforms_bind_group,
+                &self.pipelines.plate.uniforms_bind_group,
                 &[],
             );
             pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
@@ -433,7 +484,7 @@ impl Renderer {
             // Plate top: inner grid + outer rounded border at Z = 0.
             // Depth-write off so a model resting at Z = 0 always
             // wins z-fighting against the plate top.
-            pass.set_pipeline(&self.plate.top_pipeline);
+            pass.set_pipeline(&self.pipelines.plate.top_pipeline);
             pass.set_index_buffer(
                 plate_buffers.top_index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
@@ -443,7 +494,7 @@ impl Renderer {
             // Cage: 12 wireframe edges sharing the plate vertex
             // buffer; the line-list index buffer picks the cage
             // corner range.
-            pass.set_pipeline(&self.plate.line_pipeline);
+            pass.set_pipeline(&self.pipelines.plate.line_pipeline);
             pass.set_index_buffer(
                 plate_buffers.cage_index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
@@ -451,10 +502,10 @@ impl Renderer {
             pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
 
             if scene_for_draws && let Some(inst) = installed {
-                pass.set_pipeline(&self.mesh.pipeline);
+                pass.set_pipeline(&self.pipelines.mesh.pipeline);
                 pass.set_bind_group(
                     MeshBindGroup::Uniforms.idx(),
-                    &self.mesh.uniforms_bind_group,
+                    &self.pipelines.mesh.uniforms_bind_group,
                     &[],
                 );
                 // One draw call per object. The models bind group
@@ -496,10 +547,10 @@ impl Renderer {
             // should. `top_pipeline` matches the needs here
             // (TriangleList, depth-test Less, depth-write off,
             // cull none, alpha blending). Stencil stays at 0.
-            pass.set_pipeline(&self.plate.top_pipeline);
+            pass.set_pipeline(&self.pipelines.plate.top_pipeline);
             pass.set_bind_group(
                 PlateBindGroup::Uniforms.idx(),
-                &self.plate.uniforms_bind_group,
+                &self.pipelines.plate.uniforms_bind_group,
                 &[],
             );
             pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
@@ -519,10 +570,10 @@ impl Renderer {
             // loop above left the plate vertex buffer unbound, so
             // rebind. Stencil reset to 0 so the outline post-pass
             // leaves the bottom untouched.
-            pass.set_pipeline(&self.plate.bottom_pipeline);
+            pass.set_pipeline(&self.pipelines.plate.bottom_pipeline);
             pass.set_bind_group(
                 PlateBindGroup::Uniforms.idx(),
-                &self.plate.uniforms_bind_group,
+                &self.pipelines.plate.uniforms_bind_group,
                 &[],
             );
             pass.set_vertex_buffer(0, plate_buffers.vertex_buffer.slice(..));
@@ -557,7 +608,7 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            outline_pass.set_pipeline(&self.outline.pipeline);
+            outline_pass.set_pipeline(&self.pipelines.outline.pipeline);
             outline_pass.set_bind_group(
                 OutlineBindGroup::Stencil.idx(),
                 &msaa.outline_bind_group,
@@ -575,8 +626,8 @@ impl Renderer {
                 view_proj: view_proj.to_cols_array_2d(),
                 pivot_and_scale: [frame.pivot.x, frame.pivot.y, frame.pivot.z, frame.scale],
             };
-            self.queue.write_buffer(
-                &self.gizmo_buffers.uniforms_buffer,
+            self.core.queue.write_buffer(
+                &self.pipelines.gizmo_buffers.uniforms_buffer,
                 0,
                 bytemuck::bytes_of(&uniforms),
             );
@@ -600,21 +651,24 @@ impl Renderer {
 
             if render_translate {
                 let entries = build_translate_entries(&frame);
-                self.gizmo_buffers.write_entries(
-                    &self.queue,
+                self.pipelines.gizmo_buffers.write_entries(
+                    &self.core.queue,
                     GIZMO_SLOTS.translate.start(),
                     &entries,
                 );
             }
             if render_rotate {
                 let entries = build_rotate_entries(&frame, camera);
-                self.gizmo_buffers
-                    .write_entries(&self.queue, GIZMO_SLOTS.rotate.start(), &entries);
+                self.pipelines.gizmo_buffers.write_entries(
+                    &self.core.queue,
+                    GIZMO_SLOTS.rotate.start(),
+                    &entries,
+                );
             }
             if render_scale {
                 let axis_entries = build_scale_axis_entries(&frame);
-                self.gizmo_buffers.write_entries(
-                    &self.queue,
+                self.pipelines.gizmo_buffers.write_entries(
+                    &self.core.queue,
                     GIZMO_SLOTS.scale_axis.start(),
                     &axis_entries,
                 );
@@ -645,114 +699,169 @@ impl Renderer {
             });
             gizmo_pass.set_bind_group(
                 GizmoBindGroup::Uniforms.idx(),
-                &self.gizmo.uniforms_bind_group,
+                &self.pipelines.gizmo.uniforms_bind_group,
                 &[],
             );
 
             if render_translate {
                 // 1-pixel shaft line, three axes.
-                gizmo_pass.set_pipeline(&self.gizmo.line_pipeline);
-                gizmo_pass
-                    .set_vertex_buffer(0, self.gizmo_buffers.shaft_line_vertex_buffer.slice(..));
+                gizmo_pass.set_pipeline(&self.pipelines.gizmo.line_pipeline);
+                gizmo_pass.set_vertex_buffer(
+                    0,
+                    self.pipelines
+                        .gizmo_buffers
+                        .shaft_line_vertex_buffer
+                        .slice(..),
+                );
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.shaft_line_index_buffer.slice(..),
+                    self.pipelines
+                        .gizmo_buffers
+                        .shaft_line_index_buffer
+                        .slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
                     let offset = (GIZMO_SLOTS.translate.slot(axis_idx as u64)
-                        * self.gizmo_buffers.entry_stride) as u32;
+                        * self.pipelines.gizmo_buffers.entry_stride)
+                        as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo.entries_bind_group,
+                        &self.pipelines.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.shaft_line_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(
+                        0..self.pipelines.gizmo_buffers.shaft_line_index_count,
+                        0,
+                        0..1,
+                    );
                 }
                 // Solid cone tip, the active translate handle.
-                gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
-                gizmo_pass
-                    .set_vertex_buffer(0, self.gizmo_buffers.cone_tip_vertex_buffer.slice(..));
+                gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
+                gizmo_pass.set_vertex_buffer(
+                    0,
+                    self.pipelines
+                        .gizmo_buffers
+                        .cone_tip_vertex_buffer
+                        .slice(..),
+                );
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.cone_tip_index_buffer.slice(..),
+                    self.pipelines.gizmo_buffers.cone_tip_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
                     let offset = (GIZMO_SLOTS.translate.slot(axis_idx as u64)
-                        * self.gizmo_buffers.entry_stride) as u32;
+                        * self.pipelines.gizmo_buffers.entry_stride)
+                        as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo.entries_bind_group,
+                        &self.pipelines.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.cone_tip_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(
+                        0..self.pipelines.gizmo_buffers.cone_tip_index_count,
+                        0,
+                        0..1,
+                    );
                 }
             }
             if render_rotate {
                 // 1-pixel arc polyline.
-                gizmo_pass.set_pipeline(&self.gizmo.line_pipeline);
-                gizmo_pass
-                    .set_vertex_buffer(0, self.gizmo_buffers.arc_line_vertex_buffer.slice(..));
+                gizmo_pass.set_pipeline(&self.pipelines.gizmo.line_pipeline);
+                gizmo_pass.set_vertex_buffer(
+                    0,
+                    self.pipelines
+                        .gizmo_buffers
+                        .arc_line_vertex_buffer
+                        .slice(..),
+                );
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.arc_line_index_buffer.slice(..),
+                    self.pipelines.gizmo_buffers.arc_line_index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
                     let offset = (GIZMO_SLOTS.rotate.slot(axis_idx as u64)
-                        * self.gizmo_buffers.entry_stride) as u32;
+                        * self.pipelines.gizmo_buffers.entry_stride)
+                        as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo.entries_bind_group,
+                        &self.pipelines.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.arc_line_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(
+                        0..self.pipelines.gizmo_buffers.arc_line_index_count,
+                        0,
+                        0..1,
+                    );
                 }
                 // Two-cone spindle at the arc's midpoint, the active
                 // rotate handle. Shares the per-axis camera-rolled
                 // `axis_rotation` so it lands at the visual centre of
                 // the arc.
-                gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
-                gizmo_pass
-                    .set_vertex_buffer(0, self.gizmo_buffers.rotate_cones_vertex_buffer.slice(..));
+                gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
+                gizmo_pass.set_vertex_buffer(
+                    0,
+                    self.pipelines
+                        .gizmo_buffers
+                        .rotate_cones_vertex_buffer
+                        .slice(..),
+                );
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.rotate_cones_index_buffer.slice(..),
+                    self.pipelines
+                        .gizmo_buffers
+                        .rotate_cones_index_buffer
+                        .slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
                     let offset = (GIZMO_SLOTS.rotate.slot(axis_idx as u64)
-                        * self.gizmo_buffers.entry_stride) as u32;
+                        * self.pipelines.gizmo_buffers.entry_stride)
+                        as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo.entries_bind_group,
+                        &self.pipelines.gizmo.entries_bind_group,
                         &[offset],
                     );
                     gizmo_pass.draw_indexed(
-                        0..self.gizmo_buffers.rotate_cones_index_count,
+                        0..self.pipelines.gizmo_buffers.rotate_cones_index_count,
                         0,
                         0..1,
                     );
                 }
             }
             if render_scale {
-                gizmo_pass.set_pipeline(&self.gizmo.triangle_pipeline);
-                gizmo_pass
-                    .set_vertex_buffer(0, self.gizmo_buffers.scale_cube_vertex_buffer.slice(..));
+                gizmo_pass.set_pipeline(&self.pipelines.gizmo.triangle_pipeline);
+                gizmo_pass.set_vertex_buffer(
+                    0,
+                    self.pipelines
+                        .gizmo_buffers
+                        .scale_cube_vertex_buffer
+                        .slice(..),
+                );
                 gizmo_pass.set_index_buffer(
-                    self.gizmo_buffers.scale_cube_index_buffer.slice(..),
+                    self.pipelines
+                        .gizmo_buffers
+                        .scale_cube_index_buffer
+                        .slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
                 for (axis_idx, _axis) in ALL_AXES.iter().enumerate() {
                     let offset = (GIZMO_SLOTS.scale_axis.slot(axis_idx as u64)
-                        * self.gizmo_buffers.entry_stride) as u32;
+                        * self.pipelines.gizmo_buffers.entry_stride)
+                        as u32;
                     gizmo_pass.set_bind_group(
                         GizmoBindGroup::Entries.idx(),
-                        &self.gizmo.entries_bind_group,
+                        &self.pipelines.gizmo.entries_bind_group,
                         &[offset],
                     );
-                    gizmo_pass.draw_indexed(0..self.gizmo_buffers.scale_cube_index_count, 0, 0..1);
+                    gizmo_pass.draw_indexed(
+                        0..self.pipelines.gizmo_buffers.scale_cube_index_count,
+                        0,
+                        0..1,
+                    );
                 }
             }
         }
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.core.queue.submit(std::iter::once(encoder.finish()));
 
         Some(target)
     }
@@ -1336,14 +1445,22 @@ mod gpu_integration_tests {
         let _ = renderer
             .render(None, TEST_BV, &camera, 64, 64)
             .expect("render at default envelope");
-        let cached_after_first = renderer.plate_buffers.as_ref().map(|b| b.build_volume);
+        let cached_after_first = renderer
+            .pipelines
+            .plate_buffers
+            .as_ref()
+            .map(|b| b.build_volume);
         assert_eq!(cached_after_first, Some(TEST_BV));
 
         let smaller = BuildVolume::new(50.0, 50.0, 50.0);
         let _ = renderer
             .render(None, smaller, &camera, 64, 64)
             .expect("render at smaller envelope");
-        let cached_after_second = renderer.plate_buffers.as_ref().map(|b| b.build_volume);
+        let cached_after_second = renderer
+            .pipelines
+            .plate_buffers
+            .as_ref()
+            .map(|b| b.build_volume);
         assert_eq!(cached_after_second, Some(smaller));
     }
 
