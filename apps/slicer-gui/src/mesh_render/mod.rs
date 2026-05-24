@@ -464,16 +464,7 @@ impl Renderer {
 
             self.record_plate_solid(&mut pass, plate_buffers);
             self.record_plate_top(&mut pass, plate_buffers);
-
-            // Cage: 12 wireframe edges sharing the plate vertex
-            // buffer; the line-list index buffer picks the cage
-            // corner range.
-            pass.set_pipeline(&self.pipelines.plate.line_pipeline);
-            pass.set_index_buffer(
-                plate_buffers.cage_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+            self.record_cage(&mut pass, plate_buffers);
 
             if scene_for_draws && let Some(inst) = installed {
                 pass.set_pipeline(&self.pipelines.mesh.pipeline);
@@ -872,6 +863,19 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..1);
+    }
+
+    /// Cage: 12 wireframe edges sharing the plate vertex buffer;
+    /// the line-list index buffer picks the cage corner range.
+    /// Relies on the vertex buffer and uniforms bind group set by
+    /// [`Self::record_plate_solid`].
+    fn record_cage(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        pass.set_pipeline(&self.pipelines.plate.line_pipeline);
+        pass.set_index_buffer(
+            plate_buffers.cage_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
     }
 }
 
