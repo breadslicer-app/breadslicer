@@ -5,16 +5,26 @@
 
 //! Hierarchical [`Scene`] aggregate and its mutation / validation
 //! API. Arena-backed; per-mesh AABB and bake helpers live in the
-//! sibling `scene_aabb` / `scene_bake` modules; typed edits in
-//! `scene_edit`.
+//! sibling [`aabb`] / [`bake`] modules; typed edits in [`edit`].
+
+pub mod aabb;
+pub mod bake;
+pub mod edit;
+pub mod error;
+pub mod fragment;
+pub mod node;
+pub mod validate;
+
+#[cfg(test)]
+mod tests_error;
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use crate::indexed_mesh::IndexedMesh;
-use crate::scene_error::SceneError;
-use crate::scene_node::{
+use crate::scene::error::SceneError;
+use crate::scene::node::{
     CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
 use crate::transform::Transform3D;
@@ -300,7 +310,7 @@ impl Scene {
     ///
     /// Use this when the id needs to exist before the node it will
     /// reference does, typically so the id can be embedded in a typed
-    /// edit (see `sc_mesh_core::scene_edit`) that the undo/redo
+    /// edit (see `sc_mesh_core::scene::edit`) that the undo/redo
     /// machinery replays against the same slot.
     ///
     /// The slot is permanently consumed: dropping the id without
@@ -336,7 +346,7 @@ impl Scene {
     ///
     /// Use this when the id needs to exist before the resource it
     /// will reference does, typically so the id can be embedded in a
-    /// typed edit (see `sc_mesh_core::scene_edit`) that the
+    /// typed edit (see `sc_mesh_core::scene::edit`) that the
     /// undo/redo machinery replays against the same slot. Mirrors
     /// [`Self::allocate_unbound_node_id`] for mesh-resource ids.
     ///
@@ -623,7 +633,7 @@ impl Scene {
     /// currently-empty node slot, and register it as a scene root.
     ///
     /// Paired with [`Self::remove_root_leaf`] so a typed edit (see
-    /// `sc_mesh_core::scene_edit`) can round-trip a paste insertion
+    /// `sc_mesh_core::scene::edit`) can round-trip a paste insertion
     /// through the undo/redo machinery while keeping the same
     /// [`NodeId`] across applies.
     ///

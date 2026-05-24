@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene_edit::SceneEdit;
+use sc_mesh_core::scene::edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};

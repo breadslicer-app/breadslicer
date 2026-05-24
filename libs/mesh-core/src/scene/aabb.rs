@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::aabb::Aabb;
 use crate::scene::Scene;
-use crate::scene_error::SceneError;
-use crate::scene_node::{LeafPayload, NodeId, NodeKind};
+use crate::scene::error::SceneError;
+use crate::scene::node::{LeafPayload, NodeId, NodeKind};
 use crate::transform::Transform3D;
 
 impl Scene {
@@ -109,7 +109,7 @@ mod scene_aabb_tests {
     use super::*;
     use crate::indexed_mesh::IndexedMesh;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene_node::{CsgOp, LeafPayload};
+    use crate::scene::node::{CsgOp, LeafPayload};
     use crate::transform::AffineTransform3D;
     use float_cmp::assert_approx_eq;
 

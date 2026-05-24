@@ -12,7 +12,7 @@
 //! fragment, allocates target ids in the destination scene's arenas,
 //! emits the matching `AddMeshResource` / `AddRootLeaf` (and later
 //! `AddGroup` / `AddCsg` / `AddInstance`) typed edits, and wraps the
-//! whole thing in a single [`crate::scene_edit::SceneEdit::Compound`].
+//! whole thing in a single [`crate::scene::edit::SceneEdit::Compound`].
 //!
 //! The current builder only populates the fragment with a single
 //! root leaf and a single mesh resource. The same type generalises
@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::scene::Scene;
-use crate::scene_node::LeafPayload;
+use crate::scene::node::LeafPayload;
 use crate::transform::Transform3D;
 
 /// Self-contained scene subgraph. The newtype around [`Scene`] makes
@@ -77,7 +77,7 @@ impl SceneFragment {
 mod scene_fragment_tests {
     use super::*;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene_node::NodeKind;
+    use crate::scene::node::NodeKind;
     use crate::transform::AffineTransform3D;
 
     fn triangle_arc() -> Arc<IndexedMesh> {

@@ -21,7 +21,7 @@ use std::rc::Rc;
 use anyhow::Result;
 use glam::Vec3;
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene_node::NodeId;
+use sc_mesh_core::scene::node::NodeId;
 use slint::wgpu_28::wgpu;
 
 use super::scene_upload::GpuScene;

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
-use sc_mesh_core::scene_node::LeafPayload;
+use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
     IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, Normal, Scene, SceneMetadata, Vertex,

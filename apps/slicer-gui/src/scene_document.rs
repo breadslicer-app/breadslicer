@@ -13,7 +13,7 @@
 //!
 //! Mutation goes through one path: [`SceneDocument::apply_edit`].
 //! It accepts a typed [`SceneEdit`] from
-//! [`sc_mesh_core::scene_edit`] and routes through
+//! [`sc_mesh_core::scene::edit`] and routes through
 //! [`SceneSpatial::apply_edit`], which keeps spatial caches in sync
 //! with the scene state. There is no closure-based mutation entry
 //! point: the cache layer would not be able to inspect a closure to
@@ -28,12 +28,12 @@ use std::sync::Arc;
 #[cfg(test)]
 use sc_mesh_core::Scene;
 use sc_mesh_core::SceneFragment;
-use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
+use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 
-pub(crate) use sc_mesh_core::scene_edit::SceneEdit;
+pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
 
 use crate::selection::{Selection, SelectionState};
 

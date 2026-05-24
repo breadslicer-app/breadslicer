@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::scene::Scene;
-use crate::scene_node::{MeshResourceId, NodeId};
+use crate::scene::node::{MeshResourceId, NodeId};
 use crate::transform::Transform3D;
 
 /// Typed scene mutation. The shared edit shape across the workspace:
@@ -235,8 +235,8 @@ mod scene_edit_tests {
     fn add_root_leaf_is_structural() {
         use std::num::NonZeroU32;
         let edit = SceneEdit::AddRootLeaf {
-            node_id: crate::scene_node::NodeId(NonZeroU32::new(1).unwrap()),
-            mesh: crate::scene_node::MeshResourceId(NonZeroU32::new(1).unwrap()),
+            node_id: crate::scene::node::NodeId(NonZeroU32::new(1).unwrap()),
+            mesh: crate::scene::node::MeshResourceId(NonZeroU32::new(1).unwrap()),
             local_transform: Transform3D::Identity,
         };
         assert!(edit.is_structural());
@@ -244,7 +244,7 @@ mod scene_edit_tests {
 
     #[test]
     fn compound_is_structural_iff_any_inner_is() {
-        let nid = crate::scene_node::NodeId(std::num::NonZeroU32::new(1).unwrap());
+        let nid = crate::scene::node::NodeId(std::num::NonZeroU32::new(1).unwrap());
         let only_set = SceneEdit::Compound(vec![SceneEdit::SetLocalTransform {
             node_id: nid,
             before: Transform3D::Identity,
@@ -259,7 +259,7 @@ mod scene_edit_tests {
             },
             SceneEdit::AddRootLeaf {
                 node_id: nid,
-                mesh: crate::scene_node::MeshResourceId(std::num::NonZeroU32::new(1).unwrap()),
+                mesh: crate::scene::node::MeshResourceId(std::num::NonZeroU32::new(1).unwrap()),
                 local_transform: Transform3D::Identity,
             },
         ]);

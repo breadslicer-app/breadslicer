@@ -13,7 +13,7 @@
 //! and the spatial cache that belongs to that mesh; mismatched
 //! pairings are structurally impossible.
 
-use sc_mesh_core::scene_edit::SceneEdit;
+use sc_mesh_core::scene::edit::SceneEdit;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
     Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, Scene, Vertex,

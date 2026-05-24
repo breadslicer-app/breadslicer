@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use crate::scene_node::{MeshResourceId, NodeId, SubtreeResourceId};
+use crate::scene::node::{MeshResourceId, NodeId, SubtreeResourceId};
 use crate::transform::TransformError;
 
 /// Failure modes of [`Scene`](crate::scene::Scene) mutators,

@@ -10,8 +10,8 @@ use std::collections::HashSet;
 use std::num::NonZeroU32;
 
 use crate::scene::Scene;
-use crate::scene_error::SceneError;
-use crate::scene_node::{CsgOp, LeafPayload, NodeId, NodeKind};
+use crate::scene::error::SceneError;
+use crate::scene::node::{CsgOp, LeafPayload, NodeId, NodeKind};
 
 impl Scene {
     pub(crate) fn expansion_successor(&self, node_idx: usize, child_i: usize) -> Option<NodeId> {

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene_node::LeafPayload;
+use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 
 use crate::build_volume::BuildVolume;

@@ -10,7 +10,7 @@ use sc_mesh_core::Aabb;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene_node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use slint::wgpu_28::wgpu;

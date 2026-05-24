@@ -9,7 +9,7 @@
 
 use sc_mesh_core::NodeId;
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
+use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
 use crate::MainWindow;

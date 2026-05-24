@@ -17,7 +17,7 @@
 
 pub(crate) mod placement;
 
-use sc_mesh_core::scene_node::{LeafPayload, NodeKind};
+use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{Aabb, SceneFragment};
 
@@ -136,7 +136,7 @@ mod clipboard_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene_node::LeafPayload;
+    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::{IndexedMesh, Scene};
 
     use crate::selection::{LeafId, Selection};

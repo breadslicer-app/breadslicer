@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene_node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
 use sc_slicer_gui::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;

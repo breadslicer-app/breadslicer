@@ -8,8 +8,8 @@
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
 use crate::scene::Scene;
-use crate::scene_error::SceneError;
-use crate::scene_node::{LeafPayload, Node, NodeId, NodeKind};
+use crate::scene::error::SceneError;
+use crate::scene::node::{LeafPayload, Node, NodeId, NodeKind};
 use crate::transform::AffineTransform3D;
 use crate::transform::Transform3D;
 
@@ -212,7 +212,7 @@ fn bake_into_affine(
 mod scene_bake_tests {
     use super::*;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene_node::{CsgOp, LeafPayload};
+    use crate::scene::node::{CsgOp, LeafPayload};
     use float_cmp::assert_approx_eq;
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
