@@ -4,8 +4,11 @@
  */
 
 //! On-disk application settings. Loaded once at startup and rewritten on
-//! every user-driven change. Silent fallback to defaults on any I/O or parse
-//! failure so first-run and corrupted-file cases both degrade gracefully.
+//! every user-driven change. Silent fallback to defaults on I/O errors so
+//! first-run cases degrade gracefully; a parse failure or schema-version
+//! mismatch additionally overwrites the on-disk file with fresh defaults
+//! (pre-alpha policy: bump [`APP_SETTINGS_SCHEMA_VERSION`] when the schema
+//! changes, no migration code).
 
 use std::fs;
 use std::io;
@@ -137,14 +140,40 @@ fn build_volume_is_default(bv: &BuildVolumeSetting) -> bool {
     *bv == BuildVolumeSetting::default()
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// Current schema version of the on-disk settings file. Bump this when
+/// the structure of `AppSettings` (or one of its nested settings types)
+/// changes in a way that an older or newer build cannot read. On load,
+/// a file whose version differs from this constant is replaced with a
+/// fresh defaults file; no migration code is kept.
+pub(crate) const APP_SETTINGS_SCHEMA_VERSION: u32 = 1;
+
+fn default_schema_version() -> u32 {
+    APP_SETTINGS_SCHEMA_VERSION
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct AppSettings {
+    /// On-disk schema version. Files predating this field are read with
+    /// the current version filled in by serde (treated as compatible);
+    /// once written, the field is always present.
+    #[serde(default = "default_schema_version")]
+    pub(crate) version: u32,
     #[serde(default)]
     pub appearance: Appearance,
     /// Omitted in TOML when the user has the hardcoded default, so a
     /// fresh config stays minimal.
     #[serde(default, skip_serializing_if = "build_volume_is_default")]
     build_volume: BuildVolumeSetting,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            version: APP_SETTINGS_SCHEMA_VERSION,
+            appearance: Appearance::default(),
+            build_volume: BuildVolumeSetting::default(),
+        }
+    }
 }
 
 impl AppSettings {
@@ -157,19 +186,48 @@ impl AppSettings {
 
     /// Same fallback semantics as `load`, but the caller chooses the
     /// file path. Used by tests; the production entry point
-    /// `load` resolves the user's config path and forwards.
+    /// `load` resolves the user's config path and forwards. A parse
+    /// failure or schema-version mismatch resets to defaults and
+    /// overwrites the on-disk file; an I/O failure (other than
+    /// `NotFound`) only resets in memory.
     pub(crate) fn load_from_path(path: &Path) -> Self {
         match fs::read_to_string(path) {
-            Ok(content) => toml::from_str::<AppSettings>(&content).unwrap_or_else(|err| {
-                eprintln!("Failed to parse {}: {err}", path.display());
-                Self::default()
-            }),
+            Ok(content) => match toml::from_str::<AppSettings>(&content) {
+                Ok(loaded) if loaded.version == APP_SETTINGS_SCHEMA_VERSION => loaded,
+                Ok(loaded) => {
+                    eprintln!(
+                        "Settings schema version in {} is {} (current is {}); resetting to defaults",
+                        path.display(),
+                        loaded.version,
+                        APP_SETTINGS_SCHEMA_VERSION,
+                    );
+                    Self::reset_on_disk(path)
+                }
+                Err(err) => {
+                    eprintln!(
+                        "Failed to parse {}: {err}; resetting to defaults",
+                        path.display(),
+                    );
+                    Self::reset_on_disk(path)
+                }
+            },
             Err(err) if err.kind() == io::ErrorKind::NotFound => Self::default(),
             Err(err) => {
                 eprintln!("Failed to read {}: {err}", path.display());
                 Self::default()
             }
         }
+    }
+
+    fn reset_on_disk(path: &Path) -> Self {
+        let fresh = Self::default();
+        if let Err(err) = fresh.save_to_path(path) {
+            eprintln!(
+                "Failed to overwrite {} with fresh defaults: {err}",
+                path.display(),
+            );
+        }
+        fresh
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -244,14 +302,22 @@ mod app_settings_tests {
     }
 
     #[test]
-    fn malformed_toml_logs_and_loads_defaults() {
+    fn malformed_toml_resets_and_overwrites_file() {
         // A parse failure is intentionally non-fatal: first-run / hand-
-        // edited typo cases must not refuse to launch the GUI.
+        // edited typo cases must not refuse to launch the GUI. The
+        // garbled file is replaced with a fresh defaults file so the
+        // next run starts from a known-good state.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         fs::write(&path, b"this is not valid TOML").unwrap();
         let s = AppSettings::load_from_path(&path);
         assert!(matches!(s.theme(), ThemePreference::System));
+        assert_eq!(s.version, APP_SETTINGS_SCHEMA_VERSION);
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
+            "expected garbled file to be replaced with defaults, got:\n{on_disk}"
+        );
     }
 
     #[test]
@@ -365,6 +431,99 @@ mod app_settings_tests {
         let loaded = AppSettings::load_from_path(&path);
         let bv = loaded.build_volume();
         assert_eq!(bv, BuildVolume::new(MIN_DIM_MM, 50.0, MAX_DIM_MM));
+    }
+
+    #[test]
+    fn default_carries_current_schema_version() {
+        assert_eq!(AppSettings::default().version, APP_SETTINGS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn saved_toml_includes_schema_version() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
+            "saved file must stamp the current schema version, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn save_then_load_preserves_schema_version() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn missing_version_field_loads_as_current() {
+        // Files written before this field existed do not carry a
+        // `version` key. Serde's default fills in the current schema
+        // version so the legacy file loads without triggering a reset.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(&path, "[appearance]\ntheme = \"dark\"\n").unwrap();
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+        assert!(matches!(loaded.theme(), ThemePreference::Dark));
+        // The legacy file is preserved verbatim (no rewrite happens
+        // until the user makes a change that triggers a save).
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("version ="), "got:\n{on_disk}");
+    }
+
+    #[test]
+    fn future_schema_version_resets_and_overwrites_file() {
+        // A settings file from a hypothetical future build (version
+        // ahead of the current one) is not migrated; the file is
+        // replaced with a fresh defaults file stamped at the current
+        // schema version.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let future = APP_SETTINGS_SCHEMA_VERSION + 999;
+        fs::write(
+            &path,
+            format!("version = {future}\n[appearance]\ntheme = \"dark\"\n"),
+        )
+        .unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(matches!(loaded.theme(), ThemePreference::System));
+        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
+            "expected file to be replaced with current version, got:\n{on_disk}"
+        );
+        assert!(
+            !on_disk.contains(&format!("version = {future}")),
+            "stale future version still present, got:\n{on_disk}"
+        );
+    }
+
+    #[test]
+    fn past_schema_version_resets_and_overwrites_file() {
+        // A settings file with a version below the current schema is
+        // also smashed; no migration code is kept in pre-alpha. `0`
+        // stands in for "any version older than the first real
+        // schema", which is the only direction below the current one.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(&path, "version = 0\n").unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
+            "expected file to be replaced with current version, got:\n{on_disk}"
+        );
     }
 
     #[test]
