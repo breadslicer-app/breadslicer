@@ -15,7 +15,7 @@
 use std::error::Error;
 use std::num::NonZeroU32;
 
-use crate::scene::SceneError;
+use crate::scene_error::SceneError;
 use crate::scene_node::{MeshResourceId, NodeId, SubtreeResourceId};
 use crate::transform::TransformError;
 

@@ -7,7 +7,8 @@
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
-use crate::scene::{Scene, SceneError};
+use crate::scene::Scene;
+use crate::scene_error::SceneError;
 use crate::scene_node::{LeafPayload, Node, NodeId, NodeKind};
 use crate::transform::AffineTransform3D;
 use crate::transform::Transform3D;

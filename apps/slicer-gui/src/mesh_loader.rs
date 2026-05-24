@@ -18,7 +18,8 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use sc_mesh_core::scene::{Scene, SceneError};
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene_error::SceneError;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::LoadedMesh;

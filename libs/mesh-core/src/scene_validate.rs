@@ -9,7 +9,8 @@
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 
-use crate::scene::{Scene, SceneError};
+use crate::scene::Scene;
+use crate::scene_error::SceneError;
 use crate::scene_node::{CsgOp, LeafPayload, NodeId, NodeKind};
 
 impl Scene {

@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use crate::aabb::Aabb;
-use crate::scene::{Scene, SceneError};
+use crate::scene::Scene;
+use crate::scene_error::SceneError;
 use crate::scene_node::{LeafPayload, NodeId, NodeKind};
 use crate::transform::Transform3D;
 
