@@ -8,10 +8,11 @@ use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 use sc_mesh_core::Scene;
+use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 
 use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};
-use crate::messages::LoadMeshWarning;
+use crate::messages::{LoadMeshWarning, SceneLoadWarning, SharedVertexLeaf};
 use crate::obj::Obj;
 use crate::ports::MeshReader;
 use crate::stl::{Stl, StlAscii, StlBin};
@@ -88,5 +89,38 @@ where
         }
         other => return Err(LoadMeshError::UnsupportedFormat(other)),
     };
+    if let Some(warning) = scene_shared_vertices_warning(&graph) {
+        warnings.push(LoadMeshWarning::Scene(warning));
+    }
     Ok(LoadedMesh { graph, warnings })
+}
+
+/// Resolves a `Scene::detect_shared_vertices` result into a
+/// scene-level warning payload, pairing each offending leaf's
+/// `NodeId` with its mesh-metadata name when present. Returns
+/// `None` when no leaves share vertices.
+fn scene_shared_vertices_warning(graph: &Scene) -> Option<SceneLoadWarning> {
+    let ids = graph.detect_shared_vertices();
+    if ids.is_empty() {
+        return None;
+    }
+    let leaves = ids
+        .into_iter()
+        .map(|node_id| {
+            let object_name = graph.node(node_id).and_then(|node| match &node.kind {
+                NodeKind::Leaf(LeafPayload::Mesh(arc)) => {
+                    arc.meta().as_ref().and_then(|m| m.name.clone())
+                }
+                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => graph
+                    .mesh_resource(*rid)
+                    .and_then(|mesh| mesh.meta().as_ref().and_then(|m| m.name.clone())),
+                _ => None,
+            });
+            SharedVertexLeaf {
+                node_id,
+                object_name,
+            }
+        })
+        .collect();
+    Some(SceneLoadWarning::SharedVertices { leaves })
 }

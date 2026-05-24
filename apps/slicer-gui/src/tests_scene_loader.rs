@@ -15,10 +15,21 @@
 
 use std::path::PathBuf;
 
-use sc_mesh_formats::messages::LoadObjWarning;
+use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::{NodeId, Scene};
+use sc_mesh_formats::messages::{LoadObjWarning, SceneLoadWarning, SharedVertexLeaf};
 
 use crate::error_dialog::DialogManager;
-use crate::scene_loader::{SceneLoader, describe_obj_warning};
+use crate::scene_loader::{SceneLoader, describe_obj_warning, describe_scene_warning};
+
+/// Allocates `count` fresh NodeIds out of a throw-away scene so
+/// tests don't depend on NodeId having a public raw constructor.
+fn fresh_node_ids(count: usize) -> Vec<NodeId> {
+    let mut graph = Scene::new();
+    (0..count)
+        .map(|_| graph.add_group(None, Transform3D::Identity))
+        .collect()
+}
 
 fn loader() -> SceneLoader {
     SceneLoader::new_for_test(DialogManager::new())
@@ -179,21 +190,41 @@ fn describe_skipped_unknown_directive() {
 }
 
 #[test]
-fn describe_shared_vertices_named_object_branch() {
-    let s = describe_obj_warning(&LoadObjWarning::SharedVertices {
-        object_name: Some("cube".to_string()),
-        shared_indices: vec![3, 5],
+fn describe_scene_shared_vertices_emits_each_object_name() {
+    let ids = fresh_node_ids(2);
+    let s = describe_scene_warning(&SceneLoadWarning::SharedVertices {
+        leaves: vec![
+            SharedVertexLeaf {
+                node_id: ids[0],
+                object_name: Some("cube".to_string()),
+            },
+            SharedVertexLeaf {
+                node_id: ids[1],
+                object_name: Some("sphere".to_string()),
+            },
+        ],
     });
-    assert!(s.contains("cube"));
-    assert!(s.contains("[3, 5]"));
+    assert!(s.contains("'cube'"), "{s}");
+    assert!(s.contains("'sphere'"), "{s}");
+    assert!(s.contains("share at least one vertex"), "{s}");
 }
 
 #[test]
-fn describe_shared_vertices_unnamed_object_branch() {
-    let s = describe_obj_warning(&LoadObjWarning::SharedVertices {
-        object_name: None,
-        shared_indices: vec![7, 9],
+fn describe_scene_shared_vertices_falls_back_to_node_id_when_nameless() {
+    let ids = fresh_node_ids(2);
+    let nameless = ids[0];
+    let s = describe_scene_warning(&SceneLoadWarning::SharedVertices {
+        leaves: vec![
+            SharedVertexLeaf {
+                node_id: nameless,
+                object_name: None,
+            },
+            SharedVertexLeaf {
+                node_id: ids[1],
+                object_name: Some("cube".to_string()),
+            },
+        ],
     });
-    assert!(s.contains("unnamed"));
-    assert!(s.contains("[7, 9]"));
+    assert!(s.contains(&format!("node {}", nameless.get())), "{s}");
+    assert!(s.contains("'cube'"), "{s}");
 }

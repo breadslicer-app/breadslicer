@@ -86,7 +86,7 @@ mod obj_dispatch_tests {
 
     use sc_mesh_formats::filetypes::MeshFileType;
     use sc_mesh_formats::load_mesh_from_reader;
-    use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
+    use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning, SceneLoadWarning};
 
     #[test]
     fn obj_propagates_warnings() {
@@ -112,6 +112,44 @@ mod obj_dispatch_tests {
             "expected SkippedTextureCoordinates warning, got {:?}",
             loaded.warnings
         );
+    }
+
+    #[test]
+    fn dispatcher_surfaces_shared_vertices_at_scene_level() {
+        // ObjectA and ObjectB both reference the OBJ global vertex 1.
+        // `read_obj` no longer emits a per-object warning for that;
+        // the dispatcher must run the scene-level detector and produce
+        // a single `LoadMeshWarning::Scene(SharedVertices)` carrying
+        // both leaves, named when their `o` line carried a name.
+        let obj = b"\
+o ObjectA
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o ObjectB
+v 1.0 1.0 0.0
+f 1 3 4
+";
+        let mut reader = Cursor::new(&obj[..]);
+        let loaded = load_mesh_from_reader(MeshFileType::Obj, &mut reader).unwrap();
+
+        let scene_warning = loaded
+            .warnings
+            .iter()
+            .find_map(|w| match w {
+                LoadMeshWarning::Scene(SceneLoadWarning::SharedVertices { leaves }) => Some(leaves),
+                _ => None,
+            })
+            .expect("scene-level SharedVertices warning must be emitted");
+
+        let names: Vec<Option<&str>> = scene_warning
+            .iter()
+            .map(|leaf| leaf.object_name.as_deref())
+            .collect();
+        assert!(names.contains(&Some("ObjectA")), "{names:?}");
+        assert!(names.contains(&Some("ObjectB")), "{names:?}");
+        assert_eq!(scene_warning.len(), 2, "{scene_warning:?}");
     }
 }
 

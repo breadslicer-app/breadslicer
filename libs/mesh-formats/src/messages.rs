@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use sc_mesh_core::NodeId;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadObjWarning {
     NoVertices,
@@ -39,13 +41,6 @@ pub enum LoadObjWarning {
         line: usize,
         directive: String,
     },
-    /// One or more vertices are shared between this object and a previously
-    /// loaded object.  The OBJ format allows this, but it usually indicates
-    /// that the file was not exported cleanly for use as separate meshes.
-    SharedVertices {
-        object_name: Option<String>,
-        shared_indices: Vec<u32>,
-    },
 }
 
 /// Warnings emitted by the STL readers (binary and ASCII).
@@ -59,8 +54,32 @@ pub enum LoadObjWarning {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadStlWarning {}
 
+/// One entry in a scene-level `SharedVertices` warning. Pairs the
+/// offending leaf's `NodeId` with the leaf's mesh-metadata name so
+/// display surfaces can show a human label without re-borrowing the
+/// scene.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SharedVertexLeaf {
+    pub node_id: NodeId,
+    pub object_name: Option<String>,
+}
+
+/// Warnings derived from the assembled scene after a successful read,
+/// regardless of source format. These observations live above the
+/// per-format parsers because they describe relationships between
+/// `SceneObject`s, not syntactic facts about the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SceneLoadWarning {
+    /// Two or more leaves carry coincident vertex coordinates
+    /// (bit-exact f32, with `-0.0` normalised to `0.0`). For OBJ
+    /// inputs this typically means the source file declared `v`
+    /// directives reused by multiple `o` blocks.
+    SharedVertices { leaves: Vec<SharedVertexLeaf> },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadMeshWarning {
     Obj(LoadObjWarning),
     Stl(LoadStlWarning),
+    Scene(SceneLoadWarning),
 }

@@ -7,73 +7,77 @@
 
 use std::io::Write;
 
-use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
+use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning, SceneLoadWarning};
 
 pub(crate) fn display_warnings(warnings: &[LoadMeshWarning], out: &mut dyn Write) {
     for warning in warnings {
-        let obj_warning = match warning {
-            LoadMeshWarning::Obj(w) => w,
+        match warning {
+            LoadMeshWarning::Obj(w) => display_obj_warning(w, out),
             LoadMeshWarning::Stl(stl) => match *stl {},
-        };
-        match obj_warning {
-            LoadObjWarning::NoVertices => {
-                let _ = writeln!(out, "WARNING: Loaded OBJ file has no vertices");
-            }
-            LoadObjWarning::NoFaces => {
-                let _ = writeln!(out, "WARNING: Loaded OBJ file has no faces");
-            }
-            LoadObjWarning::SkippedTextureCoordinates { line } => {
-                let _ = writeln!(out, "WARNING (line {line}): skipped texture coordinates");
-            }
-            LoadObjWarning::SkippedVertexNormal { line } => {
-                let _ = writeln!(out, "WARNING (line {line}): skipped vertex normal");
-            }
-            LoadObjWarning::SkippedGroup { line, name } => {
-                let _ = writeln!(out, "WARNING (line {line}): Skipped group '{name}'");
-            }
-            LoadObjWarning::SkippedSmoothingGroup { line } => {
-                let _ = writeln!(out, "WARNING (line {line}): Skipped smoothing group");
-            }
-            LoadObjWarning::SkippedMaterialReference { line, material } => {
-                let _ = writeln!(
-                    out,
-                    "WARNING (line {line}): Skipped material reference '{material}'"
-                );
-            }
-            LoadObjWarning::SkippedMaterialLibrary { line, path } => {
-                let _ = writeln!(
-                    out,
-                    "WARNING (line {line}): Skipped material library '{path}'"
-                );
-            }
-            LoadObjWarning::SkippedComment { line } => {
-                let _ = writeln!(out, "WARNING (line {line}): Skipped comment");
-            }
-            LoadObjWarning::SkippedUnknownDirective { line, directive } => {
-                let _ = writeln!(
-                    out,
-                    "WARNING (line {line}): Skipped OBJ directive '{directive}'"
-                );
-            }
-            LoadObjWarning::SharedVertices {
-                object_name,
-                shared_indices,
-            } => match object_name {
-                Some(name) => {
-                    let _ = writeln!(
-                        out,
-                        "WARNING: Object '{name}' shares global vertex indices with previously \
-                         loaded objects: {shared_indices:?}"
-                    );
-                }
-                None => {
-                    let _ = writeln!(
-                        out,
-                        "WARNING: An unnamed object shares global vertex indices with \
-                         previously loaded objects: {shared_indices:?}"
-                    );
-                }
-            },
+            LoadMeshWarning::Scene(w) => display_scene_warning(w, out),
+        }
+    }
+}
+
+fn display_obj_warning(warning: &LoadObjWarning, out: &mut dyn Write) {
+    match warning {
+        LoadObjWarning::NoVertices => {
+            let _ = writeln!(out, "WARNING: Loaded OBJ file has no vertices");
+        }
+        LoadObjWarning::NoFaces => {
+            let _ = writeln!(out, "WARNING: Loaded OBJ file has no faces");
+        }
+        LoadObjWarning::SkippedTextureCoordinates { line } => {
+            let _ = writeln!(out, "WARNING (line {line}): skipped texture coordinates");
+        }
+        LoadObjWarning::SkippedVertexNormal { line } => {
+            let _ = writeln!(out, "WARNING (line {line}): skipped vertex normal");
+        }
+        LoadObjWarning::SkippedGroup { line, name } => {
+            let _ = writeln!(out, "WARNING (line {line}): Skipped group '{name}'");
+        }
+        LoadObjWarning::SkippedSmoothingGroup { line } => {
+            let _ = writeln!(out, "WARNING (line {line}): Skipped smoothing group");
+        }
+        LoadObjWarning::SkippedMaterialReference { line, material } => {
+            let _ = writeln!(
+                out,
+                "WARNING (line {line}): Skipped material reference '{material}'"
+            );
+        }
+        LoadObjWarning::SkippedMaterialLibrary { line, path } => {
+            let _ = writeln!(
+                out,
+                "WARNING (line {line}): Skipped material library '{path}'"
+            );
+        }
+        LoadObjWarning::SkippedComment { line } => {
+            let _ = writeln!(out, "WARNING (line {line}): Skipped comment");
+        }
+        LoadObjWarning::SkippedUnknownDirective { line, directive } => {
+            let _ = writeln!(
+                out,
+                "WARNING (line {line}): Skipped OBJ directive '{directive}'"
+            );
+        }
+    }
+}
+
+fn display_scene_warning(warning: &SceneLoadWarning, out: &mut dyn Write) {
+    match warning {
+        SceneLoadWarning::SharedVertices { leaves } => {
+            let labels: Vec<String> = leaves
+                .iter()
+                .map(|leaf| match &leaf.object_name {
+                    Some(name) => format!("'{name}'"),
+                    None => format!("node {}", leaf.node_id.get()),
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "WARNING: Objects share at least one vertex coordinate: {}",
+                labels.join(", ")
+            );
         }
     }
 }
@@ -81,7 +85,20 @@ pub(crate) fn display_warnings(warnings: &[LoadMeshWarning], out: &mut dyn Write
 #[cfg(test)]
 mod display_warnings_tests {
     use super::display_warnings;
-    use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
+    use sc_mesh_core::transform::Transform3D;
+    use sc_mesh_core::{NodeId, Scene};
+    use sc_mesh_formats::messages::{
+        LoadMeshWarning, LoadObjWarning, SceneLoadWarning, SharedVertexLeaf,
+    };
+
+    /// Allocates `count` fresh NodeIds out of a throw-away scene so
+    /// tests don't depend on NodeId having a public raw constructor.
+    fn fresh_node_ids(count: usize) -> Vec<NodeId> {
+        let mut graph = Scene::new();
+        (0..count)
+            .map(|_| graph.add_group(None, Transform3D::Identity))
+            .collect()
+    }
 
     fn render(warnings: &[LoadMeshWarning]) -> String {
         let mut buf = Vec::new();
@@ -119,14 +136,6 @@ mod display_warnings_tests {
                 line: 93,
                 directive: "vt2".to_string(),
             },
-            LoadObjWarning::SharedVertices {
-                object_name: Some("ObjA".to_string()),
-                shared_indices: vec![5, 7],
-            },
-            LoadObjWarning::SharedVertices {
-                object_name: None,
-                shared_indices: vec![1, 2, 3],
-            },
         ]
         .into_iter()
         .map(LoadMeshWarning::Obj)
@@ -134,7 +143,7 @@ mod display_warnings_tests {
 
         let out = render(&warnings);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 12, "one line per warning, got: {out}");
+        assert_eq!(lines.len(), 10, "one line per warning, got: {out}");
 
         assert!(lines[0].contains("no vertices"));
         assert!(lines[1].contains("no faces"));
@@ -162,19 +171,47 @@ mod display_warnings_tests {
                 && lines[9].contains("OBJ directive")
                 && lines[9].contains("vt2")
         );
-        assert!(
-            lines[10].contains("'ObjA'")
-                && lines[10].contains("shares global vertex indices")
-                && lines[10].contains("[5, 7]"),
-            "{}",
-            lines[10]
-        );
-        assert!(
-            lines[11].contains("unnamed object")
-                && lines[11].contains("shares global vertex indices")
-                && lines[11].contains("[1, 2, 3]"),
-            "{}",
-            lines[11]
-        );
+    }
+
+    #[test]
+    fn scene_shared_vertices_uses_names_when_present() {
+        let ids = fresh_node_ids(2);
+        let warning = LoadMeshWarning::Scene(SceneLoadWarning::SharedVertices {
+            leaves: vec![
+                SharedVertexLeaf {
+                    node_id: ids[0],
+                    object_name: Some("ObjA".to_string()),
+                },
+                SharedVertexLeaf {
+                    node_id: ids[1],
+                    object_name: Some("ObjB".to_string()),
+                },
+            ],
+        });
+        let out = render(&[warning]);
+        assert!(out.contains("'ObjA'"), "{out}");
+        assert!(out.contains("'ObjB'"), "{out}");
+        assert!(out.contains("share at least one vertex"), "{out}");
+    }
+
+    #[test]
+    fn scene_shared_vertices_falls_back_to_node_id_when_nameless() {
+        let ids = fresh_node_ids(2);
+        let nameless = ids[0];
+        let warning = LoadMeshWarning::Scene(SceneLoadWarning::SharedVertices {
+            leaves: vec![
+                SharedVertexLeaf {
+                    node_id: nameless,
+                    object_name: None,
+                },
+                SharedVertexLeaf {
+                    node_id: ids[1],
+                    object_name: Some("ObjB".to_string()),
+                },
+            ],
+        });
+        let out = render(&[warning]);
+        assert!(out.contains(&format!("node {}", nameless.get())), "{out}");
+        assert!(out.contains("'ObjB'"), "{out}");
     }
 }

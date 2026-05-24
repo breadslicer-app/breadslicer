@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
@@ -90,44 +90,20 @@ fn flush_pending_object_as_mesh(
     Some(IndexedMesh::new(meta, local_vertices, remapped_faces))
 }
 
-/// Checks for shared global vertex indices between the pending object and
-/// already-flushed objects, emits a warning if any are found, then flushes
-/// the pending object as an inline-mesh leaf under `root` and records its
-/// indices as used. Returns `true` when a leaf was attached.
-fn check_sharing_and_attach(
+/// Flushes the pending object as an inline-mesh leaf under `root`.
+/// Returns `true` when a leaf was attached. Cross-object vertex
+/// sharing is a scene-level observation now and is detected
+/// post-load by [`Scene::detect_shared_vertices`], not here.
+fn flush_pending_object(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
-    used_global_indices: &mut HashSet<VertexIndex>,
     graph: &mut Scene,
     root: NodeId,
-    warnings: &mut Vec<LoadObjWarning>,
 ) -> bool {
     if current_faces.is_empty() {
         return false;
     }
-
-    let face_global_indices: HashSet<VertexIndex> = current_faces
-        .iter()
-        .flat_map(|f| f.vertices.iter().copied())
-        .collect();
-
-    let mut shared: Vec<VertexIndex> = face_global_indices
-        .intersection(used_global_indices)
-        .copied()
-        .collect();
-
-    if !shared.is_empty() {
-        shared.sort_unstable();
-        // The warning carries raw `u32`s for presentation. Convert
-        // at the boundary so the warning's wire shape stays
-        // unchanged for callers that print it (CLI / GUI).
-        warnings.push(LoadObjWarning::SharedVertices {
-            object_name: current_name.clone(),
-            shared_indices: shared.into_iter().map(u32::from).collect(),
-        });
-    }
-
     let Some(mesh) = flush_pending_object_as_mesh(global_vertices, current_faces, current_name)
     else {
         return false;
@@ -142,7 +118,6 @@ fn check_sharing_and_attach(
     graph
         .add_child(root, leaf)
         .expect("freshly allocated leaf has no parent and is not a root");
-    used_global_indices.extend(face_global_indices);
     true
 }
 
@@ -183,10 +158,6 @@ where
     // Count of leaves actually attached to the graph; drives the
     // empty-file NoVertices / NoFaces warnings emitted at the end.
     let mut leaf_count: usize = 0;
-
-    // Global vertex indices consumed by already-flushed objects, used to detect
-    // cross-object vertex sharing.
-    let mut used_global_indices: HashSet<VertexIndex> = HashSet::new();
 
     // File-level header: leading `#` comments before the first non-comment line.
     let mut header_comment: Option<String> = None;
@@ -229,14 +200,12 @@ where
                 header_ended = true;
 
                 // Finalise the previous pending object (if it has faces).
-                if check_sharing_and_attach(
+                if flush_pending_object(
                     &global_vertices,
                     &mut current_faces,
                     current_name.take(),
-                    &mut used_global_indices,
                     &mut graph,
                     root,
-                    &mut warnings,
                 ) {
                     leaf_count += 1;
                 }
@@ -388,14 +357,12 @@ where
     }
 
     // Finalise the last pending object.
-    if check_sharing_and_attach(
+    if flush_pending_object(
         &global_vertices,
         &mut current_faces,
         current_name,
-        &mut used_global_indices,
         &mut graph,
         root,
-        &mut warnings,
     ) {
         leaf_count += 1;
     }
@@ -1310,6 +1277,9 @@ f 4 5 6
     fn two_objects_sharing_global_vertices() {
         // ObjectB's face references vertices defined before ObjectA's `o` line.
         // Vertex re-indexing must produce correct local indices for both objects.
+        // Cross-object sharing is a scene-level observation now and is not
+        // surfaced by `read_obj`; the dispatcher tests in
+        // `tests/load_mesh_dispatch.rs` pin that variant.
         let obj = "\
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0
@@ -1321,14 +1291,7 @@ o ObjectB
 f 1 3 4
 ";
         let (graph, warnings) = read_obj_from_str(obj).unwrap();
-        // ObjectA uses global {0,1,2}; ObjectB uses global {0,2,3} → shared {0,2}.
-        assert_eq!(
-            warnings,
-            vec![LoadObjWarning::SharedVertices {
-                object_name: Some("ObjectB".into()),
-                shared_indices: vec![0, 2],
-            }]
-        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         let leaf_ids = collect_leaf_ids(&graph);
         assert_eq!(leaf_ids.len(), 2);
 
@@ -1367,33 +1330,6 @@ f 2 3 1
         // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
         assert_eq!(mesh.vertices().len(), 3);
         assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
-    }
-
-    #[test]
-    fn shared_vertices_between_objects_emits_warning() {
-        // Vertex 0 (global index 0) is used by both ObjectA and ObjectB.
-        let obj = "\
-o ObjectA
-v 0.0 0.0 0.0
-v 1.0 0.0 0.0
-v 0.0 1.0 0.0
-f 1 2 3
-o ObjectB
-v 1.0 1.0 0.0
-f 1 3 4
-";
-        let (graph, warnings) = read_obj_from_str(obj).unwrap();
-        assert_eq!(collect_leaf_ids(&graph).len(), 2);
-
-        // Global vertex 0 (first `v`) is shared: ObjectA uses {0,1,2},
-        // ObjectB uses {0,2,3}.  Shared = {0, 2}.
-        assert_eq!(
-            warnings,
-            vec![LoadObjWarning::SharedVertices {
-                object_name: Some("ObjectB".into()),
-                shared_indices: vec![0, 2],
-            }]
-        );
     }
 }
 

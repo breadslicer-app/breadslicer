@@ -42,7 +42,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning};
+use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning, SceneLoadWarning};
 use sc_mesh_spatial::SceneSpatial;
 use slint::ComponentHandle;
 use slint::wgpu_28::wgpu;
@@ -419,16 +419,16 @@ impl SceneLoader {
     }
 }
 
-// Load-time warnings (currently OBJ-only) are surfaced to stderr until
-// the UI grows a place to show them.
+// Load-time warnings are surfaced to stderr until the UI grows a
+// place to show them.
 fn log_load_warnings(path: &Path, warnings: &[LoadMeshWarning]) {
     for warning in warnings {
-        match warning {
-            LoadMeshWarning::Obj(w) => {
-                eprintln!("WARNING [{}]: {}", path.display(), describe_obj_warning(w));
-            }
+        let line = match warning {
+            LoadMeshWarning::Obj(w) => describe_obj_warning(w),
             LoadMeshWarning::Stl(stl) => match *stl {},
-        }
+            LoadMeshWarning::Scene(w) => describe_scene_warning(w),
+        };
+        eprintln!("WARNING [{}]: {}", path.display(), line);
     }
 }
 
@@ -458,17 +458,24 @@ pub(crate) fn describe_obj_warning(warning: &LoadObjWarning) -> String {
         LoadObjWarning::SkippedUnknownDirective { line, directive } => {
             format!("line {line}: skipped OBJ directive '{directive}'")
         }
-        LoadObjWarning::SharedVertices {
-            object_name,
-            shared_indices,
-        } => match object_name {
-            Some(name) => format!(
-                "object '{name}' shares global vertex indices with previously loaded objects: {shared_indices:?}"
-            ),
-            None => format!(
-                "an unnamed object shares global vertex indices with previously loaded objects: {shared_indices:?}"
-            ),
-        },
+    }
+}
+
+pub(crate) fn describe_scene_warning(warning: &SceneLoadWarning) -> String {
+    match warning {
+        SceneLoadWarning::SharedVertices { leaves } => {
+            let labels: Vec<String> = leaves
+                .iter()
+                .map(|leaf| match &leaf.object_name {
+                    Some(name) => format!("'{name}'"),
+                    None => format!("node {}", leaf.node_id.get()),
+                })
+                .collect();
+            format!(
+                "objects share at least one vertex coordinate: {}",
+                labels.join(", "),
+            )
+        }
     }
 }
 
