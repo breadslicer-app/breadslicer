@@ -463,16 +463,7 @@ impl Renderer {
             });
 
             self.record_plate_solid(&mut pass, plate_buffers);
-
-            // Plate top: inner grid + outer rounded border at Z = 0.
-            // Depth-write off so a model resting at Z = 0 always
-            // wins z-fighting against the plate top.
-            pass.set_pipeline(&self.pipelines.plate.top_pipeline);
-            pass.set_index_buffer(
-                plate_buffers.top_index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..1);
+            self.record_plate_top(&mut pass, plate_buffers);
 
             // Cage: 12 wireframe edges sharing the plate vertex
             // buffer; the line-list index buffer picks the cage
@@ -867,6 +858,20 @@ impl Renderer {
         );
         pass.set_stencil_reference(0);
         pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
+    }
+
+    /// Plate top: inner grid + outer rounded border at Z = 0.
+    /// Depth-write off so a model resting at Z = 0 always wins
+    /// z-fighting against the plate top. Relies on the vertex buffer
+    /// and uniforms bind group set by [`Self::record_plate_solid`];
+    /// must be called after it within the same render pass.
+    fn record_plate_top(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        pass.set_pipeline(&self.pipelines.plate.top_pipeline);
+        pass.set_index_buffer(
+            plate_buffers.top_index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        pass.draw_indexed(0..plate_buffers.top_index_count, 0, 0..1);
     }
 }
 
