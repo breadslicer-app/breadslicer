@@ -20,10 +20,11 @@ type Result<T> = std::result::Result<T, LoadStlError>;
 /// 200M triangles is ~10 GB of payload (50 bytes per triangle), well
 /// above any legitimate engineering or scan mesh. The cap is a backstop
 /// against a malicious or corrupt header for consumers that operate
-/// without an earlier file-size gate (CLI, direct API). The GUI
-/// enforces its own tighter 2 GiB file-size cap upstream (see
-/// `MAX_MESH_FILE_SIZE_MIB` in the GUI crate), so this parser cap
-/// only fires when that gate is absent.
+/// without an earlier file-size gate (CLI, direct API). Most callers
+/// pass [`DEFAULT_MAX_MESH_FILE_SIZE_BYTES`](crate::DEFAULT_MAX_MESH_FILE_SIZE_BYTES)
+/// (2 GiB) to `load_mesh_from_path`, which gates upstream of this
+/// parser cap; the cap only fires when that gate is absent or set
+/// higher.
 const MAX_BINARY_STL_TRIANGLES: usize = 200_000_000;
 
 fn read_exact_section<R: Read>(reader: &mut R, buf: &mut [u8], what: &'static str) -> Result<()> {

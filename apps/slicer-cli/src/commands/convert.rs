@@ -10,6 +10,7 @@ use std::fs::copy;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
 };
@@ -17,9 +18,7 @@ use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
-use crate::filesystem::{
-    MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path, validate_targetfile_path,
-};
+use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 pub(crate) fn convert(
     source: OsString,
@@ -59,7 +58,7 @@ pub(crate) fn convert(
     let loaded = load_mesh_from_path(
         &source_path,
         Some(source_format),
-        Some(MAX_INPUT_FILE_SIZE_BYTES),
+        Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES),
     )?;
     display_warnings(&loaded.warnings, &mut std::io::stderr());
 

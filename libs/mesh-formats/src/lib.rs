@@ -31,3 +31,12 @@ mod tests_write_scene_error;
 mod tests_write_stl_error;
 
 pub use loader::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};
+
+/// Default hard upper bound on the on-disk size of a mesh file the
+/// loader will accept, in bytes. 2 GiB sits well beyond anything a
+/// resin-printer slice job needs and protects callers (CLI argv, GUI
+/// drag-and-drop) from spending arbitrary time on an accidental huge
+/// pick. Callers may pass a smaller cap to
+/// [`load_mesh_from_path`](crate::loader::load_mesh_from_path) if
+/// their use case warrants it.
+pub const DEFAULT_MAX_MESH_FILE_SIZE_BYTES: u64 = 2048 * 1024 * 1024;

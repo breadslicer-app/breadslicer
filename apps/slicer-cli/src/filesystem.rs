@@ -9,14 +9,6 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 
-/// Hard upper bound on the on-disk size of input meshes the CLI will
-/// load. Matches the GUI's `MAX_MESH_FILE_SIZE_MIB` so both surfaces
-/// agree on what counts as "too large". Passed straight through to
-/// `sc_mesh_formats::load_mesh_from_path` as the `max_file_size`
-/// argument.
-pub(crate) const MAX_INPUT_FILE_SIZE_MIB: u64 = 2048;
-pub(crate) const MAX_INPUT_FILE_SIZE_BYTES: u64 = MAX_INPUT_FILE_SIZE_MIB * 1024 * 1024;
-
 pub(crate) fn validate_sourcefile_path(path: PathBuf) -> Result<PathBuf> {
     let resolved = path.canonicalize().map_err(|e| {
         anyhow!(

@@ -13,6 +13,7 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{FixFacesOptions, MeshFix};
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
 };
@@ -21,9 +22,7 @@ use sc_mesh_formats::load_mesh_from_path;
 use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
-use crate::filesystem::{
-    MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path, validate_targetfile_path,
-};
+use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
 
 /// Repairs the user requested when running `fix`. Each flag enables an
 /// independent pass over the mesh; passes that find nothing to repair
@@ -57,7 +56,11 @@ pub(crate) fn fix(
         None => infer_mesh_file_format_from_extension(&target_path)?,
     })?;
 
-    let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
+    let loaded = load_mesh_from_path(
+        &source_path,
+        source_format,
+        Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES),
+    )?;
     display_warnings(&loaded.warnings, out);
     let mut graph = loaded.graph;
 

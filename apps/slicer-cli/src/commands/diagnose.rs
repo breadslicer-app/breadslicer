@@ -16,11 +16,12 @@ use sc_mesh_core::indexed_mesh::{
 };
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_path;
 
 use crate::commands::mesh_loader::display_warnings;
-use crate::filesystem::{MAX_INPUT_FILE_SIZE_BYTES, validate_sourcefile_path};
+use crate::filesystem::validate_sourcefile_path;
 
 pub(crate) fn diagnose(
     source: OsString,
@@ -28,7 +29,11 @@ pub(crate) fn diagnose(
     out: &mut dyn Write,
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
-    let loaded = load_mesh_from_path(&source_path, source_format, Some(MAX_INPUT_FILE_SIZE_BYTES))?;
+    let loaded = load_mesh_from_path(
+        &source_path,
+        source_format,
+        Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES),
+    )?;
     display_warnings(&loaded.warnings, out);
 
     let mut detected_problems = false;

@@ -22,6 +22,7 @@ use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_spatial::SceneSpatial;
 use slint::wgpu_28::wgpu;
@@ -31,12 +32,14 @@ use crate::i18n::ctr;
 use crate::mesh_render::GpuScene;
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
-// Reject mesh files larger than this before spawning the loader
-// worker, so the UI doesn't sit in `loading=true` for hours (or OOM)
-// on an accidental huge pick. 2 GiB is already well beyond anything a
-// resin printer slices.
-pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = 2048;
-pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = MAX_MESH_FILE_SIZE_MIB * 1024 * 1024;
+// Reject mesh files larger than the loader's default cap before
+// spawning the worker, so the UI doesn't sit in `loading=true` for
+// hours (or OOM) on an accidental huge pick. Derived from
+// `sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES` so the user-
+// facing MiB figure in the error message stays in lockstep with the
+// byte cap the loader itself enforces.
+pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
+pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = MAX_MESH_FILE_SIZE_BYTES / (1024 * 1024);
 
 /// Lower-case file extensions the GUI's mesh loader can currently
 /// read. Single source of truth: the file dialog's "All supported
