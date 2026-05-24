@@ -37,6 +37,7 @@ use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
 use sc_mesh_core::NodeId;
 use sc_mesh_core::aabb::arvo_transformed_aabb;
+use sc_mesh_core::geometry::DEGENERACY_SIN_SQ_THRESHOLD;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
@@ -53,13 +54,14 @@ const EPSILON: f32 = 1e-7;
 /// the Möller-Trumbore front-face / degeneracy gate. The picker's
 /// determinant `det = edge1 · (direction × edge2)` uses a unit
 /// `direction`, so `|det| <= |edge1| · |edge2|`; the squared ratio
-/// is dimensionless and bounded by 1. Matching mesh-core's
+/// is dimensionless and bounded by 1. Sharing mesh-core's
 /// `DEGENERACY_SIN_SQ_THRESHOLD` lets the picker work uniformly
 /// across mesh scales: the previous absolute 1e-7 floor on `det`
 /// rejected legitimate front-face hits whenever triangle edges were
 /// short (e.g. a model exported in metres but loaded as if in mm),
-/// because `|det|` shrinks with edge length squared.
-const DET_SIN_SQ_THRESHOLD: f32 = 1e-12;
+/// because `|det|` shrinks with edge length squared. f32 form
+/// because the picker's MT determinant and edge lengths are f32.
+const DET_SIN_SQ_THRESHOLD: f32 = DEGENERACY_SIN_SQ_THRESHOLD as f32;
 
 /// Object-space ray plus the conversion factor needed to bring an MT
 /// `t` back to world space. `det_sign` is `+1.0` when the parent

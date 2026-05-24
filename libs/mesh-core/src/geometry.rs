@@ -39,7 +39,7 @@ impl std::error::Error for GeometryError {}
 /// θ ≳ 5.7×10⁻⁵° at this value: well above f64 noise (~1e-16) and the
 /// f32-quantisation floor of the inputs (~1e-14), well below the
 /// smallest corner angle a real mesh would have.
-pub(crate) const DEGENERACY_SIN_SQ_THRESHOLD: f64 = 1e-12;
+pub const DEGENERACY_SIN_SQ_THRESHOLD: f64 = 1e-12;
 
 /// Tolerance for "is this f64 magnitude squared close enough to 1?" in
 /// the unit-norm check on stored f32 normals widened to f64.
