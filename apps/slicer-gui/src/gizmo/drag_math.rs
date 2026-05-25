@@ -125,11 +125,11 @@ pub fn scale_factor_along_axis(
     (current_proj / start_proj).clamp(EPS_SCALE, 1.0 / EPS_SCALE)
 }
 
-/// Uniform scale factor for a drag of the centre cube (or the
-/// per-axis cube with the proportional-scale modifier held). Driven
-/// by the screen-space distance between the cursor and the
-/// projected pivot: the factor is the ratio of the current distance
-/// to the press distance, clamped into `[EPS_SCALE, 1/EPS_SCALE]`.
+/// Uniform scale factor for a drag of the per-axis cube with the
+/// proportional-scale modifier (Shift) held. Driven by the
+/// screen-space distance between the cursor and the projected pivot:
+/// the factor is the ratio of the current distance to the press
+/// distance, clamped into `[EPS_SCALE, 1/EPS_SCALE]`.
 ///
 /// `pivot_screen_*` must be the projection of the world-space
 /// pivot into the same logical-pixel coordinate space as the
