@@ -27,7 +27,9 @@ use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 /// World-space pivot for the gizmo: the local-AABB centre of the
 /// leaf, transformed by the leaf's world transform. Returns `None`
 /// when the leaf has no vertices, an out-of-bounds resource
-/// reference, or `node_id` does not name a reachable leaf; all of
+/// reference, `node_id` does not name a reachable leaf, or the
+/// resulting pivot has any non-finite component (a NaN/Inf vertex
+/// in the mesh, or a transform that overflows to infinity); all of
 /// which render the gizmo unattachable.
 pub fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
     let query = spatial.leaf(node_id)?;
@@ -35,7 +37,10 @@ pub fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
     let lmin = Vec3::from(aabb.min().coords());
     let lmax = Vec3::from(aabb.max().coords());
     let local_centre = (lmin + lmax) * 0.5;
-    Some(match &query.world_transform() {
+    if !local_centre.is_finite() {
+        return None;
+    }
+    let pivot = match &query.world_transform() {
         Transform3D::Identity => local_centre,
         Transform3D::Affine(a) => {
             let v = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new([
@@ -45,7 +50,8 @@ pub fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
             ]));
             Vec3::from(v.coords())
         }
-    })
+    };
+    pivot.is_finite().then_some(pivot)
 }
 
 /// World-units-per-pixel × the handle's screen-pixel length, so that
@@ -154,6 +160,58 @@ mod pivot_tests {
         );
         let root_id = spatial.graph().roots()[0];
         assert!(pivot_for_leaf(&spatial, root_id).is_none());
+    }
+
+    #[test]
+    fn pivot_for_mesh_with_nan_vertex_is_none() {
+        // Every vertex carries NaN on the same axis so the AABB on
+        // that axis stays NaN (f32::min / f32::max silently drop a
+        // NaN operand when paired with a finite one, so a single bad
+        // vertex would not reach the pivot).
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh(
+                [f32::NAN, 0.0, 0.0],
+                [f32::NAN, 1.0, 0.0],
+                [f32::NAN, 0.0, 1.0],
+            ),
+            Transform3D::Identity,
+        );
+        assert!(pivot_for_leaf(&spatial, first_leaf(&spatial)).is_none());
+    }
+
+    #[test]
+    fn pivot_for_mesh_with_pos_inf_vertex_is_none() {
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh([f32::INFINITY, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            Transform3D::Identity,
+        );
+        assert!(pivot_for_leaf(&spatial, first_leaf(&spatial)).is_none());
+    }
+
+    #[test]
+    fn pivot_for_mesh_with_neg_inf_vertex_is_none() {
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh(
+                [0.0, 0.0, 0.0],
+                [1.0, f32::NEG_INFINITY, 0.0],
+                [0.0, 1.0, 0.0],
+            ),
+            Transform3D::Identity,
+        );
+        assert!(pivot_for_leaf(&spatial, first_leaf(&spatial)).is_none());
+    }
+
+    #[test]
+    fn pivot_for_finite_mesh_with_non_finite_transform_is_none() {
+        // The local AABB centre is finite, but the affine transform
+        // pushes the result to non-finite. The guard has to catch the
+        // post-transform value, not just the local one.
+        let non_finite_translation = AffineTransform3D::from_translation([f64::INFINITY, 0.0, 0.0]);
+        let spatial = spatial_with_one_leaf(
+            triangle_mesh([-1.0, -2.0, -3.0], [3.0, 0.0, 0.0], [-1.0, 4.0, 5.0]),
+            Transform3D::Affine(non_finite_translation),
+        );
+        assert!(pivot_for_leaf(&spatial, first_leaf(&spatial)).is_none());
     }
 }
 
