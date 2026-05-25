@@ -27,7 +27,7 @@ pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
 /// Hit-test the three world-aligned axis handles against `ray`.
 /// Returns the front-most pickable axis (smallest positive `t` on
 /// the ray) whose cone cylinder the ray intersects, paired with that
-/// `t`, or `None`. The active region is the cone tip *only* — the
+/// `t`, or `None`. The active region is the cone tip *only*; the
 /// shaft line below the cone is decorative.
 ///
 /// The returned `t` is exposed so the controller can arbitrate
@@ -153,8 +153,8 @@ fn ray_hits_finite_cylinder(
 
 /// Whether a rotate arc is grabbable. Returns `false` when the camera
 /// ray sits within 8° of the arc's plane: `|axis · ray.direction|`
-/// drops below `cos(82°)` and the perpendicular-plane intersection
-/// — the basis of both hit-test and drag math — degenerates. The
+/// drops below `cos(82°)` and the perpendicular-plane intersection,
+/// the basis of both hit-test and drag math, degenerates. The
 /// renderer should grey the arc in that state so the user sees why
 /// it is unresponsive.
 pub fn arc_pickable(ray: &Ray, axis: Axis) -> bool {
@@ -168,10 +168,17 @@ pub fn arc_pickable(ray: &Ray, axis: Axis) -> bool {
 /// the axis-perpendicular plane through `pivot`) centred on the
 /// projection of the eye-to-pivot direction onto that plane.
 ///
-/// Returns `None` when the camera sits on the axis itself — the
-/// in-plane direction degenerates and the controller's `arc_pickable`
-/// gate is expected to have rejected the axis upstream.
+/// Returns `None` when either:
+/// - `arc_radius_world <= 0.0`: the midpoint would collapse onto
+///   `pivot`, and the caller's `(midpoint - pivot).normalize()`
+///   would produce NaN.
+/// - the camera sits on the axis itself: the in-plane direction
+///   degenerates, and the controller's `arc_pickable` gate is
+///   expected to have rejected the axis upstream.
 fn arc_midpoint_world(ray: &Ray, pivot: Vec3, axis: Axis, arc_radius_world: f32) -> Option<Vec3> {
+    if arc_radius_world <= 0.0 {
+        return None;
+    }
     let a = axis.world_dir();
     let to_camera = ray.origin - pivot;
     let in_plane = to_camera - a * to_camera.dot(a);
@@ -193,7 +200,7 @@ fn arc_midpoint_world(ray: &Ray, pivot: Vec3, axis: Axis, arc_radius_world: f32)
 ///
 /// Returns the entry parameter `t` if the ray crosses the bounding
 /// cylinder, or `None` if it misses. The torus *tube* itself is no
-/// longer a click target — it's a visual aid that connects the
+/// longer a click target; it's a visual aid that connects the
 /// two-cone spindle around the rotation axis.
 pub fn ray_hits_rotate_cones(
     ray: &Ray,
@@ -226,7 +233,7 @@ pub fn ray_hits_rotate_cones(
 /// `arc_radius_world` is the major-circle radius (typically
 /// `gizmo_scale * ROTATE_ARC_RADIUS_FRACTION`); `cone_length_world`
 /// is each cone's length along the axis; `cone_radius_world` is the
-/// shared cone base radius — both follow the per-frame world-per-
+/// shared cone base radius; both follow the per-frame world-per-
 /// pixel ratio so the cones keep a constant on-screen size.
 pub fn rotate_hit_test(
     ray: &Ray,
@@ -325,7 +332,7 @@ mod axis_pickable_tests {
 
     #[test]
     fn lockout_is_symmetric_in_axis_direction() {
-        // Ray pointing along -X is just as locked-out as +X — the
+        // Ray pointing along -X is just as locked-out as +X; the
         // dot-product magnitude check is sign-agnostic.
         assert!(!axis_pickable(&ray_along(-Vec3::X), Axis::X));
     }
@@ -379,7 +386,7 @@ mod ray_hits_finite_cylinder_tests {
 
     #[test]
     fn translate_cone_region_rejects_shaft_clicks() {
-        // Translate hit uses s ∈ [length, length·1.25] — clicks on
+        // Translate hit uses s ∈ [length, length·1.25]; clicks on
         // the shaft (s in [0, length]) must miss. Pin the contract.
         // length = 1.0; ray crosses (0.5, 0, *) at s = 0.5.
         let ray = Ray {
@@ -415,7 +422,7 @@ mod hit_test_tests {
 
     #[test]
     fn x_axis_ray_picks_x_handle() {
-        // Ray crosses (1.1, 0, 0) — inside the cone region
+        // Ray crosses (1.1, 0, 0), inside the cone region
         // (s ∈ [1.0, 1.25]).
         let ray = Ray {
             origin: Vec3::new(1.1, 0.0, 5.0),
@@ -430,7 +437,7 @@ mod hit_test_tests {
     #[test]
     fn shaft_line_clicks_miss_translate_handle() {
         // Click on the visible shaft line (s ∈ [0, 1.0)) must NOT
-        // start a translate drag — the shaft is decorative; only the
+        // start a translate drag; the shaft is decorative, only the
         // cone tip is the active translate handle. The midpoint
         // (s = 0.5) belongs to the per-axis scale cube anyway.
         let ray = Ray {
@@ -445,7 +452,7 @@ mod hit_test_tests {
         // Both X and Y cones near the cone region. Construct a ray
         // that hits the X cone (s ≈ 1.1 along +X). The Y cone is
         // around (0, 1.1, *), which the ray (offset 1.1 in x) is
-        // far from — Y misses, X wins.
+        // far from: Y misses, X wins.
         let ray = Ray {
             origin: Vec3::new(1.1, 0.05, 5.0),
             direction: -Vec3::Z,
@@ -458,7 +465,7 @@ mod hit_test_tests {
 
     #[test]
     fn locked_out_axis_is_not_picked() {
-        // Ray pointing nearly along +X — X is locked out by the
+        // Ray pointing nearly along +X: X is locked out by the
         // 8° threshold in `axis_pickable`.
         // A barely-perpendicular component still places the ray
         // close enough to the X handle that the cylinder math would
@@ -471,7 +478,7 @@ mod hit_test_tests {
         };
         // We don't assert non-None for a lock-out-disabled axis;
         // we assert it's not X. Y/Z might or might not be hit
-        // depending on the geometry — the only contract is X is
+        // depending on the geometry; the only contract is X is
         // forbidden.
         let picked = hit_test(&ray, Vec3::ZERO, 1.0, 0.05).map(|(a, _)| a);
         assert_ne!(picked, Some(Axis::X));
@@ -500,7 +507,7 @@ mod arc_pickable_tests {
     #[test]
     fn ray_in_arc_plane_is_locked_out() {
         // X-axis arc lives in the YZ plane. A ray along +Y lies
-        // exactly in that plane — the arc is edge-on.
+        // exactly in that plane; the arc is edge-on.
         assert!(!arc_pickable(&ray_along(Vec3::Y), Axis::X));
         assert!(!arc_pickable(&ray_along(Vec3::Z), Axis::X));
     }
@@ -525,7 +532,7 @@ mod arc_pickable_tests {
 
     #[test]
     fn lockout_is_symmetric_in_axis_direction() {
-        // Ray along -X is just as pickable as +X — the
+        // Ray along -X is just as pickable as +X; the
         // dot-product magnitude is sign-agnostic.
         assert!(arc_pickable(&ray_along(-Vec3::X), Axis::X));
     }
@@ -565,10 +572,49 @@ mod ray_hits_rotate_cones_tests {
     }
 
     #[test]
+    fn arc_midpoint_rejects_zero_radius() {
+        // Zero radius collapses the midpoint onto the pivot, which
+        // would make the caller's `(midpoint - pivot).normalize()`
+        // produce NaN. The helper must reject this up front.
+        let ray = Ray {
+            origin: Vec3::new(5.0, 0.1, 0.0),
+            direction: (Vec3::new(0.0, 1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
+        };
+        assert!(arc_midpoint_world(&ray, Vec3::ZERO, Axis::X, 0.0).is_none());
+    }
+
+    #[test]
+    fn arc_midpoint_rejects_negative_radius() {
+        // A negative radius is geometrically nonsensical and would
+        // place the midpoint on the far side of the pivot from the
+        // camera. The helper must reject it.
+        let ray = Ray {
+            origin: Vec3::new(5.0, 0.1, 0.0),
+            direction: (Vec3::new(0.0, 1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
+        };
+        assert!(arc_midpoint_world(&ray, Vec3::ZERO, Axis::X, -1.0).is_none());
+    }
+
+    #[test]
+    fn rotate_cones_reject_zero_radius_without_nan() {
+        // Regression for GG-H-1: a zero `arc_radius_world` used to
+        // make `ray_hits_rotate_cones` compute
+        // `(pivot - pivot).normalize()` (NaN), then feed those NaNs
+        // through the cylinder math. The fix in `arc_midpoint_world`
+        // makes the `?` short-circuit on the first line, so the hit
+        // test returns `None` deterministically.
+        let ray = Ray {
+            origin: Vec3::new(5.0, 0.1, 0.0),
+            direction: (Vec3::new(0.0, 1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
+        };
+        assert!(ray_hits_rotate_cones(&ray, Vec3::ZERO, Axis::X, 0.0, 0.18, 0.07).is_none());
+    }
+
+    #[test]
     fn ray_far_from_midpoint_misses() {
         // Camera at (5, 0.1, 0), arc midpoint at world (0, 1, 0). A
-        // ray crossing (0, -1, 0) — the *back* side of the rotation
-        // axis, 180° away — is far from the midpoint cone spindle.
+        // ray crossing (0, -1, 0), the *back* side of the rotation
+        // axis, 180° away, is far from the midpoint cone spindle.
         let ray = Ray {
             origin: Vec3::new(5.0, 0.1, 0.0),
             direction: (Vec3::new(0.0, -1.0, 0.0) - Vec3::new(5.0, 0.1, 0.0)).normalize(),
@@ -620,8 +666,8 @@ mod rotate_hit_test_tests {
     #[test]
     fn locked_out_axis_is_skipped() {
         // X arc lives in the YZ plane; ray inside that plane is
-        // edge-on — `arc_pickable` rejects X. Y/Z may or may not be
-        // hit; the only contract is X is forbidden.
+        // edge-on, so `arc_pickable` rejects X. Y/Z may or may not
+        // be hit; the only contract is X is forbidden.
         let ray = Ray {
             origin: Vec3::new(0.0, 5.0, 0.0),
             direction: -Vec3::Y,
@@ -732,7 +778,7 @@ mod scale_hit_test_tests {
 
     #[test]
     fn locked_out_axis_cube_is_skipped() {
-        // Ray nearly along +X — X axis is lock-out; the X cube must
+        // Ray nearly along +X: X axis is lock-out, the X cube must
         // not be returned even if the ray geometrically crosses it.
         let theta = 5.0_f32.to_radians();
         let dir = Vec3::new(theta.cos(), 0.0, theta.sin()).normalize();
