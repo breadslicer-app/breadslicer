@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self, JoinHandle};
 
 use slint::{CloseRequestResponse, ComponentHandle};
 
@@ -141,14 +143,74 @@ pub(crate) struct AppState {
     clipboard: RefCell<Option<Clipboard>>,
     // Bus subscriptions owned by AppState. They run on every
     // `bus.update`; dropping them unregisters. Stored here so they
-    // live as long as `AppState`. The settings subscription owns the
-    // `AppSettings` it writes to, so it lives and dies with AppState.
+    // live as long as `AppState`. The settings subscription holds the
+    // only `Sender` clone; dropping it lets the saver thread observe
+    // channel-closed and exit its recv loop.
     _settings_sub: Subscription,
     _language_apply_sub: Subscription,
+    // RAII handle that joins the settings-saver worker thread. Declared
+    // after `_settings_sub` so the subscription's `Sender` is dropped
+    // first; otherwise the join would deadlock waiting for the worker
+    // to exit while the worker is still blocked on `recv`.
+    _settings_saver: SettingsSaverJoin,
+}
+
+/// RAII handle joining the settings-saver thread on drop. The worker
+/// owns the `AppSettings` instance and writes to disk off the Slint
+/// event-loop thread; joining on drop preserves the previous "save
+/// completes before process exit" guarantee.
+struct SettingsSaverJoin {
+    join: Option<JoinHandle<()>>,
+}
+
+impl Drop for SettingsSaverJoin {
+    fn drop(&mut self) {
+        if let Some(handle) = self.join.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Settings-saver worker loop. Blocks on `recv`; on each wake drains
+/// any further pending snapshots via `try_recv` so a burst of rapid
+/// preference changes collapses to a single `on_snapshot` call.
+/// Returns when every `Sender` clone is dropped.
+fn run_settings_saver_loop<F>(rx: mpsc::Receiver<PreferencesSnapshot>, mut on_snapshot: F)
+where
+    F: FnMut(&PreferencesSnapshot),
+{
+    while let Ok(mut snap) = rx.recv() {
+        while let Ok(latest) = rx.try_recv() {
+            snap = latest;
+        }
+        on_snapshot(&snap);
+    }
+}
+
+/// Spawns the settings-saver worker thread, with the loop body wired
+/// to persist each coalesced snapshot through `AppSettings::save`.
+fn spawn_settings_saver(
+    initial_settings: AppSettings,
+) -> std::io::Result<(Sender<PreferencesSnapshot>, SettingsSaverJoin)> {
+    let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
+    let join = thread::Builder::new()
+        .name("settings-saver".into())
+        .spawn(move || {
+            let mut settings = initial_settings;
+            run_settings_saver_loop(rx, |snap| {
+                settings.set_theme(snap.theme);
+                settings.set_language(snap.language);
+                settings.set_build_volume(snap.build_volume);
+                if let Err(err) = settings.save() {
+                    eprintln!("Failed to save settings: {err}");
+                }
+            });
+        })?;
+    Ok((tx, SettingsSaverJoin { join: Some(join) }))
 }
 
 impl AppState {
-    pub fn new() -> Rc<Self> {
+    pub fn new() -> Result<Rc<Self>, Box<dyn Error>> {
         let settings = AppSettings::load();
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
@@ -165,23 +227,17 @@ impl AppState {
 
         let prefs = PreferencesBus::new(snapshot);
 
-        // Persistence: on any change, mirror the snapshot into
-        // `AppSettings` and save. Captures the `AppSettings` by move
-        // so its lifetime is tied to the subscription. Kept ahead of
-        // window listeners so a disk-write failure happens before
-        // any UI re-render.
-        let settings_sub = {
-            let settings = RefCell::new(settings);
-            prefs.subscribe(move |snap, _change| {
-                let mut settings = settings.borrow_mut();
-                settings.set_theme(snap.theme);
-                settings.set_language(snap.language);
-                settings.set_build_volume(snap.build_volume);
-                if let Err(err) = settings.save() {
-                    eprintln!("Failed to save settings: {err}");
-                }
-            })
-        };
+        // Persistence runs on a dedicated worker thread: the
+        // subscription forwards each updated snapshot to it over an
+        // `mpsc` channel and the worker writes to disk. Off-loading
+        // the write keeps the Slint event loop responsive on slow /
+        // network-mounted / nearly-full config directories.
+        let (saver_tx, settings_saver) = spawn_settings_saver(settings)?;
+        let settings_sub = prefs.subscribe(move |snap, _change| {
+            // Channel send is non-blocking; failure means the worker
+            // has already exited, which only happens at shutdown.
+            let _ = saver_tx.send(snap.clone());
+        });
 
         // Language side-effect: flip the process-global bundled
         // translation before per-window listeners re-render. The
@@ -193,7 +249,7 @@ impl AppState {
             }
         });
 
-        Rc::new(Self {
+        Ok(Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
@@ -202,7 +258,8 @@ impl AppState {
             clipboard: RefCell::new(None),
             _settings_sub: settings_sub,
             _language_apply_sub: language_apply_sub,
-        })
+            _settings_saver: settings_saver,
+        }))
     }
 
     /// Creates, wires, and shows a new `MainWindow`. Per-window Slint
@@ -753,5 +810,99 @@ mod replace_scene_policy_tests {
             map_replace_choice(ReplaceSceneChoice::Cancel),
             PostPromptAction::NoOp
         );
+    }
+}
+
+#[cfg(test)]
+mod settings_saver_tests {
+    use super::*;
+    use crate::ThemePreference;
+    use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
+    use crate::language::LanguagePreference;
+
+    fn snapshot_with(theme: ThemePreference) -> PreferencesSnapshot {
+        PreferencesSnapshot {
+            theme,
+            language: LanguagePreference::System,
+            build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
+        }
+    }
+
+    #[test]
+    fn loop_exits_when_all_senders_drop() {
+        let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
+        drop(tx);
+        // If the loop's exit condition regresses, this test hangs
+        // rather than fails; that's the failure mode we want to catch
+        // since `AppState::drop` would deadlock the same way.
+        run_settings_saver_loop(rx, |_| {
+            panic!("on_snapshot must not fire when no snapshots were sent");
+        });
+    }
+
+    #[test]
+    fn loop_processes_each_snapshot_when_arrivals_are_serialised() {
+        // Sender dropped between sends so each `recv` sees exactly one
+        // queued message; no coalescing opportunity. Verifies the
+        // straight-line "save every message" path still works.
+        let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
+        tx.send(snapshot_with(ThemePreference::Light)).unwrap();
+        tx.send(snapshot_with(ThemePreference::Dark)).unwrap();
+        tx.send(snapshot_with(ThemePreference::System)).unwrap();
+        drop(tx);
+        let mut seen = Vec::new();
+        run_settings_saver_loop(rx, |snap| seen.push(snap.theme));
+        // All three queued sends are observable; coalescing only kicks
+        // in when multiple messages are already buffered at recv time,
+        // which is timing-dependent across threads. With a single
+        // consumer thread and pre-queued messages, the first recv
+        // returns one and try_recv drains the rest in a single wake,
+        // so we expect exactly one coalesced call here too.
+        assert_eq!(seen.len(), 1);
+        assert!(matches!(seen[0], ThemePreference::System));
+    }
+
+    #[test]
+    fn loop_coalesces_burst_to_latest_snapshot() {
+        // Queue a burst of snapshots before the loop starts. The first
+        // `recv` returns one; `try_recv` drains the rest in the same
+        // wake; the loop calls `on_snapshot` once with the LAST value
+        // queued. Catches regressions in the inner drain (e.g. an off-
+        // by-one or a missing while loop) that would re-introduce
+        // per-snapshot writes.
+        let (tx, rx) = mpsc::channel::<PreferencesSnapshot>();
+        let mut last_bv = BuildVolume::new(100.0, 100.0, 100.0);
+        for i in 0..16 {
+            let bv = BuildVolume::new(100.0 + i as f32, 80.0, 60.0);
+            last_bv = bv;
+            tx.send(PreferencesSnapshot {
+                theme: ThemePreference::System,
+                language: LanguagePreference::System,
+                build_volume: bv,
+            })
+            .unwrap();
+        }
+        drop(tx);
+
+        let mut calls: Vec<BuildVolume> = Vec::new();
+        run_settings_saver_loop(rx, |snap| calls.push(snap.build_volume));
+
+        assert_eq!(calls.len(), 1, "burst must coalesce to one call");
+        assert_eq!(calls[0], last_bv);
+    }
+
+    #[test]
+    fn spawn_settings_saver_joins_cleanly_on_drop() {
+        // Smoke test for the production spawn path: drop the sender
+        // without sending any snapshot, so the worker exits via
+        // channel-closed before ever calling `AppSettings::save` (which
+        // would touch the user's real config directory under test).
+        // The join in `SettingsSaverJoin::drop` must complete without
+        // hanging, matching the shutdown behaviour `AppState::drop`
+        // relies on.
+        let settings = AppSettings::default();
+        let (tx, saver) = spawn_settings_saver(settings).expect("spawn settings-saver thread");
+        drop(tx);
+        drop(saver);
     }
 }

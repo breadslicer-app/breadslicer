@@ -96,7 +96,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         })
         .select()?;
 
-    let app = AppState::new();
+    let app = AppState::new()?;
 
     // OS "Open With…" / file-association support on Linux + Windows:
     // every positional argument that names a supported mesh file gets
