@@ -10,9 +10,10 @@
 //! (pre-alpha policy: bump [`APP_SETTINGS_SCHEMA_VERSION`] when the schema
 //! changes, no migration code).
 
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -243,7 +244,7 @@ impl AppSettings {
             fs::create_dir_all(parent)?;
         }
         let content = toml::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(path, content)
+        write_atomically(path, content.as_bytes())
     }
 
     pub fn theme(&self) -> ThemePreference {
@@ -274,6 +275,59 @@ impl AppSettings {
 fn settings_path() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|d| d.config_dir().join(SETTINGS_FILENAME))
+}
+
+/// Process-wide counter that disambiguates concurrent atomic writes
+/// from inside the same process (parallel test threads in particular).
+static ATOMIC_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn atomic_temp_path(target: &Path) -> io::Result<PathBuf> {
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| io::Error::other("settings path has no file name"))?
+        .to_string_lossy()
+        .into_owned();
+    let parent = match target.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let pid = std::process::id();
+    let token = ATOMIC_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    Ok(parent.join(format!(".{file_name}.tmp.{pid}.{token}")))
+}
+
+/// Writes `contents` to `target` atomically: opens a freshly named temp
+/// file next to the target with `create_new(true)`, writes + flushes +
+/// fsyncs it, then renames over the target. On any failure the temp
+/// file is removed and the previous target (if any) is left intact, so
+/// a crash mid-write cannot truncate the user's settings.
+fn write_atomically(target: &Path, contents: &[u8]) -> io::Result<()> {
+    let temp_path = atomic_temp_path(target)?;
+
+    let inner = (|| -> io::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        file.write_all(contents)?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    match inner {
+        Ok(()) => match fs::rename(&temp_path, target) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let _ = fs::remove_file(&temp_path);
+                Err(err)
+            }
+        },
+        Err(err) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(err)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -523,6 +577,31 @@ mod app_settings_tests {
         assert!(
             on_disk.contains(&format!("version = {APP_SETTINGS_SCHEMA_VERSION}")),
             "expected file to be replaced with current version, got:\n{on_disk}"
+        );
+    }
+
+    #[test]
+    fn save_to_path_leaves_no_temp_file_on_success() {
+        // The atomic-write helper places a `.settings.toml.tmp.<pid>.<n>`
+        // file next to the target and renames it into place. A successful
+        // save must leave exactly the target behind, with no leftover
+        // temp file polluting the config directory across repeated saves.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+
+        let s = AppSettings::default();
+        s.save_to_path(&path).unwrap();
+        s.save_to_path(&path).unwrap();
+        s.save_to_path(&path).unwrap();
+
+        let entries: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![std::ffi::OsString::from("settings.toml")],
+            "expected only the target file, got {entries:?}",
         );
     }
 
