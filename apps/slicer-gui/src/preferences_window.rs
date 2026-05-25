@@ -74,7 +74,7 @@ fn commit_axis_handler(
                 }
             }
             AxisCommit::Commit(new_bv) => {
-                bus.update(|snap| {
+                bus.update(move |snap| {
                     snap.build_volume = new_bv;
                     PreferencesChange::BuildVolume
                 });
@@ -118,7 +118,7 @@ pub(crate) fn build_preferences_window(
     prefs.on_theme_changed({
         let bus = bus.clone();
         move |new_theme| {
-            bus.update(|snap| {
+            bus.update(move |snap| {
                 snap.theme = new_theme;
                 PreferencesChange::Theme
             });
@@ -129,7 +129,7 @@ pub(crate) fn build_preferences_window(
         let bus = bus.clone();
         move |index| {
             let new_language = LanguagePreference::from_combo_index(index);
-            bus.update(|snap| {
+            bus.update(move |snap| {
                 snap.language = new_language;
                 PreferencesChange::Language
             });
@@ -155,7 +155,7 @@ pub(crate) fn build_preferences_window(
     prefs.on_reset_build_volume_requested({
         let bus = bus.clone();
         move || {
-            bus.update(|snap| {
+            bus.update(move |snap| {
                 snap.build_volume = HARDCODED_DEFAULT_BUILD_VOLUME;
                 PreferencesChange::BuildVolume
             });

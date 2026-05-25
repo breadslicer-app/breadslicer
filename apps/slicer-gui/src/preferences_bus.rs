@@ -23,7 +23,7 @@
 //! own `Subscription` alongside the Slint handle so the listener is
 //! automatically removed when the window is closed.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::ThemePreference;
@@ -48,6 +48,7 @@ pub(crate) enum PreferencesChange {
 }
 
 type Listener = Rc<dyn Fn(&PreferencesSnapshot, &PreferencesChange)>;
+type DeferredUpdate = Box<dyn FnOnce(&mut PreferencesSnapshot) -> PreferencesChange>;
 
 struct BusInner {
     snapshot: PreferencesSnapshot,
@@ -57,6 +58,8 @@ struct BusInner {
 
 pub(crate) struct PreferencesBus {
     inner: RefCell<BusInner>,
+    dispatching: Cell<bool>,
+    pending: RefCell<Vec<DeferredUpdate>>,
 }
 
 impl PreferencesBus {
@@ -67,6 +70,8 @@ impl PreferencesBus {
                 next_id: 0,
                 listeners: Vec::new(),
             }),
+            dispatching: Cell::new(false),
+            pending: RefCell::new(Vec::new()),
         })
     }
 
@@ -80,13 +85,40 @@ impl PreferencesBus {
     /// Mutates the snapshot via `f` and notifies listeners with the
     /// change the caller reports. Listeners are cloned out of the
     /// inner state before dispatch so a listener can freely call back
-    /// into `subscribe` / `snapshot` without re-borrowing the cell.
-    /// Listeners must *not* call `update` re-entrantly: we don't
-    /// queue nested updates and the behaviour is undefined.
+    /// into `subscribe` / `snapshot` / `update` without re-borrowing
+    /// the cell.
+    ///
+    /// Reentrant `update` calls (from within `f` or from a listener
+    /// callback) are queued and drained after the in-flight dispatch
+    /// finishes, in registration order. This preserves the temporal
+    /// order of updates as observed by listeners.
     pub fn update<F>(&self, f: F)
     where
-        F: FnOnce(&mut PreferencesSnapshot) -> PreferencesChange,
+        F: FnOnce(&mut PreferencesSnapshot) -> PreferencesChange + 'static,
     {
+        if self.dispatching.get() {
+            self.pending.borrow_mut().push(Box::new(f));
+            return;
+        }
+
+        self.dispatching.set(true);
+        let _guard = DispatchingGuard {
+            flag: &self.dispatching,
+        };
+
+        self.dispatch_one(Box::new(f));
+        loop {
+            let drained: Vec<DeferredUpdate> = self.pending.borrow_mut().drain(..).collect();
+            if drained.is_empty() {
+                break;
+            }
+            for deferred in drained {
+                self.dispatch_one(deferred);
+            }
+        }
+    }
+
+    fn dispatch_one(&self, f: DeferredUpdate) {
         let (snap, change, listeners) = {
             let mut inner = self.inner.borrow_mut();
             let change = f(&mut inner.snapshot);
@@ -114,6 +146,19 @@ impl PreferencesBus {
             id,
             bus: Rc::downgrade(self),
         }
+    }
+}
+
+/// Clears the `dispatching` flag on drop so an unwinding panic in a
+/// closure or listener cannot leave the bus stuck in the "queue every
+/// new update" state.
+struct DispatchingGuard<'a> {
+    flag: &'a Cell<bool>,
+}
+
+impl Drop for DispatchingGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.set(false);
     }
 }
 
@@ -151,7 +196,7 @@ mod preferences_bus_tests {
     }
 
     fn trigger_theme(bus: &PreferencesBus, theme: ThemePreference) {
-        bus.update(|snap| {
+        bus.update(move |snap| {
             snap.theme = theme;
             PreferencesChange::Theme
         });
@@ -307,7 +352,7 @@ mod preferences_bus_tests {
         };
 
         let new_bv = BuildVolume::new(150.0, 80.0, 160.0);
-        bus.update(|snap| {
+        bus.update(move |snap| {
             snap.build_volume = new_bv;
             PreferencesChange::BuildVolume
         });
@@ -326,5 +371,56 @@ mod preferences_bus_tests {
         drop(bus);
         // sub now holds a dangling Weak; its Drop must silently no-op.
         drop(sub);
+    }
+
+    #[test]
+    fn update_from_within_closure_does_not_panic() {
+        let bus = PreferencesBus::new(initial());
+        let bus_for_closure = bus.clone();
+        bus.update(move |snap| {
+            snap.theme = ThemePreference::Dark;
+            bus_for_closure.update(move |snap| {
+                snap.theme = ThemePreference::Light;
+                PreferencesChange::Theme
+            });
+            PreferencesChange::Theme
+        });
+        assert!(matches!(bus.snapshot().theme, ThemePreference::Light));
+    }
+
+    #[test]
+    fn update_from_listener_preserves_dispatch_order() {
+        let bus = PreferencesBus::new(initial());
+        let history: Rc<RefCell<Vec<ThemePreference>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let _re_entrant_sub = {
+            let bus_for_listener = bus.clone();
+            let triggered = Rc::new(Cell::new(false));
+            bus.subscribe(move |snap, change| {
+                if *change == PreferencesChange::Theme
+                    && matches!(snap.theme, ThemePreference::Dark)
+                    && !triggered.get()
+                {
+                    triggered.set(true);
+                    bus_for_listener.update(move |snap| {
+                        snap.theme = ThemePreference::Light;
+                        PreferencesChange::Theme
+                    });
+                }
+            })
+        };
+        let _observer_sub = {
+            let history = history.clone();
+            bus.subscribe(move |snap, _| history.borrow_mut().push(snap.theme))
+        };
+
+        trigger_theme(&bus, ThemePreference::Dark);
+
+        assert_eq!(
+            *history.borrow(),
+            vec![ThemePreference::Dark, ThemePreference::Light],
+            "observer must see updates in the temporal order they were issued",
+        );
+        assert!(matches!(bus.snapshot().theme, ThemePreference::Light));
     }
 }
