@@ -172,7 +172,11 @@ impl GizmoFsm {
 
                 let op = match winner {
                     HandleHit::Translate(axis) => {
-                        let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
+                        // `closest_point_on_axis` returns `None` only inside
+                        // the translate lock-out, which `hit_test` already
+                        // rejected; bail defensively if it slips through,
+                        // leaving the press as a click candidate.
+                        let anchor = gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis)?;
                         DragOp::Translate { axis, anchor }
                     }
                     HandleHit::Rotate(axis) => {
@@ -190,7 +194,7 @@ impl GizmoFsm {
                     }
                     HandleHit::ScaleAxis(axis) => {
                         let start_anchor =
-                            gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis);
+                            gizmo::drag_math::closest_point_on_axis(&ray, pivot, axis)?;
                         // The uniform-branch anchors are captured at press as
                         // well, even when `proportional` starts false; that
                         // way a mid-drag Shift press flips the formula

@@ -1571,9 +1571,10 @@ mod viewport_click_tests {
         let fov_y = default_fov_y();
         let press_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1);
         let release_ray = picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1);
-        let press_anchor = gizmo::drag_math::closest_point_on_axis(&press_ray, Vec3::ZERO, Axis::X);
+        let press_anchor =
+            gizmo::drag_math::closest_point_on_axis(&press_ray, Vec3::ZERO, Axis::X).unwrap();
         let release_anchor =
-            gizmo::drag_math::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X);
+            gizmo::drag_math::closest_point_on_axis(&release_ray, Vec3::ZERO, Axis::X).unwrap();
         let expected = release_anchor - press_anchor;
 
         ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());
@@ -1611,12 +1612,14 @@ mod viewport_click_tests {
             &picking::ray_from_pixel(&cam, fov_y, vw, vh, press.0, press.1),
             Vec3::ZERO,
             Axis::X,
-        );
+        )
+        .unwrap();
         let release_anchor = gizmo::drag_math::closest_point_on_axis(
             &picking::ray_from_pixel(&cam, fov_y, vw, vh, release.0, release.1),
             Vec3::ZERO,
             Axis::X,
-        );
+        )
+        .unwrap();
         let expected = release_anchor - press_anchor;
 
         ctrl.on_pointer_down(ScreenPoint::new(press.0, press.1), no_mods());

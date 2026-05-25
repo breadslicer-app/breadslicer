@@ -127,7 +127,7 @@ pub(super) fn apply_drag_move(
 ) -> Option<(Transform3D, DragOp)> {
     match op {
         DragOp::Translate { axis, anchor } => {
-            let new_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis);
+            let new_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis)?;
             let delta = new_anchor - anchor;
             let translation = AffineTransform3D::from_translation([
                 delta.x as f64,
@@ -171,8 +171,10 @@ pub(super) fn apply_drag_move(
             // even when `proportional` is on (the uniform branch
             // doesn't use the anchor for its own math, but we still
             // refresh it so a Shift-toggle back to per-axis re-uses a
-            // current anchor instead of the stale press one).
-            let current_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis);
+            // current anchor instead of the stale press one). `None`
+            // here means the camera snapped into the axis lock-out
+            // since press; freeze the drag for this frame.
+            let current_anchor = gizmo::drag_math::closest_point_on_axis(ray, pivot, axis)?;
             let scale_mat = if proportional {
                 let factor = gizmo::drag_math::uniform_scale_factor(
                     pivot_screen.0,
@@ -217,7 +219,8 @@ pub(super) fn apply_drag_move(
 /// switch is visually snap-free.
 ///
 /// Returns `None` if the pivot's screen projection fails (degenerate
-/// camera): the caller leaves the drag unchanged in that case.
+/// camera) or if the cursor ray slipped into the axis lock-out since
+/// press; the caller leaves the drag unchanged in either case.
 /// Defensive against op variants other than `ScaleAxis`: returns
 /// `None` so the move dispatch falls through to the regular path.
 pub(super) fn re_anchor_scale_axis(
@@ -236,7 +239,7 @@ pub(super) fn re_anchor_scale_axis(
     let ray = picking::ray_from_pixel(
         ctx.camera, ctx.fov_y, viewport_w, viewport_h, cursor_x, cursor_y,
     );
-    let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, ctx.pivot, axis);
+    let start_anchor = gizmo::drag_math::closest_point_on_axis(&ray, ctx.pivot, axis)?;
     let new_op = DragOp::ScaleAxis {
         axis,
         start_anchor,
@@ -307,7 +310,7 @@ pub(super) fn scale_along_axis(axis: Axis, factor: f32) -> AffineTransform3D {
 /// fixed.
 ///
 /// For a pure-translation parent (the only kind today's scene
-/// shapes produce), the conversion is `pivot_local = pivot − δ_p`,
+/// shapes produce), the conversion is `pivot_local = pivot - δ_p`,
 /// where `δ_p` is the parent's translation. The general form goes
 /// through `parent_world.inverse()` applied as a point transform.
 pub(super) fn compose_about_pivot(
@@ -390,7 +393,7 @@ mod unwrap_angle_tests {
     #[test]
     fn full_revolution_yields_continuous_angle() {
         // Simulate dragging CCW through a full 2π. Successive raw
-        // readings: 0, π/2, π−ε, −π+ε, −π/2, −ε, 0, π/2, ... . The
+        // readings: 0, π/2, π-ε, -π+ε, -π/2, -ε, 0, π/2, ... . The
         // unwrapped sequence should grow monotonically over a full
         // revolution.
         let pi = std::f32::consts::PI;

@@ -12,18 +12,28 @@ use glam::Vec3;
 use crate::picking::Ray;
 
 use super::axis::{Axis, axis_basis};
-use super::tolerances::EPS_SCALE;
+use super::tolerances::{EPS_SCALE, LOCKOUT_COS};
+
+/// Minimum value of `1 - (axis · ray_dir)²` (= `sin²(angle)`) for the
+/// closest-point formula to be well-conditioned: matches the 8°
+/// margin already enforced by `axis_pickable`/`LOCKOUT_COS` on the
+/// hit-test side, so any ray accepted by hit-test sits above this
+/// floor and the helper never has to bail mid-press.
+const DENOM_FLOOR: f32 = 1.0 - LOCKOUT_COS * LOCKOUT_COS;
 
 /// Closest point on the infinite world-space line `pivot + t * axis`
 /// to the world-space ray. Used during a drag to convert the cursor
 /// position into the pinned-to-axis world point.
 ///
-/// Stable as long as `axis_pickable(ray, axis)` is true at gesture
-/// start; if the camera rotates into the unstable region mid-drag,
-/// the drag continues using the same (now-noisier) formula — we
-/// don't switch policies inside a gesture, since a mid-drag jump in
-/// world delta would be more confusing than a few noisy frames.
-pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Vec3 {
+/// Returns `None` when the ray is within `8°` of axis-parallel: the
+/// `1 - (a·D)²` denominator collapses there and `t` becomes
+/// arbitrarily large, which would teleport the dragged object across
+/// the scene. The press path is gated by `axis_pickable` (same
+/// threshold) so `None` is only reachable when the camera snaps into
+/// the lock-out region mid-drag; the controller treats `None` as
+/// "no usable delta this frame" and leaves the running transform
+/// unchanged until the camera leaves the unstable cone.
+pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
     let a = axis.world_dir();
     let d = ray.direction;
     let oc = pivot - ray.origin;
@@ -33,18 +43,15 @@ pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Vec3 {
     let oc_dot_d = oc.dot(d);
 
     let denom = 1.0 - d_dot_a * d_dot_a;
-    // Caller is responsible for ensuring denom is non-tiny via the
-    // `axis_pickable` lock-out at gesture start. Inside a
-    // tolerated-but-marginal drag, we clamp denom to a small positive
-    // floor rather than dividing by zero — keeps the formula
-    // well-defined even at the exact lock-out edge.
-    let denom = denom.max(1e-6);
+    if denom < DENOM_FLOOR {
+        return None;
+    }
 
-    // Derivation: with `q = pivot − O`, the perpendicularity
+    // Derivation: with `q = pivot - O`, the perpendicularity
     // conditions `(δ·D) = 0` and `(δ·a) = 0` solve to
-    //   `t · (1 − (a·D)²) = q·D · (a·D) − q·a`.
+    //   `t · (1 - (a·D)²) = q·D · (a·D) - q·a`.
     let t_axis = (oc_dot_d * d_dot_a - oc_dot_a) / denom;
-    pivot + a * t_axis
+    Some(pivot + a * t_axis)
 }
 
 /// Intersects `ray` with the plane through `pivot` perpendicular to
@@ -96,8 +103,8 @@ pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
 /// Both anchors are world-space points on the axis line through
 /// `pivot` (typically produced by `closest_point_on_axis`). The raw
 /// ratio `current_proj / start_proj` is clamped into
-/// `[EPS_SCALE, 1/EPS_SCALE]`, which also rejects negative ratios
-/// — mirroring through the gizmo is disallowed.
+/// `[EPS_SCALE, 1/EPS_SCALE]`, which also rejects negative ratios;
+/// mirroring through the gizmo is disallowed.
 ///
 /// Returns `1.0` (a no-op factor) when the press anchor coincides
 /// with the pivot along the axis: the ratio is undefined there
@@ -130,7 +137,7 @@ pub fn scale_factor_along_axis(
 /// its camera + viewport once per move event.
 ///
 /// Returns `1.0` when the press lands within `1e-6` pixels of the
-/// projected pivot — the ratio is undefined there.
+/// projected pivot; the ratio is undefined there.
 pub fn uniform_scale_factor(
     pivot_screen_x: f32,
     pivot_screen_y: f32,
@@ -164,7 +171,7 @@ mod closest_point_tests {
             origin: Vec3::new(2.0, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        let p = closest_point_on_axis(&ray, Vec3::ZERO, Axis::X);
+        let p = closest_point_on_axis(&ray, Vec3::ZERO, Axis::X).unwrap();
         assert_approx_eq!(f32, p.x, 2.0, epsilon = 1e-5);
         assert_approx_eq!(f32, p.y, 0.0, epsilon = 1e-5);
         assert_approx_eq!(f32, p.z, 0.0, epsilon = 1e-5);
@@ -179,7 +186,7 @@ mod closest_point_tests {
             origin: Vec3::new(3.0, 4.0, -5.0),
             direction: Vec3::Z,
         };
-        let p = closest_point_on_axis(&ray, Vec3::ZERO, Axis::X);
+        let p = closest_point_on_axis(&ray, Vec3::ZERO, Axis::X).unwrap();
         assert_approx_eq!(f32, p.x, 3.0, epsilon = 1e-5);
         assert_approx_eq!(f32, p.y, 0.0, epsilon = 1e-5);
         assert_approx_eq!(f32, p.z, 0.0, epsilon = 1e-5);
@@ -199,12 +206,67 @@ mod closest_point_tests {
             origin: Vec3::new(2.5, 0.0, 5.0),
             direction: -Vec3::Z,
         };
-        let p0 = closest_point_on_axis(&r0, pivot, Axis::X);
-        let p1 = closest_point_on_axis(&r1, pivot, Axis::X);
+        let p0 = closest_point_on_axis(&r0, pivot, Axis::X).unwrap();
+        let p1 = closest_point_on_axis(&r1, pivot, Axis::X).unwrap();
         let delta = p1 - p0;
         assert_approx_eq!(f32, delta.x, 2.5, epsilon = 1e-5);
         assert_approx_eq!(f32, delta.y, 0.0, epsilon = 1e-5);
         assert_approx_eq!(f32, delta.z, 0.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn ray_parallel_to_axis_returns_none() {
+        // Ray direction equals the axis direction: `1 - (a·D)² = 0`.
+        // The closest-point formula is undefined (every point on the
+        // axis is equally close); without the bail-out, the clamped
+        // denominator amplifies any q·D residual into a multi-metre
+        // translation. The helper must refuse.
+        let ray = Ray {
+            origin: Vec3::new(0.0, 1.0, 0.0),
+            direction: Vec3::X,
+        };
+        assert!(closest_point_on_axis(&ray, Vec3::ZERO, Axis::X).is_none());
+    }
+
+    #[test]
+    fn ray_antiparallel_to_axis_returns_none() {
+        // Same degeneracy as the parallel case: `(a·D)² = 1` whether
+        // the ray points along +axis or -axis.
+        let ray = Ray {
+            origin: Vec3::new(5.0, 0.0, 1.0),
+            direction: -Vec3::X,
+        };
+        assert!(closest_point_on_axis(&ray, Vec3::ZERO, Axis::X).is_none());
+    }
+
+    #[test]
+    fn ray_inside_lockout_cone_returns_none() {
+        // Ray angled 5° off +X (well inside the 8° lock-out). The
+        // unguarded formula would still divide by the tiny denominator
+        // and produce a hit far from the press point; the bail-out is
+        // what keeps a translate drag from teleporting after a
+        // mid-drag camera snap into the lock-out cone.
+        let theta = 5.0_f32.to_radians();
+        let dir = Vec3::new(theta.cos(), theta.sin(), 0.0).normalize();
+        let ray = Ray {
+            origin: Vec3::new(-5.0, 0.1, 0.0),
+            direction: dir,
+        };
+        assert!(closest_point_on_axis(&ray, Vec3::ZERO, Axis::X).is_none());
+    }
+
+    #[test]
+    fn ray_just_outside_lockout_cone_returns_some() {
+        // The complementary safety check: a ray 9° off the axis sits
+        // outside the 8° lock-out and must remain pickable, so the
+        // bail-out can't shadow the legitimate working region.
+        let theta = 9.0_f32.to_radians();
+        let dir = Vec3::new(theta.cos(), theta.sin(), 0.0).normalize();
+        let ray = Ray {
+            origin: Vec3::new(-5.0, 0.0, 0.0),
+            direction: dir,
+        };
+        assert!(closest_point_on_axis(&ray, Vec3::ZERO, Axis::X).is_some());
     }
 }
 
@@ -277,7 +339,7 @@ mod rotate_drag_angle_tests {
     #[test]
     fn ray_through_pivot_plane_returns_in_plane_angle() {
         // X-axis arc plane = YZ. Camera looks along -X from (5, 1, 0)
-        // and the ray hits the YZ plane at (0, 1, 0) — on the +u (Y)
+        // and the ray hits the YZ plane at (0, 1, 0): on the +u (Y)
         // axis, angle 0.
         let ray = Ray {
             origin: Vec3::new(5.0, 1.0, 0.0),
@@ -452,7 +514,7 @@ mod uniform_scale_factor_tests {
 
     #[test]
     fn factor_clamps_at_lower_bound() {
-        // Cursor moves toward the pivot — ratio approaches zero,
+        // Cursor moves toward the pivot; ratio approaches zero,
         // clamps at EPS_SCALE.
         let factor = uniform_scale_factor(0.0, 0.0, 100.0, 0.0, 1e-9, 0.0);
         assert_approx_eq!(f32, factor, EPS_SCALE, epsilon = 1e-6);
