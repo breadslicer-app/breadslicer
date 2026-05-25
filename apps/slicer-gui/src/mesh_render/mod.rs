@@ -356,26 +356,31 @@ impl Renderer {
         // install-time snapshot, and writing one entry per live leaf
         // would step past the model buffer's end. Skip the mesh
         // path for this frame and wait for the next install to
-        // restore the invariant.
+        // restore the invariant. A graph that fails the leaf walk
+        // (dangling node id / dangling subtree resource id) skips
+        // the mesh path on the same grounds: the partial entry list
+        // would leave the model buffer's tail slots holding stale
+        // matrices that the draw loop would render against the
+        // current frame's geometry.
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
-            let entries = build_model_entries(graph_data, selection, build_volume);
-            if entries.len() != inst.gpu.object_count() {
-                false
-            } else {
-                // Each entry lives at `i * model_stride`. The stride is
-                // at least `MODEL_ENTRY_SIZE` and a multiple of the
-                // device's uniform offset alignment (typically 256
-                // bytes), so consecutive entries are not contiguous
-                // and must be written individually.
-                for (i, entry) in entries.iter().enumerate() {
-                    let offset = i as u64 * inst.gpu.model_stride();
-                    self.core.queue.write_buffer(
-                        inst.gpu.model_buffer(),
-                        offset,
-                        bytemuck::bytes_of(entry),
-                    );
+            match build_model_entries(graph_data, selection, build_volume) {
+                Ok(entries) if entries.len() == inst.gpu.object_count() => {
+                    // Each entry lives at `i * model_stride`. The stride is
+                    // at least `MODEL_ENTRY_SIZE` and a multiple of the
+                    // device's uniform offset alignment (typically 256
+                    // bytes), so consecutive entries are not contiguous
+                    // and must be written individually.
+                    for (i, entry) in entries.iter().enumerate() {
+                        let offset = i as u64 * inst.gpu.model_stride();
+                        self.core.queue.write_buffer(
+                            inst.gpu.model_buffer(),
+                            offset,
+                            bytemuck::bytes_of(entry),
+                        );
+                    }
+                    !entries.is_empty()
                 }
-                !entries.is_empty()
+                _ => false,
             }
         } else {
             false
@@ -409,8 +414,14 @@ impl Renderer {
         // the CPU `Scene`; cheap (a single per-vertex scan) and
         // keeps the breach signal in lockstep with the per-leaf
         // `flags.y` bit. `None` for an empty graph leaves the mask
-        // at 0 so all wall fragments are discarded.
-        let face_breach_mask = graph.map_or(0, |g| build_envelope_warning_mask(g, build_volume));
+        // at 0 so all wall fragments are discarded. A leaf-walk
+        // failure on the same graph already caused `scene_for_draws`
+        // to fall to false above, so falling back to 0 here keeps
+        // the wall-warning state consistent with the skipped mesh
+        // draws.
+        let face_breach_mask = graph
+            .and_then(|g| build_envelope_warning_mask(g, build_volume).ok())
+            .unwrap_or(0);
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             light_dir: frame::LIGHT_DIR,

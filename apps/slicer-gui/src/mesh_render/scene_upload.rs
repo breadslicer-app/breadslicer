@@ -215,9 +215,9 @@ pub(super) fn build_model_entries(
     graph: &Scene,
     selection: Option<NodeId>,
     build_volume: BuildVolume,
-) -> Vec<ModelEntry> {
+) -> Result<Vec<ModelEntry>> {
     let mut entries: Vec<ModelEntry> = Vec::new();
-    let _ = for_each_leaf(graph, |node_id, world_transform, mesh| {
+    for_each_leaf(graph, |node_id, world_transform, mesh| {
         let selected = selection == Some(node_id);
         let breaches = leaf_breaches_envelope(mesh, &world_transform, &build_volume);
         entries.push(ModelEntry {
@@ -225,8 +225,8 @@ pub(super) fn build_model_entries(
             flags: [u32::from(selected), u32::from(breaches), 0, 0],
         });
         Ok(())
-    });
-    entries
+    })?;
+    Ok(entries)
 }
 
 /// Returns `true` if `mesh`, after `world_transform` is applied, has
@@ -269,11 +269,11 @@ pub(super) const FACE_BIT_Z_NEG: u32 = 1 << 5;
 /// envelope: a vertex outside on axis `a` is the only way for the
 /// mesh's `a`-face to be breached, since the convex hull of the
 /// vertices contains the mesh and the envelope is convex.
-pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolume) -> u32 {
+pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolume) -> Result<u32> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let mut mask = 0u32;
-    let _ = for_each_leaf(graph, |_node_id, world_transform, mesh| {
+    for_each_leaf(graph, |_node_id, world_transform, mesh| {
         let transform_mat = transform_to_mat4(&world_transform);
         for v in mesh.vertices() {
             let p = transform_mat.transform_point3(Vec3::from(v.coords()));
@@ -297,8 +297,8 @@ pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolu
             }
         }
         Ok(())
-    });
-    mask
+    })?;
+    Ok(mask)
 }
 
 /// Pre-order traversal of every leaf reachable from `graph.roots()`,
@@ -779,7 +779,7 @@ mod transform_to_mat4_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([7.0, 0.0, 0.0])),
         );
-        let entries = build_model_entries(&g, None, permissive_volume());
+        let entries = build_model_entries(&g, None, permissive_volume()).expect("clean graph");
         assert_eq!(entries.len(), 2);
         // First entry is identity.
         assert_approx_eq!(f32, entries[0].model[0][0], 1.0);
@@ -810,7 +810,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn no_selection_leaves_every_flags_x_zero() {
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, None, permissive_volume());
+        let entries = build_model_entries(&graph, None, permissive_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
@@ -818,7 +818,8 @@ mod transform_to_mat4_tests {
     #[test]
     fn selected_node_id_sets_only_that_entrys_flags_x() {
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, Some(nth_leaf(&graph, 1)), permissive_volume());
+        let entries = build_model_entries(&graph, Some(nth_leaf(&graph, 1)), permissive_volume())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 1);
     }
@@ -830,7 +831,8 @@ mod transform_to_mat4_tests {
         // stays 0 on every entry when the selection points at the
         // root.
         let graph = two_object_graph();
-        let entries = build_model_entries(&graph, Some(graph.roots()[0]), permissive_volume());
+        let entries = build_model_entries(&graph, Some(graph.roots()[0]), permissive_volume())
+            .expect("clean graph");
         assert_eq!(entries[0].flags[0], 0);
         assert_eq!(entries[1].flags[0], 0);
     }
@@ -871,7 +873,7 @@ mod transform_to_mat4_tests {
     #[test]
     fn flags_y_is_zero_for_fully_inside_leaf() {
         let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
-        let entries = build_model_entries(&graph, None, snug_volume());
+        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
     }
 
@@ -881,7 +883,7 @@ mod transform_to_mat4_tests {
         // [60, 0, 0], [61, 0, 0], [60, 1, 0]. All three lie past the
         // +X wall at x = 50.
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume());
+        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
 
@@ -889,7 +891,7 @@ mod transform_to_mat4_tests {
     fn flags_y_is_one_when_any_vertex_dips_below_the_floor() {
         // Translation in Z by -0.5 puts every vertex below z = 0.
         let graph = unit_triangle_graph_at([0.0, 0.0, -0.5]);
-        let entries = build_model_entries(&graph, None, snug_volume());
+        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
 
@@ -899,7 +901,7 @@ mod transform_to_mat4_tests {
         // (inside), [1,0,0] at x = 50.5 (outside +X wall). Per-vertex
         // breach detection must fire on the second vertex.
         let graph = unit_triangle_graph_at([49.5, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume());
+        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 1);
     }
 
@@ -908,21 +910,24 @@ mod transform_to_mat4_tests {
         // Every vertex has z = 0 (the floor). The breach test uses a
         // strict comparison, so resting on the plate is "inside".
         let graph = unit_triangle_graph_at([0.0, 0.0, 0.0]);
-        let entries = build_model_entries(&graph, None, snug_volume());
+        let entries = build_model_entries(&graph, None, snug_volume()).expect("clean graph");
         assert_eq!(entries[0].flags[1], 0);
     }
 
     #[test]
     fn warning_mask_is_zero_when_every_leaf_fits() {
         let graph = unit_triangle_graph_at([0.0, 0.0, 1.0]);
-        assert_eq!(build_envelope_warning_mask(&graph, snug_volume()), 0);
+        assert_eq!(
+            build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph"),
+            0
+        );
     }
 
     #[test]
     fn warning_mask_sets_plus_x_when_a_vertex_passes_the_plus_x_wall() {
         // Vertex [1,0,0] translated to [60,0,0] sits past +X (50).
         let graph = unit_triangle_graph_at([60.0, 0.0, 0.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume());
+        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_X_NEG, 0);
     }
@@ -932,7 +937,7 @@ mod transform_to_mat4_tests {
         // Vertex [0,1,0] translated by [0,-40,0] lands at [0,-39,0],
         // and [0,0,0] lands at [0,-40,0], past the -Y wall (-30).
         let graph = unit_triangle_graph_at([0.0, -40.0, 0.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume());
+        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
         assert_eq!(mask & FACE_BIT_Y_POS, 0);
     }
@@ -941,7 +946,7 @@ mod transform_to_mat4_tests {
     fn warning_mask_sets_plus_z_when_a_vertex_passes_the_ceiling() {
         // Vertices land at [0,0,90], past the +Z ceiling (80).
         let graph = unit_triangle_graph_at([0.0, 0.0, 90.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume());
+        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_Z_POS, FACE_BIT_Z_POS);
     }
 
@@ -951,7 +956,7 @@ mod transform_to_mat4_tests {
         // (bit FACE_BIT_Z_NEG); the plate shader consumes it through
         // the floor-overlay path rather than a dedicated wall quad.
         let graph = unit_triangle_graph_at([0.0, 0.0, -1.0]);
-        let mask = build_envelope_warning_mask(&graph, snug_volume());
+        let mask = build_envelope_warning_mask(&graph, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_Z_NEG, FACE_BIT_Z_NEG);
         // None of the lateral bits fire for a purely-vertical breach.
         assert_eq!(
@@ -990,7 +995,7 @@ mod transform_to_mat4_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([0.0, -40.0, 0.0])),
         );
-        let mask = build_envelope_warning_mask(&g, snug_volume());
+        let mask = build_envelope_warning_mask(&g, snug_volume()).expect("clean graph");
         assert_eq!(mask & FACE_BIT_X_POS, FACE_BIT_X_POS);
         assert_eq!(mask & FACE_BIT_Y_NEG, FACE_BIT_Y_NEG);
     }
@@ -1017,5 +1022,84 @@ mod align_up_tests {
         // alignment = 1 means no padding; size passes through unchanged.
         assert_eq!(align_up(1, 1), 1);
         assert_eq!(align_up(80, 1), 80);
+    }
+}
+
+#[cfg(test)]
+mod for_each_leaf_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+
+    fn unit_triangle() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    fn two_leaf_graph() -> Scene {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("root");
+        let a = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("first leaf");
+        g.add_child(root, a).expect("attach first leaf");
+        let b = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("second leaf");
+        g.add_child(root, b).expect("attach second leaf");
+        g
+    }
+
+    /// `for_each_leaf` must surface a closure-returned `Err` to its
+    /// caller; callers that discard this with `let _ = ...` (the
+    /// shape this regression test exists to lock out) silently lose
+    /// graph-walk failures and leave downstream buffers in a stale
+    /// state. The closure-error path is the only side of the
+    /// contract reachable from a public-API-constructed `Scene`; the
+    /// `descend_leaves` dangling-id branch is exercised by the
+    /// type-system signature change on `build_model_entries` and
+    /// `build_envelope_warning_mask` (their `?` cannot be reduced to
+    /// `let _ =` without a compile error).
+    #[test]
+    fn for_each_leaf_propagates_closure_err() {
+        let graph = two_leaf_graph();
+        let result = for_each_leaf(&graph, |_, _, _| Err(anyhow!("simulated downstream error")));
+        assert!(result.is_err());
+    }
+
+    /// Once the closure has returned `Err`, the walk must short-circuit:
+    /// later leaves are not visited, so a partial state mutated by the
+    /// closure before the first failure stays partial rather than
+    /// continuing to grow against half-valid input.
+    #[test]
+    fn for_each_leaf_short_circuits_on_first_closure_err() {
+        let graph = two_leaf_graph();
+        let mut visited = 0usize;
+        let result = for_each_leaf(&graph, |_, _, _| {
+            visited += 1;
+            Err(anyhow!("simulated"))
+        });
+        assert!(result.is_err());
+        assert_eq!(visited, 1);
     }
 }
