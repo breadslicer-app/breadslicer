@@ -445,14 +445,15 @@ mod convert_tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn convert_rejects_target_hardlinked_to_source() {
-        // Two distinct names for the same inode: path canonicalisation
-        // cannot see they are aliases, but the `(dev, ino)` comparison
-        // in ensure_distinct_files does. The atomic-rename writer would
-        // not corrupt the source even without this check, but silently
-        // unlinking one of the user's hardlinks is bad UX.
+        // Two distinct names for the same inode (Unix) / NTFS file id
+        // (Windows): path canonicalisation cannot see they are aliases,
+        // but the file-identity comparison in ensure_distinct_files
+        // does. The atomic-rename writer would not corrupt the source
+        // even without this check, but silently unlinking one of the
+        // user's hardlinks is bad UX.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("in.stla");
         let target = tmp.path().join("link.stla");

@@ -75,52 +75,101 @@ pub(crate) fn validate_targetfile_path(path: PathBuf) -> Result<PathBuf> {
 /// canonicalised, or parent-canonicalised, respectively).
 ///
 /// Three checks, in order:
-/// - canonical path equality, which catches every spelling variant of
-///   the same path (relative-vs-absolute, embedded `.`/`..`, symlinked
-///   intermediate directory),
-/// - on Unix, `symlink_metadata` on the target: a symlink planted at
-///   the target between [`validate_targetfile_path`] and now is
-///   rejected here even though the atomic-rename writer would replace
-///   it harmlessly, because surprising the user is bad UX,
-/// - on Unix, `(dev, ino)` equality of source and target metadata,
-///   which catches the hard-link-aliasing case that no amount of path
-///   canonicalisation can see.
+/// - canonical path equality, catching every spelling variant of the
+///   same path (relative-vs-absolute, embedded `.`/`..`, symlinked
+///   intermediate directory);
+/// - `symlink_metadata` on the target, rejecting a symlink planted at
+///   the target between [`validate_targetfile_path`] and now;
+/// - file-identity equality of source and target, catching hard-link
+///   aliasing that path canonicalisation cannot see. The identity is
+///   `(dev, ino)` on Unix and `(volume serial, file id)` on Windows;
+///   on other targets this guard is absent.
 pub(crate) fn ensure_distinct_files(source: &Path, target: &Path) -> Result<()> {
     if source == target {
         return Err(anyhow!(
             "Source file path and target file path are the same"
         ));
     }
-    #[cfg(unix)]
-    {
-        use std::io::ErrorKind;
-        use std::os::unix::fs::MetadataExt;
 
-        let target_meta = match std::fs::symlink_metadata(target) {
-            Ok(m) => m,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-            Err(e) => {
-                return Err(anyhow!(
-                    "Unable to stat target file \"{}\": {}",
-                    target.display(),
-                    e
-                ));
-            }
-        };
-        if target_meta.file_type().is_symlink() {
+    let target_meta = match std::fs::symlink_metadata(target) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
             return Err(anyhow!(
-                "Target file path \"{}\" is a symbolic link; refusing to follow it.",
-                target.display()
+                "Unable to stat target file \"{}\": {}",
+                target.display(),
+                e
             ));
         }
-        let source_meta = source
-            .metadata()
-            .map_err(|e| anyhow!("Unable to stat source file \"{}\": {}", source.display(), e))?;
-        if target_meta.dev() == source_meta.dev() && target_meta.ino() == source_meta.ino() {
+    };
+    if target_meta.file_type().is_symlink() {
+        return Err(anyhow!(
+            "Target file path \"{}\" is a symbolic link; refusing to follow it.",
+            target.display()
+        ));
+    }
+
+    #[cfg(any(unix, windows))]
+    {
+        let source_id = read_file_identity(source)?;
+        let target_id = read_file_identity(target)?;
+        if source_id == target_id {
             return Err(anyhow!(
                 "Source and target paths refer to the same underlying file"
             ));
         }
     }
+
     Ok(())
+}
+
+#[cfg(any(unix, windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    volume: u64,
+    file_id: u64,
+}
+
+#[cfg(unix)]
+fn read_file_identity(path: &Path) -> Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let m = path
+        .metadata()
+        .map_err(|e| anyhow!("Unable to stat \"{}\": {}", path.display(), e))?;
+    Ok(FileIdentity {
+        volume: m.dev(),
+        file_id: m.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn read_file_identity(path: &Path) -> Result<FileIdentity> {
+    use std::fs::File;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let file = File::open(path).map_err(|e| {
+        anyhow!(
+            "Unable to open \"{}\" for identity check: {}",
+            path.display(),
+            e
+        )
+    })?;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) };
+    if ok == 0 {
+        return Err(anyhow!(
+            "GetFileInformationByHandle failed for \"{}\": {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let file_id = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok(FileIdentity {
+        volume: u64::from(info.dwVolumeSerialNumber),
+        file_id,
+    })
 }

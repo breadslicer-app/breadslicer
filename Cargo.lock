@@ -4520,6 +4520,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-formats",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

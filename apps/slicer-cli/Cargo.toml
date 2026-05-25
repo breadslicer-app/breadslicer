@@ -14,6 +14,9 @@ anyhow.workspace = true
 
 bpaf = "0.9.24"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 assert_cmd = "2.0.18"
 predicates = "3.1.3"
