@@ -39,9 +39,7 @@ use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
 pub(crate) use renderer_trait::MeshRenderer;
 pub(crate) use scene_upload::GpuScene;
-use scene_upload::{
-    MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries, graph_leaf_count,
-};
+use scene_upload::{MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries};
 use targets::{MsaaTargets, TargetPool};
 
 /// Scene-dependent inputs to [`Renderer::render`]. The selection
@@ -353,30 +351,32 @@ impl Renderer {
         // `Scene`. The CPU graph is the source of truth; the GPU
         // uniform buffer is a mirror that lives long enough to be
         // sampled across the next draw. The renderer's `GpuScene`
-        // must match the graph's reachable-leaf count 1:1; caller-side
-        // invariant checked by debug_assert so test failures surface
-        // early.
+        // must match the graph's reachable-leaf count 1:1; a
+        // mismatch means the live graph has drifted from the
+        // install-time snapshot, and writing one entry per live leaf
+        // would step past the model buffer's end. Skip the mesh
+        // path for this frame and wait for the next install to
+        // restore the invariant.
         let scene_for_draws = if let (Some(inst), Some(graph_data)) = (installed, graph) {
-            debug_assert_eq!(
-                inst.gpu.object_count(),
-                graph_leaf_count(graph_data),
-                "GpuScene and Scene have diverged in leaf count"
-            );
             let entries = build_model_entries(graph_data, selection, build_volume);
-            // Each entry lives at `i * model_stride`. The stride is
-            // at least `MODEL_ENTRY_SIZE` and a multiple of the
-            // device's uniform offset alignment (typically 256
-            // bytes), so consecutive entries are not contiguous
-            // and must be written individually.
-            for (i, entry) in entries.iter().enumerate() {
-                let offset = i as u64 * inst.gpu.model_stride();
-                self.core.queue.write_buffer(
-                    inst.gpu.model_buffer(),
-                    offset,
-                    bytemuck::bytes_of(entry),
-                );
+            if entries.len() != inst.gpu.object_count() {
+                false
+            } else {
+                // Each entry lives at `i * model_stride`. The stride is
+                // at least `MODEL_ENTRY_SIZE` and a multiple of the
+                // device's uniform offset alignment (typically 256
+                // bytes), so consecutive entries are not contiguous
+                // and must be written individually.
+                for (i, entry) in entries.iter().enumerate() {
+                    let offset = i as u64 * inst.gpu.model_stride();
+                    self.core.queue.write_buffer(
+                        inst.gpu.model_buffer(),
+                        offset,
+                        bytemuck::bytes_of(entry),
+                    );
+                }
+                !entries.is_empty()
             }
-            !entries.is_empty()
         } else {
             false
         };
@@ -1725,6 +1725,66 @@ mod gpu_integration_tests {
         let installed = renderer.install_scene(gpu);
         assert!(installed);
         assert!(renderer.scene_bounds().is_some());
+    }
+
+    /// A live `Scene` that grew an extra leaf after `upload_scene` must
+    /// not crash `render`: the per-leaf model uploads target a
+    /// `model_buffer` sized at install time, so writing one entry per
+    /// live leaf would OOB the buffer (the wgpu runtime would panic on
+    /// the trailing `queue.write_buffer`). The renderer must detect the
+    /// leaf-count drift and skip the per-frame mesh path until the next
+    /// install brings the GpuScene back in sync with the graph.
+    #[test]
+    fn render_against_grown_graph_does_not_panic() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&graph)
+            .expect("upload single-leaf graph");
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        let root = graph.roots()[0];
+        add_inline_leaf(
+            &mut graph,
+            root,
+            mesh,
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+        );
+
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let texture = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: None,
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
+            .expect("render against the live mutated graph still produces a texture");
+        assert_eq!(texture.size().width, 64);
     }
 
     /// `clear_scene` drops the installed scene; subsequent

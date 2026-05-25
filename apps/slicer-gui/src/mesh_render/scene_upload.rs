@@ -301,19 +301,6 @@ pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolu
     mask
 }
 
-/// Count of leaves reachable from `graph.roots()` in pre-order. Mirrors
-/// the count [`build_gpu_scene_data`] and [`build_model_entries`]
-/// produce; the renderer uses it to debug-assert that an installed
-/// `GpuScene` matches the graph it draws against.
-pub(super) fn graph_leaf_count(graph: &Scene) -> usize {
-    let mut count: usize = 0;
-    let _ = for_each_leaf(graph, |_node_id, _world_transform, _mesh| {
-        count += 1;
-        Ok(())
-    });
-    count
-}
-
 /// Pre-order traversal of every leaf reachable from `graph.roots()`,
 /// resolving `MeshResource` payloads and composing each leaf's world
 /// transform from the ancestor chain. The closure receives the leaf's
