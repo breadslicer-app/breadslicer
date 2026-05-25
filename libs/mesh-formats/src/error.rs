@@ -24,7 +24,7 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 use std::str::Utf8Error;
 
-use sc_mesh_core::SceneError;
+use sc_mesh_core::{IndexedMeshBuildError, SceneError};
 
 use crate::filetypes::MeshFileType;
 
@@ -236,6 +236,7 @@ pub enum LoadStlError {
         what: &'static str,
         value: f32,
     },
+    IndexedMeshBuild(IndexedMeshBuildError),
 }
 
 impl fmt::Display for LoadStlError {
@@ -275,6 +276,7 @@ impl fmt::Display for LoadStlError {
                 "expected finite f32 for {what}, got {value} which is {:?}",
                 value.classify(),
             ),
+            Self::IndexedMeshBuild(e) => write!(f, "{e}"),
         }
     }
 }
@@ -285,6 +287,7 @@ impl std::error::Error for LoadStlError {
             Self::Io(e) => Some(e),
             Self::HeaderNotUtf8(e) => Some(e),
             Self::InvalidFloat { source, .. } => Some(source),
+            Self::IndexedMeshBuild(e) => Some(e),
             _ => None,
         }
     }
@@ -293,6 +296,12 @@ impl std::error::Error for LoadStlError {
 impl From<std::io::Error> for LoadStlError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<IndexedMeshBuildError> for LoadStlError {
+    fn from(e: IndexedMeshBuildError) -> Self {
+        Self::IndexedMeshBuild(e)
     }
 }
 
@@ -356,6 +365,7 @@ pub enum LoadObjError {
         line: usize,
         directive: String,
     },
+    IndexedMeshBuild(IndexedMeshBuildError),
 }
 
 impl fmt::Display for LoadObjError {
@@ -425,6 +435,7 @@ impl fmt::Display for LoadObjError {
             Self::UnrecognizedDirective { line, directive } => {
                 write!(f, "line {line}: unrecognized directive '{directive}'")
             }
+            Self::IndexedMeshBuild(e) => write!(f, "{e}"),
         }
     }
 }
@@ -435,6 +446,7 @@ impl std::error::Error for LoadObjError {
             Self::Io(e) => Some(e),
             Self::InvalidFloat { source, .. } => Some(source),
             Self::InvalidFaceIndex { source, .. } => Some(source),
+            Self::IndexedMeshBuild(e) => Some(e),
             _ => None,
         }
     }
@@ -443,6 +455,12 @@ impl std::error::Error for LoadObjError {
 impl From<std::io::Error> for LoadObjError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<IndexedMeshBuildError> for LoadObjError {
+    fn from(e: IndexedMeshBuildError) -> Self {
+        Self::IndexedMeshBuild(e)
     }
 }
 

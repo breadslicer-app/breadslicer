@@ -25,8 +25,7 @@ pub mod indexed_mesh;
 pub mod primitives;
 pub mod scene;
 pub mod transform;
-
-use std::collections::HashMap;
+pub mod triangle_iterator;
 
 // Re-exporting "core" symbols for ease of use
 pub use crate::aabb::Aabb;
@@ -39,61 +38,4 @@ pub use crate::scene::fragment::SceneFragment;
 pub use crate::scene::node::{
     CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
-
-/// Fallible streaming iterator of triangles, used by format readers as the
-/// bridge between byte-level parsing and the indexed-mesh aggregate.
-///
-/// The associated `Error` is owned by the adapter; the domain core only
-/// requires that yielded items report a `Result<Triangle, Self::Error>`.
-/// This keeps `sc-mesh-core` free of any error-type dependency on the
-/// crate that drives the stream.
-pub trait TriangleIterator:
-    Iterator<Item = Result<Triangle, <Self as TriangleIterator>::Error>>
-{
-    type Error;
-
-    fn as_indexed_mesh(&mut self, meta: Option<MeshMetadata>) -> Result<IndexedMesh, Self::Error> {
-        let mut vertices: Vec<Vertex> = Vec::new();
-        let mut triangles: Vec<IndexedTriangle> = Vec::new();
-        let mut vertex_to_index: HashMap<[u32; 3], usize> = std::collections::HashMap::new();
-
-        // Do not reserve memory in those structures based on size_hint, because we might have just
-        // read bogus data.
-        let mut vertex_indices: [u32; 3] = [0; 3];
-        for t in self {
-            let t = t?;
-            for (i, vertex) in t.vertices.iter().enumerate() {
-                // f32 has no Eq and no Hash, but comparing the bits will do.
-                // This has the effect that if any coordinate is NaN (which does not make sense
-                // anyway), its NaN payload bits will be used as the identity of the vertex.
-                let bitpattern = vertex.coords().map(|f| {
-                    if f == -0.0 {
-                        0.0_f32.to_bits()
-                    } else {
-                        f.to_bits()
-                    }
-                });
-                let index = *vertex_to_index
-                    .entry(bitpattern)
-                    .or_insert_with(|| vertices.len());
-
-                if index == vertices.len() {
-                    vertices.push(*vertex);
-                }
-
-                vertex_indices[i] = index as u32;
-            }
-
-            triangles.push(IndexedTriangle::from_raw_indices(t.normal, vertex_indices));
-        }
-
-        vertices.shrink_to_fit();
-        triangles.shrink_to_fit();
-
-        Ok(IndexedMesh {
-            meta,
-            vertices,
-            faces: triangles,
-        })
-    }
-}
+pub use crate::triangle_iterator::{IndexedMeshBuildError, TriangleIterator};
