@@ -22,7 +22,9 @@ use sc_mesh_formats::load_mesh_from_path;
 use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::display_warnings;
 use crate::commands::mesh_writer::write_scene;
-use crate::filesystem::{validate_sourcefile_path, validate_targetfile_path};
+use crate::filesystem::{
+    ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
+};
 
 /// Repairs the user requested when running `fix`. Each flag enables an
 /// independent pass over the mesh; passes that find nothing to repair
@@ -44,12 +46,7 @@ pub(crate) fn fix(
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
     let target_path = validate_targetfile_path(PathBuf::from(target))?;
-
-    if source_path == target_path {
-        return Err(anyhow!(
-            "Source file path and target file path are the same"
-        ));
-    }
+    ensure_distinct_files(&source_path, &target_path)?;
 
     let target_format = WriteFormat::try_from(match target_format {
         Some(f) => f,

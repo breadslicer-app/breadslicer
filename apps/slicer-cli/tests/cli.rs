@@ -350,9 +350,13 @@ mod convert_tests {
     }
 
     #[test]
-    fn convert_same_format_short_circuits_to_copy() {
-        // ASCII STL → ASCII STL just `fs::copy`s the source. The CLI
-        // emits a warning on stderr and returns success.
+    fn convert_same_format_parses_and_re_emits_through_the_writer() {
+        // Same-format conversion no longer short-circuits to
+        // `fs::copy`: it goes through the loader (so the source is
+        // validated as a real mesh) and the atomic writer (so the
+        // destination is never partially overwritten and never
+        // followed through a symlink). The output is a freshly emitted
+        // STLA, not a verbatim byte copy.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("in.stla");
         let target = tmp.path().join("out.stla");
@@ -368,13 +372,132 @@ mod convert_tests {
                 target.to_str().unwrap(),
             ])
             .assert()
-            .success()
-            .stderr(predicate::str::contains("copying file"));
+            .success();
+
+        let content = fs::read_to_string(&target).unwrap();
+        assert!(
+            content.starts_with("solid"),
+            "ASCII STL must start with `solid`, got: {:?}",
+            &content[..content.len().min(60)]
+        );
+        // Same fixture geometry has 4 facets; the writer must emit one
+        // `facet normal` line per triangle.
+        assert_eq!(
+            content.matches("facet normal").count(),
+            4,
+            "round-tripped tetrahedron must keep all 4 facets"
+        );
+    }
+
+    #[test]
+    fn convert_same_format_rejects_garbage_payload_under_known_extension() {
+        // A `.stla` extension whose contents do not parse as ASCII STL
+        // used to be copied verbatim by the same-format short-circuit,
+        // producing a "successfully converted" file full of garbage.
+        // The loader-routed path rejects it with a non-zero exit and
+        // no target file is created.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        let target = tmp.path().join("out.stla");
+        fs::write(&source, b"this is not an STL file at all").unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure();
+        assert!(
+            !target.exists(),
+            "target must not be created when the source fails to parse"
+        );
+    }
+
+    #[test]
+    fn convert_rejects_target_equal_to_source_via_relative_spelling() {
+        // Pre-fix: source canonicalised to its absolute path, target
+        // stayed as the raw `in.stla`, the equality check missed it,
+        // and `fs::copy` truncated the source before reading a byte.
+        // Post-fix: validate_targetfile_path canonicalises the parent
+        // and re-joins the file name, ensure_distinct_files then sees
+        // both paths in the same canonical form and refuses.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        write_clean_stla(&source);
+        let original = fs::read(&source).unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .current_dir(tmp.path())
+            .args(["convert", "-s", source.to_str().unwrap(), "-t", "in.stla"])
+            .assert()
+            .failure();
+
         assert_eq!(
             fs::read(&source).unwrap(),
-            fs::read(&target).unwrap(),
-            "same-format conversion must produce a byte-identical copy"
+            original,
+            "source file must not be touched by a rejected same-file convert"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn convert_rejects_target_hardlinked_to_source() {
+        // Two distinct names for the same inode: path canonicalisation
+        // cannot see they are aliases, but the `(dev, ino)` comparison
+        // in ensure_distinct_files does. The atomic-rename writer would
+        // not corrupt the source even without this check, but silently
+        // unlinking one of the user's hardlinks is bad UX.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        let target = tmp.path().join("link.stla");
+        write_clean_stla(&source);
+        std::fs::hard_link(&source, &target).unwrap();
+        let original = fs::read(&source).unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure();
+
+        assert_eq!(fs::read(&source).unwrap(), original);
+    }
+
+    #[test]
+    fn convert_target_with_missing_parent_directory_errors_at_validation() {
+        // The parent directory has to exist (we need to canonicalise
+        // it for the equality check and the writer needs to land the
+        // temp file there). Surfacing the failure at validation time
+        // gives a path-specific message instead of a mid-write I/O
+        // error.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        write_clean_stla(&source);
+        let target = tmp.path().join("does_not_exist").join("out.stla");
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure();
     }
 
     #[test]
@@ -916,6 +1039,27 @@ mod fix_tests {
             ])
             .assert()
             .failure();
+    }
+
+    #[test]
+    fn fix_rejects_target_equal_to_source_via_relative_spelling() {
+        // Same canonicalisation hole as `convert` had: source resolved
+        // to its absolute path, target stayed raw, the equality check
+        // missed it, and the writer would have rewritten the source.
+        // The shared `ensure_distinct_files` helper now closes both.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("clean.stla");
+        write_clean_stla(&source);
+        let original = fs::read(&source).unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .current_dir(tmp.path())
+            .args(["fix", "-s", source.to_str().unwrap(), "-t", "clean.stla"])
+            .assert()
+            .failure();
+
+        assert_eq!(fs::read(&source).unwrap(), original);
     }
 
     #[test]

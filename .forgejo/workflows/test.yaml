@@ -5,10 +5,14 @@ on: [push]
 jobs:
   check:
     name: "Check, Clippy & Build"
-    runs-on: "codeberg-medium"
+    runs-on: "codeberg-small"
     steps:
       - name: "Checkout Repository"
         uses: "actions/checkout@v4"
+
+      # NOTE: Everything is disabled because Codeberg Runners are so saturated
+      #       that they keep always failing due to OOM-kills.
+      #       We perform all checks in our pre-commit & pre-push git hooks.
 
       #- name: "Get rustup from cache"
       #  uses: "actions/cache@v5"
