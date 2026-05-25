@@ -159,7 +159,20 @@ impl OrbitCamera {
 
     fn right_and_up(&self) -> (Vec3, Vec3) {
         let forward = (self.target - self.eye()).normalize_or_zero();
-        let right = forward.cross(self.up).normalize_or_zero();
+        // When `forward` is nearly parallel to `self.up`, the cross
+        // product `forward.cross(self.up)` collapses toward zero;
+        // its sign is then dominated by f32 round-off in
+        // `cos(pitch)` near +/- pi/2, which silently flips the
+        // basis from the well-behaved orientation just below the
+        // `clamp_pitch` limit. Substitute a perpendicular world
+        // axis as the cross-product reference so the basis stays
+        // continuous through the pole.
+        let up_ref = if forward.dot(self.up).abs() > 0.99 {
+            Vec3::Y
+        } else {
+            self.up
+        };
+        let right = forward.cross(up_ref).normalize_or_zero();
         let cam_up = right.cross(forward).normalize_or_zero();
         (right, cam_up)
     }
@@ -309,6 +322,70 @@ mod tests {
         }
         let near_safety = 100.0 * NEAR_PLANE_SAFETY_FACTOR;
         assert_approx_eq!(f32, cam.distance, near_safety, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn pan_at_top_pole_matches_pan_just_below_clamp() {
+        // `clamp_pitch` keeps `pitch` strictly below `FRAC_PI_2`,
+        // so production code paths land just below the pole. If a
+        // future caller bypasses the clamp (or `set_axis_view`
+        // ever stops clamping for `AxisView::Top`), the basis must
+        // stay consistent with the just-below-clamp orientation:
+        // f32 rounding makes `cos(FRAC_PI_2)` slightly NEGATIVE,
+        // which silently flips the sign of `forward.cross(Z)` and
+        // therefore the pan direction. The reference orientation
+        // below pans in `-X`; the pole orientation must pan in the
+        // same half-space.
+        let fov_y = std::f32::consts::FRAC_PI_4;
+        let viewport_h = 720.0;
+        let yaw = -std::f32::consts::FRAC_PI_2;
+
+        let mut reference = OrbitCamera::new(Vec3::ZERO, 10.0);
+        reference.yaw = yaw;
+        reference.pitch = std::f32::consts::FRAC_PI_2 - PITCH_EPSILON;
+        let r0 = reference.target;
+        reference.pan(100.0, 0.0, fov_y, viewport_h);
+        let reference_dx = reference.target.x - r0.x;
+
+        let mut pole = OrbitCamera::new(Vec3::ZERO, 10.0);
+        pole.yaw = yaw;
+        pole.pitch = std::f32::consts::FRAC_PI_2;
+        let p0 = pole.target;
+        pole.pan(100.0, 0.0, fov_y, viewport_h);
+        let pole_dx = pole.target.x - p0.x;
+
+        assert!(
+            reference_dx * pole_dx > 0.0,
+            "pan direction flipped at pitch = +pi/2: \
+             reference_dx={reference_dx}, pole_dx={pole_dx}",
+        );
+    }
+
+    #[test]
+    fn pan_at_bottom_pole_matches_pan_just_above_clamp() {
+        let fov_y = std::f32::consts::FRAC_PI_4;
+        let viewport_h = 720.0;
+        let yaw = -std::f32::consts::FRAC_PI_2;
+
+        let mut reference = OrbitCamera::new(Vec3::ZERO, 10.0);
+        reference.yaw = yaw;
+        reference.pitch = -std::f32::consts::FRAC_PI_2 + PITCH_EPSILON;
+        let r0 = reference.target;
+        reference.pan(100.0, 0.0, fov_y, viewport_h);
+        let reference_dx = reference.target.x - r0.x;
+
+        let mut pole = OrbitCamera::new(Vec3::ZERO, 10.0);
+        pole.yaw = yaw;
+        pole.pitch = -std::f32::consts::FRAC_PI_2;
+        let p0 = pole.target;
+        pole.pan(100.0, 0.0, fov_y, viewport_h);
+        let pole_dx = pole.target.x - p0.x;
+
+        assert!(
+            reference_dx * pole_dx > 0.0,
+            "pan direction flipped at pitch = -pi/2: \
+             reference_dx={reference_dx}, pole_dx={pole_dx}",
+        );
     }
 
     #[test]
