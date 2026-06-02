@@ -101,12 +101,14 @@ export component MeshViewer inherits Rectangle {
     property <length> context-anchor-y: 0px;
     property <bool> context-can-copy: false;
     property <bool> context-can-paste: false;
-    callback show-context-menu(length, length, bool, bool);
-    show-context-menu(x, y, copy, paste) => {
+    property <bool> context-can-delete: false;
+    callback show-context-menu(length, length, bool, bool, bool);
+    show-context-menu(x, y, copy, paste, del) => {
         root.context-anchor-x = x;
         root.context-anchor-y = y;
         root.context-can-copy = copy;
         root.context-can-paste = paste;
+        root.context-can-delete = del;
         ctx-menu.show({ x: x, y: y });
     }
     callback context-copy-pressed();
@@ -115,6 +117,11 @@ export component MeshViewer inherits Rectangle {
     // rather than at the (drifted) cursor when the menu entry was
     // clicked.
     callback context-paste-pressed(length, length);
+    // Delete fires through the same callback regardless of surface
+    // (Delete key, context menu, or the Edit > Delete menu item):
+    // the Rust handler is a single document.delete_selected_root_leaf
+    // call, no per-surface state to carry.
+    callback delete-requested();
     // Right-button press / release events. The Rust side
     // classifies the gesture as click (context menu) or drag
     // (camera orbit / pan, also driven by the existing
@@ -310,6 +317,10 @@ export component MeshViewer inherits Rectangle {
                 root.selection-cycle(event.modifiers.shift ? -1 : 1);
                 return accept;
             }
+            if (event.text == Key.Delete) {
+                root.delete-requested();
+                return accept;
+            }
             return reject;
         }
 
@@ -451,6 +462,12 @@ export component MeshViewer inherits Rectangle {
                     title: @tr("MeshViewer" => "Copy");
                     activated => {
                         root.context-copy-pressed();
+                    }
+                }
+                if (root.context-can-delete): MenuItem {
+                    title: @tr("MeshViewer" => "Delete");
+                    activated => {
+                        root.delete-requested();
                     }
                 }
                 if (root.context-can-paste): MenuItem {

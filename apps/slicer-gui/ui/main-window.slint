@@ -138,12 +138,15 @@ export component MainWindow inherits Window {
     // `context-copy-pressed` / `context-paste-pressed` surface the
     // menu-item activations so the Rust wiring can route them to
     // the AppState clipboard methods.
-    callback show-context-menu(length, length, bool, bool);
-    show-context-menu(x, y, copy, paste) => {
-        mv.show-context-menu(x, y, copy, paste);
+    callback show-context-menu(length, length, bool, bool, bool);
+    show-context-menu(x, y, copy, paste, del) => {
+        mv.show-context-menu(x, y, copy, paste, del);
     }
     callback context-copy-pressed();
     callback context-paste-pressed(length, length);
+    // Single Delete callback shared by the Delete key, the
+    // context-menu Delete item, and the Edit > Delete menu item.
+    callback delete-requested();
     // Right-button press / release positions for the context-menu
     // click-vs-orbit classifier on the Rust side.
     callback viewport-right-pointer-down(length, length);
@@ -224,6 +227,16 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && root.can-redo;
                 activated => {
                     root.redo-requested();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Delete");
+                enabled: root.has-scene && !root.loading && root.selected-object-index != -1;
+                activated => {
+                    root.delete-requested();
                 }
             }
 
@@ -370,6 +383,9 @@ export component MainWindow inherits Window {
             }
             context-paste-pressed(x, y) => {
                 root.context-paste-pressed(x, y);
+            }
+            delete-requested() => {
+                root.delete-requested();
             }
             viewport-right-pointer-down(x, y) => {
                 root.viewport-right-pointer-down(x, y);

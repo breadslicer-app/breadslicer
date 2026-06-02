@@ -294,7 +294,6 @@ impl SceneDocument {
     ///
     /// Returns `true` on a successful deletion. Selection clearing and the
     /// `Restructured` event are handled by [`Self::apply_edit`].
-    #[allow(dead_code)]
     pub(crate) fn delete_selected_root_leaf(&self) -> bool {
         let Some(node_id) = self.selection_primary_node_id() else {
             return false;
@@ -569,7 +568,6 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
 /// The compound order matters: `RemoveMeshResource` requires that no leaf still
 /// references the rid, and the preceding `RemoveRootLeaf` satisfies that
 /// precondition.
-#[allow(dead_code)]
 fn build_delete_root_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
     if !graph.roots().contains(&node_id) {
         return None;

@@ -541,6 +541,14 @@ impl ViewportController {
         self.session.document().redo();
     }
 
+    /// Delete handler shared by the viewport Delete key, the
+    /// right-click context menu, and the Edit > Delete menu item.
+    /// No-op when no scene is loaded, nothing is selected, or the
+    /// selection is not a removable root mesh-resource leaf.
+    pub fn on_delete_requested(&self) {
+        self.session.document().delete_selected_root_leaf();
+    }
+
     pub fn on_clear_selection(&self) {
         if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
             self.input.abort_gizmo_drag(self.session.document());

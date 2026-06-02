@@ -571,13 +571,14 @@ impl AppState {
                 .set_selection(Selection::One(LeafId(node_id)));
         }
         let can_copy = hit.is_some();
+        let can_delete = hit.is_some();
         let can_paste = self.clipboard.borrow().is_some();
-        if !can_copy && !can_paste {
+        if !can_copy && !can_paste && !can_delete {
             return;
         }
         wired
             .window
-            .invoke_show_context_menu(x, y, can_copy, can_paste);
+            .invoke_show_context_menu(x, y, can_copy, can_paste, can_delete);
     }
 
     /// Paste anchored on an explicit logical pixel (the position

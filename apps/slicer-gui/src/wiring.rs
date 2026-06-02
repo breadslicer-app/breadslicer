@@ -88,7 +88,11 @@ fn wire_edit_menu(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let ctrl = ctrl.clone();
         ui.on_undo_requested(move || ctrl.on_undo_requested());
     }
-    ui.on_redo_requested(move || ctrl.on_redo_requested());
+    {
+        let ctrl = ctrl.clone();
+        ui.on_redo_requested(move || ctrl.on_redo_requested());
+    }
+    ui.on_delete_requested(move || ctrl.on_delete_requested());
 }
 
 fn install_rendering_notifier(
