@@ -26,6 +26,7 @@ pub mod geom2d;
 pub mod mesh_slice;
 pub mod plane_intersect;
 pub mod profile;
+pub mod stitch;
 
 #[cfg(test)]
 mod tests_mesh_slice;
