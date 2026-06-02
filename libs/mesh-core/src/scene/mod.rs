@@ -331,44 +331,42 @@ impl Scene {
         self.add_mesh_resource_arc(Arc::new(mesh))
     }
 
-    /// `Arc`-handoff variant of [`Self::add_mesh_resource`]. The
-    /// arena stores the exact `Arc` the caller passed in (refcount
-    /// bumped, no mesh-content clone), so a later
-    /// [`Self::find_mesh_resource_by_arc`] with the same `Arc`
-    /// returns the id allocated here.
+    /// `Arc`-handoff variant of [`Self::add_mesh_resource`]. The arena stores
+    /// the exact `Arc` the caller passed in (refcount bumped, no mesh-content
+    /// clone), so a later [`Self::find_mesh_resource_by_arc`] with the same
+    /// `Arc` returns the id allocated here.
     pub fn add_mesh_resource_arc(&mut self, arc: Arc<IndexedMesh>) -> MeshResourceId {
         let id = self.allocate_mesh_resource_slot();
         self.mesh_resources[id.index()] = Some(arc);
         id
     }
 
-    /// Allocate a fresh [`MeshResourceId`] without populating its
-    /// slot. The returned id's arena slot is `None`.
+    /// Allocate a fresh [`MeshResourceId`] without populating its slot. The
+    /// returned id's arena slot is `None`.
     ///
-    /// Use this when the id needs to exist before the resource it
-    /// will reference does, typically so the id can be embedded in a
-    /// typed edit (see `sc_mesh_core::scene::edit`) that the
-    /// undo/redo machinery replays against the same slot. Mirrors
-    /// [`Self::allocate_unbound_node_id`] for mesh-resource ids.
+    /// Use this when the id needs to exist before the resource it will
+    /// reference does, typically so the id can be embedded in a typed edit (see
+    /// `sc_mesh_core::scene::edit`) that the undo/redo machinery replays
+    /// against the same slot. Mirrors [`Self::allocate_unbound_node_id`] for
+    /// mesh-resource ids.
     ///
-    /// The slot is permanently consumed: dropping the id without
-    /// later installing a resource at it leaks one arena slot.
-    /// Slots are tombstoned but never reused, so this is benign at
-    /// the scale of user-driven editing.
+    /// The slot is permanently consumed: dropping the id without later
+    /// installing a resource at it leaks one arena slot. Slots are tombstoned
+    /// but never reused, so this is benign at the scale of user-driven editing.
     pub fn allocate_unbound_mesh_resource_id(&mut self) -> MeshResourceId {
         self.allocate_mesh_resource_slot()
     }
 
-    /// Install a mesh resource at a previously-allocated, currently-
-    /// empty slot. Pairs with [`Self::remove_mesh_resource`] so a
-    /// typed edit can round-trip a paste's mesh-resource creation
-    /// through undo/redo while keeping the same [`MeshResourceId`].
+    /// Install a mesh resource at a previously-allocated, currently-empty slot.
+    /// Pairs with [`Self::remove_mesh_resource`] so a typed edit can round-trip
+    /// a paste's mesh-resource creation through undo/redo while keeping the
+    /// same [`MeshResourceId`].
     ///
     /// Errors:
-    /// - [`SceneError::DanglingMeshResource`] if `rid` is past the
-    ///   arena's high-water mark.
-    /// - [`SceneError::MeshResourceSlotOccupied`] if a resource
-    ///   already lives at that id.
+    /// - [`SceneError::DanglingMeshResource`] if `rid` is past the arena's
+    ///   high-water mark.
+    /// - [`SceneError::MeshResourceSlotOccupied`] if a resource already lives
+    ///   at that id.
     ///
     /// On error the scene is unchanged.
     pub fn install_mesh_resource_at(
@@ -386,18 +384,17 @@ impl Scene {
         Ok(())
     }
 
-    /// Tombstone the mesh resource at `rid`, returning the `Arc`
-    /// that lived there so the paired
-    /// [`Self::install_mesh_resource_at`] can re-install the same
-    /// content.
+    /// Tombstone the mesh resource at `rid`, returning the `Arc` that lived
+    /// there so the paired [`Self::install_mesh_resource_at`] can re-install
+    /// the same content.
     ///
     /// Errors:
-    /// - [`SceneError::DanglingMeshResource`] if no live resource
-    ///   lives at `rid`.
+    /// - [`SceneError::DanglingMeshResource`] if no live resource lives at
+    ///   `rid`.
     /// - [`SceneError::MeshResourceInUse`] if at least one live
-    ///   `Leaf(MeshResource(rid))` still references the resource.
-    ///   Callers must remove every referencing leaf first (the
-    ///   compound paste-undo path orders edits accordingly).
+    ///   `Leaf(MeshResource(rid))` still references the resource. Callers must
+    ///   remove every referencing leaf first (the compound paste-undo path
+    ///   orders edits accordingly).
     ///
     /// On error the scene is unchanged.
     pub fn remove_mesh_resource(
@@ -417,11 +414,36 @@ impl Scene {
     }
 
     fn any_live_leaf_references(&self, rid: MeshResourceId) -> bool {
-        self.nodes.iter().any(|slot| {
-            matches!(
-                slot.as_ref().map(|n| &n.kind),
-                Some(NodeKind::Leaf(LeafPayload::MeshResource(r))) if *r == rid
-            )
+        self.live_leaf_references_resource_excluding(rid, None)
+    }
+
+    /// Returns true if some live leaf other than `exclude` carries a
+    /// `LeafPayload::MeshResource(rid)`.
+    ///
+    /// Use it before removing the leaf at `exclude`:
+    /// - False means the removal drops the last live reference, and the caller
+    ///   should pair `RemoveRootLeaf` with `RemoveMeshResource`.
+    /// - True means at least one sibling still holds the resource, so it has to
+    ///   stay.
+    ///
+    /// A dangling `exclude` is harmless: the check still answers correctly for
+    /// the live-leaf population.
+    pub fn other_leaf_references_resource(&self, rid: MeshResourceId, exclude: NodeId) -> bool {
+        self.live_leaf_references_resource_excluding(rid, Some(exclude))
+    }
+
+    fn live_leaf_references_resource_excluding(
+        &self,
+        rid: MeshResourceId,
+        exclude: Option<NodeId>,
+    ) -> bool {
+        let exclude_idx = exclude.map(NodeId::index);
+        self.nodes.iter().enumerate().any(|(idx, slot)| {
+            Some(idx) != exclude_idx
+                && matches!(
+                    slot.as_ref().map(|n| &n.kind),
+                    Some(NodeKind::Leaf(LeafPayload::MeshResource(r))) if *r == rid
+                )
         })
     }
 
@@ -1532,6 +1554,72 @@ mod scene_construction_tests {
             Err(SceneError::MeshResourceInUse { id: rid })
         );
         assert!(g.mesh_resource(rid).is_some());
+    }
+
+    #[test]
+    fn other_leaf_references_resource_is_false_when_exclude_is_the_only_reference() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        assert!(!g.other_leaf_references_resource(rid, leaf));
+    }
+
+    #[test]
+    fn other_leaf_references_resource_is_true_when_a_sibling_leaf_holds_the_same_rid() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let leaf_a = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        let leaf_b = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        assert!(g.other_leaf_references_resource(rid, leaf_a));
+        assert!(g.other_leaf_references_resource(rid, leaf_b));
+    }
+
+    #[test]
+    fn other_leaf_references_resource_ignores_inline_mesh_leaves() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let resource_leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        let _inline_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        assert!(!g.other_leaf_references_resource(rid, resource_leaf));
+    }
+
+    #[test]
+    fn other_leaf_references_resource_ignores_non_leaf_nodes() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        let _group = g.add_group(None, Transform3D::Identity);
+        let _csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, Vec::new())
+            .unwrap();
+        assert!(!g.other_leaf_references_resource(rid, leaf));
+    }
+
+    #[test]
+    fn other_leaf_references_resource_with_dangling_exclude_still_reports_live_references() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource(unit_triangle());
+        let _leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        let bogus = NodeId(NonZeroU32::new(9999).unwrap());
+        assert!(g.other_leaf_references_resource(rid, bogus));
     }
 
     #[test]
