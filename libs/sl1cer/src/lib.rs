@@ -20,4 +20,5 @@
 //! build platform sits at Z = 0; layers are slabs of constant
 //! thickness along +Z.
 
+pub mod contour;
 pub mod geom2d;
