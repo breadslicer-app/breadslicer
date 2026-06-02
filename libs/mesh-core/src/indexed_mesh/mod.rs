@@ -9,7 +9,10 @@ pub mod validated;
 
 pub use fix::{MeshFix, MeshFixError};
 pub use validate::{MeshFaceError, MeshVertexError};
-pub use validated::{MeshManifoldError, MeshNormalVectorError, ValidatedFaces, ValidatedFacesMut};
+pub use validated::{
+    MeshManifoldError, MeshNormalVectorError, ValidatedFaces, ValidatedFacesMut,
+    ValidatedManifoldMesh,
+};
 
 use crate::aabb::Aabb;
 use crate::primitives::{IndexedTriangle, Vertex};

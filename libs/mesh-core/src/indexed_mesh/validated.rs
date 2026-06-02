@@ -98,6 +98,57 @@ impl<'a> ValidatedFaces<'a> {
     pub fn validate_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
         validate_manifold_impl(self.mesh)
     }
+
+    /// Run the manifold validation and, on success, return a stronger
+    /// witness whose existence proves the wrapped mesh is manifold.
+    /// Consumes `self` so the in-range witness is upgraded rather than
+    /// duplicated; the resulting `ValidatedManifoldMesh<'a>` ties to the
+    /// same `&'a IndexedMesh` borrow.
+    pub fn validated_manifold(self) -> Result<ValidatedManifoldMesh<'a>, Vec<MeshManifoldError>> {
+        validate_manifold_impl(self.mesh)?;
+        Ok(ValidatedManifoldMesh::new_unchecked(self.mesh))
+    }
+}
+
+/// Read-only witness that the underlying `IndexedMesh` is manifold:
+/// every interior edge is incident to exactly two faces (no boundary
+/// edges, no edges shared by three or more faces) and consistently
+/// oriented across that edge (no two coincident half-edges traversing
+/// the same direction). The in-range invariant of [`ValidatedFaces`]
+/// is also carried by this witness, since the only path to construct
+/// one is through [`ValidatedFaces::validated_manifold`].
+///
+/// What this witness does NOT guarantee:
+/// - Per-face normal vectors are correct (covered by
+///   [`ValidatedFaces::validate_normal_vectors`]).
+/// - Every triangle has non-zero area / no zero-length edges (covered
+///   by `validate_faces`).
+/// - Any particular global winding convention (CCW outward, etc.):
+///   manifold inputs may still be globally inside-out.
+#[derive(Debug)]
+pub struct ValidatedManifoldMesh<'a> {
+    mesh: &'a IndexedMesh,
+}
+
+impl<'a> ValidatedManifoldMesh<'a> {
+    /// Mint a manifold witness from a mesh whose manifoldness has just
+    /// been confirmed. `pub(super)` so the only public path is via
+    /// [`ValidatedFaces::validated_manifold`].
+    pub(super) fn new_unchecked(mesh: &'a IndexedMesh) -> Self {
+        Self { mesh }
+    }
+
+    pub fn vertices(&self) -> &[Vertex] {
+        &self.mesh.vertices
+    }
+
+    pub fn faces(&self) -> &[IndexedTriangle] {
+        &self.mesh.faces
+    }
+
+    pub fn as_indexed_mesh(&self) -> &IndexedMesh {
+        self.mesh
+    }
 }
 
 impl<'a> ValidatedFacesMut<'a> {
@@ -377,5 +428,64 @@ mod indexed_mesh_validated_faces_tests {
         let (fixes, witness) = mesh.fix_zero_length_edges_into_validated(&face_errors);
         assert!(fixes.is_empty());
         let _ = witness.expect_err("post-removal mesh still has out-of-range index");
+    }
+
+    /// Hand-rolled closed-tetrahedron mesh with consistent outward
+    /// winding, mirroring the helper in
+    /// `indexed_mesh_validate_manifold_tests`.
+    fn closed_tetrahedron() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([1.0, 1.0, 1.0]),
+                Vertex::new([1.0, -1.0, -1.0]),
+                Vertex::new([-1.0, 1.0, -1.0]),
+                Vertex::new([-1.0, -1.0, 1.0]),
+            ],
+            faces: vec![face(0, 1, 2), face(0, 3, 1), face(0, 2, 3), face(1, 3, 2)],
+        }
+    }
+
+    #[test]
+    fn validated_manifold_succeeds_on_closed_mesh() {
+        let mesh = closed_tetrahedron();
+        let witness = mesh
+            .validated_faces()
+            .expect("in-range indices")
+            .validated_manifold()
+            .expect("manifold tetrahedron");
+        assert_eq!(witness.vertices().len(), 4);
+        assert_eq!(witness.faces().len(), 4);
+    }
+
+    #[test]
+    fn validated_manifold_round_trips_buffers() {
+        let mesh = closed_tetrahedron();
+        let witness = mesh
+            .validated_faces()
+            .unwrap()
+            .validated_manifold()
+            .unwrap();
+        assert_eq!(witness.vertices(), mesh.vertices.as_slice());
+        assert_eq!(witness.faces(), mesh.faces.as_slice());
+        assert!(std::ptr::eq(witness.as_indexed_mesh(), &mesh));
+    }
+
+    #[test]
+    fn validated_manifold_fails_on_boundary_edge() {
+        // Two triangles glued along one edge: a non-closed strip whose
+        // remaining edges are boundary edges, which the manifold check
+        // rejects.
+        let mesh = make_mesh(4, vec![face(0, 1, 2), face(1, 0, 3)]);
+        let errors = mesh
+            .validated_faces()
+            .unwrap()
+            .validated_manifold()
+            .expect_err("open strip");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+        );
     }
 }
