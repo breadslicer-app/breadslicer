@@ -91,6 +91,45 @@ use replace_scene_policy::{
     OpenPathAction, PostPromptAction, decide_open_path_action, map_replace_choice,
 };
 
+mod context_menu_policy {
+    /// Visibility flags for the viewport's right-click context menu.
+    /// Each flag controls whether the corresponding `MenuItem` is
+    /// rendered in `mesh-viewer.slint`; the menu popup itself is
+    /// suppressed when none of the flags are set so a right-click on
+    /// empty space with an empty clipboard does not pop an empty
+    /// menu.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct ContextMenuFlags {
+        pub(crate) can_copy: bool,
+        pub(crate) can_paste: bool,
+        pub(crate) can_delete: bool,
+    }
+
+    impl ContextMenuFlags {
+        /// True when at least one item would be visible.
+        pub(crate) fn any(self) -> bool {
+            self.can_copy || self.can_paste || self.can_delete
+        }
+    }
+
+    /// Map the right-click state to the menu's visibility flags:
+    /// - `picked_hit` (whether `pick_node_at` returned a node) drives
+    ///   both Copy and Delete: both require an object under the cursor;
+    /// - `clipboard_has_content` drives Paste alone.
+    pub(crate) fn context_menu_flags(
+        picked_hit: bool,
+        clipboard_has_content: bool,
+    ) -> ContextMenuFlags {
+        ContextMenuFlags {
+            can_copy: picked_hit,
+            can_paste: clipboard_has_content,
+            can_delete: picked_hit,
+        }
+    }
+}
+
+use context_menu_policy::context_menu_flags;
+
 /// A main window paired with its viewport controller and preference-
 /// bus subscription. Drop of this struct drops the subscription,
 /// unregistering the window's preference-apply listener. Held by value
@@ -570,15 +609,17 @@ impl AppState {
                 .document()
                 .set_selection(Selection::One(LeafId(node_id)));
         }
-        let can_copy = hit.is_some();
-        let can_delete = hit.is_some();
-        let can_paste = self.clipboard.borrow().is_some();
-        if !can_copy && !can_paste && !can_delete {
+        let flags = context_menu_flags(hit.is_some(), self.clipboard.borrow().is_some());
+        if !flags.any() {
             return;
         }
-        wired
-            .window
-            .invoke_show_context_menu(x, y, can_copy, can_paste, can_delete);
+        wired.window.invoke_show_context_menu(
+            x,
+            y,
+            flags.can_copy,
+            flags.can_paste,
+            flags.can_delete,
+        );
     }
 
     /// Paste anchored on an explicit logical pixel (the position
@@ -811,6 +852,62 @@ mod replace_scene_policy_tests {
             map_replace_choice(ReplaceSceneChoice::Cancel),
             PostPromptAction::NoOp
         );
+    }
+}
+
+#[cfg(test)]
+mod context_menu_policy_tests {
+    use super::context_menu_policy::*;
+
+    #[test]
+    fn pick_hit_with_empty_clipboard_enables_copy_and_delete_only() {
+        let f = context_menu_flags(true, false);
+        assert_eq!(
+            f,
+            ContextMenuFlags {
+                can_copy: true,
+                can_paste: false,
+                can_delete: true,
+            }
+        );
+        assert!(f.any());
+    }
+
+    #[test]
+    fn no_hit_with_filled_clipboard_enables_paste_only() {
+        let f = context_menu_flags(false, true);
+        assert_eq!(
+            f,
+            ContextMenuFlags {
+                can_copy: false,
+                can_paste: true,
+                can_delete: false,
+            }
+        );
+        assert!(f.any());
+    }
+
+    #[test]
+    fn no_hit_with_empty_clipboard_disables_everything() {
+        let f = context_menu_flags(false, false);
+        assert_eq!(
+            f,
+            ContextMenuFlags {
+                can_copy: false,
+                can_paste: false,
+                can_delete: false,
+            }
+        );
+        assert!(!f.any());
+    }
+
+    #[test]
+    fn pick_hit_with_filled_clipboard_enables_all_three() {
+        let f = context_menu_flags(true, true);
+        assert!(f.can_copy);
+        assert!(f.can_paste);
+        assert!(f.can_delete);
+        assert!(f.any());
     }
 }
 
