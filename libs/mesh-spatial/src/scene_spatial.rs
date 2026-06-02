@@ -136,18 +136,23 @@ impl SceneSpatial {
     }
 
     /// Apply a typed scene edit and update caches accordingly.
+    ///
     /// `SetLocalTransform` leaves the per-mesh caches alone (they
-    /// are object-space: local AABB, clusters). `AddRootLeaf` /
-    /// `RemoveRootLeaf` operate only on mesh-resource-backed leaves,
-    /// whose caches live in `mesh_resources` (keyed by
-    /// [`MeshResourceId`]) and stay valid across the leaf's
-    /// installation / removal. `AddMeshResource` /
-    /// `RemoveMeshResource` install / tombstone the underlying
-    /// resource at a previously-allocated slot; the per-resource
-    /// cache slot is already sized to match because it was extended
-    /// at allocation time. `Compound` recurses through the inner
-    /// edits in order so each one observes the side-effects of the
-    /// previous ones.
+    /// are object-space: local AABB, clusters).
+    ///
+    /// The leaf-add / leaf-remove pairs (`AddRootLeaf` /
+    /// `RemoveRootLeaf`, plus the general `AddLeaf` / `RemoveLeaf`)
+    /// touch only `nodes` / `parents` / `roots`; per-mesh caches
+    /// live in `mesh_resources` (keyed by [`MeshResourceId`]) and
+    /// stay valid across the leaf's installation / removal.
+    ///
+    /// `AddMeshResource` / `RemoveMeshResource` install / tombstone
+    /// the underlying resource at a previously-allocated slot; the
+    /// per-resource cache slot is already sized to match because it
+    /// was extended at allocation time.
+    ///
+    /// `Compound` recurses through the inner edits in order so each
+    /// one observes the side effects of the previous ones.
     pub fn apply_edit(&mut self, edit: SceneEdit) {
         match edit {
             SceneEdit::SetLocalTransform { node_id, after, .. } => {
@@ -162,6 +167,19 @@ impl SceneSpatial {
             }
             SceneEdit::RemoveRootLeaf { node_id, .. } => {
                 let _ = self.graph.remove_root_leaf(node_id);
+            }
+            SceneEdit::AddLeaf {
+                node_id,
+                attachment,
+                payload,
+                local_transform,
+            } => {
+                let _ = self
+                    .graph
+                    .install_leaf_at(node_id, attachment, payload, local_transform);
+            }
+            SceneEdit::RemoveLeaf { node_id, .. } => {
+                let _ = self.graph.remove_leaf(node_id);
             }
             SceneEdit::AddMeshResource { rid, mesh } => {
                 let _ = self.graph.install_mesh_resource_at(rid, mesh);

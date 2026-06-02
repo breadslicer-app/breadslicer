@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::indexed_mesh::IndexedMesh;
 use crate::scene::Scene;
-use crate::scene::node::{MeshResourceId, NodeId};
+use crate::scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId};
 use crate::transform::Transform3D;
 
 /// Typed scene mutation. The shared edit shape across the workspace:
@@ -62,6 +62,28 @@ pub enum SceneEdit {
         mesh: MeshResourceId,
         local_transform: Transform3D,
     },
+    /// Install a leaf at `node_id` with the given payload,
+    /// attachment, and transform. Generalises [`Self::AddRootLeaf`]
+    /// across inline-mesh / mesh-resource payloads and across
+    /// root / parented attachments. The id must come from
+    /// [`Scene::allocate_unbound_node_id`] so the arena slot exists
+    /// and is empty when the edit is applied.
+    AddLeaf {
+        node_id: NodeId,
+        attachment: LeafAttachment,
+        payload: LeafPayload,
+        local_transform: Transform3D,
+    },
+    /// Tombstone the leaf at `node_id`. `attachment`, `payload`,
+    /// and `local_transform` snapshot the state so the inverse
+    /// [`Self::AddLeaf`] re-installs it identically, including the
+    /// position within the parent's children list.
+    RemoveLeaf {
+        node_id: NodeId,
+        attachment: LeafAttachment,
+        payload: LeafPayload,
+        local_transform: Transform3D,
+    },
     /// Install a mesh resource at `rid` carrying the given `Arc`.
     /// The id must come from
     /// [`Scene::allocate_unbound_mesh_resource_id`] so the arena
@@ -94,6 +116,8 @@ impl SceneEdit {
             Self::SetLocalTransform { before, after, .. } => before == after,
             Self::AddRootLeaf { .. }
             | Self::RemoveRootLeaf { .. }
+            | Self::AddLeaf { .. }
+            | Self::RemoveLeaf { .. }
             | Self::AddMeshResource { .. }
             | Self::RemoveMeshResource { .. } => false,
             Self::Compound(edits) => edits.iter().all(Self::is_noop),
@@ -115,6 +139,8 @@ impl SceneEdit {
             Self::SetLocalTransform { .. } => false,
             Self::AddRootLeaf { .. }
             | Self::RemoveRootLeaf { .. }
+            | Self::AddLeaf { .. }
+            | Self::RemoveLeaf { .. }
             | Self::AddMeshResource { .. }
             | Self::RemoveMeshResource { .. } => true,
             Self::Compound(edits) => edits.iter().any(Self::is_structural),
@@ -152,6 +178,28 @@ impl SceneEdit {
                 mesh: *mesh,
                 local_transform: *local_transform,
             },
+            Self::AddLeaf {
+                node_id,
+                attachment,
+                payload,
+                local_transform,
+            } => Self::RemoveLeaf {
+                node_id: *node_id,
+                attachment: *attachment,
+                payload: payload.clone(),
+                local_transform: *local_transform,
+            },
+            Self::RemoveLeaf {
+                node_id,
+                attachment,
+                payload,
+                local_transform,
+            } => Self::AddLeaf {
+                node_id: *node_id,
+                attachment: *attachment,
+                payload: payload.clone(),
+                local_transform: *local_transform,
+            },
             Self::AddMeshResource { rid, mesh } => Self::RemoveMeshResource {
                 rid: *rid,
                 mesh: Arc::clone(mesh),
@@ -186,6 +234,18 @@ impl SceneEdit {
             }
             Self::RemoveRootLeaf { node_id, .. } => {
                 let _ = graph.remove_root_leaf(*node_id);
+            }
+            Self::AddLeaf {
+                node_id,
+                attachment,
+                payload,
+                local_transform,
+            } => {
+                let _ =
+                    graph.install_leaf_at(*node_id, *attachment, payload.clone(), *local_transform);
+            }
+            Self::RemoveLeaf { node_id, .. } => {
+                let _ = graph.remove_leaf(*node_id);
             }
             Self::AddMeshResource { rid, mesh } => {
                 let _ = graph.install_mesh_resource_at(*rid, Arc::clone(mesh));
@@ -663,6 +723,176 @@ mod scene_edit_tests {
         assert!(g.roots().contains(&nid));
         assert!(g.mesh_resource(rid).is_some());
         compound.inverse().apply_to_scene(&mut g);
+        assert_eq!(g, snapshot_before);
+    }
+
+    fn triangle_arc() -> Arc<IndexedMesh> {
+        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        Arc::new(IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        })
+    }
+
+    #[test]
+    fn add_leaf_and_remove_leaf_are_structural_and_not_noop() {
+        let mut g = Scene::new();
+        let nid = g.allocate_unbound_node_id();
+        let add = SceneEdit::AddLeaf {
+            node_id: nid,
+            attachment: LeafAttachment::Root,
+            payload: LeafPayload::Mesh(triangle_arc()),
+            local_transform: Transform3D::Identity,
+        };
+        let remove = SceneEdit::RemoveLeaf {
+            node_id: nid,
+            attachment: LeafAttachment::Root,
+            payload: LeafPayload::Mesh(triangle_arc()),
+            local_transform: Transform3D::Identity,
+        };
+        assert!(add.is_structural());
+        assert!(!add.is_noop());
+        assert!(remove.is_structural());
+        assert!(!remove.is_noop());
+        let _ = g.allocate_unbound_node_id();
+    }
+
+    #[test]
+    fn add_leaf_inverse_is_remove_leaf_with_same_fields_and_vice_versa() {
+        let mut g = Scene::new();
+        let nid = g.allocate_unbound_node_id();
+        let attachment = LeafAttachment::Parent {
+            parent: NodeId(std::num::NonZeroU32::new(42).unwrap()),
+            position: 3,
+        };
+        let payload = LeafPayload::Mesh(triangle_arc());
+        let xform = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
+        let add = SceneEdit::AddLeaf {
+            node_id: nid,
+            attachment,
+            payload: payload.clone(),
+            local_transform: xform,
+        };
+        match add.inverse() {
+            SceneEdit::RemoveLeaf {
+                node_id,
+                attachment: a,
+                payload: p,
+                local_transform,
+            } => {
+                assert_eq!(node_id, nid);
+                assert_eq!(a, attachment);
+                assert_eq!(p, payload);
+                assert_eq!(local_transform, xform);
+            }
+            _ => panic!("AddLeaf inverse must be RemoveLeaf"),
+        }
+        let remove = SceneEdit::RemoveLeaf {
+            node_id: nid,
+            attachment,
+            payload: payload.clone(),
+            local_transform: xform,
+        };
+        assert!(matches!(remove.inverse(), SceneEdit::AddLeaf { .. }));
+    }
+
+    #[test]
+    fn add_leaf_apply_installs_a_root_inline_leaf() {
+        let mut g = Scene::new();
+        let nid = g.allocate_unbound_node_id();
+        let arc = triangle_arc();
+        let edit = SceneEdit::AddLeaf {
+            node_id: nid,
+            attachment: LeafAttachment::Root,
+            payload: LeafPayload::Mesh(Arc::clone(&arc)),
+            local_transform: Transform3D::Identity,
+        };
+        edit.apply_to_scene(&mut g);
+        assert!(g.roots().contains(&nid));
+        let observed = g.leaf_mesh_arc(nid).map(Arc::as_ptr);
+        assert_eq!(observed, Some(Arc::as_ptr(&arc)));
+    }
+
+    #[test]
+    fn add_leaf_apply_installs_a_parented_inline_leaf_at_the_recorded_position() {
+        let mut g = Scene::new();
+        let parent = g.add_group(None, Transform3D::Identity);
+        g.add_root(parent).unwrap();
+        // Pre-existing sibling so the inserted leaf at position 0
+        // shifts it to position 1.
+        let sibling = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(triangle_arc()),
+            )
+            .unwrap();
+        g.add_child(parent, sibling).unwrap();
+        let new_id = g.allocate_unbound_node_id();
+        let edit = SceneEdit::AddLeaf {
+            node_id: new_id,
+            attachment: LeafAttachment::Parent {
+                parent,
+                position: 0,
+            },
+            payload: LeafPayload::Mesh(triangle_arc()),
+            local_transform: Transform3D::Identity,
+        };
+        edit.apply_to_scene(&mut g);
+        let children = g.node(parent).unwrap().kind.children();
+        assert_eq!(children, &[new_id, sibling]);
+    }
+
+    #[test]
+    fn add_leaf_apply_then_inverse_round_trips_for_a_root_leaf() {
+        let mut g = Scene::new();
+        let nid = g.allocate_unbound_node_id();
+        let snapshot_before = g.clone();
+        let edit = SceneEdit::AddLeaf {
+            node_id: nid,
+            attachment: LeafAttachment::Root,
+            payload: LeafPayload::Mesh(triangle_arc()),
+            local_transform: Transform3D::Identity,
+        };
+        edit.apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g);
+        assert_eq!(g, snapshot_before);
+    }
+
+    #[test]
+    fn remove_leaf_apply_then_inverse_round_trips_for_a_parented_leaf() {
+        let mut g = Scene::new();
+        let parent = g.add_group(None, Transform3D::Identity);
+        g.add_root(parent).unwrap();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(triangle_arc()),
+            )
+            .unwrap();
+        g.add_child(parent, leaf).unwrap();
+        let snapshot_before = g.clone();
+        let edit = SceneEdit::RemoveLeaf {
+            node_id: leaf,
+            attachment: LeafAttachment::Parent {
+                parent,
+                position: 0,
+            },
+            payload: LeafPayload::Mesh(triangle_arc()),
+            local_transform: Transform3D::Identity,
+        };
+        edit.apply_to_scene(&mut g);
+        assert!(g.node(leaf).is_none());
+        edit.inverse().apply_to_scene(&mut g);
         assert_eq!(g, snapshot_before);
     }
 }

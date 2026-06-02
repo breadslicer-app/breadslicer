@@ -606,10 +606,13 @@ fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> b
     };
     fn touches(edit: &SceneEdit, selected: NodeId) -> bool {
         match edit {
-            SceneEdit::RemoveRootLeaf { node_id, .. } => *node_id == selected,
+            SceneEdit::RemoveRootLeaf { node_id, .. } | SceneEdit::RemoveLeaf { node_id, .. } => {
+                *node_id == selected
+            }
             SceneEdit::Compound(edits) => edits.iter().any(|e| touches(e, selected)),
             SceneEdit::SetLocalTransform { .. }
             | SceneEdit::AddRootLeaf { .. }
+            | SceneEdit::AddLeaf { .. }
             | SceneEdit::AddMeshResource { .. }
             | SceneEdit::RemoveMeshResource { .. } => false,
         }
