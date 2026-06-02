@@ -23,5 +23,9 @@
 pub mod contour;
 pub mod error;
 pub mod geom2d;
+pub mod mesh_slice;
 pub mod plane_intersect;
 pub mod profile;
+
+#[cfg(test)]
+mod tests_segments_at_z;
