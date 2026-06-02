@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use sc_mesh_core::Scene;
 use sc_mesh_core::SceneFragment;
-use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
+use sc_mesh_core::scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
@@ -278,28 +278,34 @@ impl SceneDocument {
         Some(node_id)
     }
 
-    /// Delete the currently-selected root leaf, recording the operation as
-    /// one undo entry.
+    /// Delete the currently-selected leaf, recording the operation as one
+    /// undo entry.
     ///
-    /// Bails with `false` (no scene mutation, no undo push) when:
-    /// - no scene is loaded;
-    /// - the selection is `Selection::None`;
-    /// - the selected node is not a root, or its payload is not
-    ///   `LeafPayload::MeshResource(_)`.
+    /// Works on any leaf the loaders or paste flow can produce:
+    /// - inline-mesh and mesh-resource payloads alike;
+    /// - root leaves (STL-loaded, paste-installed) and parented leaves
+    ///   (OBJ-loaded under their identity-Group root) alike. The leaf's
+    ///   parent and position are recorded in the edit so undo restores
+    ///   sibling order.
     ///
-    /// When the leaf was the last live reference to its `MeshResourceId`, the
-    /// recorded edit is a `Compound` that also tombstones the resource so the
-    /// arena stays in sync with the live-leaf population. When other leaves
-    /// still hold the resource, only the leaf is removed.
+    /// Bails with `false` (no scene mutation, no undo push) when no scene
+    /// is loaded, the selection is `Selection::None`, or the selected
+    /// node is not a leaf.
     ///
-    /// Returns `true` on a successful deletion. Selection clearing and the
-    /// `Restructured` event are handled by [`Self::apply_edit`].
-    pub(crate) fn delete_selected_root_leaf(&self) -> bool {
+    /// When a mesh-resource leaf was the last live reference to its
+    /// `MeshResourceId`, the recorded edit is a `Compound` that also
+    /// tombstones the resource so the arena stays in sync with the
+    /// live-leaf population. Inline-mesh leaves carry their own `Arc`,
+    /// so removal of an inline-mesh leaf never produces a Compound.
+    ///
+    /// Returns `true` on a successful deletion. Selection clearing and
+    /// the `Restructured` event are handled by [`Self::apply_edit`].
+    pub(crate) fn delete_selected_leaf(&self) -> bool {
         let Some(node_id) = self.selection_primary_node_id() else {
             return false;
         };
         let edit = self
-            .with_scene(|spatial| build_delete_root_leaf_edit(spatial.graph(), node_id))
+            .with_scene(|spatial| build_delete_leaf_edit(spatial.graph(), node_id))
             .flatten();
         let Some(edit) = edit else {
             return false;
@@ -555,45 +561,57 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
     }
 }
 
-/// Build the `SceneEdit` that removes the root leaf at `node_id`, or `None` if
-/// the node is not a removable mesh-resource root leaf.
+/// Build the `SceneEdit` that removes the leaf at `node_id`, or `None`
+/// if the node is not a leaf or its graph attachment cannot be
+/// determined.
 ///
 /// The returned edit is:
-/// - a plain `RemoveRootLeaf` when at least one other live leaf still
-///   references the same `MeshResourceId`;
-/// - a `Compound([RemoveRootLeaf, RemoveMeshResource])` when this was the last
-///   reference, so the inverse `Compound([AddMeshResource, AddRootLeaf])`
-///   re-installs both on undo.
+/// - a plain `RemoveLeaf` for inline-mesh leaves, or for mesh-resource
+///   leaves where at least one other live leaf still references the
+///   same `MeshResourceId`;
+/// - a `Compound([RemoveLeaf, RemoveMeshResource])` when a mesh-resource
+///   leaf was the last live reference, so the inverse
+///   `Compound([AddMeshResource, AddLeaf])` re-installs both on undo.
 ///
-/// The compound order matters: `RemoveMeshResource` requires that no leaf still
-/// references the rid, and the preceding `RemoveRootLeaf` satisfies that
-/// precondition.
-fn build_delete_root_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
-    if !graph.roots().contains(&node_id) {
-        return None;
-    }
+/// The compound order matters: `RemoveMeshResource` requires that no
+/// leaf still references the rid, and the preceding `RemoveLeaf`
+/// satisfies that precondition.
+fn build_delete_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
     let node = graph.node(node_id)?;
     let local_transform = node.local_transform;
-    let rid = match &node.kind {
-        NodeKind::Leaf(LeafPayload::MeshResource(rid)) => *rid,
-        NodeKind::Leaf(LeafPayload::Mesh(_))
-        | NodeKind::Group { .. }
-        | NodeKind::Csg { .. }
-        | NodeKind::Instance { .. } => return None,
+    let payload = match &node.kind {
+        NodeKind::Leaf(payload) => payload.clone(),
+        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => return None,
     };
-    let remove_leaf = SceneEdit::RemoveRootLeaf {
+    let attachment = if let Some(parent) = graph.parent_of(node_id) {
+        let parent_node = graph.node(parent)?;
+        let children = match &parent_node.kind {
+            NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
+            NodeKind::Leaf(_) | NodeKind::Instance { .. } => return None,
+        };
+        let position = children.iter().position(|c| *c == node_id)?;
+        LeafAttachment::Parent { parent, position }
+    } else if graph.roots().contains(&node_id) {
+        LeafAttachment::Root
+    } else {
+        return None;
+    };
+    let remove_leaf = SceneEdit::RemoveLeaf {
         node_id,
-        mesh: rid,
+        attachment,
+        payload: payload.clone(),
         local_transform,
     };
-    if graph.other_leaf_references_resource(rid, node_id) {
-        return Some(remove_leaf);
+    if let LeafPayload::MeshResource(rid) = payload
+        && !graph.other_leaf_references_resource(rid, node_id)
+    {
+        let arc = Arc::clone(graph.mesh_resource_arc(rid)?);
+        return Some(SceneEdit::Compound(vec![
+            remove_leaf,
+            SceneEdit::RemoveMeshResource { rid, mesh: arc },
+        ]));
     }
-    let arc = Arc::clone(graph.mesh_resource_arc(rid)?);
-    Some(SceneEdit::Compound(vec![
-        remove_leaf,
-        SceneEdit::RemoveMeshResource { rid, mesh: arc },
-    ]))
+    Some(remove_leaf)
 }
 
 /// True when applying `edit` would tombstone the leaf the document's
@@ -1298,42 +1316,64 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn delete_selected_root_leaf_with_no_scene_loaded_returns_false() {
+    fn delete_selected_leaf_with_no_scene_loaded_returns_false() {
         let doc = SceneDocument::new();
-        assert!(!doc.delete_selected_root_leaf());
+        assert!(!doc.delete_selected_leaf());
         assert!(!doc.can_undo());
     }
 
     #[test]
-    fn delete_selected_root_leaf_with_no_selection_returns_false() {
+    fn delete_selected_leaf_with_no_selection_returns_false() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
         let _ = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
         // Selection stays None (add_root_leaf does not auto-select).
         assert_eq!(doc.selection(), Selection::None);
-        assert!(!doc.delete_selected_root_leaf());
+        assert!(!doc.delete_selected_leaf());
         // Only the AddRootLeaf entry from the setup is on the stack.
         let undo_entries_before = doc.undo_stack.borrow().len();
         assert_eq!(undo_entries_before, 1);
     }
 
     #[test]
-    fn delete_selected_root_leaf_with_non_root_selection_returns_false() {
-        // graph_with_one_object parents an inline-mesh leaf under a
-        // Group root, so the leaf is non-root. The delete primitive
-        // must bail without touching the scene or the undo stack.
+    fn delete_selected_leaf_of_a_parented_inline_mesh_leaf_succeeds_and_round_trips() {
+        // graph_with_one_object is the OBJ-loader shape: an inline-mesh
+        // leaf parented under an identity-Group root. The delete primitive
+        // must handle this case, and undo must restore the leaf as a
+        // child of the same parent.
         let doc = SceneDocument::new();
         doc.install_graph(graph_with_one_object(), fixture_path());
         let leaf = first_leaf_id(&doc);
         doc.set_selection(Selection::One(leaf));
-        assert!(!doc.delete_selected_root_leaf());
-        assert!(!doc.can_undo());
-        assert_eq!(doc.selection_primary_node_id(), Some(leaf.node_id()));
+        let parent_before = doc
+            .with_scene(|s| s.graph().parent_of(leaf.node_id()))
+            .flatten();
+
+        assert!(doc.delete_selected_leaf());
+
+        let leaf_gone = doc
+            .with_scene(|s| s.graph().node(leaf.node_id()).is_none())
+            .unwrap();
+        assert!(leaf_gone);
+        assert_eq!(doc.selection_primary_node_id(), None);
+        assert!(doc.can_undo());
+
+        doc.undo();
+
+        let restored = doc
+            .with_scene(|s| {
+                (
+                    s.graph().node(leaf.node_id()).is_some(),
+                    s.graph().parent_of(leaf.node_id()),
+                )
+            })
+            .unwrap();
+        assert_eq!(restored, (true, parent_before));
     }
 
     #[test]
-    fn delete_selected_root_leaf_with_shared_rid_emits_plain_remove_root_leaf() {
+    fn delete_selected_leaf_with_shared_rid_emits_plain_remove_leaf() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
@@ -1341,7 +1381,7 @@ mod scene_document_tests {
         let to_delete = doc.add_root_leaf(rid, translation(5.0)).unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(to_delete)));
 
-        assert!(doc.delete_selected_root_leaf());
+        assert!(doc.delete_selected_leaf());
 
         let observed = doc
             .with_scene(|s| {
@@ -1370,14 +1410,14 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn delete_selected_root_leaf_as_sole_reference_emits_compound_that_gcs_resource() {
+    fn delete_selected_leaf_as_sole_reference_emits_compound_that_gcs_resource() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
         let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
 
-        assert!(doc.delete_selected_root_leaf());
+        assert!(doc.delete_selected_leaf());
 
         // Leaf gone and resource arena's live-iter count dropped to 0:
         // the Compound also tombstoned the mesh resource.
@@ -1393,7 +1433,7 @@ mod scene_document_tests {
         assert_eq!(doc.selection_primary_node_id(), None);
 
         // Undo restores both leaf and resource via the inverse Compound
-        // (Compound([AddMeshResource, AddRootLeaf])).
+        // (Compound([AddMeshResource, AddLeaf])).
         doc.undo();
         let observed = doc
             .with_scene(|s| {
@@ -1413,7 +1453,7 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn delete_selected_root_leaf_fires_restructured_selection_changed_and_undo_stack_changed() {
+    fn delete_selected_leaf_fires_restructured_selection_changed_and_undo_stack_changed() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
@@ -1421,7 +1461,7 @@ mod scene_document_tests {
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
-        assert!(doc.delete_selected_root_leaf());
+        assert!(doc.delete_selected_leaf());
         assert_eq!(
             *log.borrow(),
             vec![

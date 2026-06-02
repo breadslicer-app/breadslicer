@@ -544,9 +544,9 @@ impl ViewportController {
     /// Delete handler shared by the viewport Delete key, the
     /// right-click context menu, and the Edit > Delete menu item.
     /// No-op when no scene is loaded, nothing is selected, or the
-    /// selection is not a removable root mesh-resource leaf.
+    /// selection is not a leaf.
     pub fn on_delete_requested(&self) {
-        self.session.document().delete_selected_root_leaf();
+        self.session.document().delete_selected_leaf();
     }
 
     pub fn on_clear_selection(&self) {
