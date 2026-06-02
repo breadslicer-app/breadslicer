@@ -16,6 +16,7 @@ use crate::geom2d::{EdgeId, Segment};
 use crate::plane_intersect::{
     TriangleSlice, Z_CLASSIFY_EPS_MM, classify_vertex_z, intersect_triangle_z,
 };
+use crate::profile::LayerSchedule;
 
 /// Crossing segments produced by intersecting every face of `mesh`
 /// with the horizontal plane at `z_mm`.
@@ -53,4 +54,18 @@ pub fn segments_at_z(mesh: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment
         }
     }
     segments
+}
+
+/// Crossing segments for every layer in `schedule`, paired with the
+/// centred Z of each slab. Wraps [`segments_at_z`] over
+/// [`LayerSchedule::iter_z`]; the returned vector preserves the
+/// schedule's strict-monotone Z ordering.
+pub fn slice_mesh(
+    mesh: &ValidatedManifoldMesh<'_>,
+    schedule: &LayerSchedule,
+) -> Vec<(f64, Vec<Segment>)> {
+    schedule
+        .iter_z()
+        .map(|z_mm| (z_mm, segments_at_z(mesh, z_mm)))
+        .collect()
 }

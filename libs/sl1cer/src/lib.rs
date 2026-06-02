@@ -28,4 +28,4 @@ pub mod plane_intersect;
 pub mod profile;
 
 #[cfg(test)]
-mod tests_segments_at_z;
+mod tests_mesh_slice;

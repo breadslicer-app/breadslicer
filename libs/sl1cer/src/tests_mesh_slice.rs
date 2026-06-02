@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Public-API tests for [`crate::mesh_slice::segments_at_z`].
+//! Public-API tests for the [`crate::mesh_slice`] module: the
+//! single-Z producer [`crate::mesh_slice::segments_at_z`] and the
+//! schedule-driven [`crate::mesh_slice::slice_mesh`].
 //!
 //! Fixture meshes are hand-rolled and manifold by inspection. Tests
 //! exercise the cube case (simplest closed manifold) plus two
@@ -24,7 +26,8 @@ use std::collections::{HashMap, HashSet};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, ValidatedManifoldMesh, Vertex};
 
 use crate::geom2d::{EdgeId, Segment};
-use crate::mesh_slice::segments_at_z;
+use crate::mesh_slice::{segments_at_z, slice_mesh};
+use crate::profile::LayerSchedule;
 
 fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
     mesh.validated_faces()
@@ -467,4 +470,50 @@ fn y_tunnel_below_tunnel_band_has_one_contour_component() {
     let w = witness(&mesh);
     let segments = segments_at_z(&w, 0.3);
     assert_eq!(count_contour_components(&segments), 1);
+}
+
+// =====================================================================
+// slice_mesh: schedule-driven wrapper over segments_at_z.
+// =====================================================================
+
+#[test]
+fn slice_mesh_yields_paired_z_and_segments_following_schedule() {
+    // Centred cube spans Z in [-0.5, +0.5]. Schedule h0 = h = 0.1
+    // with 4 layers gives centred Z planes at 0.05, 0.15, 0.25, 0.35,
+    // all inside the cube, so every layer cuts the 4 side faces and
+    // returns 8 segments per layer.
+    let mesh = unit_cube_mesh();
+    let w = witness(&mesh);
+    let schedule = LayerSchedule::uniform(0.1, 0.1, 4).unwrap();
+    let layers = slice_mesh(&w, &schedule);
+
+    assert_eq!(layers.len(), 4);
+
+    let expected_zs: Vec<f64> = schedule.iter_z().collect();
+    for ((got_z, segments), expected_z) in layers.iter().zip(expected_zs.iter()) {
+        assert_eq!(got_z, expected_z);
+        assert_eq!(segments.len(), 8);
+        assert_edge_id_pairing(segments);
+    }
+
+    // Strict-monotone Z carries through from the schedule.
+    for w in layers.windows(2) {
+        assert!(w[1].0 > w[0].0);
+    }
+}
+
+#[test]
+fn slice_mesh_returns_empty_layers_for_schedule_above_the_mesh() {
+    // Schedule entirely above the cube (cube tops out at z = 0.5):
+    // every layer slices an empty plane and yields zero segments,
+    // but the (z, segments) pairs are still produced in order.
+    let mesh = unit_cube_mesh();
+    let w = witness(&mesh);
+    let schedule = LayerSchedule::uniform(0.1, 1.0, 3).unwrap();
+    let layers = slice_mesh(&w, &schedule);
+
+    assert_eq!(layers.len(), 3);
+    for (_, segments) in &layers {
+        assert!(segments.is_empty());
+    }
 }
