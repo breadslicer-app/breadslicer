@@ -4510,6 +4510,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-sl1cer"
+version = "0.0.12"
+dependencies = [
+ "sc-mesh-core",
+]
+
+[[package]]
 name = "sc-slicer-cli"
 version = "0.0.12"
 dependencies = [

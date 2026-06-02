@@ -1,0 +1,21 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Slicing engine for resin 3D printers.
+//!
+//! `sc-sl1cer` turns validated 3D meshes from [`sc_mesh_core`] into
+//! per-layer geometry suitable for a resin printer. The crate is
+//! intentionally narrow:
+//!
+//! - No file I/O. Mesh formats live in `sc-mesh-formats`; printer
+//!   file formats will live in the planned `sc-sla-formats` crate.
+//! - No support-structure generation (planned `sc-supports` crate).
+//! - No rendering or GPU types.
+//!
+//! # Conventions
+//!
+//! Same as [`sc_mesh_core`]: right-handed, Z-up, millimetres. The
+//! build platform sits at Z = 0; layers are slabs of constant
+//! thickness along +Z.
