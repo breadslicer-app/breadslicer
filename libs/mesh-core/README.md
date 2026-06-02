@@ -32,7 +32,10 @@ It is intentionally narrow:
 
 - `primitives`: `Vertex`, `Normal`, `Vector3D`, `Triangle`, `IndexedTriangle`.
 - `indexed_mesh`: `IndexedMesh` (vertex buffer + indexed face buffer + optional
-  metadata), plus mesh validation and repair routines.
+  metadata), plus mesh validation and repair routines. The witness chain
+  (`ValidatedFaces` for in-range face indices, `ValidatedManifoldMesh` for
+  closed manifolds) lets downstream APIs require the invariant they need
+  at the type level instead of re-validating defensively.
 - `aabb`: `Aabb` axis-aligned bounding boxes.
 - `transform`: `AffineTransform3D` 3×4 affine transforms in `f64`, with
   composition, inversion, and a normal-aware apply.

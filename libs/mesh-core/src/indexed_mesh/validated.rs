@@ -3,21 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Lifetime-bound witnesses that encode the invariant
-//! "every `face.vertices[k]` value is < `mesh.vertices.len()`".
+//! Lifetime-bound witnesses for mesh invariants, layered from weakest
+//! to strongest:
 //!
-//! `IndexedMesh::validated_faces` and `validated_faces_mut` consume
-//! the mesh borrow, run `validate_faces` once, and on success return a
-//! handle whose lifetime ties safe access to the still-valid borrow.
-//! Routines that index into `vertices` / `faces` without bounds checks
-//! live on the witness, so the in-range invariant is statically
-//! enforced rather than relying on the caller's discipline.
+//! 1. [`ValidatedFaces`] / [`ValidatedFacesMut`]: every
+//!    `face.vertices[k]` is `< mesh.vertices.len()`. Minted by
+//!    `IndexedMesh::validated_faces` (or the `_mut` form), which runs
+//!    `validate_faces` once and on success hands back a witness whose
+//!    lifetime ties safe access to the still-valid borrow. Routines
+//!    that index into `vertices` / `faces` without bounds checks live
+//!    on the witness, so the in-range invariant is statically enforced
+//!    rather than relying on the caller's discipline.
+//! 2. [`ValidatedManifoldMesh`]: in addition, every interior edge is
+//!    incident to exactly two faces and consistently oriented across
+//!    that edge. Minted by [`ValidatedFaces::validated_manifold`],
+//!    which consumes the in-range witness, runs the manifold check,
+//!    and on success upgrades the borrow to the stronger witness.
 //!
-//! Operations that preserve the invariant (`fix_faces_orientation`,
-//! either reverses a face's vertex order in place or mutates its
-//! normal, and the same for the read-only validators) are methods on
-//! the witnesses. `fix_zero_length_edges` lives on `IndexedMesh`
-//! itself and minted-via-shortcut: see
+//! Operations that preserve the in-range invariant
+//! (`fix_faces_orientation`, either reverses a face's vertex order in
+//! place or mutates its normal, and the same for the read-only
+//! validators) are methods on the witnesses. `fix_zero_length_edges`
+//! lives on `IndexedMesh` itself and minted-via-shortcut: see
 //! `IndexedMesh::fix_zero_length_edges_into_validated`.
 
 use std::collections::{HashMap, HashSet};
