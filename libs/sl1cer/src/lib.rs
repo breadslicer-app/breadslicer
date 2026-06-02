@@ -19,3 +19,5 @@
 //! Same as [`sc_mesh_core`]: right-handed, Z-up, millimetres. The
 //! build platform sits at Z = 0; layers are slabs of constant
 //! thickness along +Z.
+
+pub mod geom2d;
