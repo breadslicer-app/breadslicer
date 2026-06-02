@@ -25,7 +25,6 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-#[cfg(test)]
 use sc_mesh_core::Scene;
 use sc_mesh_core::SceneFragment;
 use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
@@ -279,6 +278,40 @@ impl SceneDocument {
         Some(node_id)
     }
 
+    /// Delete the currently-selected root leaf, recording the operation as
+    /// one undo entry.
+    ///
+    /// Bails with `false` (no scene mutation, no undo push) when:
+    /// - no scene is loaded;
+    /// - the selection is `Selection::None`;
+    /// - the selected node is not a root, or its payload is not
+    ///   `LeafPayload::MeshResource(_)`.
+    ///
+    /// When the leaf was the last live reference to its `MeshResourceId`, the
+    /// recorded edit is a `Compound` that also tombstones the resource so the
+    /// arena stays in sync with the live-leaf population. When other leaves
+    /// still hold the resource, only the leaf is removed.
+    ///
+    /// Returns `true` on a successful deletion. Selection clearing and the
+    /// `Restructured` event are handled by [`Self::apply_edit`].
+    #[allow(dead_code)]
+    pub(crate) fn delete_selected_root_leaf(&self) -> bool {
+        let Some(node_id) = self.selection_primary_node_id() else {
+            return false;
+        };
+        let edit = self
+            .with_scene(|spatial| build_delete_root_leaf_edit(spatial.graph(), node_id))
+            .flatten();
+        let Some(edit) = edit else {
+            return false;
+        };
+        if !self.apply_edit(edit.clone()) {
+            return false;
+        }
+        self.push_edit(edit);
+        true
+    }
+
     /// Paste a [`SceneFragment`] into the current scene as a new root.
     /// `placement_translation` overrides the fragment root's
     /// translation component (the caller's mouse-projection /
@@ -521,6 +554,48 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
             AffineTransform3D::from_linear_and_translation(*a.linear(), translation),
         ),
     }
+}
+
+/// Build the `SceneEdit` that removes the root leaf at `node_id`, or `None` if
+/// the node is not a removable mesh-resource root leaf.
+///
+/// The returned edit is:
+/// - a plain `RemoveRootLeaf` when at least one other live leaf still
+///   references the same `MeshResourceId`;
+/// - a `Compound([RemoveRootLeaf, RemoveMeshResource])` when this was the last
+///   reference, so the inverse `Compound([AddMeshResource, AddRootLeaf])`
+///   re-installs both on undo.
+///
+/// The compound order matters: `RemoveMeshResource` requires that no leaf still
+/// references the rid, and the preceding `RemoveRootLeaf` satisfies that
+/// precondition.
+#[allow(dead_code)]
+fn build_delete_root_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
+    if !graph.roots().contains(&node_id) {
+        return None;
+    }
+    let node = graph.node(node_id)?;
+    let local_transform = node.local_transform;
+    let rid = match &node.kind {
+        NodeKind::Leaf(LeafPayload::MeshResource(rid)) => *rid,
+        NodeKind::Leaf(LeafPayload::Mesh(_))
+        | NodeKind::Group { .. }
+        | NodeKind::Csg { .. }
+        | NodeKind::Instance { .. } => return None,
+    };
+    let remove_leaf = SceneEdit::RemoveRootLeaf {
+        node_id,
+        mesh: rid,
+        local_transform,
+    };
+    if graph.other_leaf_references_resource(rid, node_id) {
+        return Some(remove_leaf);
+    }
+    let arc = Arc::clone(graph.mesh_resource_arc(rid)?);
+    Some(SceneEdit::Compound(vec![
+        remove_leaf,
+        SceneEdit::RemoveMeshResource { rid, mesh: arc },
+    ]))
 }
 
 /// True when applying `edit` would tombstone the leaf the document's
@@ -1213,6 +1288,141 @@ mod scene_document_tests {
         doc.undo();
         assert_eq!(
             *events.borrow(),
+            vec![
+                SceneEvent::Restructured,
+                SceneEvent::SelectionChanged,
+                SceneEvent::UndoStackChanged,
+            ]
+        );
+    }
+
+    #[test]
+    fn delete_selected_root_leaf_with_no_scene_loaded_returns_false() {
+        let doc = SceneDocument::new();
+        assert!(!doc.delete_selected_root_leaf());
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn delete_selected_root_leaf_with_no_selection_returns_false() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let _ = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        // Selection stays None (add_root_leaf does not auto-select).
+        assert_eq!(doc.selection(), Selection::None);
+        assert!(!doc.delete_selected_root_leaf());
+        // Only the AddRootLeaf entry from the setup is on the stack.
+        let undo_entries_before = doc.undo_stack.borrow().len();
+        assert_eq!(undo_entries_before, 1);
+    }
+
+    #[test]
+    fn delete_selected_root_leaf_with_non_root_selection_returns_false() {
+        // graph_with_one_object parents an inline-mesh leaf under a
+        // Group root, so the leaf is non-root. The delete primitive
+        // must bail without touching the scene or the undo stack.
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let leaf = first_leaf_id(&doc);
+        doc.set_selection(Selection::One(leaf));
+        assert!(!doc.delete_selected_root_leaf());
+        assert!(!doc.can_undo());
+        assert_eq!(doc.selection_primary_node_id(), Some(leaf.node_id()));
+    }
+
+    #[test]
+    fn delete_selected_root_leaf_with_shared_rid_emits_plain_remove_root_leaf() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let kept = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let to_delete = doc.add_root_leaf(rid, translation(5.0)).unwrap();
+        doc.set_selection(Selection::One(crate::selection::LeafId(to_delete)));
+
+        assert!(doc.delete_selected_root_leaf());
+
+        let observed = doc
+            .with_scene(|s| {
+                (
+                    s.graph().node(to_delete).is_some(),
+                    s.graph().node(kept).is_some(),
+                    s.graph().mesh_resources_iter().count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(observed, (false, true, 1));
+        assert_eq!(doc.selection_primary_node_id(), None);
+
+        // Undo restores only the leaf; the resource was never removed
+        // because the sibling kept it live.
+        doc.undo();
+        let observed = doc
+            .with_scene(|s| {
+                (
+                    s.graph().node(to_delete).is_some(),
+                    s.graph().mesh_resources_iter().count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(observed, (true, 1));
+    }
+
+    #[test]
+    fn delete_selected_root_leaf_as_sole_reference_emits_compound_that_gcs_resource() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        doc.set_selection(Selection::One(crate::selection::LeafId(id)));
+
+        assert!(doc.delete_selected_root_leaf());
+
+        // Leaf gone and resource arena's live-iter count dropped to 0:
+        // the Compound also tombstoned the mesh resource.
+        let observed = doc
+            .with_scene(|s| {
+                (
+                    s.graph().node(id).is_some(),
+                    s.graph().mesh_resources_iter().count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(observed, (false, 0));
+        assert_eq!(doc.selection_primary_node_id(), None);
+
+        // Undo restores both leaf and resource via the inverse Compound
+        // (Compound([AddMeshResource, AddRootLeaf])).
+        doc.undo();
+        let observed = doc
+            .with_scene(|s| {
+                let node_back = s.graph().node(id);
+                let kind_ok = matches!(
+                    node_back.map(|n| &n.kind),
+                    Some(NodeKind::Leaf(LeafPayload::MeshResource(r))) if *r == rid
+                );
+                (
+                    node_back.is_some(),
+                    kind_ok,
+                    s.graph().mesh_resources_iter().count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(observed, (true, true, 1));
+    }
+
+    #[test]
+    fn delete_selected_root_leaf_fires_restructured_selection_changed_and_undo_stack_changed() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        doc.set_selection(Selection::One(crate::selection::LeafId(id)));
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+        assert!(doc.delete_selected_root_leaf());
+        assert_eq!(
+            *log.borrow(),
             vec![
                 SceneEvent::Restructured,
                 SceneEvent::SelectionChanged,
