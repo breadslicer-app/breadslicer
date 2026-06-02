@@ -23,4 +23,5 @@
 pub mod contour;
 pub mod error;
 pub mod geom2d;
+pub mod plane_intersect;
 pub mod profile;

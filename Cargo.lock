@@ -4513,6 +4513,7 @@ dependencies = [
 name = "sc-sl1cer"
 version = "0.0.12"
 dependencies = [
+ "proptest",
  "sc-mesh-core",
 ]
 
