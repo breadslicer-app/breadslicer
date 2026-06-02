@@ -20,6 +20,7 @@
 //! build platform sits at Z = 0; layers are slabs of constant
 //! thickness along +Z.
 
+pub mod api;
 pub mod contour;
 pub mod error;
 pub mod geom2d;
@@ -28,6 +29,8 @@ pub mod mesh_slice;
 pub mod plane_intersect;
 pub mod profile;
 pub mod stitch;
+
+pub use api::slice_leaf;
 
 #[cfg(test)]
 mod tests_mesh_slice;
