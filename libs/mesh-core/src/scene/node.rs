@@ -81,6 +81,19 @@ impl SubtreeResourceId {
     }
 }
 
+/// Where a leaf sits in the scene graph: as a scene root, or as a
+/// child of another node at a specific position in the parent's
+/// children list. Recorded by [`crate::scene::Scene::remove_leaf`]
+/// alongside the leaf's payload and transform so the inverse
+/// [`crate::scene::Scene::install_leaf_at`] can re-attach the leaf
+/// at the exact same place, preserving sibling order under the
+/// parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LeafAttachment {
+    Root,
+    Parent { parent: NodeId, position: usize },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub meta: Option<SceneMetadata>,
