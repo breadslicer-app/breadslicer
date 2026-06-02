@@ -23,6 +23,7 @@
 pub mod contour;
 pub mod error;
 pub mod geom2d;
+pub mod grouping;
 pub mod mesh_slice;
 pub mod plane_intersect;
 pub mod profile;
