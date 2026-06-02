@@ -111,6 +111,23 @@ pub fn stitch_layer(segments: &[Segment], z_mm: f64) -> Result<Vec<ClosedRing>, 
     Ok(rings)
 }
 
+/// Reverse the vertex order of any clockwise ring so every ring's
+/// vertices end up in counter-clockwise order (strictly positive
+/// signed area). Rings with zero signed area (degenerate) are left
+/// alone.
+///
+/// This is a pure orientation pass. Outer-vs-hole classification is
+/// the grouping step's job and assumes CCW input, so downstream code
+/// can read "CCW means traversal direction" from any ring this
+/// function has touched.
+pub fn normalise_to_ccw(rings: &mut [ClosedRing]) {
+    for ring in rings.iter_mut() {
+        if ring.signed_area() < 0.0 {
+            ring.reverse();
+        }
+    }
+}
+
 #[cfg(test)]
 mod stitch_tests {
     use sc_mesh_core::primitives::VertexIndex;
@@ -191,6 +208,36 @@ mod stitch_tests {
         assert_eq!(rings.len(), 2);
         assert_eq!(rings[0].vertices().len(), 4);
         assert_eq!(rings[1].vertices().len(), 4);
+    }
+
+    #[test]
+    fn normalise_to_ccw_flips_clockwise_rings_and_keeps_ccw_rings() {
+        // CCW unit square at origin.
+        let ccw = ClosedRing::new(vec![p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0), p(0.0, 1.0)]);
+        // CW unit square at origin (same set of corners, reverse order).
+        let cw = ClosedRing::new(vec![p(0.0, 0.0), p(0.0, 1.0), p(1.0, 1.0), p(1.0, 0.0)]);
+        let ccw_original: Vec<_> = ccw.vertices().to_vec();
+        let mut rings = vec![ccw, cw];
+        normalise_to_ccw(&mut rings);
+        for ring in &rings {
+            assert!(
+                ring.signed_area() > 0.0,
+                "expected CCW, got area {}",
+                ring.signed_area(),
+            );
+        }
+        // The already-CCW ring is untouched in vertex order.
+        assert_eq!(rings[0].vertices(), ccw_original.as_slice());
+    }
+
+    #[test]
+    fn normalise_to_ccw_leaves_zero_area_rings_alone() {
+        // Three collinear vertices bake to zero signed area.
+        let degenerate = ClosedRing::new(vec![p(0.0, 0.0), p(1.0, 0.0), p(2.0, 0.0)]);
+        let original: Vec<_> = degenerate.vertices().to_vec();
+        let mut rings = vec![degenerate];
+        normalise_to_ccw(&mut rings);
+        assert_eq!(rings[0].vertices(), original.as_slice());
     }
 
     #[test]
