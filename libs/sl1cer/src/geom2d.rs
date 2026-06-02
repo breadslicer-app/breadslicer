@@ -30,7 +30,7 @@ impl Point2D {
     pub fn distance_squared(&self, other: &Self) -> f64 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
-        dx * dx + dy * dy
+        dx.mul_add(dx, dy * dy)
     }
 
     /// Linear interpolation: `t = 0` returns `self`, `t = 1` returns
@@ -38,8 +38,8 @@ impl Point2D {
     #[inline]
     pub fn lerp(&self, other: &Self, t: f64) -> Self {
         Self {
-            x: self.x + (other.x - self.x) * t,
-            y: self.y + (other.y - self.y) * t,
+            x: (other.x - self.x).mul_add(t, self.x),
+            y: (other.y - self.y).mul_add(t, self.y),
         }
     }
 }

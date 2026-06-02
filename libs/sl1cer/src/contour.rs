@@ -70,7 +70,7 @@ impl ClosedRing {
         for i in 0..n {
             let a = self.vertices[i];
             let b = self.vertices[(i + 1) % n];
-            sum += a.x * b.y - b.x * a.y;
+            sum += a.x.mul_add(b.y, -b.x * a.y);
         }
         sum * 0.5
     }
