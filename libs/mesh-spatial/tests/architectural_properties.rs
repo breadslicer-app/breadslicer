@@ -107,7 +107,7 @@ fn mesh_formats_does_not_depend_on_mesh_spatial() {
 }
 
 /// `slicer-cli` runs headless format conversions. It has no GUI, no
-/// picker, no gizmo — and therefore no reason to pull spatial-cache
+/// picker, no gizmo, and therefore no reason to pull spatial-cache
 /// types into its dependency graph.
 #[test]
 fn slicer_cli_does_not_depend_on_mesh_spatial() {

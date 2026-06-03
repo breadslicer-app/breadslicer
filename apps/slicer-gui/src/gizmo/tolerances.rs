@@ -10,7 +10,7 @@
 /// Cosine of the lock-out angle: when
 /// `|axis_world · ray_dir| > LOCKOUT_COS`, the angle between the
 /// camera ray and the axis is below 8° and the closest-point math
-/// becomes unstable — `1 − (axis · ray_dir)²` drops below `sin²(8°)`
+/// becomes unstable, `1 - (axis · ray_dir)²` drops below `sin²(8°)`
 /// and a one-pixel cursor jitter would translate the object far more
 /// than the user expects. Such an axis is dropped from the hit test
 /// and rendered greyed so the user sees why it is unresponsive.

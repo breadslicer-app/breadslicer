@@ -13,7 +13,7 @@ use crate::window_prefs::WindowPreferences;
 
 /// Bundle of an `AboutWindow` and its preference-bus subscription.
 /// Dropping the bundle drops the subscription, which removes the
-/// listener from the bus — preventing dangling calls into a
+/// listener from the bus, preventing dangling calls into a
 /// no-longer-used window handle.
 pub(crate) struct WiredAboutWindow {
     pub window: AboutWindow,

@@ -492,7 +492,7 @@ mod keyboard_step_tests {
 
     #[test]
     fn arrow_drive_signs_compose_per_axis_kbd() {
-        // +X and −X cancel; +Y alone keeps a sign; mixed bits across
+        // +X and -X cancel; +Y alone keeps a sign; mixed bits across
         // axes drive each axis independently.
         let d = ArrowDrive {
             x_pos: true,
@@ -640,7 +640,7 @@ mod keyboard_step_tests {
 
     #[test]
     fn keyboard_step_scale_negative_sign_inverts_factor() {
-        // Held −X for 1 s → factor 1/1.5 along X.
+        // Held -X for 1 s → factor 1/1.5 along X.
         let arrows = ArrowDrive {
             x_neg: true,
             ..ArrowDrive::default()

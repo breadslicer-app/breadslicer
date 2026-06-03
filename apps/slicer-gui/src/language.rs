@@ -111,7 +111,7 @@ impl LanguagePreference {
         if base != target && slint::select_bundled_translation(base).is_ok() {
             return;
         }
-        // Nothing matched — fall back to the source language.
+        // Nothing matched, fall back to the source language.
         let _ = slint::select_bundled_translation("");
     }
 }

@@ -36,7 +36,7 @@ impl TriangleClusters {
 
     /// Build clusters from the vertex / face arrays of a mesh.
     /// Returns `None` when `faces` is empty (no clusters to emit) or
-    /// when any face references an out-of-range vertex index —
+    /// when any face references an out-of-range vertex index;
     /// corrupt-mesh callers (e.g. the picker) treat this the same as
     /// "miss" rather than surfacing the error. For an in-range mesh,
     /// the result has length `ceil(faces.len() / CLUSTER_SIZE)` and

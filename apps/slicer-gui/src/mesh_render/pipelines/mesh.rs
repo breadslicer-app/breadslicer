@@ -131,7 +131,7 @@ impl MeshPipeline {
                 // the render loop to 1 for the selected object and 0
                 // otherwise). This means after the main pass the
                 // stencil holds 1 only over the selected object's
-                // visible silhouette — exactly what the outline
+                // visible silhouette, exactly what the outline
                 // post-pass dilates.
                 stencil: wgpu::StencilState {
                     front: wgpu::StencilFaceState {

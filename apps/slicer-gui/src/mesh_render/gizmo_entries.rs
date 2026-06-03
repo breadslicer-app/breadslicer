@@ -81,7 +81,7 @@ pub(super) const GIZMO_SLOTS: GizmoSlots = GizmoSlots {
 /// the world-space gizmo origin; `scale` is the world-unit length of
 /// the translate shaft (so the gizmo subtends a constant pixel size);
 /// `visibility` tells the renderer which handle types to draw and
-/// which axis (if any) is the currently-active drag target — handles
+/// which axis (if any) is the currently-active drag target: handles
 /// matching the active axis render at full brightness, the rest at
 /// dim brightness. `locked_translate` / `locked_rotate` flag axes the
 /// user can't grab right now (matching `gizmo::axis_pickable` and
@@ -99,7 +99,7 @@ pub struct GizmoFrame {
     pub locked_rotate: [bool; 3],
     /// Handle the cursor is currently hovering over (no button held),
     /// or `None` when the cursor is off any handle. Renders that
-    /// handle at hover brightness — between inactive and active.
+    /// handle at hover brightness, between inactive and active.
     /// Ignored while `visibility` is `Dragging*` (the dragged handle
     /// is already at full brightness).
     pub hover: Option<GizmoHover>,
@@ -316,19 +316,19 @@ pub(super) fn build_scale_axis_entries(frame: &GizmoFrame) -> [GizmoDrawEntry; 3
     out
 }
 
-/// Mirror of `gizmo::dimensions::MIDPOINT_FRACTION` — kept here as a
+/// Mirror of `gizmo::dimensions::MIDPOINT_FRACTION`, kept here as a
 /// private const so `build_scale_axis_entries` doesn't need a fresh
 /// import path through the `gizmo` module.
 const MIDPOINT_FRACTION_LOCAL: f32 = crate::gizmo::dimensions::MIDPOINT_FRACTION;
 
 /// Per-axis offset between the rotate-drag angle frame and the X-roll
 /// frame (CCW about the rotation axis):
-/// - **X** — drag frame's 0° = world +Y; arc midpoint's 0° (after
+/// - **X**: drag frame's 0° = world +Y; arc midpoint's 0° (after
 ///   `axis_world_rotations[X]` = identity) = world +Y → offset 0.
-/// - **Y** — drag frame's 0° = world +Z; arc midpoint's 0° (after
+/// - **Y**: drag frame's 0° = world +Z; arc midpoint's 0° (after
 ///   `Rz(+π/2)`) = world -X → offset +π/2.
-/// - **Z** — drag frame's 0° = world +X; arc midpoint's 0° (after
-///   `Ry(-π/2)`) = world +Y → offset −π/2.
+/// - **Z**: drag frame's 0° = world +X; arc midpoint's 0° (after
+///   `Ry(-π/2)`) = world +Y → offset -π/2.
 fn arc_drag_to_roll_offset(axis: Axis) -> f32 {
     use std::f32::consts::FRAC_PI_2;
     match axis {
@@ -412,7 +412,7 @@ fn arc_camera_roll(camera: &OrbitCamera, pivot: Vec3, axis: Axis) -> f32 {
     // Camera direction in world space, then expressed in handle-
     // local coords by inverting the world-axis rotation. The
     // rotation matrix is orthogonal, so the inverse is the
-    // transpose — but glam's `inverse` on rigid rotations is cheap
+    // transpose, but glam's `inverse` on rigid rotations is cheap
     // enough to avoid premature optimisation here.
     let world_to_local = world_to_handle_local(axis);
     let to_camera_world = camera.eye() - pivot;
@@ -489,7 +489,7 @@ mod gizmo_entry_tests {
             [false; 3],
         ));
         assert_approx_eq!(f32, entries[0].tint[0], 1.0, epsilon = 1e-5);
-        // Y stays inactive — only the dragging axis brightens.
+        // Y stays inactive; only the dragging axis brightens.
         assert_approx_eq!(f32, entries[1].tint[1], 1.0 * 0.65, epsilon = 1e-5);
     }
 
@@ -571,7 +571,7 @@ mod gizmo_entry_tests {
         let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
         let translate = build_translate_entries(&idle_frame());
         let rotate = build_rotate_entries(&idle_frame(), &camera);
-        // For each axis, at least one channel must differ — the
+        // For each axis, at least one channel must differ: the
         // rotate arcs and cones must not visually share a colour
         // with the translate shafts/cones for the same axis.
         for i in 0..3 {
@@ -592,7 +592,7 @@ mod gizmo_entry_tests {
         frame.hover = Some(GizmoHover::Translate(Axis::X));
         let entries = build_translate_entries(&frame);
         assert_approx_eq!(f32, entries[0].tint[0], TINT_HOVER, epsilon = 1e-5);
-        // Y stays inactive — hover is per-axis.
+        // Y stays inactive; hover is per-axis.
         assert_approx_eq!(f32, entries[1].tint[1], TINT_INACTIVE, epsilon = 1e-5);
         // Hover sits strictly between inactive and active.
         const _: () = {

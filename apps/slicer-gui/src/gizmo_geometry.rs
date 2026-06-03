@@ -4,19 +4,19 @@
  */
 
 //! Procedural geometry for the gizmo handles, all in **handle-local
-//! space** — pivot at origin, primary axis along +X. The renderer
+//! space**: pivot at origin, primary axis along +X. The renderer
 //! draws each buffer three times, rotating onto +X / +Y / +Z; per-axis
 //! tint uniforms colour each draw.
 //!
 //! Two topologies are produced:
 //!
-//! - `LineList` — 1-pixel handle lines:
+//! - `LineList`: 1-pixel handle lines:
 //!   - [`build_axis_shaft_line_geometry`]: pivot → cone base, one
 //!     segment.
 //!   - [`build_rotate_arc_line_geometry`]: polyline approximating the
 //!     90° arc around +X.
 //!
-//! - `TriangleList` — solid pieces that act as click targets:
+//! - `TriangleList`: solid pieces that act as click targets:
 //!   - [`build_axis_cone_tip_geometry`]: 12-sided cone capping the
 //!     shaft (translate handle).
 //!   - [`build_axis_scale_cube_geometry`]: axis-aligned cube at the
@@ -42,7 +42,7 @@ pub struct GizmoVertex {
 /// `[0.0, 1.0]`; cone occupies `[1.0, 1.18]`. The hit-test in
 /// `gizmo::hit_test` extends the cylinder to 1.25 × shaft length so
 /// a click anywhere up to and slightly past the cone tip registers
-/// as a shaft hit — no separate ray-vs-cone path needed.
+/// as a shaft hit; no separate ray-vs-cone path needed.
 const SHAFT_LENGTH: f32 = 1.0;
 const CONE_BASE_X: f32 = SHAFT_LENGTH;
 const CONE_TIP_X: f32 = 1.18;
@@ -101,7 +101,7 @@ pub fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     });
 
     // CCW-from-outside for each cone side: (base[i], base[i+1], tip).
-    // The base ring-cap is omitted — the cone's bottom is hidden by
+    // The base ring-cap is omitted; the cone's bottom is hidden by
     // the shaft line ending at the cone base.
     for i in 0..CONE_SIDES {
         let next = (i + 1) % CONE_SIDES;
@@ -157,7 +157,7 @@ pub fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 /// Builds the rotate-handle two-cone spindle in handle-local space.
 /// Two cones share their bases at the arc's camera-facing midpoint
 /// `(0, R, 0)` (where `R = ROTATE_ARC_RADIUS_LOCAL`), tips at
-/// `(0, R, ±ROTATE_CONE_LENGTH)` — i.e. along ±Z, the arc tangent at
+/// `(0, R, ±ROTATE_CONE_LENGTH)`, i.e. along ±Z, the arc tangent at
 /// the midpoint. The base disc therefore lies in the handle-local XY
 /// plane, perpendicular to the arc curve at that point.
 ///

@@ -44,7 +44,7 @@ pub(super) struct GizmoBuffers {
     /// Rotate arc polyline (`LineList`) approximating a 90° sweep
     /// around handle-local +X, centred on +Y. The per-frame X-roll
     /// (baked into `axis_rotation`) swings the arc to face the camera
-    /// before the world-axis rotation maps it onto X/Y/Z. Decorative —
+    /// before the world-axis rotation maps it onto X/Y/Z. Decorative;
     /// the click target is the cone spindle below.
     pub(super) arc_line_vertex_buffer: wgpu::Buffer,
     pub(super) arc_line_index_buffer: wgpu::Buffer,

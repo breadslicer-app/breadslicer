@@ -67,7 +67,7 @@ export component MeshViewer inherits Rectangle {
     callback gizmo-focus-rotate-pressed();
     callback gizmo-focus-scale-pressed();
     // The `int` codes encode axis × sign:
-    //   0 = +X, 1 = −X, 2 = +Y, 3 = −Y, 4 = +Z, 5 = −Z.
+    //   0 = +X, 1 = -X, 2 = +Y, 3 = -Y, 4 = +Z, 5 = -Z.
     callback gizmo-arrow-pressed(int);
     callback gizmo-arrow-released(int);
     // Tab / Shift+Tab selection cycling. `+1` advances forward,

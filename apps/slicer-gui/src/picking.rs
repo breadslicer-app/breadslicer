@@ -19,7 +19,7 @@
 //!    AABB against the local ray. Clusters the ray misses skip
 //!    the linear MT walk entirely.
 //!
-//! 3. **Sign-aware Möller–Trumbore on cluster survivors.** Faces in
+//! 3. **Sign-aware Möller-Trumbore on cluster survivors.** Faces in
 //!    surviving clusters are tested in object space. The renderer's
 //!    `cull_mode: Some(Face::Back)` with `front_face: FrontFace::Ccw`
 //!    is matched by accepting hits whose MT determinant has the same
@@ -242,7 +242,7 @@ pub(crate) fn ray_hits_aabb_t(ray: &Ray, min: Vec3, max: Vec3) -> Option<f32> {
     Some(t_enter.max(0.0))
 }
 
-/// Sign-aware Möller–Trumbore intersection. `det_sign = +1.0` is the
+/// Sign-aware Möller-Trumbore intersection. `det_sign = +1.0` is the
 /// classic "front face = CCW winding" rule that matches the renderer's
 /// `front_face: FrontFace::Ccw, cull_mode: Some(Face::Back)` pipeline
 /// state. `det_sign = -1.0` flips the front-face filter, which is

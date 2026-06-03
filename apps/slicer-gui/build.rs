@@ -93,12 +93,12 @@ fn generate_language_table() {
     }
     for code in names.keys() {
         if code == SOURCE_LANGUAGE_CODE {
-            // The source language never ships a directory — see the
+            // The source language never ships a directory, see the
             // constant's comment.
             continue;
         }
         if !locales.contains(code) {
-            // Stale entry — surfaced as a warning rather than a hard error
+            // Stale entry, surfaced as a warning rather than a hard error
             // so a translator removing a directory doesn't block the build.
             println!(
                 "cargo:warning={LOCALE_NAMES_FILE} has entry '{code}' but no matching \
@@ -111,7 +111,7 @@ fn generate_language_table() {
     // explicitly. At runtime `select_bundled_translation("en")` will fail
     // (no bundle), and `LanguagePreference::apply` falls through to
     // `select_bundled_translation("")`, which resolves to the source
-    // strings — i.e. English. If a translator ever adds a real
+    // strings, i.e. English. If a translator ever adds a real
     // `i18n/en/` directory it will show up through the normal path
     // above; skip injection in that case.
     if !entries.iter().any(|e| e.code == SOURCE_LANGUAGE_CODE) {
@@ -380,7 +380,7 @@ fn po_coverage(po_path: &Path) -> CoverageStats {
                 state.all_msgstr_empty = false;
             }
         } else if let Some(rest) = trimmed.strip_prefix("msgstr[") {
-            // `msgstr[N] "…"` — strip past the `]`.
+            // `msgstr[N] "…"`: strip past the `]`.
             state.field = Field::Msgstr;
             let payload = rest.split_once(']').map(|(_, r)| r.trim()).unwrap_or("");
             if !is_empty_quoted(payload) {

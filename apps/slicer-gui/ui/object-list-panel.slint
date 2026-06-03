@@ -42,7 +42,7 @@ export component ObjectListPanel inherits Rectangle {
         }
 
         // Empty-state placeholder. Shown when the scene has zero
-        // objects (rare but possible — e.g. the loader currently
+        // objects (rare but possible, e.g. the loader currently
         // strips empty meshes silently elsewhere). Gives the panel a
         // hint about its purpose instead of an empty rectangle.
         if (root.model.length == 0): Rectangle {

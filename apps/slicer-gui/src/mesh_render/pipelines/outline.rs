@@ -90,7 +90,7 @@ impl OutlinePipeline {
                 conservative: false,
             },
             // The post-pass renders to the resolved (non-MSAA) target
-            // and samples the still-MSAA stencil as input — colour and
+            // and samples the still-MSAA stencil as input, colour and
             // attachment sample counts agree at 1, while the texture
             // binding is multisampled.
             depth_stencil: None,

@@ -565,7 +565,7 @@ mod affine_transform_3d_tests {
     #[test]
     fn from_axis_angle_pi_around_diagonal_swaps_axes() {
         // Rotation by π about the (1,1,1)/√3 axis cycles (x,y,z) ↦ in a known
-        // pattern. Specifically, the matrix is (2/3)·J − I where J is the
+        // pattern. Specifically, the matrix is (2/3)·J - I where J is the
         // all-ones matrix, giving diagonal entries -1/3 and off-diagonal 2/3.
         let t = AffineTransform3D::from_axis_angle([1.0, 1.0, 1.0], PI).unwrap();
         let third = 1.0 / 3.0;

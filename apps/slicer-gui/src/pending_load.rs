@@ -6,8 +6,8 @@
 //! Per-window slot for a load request that can't start yet because the
 //! GPU device hasn't been published (no `RenderingSetup` has fired
 //! since the window opened, or a teardown cleared the slot). External
-//! entry points — argv at startup, drag-and-drop before first paint,
-//! the future macOS `openURLs` event — write here via
+//! entry points (argv at startup, drag-and-drop before first paint,
+//! the future macOS `openURLs` event) write here via
 //! [`PendingLoad::queue`]; the controller drains it from
 //! `handle_rendering_setup` once the device is available.
 //!

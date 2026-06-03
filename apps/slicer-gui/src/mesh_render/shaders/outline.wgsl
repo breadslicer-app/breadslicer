@@ -8,7 +8,7 @@
 // Reads sample 0 of the multisampled stencil produced by the main pass
 // (the selected object's fragments wrote `1`; everything else is `0`)
 // and emits an outline colour wherever the 3×3 neighbourhood mixes
-// `0` and `1` — that is, on the silhouette edge of the selected
+// `0` and `1`, that is, on the silhouette edge of the selected
 // object. Non-edge fragments `discard`, so the resolved colour from
 // the main pass shows through unchanged.
 //
@@ -26,7 +26,7 @@ struct VsOut {
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VsOut {
-    // Single oversized triangle covering the screen — saves a vertex
+    // Single oversized triangle covering the screen, saves a vertex
     // versus a quad, no vertex buffer needed.
     var positions = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -1.0),

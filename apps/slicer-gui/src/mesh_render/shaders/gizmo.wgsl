@@ -5,7 +5,7 @@
 
 // Translate gizmo: three axis handles drawn after the main scene
 // from a single axis-along-+X geometry, rotated and tinted per axis.
-// No lighting — handles read as flat-shaded UI, not as 3D objects.
+// No lighting: handles read as flat-shaded UI, not as 3D objects.
 
 struct GizmoUniforms {
     view_proj: mat4x4<f32>,
@@ -18,10 +18,10 @@ struct GizmoUniforms {
 
 struct DrawEntry {
     // Rotates handle-local +X onto the active world axis (identity
-    // for X, +90° around Z for Y, −90° around Y for Z).
+    // for X, +90° around Z for Y, -90° around Y for Z).
     axis_rotation: mat4x4<f32>,
     // Solid colour for this axis's draw call. Drives both visual
-    // colour and the active/inactive/locked-out distinction —
+    // colour and the active/inactive/locked-out distinction;
     // brightness is modulated CPU-side.
     tint: vec4<f32>,
 };

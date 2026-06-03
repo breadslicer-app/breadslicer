@@ -29,7 +29,7 @@ fn vertex_strategy() -> impl Strategy<Value = Vertex> {
     (bounded_f32(), bounded_f32(), bounded_f32()).prop_map(|(x, y, z)| Vertex::new([x, y, z]))
 }
 
-/// 1–8 vertices wired into a single fan-triangulated face set so the
+/// 1-8 vertices wired into a single fan-triangulated face set so the
 /// resulting mesh is non-empty. Face normals are arbitrary; the AABB
 /// computation only walks vertices.
 fn mesh_strategy() -> impl Strategy<Value = IndexedMesh> {

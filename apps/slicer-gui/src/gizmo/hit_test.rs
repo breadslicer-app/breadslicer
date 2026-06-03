@@ -549,7 +549,7 @@ mod ray_hits_rotate_cones_tests {
         // (5, 0.1, 0): the in-plane camera direction (in YZ) is +Y,
         // so the arc midpoint is at world (0, 1, 0) for arc_radius=1.
         // The two rotate cones share their base there, tips at +X and
-        // −X with cone_length = 0.18. A ray crossing (0, 1, 0) along
+        // -X with cone_length = 0.18. A ray crossing (0, 1, 0) along
         // -X enters the bounding cylinder.
         let ray = Ray {
             origin: Vec3::new(5.0, 0.1, 0.0),
