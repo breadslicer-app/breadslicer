@@ -28,6 +28,7 @@ pub mod grouping;
 pub mod mesh_slice;
 pub mod plane_intersect;
 pub mod profile;
+pub mod raster;
 pub mod stitch;
 
 pub use api::slice_leaf;
