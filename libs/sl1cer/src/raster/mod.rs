@@ -10,7 +10,11 @@
 //! runs in physical pixel space. The submodules:
 //!
 //! - [`pixel_map`] holds the millimetre-to-pixel projection.
+//! - [`rle`] holds the run-length-encoded raster types and the
+//!   streaming accumulator that builds them.
 
 pub mod pixel_map;
+pub mod rle;
 
 pub use pixel_map::PixelMap;
+pub use rle::{LayerRaster, LayerRasterStack, RleRun, RleRunAccumulator};
