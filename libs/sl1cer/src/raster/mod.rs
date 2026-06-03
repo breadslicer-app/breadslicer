@@ -19,6 +19,4 @@ pub mod pixel_map;
 pub mod rle;
 pub mod scanline;
 
-pub use pixel_map::PixelMap;
-pub use rle::{LayerRaster, LayerRasterStack, RleRun, RleRunAccumulator};
 pub use scanline::{rasterize_layer, rasterize_layer_binary};
