@@ -24,6 +24,7 @@
 //! when consecutive rows end and begin with the same value.
 
 use crate::contour::{ClosedRing, ContourLayer};
+use crate::profile::AaLevel;
 use crate::raster::pixel_map::PixelMap;
 use crate::raster::rle::{LayerRaster, RleRunAccumulator};
 
@@ -105,6 +106,137 @@ pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> Lay
     }
 
     LayerRaster::new(layer.z_mm(), width_px, height_px, acc.into_runs())
+}
+
+/// Rasterise `layer` with the chosen anti-aliasing level.
+///
+/// [`AaLevel::Off`] short-circuits to [`rasterize_layer_binary`].
+/// [`AaLevel::X2`] / [`AaLevel::X4`] / [`AaLevel::X8`] run N Y
+/// sub-scanlines per pixel row and accumulate analytic X-span
+/// coverage per pixel column. The per-pixel coverage in `[0, 1]` is
+/// then mapped to `[0, 255]` and rounded to the nearest integer.
+///
+/// `min_alpha_pct` is the resin printer's practical exposure floor:
+/// any non-zero pixel whose 8-bit value sits strictly below
+/// `round(min_alpha_pct / 100 * 255)` is clamped to `0`. Pass `0.0`
+/// to disable the floor.
+pub fn rasterize_layer(
+    layer: &ContourLayer,
+    pixel_map: &PixelMap,
+    aa: AaLevel,
+    min_alpha_pct: f32,
+) -> LayerRaster {
+    match aa {
+        AaLevel::Off => rasterize_layer_binary(layer, pixel_map),
+        AaLevel::X2 => rasterize_layer_aa(layer, pixel_map, 2, min_alpha_pct),
+        AaLevel::X4 => rasterize_layer_aa(layer, pixel_map, 4, min_alpha_pct),
+        AaLevel::X8 => rasterize_layer_aa(layer, pixel_map, 8, min_alpha_pct),
+    }
+}
+
+fn rasterize_layer_aa(
+    layer: &ContourLayer,
+    pixel_map: &PixelMap,
+    n: u32,
+    min_alpha_pct: f32,
+) -> LayerRaster {
+    let width_px = pixel_map.pixel_resolution().x();
+    let height_px = pixel_map.pixel_resolution().y();
+    let edges = collect_edges(layer, pixel_map);
+
+    let mut acc = RleRunAccumulator::new();
+    let mut row_acc: Vec<f64> = vec![0.0; width_px as usize];
+    let mut crossings: Vec<(f64, i32)> = Vec::new();
+
+    let threshold_raw = (f64::from(min_alpha_pct) / 100.0 * 255.0).round() as i32;
+    let threshold = threshold_raw.clamp(0, 256) as u32;
+    let per_sub_strip = 1.0 / f64::from(n);
+
+    for row in 0..height_px {
+        for v in row_acc.iter_mut() {
+            *v = 0.0;
+        }
+
+        for k in 0..n {
+            let y = f64::from(row) + (f64::from(k) + 0.5) / f64::from(n);
+            crossings.clear();
+            for edge in &edges {
+                if (edge.ay > y) != (edge.by > y) {
+                    let t = (y - edge.ay) / (edge.by - edge.ay);
+                    let x_int = (edge.bx - edge.ax).mul_add(t, edge.ax);
+                    let dir = if edge.ay < edge.by { 1 } else { -1 };
+                    crossings.push((x_int, dir));
+                }
+            }
+            crossings.sort_by(|p, q| p.0.partial_cmp(&q.0).unwrap());
+
+            let mut winding = 0i32;
+            let mut span_start: Option<f64> = None;
+            for (x_c, dir) in &crossings {
+                let prev_winding = winding;
+                winding += dir;
+                let was_filled = prev_winding != 0;
+                let is_filled = winding != 0;
+                if !was_filled && is_filled {
+                    span_start = Some(*x_c);
+                } else if was_filled
+                    && !is_filled
+                    && let Some(start) = span_start.take()
+                {
+                    accumulate_span(&mut row_acc, start, *x_c, width_px, per_sub_strip);
+                }
+            }
+        }
+
+        for &cov in row_acc.iter() {
+            let raw_value = (cov * 255.0).round() as i32;
+            let clamped = raw_value.clamp(0, 255) as u32;
+            let final_value = if clamped > 0 && clamped < threshold {
+                0
+            } else {
+                clamped as u8
+            };
+            acc.push(final_value, 1);
+        }
+    }
+
+    LayerRaster::new(layer.z_mm(), width_px, height_px, acc.into_runs())
+}
+
+/// Distribute one sub-scanline's `[x_start, x_end]` X interval over
+/// the pixel columns it touches, weighted by `per_sub_strip` (the
+/// 1 / N Y-fraction one sub-scanline contributes).
+fn accumulate_span(
+    row_acc: &mut [f64],
+    x_start: f64,
+    x_end: f64,
+    width_px: u32,
+    per_sub_strip: f64,
+) {
+    let x_start = x_start.max(0.0);
+    let x_end = x_end.min(f64::from(width_px));
+    if x_end <= x_start {
+        return;
+    }
+
+    let left = x_start.floor() as i64;
+    let right = x_end.ceil() as i64 - 1;
+
+    if left == right {
+        let col = left as usize;
+        let frac = x_end - x_start;
+        row_acc[col] += per_sub_strip * frac;
+    } else {
+        let left_col = left as usize;
+        let left_frac = (left + 1) as f64 - x_start;
+        row_acc[left_col] += per_sub_strip * left_frac;
+        for v in &mut row_acc[(left + 1) as usize..right as usize] {
+            *v += per_sub_strip;
+        }
+        let right_col = right as usize;
+        let right_frac = x_end - right as f64;
+        row_acc[right_col] += per_sub_strip * right_frac;
+    }
 }
 
 #[cfg(test)]
@@ -244,5 +376,84 @@ mod scanline_tests {
         assert_eq!(raster.height_px(), 80);
         let total: u64 = raster.runs().iter().map(|r| u64::from(r.length)).sum();
         assert_eq!(total, 50 * 80);
+    }
+
+    fn unit_diamond_layer() -> ContourLayer {
+        // Unit square rotated 45 degrees about (0.5, 0.5). Every edge
+        // crosses pixels at non-integer Y, so the AA pass produces
+        // gradient pixels along every edge.
+        let outer = ClosedRing::new(vec![p(0.5, 0.0), p(1.0, 0.5), p(0.5, 1.0), p(0.0, 0.5)]);
+        let polygon = Polygon::new(outer, vec![]).unwrap();
+        ContourLayer::new(0.05, vec![polygon])
+    }
+
+    #[test]
+    fn aa_off_matches_the_binary_path_bitwise() {
+        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
+        let hole = cw_square(p(0.25, 0.25), p(0.75, 0.75));
+        let polygon = Polygon::new(outer, vec![hole]).unwrap();
+        let layer = ContourLayer::new(0.05, vec![polygon]);
+        let pm = one_mm_per_hundred_pixels();
+        let binary = rasterize_layer_binary(&layer, &pm);
+        let aa_off = rasterize_layer(&layer, &pm, AaLevel::Off, 0.0);
+        assert_eq!(aa_off, binary);
+    }
+
+    #[test]
+    fn aa_produces_intermediate_grayscale_values_on_diagonal_edges() {
+        let layer = unit_diamond_layer();
+        let raster = rasterize_layer(&layer, &one_mm_per_hundred_pixels(), AaLevel::X4, 0.0);
+        let has_intermediate = raster.runs().iter().any(|r| r.value > 0 && r.value < 255);
+        assert!(
+            has_intermediate,
+            "AA on a diamond must produce some grayscale (0 < value < 255) pixels",
+        );
+    }
+
+    #[test]
+    fn aa_axis_aligned_unit_square_is_uniformly_filled() {
+        // Pixel edges line up with the polygon's mm edges, so even
+        // with AA on every pixel ends up at exactly 100% coverage.
+        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
+        let polygon = Polygon::new(outer, vec![]).unwrap();
+        let layer = ContourLayer::new(0.05, vec![polygon]);
+        let raster = rasterize_layer(&layer, &one_mm_per_hundred_pixels(), AaLevel::X4, 0.0);
+        for run in raster.runs() {
+            assert_eq!(run.value, 255);
+        }
+        let total: u64 = raster.runs().iter().map(|r| u64::from(r.length)).sum();
+        assert_eq!(total, 100 * 100);
+    }
+
+    #[test]
+    fn aa_output_is_deterministic_across_invocations() {
+        let layer = unit_diamond_layer();
+        let pm = one_mm_per_hundred_pixels();
+        let first = rasterize_layer(&layer, &pm, AaLevel::X8, 0.0);
+        let second = rasterize_layer(&layer, &pm, AaLevel::X8, 0.0);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn aa_min_alpha_threshold_clamps_sub_threshold_pixels_to_zero() {
+        let layer = unit_diamond_layer();
+        let pm = one_mm_per_hundred_pixels();
+        // No threshold: gradient pixels appear in the (0, 128) range.
+        let no_floor = rasterize_layer(&layer, &pm, AaLevel::X8, 0.0);
+        let any_sub_half = no_floor.runs().iter().any(|r| r.value > 0 && r.value < 128);
+        assert!(
+            any_sub_half,
+            "AA without floor must surface at least one sub-50% pixel on a diamond",
+        );
+
+        // 50% floor: every pixel is either 0 or at least round(50/100 * 255) = 128.
+        let with_floor = rasterize_layer(&layer, &pm, AaLevel::X8, 50.0);
+        for run in with_floor.runs() {
+            assert!(
+                run.value == 0 || run.value >= 128,
+                "pixel value {} fell into the clamped band",
+                run.value,
+            );
+        }
     }
 }
