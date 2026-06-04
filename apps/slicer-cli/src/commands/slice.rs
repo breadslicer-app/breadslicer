@@ -6,14 +6,18 @@
  */
 
 use std::ffi::OsString;
+use std::fmt;
+use std::io::Write;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
+use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
 use sc_mesh_core::scene::node::{NodeId, NodeKind};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
+use sc_sl1cer::error::SliceError;
 use sc_sl1cer::profile::{
     AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, PositiveFiniteMm,
     SliceProfile,
@@ -39,6 +43,7 @@ pub(crate) struct SliceArgs {
     pub build_x: PositiveFiniteMm,
     pub build_y: PositiveFiniteMm,
     pub aa: AaLevel,
+    pub verbose: bool,
 }
 
 pub(crate) fn slice(args: SliceArgs) -> Result<()> {
@@ -86,7 +91,15 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         PackingMode::None,
     );
 
-    let stack = slice_leaf(&loaded.graph, leaf_id, &profile)?;
+    let stack = match slice_leaf(&loaded.graph, leaf_id, &profile) {
+        Ok(stack) => stack,
+        Err(err @ SliceError::FacesValidationFailed(_))
+        | Err(err @ SliceError::ManifoldCheckFailed(_)) => {
+            report_validation_failure(&err, args.verbose, &mut std::io::stderr());
+            return Err(anyhow!("mesh validation failed; slicing aborted"));
+        }
+        Err(other) => return Err(other.into()),
+    };
 
     let options = WriterOptions::from_profile(&profile, VERSION);
     write_slice(&stack, &output_path, format, &options)?;
@@ -140,6 +153,56 @@ fn total_layers_for_height(z_max: f64, layer_height: f64, first_layer_height: f6
     1 + extra
 }
 
+/// Render a validation failure to `out`:
+///
+/// 1. The aggregated `SliceError` summary (count + per-variant breakdown
+///    with up to five face indices each, as produced by `Display for SliceError`).
+/// 2. When `verbose` is set, a blank line followed by a section per
+///    variant listing every offending error via its `Display` impl.
+/// 3. Always, a blank line followed by a hint pointing at the `fix`
+///    subcommand. When `verbose` is unset the hint also advertises
+///    `--verbose` for the full error list.
+fn report_validation_failure(err: &SliceError, verbose: bool, out: &mut dyn Write) {
+    let _ = writeln!(out, "{err}");
+    if verbose {
+        let _ = writeln!(out);
+        match err {
+            SliceError::FacesValidationFailed(errors) => write_grouped_errors(errors, out),
+            SliceError::ManifoldCheckFailed(errors) => write_grouped_errors(errors, out),
+            _ => {}
+        }
+    }
+    let _ = writeln!(out);
+    let _ = if verbose {
+        writeln!(out, "Run `sc-slicer-cli fix` to repair the mesh.")
+    } else {
+        writeln!(
+            out,
+            "Run `sc-slicer-cli fix` to repair the mesh, or re-run with --verbose for the full error list.",
+        )
+    };
+}
+
+/// Write `errors` to `out` grouped by variant. One section per variant
+/// in first-occurrence order: a header line `VariantName (count):`
+/// followed by `  - {err}` for each member. Sections are separated by
+/// a blank line.
+fn write_grouped_errors<E>(errors: &[E], out: &mut dyn Write)
+where
+    E: MeshErrorReport + fmt::Display,
+{
+    let groups = group_errors_by_variant(errors);
+    for (idx, group) in groups.iter().enumerate() {
+        if idx > 0 {
+            let _ = writeln!(out);
+        }
+        let _ = writeln!(out, "{} ({}):", group.variant_name, group.members.len());
+        for member in &group.members {
+            let _ = writeln!(out, "  - {member}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod total_layers_tests {
     use super::total_layers_for_height;
@@ -161,5 +224,150 @@ mod total_layers_tests {
     fn uniform_schedule_matches_classical_count() {
         // h0 = h = 0.2, z_max = 2.0. classical: ceil(2.0 / 0.2) = 10.
         assert_eq!(total_layers_for_height(2.0, 0.2, 0.2), 10);
+    }
+}
+
+#[cfg(test)]
+mod write_grouped_errors_tests {
+    use sc_mesh_core::indexed_mesh::MeshFaceError;
+    use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
+
+    use super::write_grouped_errors;
+
+    fn zle(face: usize) -> MeshFaceError {
+        MeshFaceError::ZeroLengthEdge {
+            face_idx: face.into(),
+            vertex_pos_a: TriVertexSlot::V0,
+            vertex_pos_b: TriVertexSlot::V1,
+            vertex_idx: VertexIndex::from(0_u32),
+        }
+    }
+
+    fn oor(face: usize) -> MeshFaceError {
+        MeshFaceError::OutOfRangeVertexIndex {
+            face_idx: face.into(),
+            vertex_pos: TriVertexSlot::V0,
+            vertex_idx: VertexIndex::from(999_u32),
+        }
+    }
+
+    fn render(errors: &[MeshFaceError]) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        write_grouped_errors(errors, &mut buf);
+        String::from_utf8(buf).expect("UTF-8")
+    }
+
+    #[test]
+    fn empty_input_writes_nothing() {
+        let out = render(&[]);
+        assert!(out.is_empty(), "expected no output, got: {out:?}");
+    }
+
+    #[test]
+    fn single_variant_emits_header_and_body_lines() {
+        let errors = vec![zle(2), zle(5), zle(11)];
+        let out = render(&errors);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 4, "expected header + 3 entries, got: {out}");
+        assert_eq!(lines[0], "ZeroLengthEdge (3):");
+        assert_eq!(
+            lines[1],
+            "  - face #2 has a zero-length edge: slots v0 and v1 both bound to vertex #0",
+        );
+        assert_eq!(
+            lines[2],
+            "  - face #5 has a zero-length edge: slots v0 and v1 both bound to vertex #0",
+        );
+        assert_eq!(
+            lines[3],
+            "  - face #11 has a zero-length edge: slots v0 and v1 both bound to vertex #0",
+        );
+    }
+
+    #[test]
+    fn mixed_variants_get_one_section_each_separated_by_blank_lines() {
+        let errors = vec![zle(2), oor(99), zle(5), oor(101), zle(11)];
+        let out = render(&errors);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "ZeroLengthEdge (3):");
+        assert!(lines[1].starts_with("  - face #2"));
+        assert!(lines[2].starts_with("  - face #5"));
+        assert!(lines[3].starts_with("  - face #11"));
+        assert_eq!(lines[4], "");
+        assert_eq!(lines[5], "OutOfRangeVertexIndex (2):");
+        assert!(lines[6].starts_with("  - face #99"));
+        assert!(lines[7].starts_with("  - face #101"));
+    }
+}
+
+#[cfg(test)]
+mod report_validation_failure_tests {
+    use sc_mesh_core::indexed_mesh::MeshFaceError;
+    use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
+    use sc_sl1cer::error::SliceError;
+
+    use super::report_validation_failure;
+
+    fn zle(face: usize) -> MeshFaceError {
+        MeshFaceError::ZeroLengthEdge {
+            face_idx: face.into(),
+            vertex_pos_a: TriVertexSlot::V0,
+            vertex_pos_b: TriVertexSlot::V1,
+            vertex_idx: VertexIndex::from(0_u32),
+        }
+    }
+
+    fn render(err: &SliceError, verbose: bool) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        report_validation_failure(err, verbose, &mut buf);
+        String::from_utf8(buf).expect("UTF-8")
+    }
+
+    #[test]
+    fn non_verbose_emits_summary_and_short_hint() {
+        let err = SliceError::FacesValidationFailed(vec![zle(2), zle(5)]);
+        let out = render(&err, false);
+        assert!(
+            out.contains("mesh face validation failed: 2 error(s)"),
+            "missing summary header: {out}",
+        );
+        assert!(
+            out.contains("2x ZeroLengthEdge (e.g. faces #2, #5)"),
+            "missing summary breakdown: {out}",
+        );
+        assert!(
+            out.contains("re-run with --verbose for the full error list"),
+            "missing verbose advertisement: {out}",
+        );
+        assert!(
+            !out.contains("ZeroLengthEdge (2):"),
+            "non-verbose must not emit grouped sections: {out}",
+        );
+    }
+
+    #[test]
+    fn verbose_emits_summary_grouped_sections_and_short_hint() {
+        let err = SliceError::FacesValidationFailed(vec![zle(2), zle(5)]);
+        let out = render(&err, true);
+        assert!(
+            out.contains("mesh face validation failed: 2 error(s)"),
+            "missing summary header: {out}",
+        );
+        assert!(
+            out.contains("ZeroLengthEdge (2):"),
+            "missing grouped section header: {out}",
+        );
+        assert!(
+            out.contains("  - face #2 has a zero-length edge"),
+            "missing grouped body line: {out}",
+        );
+        assert!(
+            out.contains("Run `sc-slicer-cli fix` to repair the mesh."),
+            "missing repair hint: {out}",
+        );
+        assert!(
+            !out.contains("--verbose for the full error list"),
+            "verbose run should not re-advertise --verbose: {out}",
+        );
     }
 }

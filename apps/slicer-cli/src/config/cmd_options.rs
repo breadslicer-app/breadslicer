@@ -45,6 +45,7 @@ pub enum CmdOptions {
         build_x: PositiveFiniteMm,
         build_y: PositiveFiniteMm,
         aa: AaLevel,
+        verbose: bool,
     },
     Version,
 }
@@ -201,6 +202,13 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         .argument::<AaLevel>("AA")
         .fallback(AaLevel::Off);
 
+    let verbose = short('v')
+        .long("verbose")
+        .help(
+            "On a mesh-validation failure, list every offending face grouped by error variant. Without this flag the slicer prints only an aggregated summary.",
+        )
+        .switch();
+
     construct!(CmdOptions::Slice {
         input,
         output,
@@ -212,6 +220,7 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         build_x,
         build_y,
         aa,
+        verbose,
     })
 }
 

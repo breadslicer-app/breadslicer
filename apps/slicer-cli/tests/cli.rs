@@ -1361,3 +1361,93 @@ mod inspect_and_slice_tests {
             .failure();
     }
 }
+
+#[cfg(test)]
+mod slice_validation_error_tests {
+    use super::*;
+
+    /// Single triangle whose first and third vertices share a position
+    /// (collapsed edge) at z = 1. The non-zero z keeps the slicer
+    /// above the build plate so the validation check fires instead
+    /// of the "reposition above z = 0" check.
+    fn mesh_with_zero_length_edge_above_z0() -> IndexedMesh {
+        let repeat = Vertex::new([0.0, 0.0, 1.0]);
+        IndexedMesh {
+            meta: None,
+            vertices: vec![repeat, Vertex::new([1.0, 0.0, 1.0]), repeat],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    fn run_slice(source: &Path, output: &Path, verbose: bool) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-i",
+            source.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--format",
+            "png-per-layer",
+            "--layer-height",
+            "0.05",
+            "--pixels-x",
+            "100",
+            "--pixels-y",
+            "100",
+            "--build-x",
+            "10",
+            "--build-y",
+            "10",
+        ]);
+        if verbose {
+            cmd.arg("--verbose");
+        }
+        cmd.assert()
+    }
+
+    #[test]
+    fn slice_without_verbose_emits_summary_and_advertises_verbose() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("degenerate.stla");
+        let output = tmp.path().join("layers");
+        write_stla_to(&source, &mesh_with_zero_length_edge_above_z0());
+
+        run_slice(&source, &output, false)
+            .failure()
+            .stderr(predicate::str::contains(
+                "mesh face validation failed: 1 error(s)",
+            ))
+            .stderr(predicate::str::contains("1x ZeroLengthEdge"))
+            .stderr(predicate::str::contains(
+                "re-run with --verbose for the full error list",
+            ))
+            .stderr(predicate::str::contains("`sc-slicer-cli fix`"))
+            .stderr(predicate::str::contains("ZeroLengthEdge (1):").not());
+    }
+
+    #[test]
+    fn slice_with_verbose_emits_summary_and_grouped_sections_without_verbose_advertisement() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("degenerate.stla");
+        let output = tmp.path().join("layers");
+        write_stla_to(&source, &mesh_with_zero_length_edge_above_z0());
+
+        run_slice(&source, &output, true)
+            .failure()
+            .stderr(predicate::str::contains(
+                "mesh face validation failed: 1 error(s)",
+            ))
+            .stderr(predicate::str::contains("ZeroLengthEdge (1):"))
+            .stderr(predicate::str::contains(
+                "  - face #0 has a zero-length edge: slots v2 and v0 both bound to vertex #0",
+            ))
+            .stderr(predicate::str::contains(
+                "Run `sc-slicer-cli fix` to repair the mesh.",
+            ))
+            .stderr(predicate::str::contains("--verbose for the full error list").not());
+    }
+}
