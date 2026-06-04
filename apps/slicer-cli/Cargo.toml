@@ -23,5 +23,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 sc-mesh-fixtures.workspace = true
 
 assert_cmd = "2.0.18"
+png = "0.18.1"
 predicates = "3.1.3"
 tempfile = "3.23.0"

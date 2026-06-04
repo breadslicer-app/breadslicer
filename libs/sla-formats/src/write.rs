@@ -43,7 +43,7 @@ pub fn write_slice(
     match format {
         Format::SvgPerLayer => crate::debug::svg::write_per_layer(stack, output, options),
         Format::SvgCombined => crate::debug::svg::write_combined(stack, output, options),
-        Format::PngPerLayer => Err(WriterError::NotImplemented { format }),
+        Format::PngPerLayer => crate::debug::png::write_per_layer(stack, output, options),
     }
 }
 
@@ -143,22 +143,17 @@ mod write_slice_tests {
     }
 
     #[test]
-    fn png_per_layer_returns_not_implemented() {
+    fn png_per_layer_with_empty_stack_succeeds() {
         let dir = tempdir().unwrap();
         let out = dir.path().join("layers");
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             &out,
             Format::PngPerLayer,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            WriterError::NotImplemented {
-                format: Format::PngPerLayer,
-            },
-        ));
+        .unwrap();
+        assert!(out.is_dir());
     }
 
     #[test]
@@ -166,28 +161,26 @@ mod write_slice_tests {
         let dir = tempdir().unwrap();
         let out = dir.path().join("not_there_yet");
         assert!(!out.exists());
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             &out,
             Format::PngPerLayer,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(err, WriterError::NotImplemented { .. }));
+        .unwrap();
         assert!(out.is_dir(), "validation should create the directory");
     }
 
     #[test]
     fn directory_format_accepts_existing_empty_directory() {
         let dir = tempdir().unwrap();
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             dir.path(),
             Format::PngPerLayer,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(err, WriterError::NotImplemented { .. }));
+        .unwrap();
     }
 
     #[test]

@@ -4529,6 +4529,7 @@ dependencies = [
 name = "sc-sla-formats"
 version = "0.0.12"
 dependencies = [
+ "png 0.18.1",
  "sc-sl1cer",
  "tempfile",
 ]
@@ -4540,6 +4541,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bpaf",
+ "png 0.18.1",
  "predicates",
  "sc-mesh-core",
  "sc-mesh-fixtures",

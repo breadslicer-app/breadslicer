@@ -8,4 +8,5 @@
 //! These formats exist for inspection, regression fixtures, and
 //! visual debugging; they are not intended to be fed to a printer.
 
+pub mod png;
 pub mod svg;

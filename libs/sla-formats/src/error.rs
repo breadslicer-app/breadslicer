@@ -33,6 +33,9 @@ pub enum WriterError {
     /// A directory-target format was pointed at an existing
     /// directory that already contains files; we refuse to clobber.
     OutputPathExistsAndIsNotEmpty { path: PathBuf },
+    /// The format's encoder rejected our request for reasons other
+    /// than I/O (bad parameter, malformed text chunk, ...).
+    EncodingFailed { format: Format, reason: String },
 }
 
 impl fmt::Display for WriterError {
@@ -55,6 +58,10 @@ impl fmt::Display for WriterError {
                 "output directory \"{}\" exists and is not empty",
                 path.display(),
             ),
+            Self::EncodingFailed { format, reason } => write!(
+                f,
+                "encoder for format \"{format}\" rejected the request: {reason}",
+            ),
         }
     }
 }
@@ -66,7 +73,8 @@ impl std::error::Error for WriterError {
             Self::NotImplemented { .. }
             | Self::OutputPathInvalid { .. }
             | Self::OutputPathExistsAndIsNotADirectory { .. }
-            | Self::OutputPathExistsAndIsNotEmpty { .. } => None,
+            | Self::OutputPathExistsAndIsNotEmpty { .. }
+            | Self::EncodingFailed { .. } => None,
         }
     }
 }
@@ -178,5 +186,26 @@ mod writer_error_tests {
             .source()
             .is_none(),
         );
+        assert!(
+            WriterError::EncodingFailed {
+                format: Format::PngPerLayer,
+                reason: "x".into(),
+            }
+            .source()
+            .is_none(),
+        );
+    }
+
+    #[test]
+    fn display_encoding_failed_names_the_format_and_reason() {
+        let msg = format!(
+            "{}",
+            WriterError::EncodingFailed {
+                format: Format::PngPerLayer,
+                reason: "image data length mismatch".into(),
+            },
+        );
+        assert!(msg.contains("png-per-layer"), "msg: {msg}");
+        assert!(msg.contains("image data length mismatch"), "msg: {msg}");
     }
 }
