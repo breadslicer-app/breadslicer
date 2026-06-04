@@ -4,9 +4,12 @@
  */
 
 use std::ffi::OsString;
+use std::num::NonZeroU32;
 
 use bpaf::{OptionParser, Parser, construct, long, short};
 use sc_mesh_formats::filetypes::MeshFileType;
+use sc_sl1cer::profile::{AaLevel, PositiveFiniteMm};
+use sc_sla_formats::Format;
 
 #[derive(Clone, Debug)]
 pub enum CmdOptions {
@@ -31,7 +34,18 @@ pub enum CmdOptions {
     },
     Help,
     Inspect {},
-    Slice {},
+    Slice {
+        input: OsString,
+        output: OsString,
+        format: Option<Format>,
+        layer_height: PositiveFiniteMm,
+        first_layer_height: Option<PositiveFiniteMm>,
+        pixels_x: NonZeroU32,
+        pixels_y: NonZeroU32,
+        build_x: PositiveFiniteMm,
+        build_y: PositiveFiniteMm,
+        aa: AaLevel,
+    },
     Version,
 }
 
@@ -136,7 +150,69 @@ fn get_inspect_options() -> impl Parser<CmdOptions> {
 }
 
 fn get_slice_options() -> impl Parser<CmdOptions> {
-    construct!(CmdOptions::Slice {})
+    let input = short('i')
+        .long("input")
+        .help("Path to the input 3D model file")
+        .argument::<OsString>("INPUT_FILEPATH");
+
+    let output = short('o')
+        .long("output")
+        .help(
+            "Output path. A single file for packed formats (e.g. svg-combined), a directory for per-layer formats (svg-per-layer, png-per-layer).",
+        )
+        .argument::<OsString>("OUTPUT_PATH");
+
+    let format = long("format")
+        .help(
+            "Output format. Accepted values: svg-per-layer, svg-combined, png-per-layer. Inferred from the output file extension when omitted.",
+        )
+        .argument::<Format>("FORMAT")
+        .optional();
+
+    let layer_height = long("layer-height")
+        .help("Layer height in millimetres (strictly positive)")
+        .argument::<PositiveFiniteMm>("MM");
+
+    let first_layer_height = long("first-layer-height")
+        .help(
+            "Optional thicker first-layer height in millimetres (strictly positive); defaults to the regular layer height when omitted.",
+        )
+        .argument::<PositiveFiniteMm>("MM")
+        .optional();
+
+    let pixels_x = long("pixels-x")
+        .help("Print panel pixel resolution along X (non-zero)")
+        .argument::<NonZeroU32>("PIXELS");
+
+    let pixels_y = long("pixels-y")
+        .help("Print panel pixel resolution along Y (non-zero)")
+        .argument::<NonZeroU32>("PIXELS");
+
+    let build_x = long("build-x")
+        .help("Build volume X dimension in millimetres (strictly positive)")
+        .argument::<PositiveFiniteMm>("MM");
+
+    let build_y = long("build-y")
+        .help("Build volume Y dimension in millimetres (strictly positive)")
+        .argument::<PositiveFiniteMm>("MM");
+
+    let aa = long("aa")
+        .help("Per-pixel anti-aliasing: 0 (off), 2, 4, or 8")
+        .argument::<AaLevel>("AA")
+        .fallback(AaLevel::Off);
+
+    construct!(CmdOptions::Slice {
+        input,
+        output,
+        format,
+        layer_height,
+        first_layer_height,
+        pixels_x,
+        pixels_y,
+        build_x,
+        build_y,
+        aa,
+    })
 }
 
 pub fn get_cmd_options() -> OptionParser<CmdOptions> {

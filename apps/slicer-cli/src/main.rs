@@ -14,6 +14,7 @@ use anyhow::Result;
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
 use crate::commands::fix::{FixOptions, fix};
+use crate::commands::slice::{SliceArgs, slice};
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
 
 fn main() -> Result<()> {
@@ -61,9 +62,29 @@ fn main() -> Result<()> {
         CmdOptions::Inspect {} => {
             todo!("Not yet implemented :(");
         }
-        CmdOptions::Slice {} => {
-            todo!("Not yet implemented :(");
-        }
+        CmdOptions::Slice {
+            input,
+            output,
+            format,
+            layer_height,
+            first_layer_height,
+            pixels_x,
+            pixels_y,
+            build_x,
+            build_y,
+            aa,
+        } => slice(SliceArgs {
+            input,
+            output,
+            format,
+            layer_height,
+            first_layer_height,
+            pixels_x,
+            pixels_y,
+            build_x,
+            build_y,
+            aa,
+        }),
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
             println!("Version: {}", &SLICER_CLI_VERSION);
