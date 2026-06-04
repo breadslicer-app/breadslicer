@@ -4518,6 +4518,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-sla-formats"
+version = "0.0.12"
+dependencies = [
+ "sc-sl1cer",
+ "tempfile",
+]
+
+[[package]]
 name = "sc-slicer-cli"
 version = "0.0.12"
 dependencies = [

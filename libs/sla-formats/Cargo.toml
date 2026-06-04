@@ -1,0 +1,16 @@
+[package]
+name = "sc-sla-formats"
+version = "0.0.12"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Writers for SLA-printer file formats and debug per-layer outputs."
+categories = ["rendering::data-formats"]
+keywords = ["3d", "slicer", "resin", "sla"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+sc-sl1cer.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23.0"
