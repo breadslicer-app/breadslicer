@@ -25,19 +25,11 @@ use tempfile::TempDir;
 
 const BIN: &str = "sc-slicer-cli";
 
-fn workspace_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR points at apps/slicer-cli/; two parents up is
-    // the workspace root, where examples/ lives.
+fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
-
-fn examples_path(name: &str) -> PathBuf {
-    workspace_root().join("examples").join(name)
+        .join("tests")
+        .join("fixtures")
+        .join(name)
 }
 
 /// Builds a closed, manifold tetrahedron with consistent winding and
@@ -288,7 +280,7 @@ mod convert_tests {
             .args([
                 "convert",
                 "-s",
-                examples_path("double_mesh.obj").to_str().unwrap(),
+                fixture_path("double_mesh.obj").to_str().unwrap(),
                 "-t",
                 target.to_str().unwrap(),
             ])
@@ -711,7 +703,7 @@ mod convert_tests {
             .args([
                 "convert",
                 "-s",
-                examples_path("double_mesh.obj").to_str().unwrap(),
+                fixture_path("double_mesh.obj").to_str().unwrap(),
                 "-t",
                 target.to_str().unwrap(),
             ])
