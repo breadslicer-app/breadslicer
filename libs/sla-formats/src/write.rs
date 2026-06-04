@@ -38,14 +38,11 @@ pub fn write_slice(
     format: Format,
     options: &WriterOptions,
 ) -> Result<(), WriterError> {
-    let _ = stack;
-    let _ = options;
     validate_output_path(output, format)?;
 
     match format {
-        Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer => {
-            Err(WriterError::NotImplemented { format })
-        }
+        Format::SvgPerLayer => crate::debug::svg::write_per_layer(stack, output, options),
+        Format::SvgCombined | Format::PngPerLayer => Err(WriterError::NotImplemented { format }),
     }
 }
 
@@ -117,22 +114,17 @@ mod write_slice_tests {
     }
 
     #[test]
-    fn svg_per_layer_returns_not_implemented() {
+    fn svg_per_layer_with_empty_stack_succeeds() {
         let dir = tempdir().unwrap();
         let out = dir.path().join("layers");
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             &out,
             Format::SvgPerLayer,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            WriterError::NotImplemented {
-                format: Format::SvgPerLayer,
-            },
-        ));
+        .unwrap();
+        assert!(out.is_dir());
     }
 
     #[test]
@@ -181,7 +173,7 @@ mod write_slice_tests {
         let err = write_slice(
             &empty_stack(),
             &out,
-            Format::SvgPerLayer,
+            Format::PngPerLayer,
             &default_options(),
         )
         .unwrap_err();
@@ -195,7 +187,7 @@ mod write_slice_tests {
         let err = write_slice(
             &empty_stack(),
             dir.path(),
-            Format::SvgPerLayer,
+            Format::PngPerLayer,
             &default_options(),
         )
         .unwrap_err();
