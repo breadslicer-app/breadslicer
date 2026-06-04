@@ -42,7 +42,8 @@ pub fn write_slice(
 
     match format {
         Format::SvgPerLayer => crate::debug::svg::write_per_layer(stack, output, options),
-        Format::SvgCombined | Format::PngPerLayer => Err(WriterError::NotImplemented { format }),
+        Format::SvgCombined => crate::debug::svg::write_combined(stack, output, options),
+        Format::PngPerLayer => Err(WriterError::NotImplemented { format }),
     }
 }
 
@@ -128,22 +129,17 @@ mod write_slice_tests {
     }
 
     #[test]
-    fn svg_combined_returns_not_implemented() {
+    fn svg_combined_with_empty_stack_succeeds() {
         let dir = tempdir().unwrap();
         let out = dir.path().join("combined.svg");
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             &out,
             Format::SvgCombined,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            WriterError::NotImplemented {
-                format: Format::SvgCombined,
-            },
-        ));
+        .unwrap();
+        assert!(out.is_file());
     }
 
     #[test]
@@ -247,14 +243,14 @@ mod write_slice_tests {
         let dir = tempdir().unwrap();
         let out = dir.path().join("brand_new.svg");
         assert!(!out.exists());
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             &out,
             Format::SvgCombined,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(err, WriterError::NotImplemented { .. }));
+        .unwrap();
+        assert!(out.is_file());
     }
 
     #[test]
@@ -262,13 +258,15 @@ mod write_slice_tests {
         let dir = tempdir().unwrap();
         let out = dir.path().join("overwriteable.svg");
         File::create(&out).unwrap();
-        let err = write_slice(
+        write_slice(
             &empty_stack(),
             &out,
             Format::SvgCombined,
             &default_options(),
         )
-        .unwrap_err();
-        assert!(matches!(err, WriterError::NotImplemented { .. }));
+        .unwrap();
+        assert!(out.is_file());
+        let bytes = std::fs::metadata(&out).unwrap().len();
+        assert!(bytes > 0, "writer should have populated the file");
     }
 }

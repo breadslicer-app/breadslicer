@@ -50,6 +50,48 @@ fn slice_fixture_as_svg_per_layer(fixture: &str, output_dir: &Path) {
         .success();
 }
 
+/// Run `slice --format svg-combined` on the named fixture into a
+/// single SVG file at `output_file`. Same fixed schedule as
+/// [`slice_fixture_as_svg_per_layer`].
+fn slice_fixture_as_svg_combined(fixture: &str, output_file: &Path) {
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--input")
+        .arg(fixture_path(fixture))
+        .arg("--output")
+        .arg(output_file)
+        .arg("--format")
+        .arg("svg-combined")
+        .arg("--layer-height")
+        .arg("0.2")
+        .arg("--build-x")
+        .arg("5")
+        .arg("--build-y")
+        .arg("5")
+        .arg("--pixels-x")
+        .arg("500")
+        .arg("--pixels-y")
+        .arg("500")
+        .assert()
+        .success();
+}
+
+/// Split a combined SVG into the inner substring of each
+/// `<g id="layer-NNNN" ...>...</g>` block, in document order.
+fn layer_groups(content: &str) -> Vec<&str> {
+    content
+        .split("<g id=\"layer-")
+        .skip(1)
+        .map(|chunk| {
+            chunk
+                .split("</g>")
+                .next()
+                .expect("each <g> opens and closes")
+        })
+        .collect()
+}
+
 fn layer_files(dir: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap()
@@ -168,6 +210,121 @@ fn y_tunnel_prism_topology_transitions_above_below_and_through_the_tunnel() {
             content.matches("M ").count(),
             2,
             "layer {idx} expected two M commands (two disjoint rectangles), got:\n{content}",
+        );
+    }
+}
+
+#[test]
+fn cube_fixture_svg_combined_packs_every_layer_into_a_single_file() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("cube.svg");
+    slice_fixture_as_svg_combined("cube.stl", &out);
+
+    assert!(out.is_file());
+    let content = fs::read_to_string(&out).unwrap();
+    let groups = layer_groups(&content);
+    assert_eq!(groups.len(), 5, "expected 5 layer groups, got:\n{content}");
+    assert!(content.contains("<metadata>"), "{content}");
+    assert!(
+        content.contains("<sc:build-volume x-mm=\"5\" y-mm=\"5\" z-mm=\"1\"/>"),
+        "{content}"
+    );
+    assert!(content.contains("viewBox=\"0 0 5 5\""), "{content}");
+
+    for (idx, group) in groups.iter().enumerate() {
+        assert_eq!(
+            group.matches("<path d=").count(),
+            1,
+            "group {idx} expected one solid path, got:\n{group}",
+        );
+        assert_eq!(
+            group.matches("M ").count(),
+            1,
+            "group {idx} expected one M command, got:\n{group}",
+        );
+    }
+}
+
+#[test]
+fn z_tunnel_prism_svg_combined_carries_polygon_with_hole_in_every_group() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("z_tunnel.svg");
+    slice_fixture_as_svg_combined("prism_z_tunnel.stl", &out);
+
+    let content = fs::read_to_string(&out).unwrap();
+    let groups = layer_groups(&content);
+    assert_eq!(
+        groups.len(),
+        10,
+        "expected 10 layer groups, got:\n{content}"
+    );
+    assert!(
+        content.contains("<sc:layer-schedule kind=\"uniform\" layer-height-mm=\"0.2\" first-layer-height-mm=\"0.2\" total-layers=\"10\"/>"),
+        "{content}",
+    );
+
+    for (idx, group) in groups.iter().enumerate() {
+        assert_eq!(
+            group.matches("<path d=").count(),
+            1,
+            "group {idx} expected one <path> (outer + hole packed via evenodd), got:\n{group}",
+        );
+        assert_eq!(
+            group.matches("M ").count(),
+            2,
+            "group {idx} expected two M commands (outer + hole), got:\n{group}",
+        );
+        assert!(
+            group.contains("fill-rule=\"evenodd\""),
+            "group {idx} missing evenodd fill rule, got:\n{group}",
+        );
+    }
+}
+
+#[test]
+fn y_tunnel_prism_svg_combined_groups_match_per_layer_topology() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("y_tunnel.svg");
+    slice_fixture_as_svg_combined("prism_y_tunnel.stl", &out);
+
+    let content = fs::read_to_string(&out).unwrap();
+    let groups = layer_groups(&content);
+    assert_eq!(
+        groups.len(),
+        10,
+        "expected 10 layer groups, got:\n{content}"
+    );
+
+    // Same indices as in the svg-per-layer test: layers 0-2 and 7-9
+    // sit above and below the tunnel band (solid); 3-6 cut through
+    // the tunnel (two disjoint rectangles).
+    let solid_layer_indices: &[usize] = &[0, 1, 2, 7, 8, 9];
+    let through_tunnel_layer_indices: &[usize] = &[3, 4, 5, 6];
+
+    for &idx in solid_layer_indices {
+        let group = groups[idx];
+        assert_eq!(
+            group.matches("<path d=").count(),
+            1,
+            "group {idx} expected one solid path, got:\n{group}",
+        );
+        assert_eq!(
+            group.matches("M ").count(),
+            1,
+            "group {idx} expected one M command, got:\n{group}",
+        );
+    }
+    for &idx in through_tunnel_layer_indices {
+        let group = groups[idx];
+        assert_eq!(
+            group.matches("<path d=").count(),
+            2,
+            "group {idx} expected two paths, got:\n{group}",
+        );
+        assert_eq!(
+            group.matches("M ").count(),
+            2,
+            "group {idx} expected two M commands, got:\n{group}",
         );
     }
 }

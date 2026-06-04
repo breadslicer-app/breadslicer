@@ -3,13 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Debug SVG output: per-layer and (in a follow-on commit) combined.
+//! Debug SVG output: per-layer files and combined single-file.
 //!
-//! Each per-layer file is self-describing: the slicer run parameters
-//! live in a top-level `<metadata>` block under the custom `sc:`
-//! namespace, and the layer's polygons live in a single `<g>` group
-//! that carries its physical Z and ordinal layer index as
-//! `data-z-mm` and `data-layer-index` attributes.
+//! Both writers emit the same top-level `<metadata>` block under the
+//! custom `sc:` namespace and the same per-layer `<g>` payload, so
+//! a downstream reader can parse either shape with the same parser
+//! and recover the slicer run parameters either way. Per-layer
+//! files are self-describing (the metadata repeats in every file);
+//! the combined file declares it once at the SVG root and follows
+//! with one `<g id="layer-NNNN" data-z-mm="..." data-layer-index="N">`
+//! per layer, all sharing the same build-volume-sized viewBox.
 //!
 //! The build-plate XY frame is Y-up; SVG's user-space Y is Y-down.
 //! Each layer's `<g>` carries
@@ -61,6 +64,34 @@ pub fn write_per_layer(
         writeln!(&mut writer, "</svg>")?;
         writer.flush()?;
     }
+    Ok(())
+}
+
+/// Write every layer of `stack` into a single SVG file at `file`.
+///
+/// All layers share the same XY frame (build-volume-sized viewBox).
+/// Each layer renders into its own `<g id="layer-NNNN"
+/// data-z-mm="..." data-layer-index="N">`; the physical Z lives as
+/// a `data-z-mm` attribute, not as a visual offset.
+pub fn write_combined(
+    stack: &ContourStack,
+    file: &Path,
+    options: &WriterOptions,
+) -> Result<(), WriterError> {
+    let bx = options.build_volume().x_mm();
+    let by = options.build_volume().y_mm();
+    let mut writer = BufWriter::new(File::create(file)?);
+    writeln!(&mut writer, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
+    writeln!(
+        &mut writer,
+        "<svg xmlns=\"{SVG_NS}\" xmlns:sc=\"{SC_NS}\" viewBox=\"0 0 {bx} {by}\">",
+    )?;
+    emit_metadata(&mut writer, options)?;
+    for (idx, layer) in stack.layers().iter().enumerate() {
+        emit_svg_layer(&mut writer, layer, idx, options)?;
+    }
+    writeln!(&mut writer, "</svg>")?;
+    writer.flush()?;
     Ok(())
 }
 
@@ -336,5 +367,92 @@ mod svg_tests {
         assert_eq!(content.matches("M ").count(), 2, "{content}");
         assert_eq!(content.matches(" Z").count(), 2, "{content}");
         assert!(content.contains("fill-rule=\"evenodd\""), "{content}");
+    }
+
+    #[test]
+    fn write_combined_with_empty_stack_writes_a_single_svg_with_metadata_only() {
+        let dir = tempdir().unwrap();
+        let out = dir.path().join("combined.svg");
+        let stack = ContourStack::new_unchecked(Vec::new());
+        write_combined(&stack, &out, &make_options()).unwrap();
+
+        let content = fs::read_to_string(&out).unwrap();
+        assert!(content.contains("<svg"), "{content}");
+        assert!(content.contains("</svg>"), "{content}");
+        assert!(content.contains("<metadata>"), "{content}");
+        assert_eq!(content.matches("<g id=").count(), 0, "{content}");
+    }
+
+    #[test]
+    fn write_combined_writes_one_group_per_layer_in_order() {
+        let dir = tempdir().unwrap();
+        let out = dir.path().join("combined.svg");
+        let stack = ContourStack::new_unchecked(vec![
+            make_square_layer(0.025, 2.0),
+            make_square_layer(0.075, 2.0),
+            make_square_layer(0.125, 2.0),
+        ]);
+        write_combined(&stack, &out, &make_options()).unwrap();
+
+        let content = fs::read_to_string(&out).unwrap();
+        assert_eq!(content.matches("<g id=\"layer-").count(), 3, "{content}");
+        assert!(content.contains("id=\"layer-0000\""), "{content}");
+        assert!(content.contains("id=\"layer-0001\""), "{content}");
+        assert!(content.contains("id=\"layer-0002\""), "{content}");
+        assert!(content.contains("data-z-mm=\"0.025\""), "{content}");
+        assert!(content.contains("data-z-mm=\"0.075\""), "{content}");
+        assert!(content.contains("data-z-mm=\"0.125\""), "{content}");
+
+        let pos_0 = content.find("id=\"layer-0000\"").unwrap();
+        let pos_1 = content.find("id=\"layer-0001\"").unwrap();
+        let pos_2 = content.find("id=\"layer-0002\"").unwrap();
+        assert!(
+            pos_0 < pos_1 && pos_1 < pos_2,
+            "layer groups must appear in ContourStack order, got positions {pos_0}, {pos_1}, {pos_2}",
+        );
+    }
+
+    #[test]
+    fn write_combined_carries_the_top_level_metadata_block() {
+        let dir = tempdir().unwrap();
+        let out = dir.path().join("combined.svg");
+        let stack = ContourStack::new_unchecked(vec![make_square_layer(0.05, 1.0)]);
+        write_combined(&stack, &out, &make_options()).unwrap();
+
+        let content = fs::read_to_string(&out).unwrap();
+        assert!(
+            content.contains("<sc:slicer-version>0.0.12</sc:slicer-version>"),
+            "{content}"
+        );
+        assert!(
+            content.contains("<sc:build-volume x-mm=\"60\" y-mm=\"40\" z-mm=\"100\"/>"),
+            "{content}",
+        );
+        assert!(
+            content.contains(
+                "<sc:layer-schedule kind=\"uniform\" layer-height-mm=\"0.1\" first-layer-height-mm=\"0.05\" total-layers=\"8\"/>",
+            ),
+            "{content}",
+        );
+        assert!(
+            content.contains("<sc:aa-level>x4</sc:aa-level>"),
+            "{content}"
+        );
+        assert!(content.contains("viewBox=\"0 0 60 40\""), "{content}");
+    }
+
+    #[test]
+    fn write_combined_renders_polygon_with_hole_using_evenodd_inside_its_group() {
+        let dir = tempdir().unwrap();
+        let out = dir.path().join("combined.svg");
+        let stack = ContourStack::new_unchecked(vec![make_square_with_hole_layer(0.05)]);
+        write_combined(&stack, &out, &make_options()).unwrap();
+
+        let content = fs::read_to_string(&out).unwrap();
+        assert_eq!(content.matches("<path d=\"").count(), 1, "{content}");
+        assert_eq!(content.matches("M ").count(), 2, "{content}");
+        assert_eq!(content.matches(" Z").count(), 2, "{content}");
+        assert!(content.contains("fill-rule=\"evenodd\""), "{content}");
+        assert_eq!(content.matches("<g id=\"layer-").count(), 1, "{content}");
     }
 }
