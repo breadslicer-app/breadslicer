@@ -4542,6 +4542,7 @@ dependencies = [
  "bpaf",
  "predicates",
  "sc-mesh-core",
+ "sc-mesh-fixtures",
  "sc-mesh-formats",
  "sc-sl1cer",
  "sc-sla-formats",
