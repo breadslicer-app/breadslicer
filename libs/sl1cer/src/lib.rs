@@ -33,5 +33,10 @@ pub mod stitch;
 
 pub use api::slice_leaf;
 
+/// This crate's package version. Surfaced so downstream tooling can
+/// stamp the slicer's identity into its output (e.g. SLA file
+/// metadata, debug-format `<metadata>` blocks).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[cfg(test)]
 mod tests_mesh_slice;

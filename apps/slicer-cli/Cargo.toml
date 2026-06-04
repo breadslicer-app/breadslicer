@@ -10,6 +10,7 @@ name = "sc-slicer-cli"
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
 sc-sl1cer.workspace = true
+sc-sla-formats.workspace = true
 
 anyhow.workspace = true
 

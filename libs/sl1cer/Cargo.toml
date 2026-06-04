@@ -13,4 +13,6 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 sc-mesh-core.workspace = true
 
 [dev-dependencies]
+sc-mesh-fixtures.workspace = true
+
 proptest.workspace = true

@@ -1,0 +1,210 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Hand-rolled, manifold-by-construction 3D mesh fixtures.
+//!
+//! Shared between the workspace's tests and any tooling that needs
+//! a stable, well-understood input mesh (e.g. STL fixture prep for
+//! integration tests). Each builder is deterministic and the
+//! resulting mesh is closed and orientable.
+//!
+//! Initial population covers the cuboid family: a unit cube and two
+//! rectangular prisms with a rectangular tunnel (Z-axis and Y-axis
+//! tunnel orientations). More fixtures land here as duplicates in
+//! other crates migrate over.
+
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+
+/// Closed unit cube centred at the origin (side 1). Manifold by
+/// construction.
+pub fn unit_cube_mesh() -> IndexedMesh {
+    let vertices = vec![
+        Vertex::new([-0.5, -0.5, -0.5]),
+        Vertex::new([0.5, -0.5, -0.5]),
+        Vertex::new([0.5, 0.5, -0.5]),
+        Vertex::new([-0.5, 0.5, -0.5]),
+        Vertex::new([-0.5, -0.5, 0.5]),
+        Vertex::new([0.5, -0.5, 0.5]),
+        Vertex::new([0.5, 0.5, 0.5]),
+        Vertex::new([-0.5, 0.5, 0.5]),
+    ];
+    let nz = Normal::new([0.0, 0.0, -1.0]);
+    let pz = Normal::new([0.0, 0.0, 1.0]);
+    let ny = Normal::new([0.0, -1.0, 0.0]);
+    let py = Normal::new([0.0, 1.0, 0.0]);
+    let nx = Normal::new([-1.0, 0.0, 0.0]);
+    let px = Normal::new([1.0, 0.0, 0.0]);
+    let f = |n: Normal, abc: [u32; 3]| IndexedTriangle::from_raw_indices(n, abc);
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces: vec![
+            f(nz, [0, 3, 2]),
+            f(nz, [0, 2, 1]),
+            f(pz, [4, 5, 6]),
+            f(pz, [4, 6, 7]),
+            f(py, [3, 7, 6]),
+            f(py, [3, 6, 2]),
+            f(ny, [0, 1, 5]),
+            f(ny, [0, 5, 4]),
+            f(px, [1, 2, 6]),
+            f(px, [1, 6, 5]),
+            f(nx, [0, 4, 7]),
+            f(nx, [0, 7, 3]),
+        ],
+    }
+}
+
+/// Rectangular prism with a vertical rectangular tunnel (axis = Z).
+/// Outer box spans x in [-1, 1], y in [-1, 1], z in [0, 2]. The
+/// tunnel spans x in [-0.4, 0.4], y in [-0.4, 0.4], full z. 16
+/// vertices, 32 triangles, genus 1 (Euler V - E + F = 16 - 48 + 32 = 0).
+pub fn cuboid_with_z_tunnel() -> IndexedMesh {
+    let vertices = vec![
+        // 0..7 outer box corners.
+        Vertex::new([-1.0, -1.0, 0.0]),
+        Vertex::new([1.0, -1.0, 0.0]),
+        Vertex::new([1.0, 1.0, 0.0]),
+        Vertex::new([-1.0, 1.0, 0.0]),
+        Vertex::new([-1.0, -1.0, 2.0]),
+        Vertex::new([1.0, -1.0, 2.0]),
+        Vertex::new([1.0, 1.0, 2.0]),
+        Vertex::new([-1.0, 1.0, 2.0]),
+        // 8..15 inner tunnel corners.
+        Vertex::new([-0.4, -0.4, 0.0]),
+        Vertex::new([0.4, -0.4, 0.0]),
+        Vertex::new([0.4, 0.4, 0.0]),
+        Vertex::new([-0.4, 0.4, 0.0]),
+        Vertex::new([-0.4, -0.4, 2.0]),
+        Vertex::new([0.4, -0.4, 2.0]),
+        Vertex::new([0.4, 0.4, 2.0]),
+        Vertex::new([-0.4, 0.4, 2.0]),
+    ];
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces: vec![
+            // Bottom annulus (outward normal -Z, CCW from below).
+            f([0, 3, 11]),
+            f([0, 11, 8]),
+            f([3, 2, 10]),
+            f([3, 10, 11]),
+            f([2, 1, 9]),
+            f([2, 9, 10]),
+            f([1, 0, 8]),
+            f([1, 8, 9]),
+            // Top annulus (outward normal +Z, CCW from above).
+            f([4, 5, 13]),
+            f([4, 13, 12]),
+            f([5, 6, 14]),
+            f([5, 14, 13]),
+            f([6, 7, 15]),
+            f([6, 15, 14]),
+            f([7, 4, 12]),
+            f([7, 12, 15]),
+            // Outer side faces.
+            f([0, 1, 5]),
+            f([0, 5, 4]),
+            f([1, 2, 6]),
+            f([1, 6, 5]),
+            f([2, 3, 7]),
+            f([2, 7, 6]),
+            f([3, 0, 4]),
+            f([3, 4, 7]),
+            // Inner tunnel side faces (normal points into the tunnel).
+            f([8, 13, 9]),
+            f([8, 12, 13]),
+            f([9, 13, 14]),
+            f([9, 14, 10]),
+            f([10, 14, 15]),
+            f([10, 15, 11]),
+            f([11, 15, 12]),
+            f([11, 12, 8]),
+        ],
+    }
+}
+
+/// Rectangular prism with a horizontal rectangular tunnel (axis = Y).
+/// Outer box spans x in [-1, 1], y in [-1, 1], z in [0, 2]. The
+/// tunnel spans x in [-0.4, 0.4], full y, z in [0.6, 1.4]. The y =
+/// +/- 1 faces become annuli (rectangle with a rectangular hole);
+/// the other four outer faces stay solid. 16 vertices, 32 triangles,
+/// genus 1.
+pub fn cuboid_with_y_tunnel() -> IndexedMesh {
+    let vertices = vec![
+        // 0..7 outer box corners.
+        Vertex::new([-1.0, -1.0, 0.0]),
+        Vertex::new([1.0, -1.0, 0.0]),
+        Vertex::new([1.0, 1.0, 0.0]),
+        Vertex::new([-1.0, 1.0, 0.0]),
+        Vertex::new([-1.0, -1.0, 2.0]),
+        Vertex::new([1.0, -1.0, 2.0]),
+        Vertex::new([1.0, 1.0, 2.0]),
+        Vertex::new([-1.0, 1.0, 2.0]),
+        // 8..11 tunnel corners on the front cap (y = -1).
+        Vertex::new([-0.4, -1.0, 0.6]),
+        Vertex::new([0.4, -1.0, 0.6]),
+        Vertex::new([0.4, -1.0, 1.4]),
+        Vertex::new([-0.4, -1.0, 1.4]),
+        // 12..15 tunnel corners on the back cap (y = +1).
+        Vertex::new([-0.4, 1.0, 0.6]),
+        Vertex::new([0.4, 1.0, 0.6]),
+        Vertex::new([0.4, 1.0, 1.4]),
+        Vertex::new([-0.4, 1.0, 1.4]),
+    ];
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    IndexedMesh {
+        meta: None,
+        vertices,
+        faces: vec![
+            // Bottom (solid, outward -Z).
+            f([0, 3, 2]),
+            f([0, 2, 1]),
+            // Top (solid, outward +Z).
+            f([4, 5, 6]),
+            f([4, 6, 7]),
+            // Left (solid, outward -X).
+            f([3, 0, 4]),
+            f([3, 4, 7]),
+            // Right (solid, outward +X).
+            f([1, 2, 6]),
+            f([1, 6, 5]),
+            // Front annulus (y = -1, outward -Y).
+            f([0, 1, 9]),
+            f([0, 9, 8]),
+            f([1, 5, 10]),
+            f([1, 10, 9]),
+            f([5, 4, 11]),
+            f([5, 11, 10]),
+            f([4, 0, 8]),
+            f([4, 8, 11]),
+            // Back annulus (y = +1, outward +Y).
+            f([2, 3, 12]),
+            f([2, 12, 13]),
+            f([3, 7, 15]),
+            f([3, 15, 12]),
+            f([7, 6, 14]),
+            f([7, 14, 15]),
+            f([6, 2, 13]),
+            f([6, 13, 14]),
+            // Inner tunnel walls.
+            // Tunnel top (z = 1.4, outward -Z).
+            f([11, 15, 14]),
+            f([11, 14, 10]),
+            // Tunnel bottom (z = 0.6, outward +Z).
+            f([8, 9, 13]),
+            f([8, 13, 12]),
+            // Tunnel left (x = -0.4, outward +X).
+            f([8, 12, 15]),
+            f([8, 15, 11]),
+            // Tunnel right (x = +0.4, outward -X).
+            f([9, 10, 14]),
+            f([9, 14, 13]),
+        ],
+    }
+}

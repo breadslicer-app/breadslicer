@@ -4489,6 +4489,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-mesh-fixtures"
+version = "0.0.12"
+dependencies = [
+ "sc-mesh-core",
+]
+
+[[package]]
 name = "sc-mesh-formats"
 version = "0.0.12"
 dependencies = [
@@ -4515,6 +4522,7 @@ version = "0.0.12"
 dependencies = [
  "proptest",
  "sc-mesh-core",
+ "sc-mesh-fixtures",
 ]
 
 [[package]]
@@ -4536,6 +4544,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-formats",
  "sc-sl1cer",
+ "sc-sla-formats",
  "tempfile",
  "windows-sys 0.61.2",
 ]
