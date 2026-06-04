@@ -858,7 +858,7 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("with same value"));
+            .stderr(predicate::str::contains("zero-length edge"));
     }
 
     #[test]
@@ -872,7 +872,7 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("area equal to 0"));
+            .stderr(predicate::str::contains("is degenerate: zero area"));
     }
 
     #[test]
@@ -903,7 +903,9 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("does not match our calculations"));
+            .stderr(predicate::str::contains(
+                "disagrees with the triangle plane",
+            ));
     }
 
     #[test]
@@ -922,7 +924,7 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("Loaded mesh is empty"));
+            .stderr(predicate::str::contains("mesh has no faces"));
     }
 
     #[test]
@@ -936,7 +938,7 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("boundary edge"));
+            .stderr(predicate::str::contains("is shared by only face"));
     }
 
     #[test]
@@ -950,7 +952,7 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("shared by more than"));
+            .stderr(predicate::str::contains("is shared by 3 faces"));
     }
 
     #[test]
@@ -964,7 +966,7 @@ mod diagnose_tests {
             .args(["diagnose", "-s", source.to_str().unwrap()])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("inconsistent normal vectors"));
+            .stderr(predicate::str::contains("windings disagree"));
     }
 }
 

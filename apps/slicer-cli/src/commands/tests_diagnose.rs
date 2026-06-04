@@ -4,10 +4,11 @@
  */
 
 //! Coverage for the four `show_*` helpers in
-//! `commands::diagnose`. Each helper formats a slice of one error
-//! enum into the supplied writer; the tests assert every variant
-//! contributes a recognisable line so a future refactor that drops a
-//! case can be caught.
+//! `commands::diagnose`. Each helper emits a header line with the
+//! variant count followed by one `\t- {error}\n` line per entry,
+//! using each error type's canonical `Display` impl. The tests pin
+//! the header shape and one body line per variant so a future
+//! refactor that drops a case can be caught.
 
 use sc_mesh_core::indexed_mesh::{
     MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
@@ -39,9 +40,9 @@ fn show_vertex_errors_covers_every_variant() {
     let out = render(|w| show_vertex_errors(&errors, w));
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 3, "header + 2 entries; got: {out}");
-    assert!(lines[0].contains("Vertex errors (2)"));
-    assert!(lines[1].contains("ID 7") && lines[1].contains("infinite") && lines[1].contains("'X'"));
-    assert!(lines[2].contains("ID 8") && lines[2].contains("NaN") && lines[2].contains("'Y'"));
+    assert_eq!(lines[0], "Vertex errors (2):");
+    assert_eq!(lines[1], "\t- vertex #7 has an infinite X coordinate");
+    assert_eq!(lines[2], "\t- vertex #8 has a NaN Y coordinate");
 }
 
 #[test]
@@ -62,21 +63,14 @@ fn show_face_errors_covers_every_variant() {
     let out = render(|w| show_face_errors(&errors, w));
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 3, "header + 2 entries; got: {out}");
-    assert!(lines[0].contains("Face errors (2)"));
-    assert!(
-        lines[1].contains("ID 3")
-            && lines[1].contains("v0")
-            && lines[1].contains("v2")
-            && lines[1].contains("vertex id = 11"),
-        "{}",
-        lines[1]
+    assert_eq!(lines[0], "Face errors (2):");
+    assert_eq!(
+        lines[1],
+        "\t- face #3 has a zero-length edge: slots v0 and v2 both bound to vertex #11",
     );
-    assert!(
-        lines[2].contains("ID 4")
-            && lines[2].contains("(v1)")
-            && lines[2].contains("out of range index 999"),
-        "{}",
-        lines[2]
+    assert_eq!(
+        lines[2],
+        "\t- face #4 slot v1 references vertex #999, which is out of range",
     );
 }
 
@@ -97,10 +91,16 @@ fn show_normal_vector_errors_covers_every_variant() {
     let out = render(|w| show_normal_vector_errors(&errors, w));
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 4, "header + 3 entries; got: {out}");
-    assert!(lines[0].contains("Normal vectors' errors (3)"));
-    assert!(lines[1].contains("ID 1") && lines[1].contains("area equal to 0"));
-    assert!(lines[2].contains("ID 2") && lines[2].contains("non-unit norm: 1.25"));
-    assert!(lines[3].contains("ID 3") && lines[3].contains("does not match"));
+    assert_eq!(lines[0], "Normal vector errors (3):");
+    assert_eq!(lines[1], "\t- face #1 is degenerate: zero area");
+    assert_eq!(
+        lines[2],
+        "\t- face #2 has a non-unit normal vector (norm = 1.25)",
+    );
+    assert_eq!(
+        lines[3],
+        "\t- face #3 declares a normal vector that disagrees with the triangle plane",
+    );
 }
 
 #[test]
@@ -127,24 +127,19 @@ fn show_manifold_errors_covers_every_variant() {
     let out = render(|w| show_manifold_errors(&errors, w));
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 5, "header + 4 entries; got: {out}");
-    assert!(lines[0].contains("Manifold errors:"));
-    assert!(lines[1].contains("empty") && lines[1].contains("no faces"));
-    assert!(
-        lines[2].contains("ID 9")
-            && lines[2].contains("(2, 5)")
-            && lines[2].contains("boundary edge")
+    assert_eq!(lines[0], "Manifold errors (4):");
+    assert_eq!(lines[1], "\t- mesh has no faces");
+    assert_eq!(
+        lines[2],
+        "\t- edge (#2, #5) is shared by only face #9 (a manifold edge must be shared by exactly 2 faces)",
     );
-    assert!(
-        lines[3].contains("(1, 4)") && lines[3].contains("more than 3 faces"),
-        "{}",
-        lines[3]
+    assert_eq!(
+        lines[3],
+        "\t- edge (#1, #4) is shared by 3 faces (a manifold edge must be shared by exactly 2)",
     );
-    assert!(
-        lines[4].contains("(3, 8)")
-            && lines[4].contains("(20 and 21)")
-            && lines[4].contains("inconsistent"),
-        "{}",
-        lines[4]
+    assert_eq!(
+        lines[4],
+        "\t- edge (#3, #8) is traversed in the same direction by faces #20 and #21 (windings disagree)",
     );
 }
 
@@ -157,8 +152,8 @@ fn empty_input_only_writes_header() {
     assert_eq!(face_out.trim(), "Face errors (0):");
 
     let normal_out = render(|w| show_normal_vector_errors(&[], w));
-    assert_eq!(normal_out.trim(), "Normal vectors' errors (0):");
+    assert_eq!(normal_out.trim(), "Normal vector errors (0):");
 
     let manifold_out = render(|w| show_manifold_errors(&[], w));
-    assert_eq!(manifold_out.trim(), "Manifold errors:");
+    assert_eq!(manifold_out.trim(), "Manifold errors (0):");
 }

@@ -28,6 +28,7 @@
 //! `IndexedMesh::fix_zero_length_edges_into_validated`.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use float_cmp::approx_eq;
 
@@ -65,6 +66,49 @@ pub enum MeshManifoldError {
         edge: (VertexIndex, VertexIndex),
         face_indices: [FaceIndex; 2],
     },
+}
+
+impl fmt::Display for MeshNormalVectorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroAreaTriangle { face_idx } => {
+                write!(f, "face #{face_idx} is degenerate: zero area",)
+            }
+            Self::NonUnitNorm { face_idx, norm } => write!(
+                f,
+                "face #{face_idx} has a non-unit normal vector (norm = {norm})",
+            ),
+            Self::ExpectationMismatch { face_idx } => write!(
+                f,
+                "face #{face_idx} declares a normal vector that disagrees with the triangle plane",
+            ),
+        }
+    }
+}
+
+impl fmt::Display for MeshManifoldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyMesh => f.write_str("mesh has no faces"),
+            Self::BoundaryEdge { edge, face_idx } => write!(
+                f,
+                "edge (#{}, #{}) is shared by only face #{face_idx} (a manifold edge must be shared by exactly 2 faces)",
+                edge.0, edge.1,
+            ),
+            Self::NonManifoldEdge { edge, face_indices } => write!(
+                f,
+                "edge (#{}, #{}) is shared by {} faces (a manifold edge must be shared by exactly 2)",
+                edge.0,
+                edge.1,
+                face_indices.len(),
+            ),
+            Self::InconsistentWindingOrder { edge, face_indices } => write!(
+                f,
+                "edge (#{}, #{}) is traversed in the same direction by faces #{} and #{} (windings disagree)",
+                edge.0, edge.1, face_indices[0], face_indices[1],
+            ),
+        }
+    }
 }
 
 /// Read-only witness that the underlying `IndexedMesh`'s face indices
@@ -493,6 +537,104 @@ mod indexed_mesh_validated_faces_tests {
             errors
                 .iter()
                 .any(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+        );
+    }
+}
+
+#[cfg(test)]
+mod mesh_normal_vector_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn zero_area_triangle_renders_face_id() {
+        let msg = format!(
+            "{}",
+            MeshNormalVectorError::ZeroAreaTriangle {
+                face_idx: 17_usize.into(),
+            },
+        );
+        assert_eq!(msg, "face #17 is degenerate: zero area");
+    }
+
+    #[test]
+    fn non_unit_norm_renders_face_id_and_norm() {
+        let msg = format!(
+            "{}",
+            MeshNormalVectorError::NonUnitNorm {
+                face_idx: 17_usize.into(),
+                norm: 1.5,
+            },
+        );
+        assert_eq!(msg, "face #17 has a non-unit normal vector (norm = 1.5)",);
+    }
+
+    #[test]
+    fn expectation_mismatch_renders_face_id() {
+        let msg = format!(
+            "{}",
+            MeshNormalVectorError::ExpectationMismatch {
+                face_idx: 42_usize.into(),
+            },
+        );
+        assert_eq!(
+            msg,
+            "face #42 declares a normal vector that disagrees with the triangle plane",
+        );
+    }
+}
+
+#[cfg(test)]
+mod mesh_manifold_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn empty_mesh_renders_short_phrase() {
+        let msg = format!("{}", MeshManifoldError::EmptyMesh);
+        assert_eq!(msg, "mesh has no faces");
+    }
+
+    #[test]
+    fn boundary_edge_renders_edge_and_face() {
+        let msg = format!(
+            "{}",
+            MeshManifoldError::BoundaryEdge {
+                edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
+                face_idx: 17_usize.into(),
+            },
+        );
+        assert_eq!(
+            msg,
+            "edge (#0, #1) is shared by only face #17 (a manifold edge must be shared by exactly 2 faces)",
+        );
+    }
+
+    #[test]
+    fn non_manifold_edge_renders_edge_and_count() {
+        let msg = format!(
+            "{}",
+            MeshManifoldError::NonManifoldEdge {
+                edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
+                face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into(),],
+            },
+        );
+        assert_eq!(
+            msg,
+            "edge (#0, #1) is shared by 3 faces (a manifold edge must be shared by exactly 2)",
+        );
+    }
+
+    #[test]
+    fn inconsistent_winding_renders_edge_and_both_face_ids() {
+        let msg = format!(
+            "{}",
+            MeshManifoldError::InconsistentWindingOrder {
+                edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
+                face_indices: [17_usize.into(), 42_usize.into()],
+            },
+        );
+        assert_eq!(
+            msg,
+            "edge (#0, #1) is traversed in the same direction by faces #17 and #42 (windings disagree)",
         );
     }
 }

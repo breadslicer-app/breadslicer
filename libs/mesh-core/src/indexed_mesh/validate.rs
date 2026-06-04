@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::fmt;
+
 use crate::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
 use super::IndexedMesh;
@@ -33,6 +35,43 @@ pub enum MeshFaceError {
         /// The shared vertex index.
         vertex_idx: VertexIndex,
     },
+}
+
+impl fmt::Display for MeshVertexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InfiniteCoordinate { vertex_idx, coord } => {
+                write!(f, "vertex #{vertex_idx} has an infinite {coord} coordinate",)
+            }
+            Self::NaNCoordinate { vertex_idx, coord } => {
+                write!(f, "vertex #{vertex_idx} has a NaN {coord} coordinate",)
+            }
+        }
+    }
+}
+
+impl fmt::Display for MeshFaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OutOfRangeVertexIndex {
+                face_idx,
+                vertex_pos,
+                vertex_idx,
+            } => write!(
+                f,
+                "face #{face_idx} slot {vertex_pos} references vertex #{vertex_idx}, which is out of range",
+            ),
+            Self::ZeroLengthEdge {
+                face_idx,
+                vertex_pos_a,
+                vertex_pos_b,
+                vertex_idx,
+            } => write!(
+                f,
+                "face #{face_idx} has a zero-length edge: slots {vertex_pos_a} and {vertex_pos_b} both bound to vertex #{vertex_idx}",
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1049,5 +1088,72 @@ mod indexed_mesh_validate_manifold_tests {
             .any(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }));
         assert!(has_winding, "expected InconsistentWindingOrder errors");
         assert!(has_boundary, "expected BoundaryEdge errors");
+    }
+}
+
+#[cfg(test)]
+mod mesh_vertex_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn infinite_coordinate_renders_index_and_axis() {
+        let msg = format!(
+            "{}",
+            MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 42,
+                coord: CoordAxis::Z,
+            }
+        );
+        assert_eq!(msg, "vertex #42 has an infinite Z coordinate");
+    }
+
+    #[test]
+    fn nan_coordinate_renders_index_and_axis() {
+        let msg = format!(
+            "{}",
+            MeshVertexError::NaNCoordinate {
+                vertex_idx: 7,
+                coord: CoordAxis::X,
+            }
+        );
+        assert_eq!(msg, "vertex #7 has a NaN X coordinate");
+    }
+}
+
+#[cfg(test)]
+mod mesh_face_error_display_tests {
+    use super::*;
+
+    #[test]
+    fn out_of_range_renders_face_slot_and_target_vertex() {
+        let msg = format!(
+            "{}",
+            MeshFaceError::OutOfRangeVertexIndex {
+                face_idx: 17_usize.into(),
+                vertex_pos: TriVertexSlot::V1,
+                vertex_idx: 999_u32.into(),
+            }
+        );
+        assert_eq!(
+            msg,
+            "face #17 slot v1 references vertex #999, which is out of range",
+        );
+    }
+
+    #[test]
+    fn zero_length_edge_renders_face_two_slots_and_shared_vertex() {
+        let msg = format!(
+            "{}",
+            MeshFaceError::ZeroLengthEdge {
+                face_idx: 2_usize.into(),
+                vertex_pos_a: TriVertexSlot::V0,
+                vertex_pos_b: TriVertexSlot::V1,
+                vertex_idx: 1_u32.into(),
+            }
+        );
+        assert_eq!(
+            msg,
+            "face #2 has a zero-length edge: slots v0 and v1 both bound to vertex #1",
+        );
     }
 }

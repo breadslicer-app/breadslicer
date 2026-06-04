@@ -115,49 +115,14 @@ fn diagnose_mesh(mesh: &IndexedMesh, out: &mut dyn Write) -> bool {
 pub(crate) fn show_vertex_errors(vertex_errors: &[MeshVertexError], out: &mut dyn Write) {
     let _ = writeln!(out, "Vertex errors ({}):", vertex_errors.len());
     for vertex_error in vertex_errors {
-        match vertex_error {
-            MeshVertexError::InfiniteCoordinate { vertex_idx, coord } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Vertex with ID {vertex_idx} has an infinite value for its coordinate '{coord}'"
-                );
-            }
-            MeshVertexError::NaNCoordinate { vertex_idx, coord } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Vertex with ID {vertex_idx} has an NaN value for its coordinate '{coord}'"
-                );
-            }
-        }
+        let _ = writeln!(out, "\t- {vertex_error}");
     }
 }
 
 pub(crate) fn show_face_errors(face_errors: &[MeshFaceError], out: &mut dyn Write) {
     let _ = writeln!(out, "Face errors ({}):", face_errors.len());
     for face_error in face_errors {
-        match face_error {
-            MeshFaceError::ZeroLengthEdge {
-                face_idx,
-                vertex_pos_a,
-                vertex_pos_b,
-                vertex_idx,
-            } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Face with ID {face_idx} has 2 vertices ({vertex_pos_a}, {vertex_pos_b}) with same value (vertex id = {vertex_idx})"
-                );
-            }
-            MeshFaceError::OutOfRangeVertexIndex {
-                face_idx,
-                vertex_pos,
-                vertex_idx,
-            } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Face with ID {face_idx} contains a vertex ({vertex_pos}) with an out of range index {vertex_idx}"
-                );
-            }
-        }
+        let _ = writeln!(out, "\t- {face_error}");
     }
 }
 
@@ -165,58 +130,15 @@ pub(crate) fn show_normal_vector_errors(
     vector_errors: &[MeshNormalVectorError],
     out: &mut dyn Write,
 ) {
-    let _ = writeln!(out, "Normal vectors' errors ({}):", vector_errors.len());
+    let _ = writeln!(out, "Normal vector errors ({}):", vector_errors.len());
     for vector_error in vector_errors {
-        match vector_error {
-            MeshNormalVectorError::ZeroAreaTriangle { face_idx } => {
-                let _ = writeln!(out, "\t- Face with ID {face_idx} has area equal to 0");
-            }
-            MeshNormalVectorError::NonUnitNorm { face_idx, norm } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Face with ID {face_idx} has normal vector with non-unit norm: {norm}"
-                );
-            }
-            MeshNormalVectorError::ExpectationMismatch { face_idx } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Face with ID {face_idx} has a normal vector that does not match our calculations"
-                );
-            }
-        }
+        let _ = writeln!(out, "\t- {vector_error}");
     }
 }
 
 pub(crate) fn show_manifold_errors(manifold_errors: &[MeshManifoldError], out: &mut dyn Write) {
-    let _ = writeln!(out, "Manifold errors:");
+    let _ = writeln!(out, "Manifold errors ({}):", manifold_errors.len());
     for manifold_error in manifold_errors {
-        match manifold_error {
-            MeshManifoldError::EmptyMesh => {
-                let _ = writeln!(out, "\t- Loaded mesh is empty, it has no faces");
-            }
-            MeshManifoldError::BoundaryEdge { edge, face_idx } => {
-                let _ = writeln!(
-                    out,
-                    "\t- Face with ID {face_idx} has a 'boundary edge' ({}, {}), so the mesh does not form a manifold",
-                    edge.0, edge.1
-                );
-            }
-            MeshManifoldError::NonManifoldEdge { edge, face_indices } => {
-                let _ = writeln!(
-                    out,
-                    "\t- The edge ({}, {}) is shared by more than {} faces (it should be 2)",
-                    edge.0,
-                    edge.1,
-                    face_indices.len()
-                );
-            }
-            MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
-                let _ = writeln!(
-                    out,
-                    "\t- The edge ({}, {}) belongs to 2 faces ({} and {}) with inconsistent normal vectors",
-                    edge.0, edge.1, face_indices[0], face_indices[1]
-                );
-            }
-        }
+        let _ = writeln!(out, "\t- {manifold_error}");
     }
 }
