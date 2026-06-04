@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+pub mod error_summary;
 pub mod fix;
 pub mod validate;
 pub mod validated;
 
+pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fix::{MeshFix, MeshFixError};
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{

@@ -13,10 +13,19 @@
 use std::fmt;
 
 use sc_mesh_core::SceneError;
-use sc_mesh_core::indexed_mesh::{MeshFaceError, MeshManifoldError};
+use sc_mesh_core::indexed_mesh::{
+    MeshErrorReport, MeshFaceError, MeshManifoldError, group_errors_by_variant,
+};
 use sc_mesh_core::scene::node::NodeId;
 
 use crate::profile::SliceProfileError;
+
+/// Maximum number of representative face indices listed per variant
+/// in the [`SliceError`] summary output. Larger lists are truncated;
+/// the full list is reachable via the underlying error vec on the
+/// [`SliceError::FacesValidationFailed`] /
+/// [`SliceError::ManifoldCheckFailed`] variants.
+const SUMMARY_FACE_EXAMPLE_LIMIT: usize = 5;
 
 #[derive(Debug)]
 pub enum SliceError {
@@ -52,6 +61,40 @@ pub enum SliceError {
     ProfileInvalid(SliceProfileError),
 }
 
+/// Append a per-variant breakdown of `errors` to `f`. Each line lists
+/// the variant name, a count, and up to
+/// [`SUMMARY_FACE_EXAMPLE_LIMIT`] representative face indices.
+///
+/// The breakdown is precisely the [`group_errors_by_variant`] output:
+/// groups appear in first-occurrence order, with members preserving
+/// input order.
+fn write_aggregated_summary<E>(f: &mut fmt::Formatter<'_>, errors: &[E]) -> fmt::Result
+where
+    E: MeshErrorReport,
+{
+    for group in group_errors_by_variant(errors) {
+        let count = group.members.len();
+        let face_examples: Vec<String> = group
+            .members
+            .iter()
+            .filter_map(|e| e.example_face())
+            .take(SUMMARY_FACE_EXAMPLE_LIMIT)
+            .map(|idx| format!("#{idx}"))
+            .collect();
+        if face_examples.is_empty() {
+            write!(f, "\n  {count}x {}", group.variant_name)?;
+        } else {
+            write!(
+                f,
+                "\n  {count}x {} (e.g. faces {})",
+                group.variant_name,
+                face_examples.join(", "),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 impl fmt::Display for SliceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -74,16 +117,18 @@ impl fmt::Display for SliceError {
                 "node #{} is an Instance reference; instance slicing is not yet supported",
                 node_id.get(),
             ),
-            Self::FacesValidationFailed(errors) => write!(
-                f,
-                "mesh face validation failed with {} error(s): {errors:?}",
-                errors.len(),
-            ),
-            Self::ManifoldCheckFailed(errors) => write!(
-                f,
-                "mesh manifold validation failed with {} error(s): {errors:?}",
-                errors.len(),
-            ),
+            Self::FacesValidationFailed(errors) => {
+                write!(f, "mesh face validation failed: {} error(s)", errors.len())?;
+                write_aggregated_summary(f, errors)
+            }
+            Self::ManifoldCheckFailed(errors) => {
+                write!(
+                    f,
+                    "mesh manifold validation failed: {} error(s)",
+                    errors.len(),
+                )?;
+                write_aggregated_summary(f, errors)
+            }
             Self::BakeFailed(err) => write!(f, "baking the leaf to world space failed: {err}"),
             Self::NonManifoldDuringStitching {
                 z_mm,
@@ -227,5 +272,135 @@ mod slice_error_tests {
             .source()
             .is_none(),
         );
+    }
+}
+
+#[cfg(test)]
+mod faces_validation_summary_tests {
+    use sc_mesh_core::indexed_mesh::MeshFaceError;
+    use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
+
+    use super::*;
+
+    fn zle(face: usize) -> MeshFaceError {
+        MeshFaceError::ZeroLengthEdge {
+            face_idx: face.into(),
+            vertex_pos_a: TriVertexSlot::V0,
+            vertex_pos_b: TriVertexSlot::V1,
+            vertex_idx: VertexIndex::from(0_u32),
+        }
+    }
+
+    fn oor(face: usize) -> MeshFaceError {
+        MeshFaceError::OutOfRangeVertexIndex {
+            face_idx: face.into(),
+            vertex_pos: TriVertexSlot::V0,
+            vertex_idx: VertexIndex::from(999_u32),
+        }
+    }
+
+    #[test]
+    fn header_carries_total_count() {
+        let errors: Vec<MeshFaceError> = (0..554).map(zle).collect();
+        let msg = format!("{}", SliceError::FacesValidationFailed(errors));
+        assert!(
+            msg.starts_with("mesh face validation failed: 554 error(s)"),
+            "msg: {msg}",
+        );
+    }
+
+    #[test]
+    fn single_variant_collapses_into_one_summary_line() {
+        let errors = vec![zle(2), zle(5), zle(11)];
+        let msg = format!("{}", SliceError::FacesValidationFailed(errors));
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines.len(), 2, "msg: {msg}");
+        assert_eq!(lines[0], "mesh face validation failed: 3 error(s)");
+        assert_eq!(lines[1], "  3x ZeroLengthEdge (e.g. faces #2, #5, #11)");
+    }
+
+    #[test]
+    fn examples_are_capped_at_five_face_indices() {
+        let errors: Vec<MeshFaceError> = [2_usize, 5, 11, 17, 23, 31, 47]
+            .into_iter()
+            .map(zle)
+            .collect();
+        let msg = format!("{}", SliceError::FacesValidationFailed(errors));
+        assert!(
+            msg.contains("7x ZeroLengthEdge (e.g. faces #2, #5, #11, #17, #23)"),
+            "msg: {msg}",
+        );
+        assert!(!msg.contains("#31"), "msg should cap at five: {msg}");
+    }
+
+    #[test]
+    fn mixed_variants_produce_one_summary_line_per_variant_in_first_seen_order() {
+        let errors = vec![zle(2), oor(99), zle(5), oor(101), zle(11)];
+        let msg = format!("{}", SliceError::FacesValidationFailed(errors));
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines.len(), 3, "msg: {msg}");
+        assert_eq!(lines[0], "mesh face validation failed: 5 error(s)");
+        assert_eq!(lines[1], "  3x ZeroLengthEdge (e.g. faces #2, #5, #11)");
+        assert_eq!(
+            lines[2],
+            "  2x OutOfRangeVertexIndex (e.g. faces #99, #101)"
+        );
+    }
+
+    #[test]
+    fn no_debug_dump_in_output() {
+        let errors: Vec<MeshFaceError> = (0..50).map(zle).collect();
+        let msg = format!("{}", SliceError::FacesValidationFailed(errors));
+        assert!(
+            !msg.contains("ZeroLengthEdge {"),
+            "regression: Debug formatter leaked into Display output: {msg}",
+        );
+        assert!(
+            !msg.contains("face_idx:"),
+            "regression: Debug formatter leaked into Display output: {msg}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod manifold_check_summary_tests {
+    use sc_mesh_core::indexed_mesh::MeshManifoldError;
+    use sc_mesh_core::primitives::VertexIndex;
+
+    use super::*;
+
+    fn boundary(face: usize, a: u32, b: u32) -> MeshManifoldError {
+        MeshManifoldError::BoundaryEdge {
+            edge: (VertexIndex::from(a), VertexIndex::from(b)),
+            face_idx: face.into(),
+        }
+    }
+
+    fn winding(a: u32, b: u32, fa: usize, fb: usize) -> MeshManifoldError {
+        MeshManifoldError::InconsistentWindingOrder {
+            edge: (VertexIndex::from(a), VertexIndex::from(b)),
+            face_indices: [fa.into(), fb.into()],
+        }
+    }
+
+    #[test]
+    fn empty_mesh_variant_renders_without_face_examples() {
+        let errors = vec![MeshManifoldError::EmptyMesh];
+        let msg = format!("{}", SliceError::ManifoldCheckFailed(errors));
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines.len(), 2, "msg: {msg}");
+        assert_eq!(lines[0], "mesh manifold validation failed: 1 error(s)");
+        assert_eq!(lines[1], "  1x EmptyMesh");
+    }
+
+    #[test]
+    fn mixed_variants_each_get_their_own_summary_line() {
+        let errors = vec![boundary(17, 0, 1), winding(2, 3, 4, 5), boundary(42, 6, 7)];
+        let msg = format!("{}", SliceError::ManifoldCheckFailed(errors));
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines.len(), 3, "msg: {msg}");
+        assert_eq!(lines[0], "mesh manifold validation failed: 3 error(s)");
+        assert_eq!(lines[1], "  2x BoundaryEdge (e.g. faces #17, #42)");
+        assert_eq!(lines[2], "  1x InconsistentWindingOrder (e.g. faces #4)");
     }
 }
