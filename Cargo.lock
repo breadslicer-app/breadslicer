@@ -4527,6 +4527,7 @@ dependencies = [
  "proptest",
  "sc-mesh-core",
  "sc-mesh-fixtures",
+ "sc-print-primitives",
 ]
 
 [[package]]

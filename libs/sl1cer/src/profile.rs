@@ -14,6 +14,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use sc_mesh_core::primitives::CoordAxis;
+pub use sc_print_primitives::{NegativeLengthError, ParseLengthError, PositiveFiniteMm};
 
 /// Why a [`SliceProfile`] component constructor rejected its input.
 ///
@@ -193,93 +194,6 @@ impl FromStr for AaLevel {
             "8" | "x8" => Ok(Self::X8),
             _ => Err(UnknownAaLevel { got: s.to_owned() }),
         }
-    }
-}
-
-/// A strictly positive, finite length in millimetres. Constructed
-/// through [`PositiveFiniteMm::new`] or its [`FromStr`] impl; once
-/// you hold one, the invariant holds by type. Use [`Self::value`]
-/// to unpack the raw `f64` for APIs that take a plain length.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PositiveFiniteMm(f64);
-
-/// Returned by [`PositiveFiniteMm::new`] when the input was zero,
-/// negative, or non-finite.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct NegativeLengthError {
-    pub value: f64,
-}
-
-impl fmt::Display for NegativeLengthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "millimetre length must be strictly positive and finite, got {}",
-            self.value,
-        )
-    }
-}
-
-impl std::error::Error for NegativeLengthError {}
-
-/// Returned by [`PositiveFiniteMm`]'s [`FromStr`] impl: either the
-/// input was not a valid floating point number, or the parsed
-/// number was out of range.
-#[derive(Debug)]
-pub enum ParseLengthError {
-    NotANumber(std::num::ParseFloatError),
-    OutOfRange(NegativeLengthError),
-}
-
-impl fmt::Display for ParseLengthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotANumber(err) => write!(f, "invalid millimetre value: {err}"),
-            Self::OutOfRange(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for ParseLengthError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::NotANumber(err) => Some(err),
-            Self::OutOfRange(err) => Some(err),
-        }
-    }
-}
-
-impl PositiveFiniteMm {
-    /// Construct from a raw `f64`. Fails with
-    /// [`NegativeLengthError`] when the value is zero, negative,
-    /// or non-finite (`NaN` / +/- infinity).
-    pub fn new(value: f64) -> Result<Self, NegativeLengthError> {
-        if value.is_finite() && value > 0.0 {
-            Ok(Self(value))
-        } else {
-            Err(NegativeLengthError { value })
-        }
-    }
-
-    /// The underlying millimetre value as a plain `f64`.
-    #[inline]
-    pub fn value(self) -> f64 {
-        self.0
-    }
-}
-
-impl fmt::Display for PositiveFiniteMm {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl FromStr for PositiveFiniteMm {
-    type Err = ParseLengthError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value: f64 = s.parse().map_err(ParseLengthError::NotANumber)?;
-        Self::new(value).map_err(ParseLengthError::OutOfRange)
     }
 }
 
@@ -655,64 +569,5 @@ mod profile_tests {
         let msg = format!("{err}");
         assert!(msg.contains("3"), "msg: {msg}");
         assert!(msg.contains("expected"), "msg: {msg}");
-    }
-
-    #[test]
-    fn positive_finite_mm_new_accepts_positive_finite() {
-        let v = PositiveFiniteMm::new(0.1).unwrap();
-        assert_eq!(v.value(), 0.1);
-    }
-
-    #[test]
-    fn positive_finite_mm_new_rejects_zero() {
-        let err = PositiveFiniteMm::new(0.0).unwrap_err();
-        assert_eq!(err.value, 0.0);
-    }
-
-    #[test]
-    fn positive_finite_mm_new_rejects_negative() {
-        let err = PositiveFiniteMm::new(-0.5).unwrap_err();
-        assert_eq!(err.value, -0.5);
-    }
-
-    #[test]
-    fn positive_finite_mm_new_rejects_nan() {
-        let err = PositiveFiniteMm::new(f64::NAN).unwrap_err();
-        assert!(err.value.is_nan());
-    }
-
-    #[test]
-    fn positive_finite_mm_new_rejects_infinity() {
-        assert!(PositiveFiniteMm::new(f64::INFINITY).is_err());
-        assert!(PositiveFiniteMm::new(f64::NEG_INFINITY).is_err());
-    }
-
-    #[test]
-    fn negative_length_error_display_includes_value() {
-        let msg = format!("{}", NegativeLengthError { value: -0.5 });
-        assert!(msg.contains("-0.5"), "msg: {msg}");
-        assert!(msg.contains("positive"), "msg: {msg}");
-    }
-
-    #[test]
-    fn positive_finite_mm_from_str_parses_valid_input() {
-        let v: PositiveFiniteMm = "0.25".parse().unwrap();
-        assert_eq!(v.value(), 0.25);
-    }
-
-    #[test]
-    fn positive_finite_mm_from_str_rejects_non_numeric() {
-        let err = "abc".parse::<PositiveFiniteMm>().unwrap_err();
-        assert!(matches!(err, ParseLengthError::NotANumber(_)));
-        let msg = format!("{err}");
-        assert!(msg.contains("invalid"), "msg: {msg}");
-    }
-
-    #[test]
-    fn positive_finite_mm_from_str_rejects_out_of_range() {
-        let err = "-1.0".parse::<PositiveFiniteMm>().unwrap_err();
-        assert!(matches!(err, ParseLengthError::OutOfRange(_)));
-        let msg = format!("{err}");
-        assert!(msg.contains("-1"), "msg: {msg}");
     }
 }

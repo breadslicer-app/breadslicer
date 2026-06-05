@@ -14,3 +14,10 @@
 //! It is consumed by both the slicing engine and the print-profile
 //! crate so neither has to depend on the other for these shared
 //! foundations.
+
+pub mod length;
+
+pub use length::{NegativeLengthError, ParseLengthError, PositiveFiniteMm};
+
+#[cfg(test)]
+mod tests_length;
