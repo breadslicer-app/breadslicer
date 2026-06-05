@@ -98,6 +98,22 @@ impl BuildVolume {
     pub fn z_mm(&self) -> f64 {
         self.z_mm
     }
+
+    /// Minimum corner of the build envelope in printer coordinates:
+    /// `[-x_mm/2, -y_mm/2, 0]`. XY is centred on the origin; the
+    /// floor of the build plate sits at `z = 0`. Matches the GUI's
+    /// [`BuildVolume::envelope_min_mm`] in `apps/slicer-gui`.
+    #[inline]
+    pub fn envelope_min_mm(&self) -> [f64; 3] {
+        [-0.5 * self.x_mm, -0.5 * self.y_mm, 0.0]
+    }
+
+    /// Maximum corner of the build envelope in printer coordinates:
+    /// `[+x_mm/2, +y_mm/2, z_mm]`. Mirror of [`Self::envelope_min_mm`].
+    #[inline]
+    pub fn envelope_max_mm(&self) -> [f64; 3] {
+        [0.5 * self.x_mm, 0.5 * self.y_mm, self.z_mm]
+    }
 }
 
 /// Pixel resolution validated non-zero per axis on construction.
@@ -468,6 +484,23 @@ mod profile_tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn build_volume_envelope_centres_xy_on_origin_and_floors_z_at_zero() {
+        let bv = BuildVolume::new(192.0, 120.0, 200.0).unwrap();
+        assert_eq!(bv.envelope_min_mm(), [-96.0, -60.0, 0.0]);
+        assert_eq!(bv.envelope_max_mm(), [96.0, 60.0, 200.0]);
+    }
+
+    #[test]
+    fn build_volume_envelope_extent_matches_per_axis_dimensions() {
+        let bv = BuildVolume::new(60.0, 40.0, 100.0).unwrap();
+        let min = bv.envelope_min_mm();
+        let max = bv.envelope_max_mm();
+        assert!((max[0] - min[0] - bv.x_mm()).abs() < 1e-12);
+        assert!((max[1] - min[1] - bv.y_mm()).abs() < 1e-12);
+        assert!((max[2] - min[2] - bv.z_mm()).abs() < 1e-12);
     }
 
     #[test]

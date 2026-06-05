@@ -29,6 +29,24 @@ pub enum MeshFileType {
     _3mf,
 }
 
+impl MeshFileType {
+    /// True when the file format carries only geometry, with no
+    /// build-plate positioning. Callers (e.g. the CLI slice command)
+    /// may translate these meshes onto the build plate before
+    /// slicing without losing information the file expressed.
+    ///
+    /// False for formats that already commit to a specific position
+    /// on the printer's build plate (future SL1 / CTB / 3MF Slice
+    /// readers). Callers must respect that positioning and skip
+    /// auto-placement entirely for these.
+    pub fn is_slicer_agnostic(&self) -> bool {
+        match self {
+            Self::Stl | Self::StlAscii | Self::StlBin => true,
+            Self::Obj | Self::Ply | Self::Amf | Self::_3mf => true,
+        }
+    }
+}
+
 impl FromStr for MeshFileType {
     type Err = InvalidMeshFileType;
 
@@ -112,6 +130,29 @@ pub fn infer_mesh_file_format_from_extension(
         _ => Err(InferFileTypeError::UnknownExtension {
             path: path.to_path_buf(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod is_slicer_agnostic_tests {
+    use super::MeshFileType;
+
+    #[test]
+    fn every_current_variant_is_slicer_agnostic() {
+        for variant in [
+            MeshFileType::Stl,
+            MeshFileType::StlAscii,
+            MeshFileType::StlBin,
+            MeshFileType::Obj,
+            MeshFileType::Ply,
+            MeshFileType::Amf,
+            MeshFileType::_3mf,
+        ] {
+            assert!(
+                variant.is_slicer_agnostic(),
+                "{variant:?} should be slicer-agnostic: every format currently supported carries geometry only, with no build-plate positioning",
+            );
+        }
     }
 }
 
