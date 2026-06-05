@@ -15,6 +15,14 @@
 //! plate) at pixel index 0; PNG rows are top-to-bottom by spec,
 //! so we flip rows on the way out to keep the rendered image
 //! oriented the same way the per-layer SVGs render.
+//!
+//! The slicer emits polygons in the build-plate's centred-on-origin
+//! XY frame (mesh XY in `[-build_x/2, +build_x/2]^2`). The raster
+//! `PixelMap` projects from `[0, build_x] x [0, build_y]` to the
+//! pixel grid, so the writer shifts every layer by `-env_min` (i.e.
+//! `+build_x/2, +build_y/2`) before rasterising. This keeps the
+//! centring shift at the writer boundary; `PixelMap` itself remains
+//! a convention-agnostic mm-to-pixel projection.
 
 use std::fs::File;
 use std::io::BufWriter;
@@ -49,9 +57,13 @@ pub fn write_per_layer(
     );
     let width = options.pixel_resolution().x();
     let height = options.pixel_resolution().y();
+    let env_min = options.build_volume().envelope_min_mm();
+    let shift_x = -env_min[0];
+    let shift_y = -env_min[1];
 
     for (idx, layer) in stack.layers().iter().enumerate() {
-        let raster = rasterize_layer(layer, &pixel_map, options.aa(), options.min_alpha_pct());
+        let shifted = layer.translated_xy(shift_x, shift_y);
+        let raster = rasterize_layer(&shifted, &pixel_map, options.aa(), options.min_alpha_pct());
         let pixels = materialize_top_down(&raster, width as usize, height as usize);
         let path = dir.join(format!("layer_{idx:04}.png"));
         write_png(&path, width, height, &pixels, options, layer.z_mm(), idx)?;
@@ -215,12 +227,15 @@ mod png_tests {
         WriterOptions::from_profile(&profile, "0.0.12")
     }
 
+    /// Centred-on-origin square layer (vertices at `+/- side/2`),
+    /// matching the slicer's centred-on-origin XY frame.
     fn make_square_layer(z_mm: f64, side: f64) -> ContourLayer {
+        let half = 0.5 * side;
         let outer = ClosedRing::new(vec![
-            Point2D::new(0.0, 0.0),
-            Point2D::new(side, 0.0),
-            Point2D::new(side, side),
-            Point2D::new(0.0, side),
+            Point2D::new(-half, -half),
+            Point2D::new(half, -half),
+            Point2D::new(half, half),
+            Point2D::new(-half, half),
         ]);
         let polygon = Polygon::new_unchecked(outer, Vec::new());
         ContourLayer::new(z_mm, vec![polygon])
@@ -275,8 +290,11 @@ mod png_tests {
     fn written_png_has_filled_pixels_inside_the_polygon_and_empty_outside() {
         let dir = tempdir().unwrap();
         // Build volume 10x10 mm, pixels 100x100, so 10 px / mm.
-        // Square polygon at x, y in [0, 4] mm covers pixels [0, 40].
-        // Inside: pixel (10, 10) (mm 1, 1). Outside: pixel (60, 60) (mm 6, 6).
+        // Square polygon in mesh frame at x, y in [-2, +2] mm. The
+        // writer shifts by +env_max = (+5, +5), so it covers x, y in
+        // [3, 7] mm (pixels [30, 70]). Inside: mesh-frame mm (0, 0)
+        // -> pixel (50, 50). Outside: mesh-frame mm (-3, -3) ->
+        // pixel (20, 20).
         let stack = ContourStack::new_unchecked(vec![make_square_layer(0.05, 4.0)]);
         write_per_layer(&stack, dir.path(), &make_options(10.0, 100)).unwrap();
 
@@ -290,17 +308,25 @@ mod png_tests {
 
         let width = info.width as usize;
         let height = info.height as usize;
-        // PNG rows go top-to-bottom; the raster tier writes Y = 0
-        // (build-plate bottom) first; we flip on write. To address
-        // a pixel by build-plate coords, flip back.
-        let at = |mm_x: f64, mm_y: f64| -> u8 {
-            let px = (mm_x * 10.0) as usize;
-            let py_raster = (mm_y * 10.0) as usize;
+        // Mesh-frame mm -> pixel index. Build envelope min is
+        // (-5, -5); add it back to get the build-frame mm the writer
+        // shifted into. PNG rows go top-to-bottom; the raster tier
+        // writes Y = 0 (build-plate bottom) first and we flip on
+        // write, so flip back here to address by mesh-frame mm.
+        let at = |mesh_mm_x: f64, mesh_mm_y: f64| -> u8 {
+            let build_mm_x = mesh_mm_x + 5.0;
+            let build_mm_y = mesh_mm_y + 5.0;
+            let px = (build_mm_x * 10.0) as usize;
+            let py_raster = (build_mm_y * 10.0) as usize;
             let py_png = height - 1 - py_raster;
             buffer[py_png * width + px]
         };
-        assert_eq!(at(1.0, 1.0), 255, "(1mm, 1mm) sits inside the square");
-        assert_eq!(at(6.0, 6.0), 0, "(6mm, 6mm) sits outside the square");
+        assert_eq!(at(0.0, 0.0), 255, "mesh origin sits inside the square");
+        assert_eq!(
+            at(-3.0, -3.0),
+            0,
+            "mesh (-3, -3) sits outside the [-2, +2]^2 square",
+        );
     }
 
     #[test]

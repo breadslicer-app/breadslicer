@@ -58,6 +58,17 @@ impl ClosedRing {
         self.vertices.reverse();
     }
 
+    /// Return a new ring with every vertex translated by
+    /// `(dx_mm, dy_mm)`. Translation preserves winding.
+    pub fn translated_xy(&self, dx_mm: f64, dy_mm: f64) -> Self {
+        let vertices = self
+            .vertices
+            .iter()
+            .map(|p| Point2D::new(p.x + dx_mm, p.y + dy_mm))
+            .collect();
+        Self { vertices }
+    }
+
     /// Signed area via the shoelace formula. Positive iff the ring is
     /// wound counter-clockwise. Rings with fewer than three vertices
     /// have zero area by definition.
@@ -144,6 +155,19 @@ impl Polygon {
     pub fn holes(&self) -> &[ClosedRing] {
         &self.holes
     }
+
+    /// Return a new polygon with every ring translated by
+    /// `(dx_mm, dy_mm)`. Translation preserves winding, so the
+    /// outer-CCW / holes-CW invariant carries over.
+    pub fn translated_xy(&self, dx_mm: f64, dy_mm: f64) -> Self {
+        let outer = self.outer.translated_xy(dx_mm, dy_mm);
+        let holes = self
+            .holes
+            .iter()
+            .map(|h| h.translated_xy(dx_mm, dy_mm))
+            .collect();
+        Self { outer, holes }
+    }
 }
 
 /// Every polygon that falls in a single horizontal slice of the mesh,
@@ -168,6 +192,20 @@ impl ContourLayer {
     #[inline]
     pub fn polygons(&self) -> &[Polygon] {
         &self.polygons
+    }
+
+    /// Return a new layer with every polygon translated by
+    /// `(dx_mm, dy_mm)`. The layer's Z is unchanged.
+    pub fn translated_xy(&self, dx_mm: f64, dy_mm: f64) -> Self {
+        let polygons = self
+            .polygons
+            .iter()
+            .map(|p| p.translated_xy(dx_mm, dy_mm))
+            .collect();
+        Self {
+            z_mm: self.z_mm,
+            polygons,
+        }
     }
 }
 
