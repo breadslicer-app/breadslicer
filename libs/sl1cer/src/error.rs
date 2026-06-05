@@ -18,8 +18,6 @@ use sc_mesh_core::indexed_mesh::{
 };
 use sc_mesh_core::scene::node::NodeId;
 
-use crate::profile::SliceProfileError;
-
 /// Maximum number of representative face indices listed per variant
 /// in the [`SliceError`] summary output. Larger lists are truncated;
 /// the full list is reachable via the underlying error vec on the
@@ -56,9 +54,6 @@ pub enum SliceError {
         z_mm: f64,
         dangling_endpoints: usize,
     },
-    /// A [`SliceProfile`](crate::profile::SliceProfile) component
-    /// constructor rejected its input.
-    ProfileInvalid(SliceProfileError),
 }
 
 /// Append a per-variant breakdown of `errors` to `f`. Each line lists
@@ -138,7 +133,6 @@ impl fmt::Display for SliceError {
                 "non-manifold geometry detected during stitching at z = {z_mm} mm: \
                  {dangling_endpoints} dangling endpoint(s)",
             ),
-            Self::ProfileInvalid(err) => write!(f, "{err}"),
         }
     }
 }
@@ -147,7 +141,6 @@ impl std::error::Error for SliceError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::BakeFailed(err) => Some(err),
-            Self::ProfileInvalid(err) => Some(err),
             Self::EmptyScene
             | Self::NodeNotFound { .. }
             | Self::NotALeaf { .. }
@@ -166,12 +159,6 @@ impl From<SceneError> for SliceError {
     }
 }
 
-impl From<SliceProfileError> for SliceError {
-    fn from(err: SliceProfileError) -> Self {
-        Self::ProfileInvalid(err)
-    }
-}
-
 #[cfg(test)]
 mod slice_error_tests {
     use std::error::Error as _;
@@ -179,8 +166,6 @@ mod slice_error_tests {
     use sc_mesh_core::Scene;
     use sc_mesh_core::scene::error::SceneError;
     use sc_mesh_core::transform::Transform3D;
-
-    use crate::profile::SliceProfileError;
 
     use super::*;
 
@@ -244,19 +229,9 @@ mod slice_error_tests {
     }
 
     #[test]
-    fn from_profile_error_routes_to_profile_invalid() {
-        let profile_err = SliceProfileError::TotalLayersZero;
-        let err: SliceError = profile_err.into();
-        assert!(matches!(err, SliceError::ProfileInvalid(_)));
-    }
-
-    #[test]
-    fn source_returns_inner_for_bake_failed_and_profile_invalid() {
+    fn source_returns_inner_for_bake_failed() {
         let bake_err = SliceError::BakeFailed(SceneError::DanglingNodeId { id: mint_node_id() });
         assert!(bake_err.source().is_some());
-
-        let profile_err = SliceError::ProfileInvalid(SliceProfileError::TotalLayersZero);
-        assert!(profile_err.source().is_some());
     }
 
     #[test]

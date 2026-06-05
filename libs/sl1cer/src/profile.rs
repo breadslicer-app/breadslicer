@@ -18,34 +18,47 @@ pub use sc_print_primitives::{
     PositiveFiniteMm, ZeroPixelExtentError,
 };
 
-/// Why a [`SliceProfile`] component constructor rejected its input.
+/// Why [`LayerSchedule::uniform`] rejected its inputs. The two
+/// length variants carry the underlying [`LengthOutOfRange`] from the
+/// per-field [`PositiveFiniteMm`] check; the zero-count variant is a unit.
 #[derive(Debug)]
-pub enum SliceProfileError {
-    /// `layer_height_mm` was zero, negative, or non-finite.
-    LayerHeightInvalid { value: f64 },
-    /// `first_layer_height_mm` was zero, negative, or non-finite.
-    FirstLayerHeightInvalid { value: f64 },
+pub enum InvalidLayerSchedule {
+    /// `layer_height_mm` failed the strictly-positive-finite invariant.
+    LayerHeightOutOfRange(LengthOutOfRange),
+    /// `first_layer_height_mm` failed the strictly-positive-finite invariant.
+    FirstLayerHeightOutOfRange(LengthOutOfRange),
     /// `total_layers` was zero.
-    TotalLayersZero,
+    ZeroTotalLayers,
 }
 
-impl fmt::Display for SliceProfileError {
+impl fmt::Display for InvalidLayerSchedule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LayerHeightInvalid { value } => write!(
+            Self::LayerHeightOutOfRange(source) => write!(
                 f,
-                "layer_height_mm must be a finite positive length in millimetres, got {value}",
+                "layer_height_mm must be a finite positive length in millimetres, got {}",
+                source.value,
             ),
-            Self::FirstLayerHeightInvalid { value } => write!(
+            Self::FirstLayerHeightOutOfRange(source) => write!(
                 f,
-                "first_layer_height_mm must be a finite positive length in millimetres, got {value}",
+                "first_layer_height_mm must be a finite positive length in millimetres, got {}",
+                source.value,
             ),
-            Self::TotalLayersZero => write!(f, "total_layers must be non-zero"),
+            Self::ZeroTotalLayers => write!(f, "total_layers must be non-zero"),
         }
     }
 }
 
-impl std::error::Error for SliceProfileError {}
+impl std::error::Error for InvalidLayerSchedule {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::LayerHeightOutOfRange(source) | Self::FirstLayerHeightOutOfRange(source) => {
+                Some(source)
+            }
+            Self::ZeroTotalLayers => None,
+        }
+    }
+}
 
 /// Per-pixel anti-aliasing factor for the raster tier. `Off` is the
 /// binary scanline path; the others apply N-step Y sub-sampling with
@@ -126,19 +139,13 @@ impl LayerSchedule {
         layer_height_mm: f64,
         first_layer_height_mm: f64,
         total_layers: u32,
-    ) -> Result<Self, SliceProfileError> {
-        if !layer_height_mm.is_finite() || layer_height_mm <= 0.0 {
-            return Err(SliceProfileError::LayerHeightInvalid {
-                value: layer_height_mm,
-            });
-        }
-        if !first_layer_height_mm.is_finite() || first_layer_height_mm <= 0.0 {
-            return Err(SliceProfileError::FirstLayerHeightInvalid {
-                value: first_layer_height_mm,
-            });
-        }
+    ) -> Result<Self, InvalidLayerSchedule> {
+        PositiveFiniteMm::new(layer_height_mm)
+            .map_err(InvalidLayerSchedule::LayerHeightOutOfRange)?;
+        PositiveFiniteMm::new(first_layer_height_mm)
+            .map_err(InvalidLayerSchedule::FirstLayerHeightOutOfRange)?;
         if total_layers == 0 {
-            return Err(SliceProfileError::TotalLayersZero);
+            return Err(InvalidLayerSchedule::ZeroTotalLayers);
         }
         Ok(Self::Uniform {
             layer_height_mm,
@@ -240,7 +247,10 @@ mod profile_tests {
     #[test]
     fn layer_schedule_uniform_rejects_zero_layer_height() {
         let err = LayerSchedule::uniform(0.0, 0.05, 10).unwrap_err();
-        assert!(matches!(err, SliceProfileError::LayerHeightInvalid { .. }));
+        assert!(matches!(
+            err,
+            InvalidLayerSchedule::LayerHeightOutOfRange(_)
+        ));
     }
 
     #[test]
@@ -248,20 +258,23 @@ mod profile_tests {
         let err = LayerSchedule::uniform(0.05, -0.01, 10).unwrap_err();
         assert!(matches!(
             err,
-            SliceProfileError::FirstLayerHeightInvalid { .. }
+            InvalidLayerSchedule::FirstLayerHeightOutOfRange(_)
         ));
     }
 
     #[test]
     fn layer_schedule_uniform_rejects_nan_layer_height() {
         let err = LayerSchedule::uniform(f64::NAN, 0.05, 10).unwrap_err();
-        assert!(matches!(err, SliceProfileError::LayerHeightInvalid { .. }));
+        assert!(matches!(
+            err,
+            InvalidLayerSchedule::LayerHeightOutOfRange(_)
+        ));
     }
 
     #[test]
     fn layer_schedule_uniform_rejects_zero_total_layers() {
         let err = LayerSchedule::uniform(0.05, 0.05, 0).unwrap_err();
-        assert!(matches!(err, SliceProfileError::TotalLayersZero));
+        assert!(matches!(err, InvalidLayerSchedule::ZeroTotalLayers));
     }
 
     #[test]
