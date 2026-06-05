@@ -61,6 +61,29 @@ pub(crate) fn fix(
     display_warnings(&loaded.warnings, out);
     let mut graph = loaded.graph;
 
+    let all_fixes = repair_scene_meshes(&mut graph, options, out)?;
+
+    if all_fixes.is_empty() {
+        let _ = writeln!(out, "No fixes were applied.");
+    } else {
+        show_applied_fixes(&all_fixes, out);
+    }
+
+    write_scene(&graph, &target_path, target_format)
+}
+
+/// Apply [`fix_mesh`] to every reachable mesh in `graph` (both
+/// resource-backed meshes and inline-mesh leaves) and return the
+/// concatenated list of fixes that were actually applied. Shared
+/// between the `fix` subcommand and the `slice --repair` path.
+/// An empty return value means no fix was applied; it does NOT
+/// imply the mesh was free of diagnosed problems (problems whose
+/// corresponding fix flag is off in `options` go untouched).
+pub(crate) fn repair_scene_meshes(
+    graph: &mut Scene,
+    options: FixOptions,
+    out: &mut dyn Write,
+) -> Result<Vec<MeshFix>> {
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     for (_id, mesh) in graph.mesh_resources_iter_mut() {
@@ -70,7 +93,7 @@ pub(crate) fn fix(
     // Two-phase walk: collect inline-mesh leaf ids while the borrow
     // is shared, then mutate one at a time so each `inline_mesh_mut`
     // call gets exclusive access.
-    let inline_leaf_ids = collect_inline_leaf_ids(&graph);
+    let inline_leaf_ids = collect_inline_leaf_ids(graph);
     for id in inline_leaf_ids {
         let mesh = graph
             .inline_mesh_mut(id)
@@ -78,13 +101,7 @@ pub(crate) fn fix(
         all_fixes.extend(fix_mesh(mesh, options, out)?);
     }
 
-    if all_fixes.is_empty() {
-        let _ = writeln!(out, "No fixes needed.");
-    } else {
-        show_applied_fixes(&all_fixes, out);
-    }
-
-    write_scene(&graph, &target_path, target_format)
+    Ok(all_fixes)
 }
 
 /// Collect every reachable inline-mesh leaf's [`NodeId`] in pre-order

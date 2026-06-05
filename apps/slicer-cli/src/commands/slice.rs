@@ -27,6 +27,7 @@ use sc_sl1cer::{VERSION, slice_leaf};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_slice};
 
+use crate::commands::fix::{FixOptions, repair_scene_meshes, show_applied_fixes};
 use crate::commands::mesh_loader::display_warnings;
 use crate::filesystem::validate_sourcefile_path;
 
@@ -46,6 +47,7 @@ pub(crate) struct SliceArgs {
     pub aa: AaLevel,
     pub verbose: bool,
     pub no_auto_place: bool,
+    pub repair: bool,
 }
 
 pub(crate) fn slice(args: SliceArgs) -> Result<()> {
@@ -65,6 +67,14 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     let mut loaded =
         load_mesh_from_path(&source_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings, &mut std::io::stderr());
+
+    if args.repair {
+        let stderr = &mut std::io::stderr();
+        let fixes = repair_scene_meshes(&mut loaded.graph, default_repair_options(), stderr)?;
+        if !fixes.is_empty() {
+            show_applied_fixes(&fixes, stderr);
+        }
+    }
 
     let leaf_id = pick_single_root_leaf(&loaded.graph)?;
     if !args.no_auto_place {
@@ -117,6 +127,18 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         target_path.display(),
     );
     Ok(())
+}
+
+/// The fix-pass defaults the `slice --repair` path applies: remove
+/// zero-length-edge faces and correct flipped face orientations.
+/// Normal recomputation stays off (matches the `fix` subcommand's
+/// own `--fix-face-normals` default).
+fn default_repair_options() -> FixOptions {
+    FixOptions {
+        zero_length_edges: true,
+        flipped_faces: true,
+        face_normals: false,
+    }
 }
 
 /// Drop the scene so its world AABB sits centred on the build-plate

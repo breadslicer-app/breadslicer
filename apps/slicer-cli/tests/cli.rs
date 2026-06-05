@@ -984,7 +984,7 @@ mod fix_tests {
             ])
             .assert()
             .success()
-            .stderr(predicate::str::contains("No fixes needed"));
+            .stderr(predicate::str::contains("No fixes were applied"));
         assert!(target.exists());
     }
 
@@ -1519,5 +1519,75 @@ mod slice_auto_place_tests {
         run_slice(&source, &output, &["--no-auto-place"])
             .success()
             .stdout(predicate::str::contains("Sliced 5 layers"));
+    }
+}
+
+#[cfg(test)]
+mod slice_repair_tests {
+    use super::*;
+
+    fn run_slice(
+        source: &Path,
+        output_dir: &Path,
+        extra_args: &[&str],
+    ) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            output_dir.to_str().unwrap(),
+            "--target-format",
+            "svg-per-layer",
+            "--layer-height",
+            "0.2",
+            "--pixels-x",
+            "100",
+            "--pixels-y",
+            "100",
+            "--build-x",
+            "10",
+            "--build-y",
+            "10",
+        ]);
+        cmd.args(extra_args);
+        cmd.assert()
+    }
+
+    /// Tetrahedron with one face's winding reversed: triggers
+    /// `InconsistentWindingOrder` (manifold check) and
+    /// `ExpectationMismatch` (normal-vector check). The `fix`
+    /// subcommand's default flags (`flipped-faces=true`) repair this;
+    /// `--repair` on slice should do the same.
+    fn write_flipped_winding_tetrahedron(path: &Path) {
+        write_stla_to(path, &flipped_winding_tetrahedron_mesh());
+    }
+
+    #[test]
+    fn slice_without_repair_on_flipped_winding_fixture_fails_validation() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("flipped.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_flipped_winding_tetrahedron(&source);
+
+        run_slice(&source, &output, &[])
+            .failure()
+            .stderr(predicate::str::contains("InconsistentWindingOrder"));
+    }
+
+    #[test]
+    fn slice_with_repair_on_flipped_winding_fixture_repairs_and_slices() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("flipped.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_flipped_winding_tetrahedron(&source);
+
+        run_slice(&source, &output, &["--repair"])
+            .success()
+            .stderr(predicate::str::contains("Applied fixes"))
+            .stderr(predicate::str::contains("Flipped orientation"));
     }
 }

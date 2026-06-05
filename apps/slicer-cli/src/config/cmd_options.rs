@@ -47,6 +47,7 @@ pub enum CmdOptions {
         aa: AaLevel,
         verbose: bool,
         no_auto_place: bool,
+        repair: bool,
     },
     Version,
 }
@@ -216,6 +217,12 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         )
         .switch();
 
+    let repair = long("repair")
+        .help(
+            "Repair the loaded mesh before slicing, using the same defaults as the `fix` subcommand (zero-length-edge removal and flipped-face correction enabled, normal recomputation off). Pre-existing problems that the enabled passes cannot address still propagate as a slicer validation error.",
+        )
+        .switch();
+
     construct!(CmdOptions::Slice {
         source,
         target,
@@ -229,6 +236,7 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         aa,
         verbose,
         no_auto_place,
+        repair,
     })
 }
 
