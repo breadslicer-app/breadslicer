@@ -7,7 +7,7 @@
 //!
 //! [`PositiveFiniteMm`] is a newtype carrying the "strictly positive
 //! and finite" invariant for a millimetre length. The companion
-//! [`NegativeLengthError`] and [`ParseLengthError`] cover the two
+//! [`LengthOutOfRange`] and [`ParseLengthError`] cover the two
 //! failure modes (out-of-range construction and string parsing).
 
 use std::fmt;
@@ -23,11 +23,11 @@ pub struct PositiveFiniteMm(f64);
 /// Returned by [`PositiveFiniteMm::new`] when the input was zero,
 /// negative, or non-finite.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct NegativeLengthError {
+pub struct LengthOutOfRange {
     pub value: f64,
 }
 
-impl fmt::Display for NegativeLengthError {
+impl fmt::Display for LengthOutOfRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -37,7 +37,7 @@ impl fmt::Display for NegativeLengthError {
     }
 }
 
-impl std::error::Error for NegativeLengthError {}
+impl std::error::Error for LengthOutOfRange {}
 
 /// Returned by [`PositiveFiniteMm`]'s [`FromStr`] impl: either the
 /// input was not a valid floating point number, or the parsed
@@ -45,7 +45,7 @@ impl std::error::Error for NegativeLengthError {}
 #[derive(Debug)]
 pub enum ParseLengthError {
     NotANumber(std::num::ParseFloatError),
-    OutOfRange(NegativeLengthError),
+    OutOfRange(LengthOutOfRange),
 }
 
 impl fmt::Display for ParseLengthError {
@@ -68,13 +68,13 @@ impl std::error::Error for ParseLengthError {
 
 impl PositiveFiniteMm {
     /// Construct from a raw `f64`. Fails with
-    /// [`NegativeLengthError`] when the value is zero, negative,
+    /// [`LengthOutOfRange`] when the value is zero, negative,
     /// or non-finite (`NaN` / +/- infinity).
-    pub fn new(value: f64) -> Result<Self, NegativeLengthError> {
+    pub fn new(value: f64) -> Result<Self, LengthOutOfRange> {
         if value.is_finite() && value > 0.0 {
             Ok(Self(value))
         } else {
-            Err(NegativeLengthError { value })
+            Err(LengthOutOfRange { value })
         }
     }
 

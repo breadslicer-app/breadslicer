@@ -14,7 +14,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use sc_mesh_core::primitives::CoordAxis;
-pub use sc_print_primitives::{Mirror, NegativeLengthError, ParseLengthError, PositiveFiniteMm};
+pub use sc_print_primitives::{LengthOutOfRange, Mirror, ParseLengthError, PositiveFiniteMm};
 
 /// Why a [`SliceProfile`] component constructor rejected its input.
 ///

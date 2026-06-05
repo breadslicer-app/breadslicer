@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::length::{NegativeLengthError, ParseLengthError, PositiveFiniteMm};
+use super::length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMm};
 
 #[test]
 fn positive_finite_mm_new_accepts_positive_finite() {
@@ -36,8 +36,8 @@ fn positive_finite_mm_new_rejects_infinity() {
 }
 
 #[test]
-fn negative_length_error_display_includes_value() {
-    let msg = format!("{}", NegativeLengthError { value: -0.5 });
+fn length_out_of_range_display_includes_value() {
+    let msg = format!("{}", LengthOutOfRange { value: -0.5 });
     assert!(msg.contains("-0.5"), "msg: {msg}");
     assert!(msg.contains("positive"), "msg: {msg}");
 }
