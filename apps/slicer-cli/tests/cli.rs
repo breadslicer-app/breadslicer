@@ -1367,14 +1367,16 @@ mod slice_validation_error_tests {
     use super::*;
 
     /// Single triangle whose first and third vertices share a position
-    /// (collapsed edge) at z = 1. The non-zero z keeps the slicer
-    /// above the build plate so the validation check fires instead
-    /// of the "reposition above z = 0" check.
+    /// (collapsed edge) at z = 1, with a third vertex at z = 2. The
+    /// non-zero z range survives the CLI's auto-placement (which
+    /// drops the mesh's lowest point to z = 0) and keeps z_max > 0,
+    /// so the validation check fires instead of the "reposition above
+    /// z = 0" check.
     fn mesh_with_zero_length_edge_above_z0() -> IndexedMesh {
         let repeat = Vertex::new([0.0, 0.0, 1.0]);
         IndexedMesh {
             meta: None,
-            vertices: vec![repeat, Vertex::new([1.0, 0.0, 1.0]), repeat],
+            vertices: vec![repeat, Vertex::new([1.0, 0.0, 2.0]), repeat],
             faces: vec![IndexedTriangle::from_raw_indices(
                 Normal::new([0.0, 0.0, 1.0]),
                 [0, 1, 2],
@@ -1449,5 +1451,73 @@ mod slice_validation_error_tests {
                 "Run `sc-slicer-cli fix` to repair the mesh.",
             ))
             .stderr(predicate::str::contains("--verbose for the full error list").not());
+    }
+}
+
+#[cfg(test)]
+mod slice_auto_place_tests {
+    use super::*;
+
+    /// `tetrahedron_mesh` has vertices at +/- 1 in each axis, so its
+    /// z range is `[-1, +1]`. Default auto-placement drops the mesh
+    /// floor to z = 0, doubling the sliced z range from `[0, +1]` to
+    /// `[0, +2]` and the layer count from 5 to 10 at layer-height 0.2.
+    fn write_centred_tetrahedron(path: &Path) {
+        write_stla_to(path, &tetrahedron_mesh(None));
+    }
+
+    fn run_slice(
+        source: &Path,
+        output_dir: &Path,
+        extra_args: &[&str],
+    ) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-i",
+            source.to_str().unwrap(),
+            "-o",
+            output_dir.to_str().unwrap(),
+            "--format",
+            "svg-per-layer",
+            "--layer-height",
+            "0.2",
+            "--pixels-x",
+            "100",
+            "--pixels-y",
+            "100",
+            "--build-x",
+            "10",
+            "--build-y",
+            "10",
+        ]);
+        cmd.args(extra_args);
+        cmd.assert()
+    }
+
+    #[test]
+    fn slice_default_auto_places_mesh_floor_at_z0() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_centred_tetrahedron(&source);
+
+        run_slice(&source, &output, &[])
+            .success()
+            .stdout(predicate::str::contains("Sliced 10 layers"));
+    }
+
+    #[test]
+    fn slice_with_no_auto_place_leaves_mesh_at_file_coords() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_centred_tetrahedron(&source);
+
+        run_slice(&source, &output, &["--no-auto-place"])
+            .success()
+            .stdout(predicate::str::contains("Sliced 5 layers"));
     }
 }

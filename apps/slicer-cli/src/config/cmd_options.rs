@@ -46,6 +46,7 @@ pub enum CmdOptions {
         build_y: PositiveFiniteMm,
         aa: AaLevel,
         verbose: bool,
+        no_auto_place: bool,
     },
     Version,
 }
@@ -209,6 +210,12 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         )
         .switch();
 
+    let no_auto_place = long("no-auto-place")
+        .help(
+            "Skip auto-placement: slice the model at its file coordinates instead of centring it on the build plate with its lowest point at z = 0.",
+        )
+        .switch();
+
     construct!(CmdOptions::Slice {
         input,
         output,
@@ -221,6 +228,7 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         build_y,
         aa,
         verbose,
+        no_auto_place,
     })
 }
 

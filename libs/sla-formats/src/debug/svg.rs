@@ -14,11 +14,13 @@
 //! with one `<g id="layer-NNNN" data-z-mm="..." data-layer-index="N">`
 //! per layer, all sharing the same build-volume-sized viewBox.
 //!
-//! The build-plate XY frame is Y-up; SVG's user-space Y is Y-down.
-//! Each layer's `<g>` carries
-//! `transform="translate(0 build_y) scale(1 -1)"` so a generic viewer
-//! renders the layer right-side-up while the path coordinates inside
-//! the group remain raw millimetres in the model frame.
+//! The build-plate XY frame is Y-up and centred on the origin
+//! (mesh XY lies in `[-build_x/2, +build_x/2] x [-build_y/2, +build_y/2]`).
+//! SVG's user-space Y is Y-down. The outer viewBox starts at
+//! `(-build_x/2, -build_y/2)` and each layer's `<g>` carries
+//! `transform="scale(1 -1)"` so a generic viewer renders the layer
+//! right-side-up while the path coordinates inside the group remain
+//! raw millimetres in the model frame.
 
 use std::fs::File;
 use std::io;
@@ -49,18 +51,21 @@ pub fn write_per_layer(
     dir: &Path,
     options: &WriterOptions,
 ) -> Result<(), WriterError> {
-    let bx = options.build_volume().x_mm();
-    let by = options.build_volume().y_mm();
+    let bv = options.build_volume();
+    let bx = bv.x_mm();
+    let by = bv.y_mm();
+    let env_min = bv.envelope_min_mm();
     for (idx, layer) in stack.layers().iter().enumerate() {
         let path = dir.join(format!("layer_{idx:04}.svg"));
         let mut writer = BufWriter::new(File::create(&path)?);
         writeln!(&mut writer, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
         writeln!(
             &mut writer,
-            "<svg xmlns=\"{SVG_NS}\" xmlns:sc=\"{SC_NS}\" viewBox=\"0 0 {bx} {by}\">",
+            "<svg xmlns=\"{SVG_NS}\" xmlns:sc=\"{SC_NS}\" viewBox=\"{} {} {bx} {by}\">",
+            env_min[0], env_min[1],
         )?;
         emit_metadata(&mut writer, options)?;
-        emit_svg_layer(&mut writer, layer, idx, options)?;
+        emit_svg_layer(&mut writer, layer, idx)?;
         writeln!(&mut writer, "</svg>")?;
         writer.flush()?;
     }
@@ -78,17 +83,20 @@ pub fn write_combined(
     file: &Path,
     options: &WriterOptions,
 ) -> Result<(), WriterError> {
-    let bx = options.build_volume().x_mm();
-    let by = options.build_volume().y_mm();
+    let bv = options.build_volume();
+    let bx = bv.x_mm();
+    let by = bv.y_mm();
+    let env_min = bv.envelope_min_mm();
     let mut writer = BufWriter::new(File::create(file)?);
     writeln!(&mut writer, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
     writeln!(
         &mut writer,
-        "<svg xmlns=\"{SVG_NS}\" xmlns:sc=\"{SC_NS}\" viewBox=\"0 0 {bx} {by}\">",
+        "<svg xmlns=\"{SVG_NS}\" xmlns:sc=\"{SC_NS}\" viewBox=\"{} {} {bx} {by}\">",
+        env_min[0], env_min[1],
     )?;
     emit_metadata(&mut writer, options)?;
     for (idx, layer) in stack.layers().iter().enumerate() {
-        emit_svg_layer(&mut writer, layer, idx, options)?;
+        emit_svg_layer(&mut writer, layer, idx)?;
     }
     writeln!(&mut writer, "</svg>")?;
     writer.flush()?;
@@ -166,12 +174,10 @@ fn emit_svg_layer(
     writer: &mut impl Write,
     layer: &ContourLayer,
     layer_index: usize,
-    options: &WriterOptions,
 ) -> io::Result<()> {
-    let by = options.build_volume().y_mm();
     writeln!(
         writer,
-        "  <g id=\"layer-{layer_index:04}\" data-z-mm=\"{}\" data-layer-index=\"{layer_index}\" transform=\"translate(0 {by}) scale(1 -1)\">",
+        "  <g id=\"layer-{layer_index:04}\" data-z-mm=\"{}\" data-layer-index=\"{layer_index}\" transform=\"scale(1 -1)\">",
         layer.z_mm(),
     )?;
     for polygon in layer.polygons() {
@@ -298,7 +304,7 @@ mod svg_tests {
             content.contains(&format!("xmlns:sc=\"{SC_NS}\"")),
             "{content}"
         );
-        assert!(content.contains("viewBox=\"0 0 60 40\""), "{content}");
+        assert!(content.contains("viewBox=\"-30 -20 60 40\""), "{content}");
         assert!(content.contains("<metadata>"), "{content}");
         assert!(
             content.contains("<sc:slicer-version>0.0.12</sc:slicer-version>"),
@@ -325,10 +331,7 @@ mod svg_tests {
         assert!(content.contains("data-z-mm=\"0.05\""), "{content}");
         assert!(content.contains("data-layer-index=\"0\""), "{content}");
         assert!(content.contains("id=\"layer-0000\""), "{content}");
-        assert!(
-            content.contains("transform=\"translate(0 40) scale(1 -1)\""),
-            "{content}",
-        );
+        assert!(content.contains("transform=\"scale(1 -1)\""), "{content}",);
         assert!(content.contains("fill-rule=\"evenodd\""), "{content}");
         assert_eq!(content.matches("M ").count(), 1, "{content}");
         assert_eq!(content.matches(" Z").count(), 1, "{content}");
@@ -438,7 +441,7 @@ mod svg_tests {
             content.contains("<sc:aa-level>x4</sc:aa-level>"),
             "{content}"
         );
-        assert!(content.contains("viewBox=\"0 0 60 40\""), "{content}");
+        assert!(content.contains("viewBox=\"-30 -20 60 40\""), "{content}");
     }
 
     #[test]

@@ -74,6 +74,7 @@ fn main() -> Result<()> {
             build_y,
             aa,
             verbose,
+            no_auto_place,
         } => slice(SliceArgs {
             input,
             output,
@@ -86,6 +87,7 @@ fn main() -> Result<()> {
             build_y,
             aa,
             verbose,
+            no_auto_place,
         }),
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");

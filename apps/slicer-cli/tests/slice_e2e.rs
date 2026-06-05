@@ -276,7 +276,7 @@ fn cube_fixture_svg_combined_packs_every_layer_into_a_single_file() {
         content.contains("<sc:build-volume x-mm=\"5\" y-mm=\"5\" z-mm=\"1\"/>"),
         "{content}"
     );
-    assert!(content.contains("viewBox=\"0 0 5 5\""), "{content}");
+    assert!(content.contains("viewBox=\"-2.5 -2.5 5 5\""), "{content}");
 
     for (idx, group) in groups.iter().enumerate() {
         assert_eq!(
