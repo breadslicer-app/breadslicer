@@ -4517,6 +4517,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-print-primitives"
+version = "0.0.12"
+
+[[package]]
 name = "sc-sl1cer"
 version = "0.0.12"
 dependencies = [
