@@ -13,20 +13,14 @@
 use std::fmt;
 use std::str::FromStr;
 
-use sc_mesh_core::primitives::CoordAxis;
 pub use sc_print_primitives::{
-    LengthOutOfRange, Mirror, ParseLengthError, PixelResolution, PositiveFiniteMm,
-    ZeroPixelExtentError,
+    AxisOutOfRange, BuildVolume, LengthOutOfRange, Mirror, ParseLengthError, PixelResolution,
+    PositiveFiniteMm, ZeroPixelExtentError,
 };
 
 /// Why a [`SliceProfile`] component constructor rejected its input.
-///
-/// `CoordAxis` is reused from `sc-mesh-core` for the per-axis
-/// variants: build volume uses X / Y / Z.
 #[derive(Debug)]
 pub enum SliceProfileError {
-    /// A build volume axis was zero, negative, or non-finite.
-    BuildVolumeAxisInvalid { axis: CoordAxis, value: f64 },
     /// `layer_height_mm` was zero, negative, or non-finite.
     LayerHeightInvalid { value: f64 },
     /// `first_layer_height_mm` was zero, negative, or non-finite.
@@ -38,10 +32,6 @@ pub enum SliceProfileError {
 impl fmt::Display for SliceProfileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BuildVolumeAxisInvalid { axis, value } => write!(
-                f,
-                "build volume {axis} axis must be a finite positive length in millimetres, got {value}",
-            ),
             Self::LayerHeightInvalid { value } => write!(
                 f,
                 "layer_height_mm must be a finite positive length in millimetres, got {value}",
@@ -56,63 +46,6 @@ impl fmt::Display for SliceProfileError {
 }
 
 impl std::error::Error for SliceProfileError {}
-
-/// Build volume in millimetres, validated finite and strictly positive
-/// per axis on construction.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BuildVolume {
-    x_mm: f64,
-    y_mm: f64,
-    z_mm: f64,
-}
-
-impl BuildVolume {
-    pub fn new(x_mm: f64, y_mm: f64, z_mm: f64) -> Result<Self, SliceProfileError> {
-        Self::check_axis(CoordAxis::X, x_mm)?;
-        Self::check_axis(CoordAxis::Y, y_mm)?;
-        Self::check_axis(CoordAxis::Z, z_mm)?;
-        Ok(Self { x_mm, y_mm, z_mm })
-    }
-
-    fn check_axis(axis: CoordAxis, value: f64) -> Result<(), SliceProfileError> {
-        if !value.is_finite() || value <= 0.0 {
-            Err(SliceProfileError::BuildVolumeAxisInvalid { axis, value })
-        } else {
-            Ok(())
-        }
-    }
-
-    #[inline]
-    pub fn x_mm(&self) -> f64 {
-        self.x_mm
-    }
-
-    #[inline]
-    pub fn y_mm(&self) -> f64 {
-        self.y_mm
-    }
-
-    #[inline]
-    pub fn z_mm(&self) -> f64 {
-        self.z_mm
-    }
-
-    /// Minimum corner of the build envelope in printer coordinates:
-    /// `[-x_mm/2, -y_mm/2, 0]`. XY is centred on the origin; the
-    /// floor of the build plate sits at `z = 0`. Matches the GUI's
-    /// [`BuildVolume::envelope_min_mm`] in `apps/slicer-gui`.
-    #[inline]
-    pub fn envelope_min_mm(&self) -> [f64; 3] {
-        [-0.5 * self.x_mm, -0.5 * self.y_mm, 0.0]
-    }
-
-    /// Maximum corner of the build envelope in printer coordinates:
-    /// `[+x_mm/2, +y_mm/2, z_mm]`. Mirror of [`Self::envelope_min_mm`].
-    #[inline]
-    pub fn envelope_max_mm(&self) -> [f64; 3] {
-        [0.5 * self.x_mm, 0.5 * self.y_mm, self.z_mm]
-    }
-}
 
 /// Per-pixel anti-aliasing factor for the raster tier. `Off` is the
 /// binary scanline path; the others apply N-step Y sub-sampling with
@@ -305,79 +238,6 @@ mod profile_tests {
     use super::*;
 
     #[test]
-    fn build_volume_new_accepts_positive_finite() {
-        let bv = BuildVolume::new(60.0, 60.0, 100.0).unwrap();
-        assert_eq!(bv.x_mm(), 60.0);
-        assert_eq!(bv.y_mm(), 60.0);
-        assert_eq!(bv.z_mm(), 100.0);
-    }
-
-    #[test]
-    fn build_volume_new_rejects_zero_x_axis() {
-        let err = BuildVolume::new(0.0, 60.0, 100.0).unwrap_err();
-        assert!(matches!(
-            err,
-            SliceProfileError::BuildVolumeAxisInvalid {
-                axis: CoordAxis::X,
-                value
-            } if value == 0.0
-        ));
-    }
-
-    #[test]
-    fn build_volume_new_rejects_negative_y_axis() {
-        let err = BuildVolume::new(60.0, -1.0, 100.0).unwrap_err();
-        assert!(matches!(
-            err,
-            SliceProfileError::BuildVolumeAxisInvalid {
-                axis: CoordAxis::Y,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn build_volume_new_rejects_nan_z_axis() {
-        let err = BuildVolume::new(60.0, 60.0, f64::NAN).unwrap_err();
-        assert!(matches!(
-            err,
-            SliceProfileError::BuildVolumeAxisInvalid {
-                axis: CoordAxis::Z,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn build_volume_new_rejects_infinite_x_axis() {
-        let err = BuildVolume::new(f64::INFINITY, 60.0, 100.0).unwrap_err();
-        assert!(matches!(
-            err,
-            SliceProfileError::BuildVolumeAxisInvalid {
-                axis: CoordAxis::X,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn build_volume_envelope_centres_xy_on_origin_and_floors_z_at_zero() {
-        let bv = BuildVolume::new(192.0, 120.0, 200.0).unwrap();
-        assert_eq!(bv.envelope_min_mm(), [-96.0, -60.0, 0.0]);
-        assert_eq!(bv.envelope_max_mm(), [96.0, 60.0, 200.0]);
-    }
-
-    #[test]
-    fn build_volume_envelope_extent_matches_per_axis_dimensions() {
-        let bv = BuildVolume::new(60.0, 40.0, 100.0).unwrap();
-        let min = bv.envelope_min_mm();
-        let max = bv.envelope_max_mm();
-        assert!((max[0] - min[0] - bv.x_mm()).abs() < 1e-12);
-        assert!((max[1] - min[1] - bv.y_mm()).abs() < 1e-12);
-        assert!((max[2] - min[2] - bv.z_mm()).abs() < 1e-12);
-    }
-
-    #[test]
     fn layer_schedule_uniform_rejects_zero_layer_height() {
         let err = LayerSchedule::uniform(0.0, 0.05, 10).unwrap_err();
         assert!(matches!(err, SliceProfileError::LayerHeightInvalid { .. }));
@@ -465,14 +325,6 @@ mod profile_tests {
         assert_eq!(profile.mirror(), Mirror::default());
         assert_eq!(profile.aa_level(), AaLevel::Off);
         assert_eq!(profile.packing_mode(), PackingMode::None);
-    }
-
-    #[test]
-    fn slice_profile_error_display_renders_axis() {
-        let err = BuildVolume::new(0.0, 60.0, 100.0).unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("X axis"), "msg: {msg}");
-        assert!(msg.contains("got 0"), "msg: {msg}");
     }
 
     #[test]

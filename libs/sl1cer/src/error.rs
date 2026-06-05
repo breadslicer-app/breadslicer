@@ -180,7 +180,7 @@ mod slice_error_tests {
     use sc_mesh_core::scene::error::SceneError;
     use sc_mesh_core::transform::Transform3D;
 
-    use crate::profile::{BuildVolume, SliceProfileError};
+    use crate::profile::SliceProfileError;
 
     use super::*;
 
@@ -245,7 +245,7 @@ mod slice_error_tests {
 
     #[test]
     fn from_profile_error_routes_to_profile_invalid() {
-        let profile_err = BuildVolume::new(0.0, 60.0, 100.0).unwrap_err();
+        let profile_err = SliceProfileError::TotalLayersZero;
         let err: SliceError = profile_err.into();
         assert!(matches!(err, SliceError::ProfileInvalid(_)));
     }

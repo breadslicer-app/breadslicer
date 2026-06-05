@@ -15,14 +15,18 @@
 //! crate so neither has to depend on the other for these shared
 //! foundations.
 
+pub mod build_volume;
 pub mod length;
 pub mod mirror;
 pub mod pixel_resolution;
 
+pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMm};
 pub use mirror::Mirror;
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 
+#[cfg(test)]
+mod tests_build_volume;
 #[cfg(test)]
 mod tests_length;
 #[cfg(test)]
