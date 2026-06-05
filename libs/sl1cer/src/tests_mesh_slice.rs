@@ -17,7 +17,7 @@
 //! (slice is above or below the tunnel band).
 //!
 //! The contour-component count is recovered from the unstitched
-//! segment list by walking an `EdgeId` adjacency graph. This previews
+//! segment list by walking an `EndpointTag` adjacency graph. This previews
 //! the stitcher's join logic and lets us assert end-to-end topology
 //! invariants directly against `segments_at_z`'s output.
 
@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 use sc_mesh_core::{IndexedMesh, ValidatedManifoldMesh};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 
-use crate::geom2d::{EdgeId, Segment};
+use crate::geom2d::{EndpointTag, Segment};
 use crate::mesh_slice::{segments_at_z, slice_mesh};
 use crate::profile::LayerSchedule;
 
@@ -39,32 +39,32 @@ fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
 
 /// Pin the stitcher invariant: every crossed mesh edge contributes
 /// exactly two segment endpoints to the layer's segment list.
-fn assert_edge_id_pairing(segments: &[Segment]) {
-    let mut counts: HashMap<EdgeId, usize> = HashMap::new();
+fn assert_endpoint_tag_pairing(segments: &[Segment]) {
+    let mut counts: HashMap<EndpointTag, usize> = HashMap::new();
     for seg in segments {
-        *counts.entry(seg.a_edge).or_insert(0) += 1;
-        *counts.entry(seg.b_edge).or_insert(0) += 1;
+        *counts.entry(seg.a_tag).or_insert(0) += 1;
+        *counts.entry(seg.b_tag).or_insert(0) += 1;
     }
     for (id, count) in &counts {
         assert_eq!(
             *count, 2,
-            "edge {id:?} appears in {count} endpoints, expected exactly 2",
+            "endpoint tag {id:?} appears in {count} endpoints, expected exactly 2",
         );
     }
 }
 
 /// Recover the number of disjoint contour components from a layer of
-/// crossing segments by building an `EdgeId` adjacency graph (one
-/// edge per segment, two endpoints per edge) and counting connected
-/// components via flood fill. Each component is one closed contour
-/// the stitcher will eventually produce.
+/// crossing segments by building an `EndpointTag` adjacency graph
+/// (one edge per segment, two endpoints per edge) and counting
+/// connected components via flood fill. Each component is one closed
+/// contour the stitcher will eventually produce.
 fn count_contour_components(segments: &[Segment]) -> usize {
-    let mut adjacency: HashMap<EdgeId, HashSet<EdgeId>> = HashMap::new();
+    let mut adjacency: HashMap<EndpointTag, HashSet<EndpointTag>> = HashMap::new();
     for seg in segments {
-        adjacency.entry(seg.a_edge).or_default().insert(seg.b_edge);
-        adjacency.entry(seg.b_edge).or_default().insert(seg.a_edge);
+        adjacency.entry(seg.a_tag).or_default().insert(seg.b_tag);
+        adjacency.entry(seg.b_tag).or_default().insert(seg.a_tag);
     }
-    let mut visited: HashSet<EdgeId> = HashSet::new();
+    let mut visited: HashSet<EndpointTag> = HashSet::new();
     let mut components = 0;
     for &start in adjacency.keys() {
         if visited.contains(&start) {
@@ -116,7 +116,7 @@ fn cube_at_mid_height_returns_eight_segments() {
     let segments = segments_at_z(&w, 0.0);
     assert_eq!(segments.len(), 8);
     for seg in &segments {
-        assert_ne!(seg.a_edge, seg.b_edge);
+        assert_ne!(seg.a_tag, seg.b_tag);
     }
 }
 
@@ -153,11 +153,11 @@ fn cube_mid_height_segment_endpoints_sit_at_canonical_points() {
 }
 
 #[test]
-fn cube_mid_height_each_edge_id_appears_in_exactly_two_endpoints() {
+fn cube_mid_height_each_endpoint_tag_appears_in_exactly_two_endpoints() {
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
     let segments = segments_at_z(&w, 0.0);
-    assert_edge_id_pairing(&segments);
+    assert_endpoint_tag_pairing(&segments);
 }
 
 #[test]
@@ -189,18 +189,18 @@ fn z_tunnel_below_bottom_returns_empty() {
 }
 
 #[test]
-fn z_tunnel_mid_height_pairs_every_edge_id() {
+fn z_tunnel_mid_height_pairs_every_endpoint_tag() {
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
     let segments = segments_at_z(&w, 1.0);
     assert!(!segments.is_empty());
-    assert_edge_id_pairing(&segments);
+    assert_endpoint_tag_pairing(&segments);
 }
 
 #[test]
 fn z_tunnel_mid_height_has_two_contour_components() {
     // Outer rectangle plus inner rectangular hole: 2 disjoint
-    // components in the EdgeId adjacency graph.
+    // components in the EndpointTag adjacency graph.
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
     let segments = segments_at_z(&w, 1.0);
@@ -228,12 +228,12 @@ fn y_tunnel_below_box_returns_empty() {
 }
 
 #[test]
-fn y_tunnel_through_tunnel_band_pairs_every_edge_id() {
+fn y_tunnel_through_tunnel_band_pairs_every_endpoint_tag() {
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
     let segments = segments_at_z(&w, 1.0);
     assert!(!segments.is_empty());
-    assert_edge_id_pairing(&segments);
+    assert_endpoint_tag_pairing(&segments);
 }
 
 #[test]
@@ -249,12 +249,12 @@ fn y_tunnel_through_tunnel_band_has_two_contour_components() {
 }
 
 #[test]
-fn y_tunnel_above_tunnel_band_pairs_every_edge_id() {
+fn y_tunnel_above_tunnel_band_pairs_every_endpoint_tag() {
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
     let segments = segments_at_z(&w, 1.6);
     assert!(!segments.is_empty());
-    assert_edge_id_pairing(&segments);
+    assert_endpoint_tag_pairing(&segments);
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn slice_mesh_yields_paired_z_and_segments_following_schedule() {
     for ((got_z, segments), expected_z) in layers.iter().zip(expected_zs.iter()) {
         assert_eq!(got_z, expected_z);
         assert_eq!(segments.len(), 8);
-        assert_edge_id_pairing(segments);
+        assert_endpoint_tag_pairing(segments);
     }
 
     // Strict-monotone Z carries through from the schedule.

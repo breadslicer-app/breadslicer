@@ -80,27 +80,43 @@ impl EdgeId {
     }
 }
 
-/// 2D line segment carrying the identity of the mesh edge each
-/// endpoint sits on. The stitcher matches `a_edge` / `b_edge` across
+/// Tag attached to one endpoint of a [`Segment`]. The stitcher mates
+/// endpoints by equal `EndpointTag`.
+///
+/// - [`EndpointTag::Edge`] is used when the endpoint sits on the
+///   interior of a mesh edge (the common straddling-triangle case).
+///   On a manifold mesh, each interior mesh edge crossed by the
+///   slicing plane contributes exactly two endpoints with the same
+///   `Edge` tag, one per incident triangle, so pairing by tag is
+///   sufficient.
+/// - [`EndpointTag::Vertex`] is used when the endpoint sits exactly on
+///   a mesh vertex (the through-vertex case, currently emitted by
+///   the AOB triangle slice). A given on-plane mesh vertex can act as
+///   a contour hub for `2k` such endpoints (`k` contour passes
+///   through that vertex); the stitcher resolves the pairing using
+///   the mesh's cyclic 1-ring of incident triangles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EndpointTag {
+    Edge(EdgeId),
+    Vertex(VertexIndex),
+}
+
+/// 2D line segment carrying the identity of the mesh feature each
+/// endpoint sits on. The stitcher matches `a_tag` / `b_tag` across
 /// segments from neighbouring triangles to chain them into closed
 /// rings.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
     pub a: Point2D,
-    pub a_edge: EdgeId,
+    pub a_tag: EndpointTag,
     pub b: Point2D,
-    pub b_edge: EdgeId,
+    pub b_tag: EndpointTag,
 }
 
 impl Segment {
     #[inline]
-    pub const fn new(a: Point2D, a_edge: EdgeId, b: Point2D, b_edge: EdgeId) -> Self {
-        Self {
-            a,
-            a_edge,
-            b,
-            b_edge,
-        }
+    pub const fn new(a: Point2D, a_tag: EndpointTag, b: Point2D, b_tag: EndpointTag) -> Self {
+        Self { a, a_tag, b, b_tag }
     }
 }
 
@@ -161,15 +177,38 @@ mod geom2d_tests {
     }
 
     #[test]
-    fn segment_stores_endpoints_and_edge_ids() {
+    fn segment_stores_endpoints_and_endpoint_tags() {
         let a = Point2D::new(0.0, 0.0);
         let b = Point2D::new(1.0, 1.0);
-        let ea = EdgeId::new(vi(0), vi(1));
-        let eb = EdgeId::new(vi(1), vi(2));
-        let seg = Segment::new(a, ea, b, eb);
+        let ta = EndpointTag::Edge(EdgeId::new(vi(0), vi(1)));
+        let tb = EndpointTag::Edge(EdgeId::new(vi(1), vi(2)));
+        let seg = Segment::new(a, ta, b, tb);
         assert_eq!(seg.a, a);
         assert_eq!(seg.b, b);
-        assert_eq!(seg.a_edge, ea);
-        assert_eq!(seg.b_edge, eb);
+        assert_eq!(seg.a_tag, ta);
+        assert_eq!(seg.b_tag, tb);
+    }
+
+    #[test]
+    fn endpoint_tag_equality_distinguishes_edge_and_vertex_kinds() {
+        let edge_tag = EndpointTag::Edge(EdgeId::new(vi(0), vi(1)));
+        let vertex_tag = EndpointTag::Vertex(vi(0));
+        assert_ne!(edge_tag, vertex_tag);
+    }
+
+    #[test]
+    fn endpoint_tag_vertex_compares_by_vertex_index() {
+        assert_eq!(EndpointTag::Vertex(vi(7)), EndpointTag::Vertex(vi(7)));
+        assert_ne!(EndpointTag::Vertex(vi(7)), EndpointTag::Vertex(vi(8)));
+    }
+
+    #[test]
+    fn endpoint_tag_can_serve_as_hashmap_key() {
+        use std::collections::HashMap;
+        let mut map: HashMap<EndpointTag, &'static str> = HashMap::new();
+        map.insert(EndpointTag::Edge(EdgeId::new(vi(1), vi(2))), "edge");
+        map.insert(EndpointTag::Vertex(vi(1)), "vertex");
+        assert_eq!(map.len(), 2);
+        assert_eq!(map[&EndpointTag::Vertex(vi(1))], "vertex");
     }
 }

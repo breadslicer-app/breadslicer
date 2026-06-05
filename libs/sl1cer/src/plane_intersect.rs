@@ -11,7 +11,7 @@
 
 use sc_mesh_core::primitives::Vertex;
 
-use crate::geom2d::{EdgeId, Point2D, Segment};
+use crate::geom2d::{EdgeId, EndpointTag, Point2D, Segment};
 
 /// Sub-micron tolerance (in mm) for the on-plane vertex
 /// classification. Sized two orders of magnitude below typical
@@ -105,10 +105,11 @@ pub fn intersect_triangle_z(
         }
         let edge_pos = triangle_edge_index(on_indices[0], on_indices[1]);
         let edge_id = edge_ids[edge_pos];
+        let edge_tag = EndpointTag::Edge(edge_id);
         let a = project_xy(vertices[on_indices[0]]);
         let b = project_xy(vertices[on_indices[1]]);
         return TriangleSlice::Edge {
-            segment: Segment::new(a, edge_id, b, edge_id),
+            segment: Segment::new(a, edge_tag, b, edge_tag),
         };
     }
 
@@ -136,7 +137,12 @@ pub fn intersect_triangle_z(
     let pt_b = interpolate_to_plane(vertices[lone_idx], vertices[other_indices[1]], z_plane_mm);
 
     TriangleSlice::Crossing {
-        segment: Segment::new(pt_a, edge_ids[edge_pos_a], pt_b, edge_ids[edge_pos_b]),
+        segment: Segment::new(
+            pt_a,
+            EndpointTag::Edge(edge_ids[edge_pos_a]),
+            pt_b,
+            EndpointTag::Edge(edge_ids[edge_pos_b]),
+        ),
     }
 }
 
@@ -259,8 +265,8 @@ mod plane_intersect_tests {
         assert!((segment.a.y - 0.0).abs() < 1e-9);
         assert!((segment.b.x - 0.0).abs() < 1e-9);
         assert!((segment.b.y - 0.5).abs() < 1e-9);
-        assert_eq!(segment.a_edge, EdgeId::new(vi(0), vi(1)));
-        assert_eq!(segment.b_edge, EdgeId::new(vi(2), vi(0)));
+        assert_eq!(segment.a_tag, EndpointTag::Edge(EdgeId::new(vi(0), vi(1))));
+        assert_eq!(segment.b_tag, EndpointTag::Edge(EdgeId::new(vi(2), vi(0))));
     }
 
     #[test]
@@ -321,8 +327,8 @@ mod plane_intersect_tests {
         let TriangleSlice::Edge { segment } = result else {
             panic!("expected Edge, got {result:?}");
         };
-        assert_eq!(segment.a_edge, EdgeId::new(vi(1), vi(2)));
-        assert_eq!(segment.b_edge, EdgeId::new(vi(1), vi(2)));
+        assert_eq!(segment.a_tag, EndpointTag::Edge(EdgeId::new(vi(1), vi(2))));
+        assert_eq!(segment.b_tag, EndpointTag::Edge(EdgeId::new(vi(1), vi(2))));
         assert!((segment.a.x - 1.0).abs() < 1e-9);
         assert!((segment.a.y - 0.0).abs() < 1e-9);
         assert!((segment.b.x - 0.0).abs() < 1e-9);
@@ -368,12 +374,16 @@ mod plane_intersect_tests {
                 prop_assert!(false, "expected Crossing, got {result:?}");
                 return Ok(());
             };
-            prop_assert_ne!(segment.a_edge, segment.b_edge);
+            prop_assert_ne!(segment.a_tag, segment.b_tag);
 
-            for (endpoint, edge_id) in [
-                (segment.a, segment.a_edge),
-                (segment.b, segment.b_edge),
+            for (endpoint, tag) in [
+                (segment.a, segment.a_tag),
+                (segment.b, segment.b_tag),
             ] {
+                let EndpointTag::Edge(edge_id) = tag else {
+                    prop_assert!(false, "Crossing endpoint must carry an Edge tag, got {tag:?}");
+                    return Ok(());
+                };
                 // EdgeIds were minted from indices 0..3 matching the
                 // triangle slot order, so they map straight back.
                 let lo = u32::from(edge_id.lo()) as usize;

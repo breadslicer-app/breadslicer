@@ -9,19 +9,20 @@
 //! On a watertight manifold mesh, every interior edge crossed by a
 //! slicing plane contributes exactly two segment endpoints to the
 //! layer's segment list (one per incident triangle). Pairing the
-//! endpoints by [`EdgeId`] and following the chain until it returns
-//! to the starting segment produces one closed ring per topological
-//! contour component.
+//! endpoints by [`EndpointTag`] and following the chain until it
+//! returns to the starting segment produces one closed ring per
+//! topological contour component.
 //!
-//! Endpoints whose `EdgeId` does not appear in exactly two segments
-//! raise [`SliceError::NonManifoldDuringStitching`] as a runtime
-//! safety net for inputs that slipped the upstream manifold check.
+//! Endpoints whose `EndpointTag` does not appear in exactly two
+//! segments raise [`SliceError::NonManifoldDuringStitching`] as a
+//! runtime safety net for inputs that slipped the upstream manifold
+//! check.
 
 use std::collections::HashMap;
 
 use crate::contour::ClosedRing;
 use crate::error::SliceError;
-use crate::geom2d::{EdgeId, Point2D, Segment};
+use crate::geom2d::{EndpointTag, Point2D, Segment};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Side {
@@ -45,10 +46,10 @@ fn point_at(seg: &Segment, side: Side) -> Point2D {
     }
 }
 
-fn edge_at(seg: &Segment, side: Side) -> EdgeId {
+fn tag_at(seg: &Segment, side: Side) -> EndpointTag {
     match side {
-        Side::A => seg.a_edge,
-        Side::B => seg.b_edge,
+        Side::A => seg.a_tag,
+        Side::B => seg.b_tag,
     }
 }
 
@@ -58,14 +59,14 @@ fn edge_at(seg: &Segment, side: Side) -> EdgeId {
 /// orientation of each ring is not normalised here (that's the
 /// winding-canonicalisation pass).
 pub fn stitch_layer(segments: &[Segment], z_mm: f64) -> Result<Vec<ClosedRing>, SliceError> {
-    let mut by_edge: HashMap<EdgeId, Vec<(usize, Side)>> = HashMap::new();
+    let mut by_tag: HashMap<EndpointTag, Vec<(usize, Side)>> = HashMap::new();
     for (i, seg) in segments.iter().enumerate() {
-        by_edge.entry(seg.a_edge).or_default().push((i, Side::A));
-        by_edge.entry(seg.b_edge).or_default().push((i, Side::B));
+        by_tag.entry(seg.a_tag).or_default().push((i, Side::A));
+        by_tag.entry(seg.b_tag).or_default().push((i, Side::B));
     }
 
     let mut dangling = 0usize;
-    for entries in by_edge.values() {
+    for entries in by_tag.values() {
         if entries.len() != 2 {
             dangling += entries.len();
         }
@@ -95,8 +96,8 @@ pub fn stitch_layer(segments: &[Segment], z_mm: f64) -> Result<Vec<ClosedRing>, 
             let seg = &segments[current_idx];
             ring_points.push(point_at(seg, entry_side));
             let exit_side = entry_side.opposite();
-            let exit_edge = edge_at(seg, exit_side);
-            let pair = &by_edge[&exit_edge];
+            let exit_tag = tag_at(seg, exit_side);
+            let pair = &by_tag[&exit_tag];
             let (next_idx, next_entry_side) = if pair[0] == (current_idx, exit_side) {
                 pair[1]
             } else {
@@ -133,6 +134,7 @@ mod stitch_tests {
     use sc_mesh_core::primitives::VertexIndex;
 
     use super::*;
+    use crate::geom2d::EdgeId;
 
     fn vi(i: u32) -> VertexIndex {
         VertexIndex::from(i)
@@ -143,7 +145,12 @@ mod stitch_tests {
     }
 
     fn seg(a: (f64, f64), a_edge: EdgeId, b: (f64, f64), b_edge: EdgeId) -> Segment {
-        Segment::new(p(a.0, a.1), a_edge, p(b.0, b.1), b_edge)
+        Segment::new(
+            p(a.0, a.1),
+            EndpointTag::Edge(a_edge),
+            p(b.0, b.1),
+            EndpointTag::Edge(b_edge),
+        )
     }
 
     #[test]
