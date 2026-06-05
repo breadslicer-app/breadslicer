@@ -14,7 +14,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use sc_mesh_core::primitives::CoordAxis;
-pub use sc_print_primitives::{NegativeLengthError, ParseLengthError, PositiveFiniteMm};
+pub use sc_print_primitives::{Mirror, NegativeLengthError, ParseLengthError, PositiveFiniteMm};
 
 /// Why a [`SliceProfile`] component constructor rejected its input.
 ///
@@ -144,14 +144,6 @@ impl PixelResolution {
     pub fn y(&self) -> u32 {
         self.y
     }
-}
-
-/// Per-axis mirror flags for raster output orientation. No invariants
-/// to validate; both flags are free.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Mirror {
-    pub x: bool,
-    pub y: bool,
 }
 
 /// Per-pixel anti-aliasing factor for the raster tier. `Off` is the

@@ -16,8 +16,10 @@
 //! foundations.
 
 pub mod length;
+pub mod mirror;
 
 pub use length::{NegativeLengthError, ParseLengthError, PositiveFiniteMm};
+pub use mirror::Mirror;
 
 #[cfg(test)]
 mod tests_length;
