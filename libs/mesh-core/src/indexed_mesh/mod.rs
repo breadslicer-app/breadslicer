@@ -5,11 +5,13 @@
 
 pub mod error_summary;
 pub mod fix;
+pub mod topology;
 pub mod validate;
 pub mod validated;
 
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fix::{MeshFix, MeshFixError};
+pub use topology::{EdgeKey, MeshTopology, edge_key};
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{
     MeshManifoldError, MeshNormalVectorError, ValidatedFaces, ValidatedFacesMut,
