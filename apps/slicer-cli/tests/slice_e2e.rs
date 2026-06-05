@@ -32,11 +32,11 @@ fn slice_fixture_as_svg_per_layer(fixture: &str, output_dir: &Path) {
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
         .arg("slice")
-        .arg("--input")
+        .arg("--source")
         .arg(fixture_path(fixture))
-        .arg("--output")
+        .arg("--target")
         .arg(output_dir)
-        .arg("--format")
+        .arg("--target-format")
         .arg("svg-per-layer")
         .arg("--layer-height")
         .arg("0.2")
@@ -52,18 +52,18 @@ fn slice_fixture_as_svg_per_layer(fixture: &str, output_dir: &Path) {
         .success();
 }
 
-/// Run `slice --format svg-combined` on the named fixture into a
-/// single SVG file at `output_file`. Same fixed schedule as
+/// Run `slice --target-format svg-combined` on the named fixture
+/// into a single SVG file at `output_file`. Same fixed schedule as
 /// [`slice_fixture_as_svg_per_layer`].
 fn slice_fixture_as_svg_combined(fixture: &str, output_file: &Path) {
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
         .arg("slice")
-        .arg("--input")
+        .arg("--source")
         .arg(fixture_path(fixture))
-        .arg("--output")
+        .arg("--target")
         .arg(output_file)
-        .arg("--format")
+        .arg("--target-format")
         .arg("svg-combined")
         .arg("--layer-height")
         .arg("0.2")
@@ -85,11 +85,11 @@ fn slice_fixture_as_png_per_layer(fixture: &str, output_dir: &Path) {
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
         .arg("slice")
-        .arg("--input")
+        .arg("--source")
         .arg(fixture_path(fixture))
-        .arg("--output")
+        .arg("--target")
         .arg(output_dir)
-        .arg("--format")
+        .arg("--target-format")
         .arg("png-per-layer")
         .arg("--layer-height")
         .arg("0.2")

@@ -34,9 +34,9 @@ use crate::filesystem::validate_sourcefile_path;
 /// fields carry their domain invariant in their type, so by the
 /// time we get here `layer_height > 0`, `pixels_x != 0`, and so on.
 pub(crate) struct SliceArgs {
-    pub input: OsString,
-    pub output: OsString,
-    pub format: Option<Format>,
+    pub source: OsString,
+    pub target: OsString,
+    pub target_format: Option<Format>,
     pub layer_height: PositiveFiniteMm,
     pub first_layer_height: Option<PositiveFiniteMm>,
     pub pixels_x: NonZeroU32,
@@ -49,21 +49,21 @@ pub(crate) struct SliceArgs {
 }
 
 pub(crate) fn slice(args: SliceArgs) -> Result<()> {
-    let input_path = validate_sourcefile_path(PathBuf::from(args.input))?;
-    let output_path = PathBuf::from(args.output);
+    let source_path = validate_sourcefile_path(PathBuf::from(args.source))?;
+    let target_path = PathBuf::from(args.target);
 
-    let format = match args.format {
+    let target_format = match args.target_format {
         Some(f) => f,
-        None => format_from_path(&output_path).ok_or_else(|| {
+        None => format_from_path(&target_path).ok_or_else(|| {
             anyhow!(
-                "could not infer output format from path \"{}\"; pass --format with one of: svg-per-layer, svg-combined, png-per-layer",
-                output_path.display(),
+                "could not infer target format from path \"{}\"; pass --target-format with one of: svg-per-layer, svg-combined, png-per-layer",
+                target_path.display(),
             )
         })?,
     };
 
     let mut loaded =
-        load_mesh_from_path(&input_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
+        load_mesh_from_path(&source_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings, &mut std::io::stderr());
 
     let leaf_id = pick_single_root_leaf(&loaded.graph)?;
@@ -108,13 +108,13 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     };
 
     let options = WriterOptions::from_profile(&profile, VERSION);
-    write_slice(&stack, &output_path, format, &options)?;
+    write_slice(&stack, &target_path, target_format, &options)?;
 
     let layer_count = stack.layers().len();
     let polygon_count: usize = stack.layers().iter().map(|l| l.polygons().len()).sum();
     println!(
         "Sliced {layer_count} layers ({polygon_count} polygons total) to {}",
-        output_path.display(),
+        target_path.display(),
     );
     Ok(())
 }

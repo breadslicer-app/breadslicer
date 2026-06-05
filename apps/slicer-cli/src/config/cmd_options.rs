@@ -35,9 +35,9 @@ pub enum CmdOptions {
     Help,
     Inspect {},
     Slice {
-        input: OsString,
-        output: OsString,
-        format: Option<Format>,
+        source: OsString,
+        target: OsString,
+        target_format: Option<Format>,
         layer_height: PositiveFiniteMm,
         first_layer_height: Option<PositiveFiniteMm>,
         pixels_x: NonZeroU32,
@@ -152,23 +152,23 @@ fn get_inspect_options() -> impl Parser<CmdOptions> {
 }
 
 fn get_slice_options() -> impl Parser<CmdOptions> {
-    let input = short('i')
-        .long("input")
-        .help("Path to the input 3D model file")
-        .argument::<OsString>("INPUT_FILEPATH");
+    let source = short('s')
+        .long("source")
+        .help("Specify the path of the 3D model file to be sliced")
+        .argument::<OsString>("SOURCE_FILEPATH");
 
-    let output = short('o')
-        .long("output")
+    let target = short('t')
+        .long("target")
         .help(
-            "Output path. A single file for packed formats (e.g. svg-combined), a directory for per-layer formats (svg-per-layer, png-per-layer).",
+            "Specify the output path. A single file for packed formats (e.g. svg-combined), a directory for per-layer formats (svg-per-layer, png-per-layer).",
         )
-        .argument::<OsString>("OUTPUT_PATH");
+        .argument::<OsString>("TARGET_PATH");
 
-    let format = long("format")
+    let target_format = long("target-format")
         .help(
-            "Output format. Accepted values: svg-per-layer, svg-combined, png-per-layer. Inferred from the output file extension when omitted.",
+            "Specify the output format. Accepted values: svg-per-layer, svg-combined, png-per-layer. Inferred from the target file extension when omitted.",
         )
-        .argument::<Format>("FORMAT")
+        .argument::<Format>("TARGET_FORMAT")
         .optional();
 
     let layer_height = long("layer-height")
@@ -217,9 +217,9 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         .switch();
 
     construct!(CmdOptions::Slice {
-        input,
-        output,
-        format,
+        source,
+        target,
+        target_format,
         layer_height,
         first_layer_height,
         pixels_x,

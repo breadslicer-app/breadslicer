@@ -63,9 +63,9 @@ fn main() -> Result<()> {
             todo!("Not yet implemented :(");
         }
         CmdOptions::Slice {
-            input,
-            output,
-            format,
+            source,
+            target,
+            target_format,
             layer_height,
             first_layer_height,
             pixels_x,
@@ -76,9 +76,9 @@ fn main() -> Result<()> {
             verbose,
             no_auto_place,
         } => slice(SliceArgs {
-            input,
-            output,
-            format,
+            source,
+            target,
+            target_format,
             layer_height,
             first_layer_height,
             pixels_x,

@@ -1388,11 +1388,11 @@ mod slice_validation_error_tests {
         let mut cmd = Command::cargo_bin(BIN).unwrap();
         cmd.args([
             "slice",
-            "-i",
+            "-s",
             source.to_str().unwrap(),
-            "-o",
+            "-t",
             output.to_str().unwrap(),
-            "--format",
+            "--target-format",
             "png-per-layer",
             "--layer-height",
             "0.05",
@@ -1474,11 +1474,11 @@ mod slice_auto_place_tests {
         let mut cmd = Command::cargo_bin(BIN).unwrap();
         cmd.args([
             "slice",
-            "-i",
+            "-s",
             source.to_str().unwrap(),
-            "-o",
+            "-t",
             output_dir.to_str().unwrap(),
-            "--format",
+            "--target-format",
             "svg-per-layer",
             "--layer-height",
             "0.2",
