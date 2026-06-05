@@ -52,9 +52,13 @@ pub enum TriangleSlice {
     /// the case with [`TriangleSlice::Empty`].
     Coplanar,
     /// Exactly two vertices on the plane: the triangle edge between
-    /// them lies on the plane. Both `Segment` endpoints carry the
-    /// same `EdgeId`. The stitcher skips this variant by default.
-    Edge { segment: Segment },
+    /// them lies on the plane. Both `Segment` endpoints carry a
+    /// [`EndpointTag::Vertex`] tag (one per on-vertex). `edge_id`
+    /// identifies the on-edge so the slicer can resolve, via the
+    /// mesh's edge-to-faces index, whether the on-edge actually
+    /// belongs to the contour: it does iff the other triangle of the
+    /// edge has its third vertex on the opposite side of the plane.
+    Edge { edge_id: EdgeId, segment: Segment },
     /// The common straddling case: the plane cuts exactly two
     /// triangle edges, producing one crossing segment whose endpoints
     /// carry the originating mesh-edge `EdgeId`.
@@ -117,11 +121,19 @@ pub fn intersect_triangle_z(
         }
         let edge_pos = triangle_edge_index(on_indices[0], on_indices[1]);
         let edge_id = edge_ids[edge_pos];
-        let edge_tag = EndpointTag::Edge(edge_id);
         let a = project_xy(vertices[on_indices[0]]);
         let b = project_xy(vertices[on_indices[1]]);
+        let v_a = slot_vertex(on_indices[0], &edge_ids);
+        let v_b = slot_vertex(on_indices[1], &edge_ids);
         return TriangleSlice::Edge {
-            segment: Segment::new(a, edge_tag, b, edge_tag, face_idx),
+            edge_id,
+            segment: Segment::new(
+                a,
+                EndpointTag::Vertex(v_a),
+                b,
+                EndpointTag::Vertex(v_b),
+                face_idx,
+            ),
         };
     }
 
@@ -182,6 +194,19 @@ pub fn intersect_triangle_z(
             EndpointTag::Edge(edge_ids[edge_pos_b]),
             face_idx,
         ),
+    }
+}
+
+/// Return the [`VertexIndex`] at triangle `slot` (0, 1, or 2). For
+/// slot `k`, the vertex is the common endpoint of the two triangle
+/// edges that touch slot `k`: edges `(k, k+1)` and `(k, k-1)` modulo 3.
+#[inline]
+fn slot_vertex(slot: usize, edge_ids: &[EdgeId; 3]) -> VertexIndex {
+    match slot {
+        0 => common_vertex(edge_ids[0], edge_ids[2]),
+        1 => common_vertex(edge_ids[0], edge_ids[1]),
+        2 => common_vertex(edge_ids[1], edge_ids[2]),
+        _ => unreachable!("triangle slot index out of range: {slot}"),
     }
 }
 
@@ -435,20 +460,22 @@ mod plane_intersect_tests {
     }
 
     #[test]
-    fn triangle_with_one_edge_on_plane_above_returns_edge() {
+    fn triangle_with_one_edge_on_plane_above_returns_edge_with_vertex_tags() {
         // AOO: V0 above, V1 and V2 on plane. Edge between V1 and V2
-        // lies on the plane, edge index 1.
+        // lies on the plane, edge index 1. The emitted segment has
+        // both endpoints tagged with the respective on-vertex.
         let vs = [
             Vertex::new([0.0, 0.0, 1.0]),
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, 0.0]),
         ];
         let result = run(vs, 0.0);
-        let TriangleSlice::Edge { segment } = result else {
+        let TriangleSlice::Edge { edge_id, segment } = result else {
             panic!("expected Edge, got {result:?}");
         };
-        assert_eq!(segment.a_tag, EndpointTag::Edge(EdgeId::new(vi(1), vi(2))));
-        assert_eq!(segment.b_tag, EndpointTag::Edge(EdgeId::new(vi(1), vi(2))));
+        assert_eq!(edge_id, EdgeId::new(vi(1), vi(2)));
+        assert_eq!(segment.a_tag, EndpointTag::Vertex(vi(1)));
+        assert_eq!(segment.b_tag, EndpointTag::Vertex(vi(2)));
         assert!((segment.a.x - 1.0).abs() < 1e-9);
         assert!((segment.a.y - 0.0).abs() < 1e-9);
         assert!((segment.b.x - 0.0).abs() < 1e-9);
@@ -456,7 +483,7 @@ mod plane_intersect_tests {
     }
 
     #[test]
-    fn triangle_with_one_edge_on_plane_below_returns_edge() {
+    fn triangle_with_one_edge_on_plane_below_returns_edge_with_vertex_tags() {
         // BOO: V0 below, V1 and V2 on plane.
         let vs = [
             Vertex::new([0.0, 0.0, -1.0]),
@@ -464,7 +491,12 @@ mod plane_intersect_tests {
             Vertex::new([0.0, 1.0, 0.0]),
         ];
         let result = run(vs, 0.0);
-        assert!(matches!(result, TriangleSlice::Edge { .. }));
+        let TriangleSlice::Edge { edge_id, segment } = result else {
+            panic!("expected Edge, got {result:?}");
+        };
+        assert_eq!(edge_id, EdgeId::new(vi(1), vi(2)));
+        assert_eq!(segment.a_tag, EndpointTag::Vertex(vi(1)));
+        assert_eq!(segment.b_tag, EndpointTag::Vertex(vi(2)));
     }
 
     proptest! {

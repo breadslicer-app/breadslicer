@@ -11,29 +11,40 @@
 //! debugged on analytical meshes before any indexing work lands.
 
 use sc_mesh_core::ValidatedManifoldMesh;
+use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::FaceIndex;
 
 use crate::geom2d::{EdgeId, Segment};
 use crate::plane_intersect::{
-    TriangleSlice, Z_CLASSIFY_EPS_MM, classify_vertex_z, intersect_triangle_z,
+    TriangleSlice, VertexClass, Z_CLASSIFY_EPS_MM, classify_vertex_z, intersect_triangle_z,
 };
 use crate::profile::LayerSchedule;
 
-/// Crossing and through-vertex segments produced by intersecting
-/// every face of `mesh` with the horizontal plane at `z_mm`.
+/// Crossing, through-vertex, and on-edge segments produced by
+/// intersecting every face of `mesh` with the horizontal plane at
+/// `z_mm`.
 ///
-/// `TriangleSlice::Edge` and `TriangleSlice::Coplanar` results are
-/// dropped: the Edge case (two on-plane vertices, a whole mesh edge
-/// lying on the plane) needs a topology lookup against the other
-/// triangle of that edge to decide whether the on-edge actually
-/// belongs to the contour; that resolution is the subject of a
-/// follow-on phase. `TriangleSlice::ThroughVertex` segments are
-/// collected here so that the AOB case is now handled rather than
-/// dropped.
-pub fn segments_at_z(mesh: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment> {
+/// `topology` is consulted when a triangle returns
+/// [`TriangleSlice::Edge`] (the on-edge case): the slicer looks up
+/// the other triangle of the on-edge via [`MeshTopology::edge_faces`]
+/// and decides whether the surface actually crosses the plane along
+/// that edge. The on-edge contributes a contour segment iff the two
+/// triangles' third vertices land on opposite sides of the plane.
+/// To avoid duplicates, the segment is emitted only from the
+/// higher-indexed of the two triangles.
+///
+/// [`TriangleSlice::Coplanar`] (an entire triangle lies in the plane)
+/// is currently dropped; consumers can revisit this when a mesh in
+/// the wild demands it.
+pub fn segments_at_z(
+    mesh: &ValidatedManifoldMesh<'_>,
+    z_mm: f64,
+    topology: &MeshTopology,
+) -> Vec<Segment> {
     let vertices = mesh.vertices();
+    let faces = mesh.faces();
     let mut segments = Vec::new();
-    for (idx, face) in mesh.faces().iter().enumerate() {
+    for (idx, face) in faces.iter().enumerate() {
         let face_idx = FaceIndex::from(idx);
         let [i0, i1, i2] = face.vertices;
         let v = [
@@ -55,10 +66,81 @@ pub fn segments_at_z(mesh: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment
             TriangleSlice::Crossing { segment } | TriangleSlice::ThroughVertex { segment, .. } => {
                 segments.push(segment);
             }
-            TriangleSlice::Empty | TriangleSlice::Coplanar | TriangleSlice::Edge { .. } => {}
+            TriangleSlice::Edge { edge_id, segment } => {
+                if let Some(seg) = resolve_on_edge_contour_segment(
+                    edge_id, segment, face_idx, mesh, topology, z_mm,
+                ) {
+                    segments.push(seg);
+                }
+            }
+            TriangleSlice::Empty | TriangleSlice::Coplanar => {}
         }
     }
     segments
+}
+
+/// Decide whether the on-edge `edge_id` of the current `face`
+/// contributes to the contour at `z_mm`, and return the segment if
+/// so. The decision rule:
+///
+/// 1. Look up the two faces incident to `edge_id` via `topology`;
+///    one is the current face, the other is its on-edge neighbour.
+/// 2. Classify each face's third vertex (the one not on the on-edge)
+///    against the slicing plane.
+/// 3. The on-edge contributes a contour segment iff the two third
+///    vertices land on opposite sides of the plane (the surface
+///    crosses the plane along the on-edge). When both are above or
+///    both are below, the surface only skims the plane along the
+///    edge and the contour does not pass through it.
+/// 4. To avoid the two on-edge triangles each emitting a copy of
+///    the same segment, only the higher-indexed face actually
+///    emits.
+fn resolve_on_edge_contour_segment(
+    edge_id: EdgeId,
+    segment: Segment,
+    face_idx: FaceIndex,
+    mesh: &ValidatedManifoldMesh<'_>,
+    topology: &MeshTopology,
+    z_mm: f64,
+) -> Option<Segment> {
+    let edge_faces = topology.edge_faces(edge_id.lo(), edge_id.hi())?;
+    let other_face_idx = if edge_faces[0] == face_idx {
+        edge_faces[1]
+    } else {
+        edge_faces[0]
+    };
+
+    let faces = mesh.faces();
+    let vertices = mesh.vertices();
+
+    let our_third = faces[face_idx.get()]
+        .vertices
+        .iter()
+        .copied()
+        .find(|&v| v != edge_id.lo() && v != edge_id.hi())?;
+    let other_third = faces[other_face_idx.get()]
+        .vertices
+        .iter()
+        .copied()
+        .find(|&v| v != edge_id.lo() && v != edge_id.hi())?;
+
+    let our_class = classify_vertex_z(vertices[usize::from(our_third)][2], z_mm, Z_CLASSIFY_EPS_MM);
+    let other_class = classify_vertex_z(
+        vertices[usize::from(other_third)][2],
+        z_mm,
+        Z_CLASSIFY_EPS_MM,
+    );
+
+    let contour_relevant = matches!(
+        (our_class, other_class),
+        (VertexClass::Above, VertexClass::Below) | (VertexClass::Below, VertexClass::Above)
+    );
+
+    if contour_relevant && face_idx > other_face_idx {
+        Some(segment)
+    } else {
+        None
+    }
 }
 
 /// Crossing segments for every layer in `schedule`, paired with the
@@ -68,9 +150,10 @@ pub fn segments_at_z(mesh: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment
 pub fn slice_mesh(
     mesh: &ValidatedManifoldMesh<'_>,
     schedule: &LayerSchedule,
+    topology: &MeshTopology,
 ) -> Vec<(f64, Vec<Segment>)> {
     schedule
         .iter_z()
-        .map(|z_mm| (z_mm, segments_at_z(mesh, z_mm)))
+        .map(|z_mm| (z_mm, segments_at_z(mesh, z_mm, topology)))
         .collect()
 }

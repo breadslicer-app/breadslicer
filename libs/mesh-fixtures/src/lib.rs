@@ -12,7 +12,11 @@
 //!
 //! Initial population covers the cuboid family: a unit cube and two
 //! rectangular prisms with a rectangular tunnel (Z-axis and Y-axis
-//! tunnel orientations). More fixtures land here as duplicates in
+//! tunnel orientations). Three tetrahedron fixtures exercise the
+//! slicer's plane-touching cases at `z = 0`: one with a vertex on
+//! the plane (saddle), one with a whole mesh edge on the plane that
+//! the surface crosses, and one where the surface only skims the
+//! plane along the on-edge. More fixtures land here as duplicates in
 //! other crates migrate over.
 
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
@@ -206,5 +210,68 @@ pub fn cuboid_with_y_tunnel() -> IndexedMesh {
             f([9, 10, 14]),
             f([9, 14, 13]),
         ],
+    }
+}
+
+/// Tetrahedron whose vertex V0 sits exactly on the plane `z = 0`,
+/// with V1 and V2 above and V3 below. Drives the slicer's AOB
+/// (one above, one on, one below) case: at `z = 0` two of the four
+/// faces are AOBs incident to V0 and emit through-vertex segments.
+/// Face winding follows the manifold tetrahedron pattern in
+/// `sc-mesh-core`.
+pub fn aob_saddle_tetrahedron() -> IndexedMesh {
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 1.0]),
+            Vertex::new([-1.0, 0.0, 1.0]),
+            Vertex::new([0.0, 1.0, -1.0]),
+        ],
+        faces: vec![f([0, 1, 2]), f([0, 3, 1]), f([0, 2, 3]), f([1, 3, 2])],
+    }
+}
+
+/// Tetrahedron whose vertices V0 and V1 sit exactly on the plane
+/// `z = 0`, V2 above and V3 below. The mesh edge V0-V1 lies on the
+/// plane and is shared by F0 (third vertex above) and F1 (third
+/// vertex below): the surface crosses the plane along the on-edge,
+/// so the on-edge contributes a contour segment. F2 and F3 are AOBs
+/// at V0 and V1 respectively. Face winding follows the manifold
+/// tetrahedron pattern in `sc-mesh-core`.
+pub fn on_edge_crossing_tetrahedron() -> IndexedMesh {
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.5, 1.0, 1.0]),
+            Vertex::new([0.5, -1.0, -1.0]),
+        ],
+        faces: vec![f([0, 1, 2]), f([0, 3, 1]), f([0, 2, 3]), f([1, 3, 2])],
+    }
+}
+
+/// Tetrahedron whose vertices V0 and V1 sit exactly on the plane
+/// `z = 0`, with V2 AND V3 BOTH above. The surface only skims the
+/// plane along the on-edge V0-V1 (it never crosses it), so the
+/// slicer must drop the on-edge segment entirely. Face winding
+/// follows the manifold tetrahedron pattern in `sc-mesh-core`.
+pub fn on_edge_skim_above_tetrahedron() -> IndexedMesh {
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 0.0]),
+            Vertex::new([0.5, 1.0, 1.0]),
+            Vertex::new([0.5, -1.0, 1.0]),
+        ],
+        faces: vec![f([0, 1, 2]), f([0, 3, 1]), f([0, 2, 3]), f([1, 3, 2])],
     }
 }

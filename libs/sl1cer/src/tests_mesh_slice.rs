@@ -24,9 +24,12 @@
 use std::collections::{HashMap, HashSet};
 
 use sc_mesh_core::indexed_mesh::MeshTopology;
-use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex, VertexIndex};
+use sc_mesh_core::primitives::VertexIndex;
 use sc_mesh_core::{IndexedMesh, ValidatedManifoldMesh};
-use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_fixtures::{
+    aob_saddle_tetrahedron, cuboid_with_y_tunnel, cuboid_with_z_tunnel,
+    on_edge_crossing_tetrahedron, on_edge_skim_above_tetrahedron, unit_cube_mesh,
+};
 
 use crate::geom2d::{EndpointTag, Segment};
 use crate::mesh_slice::{segments_at_z, slice_mesh};
@@ -38,6 +41,26 @@ fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
         .expect("in-range faces")
         .validated_manifold()
         .expect("manifold mesh")
+}
+
+/// Test-only wrapper around [`segments_at_z`] that builds the
+/// [`MeshTopology`] inline. Existing fixture-based tests don't need
+/// to expose the topology so threading it through every call would
+/// be noise; this helper keeps the call sites symmetric with the
+/// pre-topology era.
+fn slice_at(w: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment> {
+    let topology = MeshTopology::from_manifold(w);
+    segments_at_z(w, z_mm, &topology)
+}
+
+/// Test-only wrapper around [`slice_mesh`] that builds the
+/// [`MeshTopology`] inline.
+fn slice_schedule<'a>(
+    w: &'a ValidatedManifoldMesh<'a>,
+    schedule: &'a LayerSchedule,
+) -> Vec<(f64, Vec<Segment>)> {
+    let topology = MeshTopology::from_manifold(w);
+    slice_mesh(w, schedule, &topology)
 }
 
 /// Pin the stitcher invariant: every crossed mesh edge contributes
@@ -99,14 +122,14 @@ fn count_contour_components(segments: &[Segment]) -> usize {
 fn cube_above_top_face_returns_empty() {
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
-    assert!(segments_at_z(&w, 1.0).is_empty());
+    assert!(slice_at(&w, 1.0).is_empty());
 }
 
 #[test]
 fn cube_below_bottom_face_returns_empty() {
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
-    assert!(segments_at_z(&w, -1.0).is_empty());
+    assert!(slice_at(&w, -1.0).is_empty());
 }
 
 #[test]
@@ -116,7 +139,7 @@ fn cube_at_mid_height_returns_eight_segments() {
     // triangles produce 8 Crossing segments.
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     assert_eq!(segments.len(), 8);
     for seg in &segments {
         assert_ne!(seg.a_tag, seg.b_tag);
@@ -131,7 +154,7 @@ fn cube_mid_height_segment_endpoints_sit_at_canonical_points() {
     // XY midpoint, e.g. (0, +/- 0.5) or (+/- 0.5, 0)).
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     let canonical_points = [
         (-0.5, -0.5),
         (0.5, -0.5),
@@ -159,7 +182,7 @@ fn cube_mid_height_segment_endpoints_sit_at_canonical_points() {
 fn cube_mid_height_each_endpoint_tag_appears_in_exactly_two_endpoints() {
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     assert_endpoint_tag_pairing(&segments);
 }
 
@@ -168,7 +191,7 @@ fn cube_mid_height_has_single_contour_component() {
     // The cube contour is one connected square.
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     assert_eq!(count_contour_components(&segments), 1);
 }
 
@@ -181,21 +204,21 @@ fn cube_mid_height_has_single_contour_component() {
 fn z_tunnel_above_top_returns_empty() {
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
-    assert!(segments_at_z(&w, 2.5).is_empty());
+    assert!(slice_at(&w, 2.5).is_empty());
 }
 
 #[test]
 fn z_tunnel_below_bottom_returns_empty() {
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
-    assert!(segments_at_z(&w, -0.5).is_empty());
+    assert!(slice_at(&w, -0.5).is_empty());
 }
 
 #[test]
 fn z_tunnel_mid_height_pairs_every_endpoint_tag() {
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 1.0);
+    let segments = slice_at(&w, 1.0);
     assert!(!segments.is_empty());
     assert_endpoint_tag_pairing(&segments);
 }
@@ -206,7 +229,7 @@ fn z_tunnel_mid_height_has_two_contour_components() {
     // components in the EndpointTag adjacency graph.
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 1.0);
+    let segments = slice_at(&w, 1.0);
     assert_eq!(count_contour_components(&segments), 2);
 }
 
@@ -220,21 +243,21 @@ fn z_tunnel_mid_height_has_two_contour_components() {
 fn y_tunnel_above_box_returns_empty() {
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    assert!(segments_at_z(&w, 2.5).is_empty());
+    assert!(slice_at(&w, 2.5).is_empty());
 }
 
 #[test]
 fn y_tunnel_below_box_returns_empty() {
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    assert!(segments_at_z(&w, -0.5).is_empty());
+    assert!(slice_at(&w, -0.5).is_empty());
 }
 
 #[test]
 fn y_tunnel_through_tunnel_band_pairs_every_endpoint_tag() {
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 1.0);
+    let segments = slice_at(&w, 1.0);
     assert!(!segments.is_empty());
     assert_endpoint_tag_pairing(&segments);
 }
@@ -247,7 +270,7 @@ fn y_tunnel_through_tunnel_band_has_two_contour_components() {
     // cutout and right of the cutout).
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 1.0);
+    let segments = slice_at(&w, 1.0);
     assert_eq!(count_contour_components(&segments), 2);
 }
 
@@ -255,7 +278,7 @@ fn y_tunnel_through_tunnel_band_has_two_contour_components() {
 fn y_tunnel_above_tunnel_band_pairs_every_endpoint_tag() {
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 1.6);
+    let segments = slice_at(&w, 1.6);
     assert!(!segments.is_empty());
     assert_endpoint_tag_pairing(&segments);
 }
@@ -267,7 +290,7 @@ fn y_tunnel_above_tunnel_band_has_one_contour_component() {
     // full outer rectangle, one contour component.
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 1.6);
+    let segments = slice_at(&w, 1.6);
     assert_eq!(count_contour_components(&segments), 1);
 }
 
@@ -276,7 +299,7 @@ fn y_tunnel_below_tunnel_band_has_one_contour_component() {
     // Symmetric to the above-tunnel case.
     let mesh = cuboid_with_y_tunnel();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.3);
+    let segments = slice_at(&w, 0.3);
     assert_eq!(count_contour_components(&segments), 1);
 }
 
@@ -293,7 +316,7 @@ fn slice_mesh_yields_paired_z_and_segments_following_schedule() {
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
     let schedule = LayerSchedule::uniform(0.1, 0.1, 4).unwrap();
-    let layers = slice_mesh(&w, &schedule);
+    let layers = slice_schedule(&w, &schedule);
 
     assert_eq!(layers.len(), 4);
 
@@ -318,7 +341,7 @@ fn slice_mesh_returns_empty_layers_for_schedule_above_the_mesh() {
     let mesh = unit_cube_mesh();
     let w = witness(&mesh);
     let schedule = LayerSchedule::uniform(0.1, 1.0, 3).unwrap();
-    let layers = slice_mesh(&w, &schedule);
+    let layers = slice_schedule(&w, &schedule);
 
     assert_eq!(layers.len(), 3);
     for (_, segments) in &layers {
@@ -335,34 +358,11 @@ fn slice_mesh_returns_empty_layers_for_schedule_above_the_mesh() {
 // at the V0 hub.
 // =====================================================================
 
-/// Saddle-vertex tetrahedron used by the AOB tests.
-///
-/// V0 sits at z = 0 (on the slicing plane), V1 and V2 above, V3 below.
-/// The face winding mirrors `mesh-core`'s manifold tetrahedron pattern
-/// so [`validated_manifold`] accepts the mesh.
-fn aob_saddle_tetrahedron() -> IndexedMesh {
-    IndexedMesh {
-        meta: None,
-        vertices: vec![
-            Vertex::new([0.0, 0.0, 0.0]),
-            Vertex::new([1.0, 0.0, 1.0]),
-            Vertex::new([-1.0, 0.0, 1.0]),
-            Vertex::new([0.0, 1.0, -1.0]),
-        ],
-        faces: vec![
-            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
-            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 3, 1]),
-            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 2, 3]),
-            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [1, 3, 2]),
-        ],
-    }
-}
-
 #[test]
 fn aob_saddle_tetrahedron_at_z_zero_emits_three_segments() {
     let mesh = aob_saddle_tetrahedron();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     assert_eq!(
         segments.len(),
         3,
@@ -374,7 +374,7 @@ fn aob_saddle_tetrahedron_at_z_zero_emits_three_segments() {
 fn aob_saddle_tetrahedron_at_z_zero_has_two_vertex_tagged_endpoints_at_v0() {
     let mesh = aob_saddle_tetrahedron();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     let vertex_tag = EndpointTag::Vertex(VertexIndex::from(0_u32));
     let count = segments
         .iter()
@@ -391,7 +391,7 @@ fn aob_saddle_tetrahedron_at_z_zero_has_two_vertex_tagged_endpoints_at_v0() {
 fn aob_saddle_tetrahedron_stitch_closes_into_a_single_triangle_ring() {
     let mesh = aob_saddle_tetrahedron();
     let w = witness(&mesh);
-    let segments = segments_at_z(&w, 0.0);
+    let segments = slice_at(&w, 0.0);
     let topology = MeshTopology::from_manifold(&w);
     let rings = stitch_layer(&segments, 0.0, &topology).expect("AOB hub closes cleanly");
     assert_eq!(
@@ -405,5 +405,89 @@ fn aob_saddle_tetrahedron_stitch_closes_into_a_single_triangle_ring() {
         3,
         "expected 3-vertex ring, got: {:?}",
         rings[0].vertices(),
+    );
+}
+
+// =====================================================================
+// Edge-case (two on-vertices) tests. Tetrahedra whose two vertices V0
+// and V1 sit on the slicing plane. The mesh edge V0-V1 lies on the
+// plane and is shared by two triangles; whether the on-edge actually
+// belongs to the contour depends on the third vertex of each
+// triangle.
+// =====================================================================
+
+#[test]
+fn on_edge_crossing_tetrahedron_at_z_zero_emits_three_segments() {
+    // Expected segments:
+    // - F2 (AOB at V0) -> ThroughVertex from V0 to the crossing on V2-V3.
+    // - F3 (AOB at V1) -> ThroughVertex from V1 to the crossing on V2-V3.
+    // - On-edge V0-V1: emitted from whichever of F0/F1 has the higher
+    //   FaceIndex (F1, idx 1); the lower-indexed face skips.
+    let mesh = on_edge_crossing_tetrahedron();
+    let w = witness(&mesh);
+    let segments = slice_at(&w, 0.0);
+    assert_eq!(
+        segments.len(),
+        3,
+        "expected 2 through-vertex + 1 on-edge = 3 segments, got: {segments:?}",
+    );
+}
+
+#[test]
+fn on_edge_crossing_tetrahedron_at_z_zero_has_one_double_vertex_tagged_segment() {
+    let mesh = on_edge_crossing_tetrahedron();
+    let w = witness(&mesh);
+    let segments = slice_at(&w, 0.0);
+    let on_edge_seg_count = segments
+        .iter()
+        .filter(|s| {
+            matches!(s.a_tag, EndpointTag::Vertex(_)) && matches!(s.b_tag, EndpointTag::Vertex(_))
+        })
+        .count();
+    assert_eq!(
+        on_edge_seg_count, 1,
+        "expected exactly one segment with both endpoints vertex-tagged (the on-edge), got {on_edge_seg_count}",
+    );
+}
+
+#[test]
+fn on_edge_crossing_tetrahedron_stitch_closes_into_a_single_triangle_ring() {
+    let mesh = on_edge_crossing_tetrahedron();
+    let w = witness(&mesh);
+    let topology = MeshTopology::from_manifold(&w);
+    let segments = slice_at(&w, 0.0);
+    let rings = stitch_layer(&segments, 0.0, &topology).expect("on-edge resolution closes cleanly");
+    assert_eq!(
+        rings.len(),
+        1,
+        "expected one closed ring, got {}",
+        rings.len()
+    );
+    assert_eq!(
+        rings[0].vertices().len(),
+        3,
+        "expected 3-vertex ring, got: {:?}",
+        rings[0].vertices(),
+    );
+}
+
+#[test]
+fn on_edge_skim_above_tetrahedron_at_z_zero_emits_no_on_edge_segment() {
+    // V0 and V1 are on the plane but BOTH third vertices (V2 and V3)
+    // sit above: the surface only skims the plane along V0-V1 and the
+    // contour does not pass through it. The slicer must drop the
+    // on-edge segment entirely.
+    let mesh = on_edge_skim_above_tetrahedron();
+    let w = witness(&mesh);
+    let segments = slice_at(&w, 0.0);
+    let on_edge_seg_count = segments
+        .iter()
+        .filter(|s| {
+            matches!(s.a_tag, EndpointTag::Vertex(_)) && matches!(s.b_tag, EndpointTag::Vertex(_))
+        })
+        .count();
+    assert_eq!(
+        on_edge_seg_count, 0,
+        "expected no on-edge segment for skim-from-above case, got {on_edge_seg_count}",
     );
 }

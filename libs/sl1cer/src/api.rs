@@ -87,7 +87,7 @@ pub fn slice_leaf(
     let topology = MeshTopology::from_manifold(&mesh);
     let mut layers = Vec::new();
     for z_mm in profile.layer_schedule().iter_z() {
-        let segments = segments_at_z(&mesh, z_mm);
+        let segments = segments_at_z(&mesh, z_mm, &topology);
         let mut rings = stitch_layer(&segments, z_mm, &topology)?;
         normalise_to_ccw(&mut rings);
         let polygons = group_into_polygons(rings);
