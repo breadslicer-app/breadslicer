@@ -4519,6 +4519,9 @@ dependencies = [
 [[package]]
 name = "sc-print-primitives"
 version = "0.0.12"
+dependencies = [
+ "sc-mesh-core",
+]
 
 [[package]]
 name = "sc-sl1cer"

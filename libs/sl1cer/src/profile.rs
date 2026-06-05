@@ -14,19 +14,19 @@ use std::fmt;
 use std::str::FromStr;
 
 use sc_mesh_core::primitives::CoordAxis;
-pub use sc_print_primitives::{LengthOutOfRange, Mirror, ParseLengthError, PositiveFiniteMm};
+pub use sc_print_primitives::{
+    LengthOutOfRange, Mirror, ParseLengthError, PixelResolution, PositiveFiniteMm,
+    ZeroPixelExtentError,
+};
 
 /// Why a [`SliceProfile`] component constructor rejected its input.
 ///
 /// `CoordAxis` is reused from `sc-mesh-core` for the per-axis
-/// variants: build volume uses X / Y / Z; pixel resolution only emits
-/// X or Y in practice.
+/// variants: build volume uses X / Y / Z.
 #[derive(Debug)]
 pub enum SliceProfileError {
     /// A build volume axis was zero, negative, or non-finite.
     BuildVolumeAxisInvalid { axis: CoordAxis, value: f64 },
-    /// A pixel resolution axis was zero.
-    PixelResolutionZero { axis: CoordAxis },
     /// `layer_height_mm` was zero, negative, or non-finite.
     LayerHeightInvalid { value: f64 },
     /// `first_layer_height_mm` was zero, negative, or non-finite.
@@ -42,9 +42,6 @@ impl fmt::Display for SliceProfileError {
                 f,
                 "build volume {axis} axis must be a finite positive length in millimetres, got {value}",
             ),
-            Self::PixelResolutionZero { axis } => {
-                write!(f, "pixel resolution {axis} axis must be non-zero")
-            }
             Self::LayerHeightInvalid { value } => write!(
                 f,
                 "layer_height_mm must be a finite positive length in millimetres, got {value}",
@@ -114,35 +111,6 @@ impl BuildVolume {
     #[inline]
     pub fn envelope_max_mm(&self) -> [f64; 3] {
         [0.5 * self.x_mm, 0.5 * self.y_mm, self.z_mm]
-    }
-}
-
-/// Pixel resolution validated non-zero per axis on construction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PixelResolution {
-    x: u32,
-    y: u32,
-}
-
-impl PixelResolution {
-    pub fn new(x: u32, y: u32) -> Result<Self, SliceProfileError> {
-        if x == 0 {
-            return Err(SliceProfileError::PixelResolutionZero { axis: CoordAxis::X });
-        }
-        if y == 0 {
-            return Err(SliceProfileError::PixelResolutionZero { axis: CoordAxis::Y });
-        }
-        Ok(Self { x, y })
-    }
-
-    #[inline]
-    pub fn x(&self) -> u32 {
-        self.x
-    }
-
-    #[inline]
-    pub fn y(&self) -> u32 {
-        self.y
     }
 }
 
@@ -407,31 +375,6 @@ mod profile_tests {
         assert!((max[0] - min[0] - bv.x_mm()).abs() < 1e-12);
         assert!((max[1] - min[1] - bv.y_mm()).abs() < 1e-12);
         assert!((max[2] - min[2] - bv.z_mm()).abs() < 1e-12);
-    }
-
-    #[test]
-    fn pixel_resolution_new_accepts_positive_dimensions() {
-        let res = PixelResolution::new(1920, 1080).unwrap();
-        assert_eq!(res.x(), 1920);
-        assert_eq!(res.y(), 1080);
-    }
-
-    #[test]
-    fn pixel_resolution_new_rejects_zero_x() {
-        let err = PixelResolution::new(0, 1080).unwrap_err();
-        assert!(matches!(
-            err,
-            SliceProfileError::PixelResolutionZero { axis: CoordAxis::X }
-        ));
-    }
-
-    #[test]
-    fn pixel_resolution_new_rejects_zero_y() {
-        let err = PixelResolution::new(1920, 0).unwrap_err();
-        assert!(matches!(
-            err,
-            SliceProfileError::PixelResolutionZero { axis: CoordAxis::Y }
-        ));
     }
 
     #[test]

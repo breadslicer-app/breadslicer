@@ -10,3 +10,4 @@ keywords = ["3d", "printing", "resin", "sla", "primitives"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
+sc-mesh-core.workspace = true

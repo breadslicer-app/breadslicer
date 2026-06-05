@@ -17,9 +17,13 @@
 
 pub mod length;
 pub mod mirror;
+pub mod pixel_resolution;
 
 pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMm};
 pub use mirror::Mirror;
+pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 
 #[cfg(test)]
 mod tests_length;
+#[cfg(test)]
+mod tests_pixel_resolution;
