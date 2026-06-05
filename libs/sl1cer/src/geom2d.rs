@@ -11,7 +11,7 @@
 //! precision; rounding to integer pixel grids happens at the raster
 //! boundary.
 
-use sc_mesh_core::primitives::VertexIndex;
+use sc_mesh_core::primitives::{FaceIndex, VertexIndex};
 
 /// 2D point in millimetres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,19 +104,34 @@ pub enum EndpointTag {
 /// 2D line segment carrying the identity of the mesh feature each
 /// endpoint sits on. The stitcher matches `a_tag` / `b_tag` across
 /// segments from neighbouring triangles to chain them into closed
-/// rings.
+/// rings; `source_face` records which mesh triangle emitted the
+/// segment, which the stitcher uses to locate vertex-tagged
+/// endpoints in the mesh's 1-ring cyclic order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
     pub a: Point2D,
     pub a_tag: EndpointTag,
     pub b: Point2D,
     pub b_tag: EndpointTag,
+    pub source_face: FaceIndex,
 }
 
 impl Segment {
     #[inline]
-    pub const fn new(a: Point2D, a_tag: EndpointTag, b: Point2D, b_tag: EndpointTag) -> Self {
-        Self { a, a_tag, b, b_tag }
+    pub const fn new(
+        a: Point2D,
+        a_tag: EndpointTag,
+        b: Point2D,
+        b_tag: EndpointTag,
+        source_face: FaceIndex,
+    ) -> Self {
+        Self {
+            a,
+            a_tag,
+            b,
+            b_tag,
+            source_face,
+        }
     }
 }
 
@@ -177,16 +192,18 @@ mod geom2d_tests {
     }
 
     #[test]
-    fn segment_stores_endpoints_and_endpoint_tags() {
+    fn segment_stores_endpoints_endpoint_tags_and_source_face() {
         let a = Point2D::new(0.0, 0.0);
         let b = Point2D::new(1.0, 1.0);
         let ta = EndpointTag::Edge(EdgeId::new(vi(0), vi(1)));
         let tb = EndpointTag::Edge(EdgeId::new(vi(1), vi(2)));
-        let seg = Segment::new(a, ta, b, tb);
+        let face = FaceIndex::from(42_usize);
+        let seg = Segment::new(a, ta, b, tb, face);
         assert_eq!(seg.a, a);
         assert_eq!(seg.b, b);
         assert_eq!(seg.a_tag, ta);
         assert_eq!(seg.b_tag, tb);
+        assert_eq!(seg.source_face, face);
     }
 
     #[test]

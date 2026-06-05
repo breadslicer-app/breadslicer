@@ -12,6 +12,7 @@
 //! the crate into one end-to-end pipeline.
 
 use sc_mesh_core::Scene;
+use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::scene::bake::bake_leaf_to_world;
 use sc_mesh_core::scene::node::{NodeId, NodeKind};
 
@@ -83,10 +84,11 @@ pub fn slice_leaf(
         .validated_manifold()
         .map_err(SliceError::ManifoldCheckFailed)?;
 
+    let topology = MeshTopology::from_manifold(&mesh);
     let mut layers = Vec::new();
     for z_mm in profile.layer_schedule().iter_z() {
         let segments = segments_at_z(&mesh, z_mm);
-        let mut rings = stitch_layer(&segments, z_mm)?;
+        let mut rings = stitch_layer(&segments, z_mm, &topology)?;
         normalise_to_ccw(&mut rings);
         let polygons = group_into_polygons(rings);
         layers.push(ContourLayer::new(z_mm, polygons));

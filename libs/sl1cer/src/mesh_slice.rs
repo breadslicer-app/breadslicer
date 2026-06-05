@@ -11,6 +11,7 @@
 //! debugged on analytical meshes before any indexing work lands.
 
 use sc_mesh_core::ValidatedManifoldMesh;
+use sc_mesh_core::primitives::FaceIndex;
 
 use crate::geom2d::{EdgeId, Segment};
 use crate::plane_intersect::{
@@ -18,19 +19,22 @@ use crate::plane_intersect::{
 };
 use crate::profile::LayerSchedule;
 
-/// Crossing segments produced by intersecting every face of `mesh`
-/// with the horizontal plane at `z_mm`.
+/// Crossing and through-vertex segments produced by intersecting
+/// every face of `mesh` with the horizontal plane at `z_mm`.
 ///
 /// `TriangleSlice::Edge` and `TriangleSlice::Coplanar` results are
-/// dropped. The stitcher pairs segment endpoints by mesh-edge
-/// identity, and admitting either case breaks the invariant that
-/// every interior mesh edge contributes exactly two segment
-/// endpoints. A follow-on plan can lift the policy once real meshes
-/// prove it's needed.
+/// dropped: the Edge case (two on-plane vertices, a whole mesh edge
+/// lying on the plane) needs a topology lookup against the other
+/// triangle of that edge to decide whether the on-edge actually
+/// belongs to the contour; that resolution is the subject of a
+/// follow-on phase. `TriangleSlice::ThroughVertex` segments are
+/// collected here so that the AOB case is now handled rather than
+/// dropped.
 pub fn segments_at_z(mesh: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment> {
     let vertices = mesh.vertices();
     let mut segments = Vec::new();
-    for face in mesh.faces() {
+    for (idx, face) in mesh.faces().iter().enumerate() {
+        let face_idx = FaceIndex::from(idx);
         let [i0, i1, i2] = face.vertices;
         let v = [
             vertices[usize::from(i0)],
@@ -47,10 +51,11 @@ pub fn segments_at_z(mesh: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment
             EdgeId::new(i1, i2),
             EdgeId::new(i2, i0),
         ];
-        if let TriangleSlice::Crossing { segment } =
-            intersect_triangle_z(v, classes, z_mm, edge_ids)
-        {
-            segments.push(segment);
+        match intersect_triangle_z(v, classes, z_mm, edge_ids, face_idx) {
+            TriangleSlice::Crossing { segment } | TriangleSlice::ThroughVertex { segment, .. } => {
+                segments.push(segment);
+            }
+            TriangleSlice::Empty | TriangleSlice::Coplanar | TriangleSlice::Edge { .. } => {}
         }
     }
     segments

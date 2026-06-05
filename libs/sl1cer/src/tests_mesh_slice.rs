@@ -23,12 +23,15 @@
 
 use std::collections::{HashMap, HashSet};
 
+use sc_mesh_core::indexed_mesh::MeshTopology;
+use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex, VertexIndex};
 use sc_mesh_core::{IndexedMesh, ValidatedManifoldMesh};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 
 use crate::geom2d::{EndpointTag, Segment};
 use crate::mesh_slice::{segments_at_z, slice_mesh};
 use crate::profile::LayerSchedule;
+use crate::stitch::stitch_layer;
 
 fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
     mesh.validated_faces()
@@ -321,4 +324,86 @@ fn slice_mesh_returns_empty_layers_for_schedule_above_the_mesh() {
     for (_, segments) in &layers {
         assert!(segments.is_empty());
     }
+}
+
+// =====================================================================
+// AOB saddle-vertex tests. A tetrahedron whose vertex V0 sits exactly
+// on the slicing plane, with the other three vertices split into one
+// below and two above. Around V0 there are two AOB triangles and one
+// AAO; together with the bottom-cap straddling triangle they form a
+// 3-segment contour that closes only if vertex-tagged endpoints mate
+// at the V0 hub.
+// =====================================================================
+
+/// Saddle-vertex tetrahedron used by the AOB tests.
+///
+/// V0 sits at z = 0 (on the slicing plane), V1 and V2 above, V3 below.
+/// The face winding mirrors `mesh-core`'s manifold tetrahedron pattern
+/// so [`validated_manifold`] accepts the mesh.
+fn aob_saddle_tetrahedron() -> IndexedMesh {
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 1.0]),
+            Vertex::new([-1.0, 0.0, 1.0]),
+            Vertex::new([0.0, 1.0, -1.0]),
+        ],
+        faces: vec![
+            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
+            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 3, 1]),
+            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 2, 3]),
+            IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [1, 3, 2]),
+        ],
+    }
+}
+
+#[test]
+fn aob_saddle_tetrahedron_at_z_zero_emits_three_segments() {
+    let mesh = aob_saddle_tetrahedron();
+    let w = witness(&mesh);
+    let segments = segments_at_z(&w, 0.0);
+    assert_eq!(
+        segments.len(),
+        3,
+        "expected 2 through-vertex + 1 crossing = 3 segments, got: {segments:?}",
+    );
+}
+
+#[test]
+fn aob_saddle_tetrahedron_at_z_zero_has_two_vertex_tagged_endpoints_at_v0() {
+    let mesh = aob_saddle_tetrahedron();
+    let w = witness(&mesh);
+    let segments = segments_at_z(&w, 0.0);
+    let vertex_tag = EndpointTag::Vertex(VertexIndex::from(0_u32));
+    let count = segments
+        .iter()
+        .flat_map(|s| [s.a_tag, s.b_tag])
+        .filter(|t| *t == vertex_tag)
+        .count();
+    assert_eq!(
+        count, 2,
+        "expected 2 endpoints tagged Vertex(0), got {count}"
+    );
+}
+
+#[test]
+fn aob_saddle_tetrahedron_stitch_closes_into_a_single_triangle_ring() {
+    let mesh = aob_saddle_tetrahedron();
+    let w = witness(&mesh);
+    let segments = segments_at_z(&w, 0.0);
+    let topology = MeshTopology::from_manifold(&w);
+    let rings = stitch_layer(&segments, 0.0, &topology).expect("AOB hub closes cleanly");
+    assert_eq!(
+        rings.len(),
+        1,
+        "expected one closed ring, got {}",
+        rings.len()
+    );
+    assert_eq!(
+        rings[0].vertices().len(),
+        3,
+        "expected 3-vertex ring, got: {:?}",
+        rings[0].vertices(),
+    );
 }

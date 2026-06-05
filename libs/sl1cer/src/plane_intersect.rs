@@ -9,7 +9,7 @@
 //! the slicer's vector pipeline: a layer of crossing segments is built
 //! by calling [`intersect_triangle_z`] once per face of the mesh.
 
-use sc_mesh_core::primitives::Vertex;
+use sc_mesh_core::primitives::{FaceIndex, Vertex, VertexIndex};
 
 use crate::geom2d::{EdgeId, EndpointTag, Point2D, Segment};
 
@@ -44,13 +44,8 @@ pub fn classify_vertex_z(vertex_z_mm: f32, z_plane_mm: f64, eps_mm: f64) -> Vert
 /// Result of intersecting one triangle with one horizontal plane.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TriangleSlice {
-    /// Nothing to emit. Covers all-above, all-below, the "skim
-    /// through one On vertex" cases (AAO, BBO) and the "through-vertex
-    /// crossing" case (AOB). The last is skipped on purpose: emitting
-    /// it would produce three segment endpoints sharing one mesh
-    /// vertex, breaking the stitcher's "every mesh edge contributes
-    /// exactly two segment endpoints" invariant. The stitcher's
-    /// runtime safety net catches any drift the policy introduces.
+    /// Nothing to emit. Covers all-above, all-below, and the
+    /// "skim through one On vertex" cases (AAO, BBO).
     Empty,
     /// All three vertices lie on the plane. Recorded as its own
     /// variant so the caller can choose to skip it without confusing
@@ -64,20 +59,37 @@ pub enum TriangleSlice {
     /// triangle edges, producing one crossing segment whose endpoints
     /// carry the originating mesh-edge `EdgeId`.
     Crossing { segment: Segment },
+    /// Exactly one vertex on the plane, one above, one below (the
+    /// AOB case). The plane cuts the triangle from the on-vertex to
+    /// a point on the opposite mesh edge. The emitted segment has
+    /// one [`EndpointTag::Vertex`] endpoint at the on-vertex and one
+    /// [`EndpointTag::Edge`] endpoint on the opposite edge; the
+    /// stitcher pairs vertex-tagged endpoints around a hub using the
+    /// mesh's 1-ring cyclic order.
+    ThroughVertex {
+        vertex_idx: VertexIndex,
+        segment: Segment,
+    },
 }
 
 /// Intersect a single triangle with a horizontal plane at `z_plane_mm`.
 ///
 /// `vertices` and `classes` are in the same order; `edge_ids[i]` is
 /// the canonical id of the triangle edge between vertex `i` and
-/// vertex `(i + 1) % 3`. The endpoint interpolation uses the
-/// signed-distance ratio in f64 so precision stays predictable across
-/// edges of very different lengths.
+/// vertex `(i + 1) % 3`. `face_idx` is the index of the triangle in
+/// the source mesh; it is recorded on any emitted [`Segment`] so the
+/// stitcher can locate vertex-tagged endpoints in the mesh's 1-ring
+/// cyclic order.
+///
+/// The endpoint interpolation uses the signed-distance ratio in f64
+/// so precision stays predictable across edges of very different
+/// lengths.
 pub fn intersect_triangle_z(
     vertices: [Vertex; 3],
     classes: [VertexClass; 3],
     z_plane_mm: f64,
     edge_ids: [EdgeId; 3],
+    face_idx: FaceIndex,
 ) -> TriangleSlice {
     let mut on_count = 0usize;
     let mut above_count = 0usize;
@@ -109,7 +121,33 @@ pub fn intersect_triangle_z(
         let a = project_xy(vertices[on_indices[0]]);
         let b = project_xy(vertices[on_indices[1]]);
         return TriangleSlice::Edge {
-            segment: Segment::new(a, edge_tag, b, edge_tag),
+            segment: Segment::new(a, edge_tag, b, edge_tag, face_idx),
+        };
+    }
+
+    if on_count == 1 && above_count == 1 && below_count == 1 {
+        let on_idx = first_index_with(&classes, VertexClass::On);
+        let above_idx = first_index_with(&classes, VertexClass::Above);
+        let below_idx = first_index_with(&classes, VertexClass::Below);
+
+        let edge_ab_pos = triangle_edge_index(above_idx, below_idx);
+        let edge_va_pos = triangle_edge_index(on_idx, above_idx);
+        let edge_vb_pos = triangle_edge_index(on_idx, below_idx);
+
+        let vertex_idx = common_vertex(edge_ids[edge_va_pos], edge_ids[edge_vb_pos]);
+
+        let v_2d = project_xy(vertices[on_idx]);
+        let p_2d = interpolate_to_plane(vertices[above_idx], vertices[below_idx], z_plane_mm);
+
+        return TriangleSlice::ThroughVertex {
+            vertex_idx,
+            segment: Segment::new(
+                v_2d,
+                EndpointTag::Vertex(vertex_idx),
+                p_2d,
+                EndpointTag::Edge(edge_ids[edge_ab_pos]),
+                face_idx,
+            ),
         };
     }
 
@@ -142,7 +180,25 @@ pub fn intersect_triangle_z(
             EndpointTag::Edge(edge_ids[edge_pos_a]),
             pt_b,
             EndpointTag::Edge(edge_ids[edge_pos_b]),
+            face_idx,
         ),
+    }
+}
+
+/// Return the [`VertexIndex`] shared by two edges. Used in the AOB
+/// branch to recover the on-vertex's index from the two mesh edges
+/// touching it (the third edge of the triangle is the above-below
+/// edge that the crossing point sits on).
+#[inline]
+fn common_vertex(e1: EdgeId, e2: EdgeId) -> VertexIndex {
+    if e1.lo() == e2.lo() || e1.lo() == e2.hi() {
+        e1.lo()
+    } else {
+        debug_assert!(
+            e1.hi() == e2.lo() || e1.hi() == e2.hi(),
+            "common_vertex: edges {e1:?} and {e2:?} do not share a vertex",
+        );
+        e1.hi()
     }
 }
 
@@ -184,7 +240,6 @@ fn first_index_with(classes: &[VertexClass; 3], target: VertexClass) -> usize {
 #[cfg(test)]
 mod plane_intersect_tests {
     use proptest::prelude::*;
-    use sc_mesh_core::primitives::VertexIndex;
 
     use super::*;
 
@@ -192,12 +247,17 @@ mod plane_intersect_tests {
         VertexIndex::from(i)
     }
 
+    /// Test triangles use vertex indices 0, 1, 2 in slot order.
     fn unit_edges() -> [EdgeId; 3] {
         [
             EdgeId::new(vi(0), vi(1)),
             EdgeId::new(vi(1), vi(2)),
             EdgeId::new(vi(2), vi(0)),
         ]
+    }
+
+    fn unit_face_idx() -> FaceIndex {
+        FaceIndex::from(0_usize)
     }
 
     fn classify_all(vs: [Vertex; 3], z_plane: f64) -> [VertexClass; 3] {
@@ -210,7 +270,7 @@ mod plane_intersect_tests {
 
     fn run(vs: [Vertex; 3], z_plane: f64) -> TriangleSlice {
         let classes = classify_all(vs, z_plane);
-        intersect_triangle_z(vs, classes, z_plane, unit_edges())
+        intersect_triangle_z(vs, classes, z_plane, unit_edges(), unit_face_idx())
     }
 
     #[test]
@@ -302,16 +362,76 @@ mod plane_intersect_tests {
     }
 
     #[test]
-    fn triangle_aob_through_on_vertex_returns_empty_under_skip_policy() {
-        // AOB: one above, one On, one below. Plan policy skips this
-        // to keep the stitcher's "two segment endpoints per edge id"
-        // invariant intact.
+    fn triangle_aob_through_on_vertex_v1_emits_through_vertex_segment() {
+        // AOB with V1 (slot index 1) on the plane: V0 above, V1 on, V2 below.
+        // The segment runs from V1 (projected) to the crossing on edge V0-V2.
         let vs = [
             Vertex::new([0.0, 0.0, 1.0]),
             Vertex::new([1.0, 0.0, 0.0]),
             Vertex::new([0.0, 1.0, -1.0]),
         ];
-        assert_eq!(run(vs, 0.0), TriangleSlice::Empty);
+        let result = run(vs, 0.0);
+        let TriangleSlice::ThroughVertex {
+            vertex_idx,
+            segment,
+        } = result
+        else {
+            panic!("expected ThroughVertex, got {result:?}");
+        };
+        // unit_edges() ties slot index k to vertex index k, so the on-vertex
+        // at slot 1 is VertexIndex 1.
+        assert_eq!(vertex_idx, vi(1));
+        // Endpoint A sits exactly on V1's XY projection (1.0, 0.0).
+        assert!((segment.a.x - 1.0).abs() < 1e-9);
+        assert!((segment.a.y - 0.0).abs() < 1e-9);
+        assert_eq!(segment.a_tag, EndpointTag::Vertex(vi(1)));
+        // Endpoint B sits at the midpoint of edge V0-V2 (a 1:-1 z split).
+        assert!((segment.b.x - 0.0).abs() < 1e-9);
+        assert!((segment.b.y - 0.5).abs() < 1e-9);
+        assert_eq!(segment.b_tag, EndpointTag::Edge(EdgeId::new(vi(2), vi(0))));
+        assert_eq!(segment.source_face, unit_face_idx());
+    }
+
+    #[test]
+    fn triangle_aob_through_on_vertex_v0_emits_through_vertex_segment() {
+        // AOB with V0 (slot 0) on the plane: V0 on, V1 above, V2 below.
+        let vs = [
+            Vertex::new([0.0, 0.0, 0.0]),
+            Vertex::new([1.0, 0.0, 1.0]),
+            Vertex::new([0.0, 1.0, -1.0]),
+        ];
+        let result = run(vs, 0.0);
+        let TriangleSlice::ThroughVertex {
+            vertex_idx,
+            segment,
+        } = result
+        else {
+            panic!("expected ThroughVertex, got {result:?}");
+        };
+        assert_eq!(vertex_idx, vi(0));
+        assert_eq!(segment.a_tag, EndpointTag::Vertex(vi(0)));
+        assert_eq!(segment.b_tag, EndpointTag::Edge(EdgeId::new(vi(1), vi(2))));
+    }
+
+    #[test]
+    fn triangle_aob_through_on_vertex_v2_emits_through_vertex_segment() {
+        // AOB with V2 (slot 2) on the plane: V0 below, V1 above, V2 on.
+        let vs = [
+            Vertex::new([0.0, 0.0, -1.0]),
+            Vertex::new([1.0, 0.0, 1.0]),
+            Vertex::new([0.0, 1.0, 0.0]),
+        ];
+        let result = run(vs, 0.0);
+        let TriangleSlice::ThroughVertex {
+            vertex_idx,
+            segment,
+        } = result
+        else {
+            panic!("expected ThroughVertex, got {result:?}");
+        };
+        assert_eq!(vertex_idx, vi(2));
+        assert_eq!(segment.a_tag, EndpointTag::Vertex(vi(2)));
+        assert_eq!(segment.b_tag, EndpointTag::Edge(EdgeId::new(vi(0), vi(1))));
     }
 
     #[test]
