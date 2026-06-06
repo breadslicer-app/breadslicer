@@ -38,6 +38,8 @@ mod tests_identity;
 #[cfg(test)]
 mod tests_length;
 #[cfg(test)]
+mod tests_mirror;
+#[cfg(test)]
 mod tests_non_empty_string;
 #[cfg(test)]
 mod tests_pixel_resolution;

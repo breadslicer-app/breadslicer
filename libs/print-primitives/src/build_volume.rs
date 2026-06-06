@@ -19,10 +19,42 @@ use crate::length::{LengthOutOfRange, PositiveFiniteMm};
 /// Build volume in millimetres, validated finite and strictly positive
 /// per axis on construction.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(try_from = "RawBuildVolume", into = "RawBuildVolume")
+)]
 pub struct BuildVolume {
     x_mm: f64,
     y_mm: f64,
     z_mm: f64,
+}
+
+#[cfg(feature = "serde")]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct RawBuildVolume {
+    x_mm: f64,
+    y_mm: f64,
+    z_mm: f64,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawBuildVolume> for BuildVolume {
+    type Error = AxisOutOfRange;
+    fn try_from(raw: RawBuildVolume) -> Result<Self, Self::Error> {
+        Self::new(raw.x_mm, raw.y_mm, raw.z_mm)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<BuildVolume> for RawBuildVolume {
+    fn from(bv: BuildVolume) -> Self {
+        Self {
+            x_mm: bv.x_mm,
+            y_mm: bv.y_mm,
+            z_mm: bv.z_mm,
+        }
+    }
 }
 
 /// Returned by [`BuildVolume::new`] when one of the axes failed the

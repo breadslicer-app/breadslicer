@@ -159,3 +159,69 @@ fn length_out_of_range_display_is_unit_agnostic() {
     );
     assert!(msg.contains("length"), "msg: {msg}");
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn positive_finite_mm_roundtrip_through_toml() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrapper {
+        value: PositiveFiniteMm,
+    }
+    let original = Wrapper {
+        value: PositiveFiniteMm::new(0.05).unwrap(),
+    };
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: Wrapper = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn positive_finite_mm_deserialise_rejects_zero() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[allow(dead_code)]
+        value: PositiveFiniteMm,
+    }
+    let toml = "value = 0.0\n";
+    assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn positive_finite_mm_deserialise_rejects_negative() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[allow(dead_code)]
+        value: PositiveFiniteMm,
+    }
+    let toml = "value = -1.0\n";
+    assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn positive_finite_microns_roundtrip_through_toml() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrapper {
+        value: PositiveFiniteMicrons,
+    }
+    let original = Wrapper {
+        value: PositiveFiniteMicrons::new(18.0).unwrap(),
+    };
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: Wrapper = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn positive_finite_microns_deserialise_rejects_zero() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[allow(dead_code)]
+        value: PositiveFiniteMicrons,
+    }
+    let toml = "value = 0.0\n";
+    assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}

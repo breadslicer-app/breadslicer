@@ -15,9 +15,36 @@ use sc_mesh_core::primitives::CoordAxis;
 
 /// A raster resolution, validated non-zero per axis on construction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(try_from = "RawPixelResolution", into = "RawPixelResolution")
+)]
 pub struct PixelResolution {
     x: u32,
     y: u32,
+}
+
+#[cfg(feature = "serde")]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct RawPixelResolution {
+    x: u32,
+    y: u32,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawPixelResolution> for PixelResolution {
+    type Error = ZeroPixelExtentError;
+    fn try_from(raw: RawPixelResolution) -> Result<Self, Self::Error> {
+        Self::new(raw.x, raw.y)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<PixelResolution> for RawPixelResolution {
+    fn from(res: PixelResolution) -> Self {
+        Self { x: res.x, y: res.y }
+    }
 }
 
 /// Returned by [`PixelResolution::new`] when one of the axes was zero.

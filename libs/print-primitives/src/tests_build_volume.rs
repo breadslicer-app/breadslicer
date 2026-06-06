@@ -67,3 +67,36 @@ fn axis_out_of_range_display_includes_axis_and_value() {
     assert!(msg.contains("X axis"), "msg: {msg}");
     assert!(msg.contains("got 0"), "msg: {msg}");
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn build_volume_deserialises_from_toml() {
+    let toml = "x_mm = 220.0\ny_mm = 220.0\nz_mm = 250.0\n";
+    let bv: BuildVolume = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(bv.x_mm(), 220.0);
+    assert_eq!(bv.y_mm(), 220.0);
+    assert_eq!(bv.z_mm(), 250.0);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn build_volume_deserialise_rejects_zero_axis() {
+    let toml = "x_mm = 0.0\ny_mm = 220.0\nz_mm = 250.0\n";
+    assert!(toml_edit::de::from_str::<BuildVolume>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn build_volume_deserialise_rejects_negative_axis() {
+    let toml = "x_mm = 220.0\ny_mm = -1.0\nz_mm = 250.0\n";
+    assert!(toml_edit::de::from_str::<BuildVolume>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn build_volume_roundtrip_through_toml_preserves_value() {
+    let original = BuildVolume::new(192.0, 120.0, 200.0).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: BuildVolume = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}

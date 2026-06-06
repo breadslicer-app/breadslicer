@@ -13,6 +13,7 @@
 /// Per-axis mirror flags for raster output orientation. No invariants
 /// to validate; both flags are free.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct Mirror {
     pub x: bool,
     pub y: bool,

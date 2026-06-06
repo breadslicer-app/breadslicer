@@ -116,3 +116,35 @@ fn pixel_axis_out_of_range_source_chains_to_length_out_of_range() {
         "chained msg: {chained_msg}"
     );
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn pixel_size_microns_deserialises_from_toml() {
+    let toml = "x = 18.0\ny = 18.0\n";
+    let size: PixelSizeMicrons = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(size.x.value(), 18.0);
+    assert_eq!(size.y.value(), 18.0);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn pixel_size_microns_deserialise_rejects_zero_x() {
+    let toml = "x = 0.0\ny = 18.0\n";
+    assert!(toml_edit::de::from_str::<PixelSizeMicrons>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn pixel_size_microns_deserialise_rejects_negative_y() {
+    let toml = "x = 18.0\ny = -1.0\n";
+    assert!(toml_edit::de::from_str::<PixelSizeMicrons>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn pixel_size_microns_roundtrip_through_toml_preserves_value() {
+    let original = PixelSizeMicrons::new(34.0, 51.0).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: PixelSizeMicrons = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}

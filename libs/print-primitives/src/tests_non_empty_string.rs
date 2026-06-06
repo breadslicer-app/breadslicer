@@ -71,3 +71,30 @@ fn empty_string_error_display_mentions_empty() {
     let msg = format!("{}", EmptyStringError);
     assert!(msg.contains("empty"), "msg: {msg}");
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn non_empty_string_roundtrip_through_toml() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrapper {
+        value: NonEmptyString,
+    }
+    let original = Wrapper {
+        value: NonEmptyString::new("Elegoo Mars 3 Pro").unwrap(),
+    };
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: Wrapper = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn non_empty_string_deserialise_rejects_empty() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[allow(dead_code)]
+        value: NonEmptyString,
+    }
+    let toml = "value = \"\"\n";
+    assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}

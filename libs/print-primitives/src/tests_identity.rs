@@ -239,3 +239,57 @@ fn invalid_profile_id_display_for_invalid_char_includes_value_and_index() {
     assert!(msg.contains("Foo"), "msg: {msg}");
     assert!(msg.contains("byte 0"), "msg: {msg}");
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn printer_id_roundtrip_through_toml() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrapper {
+        value: PrinterId,
+    }
+    let original = Wrapper {
+        value: PrinterId::new("elegoo-mars-3-pro").unwrap(),
+    };
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: Wrapper = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn printer_id_deserialise_rejects_invalid_slug() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[allow(dead_code)]
+        value: PrinterId,
+    }
+    let toml = "value = \"Bad-Id\"\n";
+    assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn material_id_roundtrip_through_toml() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrapper {
+        value: MaterialId,
+    }
+    let original = Wrapper {
+        value: MaterialId::new("elegoo-resin-grey").unwrap(),
+    };
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: Wrapper = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn material_id_deserialise_rejects_invalid_slug() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        #[allow(dead_code)]
+        value: MaterialId,
+    }
+    let toml = "value = \"BAD\"\n";
+    assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}
