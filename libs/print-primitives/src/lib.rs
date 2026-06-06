@@ -17,6 +17,7 @@
 
 pub mod aa_level;
 pub mod build_volume;
+pub mod format;
 pub mod identity;
 pub mod length;
 pub mod mirror;
@@ -26,6 +27,7 @@ pub mod pixel_size;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
+pub use format::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
 pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
 pub use mirror::Mirror;
@@ -37,6 +39,8 @@ pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
 mod tests_aa_level;
 #[cfg(test)]
 mod tests_build_volume;
+#[cfg(test)]
+mod tests_format;
 #[cfg(test)]
 mod tests_identity;
 #[cfg(test)]
