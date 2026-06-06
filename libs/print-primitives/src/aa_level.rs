@@ -6,10 +6,10 @@
 //! Per-pixel anti-aliasing factor for raster output.
 //!
 //! [`AaLevel`] enumerates the supported anti-aliasing factors: off
-//! (no AA) and 2x / 4x / 8x super-sampling. Parsing via [`FromStr`]
-//! accepts numeric (`0`, `2`, `4`, `8`) and canonical (`off`, `x2`,
-//! `x4`, `x8`) spellings, case-insensitively. [`UnknownAaLevel`]
-//! reports the rejected input.
+//! (no AA) and 2x / 4x / 8x super-sampling. The canonical lowercase
+//! spellings `off`, `x2`, `x4`, `x8` are the only accepted forms for
+//! [`FromStr`] and (under the `serde` feature) TOML serialisation.
+//! [`UnknownAaLevel`] reports the rejected input.
 
 use std::fmt;
 use std::str::FromStr;
@@ -17,6 +17,8 @@ use std::str::FromStr;
 /// Per-pixel anti-aliasing factor. `Off` means no anti-aliasing; the
 /// `X2` / `X4` / `X8` variants specify the super-sampling factor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum AaLevel {
     Off,
     X2,
@@ -34,7 +36,7 @@ impl fmt::Display for UnknownAaLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown AA level \"{}\"; expected one of: 0, off, 2, x2, 4, x4, 8, x8",
+            "unknown AA level \"{}\"; expected one of: off, x2, x4, x8",
             self.got,
         )
     }
@@ -46,11 +48,11 @@ impl FromStr for AaLevel {
     type Err = UnknownAaLevel;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "0" | "off" => Ok(Self::Off),
-            "2" | "x2" => Ok(Self::X2),
-            "4" | "x4" => Ok(Self::X4),
-            "8" | "x8" => Ok(Self::X8),
+        match s {
+            "off" => Ok(Self::Off),
+            "x2" => Ok(Self::X2),
+            "x4" => Ok(Self::X4),
+            "x8" => Ok(Self::X8),
             _ => Err(UnknownAaLevel { got: s.to_owned() }),
         }
     }
