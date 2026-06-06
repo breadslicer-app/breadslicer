@@ -21,6 +21,7 @@ pub mod length;
 pub mod mirror;
 pub mod non_empty_string;
 pub mod pixel_resolution;
+pub mod pixel_size;
 
 pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
@@ -28,6 +29,7 @@ pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, Posi
 pub use mirror::Mirror;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
+pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
 
 #[cfg(test)]
 mod tests_build_volume;
@@ -39,3 +41,5 @@ mod tests_length;
 mod tests_non_empty_string;
 #[cfg(test)]
 mod tests_pixel_resolution;
+#[cfg(test)]
+mod tests_pixel_size;
