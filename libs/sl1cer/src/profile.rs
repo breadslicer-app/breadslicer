@@ -11,11 +11,10 @@
 //! assembles them and never fails.
 
 use std::fmt;
-use std::str::FromStr;
 
 pub use sc_print_primitives::{
-    AxisOutOfRange, BuildVolume, LengthOutOfRange, Mirror, ParseLengthError, PixelResolution,
-    PositiveFiniteMm, ZeroPixelExtentError,
+    AaLevel, AxisOutOfRange, BuildVolume, LengthOutOfRange, Mirror, ParseLengthError,
+    PixelResolution, PositiveFiniteMm, UnknownAaLevel, ZeroPixelExtentError,
 };
 
 /// Why [`LayerSchedule::uniform`] rejected its inputs. The two
@@ -56,49 +55,6 @@ impl std::error::Error for InvalidLayerSchedule {
                 Some(source)
             }
             Self::ZeroTotalLayers => None,
-        }
-    }
-}
-
-/// Per-pixel anti-aliasing factor for the raster tier. `Off` is the
-/// binary scanline path; the others apply N-step Y sub-sampling with
-/// analytic X coverage.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AaLevel {
-    Off,
-    X2,
-    X4,
-    X8,
-}
-
-/// Returned when [`AaLevel::from_str`] receives an unknown name.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnknownAaLevel {
-    pub got: String,
-}
-
-impl fmt::Display for UnknownAaLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unknown AA level \"{}\"; expected one of: 0, off, 2, x2, 4, x4, 8, x8",
-            self.got,
-        )
-    }
-}
-
-impl std::error::Error for UnknownAaLevel {}
-
-impl FromStr for AaLevel {
-    type Err = UnknownAaLevel;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "0" | "off" => Ok(Self::Off),
-            "2" | "x2" => Ok(Self::X2),
-            "4" | "x4" => Ok(Self::X4),
-            "8" | "x8" => Ok(Self::X8),
-            _ => Err(UnknownAaLevel { got: s.to_owned() }),
         }
     }
 }
@@ -338,36 +294,5 @@ mod profile_tests {
         assert_eq!(profile.mirror(), Mirror::default());
         assert_eq!(profile.aa_level(), AaLevel::Off);
         assert_eq!(profile.packing_mode(), PackingMode::None);
-    }
-
-    #[test]
-    fn aa_level_from_str_parses_numeric_shorthand() {
-        assert_eq!(AaLevel::from_str("0"), Ok(AaLevel::Off));
-        assert_eq!(AaLevel::from_str("2"), Ok(AaLevel::X2));
-        assert_eq!(AaLevel::from_str("4"), Ok(AaLevel::X4));
-        assert_eq!(AaLevel::from_str("8"), Ok(AaLevel::X8));
-    }
-
-    #[test]
-    fn aa_level_from_str_parses_canonical_names() {
-        assert_eq!(AaLevel::from_str("off"), Ok(AaLevel::Off));
-        assert_eq!(AaLevel::from_str("x2"), Ok(AaLevel::X2));
-        assert_eq!(AaLevel::from_str("x4"), Ok(AaLevel::X4));
-        assert_eq!(AaLevel::from_str("x8"), Ok(AaLevel::X8));
-    }
-
-    #[test]
-    fn aa_level_from_str_is_case_insensitive() {
-        assert_eq!(AaLevel::from_str("Off"), Ok(AaLevel::Off));
-        assert_eq!(AaLevel::from_str("X4"), Ok(AaLevel::X4));
-    }
-
-    #[test]
-    fn aa_level_from_str_rejects_unknown_name() {
-        let err = AaLevel::from_str("3").unwrap_err();
-        assert_eq!(err.got, "3");
-        let msg = format!("{err}");
-        assert!(msg.contains("3"), "msg: {msg}");
-        assert!(msg.contains("expected"), "msg: {msg}");
     }
 }

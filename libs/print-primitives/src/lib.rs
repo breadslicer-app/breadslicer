@@ -15,6 +15,7 @@
 //! crate so neither has to depend on the other for these shared
 //! foundations.
 
+pub mod aa_level;
 pub mod build_volume;
 pub mod identity;
 pub mod length;
@@ -23,6 +24,7 @@ pub mod non_empty_string;
 pub mod pixel_resolution;
 pub mod pixel_size;
 
+pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
 pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
@@ -31,6 +33,8 @@ pub use non_empty_string::{EmptyStringError, NonEmptyString};
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
 
+#[cfg(test)]
+mod tests_aa_level;
 #[cfg(test)]
 mod tests_build_volume;
 #[cfg(test)]
