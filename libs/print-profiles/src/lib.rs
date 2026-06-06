@@ -18,12 +18,16 @@
 //! material-profile bounded context.
 
 pub mod material_identity;
+pub mod printer_hardware;
 pub mod printer_identity;
 
 pub use material_identity::MaterialIdentity;
+pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 
 #[cfg(test)]
 mod tests_material_identity;
+#[cfg(test)]
+mod tests_printer_hardware;
 #[cfg(test)]
 mod tests_printer_identity;
