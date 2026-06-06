@@ -11,3 +11,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
 sc-mesh-core.workspace = true
+serde = { workspace = true, optional = true }
+
+[features]
+serde = ["dep:serde"]
