@@ -21,6 +21,7 @@ pub mod format;
 pub mod identity;
 pub mod length;
 pub mod mirror;
+pub mod network;
 pub mod non_empty_string;
 pub mod pixel_resolution;
 pub mod pixel_size;
@@ -31,6 +32,7 @@ pub use format::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
 pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
 pub use mirror::Mirror;
+pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
@@ -47,6 +49,8 @@ mod tests_identity;
 mod tests_length;
 #[cfg(test)]
 mod tests_mirror;
+#[cfg(test)]
+mod tests_network;
 #[cfg(test)]
 mod tests_non_empty_string;
 #[cfg(test)]
