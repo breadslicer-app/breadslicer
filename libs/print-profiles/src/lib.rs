@@ -16,3 +16,14 @@
 //! the resolved configuration and project it to their own input ports.
 //! This crate does not depend on the slicer; it owns the printer- and
 //! material-profile bounded context.
+
+pub mod material_identity;
+pub mod printer_identity;
+
+pub use material_identity::MaterialIdentity;
+pub use printer_identity::PrinterIdentity;
+
+#[cfg(test)]
+mod tests_material_identity;
+#[cfg(test)]
+mod tests_printer_identity;
