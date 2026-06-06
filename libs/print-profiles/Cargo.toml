@@ -14,3 +14,6 @@ sc-print-primitives = { workspace = true, features = ["serde"] }
 semver = { workspace = true }
 serde = { workspace = true }
 toml_edit = { workspace = true }
+
+[dev-dependencies]
+nonempty-collections = { workspace = true }
