@@ -24,7 +24,7 @@ pub mod pixel_resolution;
 
 pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
-pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMm};
+pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
 pub use mirror::Mirror;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};

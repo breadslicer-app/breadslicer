@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMm};
+use super::length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
 
 #[test]
 fn positive_finite_mm_new_accepts_positive_finite() {
@@ -62,4 +62,100 @@ fn positive_finite_mm_from_str_rejects_out_of_range() {
     assert!(matches!(err, ParseLengthError::OutOfRange(_)));
     let msg = format!("{err}");
     assert!(msg.contains("-1"), "msg: {msg}");
+}
+
+#[test]
+fn positive_finite_mm_try_from_f64_accepts_positive_finite() {
+    let v = PositiveFiniteMm::try_from(0.05).unwrap();
+    assert_eq!(v.value(), 0.05);
+}
+
+#[test]
+fn positive_finite_mm_try_from_f64_rejects_zero() {
+    let err = PositiveFiniteMm::try_from(0.0).unwrap_err();
+    assert_eq!(err.value, 0.0);
+}
+
+#[test]
+fn positive_finite_mm_into_f64_returns_inner_value() {
+    let v = PositiveFiniteMm::new(0.05).unwrap();
+    let raw: f64 = v.into();
+    assert_eq!(raw, 0.05);
+}
+
+#[test]
+fn positive_finite_microns_new_accepts_positive_finite() {
+    let v = PositiveFiniteMicrons::new(18.0).unwrap();
+    assert_eq!(v.value(), 18.0);
+}
+
+#[test]
+fn positive_finite_microns_new_rejects_zero() {
+    let err = PositiveFiniteMicrons::new(0.0).unwrap_err();
+    assert_eq!(err.value, 0.0);
+}
+
+#[test]
+fn positive_finite_microns_new_rejects_negative() {
+    let err = PositiveFiniteMicrons::new(-1.0).unwrap_err();
+    assert_eq!(err.value, -1.0);
+}
+
+#[test]
+fn positive_finite_microns_new_rejects_nan() {
+    let err = PositiveFiniteMicrons::new(f64::NAN).unwrap_err();
+    assert!(err.value.is_nan());
+}
+
+#[test]
+fn positive_finite_microns_new_rejects_infinity() {
+    assert!(PositiveFiniteMicrons::new(f64::INFINITY).is_err());
+    assert!(PositiveFiniteMicrons::new(f64::NEG_INFINITY).is_err());
+}
+
+#[test]
+fn positive_finite_microns_from_str_parses_valid_input() {
+    let v: PositiveFiniteMicrons = "18.5".parse().unwrap();
+    assert_eq!(v.value(), 18.5);
+}
+
+#[test]
+fn positive_finite_microns_from_str_rejects_non_numeric() {
+    let err = "abc".parse::<PositiveFiniteMicrons>().unwrap_err();
+    assert!(matches!(err, ParseLengthError::NotANumber(_)));
+}
+
+#[test]
+fn positive_finite_microns_from_str_rejects_out_of_range() {
+    let err = "-1.0".parse::<PositiveFiniteMicrons>().unwrap_err();
+    assert!(matches!(err, ParseLengthError::OutOfRange(_)));
+}
+
+#[test]
+fn positive_finite_microns_try_from_f64_accepts_positive_finite() {
+    let v = PositiveFiniteMicrons::try_from(18.0).unwrap();
+    assert_eq!(v.value(), 18.0);
+}
+
+#[test]
+fn positive_finite_microns_try_from_f64_rejects_zero() {
+    let err = PositiveFiniteMicrons::try_from(0.0).unwrap_err();
+    assert_eq!(err.value, 0.0);
+}
+
+#[test]
+fn positive_finite_microns_into_f64_returns_inner_value() {
+    let v = PositiveFiniteMicrons::new(18.0).unwrap();
+    let raw: f64 = v.into();
+    assert_eq!(raw, 18.0);
+}
+
+#[test]
+fn length_out_of_range_display_is_unit_agnostic() {
+    let msg = format!("{}", LengthOutOfRange { value: -0.5 });
+    assert!(
+        !msg.contains("millimetre"),
+        "Display should be unit-agnostic: {msg}"
+    );
+    assert!(msg.contains("length"), "msg: {msg}");
 }
