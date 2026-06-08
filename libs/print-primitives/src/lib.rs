@@ -31,7 +31,10 @@ pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
 pub use format::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
-pub use length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
+pub use length::{
+    LengthOutOfRange, LengthRange, LengthRangeBoundsInverted, ParseLengthError,
+    PositiveFiniteMicrons, PositiveFiniteMm,
+};
 pub use mirror::Mirror;
 pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};

@@ -10,7 +10,9 @@
 //! in millimetres and microns respectively. Both share the
 //! [`LengthOutOfRange`] failure type (the invariant is unit-agnostic;
 //! the wrapping newtype carries the unit) and the [`ParseLengthError`]
-//! used by their `FromStr` impls.
+//! used by their `FromStr` impls. [`LengthRange`] is the `{ min, max }`
+//! envelope in millimetres; construction enforces `min < max`
+//! strictly through [`LengthRangeBoundsInverted`].
 
 use std::fmt;
 use std::str::FromStr;
@@ -173,5 +175,94 @@ impl FromStr for PositiveFiniteMicrons {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let value: f64 = s.parse().map_err(ParseLengthError::NotANumber)?;
         Self::new(value).map_err(ParseLengthError::OutOfRange)
+    }
+}
+
+/// A `{ min, max }` envelope of lengths in millimetres. Construction
+/// enforces `min < max` strictly; both bounds are
+/// [`PositiveFiniteMm`], so non-positive or non-finite values fail
+/// before this type is reached.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(try_from = "RawLengthRange", into = "RawLengthRange")
+)]
+pub struct LengthRange {
+    min: PositiveFiniteMm,
+    max: PositiveFiniteMm,
+}
+
+/// Returned by [`LengthRange::new`] (and TOML deserialisation) when
+/// `min` is not strictly less than `max`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LengthRangeBoundsInverted {
+    pub min: f64,
+    pub max: f64,
+}
+
+impl fmt::Display for LengthRangeBoundsInverted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "length range min ({} mm) is not strictly less than max ({} mm)",
+            self.min, self.max,
+        )
+    }
+}
+
+impl std::error::Error for LengthRangeBoundsInverted {}
+
+impl LengthRange {
+    /// Construct from already-validated bounds. Fails with
+    /// [`LengthRangeBoundsInverted`] when `min` is not strictly less
+    /// than `max`.
+    pub fn new(
+        min: PositiveFiniteMm,
+        max: PositiveFiniteMm,
+    ) -> Result<Self, LengthRangeBoundsInverted> {
+        if min.value() < max.value() {
+            Ok(Self { min, max })
+        } else {
+            Err(LengthRangeBoundsInverted {
+                min: min.value(),
+                max: max.value(),
+            })
+        }
+    }
+
+    #[inline]
+    pub fn min(self) -> PositiveFiniteMm {
+        self.min
+    }
+
+    #[inline]
+    pub fn max(self) -> PositiveFiniteMm {
+        self.max
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct RawLengthRange {
+    min: PositiveFiniteMm,
+    max: PositiveFiniteMm,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawLengthRange> for LengthRange {
+    type Error = LengthRangeBoundsInverted;
+    fn try_from(raw: RawLengthRange) -> Result<Self, Self::Error> {
+        Self::new(raw.min, raw.max)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<LengthRange> for RawLengthRange {
+    fn from(value: LengthRange) -> Self {
+        Self {
+            min: value.min,
+            max: value.max,
+        }
     }
 }

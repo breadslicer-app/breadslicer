@@ -3,7 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::length::{LengthOutOfRange, ParseLengthError, PositiveFiniteMicrons, PositiveFiniteMm};
+use super::length::{
+    LengthOutOfRange, LengthRange, LengthRangeBoundsInverted, ParseLengthError,
+    PositiveFiniteMicrons, PositiveFiniteMm,
+};
 
 #[test]
 fn positive_finite_mm_new_accepts_positive_finite() {
@@ -224,4 +227,138 @@ fn positive_finite_microns_deserialise_rejects_zero() {
     }
     let toml = "value = 0.0\n";
     assert!(toml_edit::de::from_str::<Wrapper>(toml).is_err());
+}
+
+#[test]
+fn length_range_new_accepts_strictly_ordered_bounds() {
+    let min = PositiveFiniteMm::new(0.01).unwrap();
+    let max = PositiveFiniteMm::new(0.15).unwrap();
+    let r = LengthRange::new(min, max).unwrap();
+    assert_eq!(r.min().value(), 0.01);
+    assert_eq!(r.max().value(), 0.15);
+}
+
+#[test]
+fn length_range_new_rejects_equal_bounds() {
+    let bound = PositiveFiniteMm::new(0.05).unwrap();
+    let err = LengthRange::new(bound, bound).unwrap_err();
+    assert_eq!(
+        err,
+        LengthRangeBoundsInverted {
+            min: 0.05,
+            max: 0.05,
+        }
+    );
+}
+
+#[test]
+fn length_range_new_rejects_inverted_bounds() {
+    let min = PositiveFiniteMm::new(0.15).unwrap();
+    let max = PositiveFiniteMm::new(0.01).unwrap();
+    let err = LengthRange::new(min, max).unwrap_err();
+    assert_eq!(
+        err,
+        LengthRangeBoundsInverted {
+            min: 0.15,
+            max: 0.01,
+        }
+    );
+}
+
+#[test]
+fn length_range_bounds_inverted_display_mentions_unit_and_values() {
+    let err = LengthRangeBoundsInverted { min: 0.2, max: 0.1 };
+    let msg = format!("{err}");
+    assert!(msg.contains("0.2"), "msg: {msg}");
+    assert!(msg.contains("0.1"), "msg: {msg}");
+    assert!(msg.contains("mm"), "msg: {msg}");
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_deserialises_valid_toml_table() {
+    let toml = r#"
+min = 0.01
+max = 0.15
+"#;
+    let parsed: LengthRange = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(parsed.min().value(), 0.01);
+    assert_eq!(parsed.max().value(), 0.15);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_deserialise_rejects_inverted_bounds() {
+    let toml = r#"
+min = 0.15
+max = 0.01
+"#;
+    assert!(toml_edit::de::from_str::<LengthRange>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_deserialise_rejects_equal_bounds() {
+    let toml = r#"
+min = 0.05
+max = 0.05
+"#;
+    assert!(toml_edit::de::from_str::<LengthRange>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_deserialise_rejects_non_positive_min() {
+    let toml = r#"
+min = 0.0
+max = 0.1
+"#;
+    assert!(toml_edit::de::from_str::<LengthRange>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_deserialise_rejects_non_finite_max() {
+    let toml = r#"
+min = 0.01
+max = nan
+"#;
+    assert!(toml_edit::de::from_str::<LengthRange>(toml).is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_serialise_emits_min_and_max_fields() {
+    let r = LengthRange::new(
+        PositiveFiniteMm::new(0.01).unwrap(),
+        PositiveFiniteMm::new(0.15).unwrap(),
+    )
+    .unwrap();
+    #[derive(serde::Serialize)]
+    struct Wrap {
+        range: LengthRange,
+    }
+    let toml = toml_edit::ser::to_string(&Wrap { range: r }).unwrap();
+    assert!(toml.contains("min"), "toml: {toml}");
+    assert!(toml.contains("max"), "toml: {toml}");
+    assert!(toml.contains("0.01"), "toml: {toml}");
+    assert!(toml.contains("0.15"), "toml: {toml}");
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn length_range_roundtrip_preserves_value() {
+    let original = LengthRange::new(
+        PositiveFiniteMm::new(0.02).unwrap(),
+        PositiveFiniteMm::new(0.20).unwrap(),
+    )
+    .unwrap();
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrap {
+        range: LengthRange,
+    }
+    let wrap = Wrap { range: original };
+    let serialised = toml_edit::ser::to_string(&wrap).unwrap();
+    let roundtripped: Wrap = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(wrap, roundtripped);
 }
