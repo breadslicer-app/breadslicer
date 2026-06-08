@@ -25,6 +25,7 @@ pub mod network;
 pub mod non_empty_string;
 pub mod pixel_resolution;
 pub mod pixel_size;
+pub mod speed;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
@@ -36,6 +37,10 @@ pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
+pub use speed::{
+    PositiveFiniteMmPerMin, SpeedMmPerMinOutOfRange, SpeedRangeMmPerMin,
+    SpeedRangeMmPerMinBoundsInverted,
+};
 
 #[cfg(test)]
 mod tests_aa_level;
@@ -57,3 +62,5 @@ mod tests_non_empty_string;
 mod tests_pixel_resolution;
 #[cfg(test)]
 mod tests_pixel_size;
+#[cfg(test)]
+mod tests_speed;
