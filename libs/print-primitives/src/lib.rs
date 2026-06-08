@@ -17,6 +17,7 @@
 
 pub mod aa_level;
 pub mod build_volume;
+pub mod energy_density;
 pub mod format;
 pub mod identity;
 pub mod length;
@@ -30,6 +31,7 @@ pub mod speed;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
+pub use energy_density::{MjPerCm2OutOfRange, PositiveFiniteMjPerCm2};
 pub use format::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 pub use identity::{InvalidProfileId, MaterialId, PrinterId};
 pub use length::{
@@ -51,6 +53,8 @@ pub use speed::{
 mod tests_aa_level;
 #[cfg(test)]
 mod tests_build_volume;
+#[cfg(test)]
+mod tests_energy_density;
 #[cfg(test)]
 mod tests_format;
 #[cfg(test)]
