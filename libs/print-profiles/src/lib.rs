@@ -19,11 +19,13 @@
 
 pub mod material_identity;
 pub mod printer_capabilities;
+pub mod printer_constraints;
 pub mod printer_hardware;
 pub mod printer_identity;
 
 pub use material_identity::MaterialIdentity;
 pub use printer_capabilities::PrinterCapabilities;
+pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 
@@ -31,6 +33,8 @@ pub use printer_identity::PrinterIdentity;
 mod tests_material_identity;
 #[cfg(test)]
 mod tests_printer_capabilities;
+#[cfg(test)]
+mod tests_printer_constraints;
 #[cfg(test)]
 mod tests_printer_hardware;
 #[cfg(test)]
