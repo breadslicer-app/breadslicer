@@ -55,6 +55,7 @@ use crate::printer_profile::PrinterProfile;
 use crate::resolve_error::ResolveError;
 use crate::resolve_warning::{IntentSource, ResolveWarning};
 use crate::resolved_field::ResolvedField;
+use crate::scene_overrides::SceneOverrides;
 use crate::value_source::ValueSource;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -310,4 +311,123 @@ fn apply_field_policies(
         }
     }
     Ok(current)
+}
+
+pub(crate) fn apply_scene_overrides(
+    overrides: &SceneOverrides,
+    picked: &mut PickedValues,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+    records: &mut Vec<OverrideRecord>,
+) -> Result<(), ResolveError> {
+    if let Some(value) = overrides.layer_height_mm {
+        let prior = picked.layer_height_mm.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::LayerHeightMm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::LayerHeightMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.layer_height_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped layer height stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.normal_exposure_sec {
+        let prior = picked.normal_exposure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::NormalExposureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.normal_exposure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_exposure_sec {
+        let prior = picked.bottom_exposure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomExposureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_exposure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_layer_count {
+        let prior = picked.bottom_layer_count.map(f64::from);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLayerCount,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: f64::from(value),
+        });
+        picked.bottom_layer_count = Some(value);
+    }
+    if let Some(value) = overrides.lift_distance_mm {
+        let prior = picked.lift_distance_mm.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::LiftDistanceMm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::LiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.lift_speed_mm_min {
+        let prior = picked.lift_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::LiftSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::LiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped).expect("snapped lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.retract_speed_mm_min {
+        let prior = picked.retract_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::RetractSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::RetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped retract speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.scale_compensation_pct {
+        // Compound field: no OverrideRecord is emitted because the
+        // scalar `final_value` field cannot represent the three
+        // per-axis values.
+        picked.scale_compensation_pct = Some(value);
+    }
+    Ok(())
 }

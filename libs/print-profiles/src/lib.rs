@@ -37,6 +37,7 @@ pub mod resolve_warning;
 pub mod resolved_field;
 pub mod resolved_print_config;
 mod resolver;
+pub mod scene_overrides;
 pub mod value_source;
 
 pub use library::{UserLibraryDirError, user_library_dir};
@@ -63,6 +64,7 @@ pub use resolve_error::ResolveError;
 pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 pub use resolved_field::ResolvedField;
 pub use resolved_print_config::ResolvedPrintConfig;
+pub use scene_overrides::SceneOverrides;
 pub use value_source::ValueSource;
 
 #[cfg(test)]
@@ -105,5 +107,7 @@ mod tests_resolved_field;
 mod tests_resolved_print_config;
 #[cfg(test)]
 mod tests_resolver;
+#[cfg(test)]
+mod tests_scene_overrides;
 #[cfg(test)]
 mod tests_value_source;

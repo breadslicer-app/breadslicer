@@ -4,7 +4,8 @@
  */
 
 use sc_print_primitives::{
-    LengthRange, PositiveFiniteMm, PositiveFiniteMmPerMin, SpeedRangeMmPerMin,
+    LengthRange, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
+    ScaleCompensationPercent, SpeedRangeMmPerMin,
 };
 
 use super::material_profile::MaterialProfile;
@@ -13,7 +14,10 @@ use super::printer_profile::PrinterProfile;
 use super::resolve_error::ResolveError;
 use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
-use super::resolver::{PickedValues, apply_constraints, pick_and_derive_material};
+use super::resolver::{
+    PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material,
+};
+use super::scene_overrides::SceneOverrides;
 use super::value_source::ValueSource;
 
 const PRINTER_WITH_LIGHT_INTENSITY: &str = r#"
@@ -654,4 +658,237 @@ fn apply_constraints_with_no_declared_constraints_is_noop() {
     assert_eq!(picked.lift_speed_mm_min.unwrap().value(), 120.0);
     assert_eq!(picked.retract_speed_mm_min.unwrap().value(), 150.0);
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn override_overwrites_picked_value_and_emits_override_record() {
+    let mut picked = PickedValues {
+        normal_exposure_sec: Some(PositiveFiniteSec::new(2.5).unwrap()),
+        ..PickedValues::default()
+    };
+    let overrides = SceneOverrides {
+        normal_exposure_sec: Some(PositiveFiniteSec::new(3.0).unwrap()),
+        ..SceneOverrides::default()
+    };
+    let constraints = empty_constraints();
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked.normal_exposure_sec.unwrap().value(), 3.0);
+    let record = records
+        .iter()
+        .find(|r| r.field == ResolvedField::NormalExposureSec)
+        .expect("expected override record for normal_exposure_sec");
+    assert_eq!(record.source, ValueSource::Override);
+    assert_eq!(record.prior_value, Some(2.5));
+    assert_eq!(record.final_value, 3.0);
+}
+
+#[test]
+fn override_on_field_with_no_prior_value_records_none_for_prior() {
+    let mut picked = PickedValues::default();
+    let overrides = SceneOverrides {
+        bottom_layer_count: Some(8),
+        ..SceneOverrides::default()
+    };
+    let constraints = empty_constraints();
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked.bottom_layer_count, Some(8));
+    let record = records
+        .iter()
+        .find(|r| r.field == ResolvedField::BottomLayerCount)
+        .expect("expected override record for bottom_layer_count");
+    assert_eq!(record.prior_value, None);
+    assert_eq!(record.final_value, 8.0);
+}
+
+#[test]
+fn override_below_minimum_returns_rejected_below_minimum_error() {
+    let mut picked = PickedValues::default();
+    let overrides = SceneOverrides {
+        lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(30.0).unwrap()),
+        ..SceneOverrides::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_speed_range_mm_min: Some(
+            SpeedRangeMmPerMin::new(
+                PositiveFiniteMmPerMin::new(60.0).unwrap(),
+                PositiveFiniteMmPerMin::new(300.0).unwrap(),
+            )
+            .unwrap(),
+        ),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    let err = apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ResolveError::RejectedBelowMinimum {
+            field: ResolvedField::LiftSpeedMmMin,
+            value: 30.0,
+            minimum: 60.0,
+        },
+    ));
+}
+
+#[test]
+fn override_above_maximum_snaps_and_warns() {
+    let mut picked = PickedValues::default();
+    let overrides = SceneOverrides {
+        lift_distance_mm: Some(PositiveFiniteMm::new(10.0).unwrap()),
+        ..SceneOverrides::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_distance_max_mm: Some(PositiveFiniteMm::new(8.0).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked.lift_distance_mm.unwrap().value(), 8.0);
+    let record = records
+        .iter()
+        .find(|r| r.field == ResolvedField::LiftDistanceMm)
+        .expect("expected override record for lift_distance_mm");
+    assert_eq!(record.source, ValueSource::Override);
+    assert_eq!(record.final_value, 10.0);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::LiftDistanceMm,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn override_on_scale_compensation_sets_value_without_emitting_record() {
+    let mut picked = PickedValues::default();
+    let scale = ScaleCompensation {
+        x: ScaleCompensationPercent::new(1.0).unwrap(),
+        y: ScaleCompensationPercent::new(1.0).unwrap(),
+        z: ScaleCompensationPercent::new(0.5).unwrap(),
+    };
+    let overrides = SceneOverrides {
+        scale_compensation_pct: Some(scale),
+        ..SceneOverrides::default()
+    };
+    let constraints = empty_constraints();
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked.scale_compensation_pct.unwrap().x.value(), 1.0);
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.field == ResolvedField::ScaleCompensationPct),
+        "no record expected for compound override",
+    );
+}
+
+#[test]
+fn empty_scene_overrides_is_noop() {
+    let original_picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        normal_exposure_sec: Some(PositiveFiniteSec::new(2.5).unwrap()),
+        bottom_layer_count: Some(6),
+        ..PickedValues::default()
+    };
+    let mut picked = original_picked;
+    let overrides = SceneOverrides::default();
+    let constraints = empty_constraints();
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked, original_picked);
+    assert!(warnings.is_empty());
+    assert!(records.is_empty());
+}
+
+#[test]
+fn override_on_layer_height_snaps_range_then_quantises() {
+    let mut picked = PickedValues::default();
+    let overrides = SceneOverrides {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.30).unwrap()),
+        ..SceneOverrides::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.025).unwrap()),
+        layer_height_range_mm: Some(
+            LengthRange::new(
+                PositiveFiniteMm::new(0.02).unwrap(),
+                PositiveFiniteMm::new(0.10).unwrap(),
+            )
+            .unwrap(),
+        ),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.10);
+    let layer_record = records
+        .iter()
+        .find(|r| r.field == ResolvedField::LayerHeightMm)
+        .expect("expected override record for layer_height_mm");
+    assert_eq!(layer_record.final_value, 0.30);
 }
