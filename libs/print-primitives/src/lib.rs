@@ -28,6 +28,7 @@ pub mod non_empty_string;
 pub mod pixel_resolution;
 pub mod pixel_size;
 pub mod speed;
+pub mod time;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
@@ -48,6 +49,7 @@ pub use speed::{
     PositiveFiniteMmPerMin, SpeedMmPerMinOutOfRange, SpeedRangeMmPerMin,
     SpeedRangeMmPerMinBoundsInverted,
 };
+pub use time::{PositiveFiniteSec, SecOutOfRange};
 
 #[cfg(test)]
 mod tests_aa_level;
@@ -75,3 +77,5 @@ mod tests_pixel_resolution;
 mod tests_pixel_size;
 #[cfg(test)]
 mod tests_speed;
+#[cfg(test)]
+mod tests_time;
