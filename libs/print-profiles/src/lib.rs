@@ -24,6 +24,7 @@ pub mod material_identity;
 pub mod material_intent;
 pub mod material_per_printer;
 pub mod material_profile;
+pub mod material_resolved;
 pub mod override_record;
 pub mod printer_capabilities;
 pub mod printer_constraints;
@@ -33,6 +34,7 @@ pub mod printer_profile;
 pub mod resolve_error;
 pub mod resolve_warning;
 pub mod resolved_field;
+pub mod resolved_print_config;
 pub mod value_source;
 
 pub use library::{UserLibraryDirError, user_library_dir};
@@ -48,6 +50,7 @@ pub use material_identity::MaterialIdentity;
 pub use material_intent::MaterialIntent;
 pub use material_per_printer::MaterialPerPrinter;
 pub use material_profile::{MaterialProfile, MaterialProfileReservedSection};
+pub use material_resolved::MaterialResolved;
 pub use override_record::OverrideRecord;
 pub use printer_capabilities::PrinterCapabilities;
 pub use printer_constraints::PrinterConstraints;
@@ -57,6 +60,7 @@ pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection}
 pub use resolve_error::ResolveError;
 pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 pub use resolved_field::ResolvedField;
+pub use resolved_print_config::ResolvedPrintConfig;
 pub use value_source::ValueSource;
 
 #[cfg(test)]
@@ -73,6 +77,8 @@ mod tests_material_intent;
 mod tests_material_per_printer;
 #[cfg(test)]
 mod tests_material_profile;
+#[cfg(test)]
+mod tests_material_resolved;
 #[cfg(test)]
 mod tests_override_record;
 #[cfg(test)]
@@ -91,5 +97,7 @@ mod tests_resolve_error;
 mod tests_resolve_warning;
 #[cfg(test)]
 mod tests_resolved_field;
+#[cfg(test)]
+mod tests_resolved_print_config;
 #[cfg(test)]
 mod tests_value_source;
