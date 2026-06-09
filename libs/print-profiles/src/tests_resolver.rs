@@ -3,11 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use sc_print_primitives::{
+    LengthRange, PositiveFiniteMm, PositiveFiniteMmPerMin, SpeedRangeMmPerMin,
+};
+
 use super::material_profile::MaterialProfile;
+use super::printer_constraints::PrinterConstraints;
 use super::printer_profile::PrinterProfile;
-use super::resolve_warning::{IntentSource, ResolveWarning};
+use super::resolve_error::ResolveError;
+use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
-use super::resolver::pick_and_derive_material;
+use super::resolver::{PickedValues, apply_constraints, pick_and_derive_material};
 use super::value_source::ValueSource;
 
 const PRINTER_WITH_LIGHT_INTENSITY: &str = r#"
@@ -454,4 +460,198 @@ profile_version = "1.0.0"
     assert!(picked.bottom_layer_count.is_none());
     assert!(warnings.is_empty());
     assert!(records.is_empty());
+}
+
+fn empty_constraints() -> PrinterConstraints {
+    PrinterConstraints {
+        z_step_mm: None,
+        layer_height_range_mm: None,
+        lift_speed_range_mm_min: None,
+        retract_speed_range_mm_min: None,
+        lift_distance_max_mm: None,
+        light_intensity_mw_per_cm2: None,
+    }
+}
+
+#[test]
+fn apply_constraints_quantises_layer_height_emitting_warning_above_threshold() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.063).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.025).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    let snapped = picked.layer_height_mm.unwrap().value();
+    assert!(
+        (snapped - 0.075).abs() < 1e-12,
+        "expected ~0.075, got {snapped}",
+    );
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::LayerHeightMm,
+            reason: SnapReason::QuantisedToMultiple { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_quantises_silently_below_threshold() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.0501).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.05);
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn apply_constraints_clamps_layer_height_into_range_first_then_quantises() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.20).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.025).unwrap()),
+        layer_height_range_mm: Some(
+            LengthRange::new(
+                PositiveFiniteMm::new(0.02).unwrap(),
+                PositiveFiniteMm::new(0.10).unwrap(),
+            )
+            .unwrap(),
+        ),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.10);
+    let snap_kinds: Vec<&SnapReason> = warnings
+        .iter()
+        .filter_map(|w| match w {
+            ResolveWarning::Autosnap { reason, .. } => Some(reason),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        snap_kinds
+            .iter()
+            .any(|r| matches!(r, SnapReason::ClampedIntoRange { .. })),
+        "expected a range-clamp warning",
+    );
+}
+
+#[test]
+fn apply_constraints_rejects_lift_speed_below_minimum() {
+    let mut picked = PickedValues {
+        lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(30.0).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_speed_range_mm_min: Some(
+            SpeedRangeMmPerMin::new(
+                PositiveFiniteMmPerMin::new(60.0).unwrap(),
+                PositiveFiniteMmPerMin::new(300.0).unwrap(),
+            )
+            .unwrap(),
+        ),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    let err = apply_constraints(&mut picked, &constraints, &mut warnings).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ResolveError::RejectedBelowMinimum {
+            field: ResolvedField::LiftSpeedMmMin,
+            value: 30.0,
+            minimum: 60.0,
+        },
+    ));
+}
+
+#[test]
+fn apply_constraints_snaps_lift_speed_above_max() {
+    let mut picked = PickedValues {
+        lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(400.0).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_speed_range_mm_min: Some(
+            SpeedRangeMmPerMin::new(
+                PositiveFiniteMmPerMin::new(60.0).unwrap(),
+                PositiveFiniteMmPerMin::new(300.0).unwrap(),
+            )
+            .unwrap(),
+        ),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.lift_speed_mm_min.unwrap().value(), 300.0);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::LiftSpeedMmMin,
+            reason: SnapReason::ClampedAtMaximum { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_snaps_lift_distance_above_max() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(PositiveFiniteMm::new(10.0).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_distance_max_mm: Some(PositiveFiniteMm::new(8.0).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.lift_distance_mm.unwrap().value(), 8.0);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::LiftDistanceMm,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_with_no_declared_constraints_is_noop() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.063).unwrap()),
+        lift_distance_mm: Some(PositiveFiniteMm::new(5.0).unwrap()),
+        lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(120.0).unwrap()),
+        retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = empty_constraints();
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.063);
+    assert_eq!(picked.lift_distance_mm.unwrap().value(), 5.0);
+    assert_eq!(picked.lift_speed_mm_min.unwrap().value(), 120.0);
+    assert_eq!(picked.retract_speed_mm_min.unwrap().value(), 150.0);
+    assert!(warnings.is_empty());
 }

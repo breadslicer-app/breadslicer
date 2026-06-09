@@ -26,6 +26,7 @@ pub mod material_per_printer;
 pub mod material_profile;
 pub mod material_resolved;
 pub mod override_record;
+mod policy;
 pub mod printer_capabilities;
 pub mod printer_constraints;
 pub mod printer_hardware;
@@ -82,6 +83,8 @@ mod tests_material_profile;
 mod tests_material_resolved;
 #[cfg(test)]
 mod tests_override_record;
+#[cfg(test)]
+mod tests_policy;
 #[cfg(test)]
 mod tests_printer_capabilities;
 #[cfg(test)]

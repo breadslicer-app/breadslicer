@@ -47,8 +47,12 @@ use crate::material_intent::MaterialIntent;
 use crate::material_per_printer::MaterialPerPrinter;
 use crate::material_profile::MaterialProfile;
 use crate::override_record::OverrideRecord;
+use crate::policy::{
+    AUTOSNAP_WARNING_THRESHOLD, ApplyResult, policies_for, relative_delta_exceeds,
+};
 use crate::printer_constraints::PrinterConstraints;
 use crate::printer_profile::PrinterProfile;
+use crate::resolve_error::ResolveError;
 use crate::resolve_warning::{IntentSource, ResolveWarning};
 use crate::resolved_field::ResolvedField;
 use crate::value_source::ValueSource;
@@ -220,4 +224,90 @@ fn apply_intent_derivation(
             final_value: typed.value(),
         });
     }
+}
+
+pub(crate) fn apply_constraints(
+    picked: &mut PickedValues,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<(), ResolveError> {
+    if let Some(value) = picked.layer_height_mm {
+        let snapped = apply_field_policies(
+            ResolvedField::LayerHeightMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.layer_height_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped layer height stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.lift_distance_mm {
+        let snapped = apply_field_policies(
+            ResolvedField::LiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped).expect("snapped lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.lift_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::LiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped).expect("snapped lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.retract_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::RetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped retract speed stays positive-finite"),
+        );
+    }
+    Ok(())
+}
+
+fn apply_field_policies(
+    field: ResolvedField,
+    initial: f64,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<f64, ResolveError> {
+    let mut current = initial;
+    for policy in policies_for(field, constraints) {
+        match policy.apply(current) {
+            ApplyResult::Unchanged => {}
+            ApplyResult::Snapped { snapped, reason } => {
+                if relative_delta_exceeds(current, snapped, AUTOSNAP_WARNING_THRESHOLD) {
+                    warnings.push(ResolveWarning::Autosnap {
+                        field,
+                        requested: current,
+                        snapped,
+                        reason,
+                    });
+                }
+                current = snapped;
+            }
+            ApplyResult::RejectedBelow { minimum } => {
+                return Err(ResolveError::RejectedBelowMinimum {
+                    field,
+                    value: current,
+                    minimum,
+                });
+            }
+        }
+    }
+    Ok(current)
 }

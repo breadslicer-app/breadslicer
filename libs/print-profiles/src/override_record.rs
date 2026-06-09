@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Diagnostic record attributing a resolved field's final value to
-//! the resolver pipeline layer that supplied it.
+//! Diagnostic record attributing a resolved field's value to the
+//! resolver pipeline layer that supplied it.
 //!
 //! Collected into a vector on the resolved configuration: one
 //! record per emission point. `prior_value` is the value an earlier
@@ -12,6 +12,12 @@
 //! tooling reconstruct the full provenance chain. Both values are
 //! stored as `f64` regardless of the field's typed unit; the
 //! [`ResolvedField`] tag identifies the unit.
+//!
+//! `final_value` is the value the source layer supplied. Later
+//! constraint-application snaps do not update this field; the
+//! post-snap value lives in the resolved configuration's
+//! `material_resolved` block, and any snap large enough to warn is
+//! recorded as a separate `Autosnap` entry in `warnings`.
 
 use crate::resolved_field::ResolvedField;
 use crate::value_source::ValueSource;
