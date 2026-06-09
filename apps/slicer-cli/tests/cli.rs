@@ -32,6 +32,16 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Directory of bundled test profiles, pointed at by the
+/// `SC_SLICER_ASSETS_DIR` override so `slice` resolves the fake
+/// fixture printer and material by id.
+fn profiles_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("profiles")
+}
+
 /// Builds a closed, manifold tetrahedron with consistent winding and
 /// computed normals. `diagnose` reports zero issues for this mesh, so
 /// it works as a "clean input" fixture for the CLI tests. Same vertex
@@ -1394,17 +1404,12 @@ mod slice_validation_error_tests {
             output.to_str().unwrap(),
             "--target-format",
             "png-per-layer",
-            "--layer-height",
-            "0.05",
-            "--pixels-x",
-            "100",
-            "--pixels-y",
-            "100",
-            "--build-x",
-            "10",
-            "--build-y",
-            "10",
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
         ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
         if verbose {
             cmd.arg("--verbose");
         }
@@ -1480,17 +1485,12 @@ mod slice_auto_place_tests {
             output_dir.to_str().unwrap(),
             "--target-format",
             "svg-per-layer",
-            "--layer-height",
-            "0.2",
-            "--pixels-x",
-            "100",
-            "--pixels-y",
-            "100",
-            "--build-x",
-            "10",
-            "--build-y",
-            "10",
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
         ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
         cmd.args(extra_args);
         cmd.assert()
     }
@@ -1540,17 +1540,12 @@ mod slice_repair_tests {
             output_dir.to_str().unwrap(),
             "--target-format",
             "svg-per-layer",
-            "--layer-height",
-            "0.2",
-            "--pixels-x",
-            "100",
-            "--pixels-y",
-            "100",
-            "--build-x",
-            "10",
-            "--build-y",
-            "10",
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
         ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
         cmd.args(extra_args);
         cmd.assert()
     }

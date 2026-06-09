@@ -8,8 +8,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::io::Write;
-use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
@@ -18,32 +17,37 @@ use sc_mesh_core::scene::node::{NodeId, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
-use sc_sl1cer::error::SliceError;
-use sc_sl1cer::profile::{
-    AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, PositiveFiniteMm,
-    SliceProfile,
+use sc_print_glue::project_to_slice_profile;
+use sc_print_primitives::PositiveFiniteMm;
+use sc_print_profiles::{
+    MaterialProfile, PrinterProfile, SceneOverrides, load_material_profile_by_id,
+    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_path,
+    resolve, user_library_dir,
 };
+use sc_sl1cer::error::SliceError;
+use sc_sl1cer::profile::{AaLevel, PackingMode};
 use sc_sl1cer::{VERSION, slice_leaf};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_slice};
 
 use crate::commands::fix::{FixOptions, repair_scene_meshes, show_applied_fixes};
 use crate::commands::mesh_loader::display_warnings;
+use crate::config::assets_dir::resolve_assets_profiles_dir;
+use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 use crate::filesystem::validate_sourcefile_path;
 
-/// Parsed CLI arguments for the `slice` subcommand. All scalar
-/// fields carry their domain invariant in their type, so by the
-/// time we get here `layer_height > 0`, `pixels_x != 0`, and so on.
+/// Parsed CLI arguments for the `slice` subcommand. The profile
+/// references are classified at parse time into either a path or a
+/// validated id; the remaining scalar fields carry their domain
+/// invariant in their type.
 pub(crate) struct SliceArgs {
     pub source: OsString,
     pub target: OsString,
     pub target_format: Option<Format>,
-    pub layer_height: PositiveFiniteMm,
+    pub printer_profile: PrinterProfileRef,
+    pub material_profile: MaterialProfileRef,
+    pub layer_height: Option<PositiveFiniteMm>,
     pub first_layer_height: Option<PositiveFiniteMm>,
-    pub pixels_x: NonZeroU32,
-    pub pixels_y: NonZeroU32,
-    pub build_x: PositiveFiniteMm,
-    pub build_y: PositiveFiniteMm,
     pub aa: AaLevel,
     pub verbose: bool,
     pub no_auto_place: bool,
@@ -63,6 +67,19 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
             )
         })?,
     };
+
+    let library_dir = user_library_dir()
+        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
+    let assets_dir = resolve_assets_profiles_dir();
+    let printer = load_printer_profile(&args.printer_profile, &library_dir, &assets_dir)?;
+    let material = load_material_profile(&args.material_profile, &library_dir, &assets_dir)?;
+
+    let overrides = SceneOverrides {
+        layer_height_mm: args.layer_height,
+        ..SceneOverrides::default()
+    };
+    let resolved = resolve(&printer, &material, &overrides)
+        .map_err(|e| anyhow!("could not resolve the print configuration: {e}"))?;
 
     let mut loaded =
         load_mesh_from_path(&source_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
@@ -87,25 +104,19 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         ));
     }
 
-    let layer_height = args.layer_height.value();
-    let first_layer_height = args
-        .first_layer_height
-        .map(PositiveFiniteMm::value)
-        .unwrap_or(layer_height);
-    let total_layers = total_layers_for_height(z_max, layer_height, first_layer_height);
-    let build_z = z_max.max(layer_height);
+    let layer_height = resolved.material_resolved.layer_height_mm;
+    let first_layer_height = args.first_layer_height.unwrap_or(layer_height);
+    let total_layers =
+        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value());
 
-    let build_volume = BuildVolume::new(args.build_x.value(), args.build_y.value(), build_z)?;
-    let pixel_resolution = PixelResolution::new(args.pixels_x.get(), args.pixels_y.get())?;
-    let schedule = LayerSchedule::uniform(layer_height, first_layer_height, total_layers)?;
-    let profile = SliceProfile::new(
-        build_volume,
-        pixel_resolution,
-        schedule,
-        Mirror::default(),
+    let profile = project_to_slice_profile(
+        &resolved,
         args.aa,
         PackingMode::None,
-    );
+        first_layer_height,
+        total_layers,
+    )
+    .map_err(|e| anyhow!("could not build the slice profile: {e}"))?;
 
     let stack = match slice_leaf(&loaded.graph, leaf_id, &profile) {
         Ok(stack) => stack,
@@ -127,6 +138,39 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         target_path.display(),
     );
     Ok(())
+}
+
+/// Load the printer profile named by the parsed flag value: read
+/// directly from a path, or look it up by id in the user library
+/// then the bundled assets directory.
+fn load_printer_profile(
+    profile_ref: &PrinterProfileRef,
+    library_dir: &Path,
+    assets_dir: &Path,
+) -> Result<PrinterProfile> {
+    match profile_ref {
+        PrinterProfileRef::Path(path) => load_printer_profile_from_path(path)
+            .map_err(|e| anyhow!("could not load the printer profile: {e}")),
+        PrinterProfileRef::Id(id) => load_printer_profile_by_id(id, None, library_dir, assets_dir)
+            .map_err(|e| anyhow!("could not load the printer profile: {e}")),
+    }
+}
+
+/// Load the material profile named by the parsed flag value. Same
+/// path-or-id dispatch as [`load_printer_profile`].
+fn load_material_profile(
+    profile_ref: &MaterialProfileRef,
+    library_dir: &Path,
+    assets_dir: &Path,
+) -> Result<MaterialProfile> {
+    match profile_ref {
+        MaterialProfileRef::Path(path) => load_material_profile_from_path(path)
+            .map_err(|e| anyhow!("could not load the material profile: {e}")),
+        MaterialProfileRef::Id(id) => {
+            load_material_profile_by_id(id, None, library_dir, assets_dir)
+                .map_err(|e| anyhow!("could not load the material profile: {e}"))
+        }
+    }
 }
 
 /// The fix-pass defaults the `slice --repair` path applies: remove

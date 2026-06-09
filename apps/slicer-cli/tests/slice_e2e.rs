@@ -16,6 +16,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use tempfile::tempdir;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -23,6 +24,22 @@ fn fixture_path(name: &str) -> PathBuf {
         .join("tests")
         .join("fixtures")
         .join(name)
+}
+
+/// Directory of bundled test profiles, pointed at by the
+/// `SC_SLICER_ASSETS_DIR` override so the by-id loader finds the
+/// fake fixture profiles.
+fn profiles_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("profiles")
+}
+
+/// Path to a fixture profile TOML file, for exercising the
+/// load-by-path branch of the `--printer-profile` discriminator.
+fn profile_file(kind: &str, name: &str) -> PathBuf {
+    profiles_dir().join(kind).join(name)
 }
 
 /// Run `slice --format svg-per-layer` on the named fixture into
@@ -38,16 +55,11 @@ fn slice_fixture_as_svg_per_layer(fixture: &str, output_dir: &Path) {
         .arg(output_dir)
         .arg("--target-format")
         .arg("svg-per-layer")
-        .arg("--layer-height")
-        .arg("0.2")
-        .arg("--build-x")
-        .arg("5")
-        .arg("--build-y")
-        .arg("5")
-        .arg("--pixels-x")
-        .arg("500")
-        .arg("--pixels-y")
-        .arg("500")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
         .assert()
         .success();
 }
@@ -65,16 +77,11 @@ fn slice_fixture_as_svg_combined(fixture: &str, output_file: &Path) {
         .arg(output_file)
         .arg("--target-format")
         .arg("svg-combined")
-        .arg("--layer-height")
-        .arg("0.2")
-        .arg("--build-x")
-        .arg("5")
-        .arg("--build-y")
-        .arg("5")
-        .arg("--pixels-x")
-        .arg("500")
-        .arg("--pixels-y")
-        .arg("500")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
         .assert()
         .success();
 }
@@ -91,16 +98,11 @@ fn slice_fixture_as_png_per_layer(fixture: &str, output_dir: &Path) {
         .arg(output_dir)
         .arg("--target-format")
         .arg("png-per-layer")
-        .arg("--layer-height")
-        .arg("0.2")
-        .arg("--build-x")
-        .arg("5")
-        .arg("--build-y")
-        .arg("5")
-        .arg("--pixels-x")
-        .arg("500")
-        .arg("--pixels-y")
-        .arg("500")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
         .assert()
         .success();
 }
@@ -273,7 +275,7 @@ fn cube_fixture_svg_combined_packs_every_layer_into_a_single_file() {
     assert_eq!(groups.len(), 5, "expected 5 layer groups, got:\n{content}");
     assert!(content.contains("<metadata>"), "{content}");
     assert!(
-        content.contains("<sc:build-volume x-mm=\"5\" y-mm=\"5\" z-mm=\"1\"/>"),
+        content.contains("<sc:build-volume x-mm=\"5\" y-mm=\"5\" z-mm=\"50\"/>"),
         "{content}"
     );
     assert!(content.contains("viewBox=\"-2.5 -2.5 5 5\""), "{content}");
@@ -516,4 +518,74 @@ fn y_tunnel_prism_png_per_layer_transitions_above_below_and_through_the_tunnel()
         255,
         "through-tunnel layer should be filled at build mm (1.7, 2.5) (outside the tunnel slab)",
     );
+}
+
+#[test]
+fn printer_profile_by_explicit_path_slices_successfully() {
+    let out = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg(profile_file("printers", "slicer-cli-e2e-test.toml"))
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Sliced 5 layers"));
+}
+
+#[test]
+fn unknown_material_id_fails_with_not_found() {
+    let out = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("no-such-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "not found in any of the configured sources",
+        ));
+}
+
+#[test]
+fn incomplete_material_fails_to_resolve() {
+    let out = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin-incomplete")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "could not resolve the print configuration",
+        ));
 }

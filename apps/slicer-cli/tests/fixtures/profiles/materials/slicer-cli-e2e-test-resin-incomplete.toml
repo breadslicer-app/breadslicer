@@ -1,0 +1,16 @@
+# Fake material profile with no calibration for the
+# slicer-cli-e2e-test printer and no intent layer height. The
+# resolver cannot supply the required fields, so resolution fails
+# with a missing-required-field error. Used to exercise the CLI's
+# resolve-error path.
+
+[identity]
+id = "slicer-cli-e2e-test-resin-incomplete"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Incomplete Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]

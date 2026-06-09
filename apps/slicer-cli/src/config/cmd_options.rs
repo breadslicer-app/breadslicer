@@ -4,12 +4,13 @@
  */
 
 use std::ffi::OsString;
-use std::num::NonZeroU32;
 
 use bpaf::{OptionParser, Parser, construct, long, short};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_sl1cer::profile::{AaLevel, PositiveFiniteMm};
 use sc_sla_formats::Format;
+
+use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 
 #[derive(Clone, Debug)]
 pub enum CmdOptions {
@@ -38,12 +39,10 @@ pub enum CmdOptions {
         source: OsString,
         target: OsString,
         target_format: Option<Format>,
-        layer_height: PositiveFiniteMm,
+        printer_profile: PrinterProfileRef,
+        material_profile: MaterialProfileRef,
+        layer_height: Option<PositiveFiniteMm>,
         first_layer_height: Option<PositiveFiniteMm>,
-        pixels_x: NonZeroU32,
-        pixels_y: NonZeroU32,
-        build_x: PositiveFiniteMm,
-        build_y: PositiveFiniteMm,
         aa: AaLevel,
         verbose: bool,
         no_auto_place: bool,
@@ -172,9 +171,24 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         .argument::<Format>("TARGET_FORMAT")
         .optional();
 
+    let printer_profile = long("printer-profile")
+        .help(
+            "Printer profile to slice for: either a profile id (slug) looked up in the configured libraries, or a path to a profile TOML file (a value starting with a path marker such as '/' or './').",
+        )
+        .argument::<PrinterProfileRef>("PRINTER_PROFILE");
+
+    let material_profile = long("material-profile")
+        .help(
+            "Material profile to slice with: either a profile id (slug) looked up in the configured libraries, or a path to a profile TOML file (a value starting with a path marker such as '/' or './').",
+        )
+        .argument::<MaterialProfileRef>("MATERIAL_PROFILE");
+
     let layer_height = long("layer-height")
-        .help("Layer height in millimetres (strictly positive)")
-        .argument::<PositiveFiniteMm>("MM");
+        .help(
+            "Optional layer-height override in millimetres (strictly positive). When omitted, the layer height comes from the resolved material profile.",
+        )
+        .argument::<PositiveFiniteMm>("MM")
+        .optional();
 
     let first_layer_height = long("first-layer-height")
         .help(
@@ -182,22 +196,6 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         )
         .argument::<PositiveFiniteMm>("MM")
         .optional();
-
-    let pixels_x = long("pixels-x")
-        .help("Print panel pixel resolution along X (non-zero)")
-        .argument::<NonZeroU32>("PIXELS");
-
-    let pixels_y = long("pixels-y")
-        .help("Print panel pixel resolution along Y (non-zero)")
-        .argument::<NonZeroU32>("PIXELS");
-
-    let build_x = long("build-x")
-        .help("Build volume X dimension in millimetres (strictly positive)")
-        .argument::<PositiveFiniteMm>("MM");
-
-    let build_y = long("build-y")
-        .help("Build volume Y dimension in millimetres (strictly positive)")
-        .argument::<PositiveFiniteMm>("MM");
 
     let aa = long("aa")
         .help("Per-pixel anti-aliasing: 0 (off), 2, 4, or 8")
@@ -227,12 +225,10 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         source,
         target,
         target_format,
+        printer_profile,
+        material_profile,
         layer_height,
         first_layer_height,
-        pixels_x,
-        pixels_y,
-        build_x,
-        build_y,
         aa,
         verbose,
         no_auto_place,

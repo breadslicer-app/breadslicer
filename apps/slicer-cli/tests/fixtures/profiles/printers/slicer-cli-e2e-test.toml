@@ -1,0 +1,24 @@
+# Fake printer profile used only by the slicer-cli end-to-end tests.
+# Build volume 5 mm x 5 mm at 500 x 500 pixels (10 micron pixels) so
+# the rasterised geometry matches what the e2e assertions expect.
+
+[identity]
+id = "slicer-cli-e2e-test"
+manufacturer = "SoulCrafted"
+family = "E2E"
+name = "E2E Test Printer"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 5.0, y_mm = 5.0, z_mm = 50.0 }
+pixel_resolution = { x = 500, y = 500 }
+pixel_size_microns = { x = 10.0, y = 10.0 }
+mirror = { x = false, y = false }
+
+[capabilities]
+output_formats = [{ format = "png_per_layer" }]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[constraints]
