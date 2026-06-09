@@ -25,6 +25,7 @@ pub mod printer_capabilities;
 pub mod printer_constraints;
 pub mod printer_hardware;
 pub mod printer_identity;
+pub mod printer_profile;
 
 pub use material_defaults::MaterialDefaults;
 pub use material_identity::MaterialIdentity;
@@ -34,6 +35,7 @@ pub use printer_capabilities::PrinterCapabilities;
 pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
+pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection};
 
 #[cfg(test)]
 mod tests_material_defaults;
@@ -51,3 +53,5 @@ mod tests_printer_constraints;
 mod tests_printer_hardware;
 #[cfg(test)]
 mod tests_printer_identity;
+#[cfg(test)]
+mod tests_printer_profile;
