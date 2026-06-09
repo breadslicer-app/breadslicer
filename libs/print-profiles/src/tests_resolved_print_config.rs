@@ -34,7 +34,7 @@ mirror = { x = true, y = false }
 
 [capabilities]
 output_formats = [{ format = "ctb", version = "4" }]
-anti_aliasing = "off"
+supports_grayscale = true
 two_stage_lift = true
 has_camera = false
 

@@ -5,16 +5,14 @@
 
 use super::printer_capabilities::PrinterCapabilities;
 use nonempty_collections::NEVec;
-use sc_print_primitives::{
-    AaLevel, FormatKind, NetworkProtocol, NonEmptyString, OutputFormatBinding,
-};
+use sc_print_primitives::{FormatKind, NetworkProtocol, NonEmptyString, OutputFormatBinding};
 
 const FULL_TOML: &str = r#"
 output_formats = [
     { format = "sl1", version = "2" },
     { format = "ctb", version = "4" },
 ]
-anti_aliasing = "x4"
+supports_grayscale = true
 two_stage_lift = true
 transition_layers = 5
 has_camera = false
@@ -23,7 +21,7 @@ network_protocol = "elegoo_centauri"
 
 const MINIMAL_TOML: &str = r#"
 output_formats = [{ format = "png_per_layer" }]
-anti_aliasing = "off"
+supports_grayscale = false
 two_stage_lift = false
 has_camera = false
 "#;
@@ -37,7 +35,7 @@ fn deserialise_parses_all_fields() {
         parsed.output_formats.first().version,
         Some(NonEmptyString::new("2").unwrap())
     );
-    assert_eq!(parsed.anti_aliasing, AaLevel::X4);
+    assert!(parsed.supports_grayscale);
     assert!(parsed.two_stage_lift);
     assert_eq!(parsed.transition_layers, Some(5));
     assert!(!parsed.has_camera);
@@ -56,7 +54,7 @@ fn deserialise_minimal_required_fields_leaves_optionals_as_none() {
         FormatKind::PngPerLayer
     );
     assert_eq!(parsed.output_formats.first().version, None);
-    assert_eq!(parsed.anti_aliasing, AaLevel::Off);
+    assert!(!parsed.supports_grayscale);
     assert!(!parsed.two_stage_lift);
     assert_eq!(parsed.transition_layers, None);
     assert!(!parsed.has_camera);
@@ -67,7 +65,7 @@ fn deserialise_minimal_required_fields_leaves_optionals_as_none() {
 fn deserialise_rejects_empty_output_formats_array() {
     let toml = r#"
 output_formats = []
-anti_aliasing = "off"
+supports_grayscale = false
 two_stage_lift = false
 has_camera = false
 "#;
@@ -78,7 +76,7 @@ has_camera = false
 fn deserialise_accepts_unknown_format_kind_via_escape_hatch() {
     let toml = r#"
 output_formats = [{ format = "future_format", version = "1" }]
-anti_aliasing = "off"
+supports_grayscale = false
 two_stage_lift = false
 has_camera = false
 "#;
@@ -93,7 +91,7 @@ has_camera = false
 fn deserialise_accepts_unknown_network_protocol_via_escape_hatch() {
     let toml = r#"
 output_formats = [{ format = "sl1" }]
-anti_aliasing = "off"
+supports_grayscale = false
 two_stage_lift = false
 has_camera = false
 network_protocol = "future_protocol"
@@ -106,10 +104,9 @@ network_protocol = "future_protocol"
 }
 
 #[test]
-fn deserialise_rejects_invalid_anti_aliasing_value() {
+fn deserialise_rejects_missing_supports_grayscale() {
     let toml = r#"
 output_formats = [{ format = "sl1" }]
-anti_aliasing = "x16"
 two_stage_lift = false
 has_camera = false
 "#;
@@ -120,7 +117,7 @@ has_camera = false
 fn deserialise_rejects_missing_required_field() {
     let toml = r#"
 output_formats = [{ format = "sl1" }]
-anti_aliasing = "off"
+supports_grayscale = false
 two_stage_lift = false
 "#;
     assert!(toml_edit::de::from_str::<PrinterCapabilities>(toml).is_err());
@@ -166,7 +163,7 @@ fn programmatic_construction_with_nevec_builds_a_valid_value() {
     });
     let caps = PrinterCapabilities {
         output_formats: bindings,
-        anti_aliasing: AaLevel::X2,
+        supports_grayscale: true,
         two_stage_lift: false,
         transition_layers: None,
         has_camera: true,
