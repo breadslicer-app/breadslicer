@@ -35,6 +35,7 @@ pub mod resolve_error;
 pub mod resolve_warning;
 pub mod resolved_field;
 pub mod resolved_print_config;
+mod resolver;
 pub mod value_source;
 
 pub use library::{UserLibraryDirError, user_library_dir};
@@ -99,5 +100,7 @@ mod tests_resolve_warning;
 mod tests_resolved_field;
 #[cfg(test)]
 mod tests_resolved_print_config;
+#[cfg(test)]
+mod tests_resolver;
 #[cfg(test)]
 mod tests_value_source;
