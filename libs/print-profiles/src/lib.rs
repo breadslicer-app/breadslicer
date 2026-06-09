@@ -58,7 +58,10 @@ pub use material_per_printer::MaterialPerPrinter;
 pub use material_profile::{MaterialProfile, MaterialProfileReservedSection};
 pub use material_resolved::MaterialResolved;
 pub use override_record::OverrideRecord;
-pub use package::{ExportError, ExportManifest, ExportSelection, export_package};
+pub use package::{
+    Collision, CollisionReport, ExportError, ExportManifest, ExportSelection, ImportError,
+    export_package, import_package,
+};
 pub use printer_capabilities::PrinterCapabilities;
 pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};

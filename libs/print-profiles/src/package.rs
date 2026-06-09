@@ -19,12 +19,12 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{self, Seek, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{InvalidProfileId, MaterialId, PrinterId};
-use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
+use zip::{CompressionMethod, ZipArchive};
 
 use crate::listing::{ListLibraryError, list_material_ids, list_printer_ids};
 use crate::loader::{MATERIALS_SUBDIR, PRINTERS_SUBDIR};
@@ -279,6 +279,213 @@ fn write_entry<W: Write + Seek>(
     zip.write_all(bytes)
         .map_err(|err| ExportError::Zip(err.into()))?;
     Ok(())
+}
+
+/// A profile in the package that would overwrite an existing file in
+/// the destination library.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Collision {
+    pub id: String,
+    pub library_path: PathBuf,
+}
+
+/// Every collision an import would cause, grouped by kind. Returned
+/// inside [`ImportError::Collisions`] when collisions exist and the
+/// caller did not pass `force`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollisionReport {
+    pub printers: Vec<Collision>,
+    pub materials: Vec<Collision>,
+}
+
+/// Returned by [`import_package`] when the archive cannot be read, the
+/// import would overwrite existing profiles without `force`, or a
+/// profile cannot be written to the destination.
+#[derive(Debug)]
+pub enum ImportError {
+    /// The archive could not be opened or an entry header read.
+    Archive(zip::result::ZipError),
+    /// An entry's bytes could not be decompressed.
+    ReadEntry { name: String, source: io::Error },
+    /// The import would overwrite existing profiles and `force` was
+    /// not set. No files were written.
+    Collisions(CollisionReport),
+    /// A destination subdirectory could not be created.
+    CreateSubdir { path: PathBuf, source: io::Error },
+    /// A profile file could not be written to the destination.
+    WriteProfile { path: PathBuf, source: io::Error },
+}
+
+impl fmt::Display for ImportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Archive(err) => write!(f, "failed to read the package archive: {err}"),
+            Self::ReadEntry { name, source } => {
+                write!(f, "failed to read package entry {name:?}: {source}")
+            }
+            Self::Collisions(report) => write!(
+                f,
+                "import would overwrite {} existing profile(s)",
+                report.printers.len() + report.materials.len(),
+            ),
+            Self::CreateSubdir { path, source } => write!(
+                f,
+                "failed to create the destination directory {}: {source}",
+                path.display(),
+            ),
+            Self::WriteProfile { path, source } => {
+                write!(f, "failed to write profile {}: {source}", path.display(),)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Archive(err) => Some(err),
+            Self::ReadEntry { source, .. } => Some(source),
+            Self::Collisions(_) => None,
+            Self::CreateSubdir { source, .. } => Some(source),
+            Self::WriteProfile { source, .. } => Some(source),
+        }
+    }
+}
+
+/// Which profile kind a package entry belongs to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Printer,
+    Material,
+}
+
+impl Kind {
+    fn subdir(self) -> &'static str {
+        match self {
+            Self::Printer => PRINTERS_SUBDIR,
+            Self::Material => MATERIALS_SUBDIR,
+        }
+    }
+}
+
+/// Install the profiles from a package archive into `dest_library_dir`.
+///
+/// Only entries shaped exactly like `printers/<slug>.toml` or
+/// `materials/<slug>.toml` are considered; the courtesy `manifest.toml`
+/// and any other entry (nested paths, non-slug stems) are ignored. Each
+/// destination path is rebuilt from the validated slug, so a crafted
+/// entry name cannot escape `dest_library_dir`.
+///
+/// Collisions (a destination file that already exists) are collected
+/// across both kinds before anything is written. When any exist and
+/// `force` is false, [`ImportError::Collisions`] is returned and the
+/// destination is left untouched. Otherwise the profiles are written,
+/// creating the `printers/` and `materials/` subdirectories as needed.
+pub fn import_package<R: Read + Seek>(
+    reader: R,
+    dest_library_dir: &Path,
+    force: bool,
+) -> Result<(), ImportError> {
+    let mut archive = ZipArchive::new(reader).map_err(ImportError::Archive)?;
+
+    let mut entries: Vec<(Kind, String, usize)> = Vec::new();
+    for index in 0..archive.len() {
+        let name = archive
+            .by_index(index)
+            .map_err(ImportError::Archive)?
+            .name()
+            .to_owned();
+        if let Some((kind, id)) = classify_entry(&name) {
+            entries.push((kind, id, index));
+        }
+    }
+
+    if !force {
+        let report = collisions(dest_library_dir, &entries);
+        if !report.printers.is_empty() || !report.materials.is_empty() {
+            return Err(ImportError::Collisions(report));
+        }
+    }
+
+    for (kind, id, index) in &entries {
+        let mut bytes = Vec::new();
+        archive
+            .by_index(*index)
+            .map_err(ImportError::Archive)?
+            .read_to_end(&mut bytes)
+            .map_err(|source| ImportError::ReadEntry {
+                name: format!("{}/{id}.toml", kind.subdir()),
+                source,
+            })?;
+
+        let subdir = dest_library_dir.join(kind.subdir());
+        fs::create_dir_all(&subdir).map_err(|source| ImportError::CreateSubdir {
+            path: subdir.clone(),
+            source,
+        })?;
+        let path = subdir.join(format!("{id}.toml"));
+        fs::write(&path, &bytes).map_err(|source| ImportError::WriteProfile {
+            path: path.clone(),
+            source,
+        })?;
+    }
+
+    Ok(())
+}
+
+/// Collect the destination collisions for the classified entries,
+/// sorted by id within each kind.
+fn collisions(dest_library_dir: &Path, entries: &[(Kind, String, usize)]) -> CollisionReport {
+    let mut printers = Vec::new();
+    let mut materials = Vec::new();
+    for (kind, id, _) in entries {
+        let path = dest_library_dir
+            .join(kind.subdir())
+            .join(format!("{id}.toml"));
+        if path.is_file() {
+            let collision = Collision {
+                id: id.clone(),
+                library_path: path,
+            };
+            match kind {
+                Kind::Printer => printers.push(collision),
+                Kind::Material => materials.push(collision),
+            }
+        }
+    }
+    printers.sort_by(|a, b| a.id.cmp(&b.id));
+    materials.sort_by(|a, b| a.id.cmp(&b.id));
+    CollisionReport {
+        printers,
+        materials,
+    }
+}
+
+/// Classify a package entry name. Returns the kind and the validated
+/// slug for entries shaped exactly `printers/<slug>.toml` or
+/// `materials/<slug>.toml`; everything else yields `None`.
+fn classify_entry(name: &str) -> Option<(Kind, String)> {
+    if let Some(stem) = entry_stem(name, PRINTERS_SUBDIR)
+        && PrinterId::new(stem).is_ok()
+    {
+        return Some((Kind::Printer, stem.to_owned()));
+    }
+    if let Some(stem) = entry_stem(name, MATERIALS_SUBDIR)
+        && MaterialId::new(stem).is_ok()
+    {
+        return Some((Kind::Material, stem.to_owned()));
+    }
+    None
+}
+
+/// Strip a `<prefix>/` and a trailing `.toml` from an entry name,
+/// rejecting names with a further path separator (nested directories).
+fn entry_stem<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = name.strip_prefix(prefix)?.strip_prefix('/')?;
+    if rest.contains('/') {
+        return None;
+    }
+    rest.strip_suffix(".toml")
 }
 
 /// On-disk manifest shape. Borrows from [`ExportManifest`] and the

@@ -36,6 +36,13 @@ fn profiles_export(args: &[&str]) -> assert_cmd::assert::Assert {
     cmd.assert()
 }
 
+fn profiles_import_into(library_dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    let mut cmd = Command::cargo_bin("sc-slicer-cli").unwrap();
+    cmd.arg("profiles").arg("import").args(args);
+    cmd.env("SC_SLICER_LIBRARY_DIR", library_dir);
+    cmd.assert()
+}
+
 /// The first four bytes of a non-empty local zip entry: the "PK\x03\x04"
 /// local file header signature.
 fn is_zip(path: &Path) -> bool {
@@ -110,4 +117,34 @@ fn export_rejects_id_combined_with_kind_flag() {
         zip_path.to_str().unwrap(),
     ])
     .failure();
+}
+
+#[test]
+fn import_installs_then_reports_collisions_then_force_overwrites() {
+    let pkg = TempDir::new().unwrap();
+    let zip_path = pkg.path().join("bundle.zip");
+    let zip_arg = zip_path.to_str().unwrap();
+    profiles_export(&[zip_arg]).success();
+
+    // First import into an empty library succeeds and installs the
+    // fixture printer.
+    let dest = TempDir::new().unwrap();
+    profiles_import_into(dest.path(), &[zip_arg])
+        .success()
+        .stdout(predicate::str::contains("Imported profiles into"));
+    assert!(
+        dest.path()
+            .join("printers")
+            .join("slicer-cli-e2e-test.toml")
+            .is_file(),
+    );
+
+    // Re-importing without --force collides and reports the conflict.
+    profiles_import_into(dest.path(), &[zip_arg])
+        .failure()
+        .stderr(predicate::str::contains("would overwrite"))
+        .stderr(predicate::str::contains("slicer-cli-e2e-test"));
+
+    // --force lets it overwrite.
+    profiles_import_into(dest.path(), &["--force", zip_arg]).success();
 }

@@ -3,16 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Tests for the profile-library packaging (`export_package`).
+//! Tests for the profile-library packaging (export and import).
 
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use tempfile::TempDir;
-use zip::ZipArchive;
+use zip::write::{SimpleFileOptions, ZipWriter};
+use zip::{CompressionMethod, ZipArchive};
 
-use crate::package::{ExportError, ExportManifest, ExportSelection, export_package};
+use crate::package::{
+    ExportError, ExportManifest, ExportSelection, ImportError, export_package, import_package,
+};
 
 const P1_TOML: &str = "# printer one\nlabel = \"p1\"\n";
 const P2_TOML: &str = "# printer two\nlabel = \"p2\"\n";
@@ -282,4 +285,134 @@ fn export_empty_library_writes_only_an_empty_manifest() {
     let doc = parse_manifest(&mut archive);
     assert!(doc.contents.printers.is_empty());
     assert!(doc.contents.materials.is_empty());
+}
+
+/// Export the library at `src` into an in-memory archive ready to feed
+/// back into [`import_package`].
+fn package_of(src: &Path) -> Cursor<Vec<u8>> {
+    let mut buf = Cursor::new(Vec::new());
+    export_package(src, &ExportSelection::All, &manifest(), &mut buf).unwrap();
+    buf.set_position(0);
+    buf
+}
+
+fn read_dest(dest: &Path, kind: &str, id: &str) -> String {
+    fs::read_to_string(dest.join(kind).join(format!("{id}.toml"))).unwrap()
+}
+
+#[test]
+fn import_round_trips_an_exported_library_into_an_empty_destination() {
+    let src = write_library();
+    let package = package_of(src.path());
+    let dest = TempDir::new().unwrap();
+
+    import_package(package, dest.path(), false).unwrap();
+
+    assert_eq!(read_dest(dest.path(), "printers", "p-one"), P1_TOML);
+    assert_eq!(read_dest(dest.path(), "printers", "p-two"), P2_TOML);
+    assert_eq!(read_dest(dest.path(), "materials", "m-one"), M1_TOML);
+    assert_eq!(read_dest(dest.path(), "materials", "m-two"), M2_TOML);
+    // The courtesy manifest is not installed into the library.
+    assert!(!dest.path().join("manifest.toml").exists());
+}
+
+#[test]
+fn import_without_force_reports_collisions_across_both_kinds_and_writes_nothing() {
+    let src = write_library();
+    let package = package_of(src.path());
+
+    // Destination already holds one printer and one material that the
+    // package also carries, plus distinct content so an overwrite would
+    // be observable.
+    let dest = TempDir::new().unwrap();
+    fs::create_dir_all(dest.path().join("printers")).unwrap();
+    fs::create_dir_all(dest.path().join("materials")).unwrap();
+    fs::write(dest.path().join("printers").join("p-one.toml"), "OLD").unwrap();
+    fs::write(dest.path().join("materials").join("m-two.toml"), "OLD").unwrap();
+
+    let err = import_package(package, dest.path(), false).unwrap_err();
+    let ImportError::Collisions(report) = err else {
+        panic!("expected Collisions, got {err:?}");
+    };
+    assert_eq!(report.printers.len(), 1);
+    assert_eq!(report.printers[0].id, "p-one");
+    assert_eq!(
+        report.printers[0].library_path,
+        dest.path().join("printers").join("p-one.toml"),
+    );
+    assert_eq!(report.materials.len(), 1);
+    assert_eq!(report.materials[0].id, "m-two");
+
+    // Nothing was written: the existing files keep their old content and
+    // no non-colliding profile was installed.
+    assert_eq!(read_dest(dest.path(), "printers", "p-one"), "OLD");
+    assert_eq!(read_dest(dest.path(), "materials", "m-two"), "OLD");
+    assert!(!dest.path().join("printers").join("p-two.toml").exists());
+    assert!(!dest.path().join("materials").join("m-one.toml").exists());
+}
+
+#[test]
+fn import_with_force_overwrites_colliding_profiles() {
+    let src = write_library();
+    let package = package_of(src.path());
+
+    let dest = TempDir::new().unwrap();
+    fs::create_dir_all(dest.path().join("printers")).unwrap();
+    fs::write(dest.path().join("printers").join("p-one.toml"), "OLD").unwrap();
+
+    import_package(package, dest.path(), true).unwrap();
+
+    assert_eq!(read_dest(dest.path(), "printers", "p-one"), P1_TOML);
+    assert_eq!(read_dest(dest.path(), "printers", "p-two"), P2_TOML);
+    assert_eq!(read_dest(dest.path(), "materials", "m-one"), M1_TOML);
+}
+
+/// Build a package by hand so we can plant entries an honest export
+/// would never produce: a path-traversal name, a nested path, an
+/// invalid slug, and one well-formed profile.
+fn hostile_package() -> Cursor<Vec<u8>> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zip = ZipWriter::new(&mut buf);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for name in [
+            "../escape.toml",
+            "printers/../escape.toml",
+            "printers/sub/nested.toml",
+            "printers/Bad-Slug.toml",
+            "manifest.toml",
+            "printers/good.toml",
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(b"x = 1\n").unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    buf.set_position(0);
+    buf
+}
+
+#[test]
+fn import_ignores_non_conforming_and_traversing_entries() {
+    let dest = TempDir::new().unwrap();
+    import_package(hostile_package(), dest.path(), false).unwrap();
+
+    // Only the single well-formed entry is installed.
+    assert!(dest.path().join("printers").join("good.toml").is_file());
+    assert!(!dest.path().join("printers").join("Bad-Slug.toml").exists());
+    assert!(!dest.path().join("printers").join("sub").exists());
+    assert!(!dest.path().join("manifest.toml").exists());
+    // The traversal entry did not land anywhere around the destination.
+    assert!(!dest.path().join("escape.toml").exists());
+    assert!(!dest.path().parent().unwrap().join("escape.toml").exists());
+}
+
+#[test]
+fn import_of_an_empty_archive_writes_nothing_and_succeeds() {
+    let empty = TempDir::new().unwrap();
+    let package = package_of(empty.path());
+    let dest = TempDir::new().unwrap();
+    import_package(package, dest.path(), false).unwrap();
+    assert!(!dest.path().join("printers").exists());
+    assert!(!dest.path().join("materials").exists());
 }

@@ -62,6 +62,10 @@ pub enum CmdOptions {
         materials: bool,
         ids: Vec<String>,
     },
+    ProfilesImport {
+        input: OsString,
+        force: bool,
+    },
     ProfilesList {
         kind: ListKind,
     },
@@ -295,6 +299,14 @@ fn get_profiles_export_options() -> impl Parser<CmdOptions> {
     })
 }
 
+fn get_profiles_import_options() -> impl Parser<CmdOptions> {
+    let force = long("force")
+        .help("Overwrite profiles in the user library that the package would replace.")
+        .switch();
+    let input = positional::<OsString>("PACKAGE_ZIP").help("Path of the zip archive to import.");
+    construct!(CmdOptions::ProfilesImport { force, input })
+}
+
 fn get_profiles_options() -> impl Parser<CmdOptions> {
     let list = get_profiles_list_options()
         .to_options()
@@ -304,7 +316,11 @@ fn get_profiles_options() -> impl Parser<CmdOptions> {
         .to_options()
         .descr("Export profiles from the user library into a zip archive")
         .command("export");
-    construct!([list, export])
+    let import = get_profiles_import_options()
+        .to_options()
+        .descr("Import profiles from a zip archive into the user library")
+        .command("import");
+    construct!([list, export, import])
 }
 
 pub fn get_cmd_options() -> OptionParser<CmdOptions> {

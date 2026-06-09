@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use chrono::Local;
 use sc_print_profiles::{
-    ExportManifest, ExportSelection, export_package, list_material_ids, list_printer_ids,
-    load_material_profile_from_library, load_printer_profile_from_library,
+    Collision, CollisionReport, ExportManifest, ExportSelection, ImportError, export_package,
+    import_package, list_material_ids, list_printer_ids, load_material_profile_from_library,
+    load_printer_profile_from_library,
 };
 
 use crate::config::cmd_options::ListKind;
@@ -122,6 +123,69 @@ fn build_selection(printers: bool, materials: bool, ids: Vec<String>) -> Result<
         (false, true) => ExportSelection::Materials,
         (false, false) | (true, true) => ExportSelection::All,
     })
+}
+
+/// Handle `profiles import <package.zip> [--force]`: install the
+/// package's profiles into the user library. Without `--force`, a
+/// collision aborts the import and reports every conflicting profile.
+pub(crate) fn import(input: OsString, force: bool) -> Result<()> {
+    let library_dir = resolve_user_library_dir()
+        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
+
+    let input_path = PathBuf::from(input);
+    let file = File::open(&input_path).map_err(|e| {
+        anyhow!(
+            "could not open the package archive {}: {e}",
+            input_path.display(),
+        )
+    })?;
+
+    match import_package(file, &library_dir, force) {
+        Ok(()) => {
+            println!("Imported profiles into {}", library_dir.display());
+            Ok(())
+        }
+        Err(ImportError::Collisions(report)) => {
+            Err(anyhow!("{}", format_collision_report(&report)))
+        }
+        Err(other) => Err(anyhow!("could not import the profile package: {other}")),
+    }
+}
+
+/// Render a collision report in the form documented for the import
+/// command: a headline, then a `Printer conflicts:` and/or
+/// `Material conflicts:` section listing each profile with the library
+/// file it would overwrite. Ids are left-padded to a common width so
+/// the file paths line up.
+fn format_collision_report(report: &CollisionReport) -> String {
+    let width = report
+        .printers
+        .iter()
+        .chain(report.materials.iter())
+        .map(|c| c.id.len())
+        .max()
+        .unwrap_or(0);
+
+    let mut out =
+        String::from("import would overwrite existing profiles. Use --force to overwrite.");
+    append_conflict_section(&mut out, "Printer conflicts:", &report.printers, width);
+    append_conflict_section(&mut out, "Material conflicts:", &report.materials, width);
+    out
+}
+
+fn append_conflict_section(out: &mut String, header: &str, collisions: &[Collision], width: usize) {
+    if collisions.is_empty() {
+        return;
+    }
+    out.push_str("\n\n");
+    out.push_str(header);
+    for collision in collisions {
+        out.push_str(&format!(
+            "\n  - {:<width$} (library file: {})",
+            collision.id,
+            collision.library_path.display(),
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -282,5 +346,75 @@ mod build_selection_tests {
     #[test]
     fn ids_combined_with_materials_is_an_error() {
         assert!(build_selection(false, true, vec!["a".to_owned()]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod format_collision_report_tests {
+    use super::*;
+
+    fn collision(id: &str, path: &str) -> Collision {
+        Collision {
+            id: id.to_owned(),
+            library_path: PathBuf::from(path),
+        }
+    }
+
+    #[test]
+    fn renders_both_sections_with_aligned_paths() {
+        let report = CollisionReport {
+            printers: vec![
+                collision(
+                    "elegoo-saturn-4-ultra",
+                    "/lib/printers/elegoo-saturn-4-ultra.toml",
+                ),
+                collision(
+                    "elegoo-mars-5-ultra",
+                    "/lib/printers/elegoo-mars-5-ultra.toml",
+                ),
+            ],
+            materials: vec![collision(
+                "sirayatech-blu",
+                "/lib/materials/sirayatech-blu.toml",
+            )],
+        };
+        let text = format_collision_report(&report);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines[0],
+            "import would overwrite existing profiles. Use --force to overwrite.",
+        );
+        assert_eq!(lines[1], "");
+        assert_eq!(lines[2], "Printer conflicts:");
+        assert_eq!(
+            lines[3],
+            "  - elegoo-saturn-4-ultra (library file: /lib/printers/elegoo-saturn-4-ultra.toml)",
+        );
+        // The shorter id is padded to the longest id's width so the
+        // file paths line up across both sections.
+        assert_eq!(
+            lines[4],
+            "  - elegoo-mars-5-ultra   (library file: /lib/printers/elegoo-mars-5-ultra.toml)",
+        );
+        assert_eq!(lines[5], "");
+        assert_eq!(lines[6], "Material conflicts:");
+        assert_eq!(
+            lines[7],
+            "  - sirayatech-blu        (library file: /lib/materials/sirayatech-blu.toml)",
+        );
+    }
+
+    #[test]
+    fn omits_a_section_with_no_conflicts() {
+        let report = CollisionReport {
+            printers: Vec::new(),
+            materials: vec![collision(
+                "sirayatech-blu",
+                "/lib/materials/sirayatech-blu.toml",
+            )],
+        };
+        let text = format_collision_report(&report);
+        assert!(!text.contains("Printer conflicts:"), "got: {text}");
+        assert!(text.contains("Material conflicts:"), "got: {text}");
     }
 }
