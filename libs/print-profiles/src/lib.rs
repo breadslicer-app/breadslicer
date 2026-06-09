@@ -32,9 +32,10 @@ pub mod printer_profile;
 
 pub use library::{UserLibraryDirError, user_library_dir};
 pub use loader::{
-    LoadMaterialProfileError, LoadMaterialProfileErrorKind, LoadPrinterProfileError,
-    LoadPrinterProfileErrorKind, load_material_profile_from_library,
-    load_material_profile_from_path, load_printer_profile_from_library,
+    LoadMaterialProfileByIdError, LoadMaterialProfileError, LoadMaterialProfileErrorKind,
+    LoadPrinterProfileByIdError, LoadPrinterProfileError, LoadPrinterProfileErrorKind,
+    load_material_profile_by_id, load_material_profile_from_library,
+    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_library,
     load_printer_profile_from_path,
 };
 pub use material_defaults::MaterialDefaults;

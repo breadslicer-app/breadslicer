@@ -5,11 +5,21 @@
 
 //! Disk loading for printer- and material-profile TOML files.
 //!
-//! Provides explicit-path loader functions for both profile types.
-//! Each loader reads the file, runs it through the typed
+//! Provides three layers of loader functions for both profile
+//! types. The path-based loaders take a TOML file path directly.
+//! The library-based loaders take a base directory and a profile
+//! id; they look up `<base>/printers/<id>.toml` (or
+//! `<base>/materials/<id>.toml`). The by-id loaders accept an
+//! optional explicit path plus the user library and assets base
+//! directories, and try them in order: explicit-path first; on
+//! `NotFound` from the library, cascade to the assets directory;
+//! return [`LoadPrinterProfileByIdError::NotFoundAnywhere`]
+//! listing every path that was tried if no source had the profile.
+//!
+//! Each loader runs the file contents through the typed
 //! deserialisation path (which enforces field invariants and
-//! rejects reserved sections), and returns either a typed value
-//! or a focused error that carries the path that failed plus the
+//! rejects reserved sections) and returns either a typed value or
+//! a focused error that carries the path that failed plus the
 //! underlying cause.
 
 use std::fmt;
@@ -174,4 +184,154 @@ pub fn load_material_profile_from_library(
         .join(MATERIALS_SUBDIR)
         .join(format!("{}.toml", id.as_str()));
     load_material_profile_from_path(&path)
+}
+
+/// Returned by [`load_printer_profile_by_id`] when no source had
+/// the profile or one of the sources had it but failed to load.
+#[derive(Debug)]
+pub enum LoadPrinterProfileByIdError {
+    /// A source produced the file but loading or parsing it failed.
+    /// Wraps the focused error from
+    /// [`load_printer_profile_from_path`].
+    Source(LoadPrinterProfileError),
+    /// Every source returned `NotFound`. The attempted paths are
+    /// listed in the order they were tried.
+    NotFoundAnywhere { attempted: Vec<PathBuf> },
+}
+
+impl fmt::Display for LoadPrinterProfileByIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source(err) => err.fmt(f),
+            Self::NotFoundAnywhere { attempted } => {
+                write!(
+                    f,
+                    "printer profile not found in any of the configured sources: ",
+                )?;
+                let paths: Vec<String> =
+                    attempted.iter().map(|p| p.display().to_string()).collect();
+                write!(f, "{}", paths.join(", "))
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoadPrinterProfileByIdError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Source(err) => Some(err),
+            Self::NotFoundAnywhere { .. } => None,
+        }
+    }
+}
+
+/// Returned by [`load_material_profile_by_id`]. Same shape as
+/// [`LoadPrinterProfileByIdError`].
+#[derive(Debug)]
+pub enum LoadMaterialProfileByIdError {
+    Source(LoadMaterialProfileError),
+    NotFoundAnywhere { attempted: Vec<PathBuf> },
+}
+
+impl fmt::Display for LoadMaterialProfileByIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source(err) => err.fmt(f),
+            Self::NotFoundAnywhere { attempted } => {
+                write!(
+                    f,
+                    "material profile not found in any of the configured sources: ",
+                )?;
+                let paths: Vec<String> =
+                    attempted.iter().map(|p| p.display().to_string()).collect();
+                write!(f, "{}", paths.join(", "))
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoadMaterialProfileByIdError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Source(err) => Some(err),
+            Self::NotFoundAnywhere { .. } => None,
+        }
+    }
+}
+
+/// Load a printer profile by id, trying sources in order:
+/// `explicit_path` first (hard error on any failure if provided),
+/// then `<library_dir>/printers/<id>.toml`, then
+/// `<assets_dir>/printers/<id>.toml`. `NotFound` on a library or
+/// assets source cascades to the next; any other failure halts and
+/// returns [`LoadPrinterProfileByIdError::Source`]. If every source
+/// returned `NotFound`,
+/// [`LoadPrinterProfileByIdError::NotFoundAnywhere`] lists each
+/// attempted path.
+pub fn load_printer_profile_by_id(
+    id: &PrinterId,
+    explicit_path: Option<&Path>,
+    library_dir: &Path,
+    assets_dir: &Path,
+) -> Result<PrinterProfile, LoadPrinterProfileByIdError> {
+    if let Some(path) = explicit_path {
+        return load_printer_profile_from_path(path).map_err(LoadPrinterProfileByIdError::Source);
+    }
+
+    let mut attempted = Vec::with_capacity(2);
+    for base in [library_dir, assets_dir] {
+        let path = base
+            .join(PRINTERS_SUBDIR)
+            .join(format!("{}.toml", id.as_str()));
+        match load_printer_profile_from_path(&path) {
+            Ok(profile) => return Ok(profile),
+            Err(err) => {
+                if matches!(
+                    &err.kind,
+                    LoadPrinterProfileErrorKind::Io(io_err) if io_err.kind() == io::ErrorKind::NotFound,
+                ) {
+                    attempted.push(path);
+                    continue;
+                }
+                return Err(LoadPrinterProfileByIdError::Source(err));
+            }
+        }
+    }
+
+    Err(LoadPrinterProfileByIdError::NotFoundAnywhere { attempted })
+}
+
+/// Load a material profile by id. Same source-cascade semantics as
+/// [`load_printer_profile_by_id`].
+pub fn load_material_profile_by_id(
+    id: &MaterialId,
+    explicit_path: Option<&Path>,
+    library_dir: &Path,
+    assets_dir: &Path,
+) -> Result<MaterialProfile, LoadMaterialProfileByIdError> {
+    if let Some(path) = explicit_path {
+        return load_material_profile_from_path(path).map_err(LoadMaterialProfileByIdError::Source);
+    }
+
+    let mut attempted = Vec::with_capacity(2);
+    for base in [library_dir, assets_dir] {
+        let path = base
+            .join(MATERIALS_SUBDIR)
+            .join(format!("{}.toml", id.as_str()));
+        match load_material_profile_from_path(&path) {
+            Ok(profile) => return Ok(profile),
+            Err(err) => {
+                if matches!(
+                    &err.kind,
+                    LoadMaterialProfileErrorKind::Io(io_err) if io_err.kind() == io::ErrorKind::NotFound,
+                ) {
+                    attempted.push(path);
+                    continue;
+                }
+                return Err(LoadMaterialProfileByIdError::Source(err));
+            }
+        }
+    }
+
+    Err(LoadMaterialProfileByIdError::NotFoundAnywhere { attempted })
 }

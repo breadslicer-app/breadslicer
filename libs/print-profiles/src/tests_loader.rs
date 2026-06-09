@@ -10,9 +10,10 @@ use std::path::Path;
 use sc_print_primitives::{MaterialId, PrinterId};
 
 use super::loader::{
-    LoadMaterialProfileError, LoadMaterialProfileErrorKind, LoadPrinterProfileError,
-    LoadPrinterProfileErrorKind, load_material_profile_from_library,
-    load_material_profile_from_path, load_printer_profile_from_library,
+    LoadMaterialProfileByIdError, LoadMaterialProfileError, LoadMaterialProfileErrorKind,
+    LoadPrinterProfileByIdError, LoadPrinterProfileError, LoadPrinterProfileErrorKind,
+    load_material_profile_by_id, load_material_profile_from_library,
+    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_library,
     load_printer_profile_from_path,
 };
 
@@ -248,4 +249,223 @@ fn load_material_profile_from_library_with_missing_file_returns_io_error_with_re
         }
         other => panic!("expected Io kind, got {other:?}"),
     }
+}
+
+#[test]
+fn load_printer_profile_by_id_uses_explicit_path_when_provided() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(&library_dir).unwrap();
+    fs::create_dir_all(&assets_dir).unwrap();
+    let explicit = write_temp_file(dir.path(), "explicit.toml", VALID_PRINTER_TOML);
+
+    let id = PrinterId::new("does-not-exist-as-id").unwrap();
+    let profile =
+        load_printer_profile_by_id(&id, Some(&explicit), &library_dir, &assets_dir).unwrap();
+    assert_eq!(profile.identity.manufacturer.as_str(), "ELEGOO");
+}
+
+#[test]
+fn load_printer_profile_by_id_explicit_path_failures_are_hard_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(&library_dir).unwrap();
+    fs::create_dir_all(&assets_dir).unwrap();
+    // Put a valid fixture in the library so we know cascading would
+    // have worked if the explicit-path semantics allowed it.
+    let printers_dir = library_dir.join("printers");
+    fs::create_dir_all(&printers_dir).unwrap();
+    fs::write(
+        printers_dir.join("elegoo-saturn-4-ultra.toml"),
+        VALID_PRINTER_TOML,
+    )
+    .unwrap();
+    let missing = dir.path().join("explicit-but-missing.toml");
+
+    let id = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+    let err =
+        load_printer_profile_by_id(&id, Some(&missing), &library_dir, &assets_dir).unwrap_err();
+    match err {
+        LoadPrinterProfileByIdError::Source(inner) => {
+            assert_eq!(inner.path, missing);
+            assert!(matches!(inner.kind, LoadPrinterProfileErrorKind::Io(_),));
+        }
+        other => panic!("expected Source kind, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_printer_profile_by_id_falls_back_from_library_to_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(library_dir.join("printers")).unwrap();
+    let assets_printers = assets_dir.join("printers");
+    fs::create_dir_all(&assets_printers).unwrap();
+    fs::write(
+        assets_printers.join("elegoo-saturn-4-ultra.toml"),
+        VALID_PRINTER_TOML,
+    )
+    .unwrap();
+
+    let id = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+    let profile = load_printer_profile_by_id(&id, None, &library_dir, &assets_dir).unwrap();
+    assert_eq!(profile.identity.manufacturer.as_str(), "ELEGOO");
+}
+
+#[test]
+fn load_printer_profile_by_id_prefers_library_over_assets_when_both_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(library_dir.join("printers")).unwrap();
+    fs::create_dir_all(assets_dir.join("printers")).unwrap();
+    // Library copy keeps the manufacturer as "ELEGOO"; assets copy
+    // is mutated to a sentinel value so the test can tell which one
+    // was returned.
+    fs::write(
+        library_dir
+            .join("printers")
+            .join("elegoo-saturn-4-ultra.toml"),
+        VALID_PRINTER_TOML,
+    )
+    .unwrap();
+    let assets_toml = VALID_PRINTER_TOML.replace("ELEGOO", "ASSETS-WIN");
+    fs::write(
+        assets_dir
+            .join("printers")
+            .join("elegoo-saturn-4-ultra.toml"),
+        &assets_toml,
+    )
+    .unwrap();
+
+    let id = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+    let profile = load_printer_profile_by_id(&id, None, &library_dir, &assets_dir).unwrap();
+    assert_eq!(profile.identity.manufacturer.as_str(), "ELEGOO");
+}
+
+#[test]
+fn load_printer_profile_by_id_not_found_anywhere_lists_each_attempted_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(&library_dir).unwrap();
+    fs::create_dir_all(&assets_dir).unwrap();
+
+    let id = PrinterId::new("does-not-exist").unwrap();
+    let err = load_printer_profile_by_id(&id, None, &library_dir, &assets_dir).unwrap_err();
+    match &err {
+        LoadPrinterProfileByIdError::NotFoundAnywhere { attempted } => {
+            let library_path = library_dir.join("printers").join("does-not-exist.toml");
+            let assets_path = assets_dir.join("printers").join("does-not-exist.toml");
+            assert_eq!(attempted, &vec![library_path.clone(), assets_path.clone()]);
+            let msg = format!("{err}");
+            assert!(msg.contains(library_path.to_str().unwrap()), "msg: {msg}");
+            assert!(msg.contains(assets_path.to_str().unwrap()), "msg: {msg}");
+        }
+        other => panic!("expected NotFoundAnywhere, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_printer_profile_by_id_hard_fails_on_bad_toml_in_library_without_cascading() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(library_dir.join("printers")).unwrap();
+    fs::create_dir_all(assets_dir.join("printers")).unwrap();
+    // Library has a broken file; assets has a valid one. The
+    // semantics: library's parse error should NOT cascade to assets.
+    fs::write(
+        library_dir
+            .join("printers")
+            .join("elegoo-saturn-4-ultra.toml"),
+        "this is not = valid toml [\n",
+    )
+    .unwrap();
+    fs::write(
+        assets_dir
+            .join("printers")
+            .join("elegoo-saturn-4-ultra.toml"),
+        VALID_PRINTER_TOML,
+    )
+    .unwrap();
+
+    let id = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+    let err = load_printer_profile_by_id(&id, None, &library_dir, &assets_dir).unwrap_err();
+    match err {
+        LoadPrinterProfileByIdError::Source(inner) => {
+            assert!(matches!(
+                inner.kind,
+                LoadPrinterProfileErrorKind::TomlParse(_),
+            ));
+        }
+        other => panic!("expected Source kind, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_material_profile_by_id_uses_explicit_path_when_provided() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(&library_dir).unwrap();
+    fs::create_dir_all(&assets_dir).unwrap();
+    let explicit = write_temp_file(dir.path(), "explicit.toml", VALID_MATERIAL_TOML);
+
+    let id = MaterialId::new("does-not-exist-as-id").unwrap();
+    let profile =
+        load_material_profile_by_id(&id, Some(&explicit), &library_dir, &assets_dir).unwrap();
+    assert_eq!(profile.identity.brand.as_str(), "Siraya Tech");
+}
+
+#[test]
+fn load_material_profile_by_id_falls_back_from_library_to_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(library_dir.join("materials")).unwrap();
+    let assets_materials = assets_dir.join("materials");
+    fs::create_dir_all(&assets_materials).unwrap();
+    fs::write(
+        assets_materials.join("sirayatech-blu.toml"),
+        VALID_MATERIAL_TOML,
+    )
+    .unwrap();
+
+    let id = MaterialId::new("sirayatech-blu").unwrap();
+    let profile = load_material_profile_by_id(&id, None, &library_dir, &assets_dir).unwrap();
+    assert_eq!(profile.identity.brand.as_str(), "Siraya Tech");
+}
+
+#[test]
+fn load_material_profile_by_id_not_found_anywhere_lists_each_attempted_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let library_dir = dir.path().join("library");
+    let assets_dir = dir.path().join("assets");
+    fs::create_dir_all(&library_dir).unwrap();
+    fs::create_dir_all(&assets_dir).unwrap();
+
+    let id = MaterialId::new("does-not-exist").unwrap();
+    let err = load_material_profile_by_id(&id, None, &library_dir, &assets_dir).unwrap_err();
+    match &err {
+        LoadMaterialProfileByIdError::NotFoundAnywhere { attempted } => {
+            let library_path = library_dir.join("materials").join("does-not-exist.toml");
+            let assets_path = assets_dir.join("materials").join("does-not-exist.toml");
+            assert_eq!(attempted, &vec![library_path.clone(), assets_path.clone()]);
+            let msg = format!("{err}");
+            assert!(msg.contains(library_path.to_str().unwrap()), "msg: {msg}");
+            assert!(msg.contains(assets_path.to_str().unwrap()), "msg: {msg}");
+        }
+        other => panic!("expected NotFoundAnywhere, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_by_id_error_types_implement_error_trait() {
+    fn assert_error<E: std::error::Error>() {}
+    assert_error::<LoadPrinterProfileByIdError>();
+    assert_error::<LoadMaterialProfileByIdError>();
 }
