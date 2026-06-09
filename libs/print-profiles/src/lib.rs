@@ -21,6 +21,7 @@ pub mod material_defaults;
 pub mod material_identity;
 pub mod material_intent;
 pub mod material_per_printer;
+pub mod material_profile;
 pub mod printer_capabilities;
 pub mod printer_constraints;
 pub mod printer_hardware;
@@ -31,6 +32,7 @@ pub use material_defaults::MaterialDefaults;
 pub use material_identity::MaterialIdentity;
 pub use material_intent::MaterialIntent;
 pub use material_per_printer::MaterialPerPrinter;
+pub use material_profile::{MaterialProfile, MaterialProfileReservedSection};
 pub use printer_capabilities::PrinterCapabilities;
 pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
@@ -45,6 +47,8 @@ mod tests_material_identity;
 mod tests_material_intent;
 #[cfg(test)]
 mod tests_material_per_printer;
+#[cfg(test)]
+mod tests_material_profile;
 #[cfg(test)]
 mod tests_printer_capabilities;
 #[cfg(test)]
