@@ -27,6 +27,7 @@ pub mod network;
 pub mod non_empty_string;
 pub mod pixel_resolution;
 pub mod pixel_size;
+pub mod scale_compensation;
 pub mod speed;
 pub mod time;
 
@@ -45,6 +46,9 @@ pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
 pub use pixel_resolution::{PixelResolution, ZeroPixelExtentError};
 pub use pixel_size::{PixelAxis, PixelAxisOutOfRange, PixelSizeMicrons};
+pub use scale_compensation::{
+    ScaleCompensation, ScaleCompensationPercent, ScaleCompensationPercentOutOfBound,
+};
 pub use speed::{
     PositiveFiniteMmPerMin, SpeedMmPerMinOutOfRange, SpeedRangeMmPerMin,
     SpeedRangeMmPerMinBoundsInverted,
@@ -75,6 +79,8 @@ mod tests_non_empty_string;
 mod tests_pixel_resolution;
 #[cfg(test)]
 mod tests_pixel_size;
+#[cfg(test)]
+mod tests_scale_compensation;
 #[cfg(test)]
 mod tests_speed;
 #[cfg(test)]
