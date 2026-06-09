@@ -17,6 +17,7 @@
 //! This crate does not depend on the slicer; it owns the printer- and
 //! material-profile bounded context.
 
+pub mod material_defaults;
 pub mod material_identity;
 pub mod material_intent;
 pub mod printer_capabilities;
@@ -24,6 +25,7 @@ pub mod printer_constraints;
 pub mod printer_hardware;
 pub mod printer_identity;
 
+pub use material_defaults::MaterialDefaults;
 pub use material_identity::MaterialIdentity;
 pub use material_intent::MaterialIntent;
 pub use printer_capabilities::PrinterCapabilities;
@@ -31,6 +33,8 @@ pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 
+#[cfg(test)]
+mod tests_material_defaults;
 #[cfg(test)]
 mod tests_material_identity;
 #[cfg(test)]
