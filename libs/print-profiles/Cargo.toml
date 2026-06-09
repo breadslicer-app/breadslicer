@@ -17,3 +17,4 @@ toml_edit = { workspace = true }
 
 [dev-dependencies]
 nonempty-collections = { workspace = true }
+tempfile = "3.23.0"
