@@ -5,13 +5,16 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
+use std::ffi::OsString;
+use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use chrono::Local;
 use sc_print_profiles::{
-    list_material_ids, list_printer_ids, load_material_profile_from_library,
-    load_printer_profile_from_library,
+    ExportManifest, ExportSelection, export_package, list_material_ids, list_printer_ids,
+    load_material_profile_from_library, load_printer_profile_from_library,
 };
 
 use crate::config::cmd_options::ListKind;
@@ -64,6 +67,61 @@ fn list_to(library_dir: &Path, kind: ListKind, out: &mut dyn Write) -> Result<()
         }
     }
     Ok(())
+}
+
+/// Handle `profiles export <output.zip> [--printers|--materials|--id ...]`:
+/// resolve the selection and package the user library into a zip.
+pub(crate) fn export(
+    output: OsString,
+    printers: bool,
+    materials: bool,
+    ids: Vec<String>,
+) -> Result<()> {
+    let selection = build_selection(printers, materials, ids)?;
+    let library_dir = resolve_user_library_dir()
+        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
+
+    let output_path = PathBuf::from(output);
+    let file = File::create(&output_path).map_err(|e| {
+        anyhow!(
+            "could not create the output archive {}: {e}",
+            output_path.display(),
+        )
+    })?;
+
+    let manifest = ExportManifest {
+        name: None,
+        description: None,
+        author: None,
+        exported_at: Local::now().to_rfc3339(),
+        sc_slicer_version: env!("CARGO_PKG_VERSION").to_owned(),
+    };
+
+    export_package(&library_dir, &selection, &manifest, file)
+        .map_err(|e| anyhow!("could not export the profile package: {e}"))?;
+
+    println!("Exported profiles to {}", output_path.display());
+    Ok(())
+}
+
+/// Turn the parsed export flags into an [`ExportSelection`]. `--id` is
+/// an explicit selection and may not be combined with the kind flags;
+/// `--printers` and `--materials` together (or neither) select
+/// everything.
+fn build_selection(printers: bool, materials: bool, ids: Vec<String>) -> Result<ExportSelection> {
+    if !ids.is_empty() {
+        if printers || materials {
+            return Err(anyhow!(
+                "--id cannot be combined with --printers or --materials",
+            ));
+        }
+        return Ok(ExportSelection::Ids(ids));
+    }
+    Ok(match (printers, materials) {
+        (true, false) => ExportSelection::Printers,
+        (false, true) => ExportSelection::Materials,
+        (false, false) | (true, true) => ExportSelection::All,
+    })
 }
 
 #[cfg(test)]
@@ -169,5 +227,60 @@ profile_version = "1.0.0"
         let dir = TempDir::new().unwrap();
         let out = render(dir.path(), ListKind::All);
         assert!(out.is_empty(), "expected no output, got: {out:?}");
+    }
+}
+
+#[cfg(test)]
+mod build_selection_tests {
+    use super::*;
+
+    #[test]
+    fn no_flags_selects_everything() {
+        assert_eq!(
+            build_selection(false, false, Vec::new()).unwrap(),
+            ExportSelection::All,
+        );
+    }
+
+    #[test]
+    fn both_kind_flags_select_everything() {
+        assert_eq!(
+            build_selection(true, true, Vec::new()).unwrap(),
+            ExportSelection::All,
+        );
+    }
+
+    #[test]
+    fn printers_flag_selects_printers() {
+        assert_eq!(
+            build_selection(true, false, Vec::new()).unwrap(),
+            ExportSelection::Printers,
+        );
+    }
+
+    #[test]
+    fn materials_flag_selects_materials() {
+        assert_eq!(
+            build_selection(false, true, Vec::new()).unwrap(),
+            ExportSelection::Materials,
+        );
+    }
+
+    #[test]
+    fn ids_select_those_ids() {
+        assert_eq!(
+            build_selection(false, false, vec!["a".to_owned(), "b".to_owned()]).unwrap(),
+            ExportSelection::Ids(vec!["a".to_owned(), "b".to_owned()]),
+        );
+    }
+
+    #[test]
+    fn ids_combined_with_printers_is_an_error() {
+        assert!(build_selection(true, false, vec!["a".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn ids_combined_with_materials_is_an_error() {
+        assert!(build_selection(false, true, vec!["a".to_owned()]).is_err());
     }
 }

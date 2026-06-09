@@ -27,6 +27,7 @@ pub mod material_per_printer;
 pub mod material_profile;
 pub mod material_resolved;
 pub mod override_record;
+pub mod package;
 mod policy;
 pub mod printer_capabilities;
 pub mod printer_constraints;
@@ -57,6 +58,7 @@ pub use material_per_printer::MaterialPerPrinter;
 pub use material_profile::{MaterialProfile, MaterialProfileReservedSection};
 pub use material_resolved::MaterialResolved;
 pub use override_record::OverrideRecord;
+pub use package::{ExportError, ExportManifest, ExportSelection, export_package};
 pub use printer_capabilities::PrinterCapabilities;
 pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
@@ -90,6 +92,8 @@ mod tests_material_profile;
 mod tests_material_resolved;
 #[cfg(test)]
 mod tests_override_record;
+#[cfg(test)]
+mod tests_package;
 #[cfg(test)]
 mod tests_policy;
 #[cfg(test)]

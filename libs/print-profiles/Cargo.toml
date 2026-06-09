@@ -15,6 +15,7 @@ directories = "6.0.0"
 semver = { workspace = true }
 serde = { workspace = true }
 toml_edit = { workspace = true }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 nonempty-collections = { workspace = true }

@@ -56,6 +56,12 @@ pub enum CmdOptions {
     },
     Help,
     Inspect {},
+    ProfilesExport {
+        output: OsString,
+        printers: bool,
+        materials: bool,
+        ids: Vec<String>,
+    },
     ProfilesList {
         kind: ListKind,
     },
@@ -267,12 +273,38 @@ fn get_profiles_list_options() -> impl Parser<CmdOptions> {
     construct!(CmdOptions::ProfilesList { kind })
 }
 
+fn get_profiles_export_options() -> impl Parser<CmdOptions> {
+    let printers = long("printers")
+        .help("Export only printer profiles. Combined with --materials this exports both kinds.")
+        .switch();
+    let materials = long("materials")
+        .help("Export only material profiles. Combined with --printers this exports both kinds.")
+        .switch();
+    let ids = long("id")
+        .help(
+            "Export exactly the named profile id (repeatable). Mutually exclusive with --printers / --materials.",
+        )
+        .argument::<String>("ID")
+        .many();
+    let output = positional::<OsString>("OUTPUT_ZIP").help("Path of the zip archive to write.");
+    construct!(CmdOptions::ProfilesExport {
+        printers,
+        materials,
+        ids,
+        output,
+    })
+}
+
 fn get_profiles_options() -> impl Parser<CmdOptions> {
     let list = get_profiles_list_options()
         .to_options()
         .descr("List the profiles in the user library")
         .command("list");
-    construct!([list])
+    let export = get_profiles_export_options()
+        .to_options()
+        .descr("Export profiles from the user library into a zip archive")
+        .command("export");
+    construct!([list, export])
 }
 
 pub fn get_cmd_options() -> OptionParser<CmdOptions> {
