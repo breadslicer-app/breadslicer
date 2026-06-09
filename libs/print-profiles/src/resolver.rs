@@ -3,40 +3,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#![allow(dead_code)]
-
-//! Composition of a printer profile and a material profile into a
-//! set of picked values.
+//! Composition of a printer profile, a material profile, and a set
+//! of per-print scene overrides into a [`ResolvedPrintConfig`].
 //!
-//! This module picks calibrated values from the material's
-//! per-printer block, falls back to material-level defaults where
-//! the per-printer entry did not supply a value, and derives from
-//! material intent where the prior two layers fell through and the
-//! intent has the inputs needed.
+//! The public entry point is [`resolve`]. The pipeline runs the
+//! following layers:
 //!
-//! Per-field coverage:
+//! - Pick calibrated values from the material's per-printer block
+//!   matched to the printer's id, then fall back to material-level
+//!   defaults for fields that have defaults coverage
+//!   (`bottom_layer_count` and `scale_compensation_pct`).
+//! - Derive from material intent where the prior layer left a
+//!   field unset and the intent has the inputs needed. Today only
+//!   `layer_height_mm` (intent passthrough from
+//!   `target_layer_height_mm`) and `normal_exposure_sec` (derived
+//!   from `target_energy_density_mj_per_cm2` divided by the
+//!   printer's declared `light_intensity_mw_per_cm2`) are
+//!   derivable.
+//! - Validate each picked value against the printer's constraints:
+//!   snap-to-multiple, snap-into-range, snap-at-max, or
+//!   reject-below-min per the policy table. Snaps that exceed the
+//!   warning threshold emit an `Autosnap` warning.
+//! - Apply per-print scene overrides. Each override overwrites
+//!   the picked value, emits an `OverrideRecord` with the prior
+//!   value captured, and re-runs the per-field policy chain so
+//!   that the override is itself constrained.
+//! - Assemble the resolved configuration. Any required field
+//!   still unset surfaces as
+//!   [`ResolveError::MissingRequiredField`].
 //!
-//! - `layer_height_mm`: intent passthrough only
-//!   (`target_layer_height_mm`).
-//! - `normal_exposure_sec`: per-printer; or derived from
-//!   `target_energy_density_mj_per_cm2` divided by the printer's
-//!   declared `light_intensity_mw_per_cm2`.
-//! - `bottom_exposure_sec`: per-printer only. No automatic
-//!   derivation; bottom exposure varies too widely per material
-//!   for a generic formula.
-//! - `bottom_layer_count`: per-printer; or material default.
-//! - `lift_distance_mm`, `lift_speed_mm_min`,
-//!   `retract_speed_mm_min`: per-printer only.
-//! - `scale_compensation_pct`: material default only. No
-//!   `OverrideRecord` is emitted for this field today since the
-//!   compound shape does not fit the scalar `final_value: f64`
-//!   field on the record; the `DefaultUsed` warning still fires.
-//!
-//! Inputs that are silently incomplete (e.g. an intent that names
-//! a target energy density but a printer that does not declare its
-//! light intensity) cause the corresponding derivation to skip
-//! without a warning; the field is left unset, deferring to the
-//! override layer or to the assembly-time required-field check.
+//! `bottom_exposure_sec` has no automatic derivation; it must be
+//! supplied via calibration or override. Inputs that are silently
+//! incomplete (e.g. an intent that names a target energy density
+//! but a printer that does not declare its light intensity) cause
+//! the corresponding derivation to skip without a warning; the
+//! field is left unset, deferring to the override layer or to the
+//! assembly-time required-field check.
 
 use sc_print_primitives::{
     PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
@@ -46,6 +48,7 @@ use crate::material_defaults::MaterialDefaults;
 use crate::material_intent::MaterialIntent;
 use crate::material_per_printer::MaterialPerPrinter;
 use crate::material_profile::MaterialProfile;
+use crate::material_resolved::MaterialResolved;
 use crate::override_record::OverrideRecord;
 use crate::policy::{
     AUTOSNAP_WARNING_THRESHOLD, ApplyResult, policies_for, relative_delta_exceeds,
@@ -55,6 +58,7 @@ use crate::printer_profile::PrinterProfile;
 use crate::resolve_error::ResolveError;
 use crate::resolve_warning::{IntentSource, ResolveWarning};
 use crate::resolved_field::ResolvedField;
+use crate::resolved_print_config::ResolvedPrintConfig;
 use crate::scene_overrides::SceneOverrides;
 use crate::value_source::ValueSource;
 
@@ -430,4 +434,101 @@ pub(crate) fn apply_scene_overrides(
         picked.scale_compensation_pct = Some(value);
     }
     Ok(())
+}
+
+fn assemble(
+    printer: PrinterProfile,
+    material: &MaterialProfile,
+    picked: PickedValues,
+    overrides_applied: Vec<OverrideRecord>,
+    warnings: Vec<ResolveWarning>,
+) -> Result<ResolvedPrintConfig, ResolveError> {
+    let layer_height_mm = picked
+        .layer_height_mm
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LayerHeightMm,
+        })?;
+    let normal_exposure_sec =
+        picked
+            .normal_exposure_sec
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::NormalExposureSec,
+            })?;
+    let bottom_exposure_sec =
+        picked
+            .bottom_exposure_sec
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::BottomExposureSec,
+            })?;
+    let bottom_layer_count =
+        picked
+            .bottom_layer_count
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::BottomLayerCount,
+            })?;
+    let lift_distance_mm = picked
+        .lift_distance_mm
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LiftDistanceMm,
+        })?;
+    let lift_speed_mm_min = picked
+        .lift_speed_mm_min
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LiftSpeedMmMin,
+        })?;
+    let retract_speed_mm_min =
+        picked
+            .retract_speed_mm_min
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::RetractSpeedMmMin,
+            })?;
+    let scale_compensation_pct =
+        picked
+            .scale_compensation_pct
+            .ok_or(ResolveError::MissingRequiredField {
+                field: ResolvedField::ScaleCompensationPct,
+            })?;
+
+    Ok(ResolvedPrintConfig {
+        printer,
+        material_resolved: MaterialResolved {
+            identity: material.identity.clone(),
+            layer_height_mm,
+            normal_exposure_sec,
+            bottom_exposure_sec,
+            bottom_layer_count,
+            lift_distance_mm,
+            lift_speed_mm_min,
+            retract_speed_mm_min,
+            scale_compensation_pct,
+        },
+        overrides_applied,
+        warnings,
+    })
+}
+
+/// Compose a printer profile, a material profile, and a set of
+/// per-print scene overrides into a fully-resolved print
+/// configuration.
+///
+/// See the module docstring for the pipeline steps. Errors with
+/// [`ResolveError::RejectedBelowMinimum`] when a constrained value
+/// falls below the printer's safety minimum, or with
+/// [`ResolveError::MissingRequiredField`] when no resolution layer
+/// supplied a required value.
+pub fn resolve(
+    printer: &PrinterProfile,
+    material: &MaterialProfile,
+    overrides: &SceneOverrides,
+) -> Result<ResolvedPrintConfig, ResolveError> {
+    let (mut picked, mut warnings, mut records) = pick_and_derive_material(printer, material);
+    apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;
+    apply_scene_overrides(
+        overrides,
+        &mut picked,
+        &printer.constraints,
+        &mut warnings,
+        &mut records,
+    )?;
+    assemble(printer.clone(), material, picked, records, warnings)
 }

@@ -15,7 +15,7 @@ use super::resolve_error::ResolveError;
 use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
 use super::resolver::{
-    PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material,
+    PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material, resolve,
 };
 use super::scene_overrides::SceneOverrides;
 use super::value_source::ValueSource;
@@ -891,4 +891,313 @@ fn override_on_layer_height_snaps_range_then_quantises() {
         .find(|r| r.field == ResolvedField::LayerHeightMm)
         .expect("expected override record for layer_height_mm");
     assert_eq!(layer_record.final_value, 0.30);
+}
+
+const FULLY_CALIBRATED_MATERIAL: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.5, y = 0.5, z = 0.0 }
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+
+#[test]
+fn resolve_assembles_fully_populated_config_from_per_printer_block() {
+    let printer = printer_with_light_intensity();
+    let material = material(FULLY_CALIBRATED_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert_eq!(resolved.material_resolved.layer_height_mm.value(), 0.05);
+    assert_eq!(resolved.material_resolved.normal_exposure_sec.value(), 2.5);
+    assert_eq!(resolved.material_resolved.bottom_exposure_sec.value(), 30.0);
+    assert_eq!(resolved.material_resolved.bottom_layer_count, 8);
+    assert_eq!(resolved.material_resolved.lift_distance_mm.value(), 5.0);
+    assert_eq!(resolved.material_resolved.lift_speed_mm_min.value(), 120.0);
+    assert_eq!(
+        resolved.material_resolved.retract_speed_mm_min.value(),
+        150.0
+    );
+    assert_eq!(
+        resolved.material_resolved.scale_compensation_pct.z.value(),
+        0.0
+    );
+    assert_eq!(resolved.printer, printer);
+}
+
+#[test]
+fn resolve_errors_with_missing_required_field_when_no_layer_present() {
+    let toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+"#;
+    let printer = printer_with_light_intensity();
+    let material = material(toml);
+    let overrides = SceneOverrides::default();
+
+    let err = resolve(&printer, &material, &overrides).unwrap_err();
+    assert!(matches!(err, ResolveError::MissingRequiredField { .. }));
+}
+
+#[test]
+fn resolve_reports_first_missing_field_in_material_resolved_field_order() {
+    let toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+"#;
+    let printer = printer_with_light_intensity();
+    let material = material(toml);
+    let overrides = SceneOverrides::default();
+
+    let err = resolve(&printer, &material, &overrides).unwrap_err();
+    assert!(matches!(
+        err,
+        ResolveError::MissingRequiredField {
+            field: ResolvedField::LayerHeightMm
+        },
+    ));
+}
+
+#[test]
+fn resolve_collects_records_from_each_pipeline_layer() {
+    let toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 6
+scale_compensation_pct = { x = 0.5, y = 0.5, z = 0.0 }
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+    let printer = printer_with_light_intensity();
+    let material = material(toml);
+    let overrides = SceneOverrides {
+        lift_distance_mm: Some(PositiveFiniteMm::new(6.0).unwrap()),
+        ..SceneOverrides::default()
+    };
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    let sources: Vec<ValueSource> = resolved
+        .overrides_applied
+        .iter()
+        .map(|r| r.source)
+        .collect();
+    assert!(
+        sources.contains(&ValueSource::Calibrated),
+        "expected at least one calibrated record, got {sources:?}",
+    );
+    assert!(
+        sources.contains(&ValueSource::Default),
+        "expected at least one default record, got {sources:?}",
+    );
+    assert!(
+        sources.contains(&ValueSource::Derived),
+        "expected at least one derived record, got {sources:?}",
+    );
+    assert!(
+        sources.contains(&ValueSource::Override),
+        "expected at least one override record, got {sources:?}",
+    );
+    assert_eq!(resolved.material_resolved.lift_distance_mm.value(), 6.0);
+}
+
+#[test]
+fn resolve_propagates_constraint_rejection_from_step_three() {
+    let printer_toml = r#"
+[identity]
+id = "elegoo-saturn-4-ultra"
+manufacturer = "ELEGOO"
+family = "Saturn"
+name = "Saturn 4 Ultra"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+anti_aliasing = "off"
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+z_step_mm = 0.01
+lift_speed_range_mm_min = { min = 60.0, max = 300.0 }
+"#;
+    let material_toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.5, y = 0.5, z = 0.0 }
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 30.0
+retract_speed_mm_min = 150.0
+"#;
+    let printer: PrinterProfile = toml_edit::de::from_str(printer_toml).unwrap();
+    let mat = material(material_toml);
+    let overrides = SceneOverrides::default();
+
+    let err = resolve(&printer, &mat, &overrides).unwrap_err();
+    assert!(matches!(
+        err,
+        ResolveError::RejectedBelowMinimum {
+            field: ResolvedField::LiftSpeedMmMin,
+            value: 30.0,
+            minimum: 60.0,
+        },
+    ));
+}
+
+#[test]
+fn resolve_propagates_constraint_rejection_from_override() {
+    let printer_toml = r#"
+[identity]
+id = "elegoo-saturn-4-ultra"
+manufacturer = "ELEGOO"
+family = "Saturn"
+name = "Saturn 4 Ultra"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+anti_aliasing = "off"
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+z_step_mm = 0.01
+lift_speed_range_mm_min = { min = 60.0, max = 300.0 }
+"#;
+    let printer: PrinterProfile = toml_edit::de::from_str(printer_toml).unwrap();
+    let mat = material(FULLY_CALIBRATED_MATERIAL);
+    let overrides = SceneOverrides {
+        lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(30.0).unwrap()),
+        ..SceneOverrides::default()
+    };
+
+    let err = resolve(&printer, &mat, &overrides).unwrap_err();
+    assert!(matches!(
+        err,
+        ResolveError::RejectedBelowMinimum {
+            field: ResolvedField::LiftSpeedMmMin,
+            value: 30.0,
+            minimum: 60.0,
+        },
+    ));
+}
+
+#[test]
+fn resolve_returns_collected_warnings_in_assembled_config() {
+    let toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 6
+scale_compensation_pct = { x = 0.5, y = 0.5, z = 0.0 }
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+    let printer = printer_with_light_intensity();
+    let material = material(toml);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    let has_default_used = resolved
+        .warnings
+        .iter()
+        .any(|w| matches!(w, ResolveWarning::DefaultUsed { .. }));
+    let has_derived_from_intent = resolved
+        .warnings
+        .iter()
+        .any(|w| matches!(w, ResolveWarning::DerivedFromIntent { .. }));
+    assert!(
+        has_default_used,
+        "expected at least one DefaultUsed warning"
+    );
+    assert!(
+        has_derived_from_intent,
+        "expected at least one DerivedFromIntent warning",
+    );
 }
