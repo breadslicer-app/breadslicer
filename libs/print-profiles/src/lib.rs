@@ -30,6 +30,7 @@ pub mod printer_constraints;
 pub mod printer_hardware;
 pub mod printer_identity;
 pub mod printer_profile;
+pub mod resolve_error;
 pub mod resolve_warning;
 pub mod resolved_field;
 pub mod value_source;
@@ -53,6 +54,7 @@ pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection};
+pub use resolve_error::ResolveError;
 pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 pub use resolved_field::ResolvedField;
 pub use value_source::ValueSource;
@@ -83,6 +85,8 @@ mod tests_printer_hardware;
 mod tests_printer_identity;
 #[cfg(test)]
 mod tests_printer_profile;
+#[cfg(test)]
+mod tests_resolve_error;
 #[cfg(test)]
 mod tests_resolve_warning;
 #[cfg(test)]
