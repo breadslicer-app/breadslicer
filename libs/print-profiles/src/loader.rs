@@ -17,8 +17,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use sc_print_primitives::{MaterialId, PrinterId};
+
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
+
+const PRINTERS_SUBDIR: &str = "printers";
+const MATERIALS_SUBDIR: &str = "materials";
 
 /// Returned by [`load_printer_profile_from_path`] when the read or
 /// the parse fails. The path field names the file that was being
@@ -140,4 +145,33 @@ pub fn load_material_profile_from_path(
         path: path.to_owned(),
         kind: LoadMaterialProfileErrorKind::TomlParse(err),
     })
+}
+
+/// Load a printer profile from a library directory by id. Resolves
+/// to `<library_dir>/printers/<id>.toml` and delegates to
+/// [`load_printer_profile_from_path`]. The library directory is
+/// either the platform-resolved user library (see
+/// [`crate::library::user_library_dir`]) or a workspace assets
+/// directory.
+pub fn load_printer_profile_from_library(
+    library_dir: &Path,
+    id: &PrinterId,
+) -> Result<PrinterProfile, LoadPrinterProfileError> {
+    let path = library_dir
+        .join(PRINTERS_SUBDIR)
+        .join(format!("{}.toml", id.as_str()));
+    load_printer_profile_from_path(&path)
+}
+
+/// Load a material profile from a library directory by id. Resolves
+/// to `<library_dir>/materials/<id>.toml` and delegates to
+/// [`load_material_profile_from_path`].
+pub fn load_material_profile_from_library(
+    library_dir: &Path,
+    id: &MaterialId,
+) -> Result<MaterialProfile, LoadMaterialProfileError> {
+    let path = library_dir
+        .join(MATERIALS_SUBDIR)
+        .join(format!("{}.toml", id.as_str()));
+    load_material_profile_from_path(&path)
 }

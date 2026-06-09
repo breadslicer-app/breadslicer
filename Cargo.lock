@@ -4539,6 +4539,7 @@ dependencies = [
 name = "sc-print-profiles"
 version = "0.0.12"
 dependencies = [
+ "directories",
  "nonempty-collections",
  "sc-print-primitives",
  "semver",

@@ -17,6 +17,7 @@
 //! This crate does not depend on the slicer; it owns the printer- and
 //! material-profile bounded context.
 
+pub mod library;
 pub mod loader;
 pub mod material_defaults;
 pub mod material_identity;
@@ -29,9 +30,12 @@ pub mod printer_hardware;
 pub mod printer_identity;
 pub mod printer_profile;
 
+pub use library::{UserLibraryDirError, user_library_dir};
 pub use loader::{
     LoadMaterialProfileError, LoadMaterialProfileErrorKind, LoadPrinterProfileError,
-    LoadPrinterProfileErrorKind, load_material_profile_from_path, load_printer_profile_from_path,
+    LoadPrinterProfileErrorKind, load_material_profile_from_library,
+    load_material_profile_from_path, load_printer_profile_from_library,
+    load_printer_profile_from_path,
 };
 pub use material_defaults::MaterialDefaults;
 pub use material_identity::MaterialIdentity;
@@ -44,6 +48,8 @@ pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection};
 
+#[cfg(test)]
+mod tests_library;
 #[cfg(test)]
 mod tests_loader;
 #[cfg(test)]

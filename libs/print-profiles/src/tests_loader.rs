@@ -7,9 +7,13 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use sc_print_primitives::{MaterialId, PrinterId};
+
 use super::loader::{
     LoadMaterialProfileError, LoadMaterialProfileErrorKind, LoadPrinterProfileError,
-    LoadPrinterProfileErrorKind, load_material_profile_from_path, load_printer_profile_from_path,
+    LoadPrinterProfileErrorKind, load_material_profile_from_library,
+    load_material_profile_from_path, load_printer_profile_from_library,
+    load_printer_profile_from_path,
 };
 
 const VALID_PRINTER_TOML: &str = r#"
@@ -188,4 +192,60 @@ fn loader_error_types_implement_error_trait() {
     fn assert_error<E: std::error::Error>() {}
     assert_error::<LoadPrinterProfileError>();
     assert_error::<LoadMaterialProfileError>();
+}
+
+#[test]
+fn load_printer_profile_from_library_resolves_id_to_path_and_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let printers_dir = dir.path().join("printers");
+    fs::create_dir_all(&printers_dir).unwrap();
+    let path = printers_dir.join("elegoo-saturn-4-ultra.toml");
+    fs::write(&path, VALID_PRINTER_TOML).unwrap();
+
+    let id = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+    let profile = load_printer_profile_from_library(dir.path(), &id).unwrap();
+    assert_eq!(profile.identity.manufacturer.as_str(), "ELEGOO");
+}
+
+#[test]
+fn load_printer_profile_from_library_with_missing_file_returns_io_error_with_resolved_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = PrinterId::new("does-not-exist").unwrap();
+    let err = load_printer_profile_from_library(dir.path(), &id).unwrap_err();
+    let expected = dir.path().join("printers").join("does-not-exist.toml");
+    assert_eq!(err.path, expected);
+    match err.kind {
+        LoadPrinterProfileErrorKind::Io(io_err) => {
+            assert_eq!(io_err.kind(), io::ErrorKind::NotFound);
+        }
+        other => panic!("expected Io kind, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_material_profile_from_library_resolves_id_to_path_and_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let materials_dir = dir.path().join("materials");
+    fs::create_dir_all(&materials_dir).unwrap();
+    let path = materials_dir.join("sirayatech-blu.toml");
+    fs::write(&path, VALID_MATERIAL_TOML).unwrap();
+
+    let id = MaterialId::new("sirayatech-blu").unwrap();
+    let profile = load_material_profile_from_library(dir.path(), &id).unwrap();
+    assert_eq!(profile.identity.brand.as_str(), "Siraya Tech");
+}
+
+#[test]
+fn load_material_profile_from_library_with_missing_file_returns_io_error_with_resolved_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = MaterialId::new("does-not-exist").unwrap();
+    let err = load_material_profile_from_library(dir.path(), &id).unwrap_err();
+    let expected = dir.path().join("materials").join("does-not-exist.toml");
+    assert_eq!(err.path, expected);
+    match err.kind {
+        LoadMaterialProfileErrorKind::Io(io_err) => {
+            assert_eq!(io_err.kind(), io::ErrorKind::NotFound);
+        }
+        other => panic!("expected Io kind, got {other:?}"),
+    }
 }
