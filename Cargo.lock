@@ -4526,6 +4526,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-print-glue"
+version = "0.0.12"
+dependencies = [
+ "sc-print-primitives",
+ "sc-print-profiles",
+ "sc-sl1cer",
+ "toml_edit",
+]
+
+[[package]]
 name = "sc-print-primitives"
 version = "0.0.12"
 dependencies = [

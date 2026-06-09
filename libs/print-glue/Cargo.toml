@@ -1,0 +1,18 @@
+[package]
+name = "sc-print-glue"
+version = "0.0.12"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Application-layer glue projecting a resolved print configuration onto the slicing engine's input port."
+categories = ["data-structures"]
+keywords = ["3d", "printing", "resin", "sla", "slicing"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+sc-print-primitives = { workspace = true }
+sc-print-profiles = { workspace = true }
+sc-sl1cer = { workspace = true }
+
+[dev-dependencies]
+toml_edit = { workspace = true }
