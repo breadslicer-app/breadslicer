@@ -5,4 +5,5 @@
 
 pub mod assets_dir;
 pub mod cmd_options;
+pub mod library_dir;
 pub mod profile_ref;

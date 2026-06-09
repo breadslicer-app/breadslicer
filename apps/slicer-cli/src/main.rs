@@ -14,6 +14,7 @@ use anyhow::Result;
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
 use crate::commands::fix::{FixOptions, fix};
+use crate::commands::profiles::list as profiles_list;
 use crate::commands::slice::{SliceArgs, slice};
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
 
@@ -62,6 +63,7 @@ fn main() -> Result<()> {
         CmdOptions::Inspect {} => {
             todo!("Not yet implemented :(");
         }
+        CmdOptions::ProfilesList { kind } => profiles_list(kind),
         CmdOptions::Slice {
             source,
             target,

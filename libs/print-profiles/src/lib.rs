@@ -18,6 +18,7 @@
 //! material-profile bounded context.
 
 pub mod library;
+pub mod listing;
 pub mod loader;
 pub mod material_defaults;
 pub mod material_identity;
@@ -41,6 +42,7 @@ pub mod scene_overrides;
 pub mod value_source;
 
 pub use library::{UserLibraryDirError, user_library_dir};
+pub use listing::{ListLibraryError, list_material_ids, list_printer_ids};
 pub use loader::{
     LoadMaterialProfileByIdError, LoadMaterialProfileError, LoadMaterialProfileErrorKind,
     LoadPrinterProfileByIdError, LoadPrinterProfileError, LoadPrinterProfileErrorKind,
@@ -70,6 +72,8 @@ pub use value_source::ValueSource;
 
 #[cfg(test)]
 mod tests_library;
+#[cfg(test)]
+mod tests_listing;
 #[cfg(test)]
 mod tests_loader;
 #[cfg(test)]

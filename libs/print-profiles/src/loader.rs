@@ -32,8 +32,8 @@ use sc_print_primitives::{MaterialId, PrinterId};
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
 
-const PRINTERS_SUBDIR: &str = "printers";
-const MATERIALS_SUBDIR: &str = "materials";
+pub(crate) const PRINTERS_SUBDIR: &str = "printers";
+pub(crate) const MATERIALS_SUBDIR: &str = "materials";
 
 /// Returned by [`load_printer_profile_from_path`] when the read or
 /// the parse fails. The path field names the file that was being

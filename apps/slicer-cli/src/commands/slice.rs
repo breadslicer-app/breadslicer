@@ -22,7 +22,7 @@ use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     MaterialProfile, PrinterProfile, SceneOverrides, load_material_profile_by_id,
     load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_path,
-    resolve, user_library_dir,
+    resolve,
 };
 use sc_sl1cer::error::SliceError;
 use sc_sl1cer::profile::{AaLevel, PackingMode};
@@ -33,6 +33,7 @@ use sc_sla_formats::{Format, WriterOptions, write_slice};
 use crate::commands::fix::{FixOptions, repair_scene_meshes, show_applied_fixes};
 use crate::commands::mesh_loader::display_warnings;
 use crate::config::assets_dir::resolve_assets_profiles_dir;
+use crate::config::library_dir::resolve_user_library_dir;
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 use crate::filesystem::validate_sourcefile_path;
 
@@ -68,7 +69,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         })?,
     };
 
-    let library_dir = user_library_dir()
+    let library_dir = resolve_user_library_dir()
         .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
     let assets_dir = resolve_assets_profiles_dir();
     let printer = load_printer_profile(&args.printer_profile, &library_dir, &assets_dir)?;

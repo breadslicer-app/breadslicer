@@ -4,13 +4,34 @@
  */
 
 use std::ffi::OsString;
+use std::str::FromStr;
 
-use bpaf::{OptionParser, Parser, construct, long, short};
+use bpaf::{OptionParser, Parser, construct, long, positional, short};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_sl1cer::profile::{AaLevel, PositiveFiniteMm};
 use sc_sla_formats::Format;
 
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
+
+/// Which kinds of profile a `profiles list` invocation lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListKind {
+    All,
+    Printers,
+    Materials,
+}
+
+impl FromStr for ListKind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "printers" => Ok(Self::Printers),
+            "materials" => Ok(Self::Materials),
+            other => Err(format!("expected 'printers' or 'materials', got '{other}'")),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum CmdOptions {
@@ -35,6 +56,9 @@ pub enum CmdOptions {
     },
     Help,
     Inspect {},
+    ProfilesList {
+        kind: ListKind,
+    },
     Slice {
         source: OsString,
         target: OsString,
@@ -236,6 +260,21 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
     })
 }
 
+fn get_profiles_list_options() -> impl Parser<CmdOptions> {
+    let kind = positional::<ListKind>("KIND")
+        .help("Restrict the listing to 'printers' or 'materials'; lists everything when omitted.")
+        .fallback(ListKind::All);
+    construct!(CmdOptions::ProfilesList { kind })
+}
+
+fn get_profiles_options() -> impl Parser<CmdOptions> {
+    let list = get_profiles_list_options()
+        .to_options()
+        .descr("List the profiles in the user library")
+        .command("list");
+    construct!([list])
+}
+
 pub fn get_cmd_options() -> OptionParser<CmdOptions> {
     let convert = get_convert_options()
         .to_options()
@@ -257,6 +296,10 @@ pub fn get_cmd_options() -> OptionParser<CmdOptions> {
         .to_options()
         .descr("Prints help information")
         .command("help");
+    let profiles = get_profiles_options()
+        .to_options()
+        .descr("List, export, and import profiles in the user library")
+        .command("profiles");
     let slice = get_slice_options()
         .to_options()
         .descr("Slice a given 3d model file")
@@ -266,7 +309,7 @@ pub fn get_cmd_options() -> OptionParser<CmdOptions> {
         .descr("Prints version information")
         .command("version");
 
-    construct!([convert, diagnose, fix, help, inspect, slice, version])
+    construct!([convert, diagnose, fix, help, inspect, profiles, slice, version])
         .to_options()
         .descr("sc-slicer-cli (SoulCrafted Slicer, CLI) is an FLOSS command line slicer for resin 3d printers")
         // .header(header) // TODO: Implement these lines for the embedded help
