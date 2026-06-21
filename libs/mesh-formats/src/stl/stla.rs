@@ -12,8 +12,7 @@
 //! case-insensitive parsing after a real-world crash report against
 //! such a file: https://github.com/slic3r/Slic3r/issues/2971. This
 //! reader follows the same convention: tokens are lowered at
-//! line-split time and the probe regex matches case-insensitively
-//! via the `(?i)` inline flag.
+//! line-split time and the probe regex matches case-insensitively.
 
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::sync::LazyLock;
@@ -27,12 +26,17 @@ use crate::stl::TriangleIterator;
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
-static ASTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$").unwrap()
-});
-static ASTL_HEADER_RE_LN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$").unwrap()
-});
+// The leading `(?i-u)` makes keyword matching case-insensitive over ASCII
+// only. The `-u` is necessary: it keeps the patterns from requiring the
+// `regex` crate's `unicode-case` feature, which is absent in some build
+// configurations and would otherwise make `Regex::new` fail at startup.
+const ASTL_HEADER_PATTERN: &str = r"(?i-u)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$";
+const ASTL_HEADER_PATTERN_LN: &str =
+    r"(?i-u)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$";
+
+static ASTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(ASTL_HEADER_PATTERN).unwrap());
+static ASTL_HEADER_RE_LN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(ASTL_HEADER_PATTERN_LN).unwrap());
 
 pub struct AsciiStlReader<'a> {
     lines: Box<dyn Iterator<Item = Result<Vec<String>>> + 'a>,
@@ -388,6 +392,28 @@ EndSolid foobar";
             .as_indexed_mesh(None)
             .unwrap();
         assert_eq!(mesh, expected_mesh());
+    }
+
+    #[test]
+    fn header_patterns_use_ascii_only_case_insensitivity() {
+        // Guards a regression where the patterns used the Unicode-aware
+        // `(?i)` flag. When the `regex` crate's `unicode-case` feature is
+        // not enabled (which happens in some build configurations, e.g.
+        // when no other crate pulls it in via feature unification),
+        // compiling such a pattern fails at runtime with "Unicode-aware
+        // case insensitivity matching is not available". STL keywords and
+        // names are ASCII, so the case folding must stay ASCII-only via
+        // the `(?i-u)` flag.
+        for pattern in [super::ASTL_HEADER_PATTERN, super::ASTL_HEADER_PATTERN_LN] {
+            assert!(
+                pattern.starts_with("(?i-u)"),
+                "header pattern must use ASCII-only case-insensitivity via `(?i-u)`: {pattern}"
+            );
+            assert!(
+                !pattern.contains("(?i)"),
+                "header pattern must not use Unicode-aware case-insensitivity via `(?i)`: {pattern}"
+            );
+        }
     }
 
     #[test]
