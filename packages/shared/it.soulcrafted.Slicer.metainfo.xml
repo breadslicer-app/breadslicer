@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>it.soulcrafted.Slicer</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>SoulCrafted Slicer</name>
+  <summary>Open Source Community-Driven Slicer for Resin 3D Printers</summary>
+  <description>
+    <p>
+      The SoulCrafted Slicer is a community-driven, open source slicer for
+      resin (SLA) 3D printers. It loads 3D models, prepares them on the build
+      plate, and produces the per-layer data that resin printers consume.
+    </p>
+  </description>
+  <launchable type="desktop-id">it.soulcrafted.Slicer.desktop</launchable>
+  <provides>
+    <mediatype>model/stl</mediatype>
+    <mediatype>model/obj</mediatype>
+  </provides>
+  <developer id="it.soulcrafted">
+    <name>SoulCrafted</name>
+  </developer>
+  <url type="homepage">https://www.soulcrafted.it/</url>
+  <url type="bugtracker">https://codeberg.org/SoulCrafted/Slicer/issues</url>
+  <url type="vcs-browser">https://codeberg.org/SoulCrafted/Slicer</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.0.12" date="2026-06-21"/>
+  </releases>
+</component>

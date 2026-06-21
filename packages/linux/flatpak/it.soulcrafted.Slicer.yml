@@ -1,0 +1,56 @@
+id: it.soulcrafted.Slicer
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: sc-slicer-gui
+
+finish-args:
+  # The GUI renders through wgpu (Vulkan), so it needs the GPU and a display
+  # socket. File dialogs go through the XDG Desktop Portal, so no filesystem
+  # access is granted here; the command-line tool reads and writes files
+  # through whatever the sandbox is given at run time.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+
+modules:
+  - name: slicer
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/slicer/cargo
+        CARGO_NET_OFFLINE: '1'
+        # The prebuilt Skia archive is fetched up front as a source (see
+        # skia-binaries.source.json) and placed at the module build root;
+        # this points skia-bindings at it so it links offline.
+        SKIA_BINARIES_URL: file:///run/build/slicer/skia-binaries.tar.gz
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release
+      - install -Dm755 target/release/sc-slicer-gui /app/bin/sc-slicer-gui
+      - install -Dm755 target/release/sc-slicer-cli /app/bin/sc-slicer-cli
+      # Bundled vendor profiles. sc-app-paths resolves the data root by
+      # searching XDG_DATA_DIRS (which includes /app/share in the sandbox)
+      # for the soulcrafted-slicer directory.
+      - install -d /app/share/soulcrafted-slicer
+      - cp -r assets/profiles /app/share/soulcrafted-slicer/profiles
+      - install -Dm644 packages/shared/it.soulcrafted.Slicer.desktop
+        /app/share/applications/it.soulcrafted.Slicer.desktop
+      - install -Dm644 packages/shared/it.soulcrafted.Slicer.metainfo.xml
+        /app/share/metainfo/it.soulcrafted.Slicer.metainfo.xml
+      - install -Dm644 packages/shared/it.soulcrafted.Slicer.svg
+        /app/share/icons/hicolor/scalable/apps/it.soulcrafted.Slicer.svg
+    sources:
+      # A deterministic tarball of the working tree (without target/), packed
+      # by build.sh. An archive source is used rather than a dir source because
+      # flatpak-builder never caches a dir source: with the archive, an
+      # unchanged source reuses the cached build instead of recompiling.
+      - type: archive
+        path: .cache/source.tar
+        strip-components: 0
+      - cargo-sources.json
+      - skia-binaries.source.json
