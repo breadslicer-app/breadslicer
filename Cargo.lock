@@ -4490,6 +4490,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-app-paths"
+version = "0.0.12"
+dependencies = [
+ "directories",
+ "tempfile",
+]
+
+[[package]]
 name = "sc-mesh-core"
 version = "0.0.12"
 dependencies = [
@@ -4550,8 +4558,8 @@ dependencies = [
 name = "sc-print-profiles"
 version = "0.0.12"
 dependencies = [
- "directories",
  "nonempty-collections",
+ "sc-app-paths",
  "sc-print-primitives",
  "semver",
  "serde",
@@ -4589,6 +4597,7 @@ dependencies = [
  "chrono",
  "png 0.18.1",
  "predicates",
+ "sc-app-paths",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
@@ -4607,11 +4616,11 @@ version = "0.0.12"
 dependencies = [
  "anyhow",
  "bytemuck",
- "directories",
  "float-cmp 0.10.0",
  "glam",
  "pollster",
  "rfd",
+ "sc-app-paths",
  "sc-mesh-core",
  "sc-mesh-formats",
  "sc-mesh-spatial",

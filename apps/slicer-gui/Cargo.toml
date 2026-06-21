@@ -12,6 +12,7 @@ name = "sc-slicer-gui"
 path = "src/main.rs"
 
 [dependencies]
+sc-app-paths = { workspace = true }
 sc-mesh-core = { workspace = true }
 sc-mesh-formats = { workspace = true }
 sc-mesh-spatial = { workspace = true }
@@ -25,7 +26,6 @@ slint = { version = "1.16.1", features = [
     "unstable-wgpu-28",
     "unstable-winit-030",
 ] }
-directories = "6.0.0"
 pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"

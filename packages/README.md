@@ -9,7 +9,7 @@ directory here.
 - [`linux/`](./linux/README.md) packaging for Linux.
 - [`windows/`](./windows/README.md) packaging for Windows.
 - [`macos/`](./macos/README.md) packaging for macOS (Apple Silicon).
-- [`shared/](./shared/README.md) assets used by more than one format: the
+- [`shared/`](./shared/README.md) assets used by more than one format: the
   application icon, AppStream metainfo, and the application id.
 
 Each format lives in a self-contained directory with its own manifest and build

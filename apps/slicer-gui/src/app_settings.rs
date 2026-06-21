@@ -15,25 +15,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::ThemePreference;
 use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::language::LanguagePreference;
 
-// Linux's config_dir = $XDG_CONFIG_HOME/<application>. Bare "slicer" would
-// collide with unrelated tools, so use the fully-namespaced name on Linux.
-// macOS keeps the reverse-DNS bundle id (it.soulcrafted.slicer) and Windows
-// keeps the Organization\Application layout (soulcrafted\slicer\config),
-// so only the Linux path needs the adjustment.
-#[cfg(target_os = "linux")]
-const APPLICATION: &str = "soulcrafted-slicer";
-#[cfg(not(target_os = "linux"))]
-const APPLICATION: &str = "slicer";
-
-const QUALIFIER: &str = "it";
-const ORGANIZATION: &str = "soulcrafted";
 const SETTINGS_FILENAME: &str = "settings.toml";
 
 /// On-disk representation of `ThemePreference`. Separate type because the
@@ -273,8 +260,7 @@ impl AppSettings {
 }
 
 fn settings_path() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|d| d.config_dir().join(SETTINGS_FILENAME))
+    sc_app_paths::project_dirs().map(|d| d.config_dir().join(SETTINGS_FILENAME))
 }
 
 /// Process-wide counter that disambiguates concurrent atomic writes

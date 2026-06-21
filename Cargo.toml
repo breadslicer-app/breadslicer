@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "apps/slicer-cli",
     "apps/slicer-gui",
+    "libs/app-paths",
     "libs/mesh-core",
     "libs/mesh-fixtures",
     "libs/mesh-formats",
@@ -25,6 +26,7 @@ debug = false
 strip = true
 
 [workspace.dependencies]
+sc-app-paths = { path = "libs/app-paths", version = "0.0.12" }
 sc-mesh-core = { path = "libs/mesh-core", version = "0.0.12" }
 sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.0.12" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "0.0.12" }

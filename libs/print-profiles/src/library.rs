@@ -13,33 +13,14 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use directories::ProjectDirs;
-
-// These three constants must stay in sync with the GUI's
-// app_settings.rs so the profile library and the on-disk settings
-// resolve to the same per-platform app identity. Drift means user
-// profiles and user settings land under different directories.
-const QUALIFIER: &str = "it";
-const ORGANIZATION: &str = "soulcrafted";
-
-// On Linux the XDG path is just `<application>`, so a bare `slicer`
-// would collide with unrelated tools. macOS and Windows already
-// namespace via the bundle id or the organization directory, so they
-// keep the short name.
-#[cfg(target_os = "linux")]
-const APPLICATION: &str = "soulcrafted-slicer";
-#[cfg(not(target_os = "linux"))]
-const APPLICATION: &str = "slicer";
-
 const PROFILES_SUBDIR: &str = "profiles";
 
 /// Resolve the per-platform user profile-library directory:
 /// `<data_dir>/profiles/`. Fails with
-/// [`UserLibraryDirError::HomeDirUnavailable`] when
-/// [`ProjectDirs::from`] cannot determine a home directory.
+/// [`UserLibraryDirError::HomeDirUnavailable`] when no home directory
+/// can be resolved.
 pub fn user_library_dir() -> Result<PathBuf, UserLibraryDirError> {
-    let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .ok_or(UserLibraryDirError::HomeDirUnavailable)?;
+    let dirs = sc_app_paths::project_dirs().ok_or(UserLibraryDirError::HomeDirUnavailable)?;
     Ok(dirs.data_dir().join(PROFILES_SUBDIR))
 }
 

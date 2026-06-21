@@ -1,0 +1,16 @@
+[package]
+name = "sc-app-paths"
+version = "0.0.12"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Application identity and on-disk path resolution for the SoulCrafted Slicer."
+categories = ["filesystem"]
+keywords = ["xdg", "paths", "directories"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+directories = "6.0.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"
