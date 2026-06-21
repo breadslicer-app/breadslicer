@@ -1,0 +1,8 @@
+[
+  {
+    "type": "file",
+    "url": "https://github.com/rust-skia/skia-binaries/releases/download/0.90.0/skia-binaries-da4579b39b75fa2187c5-x86_64-unknown-linux-gnu-gl-pdf-textlayout-vulkan.tar.gz",
+    "sha256": "0075f8a1a3f8cf951c43a6fc12c60fe6efc337a1c639b617f2b25cfeafebbdd8",
+    "dest-filename": "skia-binaries.tar.gz"
+  }
+]

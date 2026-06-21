@@ -4,3 +4,6 @@
 
 # Development samples
 /examples
+
+# Downloaded packaging blobs (large, re-fetched by the vendor scripts)
+/packages/**/.cache
