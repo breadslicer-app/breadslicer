@@ -41,6 +41,7 @@ fn main() {
 }
 
 fn run_build() {
+    #[cfg(windows)]
     embed_windows_resources();
     generate_language_table();
 
@@ -50,6 +51,7 @@ fn run_build() {
 
 /// Relative path (from the crate root) to the multi-resolution icon
 /// embedded into the GUI executable on Windows.
+#[cfg(windows)]
 const WINDOWS_ICON: &str = "assets/icons/it.soulcrafted.Slicer.ico";
 
 /// Embeds the application icon (plus the version metadata `winresource`
@@ -65,9 +67,6 @@ fn embed_windows_resources() {
         .compile()
         .expect("failed to embed Windows resources into the executable");
 }
-
-#[cfg(not(windows))]
-fn embed_windows_resources() {}
 
 /// Walks `i18n/` for translation directories, cross-checks them against
 /// `locale-names.toml`, and writes a `language_table.rs` with the
