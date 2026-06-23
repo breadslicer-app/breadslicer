@@ -20,6 +20,7 @@ sc-mesh-spatial = { workspace = true }
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
 glam = "0.32.1"
+ico = "0.5"
 rfd = "0.17.2"
 slint = { version = "1.16.1", features = [
     "renderer-skia",
@@ -35,6 +36,9 @@ toml = "1.1.2"
 [build-dependencies]
 slint-build = "1.16.1"
 toml = "1.1.2"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.31"
 
 [dev-dependencies]
 float-cmp = { workspace = true }

@@ -41,11 +41,33 @@ fn main() {
 }
 
 fn run_build() {
+    embed_windows_resources();
     generate_language_table();
 
     let config = CompilerConfiguration::new().with_bundled_translations(I18N_DIR);
     compile_with_config("ui/main-window.slint", config).expect("Slint build failed");
 }
+
+/// Relative path (from the crate root) to the multi-resolution icon
+/// embedded into the GUI executable on Windows.
+const WINDOWS_ICON: &str = "assets/icons/it.soulcrafted.Slicer.ico";
+
+/// Embeds the application icon (plus the version metadata `winresource`
+/// derives from the `CARGO_PKG_*` variables) into the executable so
+/// Explorer, the taskbar, and shortcuts show it. Windows-only; a no-op
+/// elsewhere.
+#[cfg(windows)]
+fn embed_windows_resources() {
+    println!("cargo:rerun-if-changed={WINDOWS_ICON}");
+    let mut resource = winresource::WindowsResource::new();
+    resource.set_icon(WINDOWS_ICON);
+    resource
+        .compile()
+        .expect("failed to embed Windows resources into the executable");
+}
+
+#[cfg(not(windows))]
+fn embed_windows_resources() {}
 
 /// Walks `i18n/` for translation directories, cross-checks them against
 /// `locale-names.toml`, and writes a `language_table.rs` with the

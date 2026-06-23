@@ -447,6 +447,9 @@ impl AppState {
         }
 
         ui.show()?;
+        // The winit window only exists once shown; set the taskbar icon
+        // here so the live window matches the executable resource.
+        crate::window_icon::apply(ui.window());
         self.main_windows.borrow_mut().insert(
             id,
             WiredMainWindow {
