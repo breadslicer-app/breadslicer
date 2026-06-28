@@ -22,7 +22,7 @@ use anyhow::Result;
 use glam::Vec3;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::NodeId;
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use super::scene_upload::GpuScene;
 use super::{MeshRenderer, SceneRender};

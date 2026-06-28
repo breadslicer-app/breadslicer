@@ -10,7 +10,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use crate::camera::OrbitCamera;
 

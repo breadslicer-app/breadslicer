@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use super::super::TEXTURE_FORMAT;
 
@@ -67,7 +67,7 @@ impl OutlinePipeline {
         debug_assert_eq!(OutlineBindGroup::Stencil.idx(), 0);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh-viewer outline pll"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 

@@ -32,7 +32,7 @@ use std::borrow::Cow;
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 use wgpu::util::DeviceExt;
 
 use super::super::frame::Uniforms;
@@ -146,7 +146,7 @@ impl PlatePipeline {
         debug_assert_eq!(PlateBindGroup::Uniforms.idx(), 0);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh-viewer plate pll"),
-            bind_group_layouts: &[&uniforms_bgl],
+            bind_group_layouts: &[Some(&uniforms_bgl)],
             immediate_size: 0,
         });
 
@@ -187,8 +187,8 @@ impl PlatePipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(depth_write_enabled),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     // Stencil writes stay at the default keep, so
                     // the plate leaves stencil at 0 and the outline
                     // post-pass ignores it.
@@ -265,8 +265,8 @@ impl PlatePipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),

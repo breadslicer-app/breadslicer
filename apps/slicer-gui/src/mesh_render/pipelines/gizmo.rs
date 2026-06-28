@@ -13,7 +13,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroU64;
 
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use super::super::gizmo_buffers::GizmoBuffers;
 use super::super::gizmo_entries::{GIZMO_DRAW_ENTRY_SIZE, GizmoUniformsGpu};
@@ -88,7 +88,7 @@ impl GizmoPipeline {
         debug_assert_eq!(GizmoBindGroup::Entries.idx(), 1);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh-viewer gizmo pll"),
-            bind_group_layouts: &[&uniforms_bgl, &entries_bgl],
+            bind_group_layouts: &[Some(&uniforms_bgl), Some(&entries_bgl)],
             immediate_size: 0,
         });
 
@@ -120,8 +120,8 @@ impl GizmoPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: GIZMO_DEPTH_FORMAT,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),

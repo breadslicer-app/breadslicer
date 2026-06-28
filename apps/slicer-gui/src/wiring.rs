@@ -102,7 +102,7 @@ fn install_rendering_notifier(
     ui.window()
         .set_rendering_notifier(move |state, api| match state {
             slint::RenderingState::RenderingSetup => {
-                let slint::GraphicsAPI::WGPU28 { device, queue, .. } = api else {
+                let slint::GraphicsAPI::WGPU29 { device, queue, .. } = api else {
                     return;
                 };
                 ctrl.handle_rendering_setup(device.clone(), queue.clone());

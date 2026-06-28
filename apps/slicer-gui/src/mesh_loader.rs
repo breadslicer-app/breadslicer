@@ -25,7 +25,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_spatial::SceneSpatial;
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::i18n::ctr;

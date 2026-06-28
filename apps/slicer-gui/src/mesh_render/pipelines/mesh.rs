@@ -11,7 +11,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroU64;
 
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use super::super::frame::Uniforms;
 use super::super::scene_upload::{GpuVertex, MODEL_ENTRY_SIZE};
@@ -96,7 +96,10 @@ impl MeshPipeline {
         debug_assert_eq!(MeshBindGroup::Models.idx(), 1);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh-viewer pll"),
-            bind_group_layouts: &[&uniforms_bind_group_layout, &models_bind_group_layout],
+            bind_group_layouts: &[
+                Some(&uniforms_bind_group_layout),
+                Some(&models_bind_group_layout),
+            ],
             immediate_size: 0,
         });
 
@@ -124,8 +127,8 @@ impl MeshPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 // Every fragment that passes depth replaces the stencil
                 // with the per-draw `stencil_reference` value (set by
                 // the render loop to 1 for the selected object and 0

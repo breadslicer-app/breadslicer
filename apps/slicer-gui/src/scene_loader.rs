@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning, SceneLoadWarning};
 use sc_mesh_spatial::SceneSpatial;
 use slint::ComponentHandle;
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};

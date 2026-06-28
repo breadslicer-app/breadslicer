@@ -13,7 +13,7 @@ use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 use wgpu::util::DeviceExt;
 
 use crate::build_volume::BuildVolume;

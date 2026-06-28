@@ -18,7 +18,7 @@
 
 use std::num::NonZeroU64;
 
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 use wgpu::util::DeviceExt;
 
 use crate::gizmo_geometry;

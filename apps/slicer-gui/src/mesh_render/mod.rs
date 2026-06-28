@@ -10,7 +10,7 @@ use anyhow::Result;
 use glam::{Mat4, Vec3};
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::NodeId;
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
@@ -1000,7 +1000,8 @@ mod gpu_integration_tests {
             std::sync::OnceLock::new();
         DEVICE
             .get_or_init(|| {
-                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+                let instance =
+                    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
                 let adapter = pollster::block_on(
                     instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
                 )

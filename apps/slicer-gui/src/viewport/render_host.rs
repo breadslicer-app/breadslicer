@@ -157,9 +157,9 @@ impl RenderHost {
     /// call.
     pub(super) fn handle_rendering_setup(
         &self,
-        device: slint::wgpu_28::wgpu::Device,
+        device: slint::wgpu_29::wgpu::Device,
         device_token: DeviceToken,
-        queue: slint::wgpu_28::wgpu::Queue,
+        queue: slint::wgpu_29::wgpu::Queue,
     ) {
         *self.renderer.borrow_mut() = Some(Box::new(Renderer::new(device, device_token, queue)));
     }

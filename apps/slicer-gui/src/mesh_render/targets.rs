@@ -11,7 +11,7 @@
 //! `matches` helpers let the renderer cheaply skip the rebuild when the
 //! cached size already matches.
 
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use super::{DEPTH_FORMAT, GIZMO_DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 

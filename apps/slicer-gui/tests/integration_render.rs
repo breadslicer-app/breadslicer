@@ -34,7 +34,7 @@ use sc_slicer_gui::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
 use sc_slicer_gui::camera::OrbitCamera;
 use sc_slicer_gui::mesh_render::{DeviceToken, Renderer, SceneRender, scene_upload::GpuScene};
 
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 fn shared_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     static DEVICE: OnceLock<Option<(wgpu::Device, wgpu::Queue)>> = OnceLock::new();
@@ -44,7 +44,7 @@ fn shared_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 }
 
 fn build_fresh_device(label: &'static str) -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .ok()?;

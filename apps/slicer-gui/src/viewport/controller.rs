@@ -20,7 +20,7 @@
 use std::rc::Rc;
 
 use slint::ComponentHandle;
-use slint::wgpu_28::wgpu;
+use slint::wgpu_29::wgpu;
 
 use super::camera_controller::CameraController;
 #[cfg(test)]

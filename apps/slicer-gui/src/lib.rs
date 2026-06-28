@@ -62,8 +62,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // `Automatic` triggers a full Vulkan ICD re-enumeration per
     // window (4-5 stalls of ~225 ms each on NVIDIA, measured), which
     // makes "New Window" feel like it hangs.
-    use slint::wgpu_28::wgpu;
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    use slint::wgpu_29::wgpu;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -89,7 +89,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let _ = device.poll(wgpu::PollType::Poll);
 
     slint::BackendSelector::new()
-        .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::Manual {
+        .require_wgpu_29(slint::wgpu_29::WGPUConfiguration::Manual {
             instance,
             adapter,
             device,
