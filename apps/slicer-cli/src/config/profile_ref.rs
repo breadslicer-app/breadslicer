@@ -184,3 +184,83 @@ mod tests {
         }
     }
 }
+
+// Windows-only path shapes (drive prefixes, backslashes) that the
+// `#[cfg(windows)]` `is_path_ish` / `has_drive_prefix` predicate must
+// recognise. The shared tests above only use `/`, `./`, `../`, which
+// are valid on every platform, so this branch is otherwise unexercised.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    fn as_printer_path(value: &str) -> PathBuf {
+        match value.parse::<PrinterProfileRef>().unwrap() {
+            PrinterProfileRef::Path(p) => p,
+            other => panic!("expected a path for {value:?}, got {other:?}"),
+        }
+    }
+
+    // Drive-letter prefixes with either separator are paths.
+    #[test]
+    fn drive_letter_prefixes_parse_as_paths() {
+        for value in ["C:\\printers\\foo.toml", "C:/printers/foo.toml", "z:\\x"] {
+            assert_eq!(as_printer_path(value), PathBuf::from(value));
+        }
+    }
+
+    // Backslash spellings are paths (leading `\`, `.\`, `..\`, UNC `\\`).
+    #[test]
+    fn backslash_spellings_parse_as_paths() {
+        for value in [
+            "\\foo",
+            ".\\foo.toml",
+            "..\\foo.toml",
+            "\\\\server\\share\\p.toml",
+        ] {
+            assert_eq!(as_printer_path(value), PathBuf::from(value));
+        }
+    }
+
+    // The forward-slash arm still holds on Windows.
+    #[test]
+    fn forward_slash_spellings_parse_as_paths_on_windows() {
+        for value in ["/etc/x.toml", "./x.toml", "../x.toml"] {
+            assert_eq!(as_printer_path(value), PathBuf::from(value));
+        }
+    }
+
+    // Near-miss drive shapes are NOT paths. A bare letter is a valid
+    // id; `c:` (no separator, `has_drive_prefix` needs len >= 3) and
+    // `foo:bar` carry a colon outside the slug grammar and are rejected.
+    #[test]
+    fn near_miss_drive_shapes_are_not_paths() {
+        match "c".parse::<PrinterProfileRef>().unwrap() {
+            PrinterProfileRef::Id(id) => assert_eq!(id.as_str(), "c"),
+            other => panic!("expected an id for \"c\", got {other:?}"),
+        }
+        assert!(
+            "c:".parse::<PrinterProfileRef>().is_err(),
+            "\"c:\" is neither path-ish nor a valid id"
+        );
+        assert!(
+            "foo:bar".parse::<PrinterProfileRef>().is_err(),
+            "\"foo:bar\" is neither path-ish nor a valid id"
+        );
+    }
+
+    // The material ref shares is_path_ish; spot-check both shapes.
+    #[test]
+    fn material_ref_recognises_windows_paths() {
+        match "C:\\materials\\blu.toml"
+            .parse::<MaterialProfileRef>()
+            .unwrap()
+        {
+            MaterialProfileRef::Path(p) => assert_eq!(p, PathBuf::from("C:\\materials\\blu.toml")),
+            other => panic!("expected a path, got {other:?}"),
+        }
+        match "..\\blu.toml".parse::<MaterialProfileRef>().unwrap() {
+            MaterialProfileRef::Path(p) => assert_eq!(p, PathBuf::from("..\\blu.toml")),
+            other => panic!("expected a path, got {other:?}"),
+        }
+    }
+}
