@@ -173,3 +173,89 @@ fn read_file_identity(path: &Path) -> Result<FileIdentity> {
         file_id,
     })
 }
+
+// Properties of the identity read that hold on every platform with an
+// identity impl. They are gated on `any(unix, windows)` (not `windows`)
+// because the asserted behaviour is not Windows-specific; the reason to
+// run them at all is that the Windows path computes the id by hand
+// (`GetFileInformationByHandle` plus a manual high/low reconstruction),
+// so this is the only guard on that arithmetic. On Unix they also guard
+// the `dev`/`ino` read.
+#[cfg(all(test, any(unix, windows)))]
+mod identity_tests {
+    use super::*;
+
+    // Two different byte-spellings of the same file must resolve to the
+    // same identity: the read identifies the file, not the path string.
+    #[test]
+    fn same_file_via_two_spellings_has_equal_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        // `sub/../a.txt` reaches the same file through a distinct spelling.
+        let alt = dir.path().join("sub").join("..").join("a.txt");
+
+        let direct = read_file_identity(&file).unwrap();
+        let detour = read_file_identity(&alt).unwrap();
+        assert!(direct == detour, "same file must have equal identity");
+    }
+
+    // Two separate files on the same volume must differ, and must differ
+    // in `file_id` specifically (same volume serial). Guards against a
+    // collapsed high/low reconstruction that the equality test alone
+    // would not catch.
+    #[test]
+    fn distinct_files_have_distinct_file_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+
+        let id_a = read_file_identity(&a).unwrap();
+        let id_b = read_file_identity(&b).unwrap();
+        assert!(id_a != id_b, "distinct files must have distinct identity");
+        assert_eq!(
+            id_a.volume, id_b.volume,
+            "two files in one tempdir share a volume"
+        );
+        assert_ne!(id_a.file_id, id_b.file_id);
+    }
+}
+
+// Behaviour of the identity read that genuinely diverges on Windows and
+// would not hold on Unix: the error text comes from the Windows-only
+// `File::open` arm, and opening a directory as a file fails on Windows
+// where it succeeds on Unix.
+#[cfg(all(test, windows))]
+mod windows_identity_tests {
+    use super::*;
+
+    // A nonexistent path fails at `File::open`, surfacing the identity
+    // check's own error message (the Unix impl reads metadata and says
+    // "Unable to stat" instead).
+    #[test]
+    fn nonexistent_path_errors_at_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.txt");
+        let err = read_file_identity(&missing)
+            .err()
+            .expect("opening a missing file must fail");
+        assert!(
+            err.to_string().contains("for identity check"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // On Windows a directory cannot be opened as a `File` (Rust does not
+    // set FILE_FLAG_BACKUP_SEMANTICS), so identity of a directory path is
+    // an error. On Unix the same call would succeed; the CLI never feeds
+    // a directory here because `validate_sourcefile_path` rejects it via
+    // `is_file()` first. This is a contract test for the divergence.
+    #[test]
+    fn directory_path_errors_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_file_identity(dir.path()).is_err());
+    }
+}

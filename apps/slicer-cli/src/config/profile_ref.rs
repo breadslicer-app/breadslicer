@@ -187,8 +187,9 @@ mod tests {
 
 // Windows-only path shapes (drive prefixes, backslashes) that the
 // `#[cfg(windows)]` `is_path_ish` / `has_drive_prefix` predicate must
-// recognise. The shared tests above only use `/`, `./`, `../`, which
-// are valid on every platform, so this branch is otherwise unexercised.
+// recognise. The forward-slash arms (`/`, `./`, `../`) behave the same
+// on every platform and are already covered by the shared tests above,
+// so they are not repeated here.
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
@@ -221,31 +222,16 @@ mod windows_tests {
         }
     }
 
-    // The forward-slash arm still holds on Windows.
+    // The negative space of `has_drive_prefix`: it requires a separator
+    // at byte 2, so a drive letter and colon with nothing (or a
+    // non-separator) after it is not a path. It falls through to id
+    // parsing and fails, since the colon is outside the slug grammar.
+    // This pins where the Windows classifier stops; there is no
+    // equivalent boundary on other platforms.
     #[test]
-    fn forward_slash_spellings_parse_as_paths_on_windows() {
-        for value in ["/etc/x.toml", "./x.toml", "../x.toml"] {
-            assert_eq!(as_printer_path(value), PathBuf::from(value));
-        }
-    }
-
-    // Near-miss drive shapes are NOT paths. A bare letter is a valid
-    // id; `c:` (no separator, `has_drive_prefix` needs len >= 3) and
-    // `foo:bar` carry a colon outside the slug grammar and are rejected.
-    #[test]
-    fn near_miss_drive_shapes_are_not_paths() {
-        match "c".parse::<PrinterProfileRef>().unwrap() {
-            PrinterProfileRef::Id(id) => assert_eq!(id.as_str(), "c"),
-            other => panic!("expected an id for \"c\", got {other:?}"),
-        }
-        assert!(
-            "c:".parse::<PrinterProfileRef>().is_err(),
-            "\"c:\" is neither path-ish nor a valid id"
-        );
-        assert!(
-            "foo:bar".parse::<PrinterProfileRef>().is_err(),
-            "\"foo:bar\" is neither path-ish nor a valid id"
-        );
+    fn drive_letter_without_separator_is_not_a_path() {
+        assert!("c:".parse::<PrinterProfileRef>().is_err());
+        assert!("c:foo".parse::<PrinterProfileRef>().is_err());
     }
 
     // The material ref shares is_path_ish; spot-check both shapes.
