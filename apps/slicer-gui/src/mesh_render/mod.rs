@@ -1137,6 +1137,81 @@ mod gpu_integration_tests {
         assert_eq!(texture.size().height, 64);
     }
 
+    /// A shared (Device, Queue) pinned to the DX12 backend, built lazily.
+    /// The default-backend `shared_test_device` may resolve to Vulkan on
+    /// Windows when a Vulkan ICD is present, so it does not guarantee the
+    /// DX12 path is exercised. `None` when no DX12 adapter is available.
+    #[cfg(windows)]
+    fn shared_dx12_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        static DEVICE: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
+            std::sync::OnceLock::new();
+        DEVICE
+            .get_or_init(|| {
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::DX12,
+                    ..wgpu::InstanceDescriptor::new_without_display_handle()
+                });
+                let adapter = pollster::block_on(
+                    instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+                )
+                .ok()?;
+                let (device, queue) =
+                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                        label: Some("mesh-viewer DX12 test device"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        experimental_features: wgpu::ExperimentalFeatures::default(),
+                        trace: wgpu::Trace::Off,
+                    }))
+                    .ok()?;
+                Some((device, queue))
+            })
+            .clone()
+    }
+
+    /// Windows production pins the wgpu backend to DX12 (see the GUI's
+    /// shared-device setup): Slint's Skia renderer rejects a non-DX12
+    /// adapter on Windows. The other render tests build a default-backend
+    /// device that may be Vulkan even on Windows, so this test pins DX12
+    /// explicitly and drives a full end-to-end render, proving shader
+    /// compilation, bind-group validation, and a draw call all work on
+    /// the backend Windows actually ships. Soft-skips with no DX12
+    /// adapter.
+    #[cfg(windows)]
+    #[test]
+    fn render_succeeds_on_dx12_backend() {
+        let Some((device, queue)) = shared_dx12_device() else {
+            eprintln!("skipping: no DX12 wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&graph)
+            .expect("upload_scene on the DX12 device");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+        let texture = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: None,
+                    gizmo: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
+            .expect("render on DX12 should produce a texture");
+        assert_eq!(texture.size().width, 64);
+        assert_eq!(texture.size().height, 64);
+    }
+
     /// Identical to `render_succeeds_under_default_limits` but with a
     /// non-`None` selection so the `flags.x` lane carries a 1 through
     /// the per-frame uniform write. Catches any default-limits
