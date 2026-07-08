@@ -447,6 +447,39 @@ mod convert_tests {
         );
     }
 
+    // Windows / NTFS is case-insensitive, so `Model.stla` and
+    // `model.stla` name the same file. `canonicalize` preserves the
+    // on-disk case, so ensure_distinct_files' `source == target` string
+    // check does not see the alias (the two spellings differ in case);
+    // the file-identity comparison is what catches it. On Unix these are
+    // two different files and the convert would succeed, so this is a
+    // Windows-only behaviour.
+    #[cfg(windows)]
+    #[test]
+    fn convert_rejects_target_case_variant_of_source() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("Model.stla");
+        write_clean_stla(&source);
+        let original = fs::read(&source).unwrap();
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .current_dir(tmp.path())
+            .args(["convert", "-s", "Model.stla", "-t", "model.stla"])
+            .assert()
+            .failure()
+            // The identity-comparison branch, not the `source == target`
+            // string check, must be what rejects: canonicalize preserves
+            // the differing case so the strings are not equal.
+            .stderr(predicate::str::contains("same underlying file"));
+
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            original,
+            "source must be untouched by a rejected case-variant convert"
+        );
+    }
+
     #[cfg(any(unix, windows))]
     #[test]
     fn convert_rejects_target_hardlinked_to_source() {
