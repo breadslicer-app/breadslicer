@@ -63,7 +63,26 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // window (4-5 stalls of ~225 ms each on NVIDIA, measured), which
     // makes "New Window" feel like it hangs.
     use slint::wgpu_29::wgpu;
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+
+    // Slint's Skia renderer only wires one wgpu backend per platform:
+    // Dx12 on Windows, Vulkan on Linux, Metal on macOS. An instance
+    // that enumerates every backend can hand Slint an adapter it
+    // rejects; on Windows `request_adapter` may return a Vulkan
+    // adapter, which the Skia surface refuses with "Unsupported WGPU
+    // backend for use with Skia: vulkan". Restrict the instance to the
+    // single backend the renderer accepts here. The cfg predicates
+    // mirror i-slint-renderer-skia so the two stay in lockstep.
+    #[cfg(target_family = "windows")]
+    let backends = wgpu::Backends::DX12;
+    #[cfg(all(target_family = "unix", not(target_vendor = "apple")))]
+    let backends = wgpu::Backends::VULKAN;
+    #[cfg(target_vendor = "apple")]
+    let backends = wgpu::Backends::METAL;
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
