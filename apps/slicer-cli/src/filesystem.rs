@@ -259,3 +259,46 @@ mod windows_identity_tests {
         assert!(read_file_identity(dir.path()).is_err());
     }
 }
+
+// The symlink-refusal branch of `ensure_distinct_files`: a symlink
+// planted at the target must be rejected, never followed. This holds on
+// every platform (the check is `symlink_metadata().is_symlink()`), so it
+// is gated on `any(unix, windows)`. Creating the symlink needs no
+// privilege on Unix and needs Developer Mode / admin on Windows; when it
+// is unavailable the test skips with a logged reason rather than failing.
+#[cfg(all(test, any(unix, windows)))]
+mod ensure_distinct_files_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    fn make_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn make_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+
+    #[test]
+    fn symlink_at_target_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.stla");
+        let pointee = dir.path().join("pointee.stla");
+        let target = dir.path().join("target.stla");
+        std::fs::write(&source, b"s").unwrap();
+        std::fs::write(&pointee, b"p").unwrap();
+
+        if let Err(e) = make_file_symlink(&pointee, &target) {
+            eprintln!("SKIPPED symlink_at_target_is_rejected: symlink creation unavailable ({e})");
+            return;
+        }
+
+        let err = ensure_distinct_files(&source, &target)
+            .expect_err("a symlink at the target must be rejected");
+        assert!(
+            err.to_string().contains("symbolic link"),
+            "unexpected error: {err}"
+        );
+    }
+}
