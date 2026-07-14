@@ -1,0 +1,12 @@
+[package]
+name = "sc-profiles-converter"
+version = "0.0.1"
+edition = "2024"
+publish = false
+description = "Convert third-party printer and material profiles into the SoulCrafted Slicer TOML format."
+
+[dependencies]
+anyhow.workspace = true
+nonempty-collections.workspace = true
+
+bpaf = "0.9.24"

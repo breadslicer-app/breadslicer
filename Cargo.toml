@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "apps/icon-gen",
+    "apps/profiles-converter",
     "apps/slicer-cli",
     "apps/slicer-gui",
     "libs/app-paths",

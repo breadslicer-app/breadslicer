@@ -4744,6 +4744,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-profiles-converter"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bpaf",
+ "nonempty-collections",
+]
+
+[[package]]
 name = "sc-sl1cer"
 version = "0.1.0"
 dependencies = [
