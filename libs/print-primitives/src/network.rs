@@ -7,10 +7,10 @@
 //!
 //! [`NetworkProtocol`] enumerates the known remote-control protocols
 //! exposed by SLA printers (Elegoo Centauri, Anycubic Homie, Klipper's
-//! Moonraker) plus an `Unknown(String)` escape hatch so profiles that
-//! name an unrecognised protocol still parse. Profiles wrap the type
-//! in `Option<NetworkProtocol>`; `None` means the printer offers no
-//! network control.
+//! Moonraker, SDCP) plus an `Unknown(String)` escape hatch so profiles
+//! that name an unrecognised protocol still parse. Profiles wrap the
+//! type in `Option<NetworkProtocol>`; `None` means the printer offers
+//! no network control.
 
 /// Network protocol an SLA printer exposes for remote control.
 /// `Unknown(String)` is the escape hatch for forward compatibility.
@@ -19,6 +19,7 @@ pub enum NetworkProtocol {
     ElegooCentauri,
     AnycubicHomie,
     Moonraker,
+    Sdcp,
     Unknown(String),
 }
 
@@ -29,6 +30,7 @@ impl NetworkProtocol {
             Self::ElegooCentauri => "elegoo_centauri",
             Self::AnycubicHomie => "anycubic_homie",
             Self::Moonraker => "moonraker",
+            Self::Sdcp => "sdcp",
             Self::Unknown(s) => s,
         }
     }
@@ -41,6 +43,7 @@ impl NetworkProtocol {
             "elegoo_centauri" => Self::ElegooCentauri,
             "anycubic_homie" => Self::AnycubicHomie,
             "moonraker" => Self::Moonraker,
+            "sdcp" => Self::Sdcp,
             other => Self::Unknown(other.to_owned()),
         }
     }

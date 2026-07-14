@@ -11,6 +11,7 @@ fn network_protocol_canonical_roundtrips_for_known_variants() {
         ("elegoo_centauri", NetworkProtocol::ElegooCentauri),
         ("anycubic_homie", NetworkProtocol::AnycubicHomie),
         ("moonraker", NetworkProtocol::Moonraker),
+        ("sdcp", NetworkProtocol::Sdcp),
     ];
     for (s, expected) in cases {
         let parsed = NetworkProtocol::from_canonical(s);
