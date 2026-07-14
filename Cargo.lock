@@ -4750,6 +4750,9 @@ dependencies = [
  "anyhow",
  "bpaf",
  "nonempty-collections",
+ "sc-print-profiles",
+ "tempfile",
+ "toml_edit",
 ]
 
 [[package]]

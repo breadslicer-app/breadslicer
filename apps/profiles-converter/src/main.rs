@@ -10,14 +10,10 @@
 //! profile-library root. Run on demand to refresh the committed
 //! collection; it is not part of the shipped binaries.
 
-mod cli;
-mod format;
-mod request;
-
 use anyhow::Result;
 
-use crate::cli::cli_parser;
-use crate::request::ConversionRequest;
+use sc_profiles_converter::cli::cli_parser;
+use sc_profiles_converter::request::ConversionRequest;
 
 fn main() -> Result<()> {
     let raw = cli_parser().run();
