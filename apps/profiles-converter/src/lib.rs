@@ -14,6 +14,7 @@
 //! selects a format and wires the port to the writer.
 
 pub mod cli;
+pub mod dragonfruit;
 pub mod format;
 pub mod profile;
 pub mod reader;

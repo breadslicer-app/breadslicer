@@ -6,10 +6,14 @@ publish = false
 description = "Convert third-party printer and material profiles into the SoulCrafted Slicer TOML format."
 
 [dependencies]
+sc-print-primitives.workspace = true
 sc-print-profiles.workspace = true
 
 anyhow.workspace = true
 nonempty-collections.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 toml_edit.workspace = true
 
 bpaf = "0.9.24"

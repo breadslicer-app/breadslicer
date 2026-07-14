@@ -4750,7 +4750,11 @@ dependencies = [
  "anyhow",
  "bpaf",
  "nonempty-collections",
+ "sc-print-primitives",
  "sc-print-profiles",
+ "semver",
+ "serde",
+ "serde_json",
  "tempfile",
  "toml_edit",
 ]
