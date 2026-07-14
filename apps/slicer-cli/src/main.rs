@@ -100,7 +100,7 @@ fn main() -> Result<()> {
         }),
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-            println!("Version: {}", &SLICER_CLI_VERSION);
+            println!("Version: {SLICER_CLI_VERSION}");
             Ok(())
         }
     }
