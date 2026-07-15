@@ -39,6 +39,8 @@ pub(crate) struct RawPrinter {
     #[serde(default)]
     family: Option<String>,
     name: String,
+    #[serde(rename = "imageAssetPath", default)]
+    image_asset_path: Option<String>,
     #[serde(rename = "antiAliasing", default)]
     anti_aliasing: bool,
     #[serde(rename = "hasCamera", default)]
@@ -156,13 +158,26 @@ impl std::error::Error for PrinterMapError {
     }
 }
 
-/// Convert one DragonFruit printer record into a [`PrinterProfile`].
-pub(crate) fn map_printer(raw: RawPrinter) -> Result<PrinterProfile, PrinterMapError> {
+/// The outcome of mapping a printer record: the domain profile plus the
+/// record's raw `imageAssetPath` (still relative to the source file, for
+/// the caller to resolve), if any.
+pub(crate) struct MappedPrinter {
+    pub profile: PrinterProfile,
+    pub image_ref: Option<String>,
+}
+
+/// Convert one DragonFruit printer record into a [`MappedPrinter`].
+pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapError> {
     let id = PrinterId::new(&raw.preset_id).map_err(|source| PrinterMapError::InvalidId {
         id: raw.preset_id.clone(),
         source,
     })?;
     let raw_id = raw.preset_id;
+
+    let image_ref = raw.image_asset_path.as_ref().and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    });
 
     let manufacturer = non_empty(&raw.manufacturer, &raw_id, "manufacturer")?;
     let name = non_empty(&raw.name, &raw_id, "name")?;
@@ -233,7 +248,7 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<PrinterProfile, PrinterMapE
         network_protocol: map_network(raw.network_support.as_deref()),
     };
 
-    Ok(PrinterProfile {
+    let profile = PrinterProfile {
         identity: PrinterIdentity {
             id,
             manufacturer,
@@ -252,7 +267,8 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<PrinterProfile, PrinterMapE
             lift_distance_max_mm: None,
             light_intensity_mw_per_cm2: None,
         },
-    })
+    };
+    Ok(MappedPrinter { profile, image_ref })
 }
 
 /// Build a non-empty string for `field`, or report it empty.
@@ -322,7 +338,36 @@ mod tests {
     use super::*;
 
     fn map(json: &str) -> Result<PrinterProfile, PrinterMapError> {
-        map_printer(serde_json::from_str(json).unwrap())
+        map_printer(serde_json::from_str(json).unwrap()).map(|mapped| mapped.profile)
+    }
+
+    #[test]
+    fn captures_a_trimmed_image_reference() {
+        let json = r#"{
+            "presetId": "with-image", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "With Image",
+            "imageAssetPath": "  ./assets/with-image.png  ",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+        assert_eq!(mapped.image_ref.as_deref(), Some("./assets/with-image.png"));
+        assert_eq!(mapped.profile.identity.image_asset_path, None);
+    }
+
+    #[test]
+    fn no_image_reference_when_absent_or_blank() {
+        let json = r#"{
+            "presetId": "no-image", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "No Image",
+            "imageAssetPath": "   ",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+        assert_eq!(mapped.image_ref, None);
     }
 
     /// A record with build volume and pixel size both present and

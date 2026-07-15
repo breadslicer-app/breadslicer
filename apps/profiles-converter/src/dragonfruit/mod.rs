@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::profile::ConvertedProfile;
+use crate::profile::{ConvertedPrinter, ConvertedProfile};
 use crate::reader::ProfileReader;
 use material::{MaterialMapError, RawMaterial, map_material};
 use printer::{PrinterMapError, RawPrinter, map_printer};
@@ -186,15 +186,23 @@ fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), Dr
 
     match kind {
         RecordKind::Printer => {
+            let base = path.parent().unwrap_or_else(|| Path::new(""));
             let records: Vec<RawPrinter> = parse_records(&bytes, path)?;
             for (index, record) in records.into_iter().enumerate() {
-                let profile =
+                let mapped =
                     map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
                         path: path.to_owned(),
                         index,
                         source,
                     })?;
-                profiles.push(ConvertedProfile::Printer(profile));
+                let image_source = mapped
+                    .image_ref
+                    .as_deref()
+                    .map(|reference| resolve_image(base, reference));
+                profiles.push(ConvertedProfile::Printer(ConvertedPrinter {
+                    profile: mapped.profile,
+                    image_source,
+                }));
             }
         }
         RecordKind::Material => {
@@ -225,6 +233,14 @@ fn parse_records<T: serde::de::DeserializeOwned>(
     })
 }
 
+/// Resolve a record's image reference against the directory of the file
+/// it came from, stripping a leading `./`. An absolute reference is
+/// returned unchanged.
+fn resolve_image(base: &Path, reference: &str) -> PathBuf {
+    let relative = reference.strip_prefix("./").unwrap_or(reference);
+    base.join(relative)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -249,7 +265,9 @@ mod tests {
         profiles
             .iter()
             .map(|profile| match profile {
-                ConvertedProfile::Printer(printer) => printer.identity.id.as_str().to_owned(),
+                ConvertedProfile::Printer(printer) => {
+                    printer.profile.identity.id.as_str().to_owned()
+                }
                 ConvertedProfile::Material(_) => panic!("expected only printers"),
             })
             .collect()
@@ -394,5 +412,31 @@ mod tests {
 
         let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
         assert!(profiles.is_empty());
+    }
+
+    #[test]
+    fn resolves_the_image_path_against_the_files_directory() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        let json = r#"[{
+            "presetId": "img", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Img",
+            "imageAssetPath": "./assets/img.png",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }]"#;
+        fs::write(&file, json).unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        match profiles.as_slice() {
+            [ConvertedProfile::Printer(printer)] => {
+                assert_eq!(
+                    printer.image_source,
+                    Some(dir.path().join("assets/img.png")),
+                );
+            }
+            other => panic!("expected one printer, got {other:?}"),
+        }
     }
 }
