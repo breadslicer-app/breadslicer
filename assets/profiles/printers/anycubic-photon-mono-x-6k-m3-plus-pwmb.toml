@@ -1,0 +1,34 @@
+[identity]
+id = "anycubic-photon-mono-x-6k-m3-plus-pwmb"
+manufacturer = "Anycubic"
+family = "Photon Mono X"
+name = "Photon Mono X 6K / M3 Plus"
+profile_version = "1.0.0"
+image_asset_path = "images/anycubic-photon-mono-x-6k-m3-plus-pwmb.png"
+
+[hardware]
+
+[hardware.build_volume]
+x_mm = 198.15
+y_mm = 123.84
+z_mm = 245.0
+
+[hardware.pixel_resolution]
+x = 5760
+y = 3600
+
+[hardware.pixel_size_microns]
+x = 34.401041666666664
+y = 34.4
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+output_formats = [{ format = "aff", version = "pwmb" }]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[constraints]

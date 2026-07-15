@@ -1,0 +1,34 @@
+[identity]
+id = "anycubic-photon-ultra-dlp"
+manufacturer = "Anycubic"
+family = "Photon"
+name = "Photon Ultra"
+profile_version = "1.0.0"
+image_asset_path = "images/anycubic-photon-ultra-dlp.png"
+
+[hardware]
+
+[hardware.build_volume]
+x_mm = 102.4
+y_mm = 57.6
+z_mm = 165.0
+
+[hardware.pixel_resolution]
+x = 1280
+y = 720
+
+[hardware.pixel_size_microns]
+x = 80.0
+y = 80.0
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+output_formats = [{ format = "aff", version = "dlp" }]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[constraints]

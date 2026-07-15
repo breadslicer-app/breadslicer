@@ -283,17 +283,24 @@ fn non_empty(
     })
 }
 
-/// Resolve one axis to `(build_mm, pixel_um)`. When only one of the two
-/// is given, the other is derived from the pixel grid; when neither is
-/// given, the axis cannot be determined.
+/// Resolve one axis to `(build_mm, pixel_um)`.
+///
+/// The build volume and resolution are what the slicer uses to place a
+/// model on the raster, so when a build volume is given it is
+/// authoritative and the pixel size is derived from it. This deliberately
+/// ignores a stated pixel size: some source records fill it in wrongly,
+/// for instance recording a square pixel on a panel whose pixels are not
+/// square, and deriving keeps the pixel size consistent with the build
+/// volume and resolution by construction. When the build volume is
+/// absent the pixel size is trusted and used to derive the build volume
+/// instead; when neither is given the axis cannot be determined.
 fn resolve_axis(
     build_mm: Option<f64>,
     pixel_um: Option<f64>,
     resolution: u32,
 ) -> Option<(f64, f64)> {
     match (build_mm, pixel_um) {
-        (Some(build), Some(pixel)) => Some((build, pixel)),
-        (Some(build), None) => Some((build, build / f64::from(resolution) * 1000.0)),
+        (Some(build), _) => Some((build, build / f64::from(resolution) * 1000.0)),
         (None, Some(pixel)) => Some((f64::from(resolution) * pixel / 1000.0, pixel)),
         (None, None) => None,
     }
@@ -461,6 +468,31 @@ mod tests {
     }
 
     #[test]
+    fn build_volume_wins_over_a_mis_recorded_square_pixel() {
+        // A non-square panel whose source record wrongly lists a square
+        // pixel: the build depth (5120 * 24um = 122.88) and resolution
+        // are correct, but pixelSize.y was copied from pixelSize.x. The
+        // build volume is authoritative, so the pixel size is derived
+        // back to the real 19 x 24 and the envelope check passes.
+        let json = r#"{
+            "presetId": "nonsquare-panel", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Nonsquare Panel",
+            "buildVolumeMm": { "width": 218.88, "depth": 122.88, "height": 200.0 },
+            "pixelSize": { "x": 19.0, "y": 19.0 },
+            "display": { "resolutionX": 11520, "resolutionY": 5120, "outputFormat": ".ctb" }
+        }"#;
+        let profile = map(json).unwrap();
+        assert_eq!(
+            profile.hardware.build_volume(),
+            BuildVolume::new(218.88, 122.88, 200.0).unwrap(),
+        );
+        assert_eq!(
+            profile.hardware.pixel_size_microns(),
+            PixelSizeMicrons::new(19.0, 24.0).unwrap(),
+        );
+    }
+
+    #[test]
     fn derives_pixel_size_when_it_is_absent() {
         let json = r#"{
             "presetId": "no-pixel", "profileVersion": 1,
@@ -561,22 +593,6 @@ mod tests {
         assert!(matches!(
             map(json).unwrap_err(),
             PrinterMapError::InvalidId { .. },
-        ));
-    }
-
-    #[test]
-    fn build_volume_disagreeing_with_the_pixel_grid_is_rejected() {
-        // 500 px x 100 um = 50 mm, but the record claims 100 mm.
-        let json = r#"{
-            "presetId": "mismatch", "profileVersion": 1,
-            "manufacturer": "TestCorp", "family": "Series", "name": "Mismatch",
-            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
-            "pixelSize": { "x": 100.0, "y": 100.0 },
-            "display": { "resolutionX": 500, "resolutionY": 500, "outputFormat": ".goo" }
-        }"#;
-        assert!(matches!(
-            map(json).unwrap_err(),
-            PrinterMapError::Envelope { .. },
         ));
     }
 }

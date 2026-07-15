@@ -1,0 +1,33 @@
+[identity]
+id = "generic-machine"
+manufacturer = "Generic"
+family = "Generic Machine"
+name = "Generic Machine"
+profile_version = "1.0.0"
+
+[hardware]
+
+[hardware.build_volume]
+x_mm = 143.0
+y_mm = 89.0
+z_mm = 175.0
+
+[hardware.pixel_resolution]
+x = 2560
+y = 1620
+
+[hardware.pixel_size_microns]
+x = 55.859375
+y = 54.93827160493827
+
+[hardware.mirror]
+x = false
+y = false
+
+[capabilities]
+output_formats = [{ format = "lumen", version = "v1" }]
+supports_grayscale = false
+two_stage_lift = false
+has_camera = false
+
+[constraints]

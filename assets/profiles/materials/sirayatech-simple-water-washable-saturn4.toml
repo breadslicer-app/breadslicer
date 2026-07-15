@@ -1,0 +1,43 @@
+[identity]
+id = "sirayatech-simple-water-washable-saturn4"
+brand = "Siraya Tech"
+family = "standard"
+name = "Simple Water-Washable"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer]
+
+[per_printer.elegoo-saturn-4-ctb]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+
+[per_printer.elegoo-saturn-4-ultra-16k-ctb]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+
+[per_printer.elegoo-saturn-4-ultra-ctb]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+lift_distance_mm = 6.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0

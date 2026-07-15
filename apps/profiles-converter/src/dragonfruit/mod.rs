@@ -14,11 +14,15 @@
 pub mod material;
 pub mod printer;
 
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use sc_print_primitives::MaterialId;
+use sc_print_profiles::MaterialProfile;
 use serde_json::Value;
 
 use crate::profile::{ConvertedPrinter, ConvertedProfile};
@@ -62,6 +66,34 @@ pub enum DragonFruitError {
     },
     /// A file's records are neither printers nor materials.
     UnrecognisedRecord { path: PathBuf },
+    /// Two material records share an id but cannot be merged.
+    ConflictingMaterial {
+        id: String,
+        conflict: MaterialConflict,
+    },
+}
+
+/// Why two material records that share an id could not be merged.
+#[derive(Clone, Copy, Debug)]
+pub enum MaterialConflict {
+    /// They disagree on the resin's shared identity, intent, or defaults.
+    SharedFields,
+    /// They give different settings for a printer they both target.
+    PrinterSettings,
+}
+
+impl fmt::Display for MaterialConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SharedFields => {
+                write!(f, "records disagree on the resin's shared fields")
+            }
+            Self::PrinterSettings => write!(
+                f,
+                "records give different settings for a printer they both target",
+            ),
+        }
+    }
 }
 
 impl fmt::Display for DragonFruitError {
@@ -93,6 +125,9 @@ impl fmt::Display for DragonFruitError {
                 "{}: records are neither printers nor materials",
                 path.display(),
             ),
+            Self::ConflictingMaterial { id, conflict } => {
+                write!(f, "material {id:?}: {conflict}")
+            }
         }
     }
 }
@@ -106,6 +141,7 @@ impl std::error::Error for DragonFruitError {
             Self::MapPrinter { source, .. } => Some(source),
             Self::MapMaterial { source, .. } => Some(source),
             Self::UnrecognisedRecord { .. } => None,
+            Self::ConflictingMaterial { .. } => None,
         }
     }
 }
@@ -120,8 +156,75 @@ impl ProfileReader for DragonFruitReader {
                 read_file(&file, &mut profiles)?;
             }
         }
-        Ok(profiles)
+        merge_materials(profiles)
     }
+}
+
+/// Fold material profiles that share an id into one.
+///
+/// DragonFruit ships a single resin as several records, one per target
+/// printer and often in separate files (the same resin calibrated for
+/// each of a family's printer variants). Each record maps to a
+/// material with a single `per_printer` entry; this pass combines records
+/// with the same id into one profile that carries every per-printer
+/// block. Records that share an id but disagree on the resin's shared
+/// fields, or on the settings for a printer they both target, are a
+/// conflict rather than a silent overwrite. Printers pass through
+/// untouched.
+fn merge_materials(
+    profiles: Vec<ConvertedProfile>,
+) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+    let mut printers = Vec::new();
+    let mut materials: BTreeMap<MaterialId, MaterialProfile> = BTreeMap::new();
+    for profile in profiles {
+        match profile {
+            ConvertedProfile::Printer(_) => printers.push(profile),
+            ConvertedProfile::Material(incoming) => {
+                match materials.entry(incoming.identity.id.clone()) {
+                    Entry::Vacant(slot) => {
+                        slot.insert(incoming);
+                    }
+                    Entry::Occupied(mut slot) => merge_material_into(slot.get_mut(), incoming)?,
+                }
+            }
+        }
+    }
+    let mut merged = printers;
+    merged.extend(materials.into_values().map(ConvertedProfile::Material));
+    Ok(merged)
+}
+
+/// Merge `incoming` into `existing`, which share a material id, or report
+/// the first disagreement.
+fn merge_material_into(
+    existing: &mut MaterialProfile,
+    incoming: MaterialProfile,
+) -> Result<(), DragonFruitError> {
+    if existing.identity != incoming.identity
+        || existing.intent != incoming.intent
+        || existing.defaults != incoming.defaults
+    {
+        return Err(DragonFruitError::ConflictingMaterial {
+            id: existing.identity.id.as_str().to_owned(),
+            conflict: MaterialConflict::SharedFields,
+        });
+    }
+    for (printer_id, settings) in incoming.per_printer {
+        match existing.per_printer.entry(printer_id) {
+            Entry::Vacant(slot) => {
+                slot.insert(settings);
+            }
+            Entry::Occupied(slot) => {
+                if *slot.get() != settings {
+                    return Err(DragonFruitError::ConflictingMaterial {
+                        id: existing.identity.id.as_str().to_owned(),
+                        conflict: MaterialConflict::PrinterSettings,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Resolve one input path to the JSON files it contributes: a directory
@@ -438,5 +541,94 @@ mod tests {
             }
             other => panic!("expected one printer, got {other:?}"),
         }
+    }
+
+    fn material_for(template_id: &str, name: &str, preset: &str, normal_exposure: f64) -> String {
+        format!(
+            r#"{{
+                "templateId": "{template_id}", "profileVersion": 1,
+                "name": "{name}", "brand": "TestResin", "resinFamily": "standard",
+                "validForPresets": ["{preset}"],
+                "layerHeightMm": 0.05, "normalExposureSec": {normal_exposure},
+                "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+            }}"#
+        )
+    }
+
+    #[test]
+    fn material_records_sharing_an_id_merge_their_per_printer_blocks() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-b", 2.4)),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match profiles.as_slice() {
+            [ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "blu");
+                let printers: Vec<&str> =
+                    material.per_printer.keys().map(|id| id.as_str()).collect();
+                assert_eq!(printers, vec!["printer-a", "printer-b"]);
+            }
+            other => panic!("expected one merged material, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn materials_sharing_an_id_but_disagreeing_on_shared_fields_conflict() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!("[{}]", material_for("blu", "Renamed", "printer-b", 2.4)),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new().read(&[dir.path()]).unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::ConflictingMaterial {
+                conflict: MaterialConflict::SharedFields,
+                ..
+            },
+        ));
+    }
+
+    #[test]
+    fn materials_disagreeing_on_a_shared_printer_block_conflict() {
+        let dir = tempdir().unwrap();
+        // Same id, same shared fields, same target printer, but the
+        // per-printer exposure differs.
+        fs::write(
+            dir.path().join("a.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 3.0)),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new().read(&[dir.path()]).unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::ConflictingMaterial {
+                conflict: MaterialConflict::PrinterSettings,
+                ..
+            },
+        ));
     }
 }
