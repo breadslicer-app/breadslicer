@@ -8,12 +8,18 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 
+use sc_print_profiles::user_library_dir;
+
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::profile_catalog::{MaterialCatalogEntry, ProfileCatalog, ProfileSource};
+use crate::profile_transfer::{
+    ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
+    run_import,
+};
 use crate::window_prefs::WindowPreferences;
 use crate::{PreferencesWindow, PrinterCard, ResinRow};
 
@@ -41,27 +47,58 @@ pub(crate) fn build_preferences_window(
     let prefs = PreferencesWindow::new()?;
     let catalog = catalog_handle.borrow().clone();
 
-    // Static-per-session: the tiles and the manufacturer tab bar are
-    // built once from the catalog. Thumbnails are decoded here.
-    let all_cards = Rc::new(build_card_data(&catalog));
-    let tabs = Rc::new(build_manufacturer_tabs(&catalog));
-    prefs.set_manufacturer_tabs(ModelRc::new(VecModel::from(
-        tabs.iter()
-            .map(|s| SharedString::from(s.as_str()))
-            .collect::<Vec<_>>(),
-    )));
-    set_visible_cards(&prefs, &all_cards, tab_manufacturer(&tabs, 0), "");
-
+    // The gallery tiles and the manufacturer tab bar are derived from
+    // the catalog, held behind interior mutability so an import (or a
+    // later authoring step) can rebuild them in place via `refresh_view`.
+    let all_cards = Rc::new(RefCell::new(build_card_data(&catalog)));
+    let tabs = Rc::new(RefCell::new(build_manufacturer_tabs(&catalog)));
     // View-local filter state: which manufacturer tab and search text
     // narrow the visible tiles. Never reaches the bus.
     let current_tab = Rc::new(Cell::new(0i32));
     let search_lower = Rc::new(RefCell::new(String::new()));
+
+    set_tabs_model(&prefs, &tabs.borrow());
+    set_visible_cards(
+        &prefs,
+        &all_cards.borrow(),
+        tab_manufacturer(&tabs.borrow(), 0),
+        "",
+    );
 
     let snapshot = bus.snapshot();
     prefs.apply_preferences(&snapshot);
     apply_printing(&prefs, &snapshot, &catalog);
 
     let prefs_weak = prefs.as_weak();
+
+    // Rebuild every catalog-derived view (gallery, tabs, resin list)
+    // from the current catalog handle, preserving the active filter and
+    // selection. Called after an import refreshes the catalog.
+    let refresh_view: Rc<dyn Fn()> = {
+        let prefs_weak = prefs_weak.clone();
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let all_cards = all_cards.clone();
+        let tabs = tabs.clone();
+        let current_tab = current_tab.clone();
+        let search_lower = search_lower.clone();
+        Rc::new(move || {
+            let Some(w) = prefs_weak.upgrade() else {
+                return;
+            };
+            let catalog = catalog_handle.borrow().clone();
+            *all_cards.borrow_mut() = build_card_data(&catalog);
+            *tabs.borrow_mut() = build_manufacturer_tabs(&catalog);
+            set_tabs_model(&w, &tabs.borrow());
+            set_visible_cards(
+                &w,
+                &all_cards.borrow(),
+                tab_manufacturer(&tabs.borrow(), current_tab.get()),
+                &search_lower.borrow(),
+            );
+            apply_printing(&w, &bus.snapshot(), &catalog);
+        })
+    };
     prefs.on_close_requested({
         let prefs_weak = prefs_weak.clone();
         move || {
@@ -103,8 +140,8 @@ pub(crate) fn build_preferences_window(
             if let Some(w) = prefs_weak.upgrade() {
                 set_visible_cards(
                     &w,
-                    &all_cards,
-                    tab_manufacturer(&tabs, index),
+                    &all_cards.borrow(),
+                    tab_manufacturer(&tabs.borrow(), index),
                     &search_lower.borrow(),
                 );
             }
@@ -122,8 +159,8 @@ pub(crate) fn build_preferences_window(
             if let Some(w) = prefs_weak.upgrade() {
                 set_visible_cards(
                     &w,
-                    &all_cards,
-                    tab_manufacturer(&tabs, current_tab.get()),
+                    &all_cards.borrow(),
+                    tab_manufacturer(&tabs.borrow(), current_tab.get()),
                     &search_lower.borrow(),
                 );
             }
@@ -164,10 +201,17 @@ pub(crate) fn build_preferences_window(
         }
     });
 
-    // `create-calibration-requested`, `import-requested`, and the two
-    // `export-*-requested` callbacks are declared and forwarded by the
-    // pages; their handlers land in later commits (authoring, import /
-    // export). Left unhandled here, they are no-ops.
+    prefs.on_import_requested({
+        let catalog_handle = catalog_handle.clone();
+        let refresh_view = refresh_view.clone();
+        move || spawn_import(catalog_handle.clone(), refresh_view.clone())
+    });
+    prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
+    prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
+
+    // `create-calibration-requested` is declared and forwarded by the
+    // resin page; its handler (the authoring dialog) lands in a later
+    // commit. Left unhandled here, it is a no-op.
 
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
@@ -185,6 +229,101 @@ pub(crate) fn build_preferences_window(
         window: prefs,
         _subscription: subscription,
     })
+}
+
+fn set_tabs_model(window: &PreferencesWindow, tabs: &[String]) {
+    window.set_manufacturer_tabs(ModelRc::new(VecModel::from(
+        tabs.iter()
+            .map(|s| SharedString::from(s.as_str()))
+            .collect::<Vec<_>>(),
+    )));
+}
+
+fn refresh_catalog(handle: &Rc<RefCell<Rc<ProfileCatalog>>>) {
+    *handle.borrow_mut() = Rc::new(ProfileCatalog::load_default());
+}
+
+/// Run the export flow for `scope`: pick a `.zip` destination, then
+/// package the matching profiles from the user library. Failures are
+/// reported on stderr; the library is read-only here.
+fn spawn_export(scope: ExportScope) {
+    if let Err(err) = slint::spawn_local(async move {
+        let Ok(library_dir) = user_library_dir() else {
+            eprintln!("cannot resolve the user profile library directory");
+            return;
+        };
+        let Some(handle) = rfd::AsyncFileDialog::new()
+            .set_file_name(scope.default_file_name())
+            .add_filter("Profile package", &["zip"])
+            .save_file()
+            .await
+        else {
+            return;
+        };
+        if let Err(err) = run_export(&library_dir, &scope.selection(), handle.path()) {
+            eprintln!("{err}");
+        }
+    }) {
+        eprintln!("failed to spawn export task: {err}");
+    }
+}
+
+/// Run the import flow: pick a `.zip`, install it into the user library,
+/// and on a collision offer to overwrite. On success the catalog is
+/// rebuilt and the window's views refreshed so imported profiles appear
+/// immediately.
+fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: Rc<dyn Fn()>) {
+    if let Err(err) = slint::spawn_local(async move {
+        let Ok(library_dir) = user_library_dir() else {
+            eprintln!("cannot resolve the user profile library directory");
+            return;
+        };
+        let Some(handle) = rfd::AsyncFileDialog::new()
+            .add_filter("Profile package", &["zip"])
+            .pick_file()
+            .await
+        else {
+            return;
+        };
+        let src = handle.path().to_path_buf();
+
+        let outcome = match run_import(&library_dir, &src, false) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                eprintln!("{err}");
+                return;
+            }
+        };
+        match outcome {
+            ImportOutcome::Installed => {
+                refresh_catalog(&catalog_handle);
+                refresh_view();
+            }
+            ImportOutcome::Collisions(report) => {
+                let overwrite = ctr!("PreferencesPage", "Overwrite").to_string();
+                let result = rfd::AsyncMessageDialog::new()
+                    .set_title(ctr!("PreferencesPage", "Overwrite existing profiles?").to_string())
+                    .set_description(format_collision_report(&report))
+                    .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                        overwrite.clone(),
+                        ctr!("PreferencesPage", "Cancel").to_string(),
+                    ))
+                    .show()
+                    .await;
+                if overwrite_confirmed(&result, &overwrite) {
+                    match run_import(&library_dir, &src, true) {
+                        Ok(_) => {
+                            refresh_catalog(&catalog_handle);
+                            refresh_view();
+                        }
+                        Err(err) => eprintln!("{err}"),
+                    }
+                }
+            }
+        }
+    }) {
+        eprintln!("failed to spawn import task: {err}");
+    }
 }
 
 /// Push the current selection (printer / resin indices, the derived

@@ -400,7 +400,22 @@ msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: src/preferences_window.rs:258
+#: src/preferences_window.rs:303
+msgctxt "PreferencesPage"
+msgid "Overwrite"
+msgstr ""
+
+#: src/preferences_window.rs:305
+msgctxt "PreferencesPage"
+msgid "Overwrite existing profiles?"
+msgstr ""
+
+#: src/preferences_window.rs:309
+msgctxt "PreferencesPage"
+msgid "Cancel"
+msgstr ""
+
+#: src/preferences_window.rs:397
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
