@@ -38,7 +38,6 @@ export component PrinterPreferences inherits PreferencesPage {
     property <length> tile-w: 128px;
     property <length> tile-h: 148px;
     property <length> tile-gap: 12px;
-    property <int> columns: 3;
 
     // Manufacturer filter as a horizontal tab bar; scrolls sideways
     // when the maker list is wide. Pinned height with no vertical
@@ -70,16 +69,21 @@ export component PrinterPreferences inherits PreferencesPage {
         }
     }
 
-    // Image-forward gallery: tiles flow left-to-right into a fixed
-    // number of columns, placed by index so no per-row chunking is
-    // needed. Build volume is deliberately not shown; it is a
-    // consequence of the choice, not a selection criterion.
-    ScrollView {
+    // Image-forward gallery: tiles flow left-to-right, wrapping into as
+    // many columns as the current viewport width fits (at least one).
+    // The column count is derived from `gallery.visible-width` so the
+    // grid reflows as the window resizes, and each row is centred in the
+    // leftover horizontal space. Build volume is deliberately not shown;
+    // it is a consequence of the choice, not a selection criterion.
+    gallery := ScrollView {
         vertical-stretch: 1;
-        viewport-height: Math.ceil(root.printer-cards.length / root.columns) * (root.tile-h + root.tile-gap);
+        property <int> columns: Math.max(1, Math.floor((self.visible-width + root.tile-gap) / (root.tile-w + root.tile-gap)));
+        property <length> row-width: self.columns * root.tile-w + (self.columns - 1) * root.tile-gap;
+        property <length> x-offset: Math.max(0px, (self.visible-width - self.row-width) / 2);
+        viewport-height: Math.ceil(root.printer-cards.length / self.columns) * (root.tile-h + root.tile-gap);
         for card[i] in root.printer-cards: Rectangle {
-            x: Math.mod(i, root.columns) * (root.tile-w + root.tile-gap);
-            y: Math.floor(i / root.columns) * (root.tile-h + root.tile-gap);
+            x: gallery.x-offset + Math.mod(i, gallery.columns) * (root.tile-w + root.tile-gap);
+            y: Math.floor(i / gallery.columns) * (root.tile-h + root.tile-gap);
             width: root.tile-w;
             height: root.tile-h;
             border-radius: 6px;
