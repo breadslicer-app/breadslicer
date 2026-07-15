@@ -11,6 +11,7 @@
 //! into our domain profiles. This is the only module that knows the
 //! DragonFruit schema; the rest of the crate stays format-agnostic.
 
+pub mod material;
 pub mod printer;
 
 use std::fmt;
@@ -18,8 +19,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
 use crate::profile::ConvertedProfile;
 use crate::reader::ProfileReader;
+use material::{MaterialMapError, RawMaterial, map_material};
 use printer::{PrinterMapError, RawPrinter, map_printer};
 
 /// Reads DragonFruit plugin JSON into our domain profiles.
@@ -50,6 +54,14 @@ pub enum DragonFruitError {
         index: usize,
         source: PrinterMapError,
     },
+    /// A material record could not be mapped to a domain profile.
+    MapMaterial {
+        path: PathBuf,
+        index: usize,
+        source: MaterialMapError,
+    },
+    /// A file's records are neither printers nor materials.
+    UnrecognisedRecord { path: PathBuf },
 }
 
 impl fmt::Display for DragonFruitError {
@@ -71,6 +83,16 @@ impl fmt::Display for DragonFruitError {
                 index,
                 source,
             } => write!(f, "{}: record #{index}: {source}", path.display()),
+            Self::MapMaterial {
+                path,
+                index,
+                source,
+            } => write!(f, "{}: record #{index}: {source}", path.display()),
+            Self::UnrecognisedRecord { path } => write!(
+                f,
+                "{}: records are neither printers nor materials",
+                path.display(),
+            ),
         }
     }
 }
@@ -82,6 +104,8 @@ impl std::error::Error for DragonFruitError {
             Self::ReadDir { source, .. } => Some(source),
             Self::ParseJson { source, .. } => Some(source),
             Self::MapPrinter { source, .. } => Some(source),
+            Self::MapMaterial { source, .. } => Some(source),
+            Self::UnrecognisedRecord { .. } => None,
         }
     }
 }
@@ -93,7 +117,7 @@ impl ProfileReader for DragonFruitReader {
         let mut profiles = Vec::new();
         for input in inputs {
             for file in json_files(input)? {
-                read_printer_file(&file, &mut profiles)?;
+                read_file(&file, &mut profiles)?;
             }
         }
         Ok(profiles)
@@ -129,30 +153,76 @@ fn json_files(path: &Path) -> Result<Vec<PathBuf>, DragonFruitError> {
     Ok(files)
 }
 
-/// Parse one DragonFruit printer file (an array of records) and append
-/// the converted profiles.
-fn read_printer_file(
-    path: &Path,
-    profiles: &mut Vec<ConvertedProfile>,
-) -> Result<(), DragonFruitError> {
+/// Which DragonFruit record kind a file holds.
+enum RecordKind {
+    Printer,
+    Material,
+}
+
+/// Parse one DragonFruit file (an array of records), classify it by the
+/// schema of its records, and append the converted profiles. An empty
+/// array contributes nothing; a file whose records are neither kind is
+/// an error.
+fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), DragonFruitError> {
     let bytes = fs::read(path).map_err(|source| DragonFruitError::ReadFile {
         path: path.to_owned(),
         source,
     })?;
-    let records: Vec<RawPrinter> =
+    let values: Vec<Value> =
         serde_json::from_slice(&bytes).map_err(|source| DragonFruitError::ParseJson {
             path: path.to_owned(),
             source,
         })?;
-    for (index, record) in records.into_iter().enumerate() {
-        let profile = map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
-            path: path.to_owned(),
-            index,
-            source,
-        })?;
-        profiles.push(ConvertedProfile::Printer(profile));
+    let kind = match values.first() {
+        None => return Ok(()),
+        Some(value) if value.get("presetId").is_some() => RecordKind::Printer,
+        Some(value) if value.get("templateId").is_some() => RecordKind::Material,
+        Some(_) => {
+            return Err(DragonFruitError::UnrecognisedRecord {
+                path: path.to_owned(),
+            });
+        }
+    };
+
+    match kind {
+        RecordKind::Printer => {
+            let records: Vec<RawPrinter> = parse_records(&bytes, path)?;
+            for (index, record) in records.into_iter().enumerate() {
+                let profile =
+                    map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
+                        path: path.to_owned(),
+                        index,
+                        source,
+                    })?;
+                profiles.push(ConvertedProfile::Printer(profile));
+            }
+        }
+        RecordKind::Material => {
+            let records: Vec<RawMaterial> = parse_records(&bytes, path)?;
+            for (index, record) in records.into_iter().enumerate() {
+                let profile =
+                    map_material(record).map_err(|source| DragonFruitError::MapMaterial {
+                        path: path.to_owned(),
+                        index,
+                        source,
+                    })?;
+                profiles.push(ConvertedProfile::Material(profile));
+            }
+        }
     }
     Ok(())
+}
+
+/// Deserialise a file's bytes into a typed record array, tagging a
+/// failure with the file path.
+fn parse_records<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    path: &Path,
+) -> Result<Vec<T>, DragonFruitError> {
+    serde_json::from_slice(bytes).map_err(|source| DragonFruitError::ParseJson {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -249,5 +319,80 @@ mod tests {
             DragonFruitError::MapPrinter { index, .. } => assert_eq!(index, 1),
             other => panic!("expected MapPrinter, got {other}"),
         }
+    }
+
+    fn material_record(template_id: &str) -> String {
+        format!(
+            r#"{{
+                "templateId": "{template_id}", "profileVersion": 1,
+                "name": "{template_id}", "brand": "TestResin", "resinFamily": "standard",
+                "layerHeightMm": 0.05, "normalExposureSec": 2.4, "bottomExposureSec": 26.0,
+                "bottomLayerCount": 5, "liftDistanceMm": 6.0, "liftSpeedMmMin": 65.0,
+                "retractSpeedMmMin": 150.0
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_file_of_material_records_is_classified_as_materials() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("materials.json");
+        fs::write(&file, format!("[{}]", material_record("standard-405"))).unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        match profiles.as_slice() {
+            [ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "standard-405");
+            }
+            other => panic!("expected one material, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_directory_mixing_printer_and_material_files_yields_both_kinds() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("printers.json"),
+            format!("[{}]", record("printer-a")),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("materials.json"),
+            format!("[{}]", material_record("resin-a")),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        let printers = profiles
+            .iter()
+            .filter(|p| matches!(p, ConvertedProfile::Printer(_)))
+            .count();
+        let materials = profiles
+            .iter()
+            .filter(|p| matches!(p, ConvertedProfile::Material(_)))
+            .count();
+        assert_eq!((printers, materials), (1, 1));
+    }
+
+    #[test]
+    fn records_that_are_neither_kind_are_rejected() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("mystery.json");
+        fs::write(&file, r#"[{ "somethingElse": true }]"#).unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        assert!(matches!(err, DragonFruitError::UnrecognisedRecord { .. }));
+    }
+
+    #[test]
+    fn an_empty_array_contributes_nothing() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("empty.json");
+        fs::write(&file, "[]").unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        assert!(profiles.is_empty());
     }
 }
