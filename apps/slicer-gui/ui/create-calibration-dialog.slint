@@ -13,6 +13,7 @@ import { ThemePreference } from "preferences/appearance.slint";
 export component CreateCalibrationDialog inherits Window {
     title: @tr("CreateCalibrationDialog" => "New calibration");
     icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
 
     in-out property <ThemePreference> theme: ThemePreference.System;
 

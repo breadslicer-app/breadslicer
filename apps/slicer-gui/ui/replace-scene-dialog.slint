@@ -13,6 +13,7 @@ import { Button, Palette } from "std-widgets.slint";
 export component ReplaceSceneDialog inherits Window {
     title: @tr("ReplaceSceneDialog" => "Open new model");
     icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
 
     in property <string> source-name;
     // True when the loaded scene has unsaved changes (i.e. at least

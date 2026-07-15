@@ -9,6 +9,7 @@ import { ThemePreference } from "./preferences/appearance.slint";
 export component AboutWindow inherits Window {
     title: @tr("About SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
 
     in property <string> app-version: "";
     in property <ThemePreference> theme: ThemePreference.System;

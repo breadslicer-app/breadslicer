@@ -8,6 +8,7 @@ import { Button, Palette, ScrollView } from "std-widgets.slint";
 export component ErrorDialog inherits Window {
     title: @tr("Error");
     icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
 
     in property <string> heading: @tr("An error occurred");
     in property <string> context: "";
