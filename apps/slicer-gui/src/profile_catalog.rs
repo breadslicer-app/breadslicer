@@ -137,6 +137,28 @@ impl ProfileCatalog {
         self.materials.iter().position(|entry| &entry.id == id)
     }
 
+    /// The printer to treat as selected when the user has not chosen
+    /// one yet (a fresh install with no persisted default): the Generic
+    /// Machine when the catalog ships it, otherwise the first printer in
+    /// catalog order, otherwise `None` for an empty catalog. This is a
+    /// display / envelope default only; it is never written to the
+    /// user's settings.
+    pub fn first_run_default_printer(&self) -> Option<PrinterId> {
+        const GENERIC_PRINTER_ID: &str = "generic-machine";
+        self.printers
+            .iter()
+            .find(|entry| entry.id.as_str() == GENERIC_PRINTER_ID)
+            .or_else(|| self.printers.first())
+            .map(|entry| entry.id.clone())
+    }
+
+    /// The printer effectively in force: the user's explicit choice when
+    /// present, otherwise the first-run soft default. `chosen` is the
+    /// persisted selection (`None` until the user picks one).
+    pub fn effective_default_printer(&self, chosen: Option<&PrinterId>) -> Option<PrinterId> {
+        chosen.cloned().or_else(|| self.first_run_default_printer())
+    }
+
     /// Build volume of the printer with this id, if present.
     pub fn printer_build_volume(&self, id: &PrinterId) -> Option<BuildVolume> {
         self.printers

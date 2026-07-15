@@ -260,11 +260,17 @@ impl AppState {
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::load_default())));
         let default_printer = settings.default_printer();
         let default_resin = settings.default_resin();
-        // The envelope is derived from the chosen printer (physical
-        // fact), or the hardcoded default until one is selected.
-        let build_volume = catalog
-            .borrow()
-            .envelope_for_printer(default_printer.as_ref());
+        // The envelope is derived from the effective printer: the user's
+        // explicit choice when present, otherwise the first-run soft
+        // default (Generic Machine, else the first catalog printer). The
+        // soft default drives the opening envelope only; `default_printer`
+        // stays None so nothing is written to settings until the user
+        // picks a printer.
+        let build_volume = {
+            let catalog = catalog.borrow();
+            let effective_printer = catalog.effective_default_printer(default_printer.as_ref());
+            catalog.envelope_for_printer(effective_printer.as_ref())
+        };
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             language: settings.language(),

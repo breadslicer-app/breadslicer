@@ -513,6 +513,117 @@ fn indices_locate_entries_by_id() {
 }
 
 #[test]
+fn first_run_default_prefers_the_generic_machine() {
+    let bundled = tempfile::tempdir().unwrap();
+    // The generic machine sorts last by (manufacturer, name) here, so a
+    // preference for it cannot be a sort-order accident.
+    write_printer(
+        bundled.path(),
+        "a-printer",
+        "Alpha",
+        "A",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+    write_printer(
+        bundled.path(),
+        "generic-machine",
+        "Generic",
+        "Generic Machine",
+        (120.0, 68.0, 130.0),
+        None,
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    assert_eq!(
+        catalog.first_run_default_printer(),
+        Some(printer_id("generic-machine"))
+    );
+}
+
+#[test]
+fn first_run_default_falls_back_to_the_first_printer_when_generic_absent() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "z-printer",
+        "Zeta",
+        "Z",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+    write_printer(
+        bundled.path(),
+        "a-printer",
+        "Alpha",
+        "A",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    // Printers sort by (manufacturer, name); "Alpha A" is first.
+    assert_eq!(
+        catalog.first_run_default_printer(),
+        Some(printer_id("a-printer"))
+    );
+}
+
+#[test]
+fn first_run_default_is_none_for_an_empty_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let catalog = ProfileCatalog::load(None, &dir.path().join("does-not-exist"));
+    assert_eq!(catalog.first_run_default_printer(), None);
+}
+
+#[test]
+fn effective_default_prefers_the_explicit_choice() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "generic-machine",
+        "Generic",
+        "Generic Machine",
+        (120.0, 68.0, 130.0),
+        None,
+    );
+    write_printer(
+        bundled.path(),
+        "a-printer",
+        "Alpha",
+        "A",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    let chosen = printer_id("a-printer");
+    assert_eq!(
+        catalog.effective_default_printer(Some(&chosen)),
+        Some(chosen)
+    );
+}
+
+#[test]
+fn effective_default_falls_back_to_the_first_run_default_when_unset() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "generic-machine",
+        "Generic",
+        "Generic Machine",
+        (120.0, 68.0, 130.0),
+        None,
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    assert_eq!(
+        catalog.effective_default_printer(None),
+        Some(printer_id("generic-machine"))
+    );
+}
+
+#[test]
 fn a_rebuild_picks_up_a_newly_written_user_profile() {
     let user = tempfile::tempdir().unwrap();
     let bundled = tempfile::tempdir().unwrap();

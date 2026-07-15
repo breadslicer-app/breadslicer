@@ -368,7 +368,8 @@ fn open_calibration_dialog(
     let source_name = format!("{} {}", material.brand, material.name);
 
     let snapshot = bus.snapshot();
-    let Some(printer_id) = snapshot.default_printer.clone() else {
+    let Some(printer_id) = catalog.effective_default_printer(snapshot.default_printer.as_ref())
+    else {
         return;
     };
     let printer_name = catalog
@@ -477,8 +478,12 @@ fn apply_printing(
     snap: &PreferencesSnapshot,
     catalog: &ProfileCatalog,
 ) {
-    let printer_index = snap
-        .default_printer
+    // The gallery highlights, the calibration affordances, and the
+    // per-printer resin ordering all track the effective printer: the
+    // persisted choice, or the first-run soft default until the user
+    // picks one.
+    let effective_printer = catalog.effective_default_printer(snap.default_printer.as_ref());
+    let printer_index = effective_printer
         .as_ref()
         .and_then(|id| catalog.printer_index(id))
         .map(|i| i as i32)
@@ -493,9 +498,9 @@ fn apply_printing(
         .unwrap_or(-1);
     window.set_selected_resin_index(resin_index);
 
-    window.set_has_selected_printer(snap.default_printer.is_some());
+    window.set_has_selected_printer(effective_printer.is_some());
 
-    let rows = derive_resin_rows(catalog.materials(), snap.default_printer.as_ref());
+    let rows = derive_resin_rows(catalog.materials(), effective_printer.as_ref());
     window.set_resin_rows(ModelRc::new(VecModel::from(rows)));
 }
 
