@@ -33,54 +33,79 @@ pub fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
 }
 
-/// Resolve the installed, read-only data root that packaged builds
-/// ship: the directory whose subdirectories hold bundled vendor
-/// profiles and other shipped assets.
+/// The single installed, read-only data root a packaged build ships:
+/// the highest-precedence entry of [`bundled_data_dirs`], or the
+/// source-tree `assets/` root as a development fallback.
 ///
-/// On Linux this searches the XDG data directories; on macOS and
-/// Windows it resolves relative to the executable. When neither finds
-/// an installed directory the result is the source-tree `assets/`
-/// root, which exists in a development checkout and is absent (so the
-/// caller's lookup simply skips it) in an installed build.
+/// Prefer [`bundled_data_dirs`] where the full set of read-only roots
+/// matters (e.g. merging a profile library); this single-root helper
+/// exists for callers that only need one location.
 pub fn bundled_data_dir() -> PathBuf {
-    installed_data_dir().unwrap_or_else(dev_assets_dir)
+    bundled_data_dirs()
+        .into_iter()
+        .next()
+        .unwrap_or_else(dev_assets_dir)
 }
 
-/// Linux: the first existing `<base>/<application>` across the XDG data
-/// directories (`XDG_DATA_HOME` then each `XDG_DATA_DIRS` entry).
+/// Every read-only data root a build can ship, highest precedence
+/// first: the installed roots (each existing `<base>/<application>`
+/// across the system data directories on Linux, or executable-relative
+/// on macOS / Windows) followed by the source-tree `assets/` root when
+/// it exists.
+///
+/// The user's writable library (`XDG_DATA_HOME`, resolved via
+/// [`project_dirs`]) is deliberately absent here: it is a distinct,
+/// user-owned layer the profile loader merges on top of these roots.
+/// Keeping it out is what stops a bundled lookup from resolving to the
+/// user's own library.
+pub fn bundled_data_dirs() -> Vec<PathBuf> {
+    let mut roots = installed_data_dirs();
+    let dev = dev_assets_dir();
+    if dev.is_dir() {
+        roots.push(dev);
+    }
+    roots
+}
+
+/// Linux: every existing `<base>/<application>` across the system XDG
+/// data directories (`XDG_DATA_DIRS`).
 #[cfg(target_os = "linux")]
-fn installed_data_dir() -> Option<PathBuf> {
-    find_app_dir(&data_search_bases(), APPLICATION)
+fn installed_data_dirs() -> Vec<PathBuf> {
+    all_app_dirs(&data_search_bases(), APPLICATION)
 }
 
-/// macOS / Windows: the first existing data directory relative to the
+/// macOS / Windows: every existing data directory relative to the
 /// running executable (beside the binary, or under a sibling `share/`).
 #[cfg(not(target_os = "linux"))]
-fn installed_data_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let bases = [dir.to_path_buf(), dir.join("share")];
-    find_app_dir(&bases, APPLICATION)
+fn installed_data_dirs() -> Vec<PathBuf> {
+    let Ok(exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    all_app_dirs(&[dir.to_path_buf(), dir.join("share")], APPLICATION)
 }
 
-/// The XDG data directories, in lookup order: `XDG_DATA_HOME` (or its
-/// default) followed by each `XDG_DATA_DIRS` entry (or their defaults).
+/// The system XDG data directories: each `XDG_DATA_DIRS` entry (or the
+/// spec defaults `/usr/local/share:/usr/share`). `XDG_DATA_HOME` is not
+/// among them: it is the writable per-user location (the user profile
+/// library), never an install root.
 #[cfg(target_os = "linux")]
 fn data_search_bases() -> Vec<PathBuf> {
-    let mut bases = Vec::new();
-    if let Some(base) = directories::BaseDirs::new() {
-        bases.push(base.data_dir().to_path_buf());
-    }
     let dirs = std::env::var_os("XDG_DATA_DIRS")
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| std::ffi::OsString::from("/usr/local/share:/usr/share"));
-    bases.extend(std::env::split_paths(&dirs));
-    bases
+    std::env::split_paths(&dirs).collect()
 }
 
-/// Return the first `<base>/<app>` that is an existing directory.
-fn find_app_dir(bases: &[PathBuf], app: &str) -> Option<PathBuf> {
-    bases.iter().map(|base| base.join(app)).find(|p| p.is_dir())
+/// Every `<base>/<app>` that is an existing directory, in base order.
+fn all_app_dirs(bases: &[PathBuf], app: &str) -> Vec<PathBuf> {
+    bases
+        .iter()
+        .map(|base| base.join(app))
+        .filter(|p| p.is_dir())
+        .collect()
 }
 
 /// The source-tree data root. `CARGO_MANIFEST_DIR` is

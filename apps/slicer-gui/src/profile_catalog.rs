@@ -85,9 +85,16 @@ impl ProfileCatalog {
     /// error, so a headless or fresh install simply yields whatever is
     /// present.
     pub fn load_default() -> Self {
-        let user = user_library_dir().ok();
-        let bundled = sc_app_paths::bundled_data_dir().join("profiles");
-        Self::load(user.as_deref(), &bundled)
+        // Highest precedence first: the user's writable library
+        // (XDG_DATA_HOME) wins over every packaged / dev-tree root.
+        let mut roots: Vec<(PathBuf, ProfileSource)> = Vec::new();
+        if let Ok(user) = user_library_dir() {
+            roots.push((user, ProfileSource::User));
+        }
+        for root in sc_app_paths::bundled_data_dirs() {
+            roots.push((root.join("profiles"), ProfileSource::Bundled));
+        }
+        Self::from_roots(&roots)
     }
 
     /// Build the catalog from explicit library roots. `user_dir`, when
@@ -100,10 +107,15 @@ impl ProfileCatalog {
             roots.push((dir.to_owned(), ProfileSource::User));
         }
         roots.push((bundled_dir.to_owned(), ProfileSource::Bundled));
+        Self::from_roots(&roots)
+    }
 
+    /// Build the catalog by merging the given roots in precedence order
+    /// (earliest wins on id collision).
+    fn from_roots(roots: &[(PathBuf, ProfileSource)]) -> Self {
         ProfileCatalog {
-            printers: load_printers(&roots),
-            materials: load_materials(&roots),
+            printers: load_printers(roots),
+            materials: load_materials(roots),
         }
     }
 

@@ -20,6 +20,7 @@ export struct PrinterCard {
 
 export component PrinterPreferences inherits PreferencesPage {
     title: @tr("PreferencesPage" => "Printer");
+    fill: true;
 
     in property <[PrinterCard]> printer-cards;
     in property <[string]> manufacturer-tabs;
@@ -40,9 +41,12 @@ export component PrinterPreferences inherits PreferencesPage {
     property <int> columns: 3;
 
     // Manufacturer filter as a horizontal tab bar; scrolls sideways
-    // when the maker list is wide.
+    // when the maker list is wide. Pinned height with no vertical
+    // stretch so the gallery below is the only child that grows.
     ScrollView {
-        height: 40px;
+        vertical-stretch: 0;
+        min-height: 40px;
+        max-height: 40px;
         HorizontalLayout {
             spacing: 6px;
             alignment: start;
@@ -129,6 +133,7 @@ export component PrinterPreferences inherits PreferencesPage {
     }
 
     HorizontalLayout {
+        vertical-stretch: 0;
         spacing: 8px;
         alignment: start;
         Button {
