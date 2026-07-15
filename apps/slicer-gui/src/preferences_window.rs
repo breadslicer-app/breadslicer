@@ -4,12 +4,17 @@
  */
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 
-use sc_print_profiles::user_library_dir;
+use sc_print_primitives::MaterialId;
+use sc_print_profiles::{
+    load_material_profile_by_id, save_material_profile_to_library, user_library_dir,
+};
 
+use crate::calibration_authoring::{CalibrationInput, build_material_profile, validate_input};
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::{
@@ -21,7 +26,7 @@ use crate::profile_transfer::{
     run_import,
 };
 use crate::window_prefs::WindowPreferences;
-use crate::{PreferencesWindow, PrinterCard, ResinRow};
+use crate::{CreateCalibrationDialog, PreferencesWindow, PrinterCard, ResinRow};
 
 /// A printer tile plus the fields the manufacturer / search filter
 /// needs but the Slint tile does not carry. Held once per session; the
@@ -99,6 +104,11 @@ pub(crate) fn build_preferences_window(
             apply_printing(&w, &bus.snapshot(), &catalog);
         })
     };
+
+    // Holds the create-calibration dialog while it is open so it is not
+    // dropped (and closed) the moment its opener returns.
+    let calibration_dialog: Rc<RefCell<Option<CreateCalibrationDialog>>> =
+        Rc::new(RefCell::new(None));
     prefs.on_close_requested({
         let prefs_weak = prefs_weak.clone();
         move || {
@@ -209,9 +219,21 @@ pub(crate) fn build_preferences_window(
     prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
     prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
 
-    // `create-calibration-requested` is declared and forwarded by the
-    // resin page; its handler (the authoring dialog) lands in a later
-    // commit. Left unhandled here, it is a no-op.
+    prefs.on_create_calibration_requested({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let refresh_view = refresh_view.clone();
+        let calibration_dialog = calibration_dialog.clone();
+        move |index| {
+            open_calibration_dialog(
+                &bus,
+                &catalog_handle,
+                &refresh_view,
+                &calibration_dialog,
+                index,
+            );
+        }
+    });
 
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
@@ -324,6 +346,127 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
     }) {
         eprintln!("failed to spawn import task: {err}");
     }
+}
+
+/// Open the create-calibration dialog for the resin at `source_index`,
+/// seeded with the source resin and the currently selected printer. On
+/// save it authors a new profile, refreshes the catalog and views, and
+/// selects the new resin; on a validation error it reports inline and
+/// stays open.
+fn open_calibration_dialog(
+    bus: &Rc<PreferencesBus>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh_view: &Rc<dyn Fn()>,
+    dialog_slot: &Rc<RefCell<Option<CreateCalibrationDialog>>>,
+    source_index: i32,
+) {
+    let catalog = catalog_handle.borrow().clone();
+    let Some(material) = catalog.materials().get(source_index as usize) else {
+        return;
+    };
+    let source_id = material.id.clone();
+    let source_name = format!("{} {}", material.brand, material.name);
+
+    let snapshot = bus.snapshot();
+    let Some(printer_id) = snapshot.default_printer.clone() else {
+        return;
+    };
+    let printer_name = catalog
+        .printers()
+        .iter()
+        .find(|p| p.id == printer_id)
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| printer_id.as_str().to_owned());
+
+    let dialog = match CreateCalibrationDialog::new() {
+        Ok(dialog) => dialog,
+        Err(err) => {
+            eprintln!("failed to create the calibration dialog: {err}");
+            return;
+        }
+    };
+    dialog.set_theme(snapshot.theme);
+    dialog.set_source_name(source_name.into());
+    dialog.set_printer_name(printer_name.into());
+
+    let dialog_weak = dialog.as_weak();
+    dialog.on_cancel_requested({
+        let dialog_weak = dialog_weak.clone();
+        let dialog_slot = dialog_slot.clone();
+        move || {
+            if let Some(d) = dialog_weak.upgrade() {
+                let _ = d.hide();
+            }
+            *dialog_slot.borrow_mut() = None;
+        }
+    });
+    dialog.on_save_requested({
+        let dialog_weak = dialog_weak.clone();
+        let dialog_slot = dialog_slot.clone();
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let refresh_view = refresh_view.clone();
+        move || {
+            let Some(d) = dialog_weak.upgrade() else {
+                return;
+            };
+            let input = CalibrationInput {
+                name: d.get_name_text().to_string(),
+                normal_exposure_sec: d.get_normal_exposure_text().to_string(),
+                bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
+                bottom_layer_count: d.get_bottom_layer_count_text().to_string(),
+                lift_distance_mm: d.get_lift_distance_text().to_string(),
+                lift_speed_mm_min: d.get_lift_speed_text().to_string(),
+                retract_speed_mm_min: d.get_retract_speed_text().to_string(),
+            };
+            match author_calibration(&catalog_handle, &source_id, &printer_id, &input) {
+                Ok(new_id) => {
+                    refresh_catalog(&catalog_handle);
+                    refresh_view();
+                    bus.update(move |snap| {
+                        snap.default_resin = Some(new_id);
+                        PreferencesChange::DefaultResin
+                    });
+                    let _ = d.hide();
+                    *dialog_slot.borrow_mut() = None;
+                }
+                Err(message) => d.set_error_message(message.into()),
+            }
+        }
+    });
+
+    if let Err(err) = dialog.show() {
+        eprintln!("failed to show the calibration dialog: {err}");
+        return;
+    }
+    *dialog_slot.borrow_mut() = Some(dialog);
+}
+
+/// Load the source resin, validate the form, build the new profile and
+/// write it to the user library. Returns the new id on success or a
+/// user-facing message on failure.
+fn author_calibration(
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    source_id: &MaterialId,
+    printer_id: &sc_print_primitives::PrinterId,
+    input: &CalibrationInput,
+) -> Result<MaterialId, String> {
+    let user_lib = user_library_dir().map_err(|e| e.to_string())?;
+    let bundled = sc_app_paths::bundled_data_dir().join("profiles");
+    let source = load_material_profile_by_id(source_id, None, &user_lib, &bundled)
+        .map_err(|e| e.to_string())?;
+
+    let existing: BTreeSet<MaterialId> = catalog_handle
+        .borrow()
+        .materials()
+        .iter()
+        .map(|m| m.id.clone())
+        .collect();
+    let validated = validate_input(input, &existing).map_err(|e| e.to_string())?;
+    let new_id = validated.id.clone();
+    let profile = build_material_profile(&source, printer_id, validated);
+    save_material_profile_to_library(&user_lib, &profile).map_err(|e| e.to_string())?;
+    Ok(new_id)
 }
 
 /// Push the current selection (printer / resin indices, the derived

@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-15 14:47+0000\n"
+"POT-Creation-Date: 2026-07-15 15:55+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -241,129 +241,189 @@ msgctxt "ObjectList"
 msgid "No objects to display"
 msgstr ""
 
-#: ui/main-window.slint:61
+#: ui/main-window.slint:62
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:157
+#: ui/main-window.slint:158
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:160
+#: ui/main-window.slint:161
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:170
+#: ui/main-window.slint:171
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:179
+#: ui/main-window.slint:180
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:190
+#: ui/main-window.slint:191
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:196
+#: ui/main-window.slint:197
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:204
+#: ui/main-window.slint:205
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:214
+#: ui/main-window.slint:215
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:216
+#: ui/main-window.slint:217
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:225
+#: ui/main-window.slint:226
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:236
+#: ui/main-window.slint:237
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:246
+#: ui/main-window.slint:247
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:255
+#: ui/main-window.slint:256
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:259
+#: ui/main-window.slint:260
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:260
+#: ui/main-window.slint:261
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:270
+#: ui/main-window.slint:271
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:272
+#: ui/main-window.slint:273
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:277
+#: ui/main-window.slint:278
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:284
+#: ui/main-window.slint:285
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:291
+#: ui/main-window.slint:292
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:298
+#: ui/main-window.slint:299
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:305
+#: ui/main-window.slint:306
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:317
+#: ui/main-window.slint:318
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:428
+#: ui/main-window.slint:429
 msgctxt "MainWindow"
 msgid "Drop to open"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:14
+msgctxt "CreateCalibrationDialog"
+msgid "New calibration"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:63
+msgctxt "CreateCalibrationDialog"
+msgid "Calibrate {} for {}"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:74
+msgctxt "CreateCalibrationDialog"
+msgid "Name"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:79
+msgctxt "CreateCalibrationDialog"
+msgid "e.g. My Grey 0.05mm"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:84
+msgctxt "CreateCalibrationDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:94
+msgctxt "CreateCalibrationDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:104
+msgctxt "CreateCalibrationDialog"
+msgid "Bottom layers"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:114
+msgctxt "CreateCalibrationDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:124
+msgctxt "CreateCalibrationDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:134
+msgctxt "CreateCalibrationDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:155
+msgctxt "CreateCalibrationDialog"
+msgid "Save"
+msgstr ""
+
+#: ui/create-calibration-dialog.slint:162
+msgctxt "CreateCalibrationDialog"
+msgid "Cancel"
 msgstr ""
 
 #: ui/mesh-viewer.slint:136
