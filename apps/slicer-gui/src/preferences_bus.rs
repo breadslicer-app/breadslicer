@@ -26,16 +26,25 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
+use sc_print_primitives::{MaterialId, PrinterId};
+
 use crate::ThemePreference;
 use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
 
 /// Full read-out of every preference. Listeners receive a reference;
 /// clone the fields they care about.
+///
+/// `build_volume` is not a stored preference of its own: it is derived
+/// from the selected `default_printer` (or the hardcoded default when
+/// none is selected) and carried here so viewports can keep reading it
+/// unchanged.
 #[derive(Clone, Debug)]
 pub(crate) struct PreferencesSnapshot {
     pub theme: ThemePreference,
     pub language: LanguagePreference,
+    pub default_printer: Option<PrinterId>,
+    pub default_resin: Option<MaterialId>,
     pub build_volume: BuildVolume,
 }
 
@@ -44,7 +53,8 @@ pub(crate) struct PreferencesSnapshot {
 pub(crate) enum PreferencesChange {
     Theme,
     Language,
-    BuildVolume,
+    DefaultPrinter,
+    DefaultResin,
 }
 
 type Listener = Rc<dyn Fn(&PreferencesSnapshot, &PreferencesChange)>;
@@ -191,6 +201,8 @@ mod preferences_bus_tests {
         PreferencesSnapshot {
             theme: ThemePreference::System,
             language: LanguagePreference::System,
+            default_printer: None,
+            default_resin: None,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
         }
     }
@@ -338,30 +350,39 @@ mod preferences_bus_tests {
     }
 
     #[test]
-    fn build_volume_change_propagates_to_listener() {
+    fn default_printer_change_propagates_with_derived_build_volume() {
         use crate::build_volume::BuildVolume;
 
+        type Captured = Option<(Option<PrinterId>, BuildVolume, PreferencesChange)>;
+
         let bus = PreferencesBus::new(initial());
-        let captured: Rc<RefCell<Option<(BuildVolume, PreferencesChange)>>> =
-            Rc::new(RefCell::new(None));
+        let captured: Rc<RefCell<Captured>> = Rc::new(RefCell::new(None));
         let _sub = {
             let captured = captured.clone();
             bus.subscribe(move |snap, change| {
-                *captured.borrow_mut() = Some((snap.build_volume, *change));
+                *captured.borrow_mut() =
+                    Some((snap.default_printer.clone(), snap.build_volume, *change));
             })
         };
 
+        let new_printer = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
         let new_bv = BuildVolume::new(150.0, 80.0, 160.0);
-        bus.update(move |snap| {
-            snap.build_volume = new_bv;
-            PreferencesChange::BuildVolume
+        bus.update({
+            let new_printer = new_printer.clone();
+            move |snap| {
+                snap.default_printer = Some(new_printer);
+                snap.build_volume = new_bv;
+                PreferencesChange::DefaultPrinter
+            }
         });
 
-        let (got_bv, got_change) = captured
+        let (got_printer, got_bv, got_change) = captured
             .borrow()
+            .clone()
             .expect("listener must have fired and captured the payload");
+        assert_eq!(got_printer, Some(new_printer));
         assert_eq!(got_bv, new_bv);
-        assert_eq!(got_change, PreferencesChange::BuildVolume);
+        assert_eq!(got_change, PreferencesChange::DefaultPrinter);
     }
 
     #[test]

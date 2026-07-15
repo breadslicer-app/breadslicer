@@ -152,6 +152,27 @@ impl ProfileCatalog {
             .find(|entry| &entry.id == material_id)
             .is_some_and(|entry| entry.calibrated_printers.contains(printer_id))
     }
+
+    /// The viewport build envelope implied by the selected printer: the
+    /// printer's physical build volume when `printer` resolves in the
+    /// catalog, otherwise the hardcoded default used when no printer is
+    /// selected yet. The `sc_print_primitives` build volume (x/y/z,
+    /// f64) maps to the GUI envelope as (width, depth, height), f32.
+    pub fn envelope_for_printer(
+        &self,
+        printer: Option<&PrinterId>,
+    ) -> crate::build_volume::BuildVolume {
+        printer
+            .and_then(|id| self.printer_build_volume(id))
+            .map(|bv| {
+                crate::build_volume::BuildVolume::new(
+                    bv.x_mm() as f32,
+                    bv.y_mm() as f32,
+                    bv.z_mm() as f32,
+                )
+            })
+            .unwrap_or(crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME)
+    }
 }
 
 /// Merge the printer profiles across `roots` (highest precedence

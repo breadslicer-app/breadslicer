@@ -15,10 +15,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use sc_print_primitives::{MaterialId, PrinterId};
 use serde::{Deserialize, Serialize};
 
 use crate::ThemePreference;
-use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::language::LanguagePreference;
 
 const SETTINGS_FILENAME: &str = "settings.toml";
@@ -65,69 +65,6 @@ pub(crate) struct Appearance {
     language: LanguagePreference,
 }
 
-/// Lower bound for any build-volume axis (mm). Below this, the camera
-/// can't reasonably frame the plate and translate-clamp arithmetic
-/// loses precision; on-disk values below the bound are clamped on
-/// load.
-pub(crate) const MIN_DIM_MM: f32 = 10.0;
-/// Upper bound for any build-volume axis (mm). An ample envelope for
-/// prosumer-class SLA printers; on-disk values above the bound are
-/// clamped on load to keep the camera framing radius finite.
-pub(crate) const MAX_DIM_MM: f32 = 1000.0;
-
-/// On-disk representation of `BuildVolume`. Stored as three numeric
-/// fields rather than the type itself so a hand-edited or out-of-range
-/// value loads as a clamped default instead of failing the whole file
-/// parse.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct BuildVolumeSetting {
-    width_mm: f32,
-    depth_mm: f32,
-    height_mm: f32,
-}
-
-impl Default for BuildVolumeSetting {
-    fn default() -> Self {
-        BuildVolumeSetting::from(HARDCODED_DEFAULT_BUILD_VOLUME)
-    }
-}
-
-impl From<BuildVolume> for BuildVolumeSetting {
-    fn from(value: BuildVolume) -> Self {
-        Self {
-            width_mm: value.width_mm(),
-            depth_mm: value.depth_mm(),
-            height_mm: value.height_mm(),
-        }
-    }
-}
-
-impl From<BuildVolumeSetting> for BuildVolume {
-    fn from(value: BuildVolumeSetting) -> Self {
-        BuildVolume::new(
-            sanitise_dim(value.width_mm),
-            sanitise_dim(value.depth_mm),
-            sanitise_dim(value.height_mm),
-        )
-    }
-}
-
-/// Coerce a dimension into a valid axis length: NaN / non-finite
-/// values fall back to the minimum bound, then the value is clamped
-/// into `[MIN_DIM_MM, MAX_DIM_MM]`. Used by both the on-disk loader
-/// and the preferences-UI commit handler so all entry points share
-/// one normalisation rule.
-pub(crate) fn sanitise_dim(d: f32) -> f32 {
-    if !d.is_finite() {
-        return MIN_DIM_MM;
-    }
-    d.clamp(MIN_DIM_MM, MAX_DIM_MM)
-}
-
-fn build_volume_is_default(bv: &BuildVolumeSetting) -> bool {
-    *bv == BuildVolumeSetting::default()
-}
-
 /// Current schema version of the on-disk settings file. Bump this when
 /// the structure of `AppSettings` (or one of its nested settings types)
 /// changes in a way that an older or newer build cannot read. On load,
@@ -148,10 +85,14 @@ pub(crate) struct AppSettings {
     pub(crate) version: u32,
     #[serde(default)]
     pub appearance: Appearance,
-    /// Omitted in TOML when the user has the hardcoded default, so a
-    /// fresh config stays minimal.
-    #[serde(default, skip_serializing_if = "build_volume_is_default")]
-    build_volume: BuildVolumeSetting,
+    /// The app-wide default printer, by id. Omitted in TOML until the
+    /// user picks one; the viewport envelope is derived from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_printer: Option<PrinterId>,
+    /// The app-wide default resin, by id. Omitted in TOML until the
+    /// user picks one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_resin: Option<MaterialId>,
 }
 
 impl Default for AppSettings {
@@ -159,7 +100,8 @@ impl Default for AppSettings {
         Self {
             version: APP_SETTINGS_SCHEMA_VERSION,
             appearance: Appearance::default(),
-            build_volume: BuildVolumeSetting::default(),
+            default_printer: None,
+            default_resin: None,
         }
     }
 }
@@ -250,12 +192,20 @@ impl AppSettings {
         self.appearance.language = language;
     }
 
-    pub fn build_volume(&self) -> BuildVolume {
-        self.build_volume.into()
+    pub fn default_printer(&self) -> Option<PrinterId> {
+        self.default_printer.clone()
     }
 
-    pub fn set_build_volume(&mut self, bv: BuildVolume) {
-        self.build_volume = bv.into();
+    pub fn set_default_printer(&mut self, id: Option<PrinterId>) {
+        self.default_printer = id;
+    }
+
+    pub fn default_resin(&self) -> Option<MaterialId> {
+        self.default_resin.clone()
+    }
+
+    pub fn set_default_resin(&mut self, id: Option<MaterialId>) {
+        self.default_resin = id;
     }
 }
 
@@ -424,53 +374,55 @@ mod app_settings_tests {
     }
 
     #[test]
-    fn default_build_volume_matches_hardcoded_constant() {
+    fn default_printer_and_resin_are_none_by_default() {
         let s = AppSettings::default();
-        let bv = s.build_volume();
-        assert_eq!(bv, HARDCODED_DEFAULT_BUILD_VOLUME);
+        assert_eq!(s.default_printer(), None);
+        assert_eq!(s.default_resin(), None);
     }
 
     #[test]
-    fn explicit_build_volume_round_trips() {
+    fn explicit_default_printer_and_resin_round_trip() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let mut s = AppSettings::default();
-        s.set_build_volume(BuildVolume::new(150.0, 80.0, 160.0));
+        let printer = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let resin = MaterialId::new("abs-like-405").unwrap();
+        s.set_default_printer(Some(printer.clone()));
+        s.set_default_resin(Some(resin.clone()));
         s.save_to_path(&path).unwrap();
 
         let loaded = AppSettings::load_from_path(&path);
-        let bv = loaded.build_volume();
-        assert_eq!(bv, BuildVolume::new(150.0, 80.0, 160.0));
+        assert_eq!(loaded.default_printer(), Some(printer));
+        assert_eq!(loaded.default_resin(), Some(resin));
+
+        // The ids are written as plain strings so an external tool or a
+        // hand-edit can find them.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("default_printer = \"anycubic-photon-m3-pm3\""),
+            "got:\n{written}"
+        );
+        assert!(
+            written.contains("default_resin = \"abs-like-405\""),
+            "got:\n{written}"
+        );
     }
 
     #[test]
-    fn saved_toml_omits_default_build_volume() {
+    fn saved_toml_omits_unset_default_printer_and_resin() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let s = AppSettings::default();
         s.save_to_path(&path).unwrap();
         let written = fs::read_to_string(&path).unwrap();
         assert!(
-            !written.contains("[build_volume]"),
-            "default settings should not serialise the build_volume table, got:\n{written}"
+            !written.contains("default_printer"),
+            "unset default printer should not serialise, got:\n{written}"
         );
-    }
-
-    #[test]
-    fn out_of_range_build_volume_clamps_on_load() {
-        // 5 mm is below MIN_DIM_MM (10), 5000 mm is above MAX_DIM_MM (1000).
-        // Both axes should be clamped into the allowed band.
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("settings.toml");
-        fs::write(
-            &path,
-            "[build_volume]\nwidth_mm = 5.0\ndepth_mm = 50.0\nheight_mm = 5000.0\n",
-        )
-        .unwrap();
-
-        let loaded = AppSettings::load_from_path(&path);
-        let bv = loaded.build_volume();
-        assert_eq!(bv, BuildVolume::new(MIN_DIM_MM, 50.0, MAX_DIM_MM));
+        assert!(
+            !written.contains("default_resin"),
+            "unset default resin should not serialise, got:\n{written}"
+        );
     }
 
     #[test]
@@ -589,23 +541,5 @@ mod app_settings_tests {
             vec![std::ffi::OsString::from("settings.toml")],
             "expected only the target file, got {entries:?}",
         );
-    }
-
-    #[test]
-    fn non_finite_build_volume_falls_back_to_min() {
-        // NaN / inf in the file shouldn't crash; they collapse to the
-        // minimum bound so the GUI can still launch and the user sees
-        // a small but legal envelope rather than an undefined render.
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("settings.toml");
-        fs::write(
-            &path,
-            "[build_volume]\nwidth_mm = nan\ndepth_mm = inf\nheight_mm = 80.0\n",
-        )
-        .unwrap();
-
-        let loaded = AppSettings::load_from_path(&path);
-        let bv = loaded.build_volume();
-        assert_eq!(bv, BuildVolume::new(MIN_DIM_MM, MIN_DIM_MM, 80.0));
     }
 }

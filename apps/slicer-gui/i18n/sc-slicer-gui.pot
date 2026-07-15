@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-06-02 10:47+0000\n"
+"POT-Creation-Date: 2026-07-15 14:47+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -84,69 +84,84 @@ msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:12
+#: ui/preferences/printer.slint:22
+msgctxt "PreferencesPage"
+msgid "Printer"
+msgstr ""
+
+#: ui/preferences/printer.slint:61
+msgctxt "PreferencesPage"
+msgid "Search models"
+msgstr ""
+
+#: ui/preferences/printer.slint:63
+msgctxt "PreferencesPage"
+msgid "Search printer models"
+msgstr ""
+
+#: ui/preferences/printer.slint:109
+msgctxt "PreferencesPage"
+msgid "No image"
+msgstr ""
+
+#: ui/preferences/printer.slint:122 ui/preferences/resin.slint:82
+msgctxt "PreferencesPage"
+msgid "custom"
+msgstr ""
+
+#: ui/preferences/printer.slint:135 ui/preferences/resin.slint:101
+msgctxt "PreferencesPage"
+msgid "Import package..."
+msgstr ""
+
+#: ui/preferences/printer.slint:141
+msgctxt "PreferencesPage"
+msgid "Export printers..."
+msgstr ""
+
+#: ui/preferences/resin.slint:22
+msgctxt "PreferencesPage"
+msgid "Resin"
+msgstr ""
+
+#: ui/preferences/resin.slint:76
+msgctxt "PreferencesPage"
+msgid "calibrated"
+msgstr ""
+
+#: ui/preferences/resin.slint:88
+msgctxt "PreferencesPage"
+msgid "Calibrate"
+msgstr ""
+
+#: ui/preferences/resin.slint:107
+msgctxt "PreferencesPage"
+msgid "Export materials..."
+msgstr ""
+
+#: ui/preferences/preferences-window.slint:13
 msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:56
+#: ui/preferences/preferences-window.slint:69
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:58
+#: ui/preferences/preferences-window.slint:71
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:59
+#: ui/preferences/preferences-window.slint:72
 msgctxt "PreferencesMenu"
-msgid "3D View"
+msgid "Printer"
 msgstr ""
 
-#: ui/preferences/3dview.slint:10
-msgctxt "PreferencesPage"
-msgid "3D View"
-msgstr ""
-
-#: ui/preferences/3dview.slint:37
-msgctxt "PreferencesPage"
-msgid "Build volume (mm)"
-msgstr ""
-
-#: ui/preferences/3dview.slint:47
-msgctxt "PreferencesPage"
-msgid "Width"
-msgstr ""
-
-#: ui/preferences/3dview.slint:55
-msgctxt "PreferencesPage"
-msgid "Build volume width in millimetres"
-msgstr ""
-
-#: ui/preferences/3dview.slint:73
-msgctxt "PreferencesPage"
-msgid "Depth"
-msgstr ""
-
-#: ui/preferences/3dview.slint:81
-msgctxt "PreferencesPage"
-msgid "Build volume depth in millimetres"
-msgstr ""
-
-#: ui/preferences/3dview.slint:96
-msgctxt "PreferencesPage"
-msgid "Height"
-msgstr ""
-
-#: ui/preferences/3dview.slint:104
-msgctxt "PreferencesPage"
-msgid "Build volume height in millimetres"
-msgstr ""
-
-#: ui/preferences/3dview.slint:118
-msgctxt "PreferencesPage"
-msgid "Reset to default"
+#: ui/preferences/preferences-window.slint:73
+msgctxt "PreferencesMenu"
+msgid "Resin"
 msgstr ""
 
 #: ui/preferences/appearance.slint:12
@@ -385,91 +400,96 @@ msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: src/viewport/controller.rs:944
+#: src/preferences_window.rs:258
+msgctxt "PreferencesPage"
+msgid "All"
+msgstr ""
+
+#: src/viewport/controller.rs:1035
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:948
+#: src/viewport/controller.rs:1039
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
 
-#: src/viewport/object_list.rs:39
+#: src/viewport/object_list.rs:52
 #, rust-format
 msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
 
-#: src/wiring.rs:207
+#: src/wiring.rs:261
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:210 src/wiring.rs:313
+#: src/wiring.rs:264 src/wiring.rs:362
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:212
+#: src/wiring.rs:266
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:215
+#: src/wiring.rs:269
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:268 src/wiring.rs:286
+#: src/wiring.rs:316 src/wiring.rs:333
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:269 src/wiring.rs:287 src/scene_loader.rs:325
-#: src/app_state.rs:242
+#: src/wiring.rs:317 src/wiring.rs:334 src/scene_loader.rs:374
+#: src/app_state.rs:517
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:305
+#: src/wiring.rs:354
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:309
+#: src/wiring.rs:358
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
 
-#: src/scene_loader.rs:290
+#: src/scene_loader.rs:339
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr ""
 
-#: src/scene_loader.rs:294
+#: src/scene_loader.rs:343
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr ""
 
-#: src/scene_loader.rs:324
+#: src/scene_loader.rs:373
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/app_state.rs:241
+#: src/app_state.rs:516
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:245
+#: src/app_state.rs:520
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
 msgstr ""
 
-#: src/mesh_loader.rs:72
+#: src/mesh_loader.rs:81
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."

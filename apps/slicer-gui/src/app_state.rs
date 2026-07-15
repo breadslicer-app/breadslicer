@@ -26,6 +26,7 @@ use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
+use crate::profile_catalog::ProfileCatalog;
 use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
@@ -175,6 +176,10 @@ pub(crate) struct AppState {
     main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
     prefs: Rc<PreferencesBus>,
+    /// The merged printer / material catalog the Preferences pickers
+    /// read from. Behind a refreshable handle so a later authoring or
+    /// import step can rebuild it without a restart.
+    catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
     /// App-wide copy / paste clipboard. Populated from any window's
     /// current selection by `copy_selection`; consumed by the paste
     /// path which lives on the viewport controller. `None` until the
@@ -239,7 +244,8 @@ fn spawn_settings_saver(
             run_settings_saver_loop(rx, |snap| {
                 settings.set_theme(snap.theme);
                 settings.set_language(snap.language);
-                settings.set_build_volume(snap.build_volume);
+                settings.set_default_printer(snap.default_printer.clone());
+                settings.set_default_resin(snap.default_resin.clone());
                 if let Err(err) = settings.save() {
                     eprintln!("Failed to save settings: {err}");
                 }
@@ -251,10 +257,20 @@ fn spawn_settings_saver(
 impl AppState {
     pub fn new() -> Result<Rc<Self>, Box<dyn Error>> {
         let settings = AppSettings::load();
+        let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::load_default())));
+        let default_printer = settings.default_printer();
+        let default_resin = settings.default_resin();
+        // The envelope is derived from the chosen printer (physical
+        // fact), or the hardcoded default until one is selected.
+        let build_volume = catalog
+            .borrow()
+            .envelope_for_printer(default_printer.as_ref());
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
             language: settings.language(),
-            build_volume: settings.build_volume(),
+            default_printer,
+            default_resin,
+            build_volume,
         };
         // Apply the persisted language *once* up front so the very
         // first `@tr` evaluation during window construction uses the
@@ -294,6 +310,7 @@ impl AppState {
             main_windows: RefCell::new(HashMap::new()),
             next_window_id: Cell::new(0),
             prefs,
+            catalog,
             clipboard: RefCell::new(None),
             _settings_sub: settings_sub,
             _language_apply_sub: language_apply_sub,
@@ -391,7 +408,7 @@ impl AppState {
             if let Some(w) = ui_weak.upgrade() {
                 w.apply_preferences(snap);
             }
-            if matches!(change, PreferencesChange::BuildVolume) {
+            if matches!(change, PreferencesChange::DefaultPrinter) {
                 ctrl_for_listener.set_build_volume(snap.build_volume);
             }
         });
@@ -786,7 +803,7 @@ impl AppState {
             let _ = existing.window.show();
             return;
         }
-        match build_preferences_window(&self.prefs) {
+        match build_preferences_window(&self.prefs, self.catalog.clone()) {
             Ok(wired) => {
                 if let Err(err) = wired.window.show() {
                     eprintln!("Failed to show Preferences window: {err}");
@@ -925,6 +942,8 @@ mod settings_saver_tests {
         PreferencesSnapshot {
             theme,
             language: LanguagePreference::System,
+            default_printer: None,
+            default_resin: None,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
         }
     }
@@ -979,6 +998,8 @@ mod settings_saver_tests {
             tx.send(PreferencesSnapshot {
                 theme: ThemePreference::System,
                 language: LanguagePreference::System,
+                default_printer: None,
+                default_resin: None,
                 build_volume: bv,
             })
             .unwrap();

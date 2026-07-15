@@ -3,92 +3,27 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use slint::{ComponentHandle, SharedString};
+use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 
-use crate::PreferencesWindow;
-use crate::app_settings::sanitise_dim;
-use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
+use crate::i18n::ctr;
 use crate::language::LanguagePreference;
-use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
+use crate::preferences_bus::{
+    PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
+};
+use crate::profile_catalog::{MaterialCatalogEntry, ProfileCatalog, ProfileSource};
 use crate::window_prefs::WindowPreferences;
+use crate::{PreferencesWindow, PrinterCard, ResinRow};
 
-#[derive(Clone, Copy)]
-enum Axis {
-    Width,
-    Depth,
-    Height,
-}
-
-/// Decision shape for one axis-LineEdit commit attempt. Separates the
-/// pure parse-and-clamp logic from the Slint / bus side effects so
-/// the parse-failure / clamp-no-op / new-value branches can be unit
-/// tested. The original closure now matches on this enum and turns
-/// each variant into the appropriate side effect.
-#[derive(Debug, PartialEq)]
-enum AxisCommit {
-    /// Text did not parse as `f32`; the caller should re-apply the
-    /// snapshot so the LineEdit reverts to its previous canonical
-    /// representation.
-    RevertParseError,
-    /// Text parsed but clamping produced the same envelope already on
-    /// the bus (e.g. typing "5" when 10 mm is the floor); same revert
-    /// behaviour as the parse-error case, just a different cause.
-    RevertUnchanged,
-    /// Text parsed, clamping produced a new envelope; the caller
-    /// should push it through the bus.
-    Commit(BuildVolume),
-}
-
-/// Pure parse-clamp-classify step. Mirrors the on-disk loader's
-/// `sanitise_dim` so a value typed into the UI cannot reach the bus
-/// in a form the disk persistence would reject on the next launch.
-fn parse_and_apply_axis(current: BuildVolume, axis: Axis, text: &str) -> AxisCommit {
-    let Some(v) = text.trim().parse::<f32>().ok() else {
-        return AxisCommit::RevertParseError;
-    };
-    let new_bv = with_axis(current, axis, sanitise_dim(v));
-    if new_bv == current {
-        AxisCommit::RevertUnchanged
-    } else {
-        AxisCommit::Commit(new_bv)
-    }
-}
-
-/// Build the closure wired to a single axis's `accepted` callback.
-/// Delegates the pure logic to [`parse_and_apply_axis`] and applies
-/// the corresponding Slint / bus side effect.
-fn commit_axis_handler(
-    bus: &Rc<PreferencesBus>,
-    prefs_weak: slint::Weak<PreferencesWindow>,
-    axis: Axis,
-) -> impl Fn(SharedString) + 'static {
-    let bus = bus.clone();
-    move |text| {
-        let current = bus.snapshot().build_volume;
-        match parse_and_apply_axis(current, axis, &text) {
-            AxisCommit::RevertParseError | AxisCommit::RevertUnchanged => {
-                if let Some(w) = prefs_weak.upgrade() {
-                    w.apply_preferences(&bus.snapshot());
-                }
-            }
-            AxisCommit::Commit(new_bv) => {
-                bus.update(move |snap| {
-                    snap.build_volume = new_bv;
-                    PreferencesChange::BuildVolume
-                });
-            }
-        }
-    }
-}
-
-fn with_axis(bv: BuildVolume, axis: Axis, value: f32) -> BuildVolume {
-    match axis {
-        Axis::Width => BuildVolume::new(value, bv.depth_mm(), bv.height_mm()),
-        Axis::Depth => BuildVolume::new(bv.width_mm(), value, bv.height_mm()),
-        Axis::Height => BuildVolume::new(bv.width_mm(), bv.depth_mm(), value),
-    }
+/// A printer tile plus the fields the manufacturer / search filter
+/// needs but the Slint tile does not carry. Held once per session; the
+/// visible `printer-cards` model is a filtered projection of these.
+struct PrinterCardData {
+    manufacturer: String,
+    name_lower: String,
+    card: PrinterCard,
 }
 
 /// Bundle of a `PreferencesWindow` and its bus subscription. Drop
@@ -101,9 +36,30 @@ pub(crate) struct WiredPreferencesWindow {
 
 pub(crate) fn build_preferences_window(
     bus: &Rc<PreferencesBus>,
+    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
 ) -> Result<WiredPreferencesWindow, slint::PlatformError> {
     let prefs = PreferencesWindow::new()?;
-    prefs.apply_preferences(&bus.snapshot());
+    let catalog = catalog_handle.borrow().clone();
+
+    // Static-per-session: the tiles and the manufacturer tab bar are
+    // built once from the catalog. Thumbnails are decoded here.
+    let all_cards = Rc::new(build_card_data(&catalog));
+    let tabs = Rc::new(build_manufacturer_tabs(&catalog));
+    prefs.set_manufacturer_tabs(ModelRc::new(VecModel::from(
+        tabs.iter()
+            .map(|s| SharedString::from(s.as_str()))
+            .collect::<Vec<_>>(),
+    )));
+    set_visible_cards(&prefs, &all_cards, tab_manufacturer(&tabs, 0), "");
+
+    // View-local filter state: which manufacturer tab and search text
+    // narrow the visible tiles. Never reaches the bus.
+    let current_tab = Rc::new(Cell::new(0i32));
+    let search_lower = Rc::new(RefCell::new(String::new()));
+
+    let snapshot = bus.snapshot();
+    prefs.apply_preferences(&snapshot);
+    apply_printing(&prefs, &snapshot, &catalog);
 
     let prefs_weak = prefs.as_weak();
     prefs.on_close_requested({
@@ -136,35 +92,92 @@ pub(crate) fn build_preferences_window(
         }
     });
 
-    prefs.on_build_volume_width_committed(commit_axis_handler(
-        bus,
-        prefs_weak.clone(),
-        Axis::Width,
-    ));
-    prefs.on_build_volume_depth_committed(commit_axis_handler(
-        bus,
-        prefs_weak.clone(),
-        Axis::Depth,
-    ));
-    prefs.on_build_volume_height_committed(commit_axis_handler(
-        bus,
-        prefs_weak.clone(),
-        Axis::Height,
-    ));
+    prefs.on_manufacturer_tab_changed({
+        let prefs_weak = prefs_weak.clone();
+        let all_cards = all_cards.clone();
+        let tabs = tabs.clone();
+        let current_tab = current_tab.clone();
+        let search_lower = search_lower.clone();
+        move |index| {
+            current_tab.set(index);
+            if let Some(w) = prefs_weak.upgrade() {
+                set_visible_cards(
+                    &w,
+                    &all_cards,
+                    tab_manufacturer(&tabs, index),
+                    &search_lower.borrow(),
+                );
+            }
+        }
+    });
 
-    prefs.on_reset_build_volume_requested({
+    prefs.on_printer_search_changed({
+        let prefs_weak = prefs_weak.clone();
+        let all_cards = all_cards.clone();
+        let tabs = tabs.clone();
+        let current_tab = current_tab.clone();
+        let search_lower = search_lower.clone();
+        move |text| {
+            *search_lower.borrow_mut() = text.to_lowercase();
+            if let Some(w) = prefs_weak.upgrade() {
+                set_visible_cards(
+                    &w,
+                    &all_cards,
+                    tab_manufacturer(&tabs, current_tab.get()),
+                    &search_lower.borrow(),
+                );
+            }
+        }
+    });
+
+    prefs.on_printer_selected({
         let bus = bus.clone();
-        move || {
+        let catalog_handle = catalog_handle.clone();
+        move |index| {
+            let catalog = catalog_handle.borrow().clone();
+            let Some(entry) = catalog.printers().get(index as usize) else {
+                return;
+            };
+            let id = entry.id.clone();
+            let envelope = catalog.envelope_for_printer(Some(&id));
             bus.update(move |snap| {
-                snap.build_volume = HARDCODED_DEFAULT_BUILD_VOLUME;
-                PreferencesChange::BuildVolume
+                snap.default_printer = Some(id);
+                snap.build_volume = envelope;
+                PreferencesChange::DefaultPrinter
             });
         }
     });
 
-    let subscription = bus.subscribe(move |snap, _change| {
-        if let Some(w) = prefs_weak.upgrade() {
-            w.apply_preferences(snap);
+    prefs.on_resin_selected({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        move |index| {
+            let catalog = catalog_handle.borrow().clone();
+            let Some(entry) = catalog.materials().get(index as usize) else {
+                return;
+            };
+            let id = entry.id.clone();
+            bus.update(move |snap| {
+                snap.default_resin = Some(id);
+                PreferencesChange::DefaultResin
+            });
+        }
+    });
+
+    // `create-calibration-requested`, `import-requested`, and the two
+    // `export-*-requested` callbacks are declared and forwarded by the
+    // pages; their handlers land in later commits (authoring, import /
+    // export). Left unhandled here, they are no-ops.
+
+    let subscription = bus.subscribe({
+        let prefs_weak = prefs_weak.clone();
+        let catalog_handle = catalog_handle.clone();
+        move |snap, _change| {
+            if let Some(w) = prefs_weak.upgrade() {
+                w.apply_preferences(snap);
+                let catalog = catalog_handle.borrow().clone();
+                apply_printing(&w, snap, &catalog);
+            }
         }
     });
 
@@ -174,126 +187,287 @@ pub(crate) fn build_preferences_window(
     })
 }
 
+/// Push the current selection (printer / resin indices, the derived
+/// resin ordering, and whether a printer is chosen) into the window.
+/// Does not touch the manufacturer / search filter, which is view-local.
+fn apply_printing(
+    window: &PreferencesWindow,
+    snap: &PreferencesSnapshot,
+    catalog: &ProfileCatalog,
+) {
+    let printer_index = snap
+        .default_printer
+        .as_ref()
+        .and_then(|id| catalog.printer_index(id))
+        .map(|i| i as i32)
+        .unwrap_or(-1);
+    window.set_selected_printer_index(printer_index);
+
+    let resin_index = snap
+        .default_resin
+        .as_ref()
+        .and_then(|id| catalog.material_index(id))
+        .map(|i| i as i32)
+        .unwrap_or(-1);
+    window.set_selected_resin_index(resin_index);
+
+    window.set_has_selected_printer(snap.default_printer.is_some());
+
+    let rows = derive_resin_rows(catalog.materials(), snap.default_printer.as_ref());
+    window.set_resin_rows(ModelRc::new(VecModel::from(rows)));
+}
+
+fn build_card_data(catalog: &ProfileCatalog) -> Vec<PrinterCardData> {
+    catalog
+        .printers()
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let (thumbnail, has_thumbnail) = match &entry.image_path {
+                Some(path) => match Image::load_from_path(path.as_path()) {
+                    Ok(image) => (image, true),
+                    Err(err) => {
+                        eprintln!(
+                            "warning: failed to load printer thumbnail {}: {err}",
+                            path.display()
+                        );
+                        (Image::default(), false)
+                    }
+                },
+                None => (Image::default(), false),
+            };
+            PrinterCardData {
+                manufacturer: entry.manufacturer.clone(),
+                name_lower: entry.name.to_lowercase(),
+                card: PrinterCard {
+                    name: SharedString::from(entry.name.as_str()),
+                    thumbnail,
+                    has_thumbnail,
+                    is_custom: entry.source == ProfileSource::User,
+                    id_index: i as i32,
+                },
+            }
+        })
+        .collect()
+}
+
+/// The manufacturer tab labels: a translated "All" entry followed by
+/// the catalog's distinct manufacturers.
+fn build_manufacturer_tabs(catalog: &ProfileCatalog) -> Vec<String> {
+    let mut tabs = Vec::with_capacity(catalog.manufacturers().len() + 1);
+    tabs.push(ctr!("PreferencesPage", "All").to_string());
+    tabs.extend(catalog.manufacturers());
+    tabs
+}
+
+/// The manufacturer a tab index narrows to, or `None` for the leading
+/// "All" tab (index 0).
+fn tab_manufacturer(tabs: &[String], index: i32) -> Option<&str> {
+    if index <= 0 {
+        return None;
+    }
+    tabs.get(index as usize).map(|s| s.as_str())
+}
+
+/// Whether a card is visible under the current manufacturer tab and
+/// search text. `tab_manufacturer` is `None` for the "All" tab;
+/// `search_lower` is the already-lowercased search text.
+fn card_visible(
+    manufacturer: &str,
+    name_lower: &str,
+    tab_manufacturer: Option<&str>,
+    search_lower: &str,
+) -> bool {
+    let manufacturer_ok = tab_manufacturer.is_none_or(|m| m == manufacturer);
+    let search_ok = search_lower.is_empty() || name_lower.contains(search_lower);
+    manufacturer_ok && search_ok
+}
+
+fn set_visible_cards(
+    window: &PreferencesWindow,
+    all: &[PrinterCardData],
+    tab_manufacturer: Option<&str>,
+    search_lower: &str,
+) {
+    let cards: Vec<PrinterCard> = all
+        .iter()
+        .filter(|c| {
+            card_visible(
+                &c.manufacturer,
+                &c.name_lower,
+                tab_manufacturer,
+                search_lower,
+            )
+        })
+        .map(|c| c.card.clone())
+        .collect();
+    window.set_printer_cards(ModelRc::new(VecModel::from(cards)));
+}
+
+/// Resin rows for the list, ordered calibrated-first relative to the
+/// selected printer (uncalibrated last). With no printer selected,
+/// nothing is calibrated and the base catalog order is preserved. Each
+/// row keeps its catalog index in `id-index`.
+fn derive_resin_rows(
+    materials: &[MaterialCatalogEntry],
+    selected_printer: Option<&sc_print_primitives::PrinterId>,
+) -> Vec<ResinRow> {
+    let mut calibrated_rows = Vec::new();
+    let mut uncalibrated_rows = Vec::new();
+    for (i, entry) in materials.iter().enumerate() {
+        let calibrated = selected_printer.is_some_and(|p| entry.calibrated_printers.contains(p));
+        let row = ResinRow {
+            name: SharedString::from(entry.name.as_str()),
+            brand: SharedString::from(entry.brand.as_str()),
+            family: SharedString::from(entry.family.as_str()),
+            calibrated,
+            is_custom: entry.source == ProfileSource::User,
+            id_index: i as i32,
+        };
+        if calibrated {
+            calibrated_rows.push(row);
+        } else {
+            uncalibrated_rows.push(row);
+        }
+    }
+    calibrated_rows.extend(uncalibrated_rows);
+    calibrated_rows
+}
+
 #[cfg(test)]
-mod with_axis_tests {
+mod card_visible_tests {
     use super::*;
 
-    fn bv() -> BuildVolume {
-        BuildVolume::new(100.0, 200.0, 300.0)
+    #[test]
+    fn all_tab_with_empty_search_shows_every_card() {
+        assert!(card_visible("Anycubic", "photon mono 4", None, ""));
+        assert!(card_visible("Elegoo", "mars 5 ultra", None, ""));
     }
 
     #[test]
-    fn width_axis_only_replaces_width_field() {
-        let out = with_axis(bv(), Axis::Width, 150.0);
-        assert_eq!(out.width_mm(), 150.0);
-        assert_eq!(out.depth_mm(), 200.0);
-        assert_eq!(out.height_mm(), 300.0);
+    fn manufacturer_tab_narrows_to_that_manufacturer() {
+        assert!(card_visible(
+            "Anycubic",
+            "photon mono 4",
+            Some("Anycubic"),
+            ""
+        ));
+        assert!(!card_visible(
+            "Elegoo",
+            "mars 5 ultra",
+            Some("Anycubic"),
+            ""
+        ));
     }
 
     #[test]
-    fn depth_axis_only_replaces_depth_field() {
-        let out = with_axis(bv(), Axis::Depth, 150.0);
-        assert_eq!(out.width_mm(), 100.0);
-        assert_eq!(out.depth_mm(), 150.0);
-        assert_eq!(out.height_mm(), 300.0);
+    fn search_matches_on_name_substring_case_insensitively() {
+        assert!(card_visible("Anycubic", "photon mono 4", None, "mono"));
+        assert!(!card_visible("Anycubic", "photon mono 4", None, "saturn"));
     }
 
     #[test]
-    fn height_axis_only_replaces_height_field() {
-        let out = with_axis(bv(), Axis::Height, 150.0);
-        assert_eq!(out.width_mm(), 100.0);
-        assert_eq!(out.depth_mm(), 200.0);
-        assert_eq!(out.height_mm(), 150.0);
+    fn manufacturer_tab_and_search_compose() {
+        assert!(card_visible(
+            "Elegoo",
+            "mars 5 ultra",
+            Some("Elegoo"),
+            "mars"
+        ));
+        // Right model, wrong manufacturer tab.
+        assert!(!card_visible(
+            "Anycubic",
+            "mars 5 ultra",
+            Some("Elegoo"),
+            "mars"
+        ));
+        // Right manufacturer, wrong search.
+        assert!(!card_visible(
+            "Elegoo",
+            "mars 5 ultra",
+            Some("Elegoo"),
+            "photon"
+        ));
+    }
+
+    #[test]
+    fn tab_manufacturer_maps_index_zero_to_all() {
+        let tabs = vec!["All".to_owned(), "Anycubic".to_owned(), "Elegoo".to_owned()];
+        assert_eq!(tab_manufacturer(&tabs, 0), None);
+        assert_eq!(tab_manufacturer(&tabs, 1), Some("Anycubic"));
+        assert_eq!(tab_manufacturer(&tabs, 2), Some("Elegoo"));
+        assert_eq!(tab_manufacturer(&tabs, 9), None);
     }
 }
 
 #[cfg(test)]
-mod parse_and_apply_axis_tests {
+mod derive_resin_rows_tests {
+    use std::collections::BTreeSet;
+
+    use sc_print_primitives::{MaterialId, PrinterId};
+
     use super::*;
-    use crate::app_settings::{MAX_DIM_MM, MIN_DIM_MM};
 
-    fn bv() -> BuildVolume {
-        BuildVolume::new(100.0, 200.0, 300.0)
+    fn material(
+        id: &str,
+        brand: &str,
+        name: &str,
+        calibrated_for: &[&str],
+    ) -> MaterialCatalogEntry {
+        MaterialCatalogEntry {
+            id: MaterialId::new(id).unwrap(),
+            brand: brand.to_owned(),
+            name: name.to_owned(),
+            family: "other".to_owned(),
+            calibrated_printers: calibrated_for
+                .iter()
+                .map(|p| PrinterId::new(p).unwrap())
+                .collect::<BTreeSet<_>>(),
+            source: ProfileSource::Bundled,
+        }
+    }
+
+    fn printer(id: &str) -> PrinterId {
+        PrinterId::new(id).unwrap()
     }
 
     #[test]
-    fn non_numeric_text_returns_revert_parse_error() {
-        assert_eq!(
-            parse_and_apply_axis(bv(), Axis::Width, "abc"),
-            AxisCommit::RevertParseError,
-        );
+    fn no_selected_printer_keeps_base_order_and_no_calibration() {
+        let materials = vec![
+            material("a-resin", "Alpha", "A", &["printer-a"]),
+            material("b-resin", "Beta", "B", &[]),
+        ];
+        let rows = derive_resin_rows(&materials, None);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id_index, 0);
+        assert_eq!(rows[1].id_index, 1);
+        assert!(!rows[0].calibrated);
+        assert!(!rows[1].calibrated);
     }
 
     #[test]
-    fn empty_text_returns_revert_parse_error() {
-        // `"".trim().parse::<f32>()` fails; covers the `.trim()` path.
-        assert_eq!(
-            parse_and_apply_axis(bv(), Axis::Width, ""),
-            AxisCommit::RevertParseError,
-        );
-        assert_eq!(
-            parse_and_apply_axis(bv(), Axis::Width, "   "),
-            AxisCommit::RevertParseError,
-        );
+    fn calibrated_rows_are_ordered_first() {
+        let materials = vec![
+            material("a-resin", "Alpha", "A", &[]),
+            material("b-resin", "Beta", "B", &["printer-a"]),
+            material("c-resin", "Gamma", "C", &[]),
+            material("d-resin", "Delta", "D", &["printer-a"]),
+        ];
+        let rows = derive_resin_rows(&materials, Some(&printer("printer-a")));
+        // Calibrated (b, d) first in base order, then uncalibrated (a, c).
+        let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
+        assert_eq!(ids, vec![1, 3, 0, 2]);
+        assert!(rows[0].calibrated);
+        assert!(rows[1].calibrated);
+        assert!(!rows[2].calibrated);
+        assert!(!rows[3].calibrated);
     }
 
     #[test]
-    fn clamp_to_existing_value_returns_revert_unchanged() {
-        // Current width sits at MIN_DIM_MM (10 mm). Typing "5" clamps
-        // up to 10, which matches current; no commit happens.
-        let current = BuildVolume::new(MIN_DIM_MM, 200.0, 300.0);
-        assert_eq!(
-            parse_and_apply_axis(current, Axis::Width, "5"),
-            AxisCommit::RevertUnchanged,
-        );
-    }
-
-    #[test]
-    fn valid_value_returns_commit_with_only_the_named_axis_changed() {
-        let expected = BuildVolume::new(150.0, 200.0, 300.0);
-        assert_eq!(
-            parse_and_apply_axis(bv(), Axis::Width, "150"),
-            AxisCommit::Commit(expected),
-        );
-    }
-
-    #[test]
-    fn above_max_clamps_to_ceiling_then_commits() {
-        // 5000 mm is above MAX_DIM_MM (1000); clamped to ceiling and
-        // committed because the current value is below the ceiling.
-        let expected = BuildVolume::new(MAX_DIM_MM, 200.0, 300.0);
-        assert_eq!(
-            parse_and_apply_axis(bv(), Axis::Width, "5000"),
-            AxisCommit::Commit(expected),
-        );
-    }
-
-    #[test]
-    fn whitespace_around_number_is_accepted() {
-        let expected = BuildVolume::new(150.0, 200.0, 300.0);
-        assert_eq!(
-            parse_and_apply_axis(bv(), Axis::Width, "  150  "),
-            AxisCommit::Commit(expected),
-        );
-    }
-
-    #[test]
-    fn each_axis_routes_through_its_own_field() {
-        // Same input value drives a different output for each axis.
-        let width = parse_and_apply_axis(bv(), Axis::Width, "150");
-        let depth = parse_and_apply_axis(bv(), Axis::Depth, "150");
-        let height = parse_and_apply_axis(bv(), Axis::Height, "150");
-        assert_eq!(
-            width,
-            AxisCommit::Commit(BuildVolume::new(150.0, 200.0, 300.0))
-        );
-        assert_eq!(
-            depth,
-            AxisCommit::Commit(BuildVolume::new(100.0, 150.0, 300.0))
-        );
-        assert_eq!(
-            height,
-            AxisCommit::Commit(BuildVolume::new(100.0, 200.0, 150.0))
-        );
+    fn custom_flag_reflects_the_source() {
+        let mut entry = material("a-resin", "Alpha", "A", &[]);
+        entry.source = ProfileSource::User;
+        let rows = derive_resin_rows(&[entry], None);
+        assert!(rows[0].is_custom);
     }
 }

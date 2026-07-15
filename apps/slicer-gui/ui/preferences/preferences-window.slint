@@ -6,15 +6,16 @@
 import { Palette } from "std-widgets.slint";
 import { SideBar } from "../sidebar.slint";
 import { AppearancePreferences, ThemePreference } from "./appearance.slint";
-import { _3DViewPreferences } from "./3dview.slint";
+import { PrinterPreferences, PrinterCard } from "./printer.slint";
+import { ResinPreferences, ResinRow } from "./resin.slint";
 
 export component PreferencesWindow inherits Window {
     title: @tr("Preferences");
 
-    min-width: 480px;
-    min-height: 320px;
-    preferred-width: 480px;
-    preferred-height: 320px;
+    min-width: 520px;
+    min-height: 360px;
+    preferred-width: 680px;
+    preferred-height: 540px;
 
     // Land initial focus on the tab list so arrow keys work straight away.
     // Escape still works from any descendant: the wrapping FocusScope
@@ -24,16 +25,28 @@ export component PreferencesWindow inherits Window {
     in-out property <ThemePreference> theme: ThemePreference.System;
     in property <[string]> language-options;
     in-out property <int> current-language-index: 0;
-    in property <string> build-volume-width-text;
-    in property <string> build-volume-depth-text;
-    in property <string> build-volume-height-text;
+
+    in property <[PrinterCard]> printer-cards;
+    in property <[string]> manufacturer-tabs;
+    in-out property <int> current-manufacturer-index: 0;
+    in-out property <int> selected-printer-index: -1;
+    in property <string> printer-search-text;
+
+    in property <[ResinRow]> resin-rows;
+    in-out property <int> selected-resin-index: -1;
+    in property <bool> has-selected-printer;
+
     callback close-requested();
     callback theme-changed(ThemePreference);
     callback language-changed(int);
-    callback build-volume-width-committed(string);
-    callback build-volume-depth-committed(string);
-    callback build-volume-height-committed(string);
-    callback reset-build-volume-requested();
+    callback manufacturer-tab-changed(int);
+    callback printer-search-changed(string);
+    callback printer-selected(int);
+    callback resin-selected(int);
+    callback create-calibration-requested(int);
+    callback import-requested();
+    callback export-printers-requested();
+    callback export-materials-requested();
 
     changed theme => {
         Palette.color-scheme =
@@ -56,7 +69,8 @@ export component PreferencesWindow inherits Window {
                 title: @tr("PreferencesMenu" => "Preferences Sections");
                 model: [
                     @tr("PreferencesMenu" => "UI & Theme"),
-                    @tr("PreferencesMenu" => "3D View"),
+                    @tr("PreferencesMenu" => "Printer"),
+                    @tr("PreferencesMenu" => "Resin"),
                 ];
             }
 
@@ -73,21 +87,43 @@ export component PreferencesWindow inherits Window {
                     root.language-changed(i);
                 }
             }
-            if(side-bar.current-item == 1) : _3DViewPreferences {
-                build-volume-width-text: root.build-volume-width-text;
-                build-volume-depth-text: root.build-volume-depth-text;
-                build-volume-height-text: root.build-volume-height-text;
-                build-volume-width-committed(t) => {
-                    root.build-volume-width-committed(t);
+            if(side-bar.current-item == 1) : PrinterPreferences {
+                printer-cards: root.printer-cards;
+                manufacturer-tabs: root.manufacturer-tabs;
+                current-manufacturer-index <=> root.current-manufacturer-index;
+                selected-printer-index <=> root.selected-printer-index;
+                search-text: root.printer-search-text;
+                manufacturer-tab-changed(i) => {
+                    root.manufacturer-tab-changed(i);
                 }
-                build-volume-depth-committed(t) => {
-                    root.build-volume-depth-committed(t);
+                search-changed(t) => {
+                    root.printer-search-changed(t);
                 }
-                build-volume-height-committed(t) => {
-                    root.build-volume-height-committed(t);
+                printer-selected(i) => {
+                    root.printer-selected(i);
                 }
-                reset-build-volume-requested => {
-                    root.reset-build-volume-requested();
+                import-requested => {
+                    root.import-requested();
+                }
+                export-printers-requested => {
+                    root.export-printers-requested();
+                }
+            }
+            if(side-bar.current-item == 2) : ResinPreferences {
+                resin-rows: root.resin-rows;
+                selected-resin-index <=> root.selected-resin-index;
+                has-selected-printer: root.has-selected-printer;
+                resin-selected(i) => {
+                    root.resin-selected(i);
+                }
+                create-calibration-requested(i) => {
+                    root.create-calibration-requested(i);
+                }
+                import-requested => {
+                    root.import-requested();
+                }
+                export-materials-requested => {
+                    root.export-materials-requested();
                 }
             }
         }

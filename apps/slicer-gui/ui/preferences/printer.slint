@@ -1,0 +1,147 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+
+// One printer tile. `id-index` is the printer's index in the Rust
+// catalog and the stable handle carried through selection callbacks;
+// the visible `printer-cards` model may be a filtered subset, so tile
+// position is not a usable identity.
+export struct PrinterCard {
+    name: string,
+    thumbnail: image,
+    has-thumbnail: bool,
+    is-custom: bool,
+    id-index: int,
+}
+
+export component PrinterPreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "Printer");
+
+    in property <[PrinterCard]> printer-cards;
+    in property <[string]> manufacturer-tabs;
+    in-out property <int> current-manufacturer-index: 0;
+    // Catalog index of the selected printer, or -1 when none is chosen.
+    in-out property <int> selected-printer-index: -1;
+    in property <string> search-text;
+
+    callback manufacturer-tab-changed(int);
+    callback search-changed(string);
+    callback printer-selected(int);
+    callback import-requested();
+    callback export-printers-requested();
+
+    property <length> tile-w: 128px;
+    property <length> tile-h: 148px;
+    property <length> tile-gap: 12px;
+    property <int> columns: 3;
+
+    // Manufacturer filter as a horizontal tab bar; scrolls sideways
+    // when the maker list is wide.
+    ScrollView {
+        height: 40px;
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            for maker[i] in root.manufacturer-tabs: Button {
+                text: maker;
+                primary: i == root.current-manufacturer-index;
+                clicked => {
+                    root.current-manufacturer-index = i;
+                    root.manufacturer-tab-changed(i);
+                }
+            }
+        }
+    }
+
+    search-input := LineEdit {
+        placeholder-text: @tr("PreferencesPage" => "Search models");
+        text: root.search-text;
+        accessible-label: @tr("PreferencesPage" => "Search printer models");
+        edited(t) => {
+            root.search-changed(t);
+        }
+    }
+
+    // Image-forward gallery: tiles flow left-to-right into a fixed
+    // number of columns, placed by index so no per-row chunking is
+    // needed. Build volume is deliberately not shown; it is a
+    // consequence of the choice, not a selection criterion.
+    ScrollView {
+        vertical-stretch: 1;
+        viewport-height: Math.ceil(root.printer-cards.length / root.columns) * (root.tile-h + root.tile-gap);
+        for card[i] in root.printer-cards: Rectangle {
+            x: Math.mod(i, root.columns) * (root.tile-w + root.tile-gap);
+            y: Math.floor(i / root.columns) * (root.tile-h + root.tile-gap);
+            width: root.tile-w;
+            height: root.tile-h;
+            border-radius: 6px;
+            border-width: card.id-index == root.selected-printer-index ? 2px : 1px;
+            border-color: card.id-index == root.selected-printer-index
+                ? Palette.accent-background
+                : Palette.border;
+            background: Palette.alternate-background;
+
+            TouchArea {
+                clicked => {
+                    root.selected-printer-index = card.id-index;
+                    root.printer-selected(card.id-index);
+                }
+            }
+
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+
+                if card.has-thumbnail: Image {
+                    source: card.thumbnail;
+                    image-fit: contain;
+                    height: 96px;
+                }
+                if !card.has-thumbnail: Rectangle {
+                    height: 96px;
+                    border-radius: 4px;
+                    background: Palette.background;
+                    Text {
+                        text: @tr("PreferencesPage" => "No image");
+                        color: Palette.foreground.transparentize(0.5);
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: card.name;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    font-size: 0.9rem;
+                }
+                if card.is-custom: Text {
+                    text: @tr("PreferencesPage" => "custom");
+                    color: Palette.foreground.transparentize(0.4);
+                    font-size: 0.7rem;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: @tr("PreferencesPage" => "Import package...");
+            clicked => {
+                root.import-requested();
+            }
+        }
+        Button {
+            text: @tr("PreferencesPage" => "Export printers...");
+            clicked => {
+                root.export-printers-requested();
+            }
+        }
+    }
+}

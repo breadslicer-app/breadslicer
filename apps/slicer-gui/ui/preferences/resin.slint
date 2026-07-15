@@ -1,0 +1,113 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, ListView, Palette } from "std-widgets.slint";
+import { PreferencesPage } from "./preferences-page.slint";
+
+// One resin row. `id-index` is the material's index in the Rust
+// catalog and the stable handle carried through the callbacks.
+// `calibrated` is relative to the currently selected printer.
+export struct ResinRow {
+    name: string,
+    brand: string,
+    family: string,
+    calibrated: bool,
+    is-custom: bool,
+    id-index: int,
+}
+
+export component ResinPreferences inherits PreferencesPage {
+    title: @tr("PreferencesPage" => "Resin");
+
+    in property <[ResinRow]> resin-rows;
+    // Catalog index of the selected resin, or -1 when none is chosen.
+    in-out property <int> selected-resin-index: -1;
+    // Whether a default printer is currently selected; gates the
+    // per-row create-calibration affordance.
+    in property <bool> has-selected-printer;
+
+    callback resin-selected(int);
+    callback create-calibration-requested(int);
+    callback import-requested();
+    callback export-materials-requested();
+
+    ListView {
+        vertical-stretch: 1;
+        for row in root.resin-rows: Rectangle {
+            height: 56px;
+            background: row.id-index == root.selected-resin-index
+                ? Palette.selection-background
+                : transparent;
+
+            // Behind the row content so the Calibrate button, drawn on
+            // top, still receives its own clicks while a click anywhere
+            // else on the row selects the resin.
+            TouchArea {
+                clicked => {
+                    root.selected-resin-index = row.id-index;
+                    root.resin-selected(row.id-index);
+                }
+            }
+
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: row.brand + " " + row.name;
+                        font-size: 0.95rem;
+                    }
+                    Text {
+                        text: row.family;
+                        font-size: 0.75rem;
+                        color: Palette.foreground.transparentize(0.4);
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                if row.calibrated: Text {
+                    text: @tr("PreferencesPage" => "calibrated");
+                    vertical-alignment: center;
+                    color: Palette.accent-background;
+                    font-size: 0.75rem;
+                }
+                if row.is-custom: Text {
+                    text: @tr("PreferencesPage" => "custom");
+                    vertical-alignment: center;
+                    color: Palette.foreground.transparentize(0.4);
+                    font-size: 0.75rem;
+                }
+                if !row.calibrated && root.has-selected-printer: Button {
+                    text: @tr("PreferencesPage" => "Calibrate");
+                    clicked => {
+                        root.create-calibration-requested(row.id-index);
+                    }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: @tr("PreferencesPage" => "Import package...");
+            clicked => {
+                root.import-requested();
+            }
+        }
+        Button {
+            text: @tr("PreferencesPage" => "Export materials...");
+            clicked => {
+                root.export-materials-requested();
+            }
+        }
+    }
+}

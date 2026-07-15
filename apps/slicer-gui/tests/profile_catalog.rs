@@ -12,6 +12,7 @@ use std::fs;
 use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_slicer_gui::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use sc_slicer_gui::profile_catalog::{ProfileCatalog, ProfileSource};
 
 /// Format an `f64` with a decimal point so TOML parses it as a float
@@ -132,6 +133,46 @@ fn printer_id(id: &str) -> PrinterId {
 
 fn material_id(id: &str) -> MaterialId {
     MaterialId::new(id).unwrap()
+}
+
+#[test]
+fn envelope_for_a_resolved_printer_is_its_build_volume() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "vol",
+        "Maker",
+        "Model",
+        (192.0, 120.0, 200.0),
+        None,
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    let envelope = catalog.envelope_for_printer(Some(&printer_id("vol")));
+    assert_eq!(envelope, BuildVolume::new(192.0, 120.0, 200.0));
+}
+
+#[test]
+fn envelope_falls_back_to_the_hardcoded_default_when_unselected_or_unresolved() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "vol",
+        "Maker",
+        "Model",
+        (192.0, 120.0, 200.0),
+        None,
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    assert_eq!(
+        catalog.envelope_for_printer(None),
+        HARDCODED_DEFAULT_BUILD_VOLUME
+    );
+    assert_eq!(
+        catalog.envelope_for_printer(Some(&printer_id("missing"))),
+        HARDCODED_DEFAULT_BUILD_VOLUME
+    );
 }
 
 #[test]
