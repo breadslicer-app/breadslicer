@@ -13,6 +13,12 @@ import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
 
+// Embeds Noto Sans into the executable and registers it process wide.
+// Text layout then resolves to this in-memory font instead of scanning
+// the system font set through fontconfig, which otherwise stalls the UI
+// thread the first time any text is laid out (e.g. opening a menu).
+import "../assets/fonts/NotoSans-Variable.ttf";
+
 export { AboutWindow, AxisView, CreateCalibrationDialog, ErrorDialog, PointerModifiers, PreferencesWindow, ReplaceSceneDialog, ThemePreference }
 
 // Resize handle between the viewport and the object-list panel. Tracks
@@ -61,6 +67,7 @@ component ObjectListSplitter inherits Rectangle {
 export component MainWindow inherits Window {
     title: @tr("SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
 
     min-height: 400px;
     min-width: 600px;
