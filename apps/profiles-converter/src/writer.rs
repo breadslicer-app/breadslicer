@@ -7,7 +7,9 @@
 //!
 //! [`write_profiles`] lays a set of [`ConvertedProfile`] values out
 //! under a destination library root: printers at `printers/<id>.toml`
-//! and materials at `materials/<id>.toml`, serialised with `toml_edit`.
+//! and materials at `materials/<id>.toml`, serialised with `toml_edit`
+//! and laid out with each nested struct promoted to its own `[section]`
+//! header so the committed files diff cleanly per field.
 //! When `copy_images` is on, a printer's source image is copied to
 //! `images/<id>.<ext>` and the profile's `image_asset_path` is set to
 //! that path, relative to the library root. The writer knows nothing
@@ -117,22 +119,19 @@ pub fn write_profiles(
                     }
                     _ => Cow::Borrowed(&printer.profile),
                 };
-                let toml = toml_edit::ser::to_string(domain.as_ref()).map_err(|source| {
-                    WriteError::Serialize {
+                let toml =
+                    to_sectioned_toml(domain.as_ref()).map_err(|source| WriteError::Serialize {
                         id: id.to_owned(),
                         source,
-                    }
-                })?;
+                    })?;
                 write_one(out_dir, PRINTERS_SUBDIR, id, &toml)?;
                 report.printers += 1;
             }
             ConvertedProfile::Material(material) => {
                 let id = material.identity.id.as_str();
-                let toml = toml_edit::ser::to_string(material).map_err(|source| {
-                    WriteError::Serialize {
-                        id: id.to_owned(),
-                        source,
-                    }
+                let toml = to_sectioned_toml(material).map_err(|source| WriteError::Serialize {
+                    id: id.to_owned(),
+                    source,
                 })?;
                 write_one(out_dir, MATERIALS_SUBDIR, id, &toml)?;
                 report.materials += 1;
@@ -140,6 +139,30 @@ pub fn write_profiles(
         }
     }
     Ok(report)
+}
+
+/// Serialise a value to TOML with every nested struct promoted to its
+/// own `[section]` header. `toml_edit`'s serialiser emits nested structs
+/// as inline tables (one long `identity = { .. }` line); expanding them
+/// into explicit tables keeps per-field git diffs readable.
+fn to_sectioned_toml<T: serde::Serialize>(value: &T) -> Result<String, toml_edit::ser::Error> {
+    let mut doc = toml_edit::ser::to_document(value)?;
+    expand_inline_tables(doc.as_table_mut());
+    Ok(doc.to_string())
+}
+
+/// Recursively replace a table's inline-table values with explicit
+/// sub-tables, resetting each key's formatting so the rendered header is
+/// `[name]` rather than `[name ]`.
+fn expand_inline_tables(table: &mut toml_edit::Table) {
+    for (mut key, item) in table.iter_mut() {
+        key.fmt();
+        if let toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)) = item {
+            let mut sub = std::mem::take(inline).into_table();
+            expand_inline_tables(&mut sub);
+            *item = toml_edit::Item::Table(sub);
+        }
+    }
 }
 
 /// The destination file name for a printer's image: `<id>.<ext>`, where
@@ -270,6 +293,45 @@ retract_speed_mm_min = 150.0
         let reloaded: PrinterProfile =
             toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(reloaded, profile);
+    }
+
+    #[test]
+    fn a_printer_is_written_with_sectioned_headers() {
+        let dir = tempdir().unwrap();
+        write_profiles(&[printer(sample_printer(), None)], dir.path(), false).unwrap();
+
+        let toml =
+            fs::read_to_string(dir.path().join("printers").join("test-printer.toml")).unwrap();
+        assert!(toml.contains("[identity]"), "{toml}");
+        assert!(toml.contains("[hardware]"), "{toml}");
+        assert!(toml.contains("[hardware.build_volume]"), "{toml}");
+        assert!(toml.contains("[capabilities]"), "{toml}");
+        assert!(
+            !toml.contains("identity = {"),
+            "top-level structs must not be inline: {toml}",
+        );
+        assert!(
+            !toml.contains("[identity ]"),
+            "section headers must not carry stray whitespace: {toml}",
+        );
+    }
+
+    #[test]
+    fn a_material_is_written_with_sectioned_headers() {
+        let dir = tempdir().unwrap();
+        write_profiles(
+            &[ConvertedProfile::Material(sample_material())],
+            dir.path(),
+            false,
+        )
+        .unwrap();
+
+        let toml =
+            fs::read_to_string(dir.path().join("materials").join("test-resin.toml")).unwrap();
+        assert!(toml.contains("[identity]"), "{toml}");
+        assert!(toml.contains("[intent]"), "{toml}");
+        assert!(toml.contains("[per_printer.test-printer]"), "{toml}");
+        assert!(!toml.contains("intent = {"), "{toml}");
     }
 
     #[test]
