@@ -14,10 +14,20 @@ use anyhow::Result;
 
 use sc_profiles_converter::cli::cli_parser;
 use sc_profiles_converter::request::ConversionRequest;
+use sc_profiles_converter::run::run;
 
 fn main() -> Result<()> {
     let raw = cli_parser().run();
     let request = ConversionRequest::from_raw(raw)?;
     eprintln!("{}", request.summary());
+
+    let report = run(&request)?;
+    eprintln!(
+        "converted {} printer(s), {} material(s), {} image(s) into {}",
+        report.printers,
+        report.materials,
+        report.images,
+        request.out().display(),
+    );
     Ok(())
 }

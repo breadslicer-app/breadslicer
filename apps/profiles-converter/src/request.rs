@@ -12,7 +12,7 @@
 //! single point where the "at least one input" rule is enforced.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use nonempty_collections::NEVec;
 
@@ -54,6 +54,26 @@ impl ConversionRequest {
             out: raw.out,
             with_images: raw.with_images,
         })
+    }
+
+    /// The source format to read.
+    pub fn format(&self) -> SourceFormat {
+        self.format
+    }
+
+    /// The input paths to convert.
+    pub fn inputs(&self) -> &NEVec<PathBuf> {
+        &self.inputs
+    }
+
+    /// The destination profile-library root.
+    pub fn out(&self) -> &Path {
+        self.out.as_path()
+    }
+
+    /// Whether preview images are copied.
+    pub fn with_images(&self) -> bool {
+        self.with_images
     }
 
     /// A one-line human-facing description of what this request covers.
