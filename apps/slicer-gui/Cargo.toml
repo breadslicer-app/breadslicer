@@ -16,6 +16,8 @@ sc-app-paths = { workspace = true }
 sc-mesh-core = { workspace = true }
 sc-mesh-formats = { workspace = true }
 sc-mesh-spatial = { workspace = true }
+sc-print-primitives = { workspace = true }
+sc-print-profiles = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
@@ -46,5 +48,7 @@ toml = "1.1.2"
 winresource = "0.1.31"
 
 [dev-dependencies]
+sc-print-primitives = { workspace = true }
+
 float-cmp = { workspace = true }
 tempfile = "3.23.0"
