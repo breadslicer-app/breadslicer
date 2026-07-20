@@ -31,7 +31,12 @@ export component PreferencesWindow inherits Window {
     in property <[string]> manufacturer-tabs;
     in-out property <int> current-manufacturer-index: 0;
     in-out property <int> selected-printer-index: -1;
+    in property <int> selected-visible-printer-index: -1;
     in property <string> printer-search-text;
+    // Armed once at startup; the printer gallery disarms it after its
+    // one-time scroll to the selected printer. Lives here so it
+    // survives the section component being destroyed and recreated.
+    property <bool> printer-initial-scroll-pending: true;
 
     in property <[ResinRow]> resin-rows;
     in-out property <int> selected-resin-index: -1;
@@ -93,6 +98,8 @@ export component PreferencesWindow inherits Window {
                 manufacturer-tabs: root.manufacturer-tabs;
                 current-manufacturer-index <=> root.current-manufacturer-index;
                 selected-printer-index <=> root.selected-printer-index;
+                selected-visible-index: root.selected-visible-printer-index;
+                initial-scroll-pending <=> root.printer-initial-scroll-pending;
                 search-text: root.printer-search-text;
                 manufacturer-tab-changed(i) => {
                     root.manufacturer-tab-changed(i);

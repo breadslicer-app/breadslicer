@@ -71,17 +71,29 @@ pub(crate) fn build_preferences_window(
     let current_tab = Rc::new(Cell::new(0i32));
     let search_lower = Rc::new(RefCell::new(String::new()));
 
+    let snapshot = bus.snapshot();
+    prefs.apply_preferences(&snapshot);
+    // Selection first: the visible-cards pass below reads the selected
+    // printer index back from the window.
+    apply_printing(&prefs, &snapshot, &catalog);
+
+    // Start on the selected printer's manufacturer tab rather than
+    // "All", so the printer chosen in the persisted settings is in
+    // view when the section is first opened.
+    let initial_tab = manufacturer_tab_index(
+        &tabs.borrow(),
+        selected_manufacturer(&catalog, &snapshot).as_deref(),
+    );
+    current_tab.set(initial_tab);
+    prefs.set_current_manufacturer_index(initial_tab);
+
     set_tabs_model(&prefs, &tabs.borrow());
     set_visible_cards(
         &prefs,
         &all_cards.borrow(),
-        tab_manufacturer(&tabs.borrow(), 0),
+        tab_manufacturer(&tabs.borrow(), initial_tab),
         "",
     );
-
-    let snapshot = bus.snapshot();
-    prefs.apply_preferences(&snapshot);
-    apply_printing(&prefs, &snapshot, &catalog);
 
     let prefs_weak = prefs.as_weak();
 
@@ -118,6 +130,10 @@ pub(crate) fn build_preferences_window(
             let catalog = catalog_handle.borrow().clone();
             *all_cards.borrow_mut() = build_card_data(&catalog);
             *tabs.borrow_mut() = build_manufacturer_tabs(&catalog);
+            // Selection first: catalog indices may have shifted, and
+            // the visible-cards pass reads the selected printer index
+            // back from the window.
+            apply_printing(&w, &bus.snapshot(), &catalog);
             set_tabs_model(&w, &tabs.borrow());
             set_visible_cards(
                 &w,
@@ -125,7 +141,6 @@ pub(crate) fn build_preferences_window(
                 tab_manufacturer(&tabs.borrow(), current_tab.get()),
                 &search_lower.borrow(),
             );
-            apply_printing(&w, &bus.snapshot(), &catalog);
             start_thumbnail_load(
                 &thumbnail_timer,
                 &w,
@@ -667,6 +682,25 @@ fn build_manufacturer_tabs(catalog: &ProfileCatalog) -> Vec<String> {
     tabs
 }
 
+/// The manufacturer of the printer selected in `snap` (falling back to
+/// the first-run default when nothing is persisted yet), or `None`
+/// when the catalog has no such printer.
+fn selected_manufacturer(catalog: &ProfileCatalog, snap: &PreferencesSnapshot) -> Option<String> {
+    let id = catalog.effective_default_printer(snap.default_printer.as_ref())?;
+    let index = catalog.printer_index(&id)?;
+    Some(catalog.printers()[index].manufacturer.clone())
+}
+
+/// The tab index whose label is `manufacturer`, or 0 (the "All" tab)
+/// when `manufacturer` is `None` or not among the tabs. The leading
+/// "All" label is skipped so a manufacturer named like it cannot match
+/// the wrong tab.
+fn manufacturer_tab_index(tabs: &[String], manufacturer: Option<&str>) -> i32 {
+    manufacturer
+        .and_then(|m| tabs.iter().skip(1).position(|tab| tab == m))
+        .map_or(0, |position| (position + 1) as i32)
+}
+
 /// The manufacturer a tab index narrows to, or `None` for the leading
 /// "All" tab (index 0).
 fn tab_manufacturer(tabs: &[String], index: i32) -> Option<&str> {
@@ -690,6 +724,17 @@ fn card_visible(
     manufacturer_ok && search_ok
 }
 
+/// Position of the printer with catalog index `selected_id_index`
+/// within `cards`, or -1 when the filter hides it. The gallery needs
+/// this to scroll the selected tile into view: tile position within
+/// the filtered model, not the catalog index, determines its row.
+fn selected_visible_position(cards: &[PrinterCard], selected_id_index: i32) -> i32 {
+    cards
+        .iter()
+        .position(|card| card.id_index == selected_id_index)
+        .map_or(-1, |position| position as i32)
+}
+
 fn set_visible_cards(
     window: &PreferencesWindow,
     all: &[PrinterCardData],
@@ -708,6 +753,10 @@ fn set_visible_cards(
         })
         .map(|c| c.card.clone())
         .collect();
+    window.set_selected_visible_printer_index(selected_visible_position(
+        &cards,
+        window.get_selected_printer_index(),
+    ));
     window.set_printer_cards(ModelRc::new(VecModel::from(cards)));
 }
 
@@ -804,6 +853,56 @@ mod card_visible_tests {
         assert_eq!(tab_manufacturer(&tabs, 1), Some("Anycubic"));
         assert_eq!(tab_manufacturer(&tabs, 2), Some("Elegoo"));
         assert_eq!(tab_manufacturer(&tabs, 9), None);
+    }
+}
+
+#[cfg(test)]
+mod initial_view_tests {
+    use super::*;
+
+    fn tabs() -> Vec<String> {
+        vec!["All".to_owned(), "Anycubic".to_owned(), "Elegoo".to_owned()]
+    }
+
+    #[test]
+    fn manufacturer_tab_index_finds_the_matching_tab() {
+        assert_eq!(manufacturer_tab_index(&tabs(), Some("Anycubic")), 1);
+        assert_eq!(manufacturer_tab_index(&tabs(), Some("Elegoo")), 2);
+    }
+
+    #[test]
+    fn manufacturer_tab_index_falls_back_to_all() {
+        assert_eq!(manufacturer_tab_index(&tabs(), None), 0);
+        assert_eq!(manufacturer_tab_index(&tabs(), Some("Phrozen")), 0);
+    }
+
+    #[test]
+    fn manufacturer_tab_index_never_matches_the_all_label() {
+        // A manufacturer sharing the localized "All" label must not
+        // resolve to the unfiltered tab.
+        assert_eq!(manufacturer_tab_index(&tabs(), Some("All")), 0);
+    }
+
+    fn card(id_index: i32) -> PrinterCard {
+        PrinterCard {
+            id_index,
+            ..PrinterCard::default()
+        }
+    }
+
+    #[test]
+    fn selected_visible_position_maps_catalog_index_to_filtered_position() {
+        let cards = vec![card(4), card(7), card(9)];
+        assert_eq!(selected_visible_position(&cards, 4), 0);
+        assert_eq!(selected_visible_position(&cards, 9), 2);
+    }
+
+    #[test]
+    fn selected_visible_position_is_negative_when_hidden_or_unselected() {
+        let cards = vec![card(4), card(7)];
+        assert_eq!(selected_visible_position(&cards, 5), -1);
+        assert_eq!(selected_visible_position(&cards, -1), -1);
+        assert_eq!(selected_visible_position(&[], 0), -1);
     }
 }
 

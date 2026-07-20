@@ -27,6 +27,13 @@ export component PrinterPreferences inherits PreferencesPage {
     in-out property <int> current-manufacturer-index: 0;
     // Catalog index of the selected printer, or -1 when none is chosen.
     in-out property <int> selected-printer-index: -1;
+    // Position of the selected printer within the visible (filtered)
+    // `printer-cards` model, or -1 when it is filtered out.
+    in property <int> selected-visible-index: -1;
+    // True until the one-time scroll to the selected printer has run.
+    // Bound to window-level state so recreating this component (the
+    // section sits behind a conditional) cannot re-arm the scroll.
+    in-out property <bool> initial-scroll-pending: false;
     in property <string> search-text;
 
     callback manufacturer-tab-changed(int);
@@ -81,6 +88,25 @@ export component PrinterPreferences inherits PreferencesPage {
         property <length> row-width: self.columns * root.tile-w + (self.columns - 1) * root.tile-gap;
         property <length> x-offset: Math.max(0px, (self.visible-width - self.row-width) / 2);
         viewport-height: Math.ceil(root.printer-cards.length / self.columns) * (root.tile-h + root.tile-gap);
+
+        // One-time scroll that centres the selected printer's row in
+        // the viewport. It cannot run at `init` because the column
+        // count depends on `visible-width`, which is still 0 before
+        // the first layout pass; the first width change is the
+        // earliest point where the target row is computable.
+        changed visible-width => {
+            if (root.initial-scroll-pending && self.visible-width > 0px) {
+                root.initial-scroll-pending = false;
+                if (root.selected-visible-index >= 0) {
+                    self.viewport-y = -Math.min(
+                        Math.max(0px, self.viewport-height - self.visible-height),
+                        Math.max(0px,
+                            Math.floor(root.selected-visible-index / self.columns)
+                                * (root.tile-h + root.tile-gap)
+                                - (self.visible-height - root.tile-h) / 2));
+                }
+            }
+        }
         for card[i] in root.printer-cards: Rectangle {
             x: gallery.x-offset + Math.mod(i, gallery.columns) * (root.tile-w + root.tile-gap);
             y: Math.floor(i / gallery.columns) * (root.tile-h + root.tile-gap);
