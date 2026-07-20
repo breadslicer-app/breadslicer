@@ -6,5 +6,5 @@ publish = false
 description = "Generate the Windows .ico from the shared SVG logo."
 
 [dependencies]
-resvg = "0.47"
+resvg = { version = "0.47", default-features = false }
 ico = "0.5"
