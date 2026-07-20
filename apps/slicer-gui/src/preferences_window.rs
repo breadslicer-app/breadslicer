@@ -11,8 +11,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use slint::{
-    ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode,
-    VecModel,
+    ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer,
+    TimerMode, VecModel,
 };
 
 use sc_print_primitives::MaterialId;
@@ -105,9 +105,6 @@ pub(crate) fn build_preferences_window(
         &thumbnail_timer,
         &prefs,
         all_cards.clone(),
-        tabs.clone(),
-        current_tab.clone(),
-        search_lower.clone(),
         thumbnail_paths(&catalog),
     );
 
@@ -145,9 +142,6 @@ pub(crate) fn build_preferences_window(
                 &thumbnail_timer,
                 &w,
                 all_cards.clone(),
-                tabs.clone(),
-                current_tab.clone(),
-                search_lower.clone(),
                 thumbnail_paths(&catalog),
             );
         })
@@ -608,16 +602,14 @@ fn decode_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
 
 /// Decodes the printer thumbnails on a worker thread and drops them into
 /// the gallery once ready, so opening Preferences never blocks the UI
-/// thread. The decoded images are applied as a single batch: refreshing
-/// the gallery model resets its scroll position, so per-image updates
-/// would make the list jump around while loading.
+/// thread. The decoded images land as in-place row updates on the
+/// visible model (see `apply_thumbnails_to_visible`), which keeps the
+/// gallery's scroll position; they still arrive as a single batch so
+/// the timer fires once.
 fn start_thumbnail_load(
     timer: &Rc<Timer>,
     window: &PreferencesWindow,
     all_cards: Rc<RefCell<Vec<PrinterCardData>>>,
-    tabs: Rc<RefCell<Vec<String>>>,
-    current_tab: Rc<Cell<i32>>,
-    search_lower: Rc<RefCell<String>>,
     paths: Vec<(usize, PathBuf)>,
 ) {
     timer.stop();
@@ -650,21 +642,18 @@ fn start_thumbnail_load(
         };
 
         if let Some(window) = window_weak.upgrade() {
+            let mut updated = BTreeSet::new();
             {
                 let mut cards = all_cards.borrow_mut();
                 for (index, buffer) in decoded {
                     if let Some(card) = cards.get_mut(index) {
                         card.card.thumbnail = Image::from_rgba8(buffer);
                         card.card.has_thumbnail = true;
+                        updated.insert(index as i32);
                     }
                 }
             }
-            set_visible_cards(
-                &window,
-                &all_cards.borrow(),
-                tab_manufacturer(&tabs.borrow(), current_tab.get()),
-                &search_lower.borrow(),
-            );
+            apply_thumbnails_to_visible(&window.get_printer_cards(), &all_cards.borrow(), &updated);
         }
 
         if let Some(timer) = timer_weak.upgrade() {
@@ -733,6 +722,25 @@ fn selected_visible_position(cards: &[PrinterCard], selected_id_index: i32) -> i
         .iter()
         .position(|card| card.id_index == selected_id_index)
         .map_or(-1, |position| position as i32)
+}
+
+/// Pushes freshly decoded thumbnails into the visible gallery model by
+/// replacing only the rows whose printer (identified by `id-index`) is
+/// in `updated`. Row-level updates keep the gallery's scroll position;
+/// replacing the whole model would reset it.
+fn apply_thumbnails_to_visible(
+    visible: &ModelRc<PrinterCard>,
+    all: &[PrinterCardData],
+    updated: &BTreeSet<i32>,
+) {
+    for row in 0..visible.row_count() {
+        let Some(card) = visible.row_data(row) else {
+            continue;
+        };
+        if updated.contains(&card.id_index) {
+            visible.set_row_data(row, all[card.id_index as usize].card.clone());
+        }
+    }
 }
 
 fn set_visible_cards(
@@ -903,6 +911,46 @@ mod initial_view_tests {
         assert_eq!(selected_visible_position(&cards, 5), -1);
         assert_eq!(selected_visible_position(&cards, -1), -1);
         assert_eq!(selected_visible_position(&[], 0), -1);
+    }
+}
+
+#[cfg(test)]
+mod apply_thumbnails_tests {
+    use super::*;
+
+    fn card_data(id_index: i32, has_thumbnail: bool) -> PrinterCardData {
+        PrinterCardData {
+            manufacturer: String::new(),
+            name_lower: String::new(),
+            card: PrinterCard {
+                id_index,
+                has_thumbnail,
+                ..PrinterCard::default()
+            },
+        }
+    }
+
+    #[test]
+    fn only_the_updated_visible_rows_are_replaced() {
+        let all = vec![card_data(0, true), card_data(1, false), card_data(2, true)];
+        // Card 0 is filtered out of the visible model; its stale
+        // pre-update clones are what the model still holds.
+        let visible: ModelRc<PrinterCard> = ModelRc::new(VecModel::from(vec![
+            PrinterCard {
+                id_index: 1,
+                ..PrinterCard::default()
+            },
+            PrinterCard {
+                id_index: 2,
+                ..PrinterCard::default()
+            },
+        ]));
+
+        let updated = BTreeSet::from([0, 2]);
+        apply_thumbnails_to_visible(&visible, &all, &updated);
+
+        assert!(!visible.row_data(0).unwrap().has_thumbnail);
+        assert!(visible.row_data(1).unwrap().has_thumbnail);
     }
 }
 
