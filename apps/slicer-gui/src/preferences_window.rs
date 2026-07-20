@@ -5,9 +5,15 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::Duration;
 
-use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
+use slint::{
+    ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode,
+    VecModel,
+};
 
 use sc_print_primitives::MaterialId;
 use sc_print_profiles::{
@@ -43,6 +49,9 @@ struct PrinterCardData {
 pub(crate) struct WiredPreferencesWindow {
     pub window: PreferencesWindow,
     _subscription: Subscription,
+    // Keeps the thumbnail-loading poll timer alive for the window's
+    // lifetime; dropping it (when the window closes) stops the poll.
+    _thumbnail_timer: Rc<Timer>,
 }
 
 pub(crate) fn build_preferences_window(
@@ -76,6 +85,20 @@ pub(crate) fn build_preferences_window(
 
     let prefs_weak = prefs.as_weak();
 
+    // Thumbnails decode on a worker thread and land in the gallery once
+    // ready; this timer polls for the finished batch. Kept alive by the
+    // returned `WiredPreferencesWindow`.
+    let thumbnail_timer = Rc::new(Timer::default());
+    start_thumbnail_load(
+        &thumbnail_timer,
+        &prefs,
+        all_cards.clone(),
+        tabs.clone(),
+        current_tab.clone(),
+        search_lower.clone(),
+        thumbnail_paths(&catalog),
+    );
+
     // Rebuild every catalog-derived view (gallery, tabs, resin list)
     // from the current catalog handle, preserving the active filter and
     // selection. Called after an import refreshes the catalog.
@@ -87,6 +110,7 @@ pub(crate) fn build_preferences_window(
         let tabs = tabs.clone();
         let current_tab = current_tab.clone();
         let search_lower = search_lower.clone();
+        let thumbnail_timer = thumbnail_timer.clone();
         Rc::new(move || {
             let Some(w) = prefs_weak.upgrade() else {
                 return;
@@ -102,6 +126,15 @@ pub(crate) fn build_preferences_window(
                 &search_lower.borrow(),
             );
             apply_printing(&w, &bus.snapshot(), &catalog);
+            start_thumbnail_load(
+                &thumbnail_timer,
+                &w,
+                all_cards.clone(),
+                tabs.clone(),
+                current_tab.clone(),
+                search_lower.clone(),
+                thumbnail_paths(&catalog),
+            );
         })
     };
 
@@ -250,6 +283,7 @@ pub(crate) fn build_preferences_window(
     Ok(WiredPreferencesWindow {
         window: prefs,
         _subscription: subscription,
+        _thumbnail_timer: thumbnail_timer,
     })
 }
 
@@ -509,33 +543,119 @@ fn build_card_data(catalog: &ProfileCatalog) -> Vec<PrinterCardData> {
         .printers()
         .iter()
         .enumerate()
-        .map(|(i, entry)| {
-            let (thumbnail, has_thumbnail) = match &entry.image_path {
-                Some(path) => match Image::load_from_path(path.as_path()) {
-                    Ok(image) => (image, true),
-                    Err(err) => {
-                        eprintln!(
-                            "warning: failed to load printer thumbnail {}: {err}",
-                            path.display()
-                        );
-                        (Image::default(), false)
-                    }
-                },
-                None => (Image::default(), false),
-            };
-            PrinterCardData {
-                manufacturer: entry.manufacturer.clone(),
-                name_lower: entry.name.to_lowercase(),
-                card: PrinterCard {
-                    name: SharedString::from(entry.name.as_str()),
-                    thumbnail,
-                    has_thumbnail,
-                    is_custom: entry.source == ProfileSource::User,
-                    id_index: i as i32,
-                },
-            }
+        .map(|(i, entry)| PrinterCardData {
+            manufacturer: entry.manufacturer.clone(),
+            name_lower: entry.name.to_lowercase(),
+            card: PrinterCard {
+                // Thumbnails start blank and are filled in asynchronously
+                // by `start_thumbnail_load` so opening the window never
+                // blocks the UI thread on image decoding.
+                name: SharedString::from(entry.name.as_str()),
+                thumbnail: Image::default(),
+                has_thumbnail: false,
+                is_custom: entry.source == ProfileSource::User,
+                id_index: i as i32,
+            },
         })
         .collect()
+}
+
+/// The `(card index, thumbnail path)` pairs that need decoding. Indices
+/// match `build_card_data`'s one-to-one printer ordering.
+fn thumbnail_paths(catalog: &ProfileCatalog) -> Vec<(usize, PathBuf)> {
+    catalog
+        .printers()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, entry)| entry.image_path.clone().map(|path| (i, path)))
+        .collect()
+}
+
+/// Decodes one thumbnail into an RGBA pixel buffer. Runs on a worker
+/// thread, so it returns a `SharedPixelBuffer` (which is `Send`) rather
+/// than a `slint::Image` (which is not). Returns `None` on any read or
+/// decode failure; the card then keeps its blank placeholder.
+fn decode_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
+    let rgba = image::open(path)
+        .map_err(|err| {
+            eprintln!(
+                "warning: failed to load printer thumbnail {}: {err}",
+                path.display()
+            )
+        })
+        .ok()?
+        .into_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+    buffer.make_mut_bytes().copy_from_slice(rgba.as_raw());
+    Some(buffer)
+}
+
+/// Decodes the printer thumbnails on a worker thread and drops them into
+/// the gallery once ready, so opening Preferences never blocks the UI
+/// thread. The decoded images are applied as a single batch: refreshing
+/// the gallery model resets its scroll position, so per-image updates
+/// would make the list jump around while loading.
+fn start_thumbnail_load(
+    timer: &Rc<Timer>,
+    window: &PreferencesWindow,
+    all_cards: Rc<RefCell<Vec<PrinterCardData>>>,
+    tabs: Rc<RefCell<Vec<String>>>,
+    current_tab: Rc<Cell<i32>>,
+    search_lower: Rc<RefCell<String>>,
+    paths: Vec<(usize, PathBuf)>,
+) {
+    timer.stop();
+    if paths.is_empty() {
+        return;
+    }
+
+    let (sender, receiver) = mpsc::channel::<Vec<(usize, SharedPixelBuffer<Rgba8Pixel>)>>();
+    std::thread::spawn(move || {
+        let decoded = paths
+            .into_iter()
+            .filter_map(|(index, path)| decode_thumbnail(&path).map(|buffer| (index, buffer)))
+            .collect();
+        let _ = sender.send(decoded);
+    });
+
+    let window_weak = window.as_weak();
+    let timer_weak = Rc::downgrade(timer);
+    timer.start(TimerMode::Repeated, Duration::from_millis(30), move || {
+        let decoded = match receiver.try_recv() {
+            Ok(decoded) => decoded,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // Worker vanished without sending; nothing to apply.
+                if let Some(timer) = timer_weak.upgrade() {
+                    timer.stop();
+                }
+                return;
+            }
+        };
+
+        if let Some(window) = window_weak.upgrade() {
+            {
+                let mut cards = all_cards.borrow_mut();
+                for (index, buffer) in decoded {
+                    if let Some(card) = cards.get_mut(index) {
+                        card.card.thumbnail = Image::from_rgba8(buffer);
+                        card.card.has_thumbnail = true;
+                    }
+                }
+            }
+            set_visible_cards(
+                &window,
+                &all_cards.borrow(),
+                tab_manufacturer(&tabs.borrow(), current_tab.get()),
+                &search_lower.borrow(),
+            );
+        }
+
+        if let Some(timer) = timer_weak.upgrade() {
+            timer.stop();
+        }
+    });
 }
 
 /// The manufacturer tab labels: a translated "All" entry followed by
