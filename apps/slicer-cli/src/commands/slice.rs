@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
-use sc_mesh_core::scene::node::{NodeId, NodeKind};
+use sc_mesh_core::scene::node::NodeId;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
@@ -94,7 +94,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         }
     }
 
-    let leaf_id = pick_single_root_leaf(&loaded.graph)?;
+    let leaf_id = pick_single_reachable_leaf(&loaded.graph)?;
     if !args.no_auto_place {
         place_on_build_plate(&mut loaded.graph)?;
     }
@@ -210,23 +210,19 @@ fn place_on_build_plate(scene: &mut Scene) -> Result<()> {
     Ok(())
 }
 
-fn pick_single_root_leaf(scene: &Scene) -> Result<NodeId> {
-    let mut root_leaves = scene.roots().iter().filter_map(|&id| {
-        scene.node(id).and_then(|node| match &node.kind {
-            NodeKind::Leaf(_) => Some(id),
-            _ => None,
-        })
-    });
-
-    let first = root_leaves
-        .next()
-        .ok_or_else(|| anyhow!("input has no root mesh leaf to slice"))?;
-    if root_leaves.next().is_some() {
+/// Pick the scene's only reachable mesh leaf, wherever it sits in the
+/// graph. Loaders disagree on topology: STL installs the mesh as a
+/// root-level leaf, while the OBJ reader wraps every object leaf under
+/// one identity-Group root, so scanning `roots()` alone would miss it.
+fn pick_single_reachable_leaf(scene: &Scene) -> Result<NodeId> {
+    if scene.reachable_leaf_count() > 1 {
         return Err(anyhow!(
-            "input has more than one root mesh leaf; multi-leaf selection is not yet supported",
+            "input has more than one mesh leaf; multi-leaf selection is not yet supported",
         ));
     }
-    Ok(first)
+    scene
+        .first_leaf_id()
+        .ok_or_else(|| anyhow!("input has no mesh leaf to slice"))
 }
 
 fn scene_world_z_max(scene: &Scene) -> Result<f64> {

@@ -220,6 +220,25 @@ fn no_panic_in_stderr() -> predicates::str::ContainsPredicate {
     predicate::str::contains("panicked at")
 }
 
+/// Writes a single-object scene as an OBJ file. The OBJ reader wraps
+/// object leaves under one identity-Group root, so reading this back
+/// yields a leaf that is NOT itself a scene root: the shape the
+/// `slice` leaf selection must handle.
+fn write_single_object_obj(path: &Path) {
+    let mut graph = Scene::new();
+    let leaf = graph
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(tetrahedron_mesh(Some("A")))),
+        )
+        .expect("add leaf");
+    graph.add_root(leaf).expect("add root");
+    let file = fs::File::create(path).expect("create obj");
+    let mut writer = std::io::BufWriter::new(file);
+    sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
+}
+
 /// Writes a multi-object scene as an OBJ file. Used to drive the
 /// "MultiObjectMerge" warning when this OBJ is later read back and
 /// converted to STL.
@@ -1617,5 +1636,60 @@ mod slice_repair_tests {
             .success()
             .stderr(predicate::str::contains("Applied fixes"))
             .stderr(predicate::str::contains("Flipped orientation"));
+    }
+}
+
+#[cfg(test)]
+mod slice_leaf_selection_tests {
+    use super::*;
+
+    fn run_slice(source: &Path, output_dir: &Path) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            output_dir.to_str().unwrap(),
+            "--target-format",
+            "svg-per-layer",
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
+        ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
+        cmd.assert()
+    }
+
+    /// The OBJ reader nests the object leaf under a Group root, so
+    /// leaf selection must reach through groups. Same geometry and
+    /// auto-placement as `slice_default_auto_places_mesh_floor_at_z0`,
+    /// hence the same 10-layer expectation.
+    #[test]
+    fn slice_single_object_obj_succeeds() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("single.obj");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_single_object_obj(&source);
+
+        run_slice(&source, &output)
+            .success()
+            .stdout(predicate::str::contains("Sliced 10 layers"));
+    }
+
+    #[test]
+    fn slice_multi_object_obj_is_rejected_until_multi_leaf_support_lands() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two.obj");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_two_object_obj(&source);
+
+        run_slice(&source, &output)
+            .failure()
+            .stderr(predicate::str::contains("more than one mesh leaf"))
+            .stderr(no_panic_in_stderr().not());
     }
 }
