@@ -16,69 +16,7 @@ use crate::names::SLICE_NS;
 /// object with default properties and a metadata group, a components
 /// object, and a transformed build item carrying its own metadata
 /// group.
-const SPEC_METADATA_EXAMPLE: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
-<model unit="millimeter" xml:lang="en-us"
- xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
- xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
- xmlns:vendor1="http://www.vendorwwebsite.com/3mf/vendor13mfextension/2017/01">
- <metadata name="Copyright">(c) Microsoft Corporation 2013</metadata>
- <metadata name="Application">Microsoft 3D Builder</metadata>
- <metadata name="LicenseTerms">All rights reserved</metadata>
- <metadata name="Title">Cube</metadata>
- <metadata name="Designer">Microsoft Corporation</metadata>
- <metadata name="CreationDate">2013-10-07</metadata>
- <metadata name="ModificationDate">2014-03-27</metadata>
- <metadata name="Description">Cube</metadata>
- <metadata name="vendor1:CustomMetadata1" preserve="1">CE8A91FB-C44E-4F00-B634-BAA411465F6A</metadata>
- <resources>
-  <basematerials id="1">
-   <base name="Green" displaycolor="#21BB4CFF" />
-  </basematerials>
-  <object id="2" type="model" pid="1" pindex="0">
-   <metadatagroup>
-    <metadata name="vendor1:CustomMetadata2" preserve="true" type="xs:string">03DAE6E4-24FF-4B20-97A1-7487AB9C1CB0</metadata>
-   </metadatagroup>
-   <mesh>
-    <vertices>
-     <vertex x="0" y="42.998" z="39.998" />
-     <vertex x="39.998" y="42.998" z="39.998" />
-     <vertex x="0" y="82.998" z="39.998" />
-     <vertex x="39.998" y="82.998" z="0" />
-     <vertex x="0" y="42.998" z="0" />
-     <vertex x="0" y="82.998" z="0" />
-     <vertex x="39.998" y="42.998" z="0" />
-     <vertex x="39.998" y="82.998" z="39.998" />
-    </vertices>
-    <triangles>
-     <triangle v1="0" v2="1" v3="2" />
-     <triangle v1="3" v2="4" v3="5" />
-     <triangle v1="4" v2="3" v3="6" />
-     <triangle v1="7" v2="2" v3="1" />
-     <triangle v1="4" v2="6" v3="1" />
-     <triangle v1="4" v2="2" v3="5" />
-     <triangle v1="7" v2="1" v3="6" />
-     <triangle v1="5" v2="2" v3="7" />
-     <triangle v1="4" v2="0" v3="2" />
-     <triangle v1="6" v2="3" v3="7" />
-     <triangle v1="1" v2="0" v3="4" />
-     <triangle v1="7" v2="3" v3="5" />
-    </triangles>
-   </mesh>
-  </object>
-  <object id="3" type="model">
-   <components>
-    <component objectid="2" />
-   </components>
-  </object>
- </resources>
- <build>
-  <item objectid="3" transform="1 0 0 0 1 0 0 0 1 -19.999 -62.998 0">
-   <metadatagroup>
-    <metadata name="vendor1:CustomMetadata3" type="xs:boolean">1</metadata>
-   </metadatagroup>
-  </item>
- </build>
-</model>"##;
+const SPEC_METADATA_EXAMPLE: &str = include_str!("../tests/fixtures/spec/metadata_example.model");
 
 fn id(value: u32) -> ResourceId {
     ResourceId::new(value).expect("valid id")
