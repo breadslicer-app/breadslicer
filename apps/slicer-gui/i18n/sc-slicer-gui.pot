@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-24 08:44+0000\n"
+"POT-Creation-Date: 2026-07-24 09:06+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -104,12 +104,12 @@ msgctxt "PreferencesPage"
 msgid "No image"
 msgstr ""
 
-#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:178
+#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:188
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr ""
 
-#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:246
+#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:256
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr ""
@@ -124,7 +124,7 @@ msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/resin.slint:106 ui/preferences/resin.slint:223
+#: ui/preferences/resin.slint:106 ui/preferences/resin.slint:233
 msgctxt "PreferencesPage"
 msgid "View"
 msgstr ""
@@ -139,7 +139,7 @@ msgctxt "PreferencesPage"
 msgid "Extend..."
 msgstr ""
 
-#: ui/preferences/resin.slint:124 ui/preferences/resin.slint:229
+#: ui/preferences/resin.slint:124 ui/preferences/resin.slint:239
 msgctxt "PreferencesPage"
 msgid "Edit"
 msgstr ""
@@ -149,22 +149,22 @@ msgctxt "PreferencesPage"
 msgid "Delete..."
 msgstr ""
 
-#: ui/preferences/resin.slint:192
+#: ui/preferences/resin.slint:202
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: ui/preferences/resin.slint:194
+#: ui/preferences/resin.slint:204
 msgctxt "PreferencesPage"
 msgid "Generic calibration"
 msgstr ""
 
-#: ui/preferences/resin.slint:195
+#: ui/preferences/resin.slint:205
 msgctxt "PreferencesPage"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/preferences/resin.slint:252
+#: ui/preferences/resin.slint:262
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr ""
@@ -341,129 +341,184 @@ msgctxt "ObjectList"
 msgid "No objects to display"
 msgstr ""
 
-#: ui/main-window.slint:69
+#: ui/main-window.slint:70
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:166
+#: ui/main-window.slint:167
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:169
+#: ui/main-window.slint:170
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:179
+#: ui/main-window.slint:180
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:188
+#: ui/main-window.slint:189
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:199
+#: ui/main-window.slint:200
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:205
+#: ui/main-window.slint:206
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:213
+#: ui/main-window.slint:214
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:223
+#: ui/main-window.slint:224
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:225
+#: ui/main-window.slint:226
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:234
+#: ui/main-window.slint:235
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:245
+#: ui/main-window.slint:246
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:255
+#: ui/main-window.slint:256
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:264
+#: ui/main-window.slint:265
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:268
+#: ui/main-window.slint:269
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:269
+#: ui/main-window.slint:270
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:279
+#: ui/main-window.slint:280
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:281
+#: ui/main-window.slint:282
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:286
+#: ui/main-window.slint:287
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:293
+#: ui/main-window.slint:294
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:300
+#: ui/main-window.slint:301
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:307
+#: ui/main-window.slint:308
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:314
+#: ui/main-window.slint:315
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:326
+#: ui/main-window.slint:327
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:437
+#: ui/main-window.slint:438
 msgctxt "MainWindow"
 msgid "Drop to open"
+msgstr ""
+
+#: ui/extend-dialog.slint:15
+msgctxt "ExtendDialog"
+msgid "Extend resin profile"
+msgstr ""
+
+#: ui/extend-dialog.slint:66
+msgctxt "ExtendDialog"
+msgid "Extend {}"
+msgstr ""
+
+#: ui/extend-dialog.slint:73
+msgctxt "ExtendDialog"
+msgid "Add calibration values for a target this resin does not cover yet."
+msgstr ""
+
+#: ui/extend-dialog.slint:92
+msgctxt "ExtendDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:96
+msgctxt "ExtendDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:100
+msgctxt "ExtendDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: ui/extend-dialog.slint:104
+msgctxt "ExtendDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: ui/extend-dialog.slint:108
+msgctxt "ExtendDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:112
+msgctxt "ExtendDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:130
+msgctxt "ExtendDialog"
+msgid "Save"
+msgstr ""
+
+#: ui/extend-dialog.slint:138
+msgctxt "ExtendDialog"
+msgid "Cancel"
 msgstr ""
 
 #: ui/fork-dialog.slint:14
@@ -545,67 +600,67 @@ msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: src/preferences_window.rs:433
+#: src/preferences_window.rs:444
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:435
+#: src/preferences_window.rs:446
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:439 src/preferences_window.rs:979
+#: src/preferences_window.rs:450 src/preferences_window.rs:1108
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:629 src/preferences_window.rs:1314
+#: src/preferences_window.rs:640 src/preferences_window.rs:1443
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:803
+#: src/preferences_window.rs:814
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:895
+#: src/preferences_window.rs:906
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:957
+#: src/preferences_window.rs:1086
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:967
+#: src/preferences_window.rs:1096
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:973
+#: src/preferences_window.rs:1102
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:975
+#: src/preferences_window.rs:1104
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1160
+#: src/preferences_window.rs:1289
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1382
+#: src/preferences_window.rs:1511
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
@@ -779,4 +834,9 @@ msgstr ""
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""
+
+#: src/profile_extending.rs:58
+msgctxt "ExtendDialog"
+msgid "Generic"
 msgstr ""

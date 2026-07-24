@@ -26,7 +26,7 @@ export struct ProfileViewSection {
 // A labelled text field of the editor. External updates (re-seeding
 // after a target switch) must be pushed back into the LineEdit
 // explicitly: its text binding breaks the first time the user types.
-component EditField inherits HorizontalLayout {
+export component EditField inherits HorizontalLayout {
     in property <string> label;
     in-out property <string> value;
 

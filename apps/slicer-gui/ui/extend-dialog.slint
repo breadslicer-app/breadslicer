@@ -1,0 +1,146 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, ComboBox, Palette } from "std-widgets.slint";
+import { EditField } from "profile-view-dialog.slint";
+import { ThemePreference } from "preferences/appearance.slint";
+
+// Extend dialog: adds one calibration block to a resin's extension
+// file. The target picker lists only the targets the resin does not
+// cover yet (derived on the Rust side); the six value fields appear
+// once a target is picked, and partial values are allowed.
+export component ExtendDialog inherits Window {
+    title: @tr("ExtendDialog" => "Extend resin profile");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
+
+    in-out property <ThemePreference> theme: ThemePreference.System;
+
+    in property <string> source-name;
+    in property <[string]> target-labels;
+    in-out property <int> target-index: -1;
+    in-out property <string> normal-exposure-text;
+    in-out property <string> bottom-exposure-text;
+    in-out property <string> bottom-count-text;
+    in-out property <string> lift-distance-text;
+    in-out property <string> lift-speed-text;
+    in-out property <string> retract-speed-text;
+    in property <string> error-message;
+
+    callback save-requested();
+    callback cancel-requested();
+
+    min-width: 420px;
+    preferred-width: 460px;
+    min-height: 280px;
+    preferred-height: 420px;
+
+    forward-focus: cancel-button;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancel-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            Text {
+                text: @tr("ExtendDialog" => "Extend {}", root.source-name);
+                font-size: 1.1rem;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: @tr("ExtendDialog" => "Add calibration values for a target this resin does not cover yet.");
+                font-size: 0.85rem;
+                color: Palette.foreground.transparentize(0.3);
+                wrap: word-wrap;
+            }
+
+            ComboBox {
+                model: root.target-labels;
+                current-index <=> root.target-index;
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                alignment: start;
+                vertical-stretch: 1;
+
+                if root.target-index >= 0: VerticalLayout {
+                    spacing: 6px;
+                    EditField {
+                        label: @tr("ExtendDialog" => "Normal exposure (s)");
+                        value <=> root.normal-exposure-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom exposure (s)");
+                        value <=> root.bottom-exposure-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom layer count");
+                        value <=> root.bottom-count-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Lift distance (mm)");
+                        value <=> root.lift-distance-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Lift speed (mm/min)");
+                        value <=> root.lift-speed-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Retract speed (mm/min)");
+                        value <=> root.retract-speed-text;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.error-message;
+                    color: #d32f2f;
+                    font-size: 0.85rem;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: @tr("ExtendDialog" => "Save");
+                    primary: true;
+                    enabled: root.target-index >= 0;
+                    clicked => {
+                        root.save-requested();
+                    }
+                }
+                cancel-button := Button {
+                    text: @tr("ExtendDialog" => "Cancel");
+                    clicked => {
+                        root.cancel-requested();
+                    }
+                }
+            }
+        }
+    }
+}

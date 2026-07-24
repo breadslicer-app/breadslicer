@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-24 10:44+0200\n"
+"POT-Creation-Date: 2026-07-24 11:06+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,72 +17,72 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:433
+#: src/preferences_window.rs:444
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:435
+#: src/preferences_window.rs:446
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:439 src/preferences_window.rs:979
+#: src/preferences_window.rs:450 src/preferences_window.rs:1108
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:629 src/preferences_window.rs:1314
+#: src/preferences_window.rs:640 src/preferences_window.rs:1443
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:803
+#: src/preferences_window.rs:814
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:895
+#: src/preferences_window.rs:906
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:957
+#: src/preferences_window.rs:1086
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:967
+#: src/preferences_window.rs:1096
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:973
+#: src/preferences_window.rs:1102
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:975
+#: src/preferences_window.rs:1104
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1160
+#: src/preferences_window.rs:1289
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1382
+#: src/preferences_window.rs:1511
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1408
+#: src/preferences_window.rs:1537
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -296,4 +296,9 @@ msgstr ""
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
+msgstr ""
+
+#: src/profile_extending.rs:58
+msgctxt "ExtendDialog"
+msgid "Generic"
 msgstr ""
