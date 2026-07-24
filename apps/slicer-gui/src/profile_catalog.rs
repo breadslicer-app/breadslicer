@@ -12,7 +12,9 @@
 //! winning (the same precedence the by-id loaders use), captures the
 //! fields the pickers display, and records which library each winning
 //! id came from so user-provided profiles can be marked as not shipped
-//! with the app.
+//! with the app. Material extensions from the user library attach by
+//! id to their base entry; an extension whose base entry is absent
+//! degrades to a standalone custom entry.
 //!
 //! The catalog is rebuilt (not mutated in place) whenever the on-disk
 //! libraries change, for instance after authoring or importing a
@@ -23,9 +25,14 @@ use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{BuildVolume, MaterialId, PrinterId};
 use sc_print_profiles::{
-    MaterialProfile, PrinterProfile, list_material_ids, list_printer_ids,
-    load_material_profile_from_library, load_printer_profile_from_library, user_library_dir,
+    MaterialProfile, PrinterProfile, list_material_extension_ids, list_material_ids,
+    list_printer_ids, load_material_extension_from_library, load_material_profile_from_library,
+    load_printer_profile_from_library, user_library_dir,
 };
+
+/// Id of the generic printer profile. Its calibration blocks apply as
+/// a fallback to any printer without a specific block.
+const GENERIC_PRINTER_ID: &str = "generic-machine";
 
 /// Which on-disk library a catalog entry's winning id resolved from.
 ///
@@ -65,6 +72,74 @@ pub struct MaterialCatalogEntry {
     pub source: ProfileSource,
 }
 
+/// A material extension from the user library: a same-id companion
+/// profile adding calibration blocks the base profile does not cover.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaterialExtensionEntry {
+    /// The shared resin id: the base entry this extension attaches to.
+    pub id: MaterialId,
+    /// The printers the extension adds a calibration block for.
+    pub printers: BTreeSet<PrinterId>,
+}
+
+/// How well a material's calibration data covers a printer, over the
+/// union of the base profile's blocks and its extension's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalibrationCoverage {
+    /// A block for the printer itself exists.
+    Specific,
+    /// No block for the printer, but the generic block applies as a
+    /// fallback.
+    GenericFallback,
+    /// No block applies to the printer.
+    None,
+}
+
+/// Whether the union of the entry's and the extension's calibration
+/// blocks contains the printer id given as a string.
+fn union_contains(
+    entry: &MaterialCatalogEntry,
+    extension: Option<&MaterialExtensionEntry>,
+    printer_id: &str,
+) -> bool {
+    entry
+        .calibrated_printers
+        .iter()
+        .any(|id| id.as_str() == printer_id)
+        || extension.is_some_and(|ext| ext.printers.iter().any(|id| id.as_str() == printer_id))
+}
+
+/// Coverage of `printer` by the union of the entry's and the
+/// extension's calibration blocks. With no printer given, only the
+/// generic block can cover (it applies to whichever printer ends up
+/// being used).
+pub fn coverage(
+    entry: &MaterialCatalogEntry,
+    extension: Option<&MaterialExtensionEntry>,
+    printer: Option<&PrinterId>,
+) -> CalibrationCoverage {
+    if let Some(printer) = printer
+        && union_contains(entry, extension, printer.as_str())
+    {
+        return CalibrationCoverage::Specific;
+    }
+    if union_contains(entry, extension, GENERIC_PRINTER_ID) {
+        return CalibrationCoverage::GenericFallback;
+    }
+    CalibrationCoverage::None
+}
+
+/// Whether the entry (with its extension) carries a block that applies
+/// to `printer`: a specific block or the generic fallback. Drives the
+/// matcher-first grouping of the resin list.
+pub fn has_active_matcher(
+    entry: &MaterialCatalogEntry,
+    extension: Option<&MaterialExtensionEntry>,
+    printer: Option<&PrinterId>,
+) -> bool {
+    coverage(entry, extension, printer) != CalibrationCoverage::None
+}
+
 /// The merged printer and material profiles available to the GUI.
 ///
 /// Printers are held sorted by `(manufacturer, name)`; materials by
@@ -75,6 +150,11 @@ pub struct MaterialCatalogEntry {
 pub struct ProfileCatalog {
     printers: Vec<PrinterCatalogEntry>,
     materials: Vec<MaterialCatalogEntry>,
+    /// Material extensions from the user library, attached by id to
+    /// their base entry in `materials`. An extension whose base is
+    /// absent is not held here: it degrades to a standalone entry in
+    /// `materials` instead.
+    extensions: Vec<MaterialExtensionEntry>,
 }
 
 impl ProfileCatalog {
@@ -113,9 +193,12 @@ impl ProfileCatalog {
     /// Build the catalog by merging the given roots in precedence order
     /// (earliest wins on id collision).
     fn from_roots(roots: &[(PathBuf, ProfileSource)]) -> Self {
+        let mut materials = load_materials(roots);
+        let extensions = load_extensions(roots, &mut materials);
         ProfileCatalog {
             printers: load_printers(roots),
-            materials: load_materials(roots),
+            materials,
+            extensions,
         }
     }
 
@@ -125,6 +208,11 @@ impl ProfileCatalog {
 
     pub fn materials(&self) -> &[MaterialCatalogEntry] {
         &self.materials
+    }
+
+    /// The extension attached to the material with this id, if any.
+    pub fn extension_for(&self, id: &MaterialId) -> Option<&MaterialExtensionEntry> {
+        self.extensions.iter().find(|entry| &entry.id == id)
     }
 
     /// Index of the printer entry with this id, if present.
@@ -144,7 +232,6 @@ impl ProfileCatalog {
     /// display / envelope default only; it is never written to the
     /// user's settings.
     pub fn first_run_default_printer(&self) -> Option<PrinterId> {
-        const GENERIC_PRINTER_ID: &str = "generic-machine";
         self.printers
             .iter()
             .find(|entry| entry.id.as_str() == GENERIC_PRINTER_ID)
@@ -176,15 +263,6 @@ impl ProfileCatalog {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
-    }
-
-    /// Whether the given material ships a calibration block for the
-    /// given printer.
-    pub fn resin_has_preset(&self, material_id: &MaterialId, printer_id: &PrinterId) -> bool {
-        self.materials
-            .iter()
-            .find(|entry| &entry.id == material_id)
-            .is_some_and(|entry| entry.calibrated_printers.contains(printer_id))
     }
 
     /// The viewport build envelope implied by the selected printer: the
@@ -272,6 +350,58 @@ fn load_materials(roots: &[(PathBuf, ProfileSource)]) -> Vec<MaterialCatalogEntr
 
     entries.sort_by(|a, b| a.brand.cmp(&b.brand).then_with(|| a.name.cmp(&b.name)));
     entries
+}
+
+/// Load the material extensions from the user roots (bundled libraries
+/// ship none). An extension whose id matches a merged material entry
+/// attaches to it; one whose base is absent degrades to a standalone
+/// custom entry appended to `materials`, so its data stays visible.
+/// A corrupt or unflagged file is skipped with a warning.
+fn load_extensions(
+    roots: &[(PathBuf, ProfileSource)],
+    materials: &mut Vec<MaterialCatalogEntry>,
+) -> Vec<MaterialExtensionEntry> {
+    let mut extensions: Vec<MaterialExtensionEntry> = Vec::new();
+    let mut seen: BTreeSet<MaterialId> = BTreeSet::new();
+    let mut degraded_any = false;
+
+    for (root, source) in roots {
+        if *source != ProfileSource::User {
+            continue;
+        }
+        let ids = match list_material_extension_ids(root) {
+            Ok(ids) => ids,
+            Err(err) => {
+                eprintln!("warning: {err}");
+                continue;
+            }
+        };
+        for id in ids {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            match load_material_extension_from_library(root, &id) {
+                Ok(profile) => {
+                    if materials.iter().any(|entry| entry.id == id) {
+                        extensions.push(MaterialExtensionEntry {
+                            id,
+                            printers: profile.per_printer.keys().cloned().collect(),
+                        });
+                    } else {
+                        materials.push(material_entry(ProfileSource::User, profile));
+                        degraded_any = true;
+                    }
+                }
+                Err(err) => eprintln!("warning: {err}"),
+            }
+        }
+    }
+
+    if degraded_any {
+        materials.sort_by(|a, b| a.brand.cmp(&b.brand).then_with(|| a.name.cmp(&b.name)));
+    }
+    extensions.sort_by(|a, b| a.id.cmp(&b.id));
+    extensions
 }
 
 fn printer_entry(

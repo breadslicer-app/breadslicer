@@ -4,16 +4,18 @@
  */
 
 //! End-to-end coverage of the profile catalog: merging the user and
-//! bundled libraries, capturing the fields the pickers show, and
-//! resolving thumbnails, driven from outside the crate against
-//! tempdir fixtures.
+//! bundled libraries, capturing the fields the pickers show, resolving
+//! thumbnails, and attaching material extensions with their coverage
+//! derivation, driven from outside the crate against tempdir fixtures.
 
 use std::fs;
 use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_slicer_gui::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
-use sc_slicer_gui::profile_catalog::{ProfileCatalog, ProfileSource};
+use sc_slicer_gui::profile_catalog::{
+    CalibrationCoverage, ProfileCatalog, ProfileSource, coverage, has_active_matcher,
+};
 
 /// Format an `f64` with a decimal point so TOML parses it as a float
 /// (a bare `100` would be an integer and fail the `f64` field).
@@ -125,6 +127,38 @@ fn write_material(
          {per_printer}"
     );
     fs::write(materials.join(format!("{id}.toml")), toml).unwrap();
+}
+
+/// Write a material extension file (same shape as a material, plus the
+/// `extension = true` flag) into `<root>/materials/extensions/`.
+fn write_material_extension(root: &Path, id: &str, calibrated: &[&str]) {
+    let extensions = root.join("materials").join("extensions");
+    fs::create_dir_all(&extensions).unwrap();
+    let mut per_printer = String::from("[per_printer]\n");
+    for printer_id in calibrated {
+        per_printer.push_str(&format!(
+            "\n[per_printer.{printer_id}]\n\
+             normal_exposure_sec = 2.5\n\
+             bottom_exposure_sec = 30.0\n"
+        ));
+    }
+    let toml = format!(
+        "extension = true\n\
+         \n\
+         [identity]\n\
+         id = \"{id}\"\n\
+         brand = \"Brand\"\n\
+         family = \"other\"\n\
+         name = \"Extended Resin\"\n\
+         profile_version = \"1.0.0\"\n\
+         \n\
+         [intent]\n\
+         \n\
+         [defaults]\n\
+         \n\
+         {per_printer}"
+    );
+    fs::write(extensions.join(format!("{id}.toml")), toml).unwrap();
 }
 
 fn printer_id(id: &str) -> PrinterId {
@@ -447,24 +481,8 @@ fn a_malformed_profile_is_skipped_without_dropping_the_valid_ones() {
 }
 
 #[test]
-fn resin_has_preset_reflects_the_per_printer_blocks() {
+fn calibrated_printers_reflect_the_per_printer_blocks() {
     let bundled = tempfile::tempdir().unwrap();
-    write_printer(
-        bundled.path(),
-        "printer-a",
-        "Maker",
-        "A",
-        (100.0, 60.0, 80.0),
-        None,
-    );
-    write_printer(
-        bundled.path(),
-        "printer-b",
-        "Maker",
-        "B",
-        (100.0, 60.0, 80.0),
-        None,
-    );
     write_material(
         bundled.path(),
         "resin",
@@ -475,13 +493,277 @@ fn resin_has_preset_reflects_the_per_printer_blocks() {
     );
 
     let catalog = ProfileCatalog::load(None, bundled.path());
-    assert!(catalog.resin_has_preset(&material_id("resin"), &printer_id("printer-a")));
-    assert!(!catalog.resin_has_preset(&material_id("resin"), &printer_id("printer-b")));
     let entry = &catalog.materials()[0];
     assert_eq!(
         entry.calibrated_printers,
         [printer_id("printer-a")].into_iter().collect()
     );
+}
+
+#[test]
+fn an_extension_attaches_to_its_base_entry_by_id() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "resin",
+        "Brand",
+        "Resin",
+        "other",
+        &["printer-a"],
+    );
+    write_material_extension(user.path(), "resin", &["printer-b"]);
+
+    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    // The extension adds no material entry of its own.
+    assert_eq!(catalog.materials().len(), 1);
+    assert_eq!(catalog.materials()[0].source, ProfileSource::Bundled);
+
+    let extension = catalog.extension_for(&material_id("resin")).unwrap();
+    assert_eq!(
+        extension.printers,
+        [printer_id("printer-b")].into_iter().collect()
+    );
+    assert_eq!(catalog.extension_for(&material_id("missing")), None);
+}
+
+#[test]
+fn an_extension_without_a_base_degrades_to_a_standalone_custom_entry() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(bundled.path(), "other-resin", "Aaa", "Other", "other", &[]);
+    write_material_extension(user.path(), "orphaned", &["printer-b"]);
+
+    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    assert_eq!(catalog.extension_for(&material_id("orphaned")), None);
+
+    let index = catalog.material_index(&material_id("orphaned")).unwrap();
+    let entry = &catalog.materials()[index];
+    assert_eq!(entry.source, ProfileSource::User);
+    assert_eq!(entry.name, "Extended Resin");
+    assert_eq!(
+        entry.calibrated_printers,
+        [printer_id("printer-b")].into_iter().collect()
+    );
+    // The degraded entry keeps the (brand, name) sort order intact.
+    assert!(catalog.material_index(&material_id("other-resin")).unwrap() < index);
+}
+
+#[test]
+fn an_unflagged_file_in_the_extensions_dir_is_skipped() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(bundled.path(), "resin", "Brand", "Resin", "other", &[]);
+    // A full profile misplaced in the extensions directory: no
+    // `extension = true` flag.
+    let extensions = user.path().join("materials").join("extensions");
+    fs::create_dir_all(&extensions).unwrap();
+    fs::write(
+        extensions.join("resin.toml"),
+        "[identity]\n\
+         id = \"resin\"\n\
+         brand = \"Brand\"\n\
+         family = \"other\"\n\
+         name = \"Resin\"\n\
+         profile_version = \"1.0.0\"\n\
+         \n\
+         [intent]\n\
+         \n\
+         [defaults]\n",
+    )
+    .unwrap();
+
+    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    assert_eq!(catalog.extension_for(&material_id("resin")), None);
+    assert_eq!(catalog.materials().len(), 1);
+}
+
+#[test]
+fn coverage_is_specific_when_the_base_carries_the_printer_block() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "resin",
+        "Brand",
+        "Resin",
+        "other",
+        &["printer-a"],
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    let entry = &catalog.materials()[0];
+    assert_eq!(
+        coverage(entry, None, Some(&printer_id("printer-a"))),
+        CalibrationCoverage::Specific
+    );
+    assert_eq!(
+        coverage(entry, None, Some(&printer_id("printer-b"))),
+        CalibrationCoverage::None
+    );
+}
+
+#[test]
+fn coverage_is_specific_when_the_extension_carries_the_printer_block() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "resin",
+        "Brand",
+        "Resin",
+        "other",
+        &["printer-a"],
+    );
+    write_material_extension(user.path(), "resin", &["printer-b"]);
+
+    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let entry = &catalog.materials()[0];
+    let extension = catalog.extension_for(&material_id("resin"));
+    assert_eq!(
+        coverage(entry, extension, Some(&printer_id("printer-b"))),
+        CalibrationCoverage::Specific
+    );
+}
+
+#[test]
+fn coverage_falls_back_to_generic_from_the_base_or_the_extension() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "base-generic",
+        "Brand",
+        "Base Generic",
+        "other",
+        &["generic-machine"],
+    );
+    write_material(
+        bundled.path(),
+        "ext-generic",
+        "Brand",
+        "Ext Generic",
+        "other",
+        &[],
+    );
+    write_material_extension(user.path(), "ext-generic", &["generic-machine"]);
+
+    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let unmatched = printer_id("printer-z");
+
+    let base_index = catalog
+        .material_index(&material_id("base-generic"))
+        .unwrap();
+    assert_eq!(
+        coverage(&catalog.materials()[base_index], None, Some(&unmatched)),
+        CalibrationCoverage::GenericFallback
+    );
+
+    let ext_index = catalog.material_index(&material_id("ext-generic")).unwrap();
+    let extension = catalog.extension_for(&material_id("ext-generic"));
+    assert_eq!(
+        coverage(&catalog.materials()[ext_index], extension, Some(&unmatched)),
+        CalibrationCoverage::GenericFallback
+    );
+}
+
+#[test]
+fn coverage_of_the_generic_printer_itself_is_specific() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "resin",
+        "Brand",
+        "Resin",
+        "other",
+        &["generic-machine"],
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    let entry = &catalog.materials()[0];
+    assert_eq!(
+        coverage(entry, None, Some(&printer_id("generic-machine"))),
+        CalibrationCoverage::Specific
+    );
+}
+
+#[test]
+fn coverage_without_a_printer_only_the_generic_block_applies() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "with-generic",
+        "Brand",
+        "With Generic",
+        "other",
+        &["generic-machine"],
+    );
+    write_material(
+        bundled.path(),
+        "specific-only",
+        "Brand",
+        "Specific Only",
+        "other",
+        &["printer-a"],
+    );
+
+    let catalog = ProfileCatalog::load(None, bundled.path());
+    let generic_index = catalog
+        .material_index(&material_id("with-generic"))
+        .unwrap();
+    assert_eq!(
+        coverage(&catalog.materials()[generic_index], None, None),
+        CalibrationCoverage::GenericFallback
+    );
+    let specific_index = catalog
+        .material_index(&material_id("specific-only"))
+        .unwrap();
+    assert_eq!(
+        coverage(&catalog.materials()[specific_index], None, None),
+        CalibrationCoverage::None
+    );
+}
+
+#[test]
+fn active_matcher_follows_coverage_including_the_extension_pull() {
+    let user = tempfile::tempdir().unwrap();
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "pulled",
+        "Brand",
+        "Pulled",
+        "other",
+        &["printer-a"],
+    );
+    write_material(
+        bundled.path(),
+        "unmatched",
+        "Brand",
+        "Unmatched",
+        "other",
+        &["printer-a"],
+    );
+    // The base only covers printer-a; the extension covers our
+    // printer, pulling the entry into the active-matcher group.
+    write_material_extension(user.path(), "pulled", &["printer-b"]);
+
+    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let our_printer = printer_id("printer-b");
+
+    let pulled_index = catalog.material_index(&material_id("pulled")).unwrap();
+    let extension = catalog.extension_for(&material_id("pulled"));
+    assert!(has_active_matcher(
+        &catalog.materials()[pulled_index],
+        extension,
+        Some(&our_printer)
+    ));
+
+    let unmatched_index = catalog.material_index(&material_id("unmatched")).unwrap();
+    assert!(!has_active_matcher(
+        &catalog.materials()[unmatched_index],
+        None,
+        Some(&our_printer)
+    ));
 }
 
 #[test]
