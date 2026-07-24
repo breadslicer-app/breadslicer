@@ -6,13 +6,13 @@
 //! Assembling a forked resin profile.
 //!
 //! A fork is a new full custom profile seeded from a source profile:
-//! the identity keeps the source's brand / family / profile version
-//! under a user-entered name and a fresh id derived from it, and the
-//! user picks which parts to carry over (intent, defaults, any of the
-//! source's own calibration blocks). Selected parts are copied
-//! verbatim; unselected ones start empty. The result is an ordinary
-//! material profile, never an extension. The dialog wiring lives in
-//! the preferences window.
+//! the identity keeps the source's family / profile version under a
+//! user-entered name and brand plus a fresh id derived from the name,
+//! and the user picks which parts to carry over (intent, defaults,
+//! any of the source's own calibration blocks). Selected parts are
+//! copied verbatim; unselected ones start empty. The result is an
+//! ordinary material profile, never an extension. The dialog wiring
+//! lives in the preferences window.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -34,6 +34,7 @@ pub(crate) struct ForkParts {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ForkError {
     EmptyName,
+    EmptyBrand,
     NoAvailableId,
 }
 
@@ -41,6 +42,7 @@ impl fmt::Display for ForkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyName => write!(f, "Enter a name for the forked profile"),
+            Self::EmptyBrand => write!(f, "Enter a brand for the forked profile"),
             Self::NoAvailableId => write!(f, "Could not derive a free profile id from that name"),
         }
     }
@@ -49,16 +51,19 @@ impl fmt::Display for ForkError {
 impl std::error::Error for ForkError {}
 
 /// Assemble the fork: a fresh unique id derived from `name`, the
-/// source's other identity fields, and verbatim copies of exactly the
-/// selected parts. `existing` is the set of material ids already in
-/// the catalog, used to keep the derived id unique.
+/// entered name and brand, the source's other identity fields, and
+/// verbatim copies of exactly the selected parts. `existing` is the
+/// set of material ids already in the catalog, used to keep the
+/// derived id unique.
 pub(crate) fn build_fork(
     source: &MaterialProfile,
     parts: &ForkParts,
     name: &str,
+    brand: &str,
     existing: &BTreeSet<MaterialId>,
 ) -> Result<MaterialProfile, ForkError> {
     let name = NonEmptyString::new(name.trim()).map_err(|_| ForkError::EmptyName)?;
+    let brand = NonEmptyString::new(brand.trim()).map_err(|_| ForkError::EmptyBrand)?;
     let id =
         unique_material_id(&slugify(name.as_str()), existing).ok_or(ForkError::NoAvailableId)?;
 
@@ -66,7 +71,7 @@ pub(crate) fn build_fork(
         extension: false,
         identity: MaterialIdentity {
             id,
-            brand: source.identity.brand.clone(),
+            brand,
             family: source.identity.family.clone(),
             name,
             profile_version: source.identity.profile_version.clone(),

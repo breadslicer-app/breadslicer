@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-24 09:06+0000\n"
+"POT-Creation-Date: 2026-07-24 09:27+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -526,42 +526,47 @@ msgctxt "ForkDialog"
 msgid "Fork resin profile"
 msgstr ""
 
-#: ui/fork-dialog.slint:72
+#: ui/fork-dialog.slint:77
 msgctxt "ForkDialog"
 msgid "Fork {}"
 msgstr ""
 
-#: ui/fork-dialog.slint:82
+#: ui/fork-dialog.slint:88
+msgctxt "ForkDialog"
+msgid "Brand"
+msgstr ""
+
+#: ui/fork-dialog.slint:103
 msgctxt "ForkDialog"
 msgid "Name"
 msgstr ""
 
-#: ui/fork-dialog.slint:97
+#: ui/fork-dialog.slint:119
 msgctxt "ForkDialog"
 msgid "Copy from the source:"
 msgstr ""
 
-#: ui/fork-dialog.slint:110
+#: ui/fork-dialog.slint:132
 msgctxt "ForkDialog"
 msgid "Intent"
 msgstr ""
 
-#: ui/fork-dialog.slint:114
+#: ui/fork-dialog.slint:136
 msgctxt "ForkDialog"
 msgid "Defaults"
 msgstr ""
 
-#: ui/fork-dialog.slint:118
+#: ui/fork-dialog.slint:140
 msgctxt "ForkDialog"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/fork-dialog.slint:139
+#: ui/fork-dialog.slint:161
 msgctxt "ForkDialog"
 msgid "Create"
 msgstr ""
 
-#: ui/fork-dialog.slint:146
+#: ui/fork-dialog.slint:168
 msgctxt "ForkDialog"
 msgid "Cancel"
 msgstr ""

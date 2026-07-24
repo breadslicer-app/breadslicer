@@ -814,6 +814,7 @@ fn open_fork_dialog(
         "{} (fork)",
         source.identity.name.as_str()
     ));
+    dialog.set_fork_brand(source.identity.brand.as_str().into());
     dialog.set_block_labels(ModelRc::new(VecModel::from(
         targets
             .iter()
@@ -867,7 +868,13 @@ fn open_fork_dialog(
                     .map(|((id, _), _)| id.clone())
                     .collect(),
             };
-            let fork = match build_fork(&source, &parts, &d.get_fork_name(), &existing) {
+            let fork = match build_fork(
+                &source,
+                &parts,
+                &d.get_fork_name(),
+                &d.get_fork_brand(),
+                &existing,
+            ) {
                 Ok(fork) => fork,
                 Err(err) => {
                     d.set_error_message(err.to_string().into());
@@ -1396,11 +1403,13 @@ const PILL_LINE_CHAR_BUDGET: usize = 48;
 /// Estimated character cost of a pill's padding and inter-pill gap.
 const PILL_OVERHEAD_CHARS: usize = 3;
 
-/// Resin rows for the list. Group 1 holds the profiles whose block
-/// (the base profile's own or its extension's) matches the default
-/// printer or generic; group 2 the rest; the catalog's `(brand, name)`
-/// order is kept within each group. An extension renders as its own
-/// row right below its parent, sharing the parent's catalog index.
+/// Resin rows for the list, in 3 tiers: profiles whose block (the
+/// base profile's own or its extension's) matches the default printer
+/// or generic; then profiles carrying calibration data that does not
+/// apply to it; then profiles with no calibration data at all. The
+/// catalog's `(brand, name)` order is kept within each tier. An
+/// extension renders as its own row right below its parent, sharing
+/// the parent's catalog index.
 fn derive_resin_view(
     materials: &[MaterialCatalogEntry],
     extensions: &[MaterialExtensionEntry],
@@ -1409,19 +1418,22 @@ fn derive_resin_view(
 ) -> Vec<ResinRow> {
     let mut matched_rows = Vec::new();
     let mut unmatched_rows = Vec::new();
+    let mut dataless_rows = Vec::new();
     for (i, entry) in materials.iter().enumerate() {
         let extension = extensions.iter().find(|ext| ext.id == entry.id);
+        // The red no-data marker reflects the whole resin: a base
+        // profile whose extension carries blocks is not data-less.
+        let union_empty = entry.calibrated_printers.is_empty()
+            && extension.is_none_or(|ext| ext.printers.is_empty());
         let target = if has_active_matcher(entry, extension, default_printer) {
             &mut matched_rows
+        } else if union_empty {
+            &mut dataless_rows
         } else {
             &mut unmatched_rows
         };
 
         let can_extend = has_uncovered_target(entry, extension, printers);
-        // The red no-data marker reflects the whole resin: a base
-        // profile whose extension carries blocks is not data-less.
-        let union_empty = entry.calibrated_printers.is_empty()
-            && extension.is_none_or(|ext| ext.printers.is_empty());
         let parent_pills = if union_empty {
             vec![no_data_pill(default_printer)]
         } else {
@@ -1455,6 +1467,7 @@ fn derive_resin_view(
         }
     }
     matched_rows.extend(unmatched_rows);
+    matched_rows.extend(dataless_rows);
     matched_rows
 }
 
@@ -1815,6 +1828,40 @@ mod derive_resin_view_tests {
         // order, then the rest.
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         assert_eq!(ids, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn dataless_resins_sink_below_unmatched_calibrated_ones() {
+        // The default printer matches nothing: no resin carries a
+        // block for it and none has a generic block. Resins with some
+        // calibration data must still rank above the data-less ones,
+        // whatever the brand order says.
+        let materials = vec![
+            material("abs-like", "Default", "ABS-like", &[]),
+            material("standard", "Default", "Standard", &[]),
+            material("blu", "Siraya Tech", "Blu", &["saturn-4"]),
+            material("build", "Siraya Tech", "Build", &["saturn-4"]),
+        ];
+        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("mars-5")));
+        let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
+        assert_eq!(ids, vec![2, 3, 0, 1]);
+    }
+
+    #[test]
+    fn a_dataless_parent_with_a_calibrated_extension_is_not_dataless() {
+        // The extension's blocks count for the whole resin: the pair
+        // of rows ranks in the middle tier, not the data-less one.
+        let materials = vec![
+            material("bare", "Alpha", "Bare", &[]),
+            material("empty", "Zeta", "Empty", &[]),
+        ];
+        let extensions = vec![extension("empty", &["printer-b"])];
+        let rows = derive_resin_view(&materials, &extensions, &[], Some(&printer("printer-a")));
+        let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
+        // "empty" (+ its extension row) leads despite sorting after
+        // "bare" by brand.
+        assert_eq!(ids, vec![1, 1, 0]);
+        assert!(rows[1].is_extension);
     }
 
     #[test]

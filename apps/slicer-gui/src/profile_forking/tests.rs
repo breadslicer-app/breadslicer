@@ -48,7 +48,14 @@ fn no_ids() -> BTreeSet<MaterialId> {
 #[test]
 fn a_bare_fork_copies_only_the_identity_frame() {
     let source = source_profile();
-    let fork = build_fork(&source, &ForkParts::default(), "My Fork", &no_ids()).unwrap();
+    let fork = build_fork(
+        &source,
+        &ForkParts::default(),
+        "My Fork",
+        "Brand",
+        &no_ids(),
+    )
+    .unwrap();
 
     assert!(!fork.extension);
     assert_eq!(fork.identity.id.as_str(), "my-fork");
@@ -74,7 +81,7 @@ fn every_selected_part_is_copied_verbatim() {
         defaults: true,
         blocks: vec![printer_id("printer-a"), printer_id("generic-machine")],
     };
-    let fork = build_fork(&source, &parts, "My Fork", &no_ids()).unwrap();
+    let fork = build_fork(&source, &parts, "My Fork", "Brand", &no_ids()).unwrap();
 
     assert_eq!(fork.intent, source.intent);
     assert_eq!(fork.defaults, source.defaults);
@@ -89,7 +96,7 @@ fn a_block_subset_copies_exactly_those_blocks() {
         defaults: true,
         blocks: vec![printer_id("generic-machine")],
     };
-    let fork = build_fork(&source, &parts, "My Fork", &no_ids()).unwrap();
+    let fork = build_fork(&source, &parts, "My Fork", "Brand", &no_ids()).unwrap();
 
     assert_eq!(fork.intent.target_layer_height_mm, None);
     assert_eq!(fork.defaults, source.defaults);
@@ -108,7 +115,14 @@ fn the_fork_id_skips_taken_slugs() {
         MaterialId::new("my-fork-2").unwrap(),
     ]
     .into();
-    let fork = build_fork(&source, &ForkParts::default(), "My Fork", &existing).unwrap();
+    let fork = build_fork(
+        &source,
+        &ForkParts::default(),
+        "My Fork",
+        "Brand",
+        &existing,
+    )
+    .unwrap();
     assert_eq!(fork.identity.id.as_str(), "my-fork-3");
 }
 
@@ -119,6 +133,7 @@ fn punctuation_and_case_collapse_into_the_slug() {
         &source,
         &ForkParts::default(),
         "  Grey!  (fork) 2 ",
+        "Brand",
         &no_ids(),
     )
     .unwrap();
@@ -129,14 +144,37 @@ fn punctuation_and_case_collapse_into_the_slug() {
 #[test]
 fn a_whitespace_name_is_rejected() {
     let source = source_profile();
-    let err = build_fork(&source, &ForkParts::default(), "   ", &no_ids()).unwrap_err();
+    let err = build_fork(&source, &ForkParts::default(), "   ", "Brand", &no_ids()).unwrap_err();
     assert_eq!(err, ForkError::EmptyName);
+}
+
+#[test]
+fn a_whitespace_brand_is_rejected() {
+    let source = source_profile();
+    let err = build_fork(&source, &ForkParts::default(), "My Fork", "   ", &no_ids()).unwrap_err();
+    assert_eq!(err, ForkError::EmptyBrand);
+}
+
+#[test]
+fn an_edited_brand_replaces_the_source_brand() {
+    let source = source_profile();
+    let fork = build_fork(
+        &source,
+        &ForkParts::default(),
+        "My Fork",
+        "  Other Brand ",
+        &no_ids(),
+    )
+    .unwrap();
+    assert_eq!(fork.identity.brand.as_str(), "Other Brand");
+    // The id still derives from the name alone.
+    assert_eq!(fork.identity.id.as_str(), "my-fork");
 }
 
 #[test]
 fn a_name_with_no_slug_characters_has_no_id() {
     let source = source_profile();
-    let err = build_fork(&source, &ForkParts::default(), "???", &no_ids()).unwrap_err();
+    let err = build_fork(&source, &ForkParts::default(), "???", "Brand", &no_ids()).unwrap_err();
     assert_eq!(err, ForkError::NoAvailableId);
 }
 
@@ -149,6 +187,6 @@ fn forking_an_extension_yields_a_full_profile() {
         defaults: false,
         blocks: vec![printer_id("printer-a")],
     };
-    let fork = build_fork(&source, &parts, "My Fork", &no_ids()).unwrap();
+    let fork = build_fork(&source, &parts, "My Fork", "Brand", &no_ids()).unwrap();
     assert!(!fork.extension);
 }

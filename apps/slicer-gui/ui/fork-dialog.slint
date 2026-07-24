@@ -19,6 +19,7 @@ export component ForkDialog inherits Window {
 
     in property <string> source-name;
     in-out property <string> fork-name;
+    in-out property <string> fork-brand;
     in-out property <bool> copy-intent: true;
     in-out property <bool> copy-defaults: true;
     // Labels of the source's calibration blocks, one checkbox each.
@@ -52,6 +53,10 @@ export component ForkDialog inherits Window {
         name-input.text = root.fork-name;
     }
 
+    changed fork-brand => {
+        brand-input.text = root.fork-brand;
+    }
+
     FocusScope {
         width: parent.width;
         height: parent.height;
@@ -75,20 +80,37 @@ export component ForkDialog inherits Window {
                 wrap: word-wrap;
             }
 
-            HorizontalLayout {
+            GridLayout {
                 spacing: 8px;
 
-                Text {
-                    text: @tr("ForkDialog" => "Name");
-                    font-size: 0.85rem;
-                    color: Palette.foreground.transparentize(0.3);
-                    vertical-alignment: center;
+                Row {
+                    Text {
+                        text: @tr("ForkDialog" => "Brand");
+                        font-size: 0.85rem;
+                        color: Palette.foreground.transparentize(0.3);
+                        vertical-alignment: center;
+                    }
+                    brand-input := LineEdit {
+                        text: root.fork-brand;
+                        horizontal-stretch: 1;
+                        edited(t) => {
+                            root.fork-brand = t;
+                        }
+                    }
                 }
-                name-input := LineEdit {
-                    text: root.fork-name;
-                    horizontal-stretch: 1;
-                    edited(t) => {
-                        root.fork-name = t;
+                Row {
+                    Text {
+                        text: @tr("ForkDialog" => "Name");
+                        font-size: 0.85rem;
+                        color: Palette.foreground.transparentize(0.3);
+                        vertical-alignment: center;
+                    }
+                    name-input := LineEdit {
+                        text: root.fork-name;
+                        horizontal-stretch: 1;
+                        edited(t) => {
+                            root.fork-name = t;
+                        }
                     }
                 }
             }
