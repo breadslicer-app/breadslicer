@@ -1,0 +1,135 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, Palette, ScrollView } from "std-widgets.slint";
+import { ThemePreference } from "preferences/appearance.slint";
+
+// One displayed value of the profile viewer. `value` is already
+// formatted on the Rust side; unset optional fields arrive as the
+// translated "not set" text rather than an empty string.
+export struct ProfileViewField {
+    label: string,
+    value: string,
+}
+
+// One section of the profile viewer: identity, intent, defaults, or a
+// calibration block. The section holding the calibration the default
+// printer would use is highlighted.
+export struct ProfileViewSection {
+    title: string,
+    highlighted: bool,
+    fields: [ProfileViewField],
+}
+
+// Read-only view of a material profile: every section and every field,
+// including unset ones. Editing affordances come with the edit mode in
+// a later stage; bundled profiles only ever see this mode.
+export component ProfileViewDialog inherits Window {
+    title: @tr("ProfileViewDialog" => "Resin profile");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
+
+    in-out property <ThemePreference> theme: ThemePreference.System;
+
+    // Headline: the resin's display name, plus the profile origin.
+    in property <string> profile-name;
+    in property <[ProfileViewSection]> sections;
+
+    callback close-requested();
+
+    min-width: 420px;
+    preferred-width: 480px;
+    min-height: 320px;
+    preferred-height: 560px;
+
+    forward-focus: close-button;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            Text {
+                text: root.profile-name;
+                font-size: 1.1rem;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 12px;
+                    alignment: start;
+
+                    for section in root.sections: Rectangle {
+                        border-radius: 6px;
+                        border-width: section.highlighted ? 2px : 1px;
+                        border-color: section.highlighted
+                            ? Palette.accent-background
+                            : Palette.border;
+                        background: Palette.alternate-background;
+                        height: section-body.preferred-height;
+
+                        section-body := VerticalLayout {
+                            padding: 10px;
+                            spacing: 6px;
+
+                            Text {
+                                text: section.title;
+                                font-size: 0.9rem;
+                                font-weight: 700;
+                            }
+
+                            for field in section.fields: HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: field.label;
+                                    font-size: 0.85rem;
+                                    color: Palette.foreground.transparentize(0.3);
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: field.value;
+                                    font-size: 0.85rem;
+                                    horizontal-alignment: right;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                close-button := Button {
+                    text: @tr("ProfileViewDialog" => "Close");
+                    clicked => {
+                        root.close-requested();
+                    }
+                }
+            }
+        }
+    }
+}

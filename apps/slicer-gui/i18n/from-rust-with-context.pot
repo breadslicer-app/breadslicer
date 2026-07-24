@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-24 09:02+0200\n"
+"POT-Creation-Date: 2026-07-24 09:14+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,38 +17,38 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:352
+#: src/preferences_window.rs:369
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:354
+#: src/preferences_window.rs:371
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:358
+#: src/preferences_window.rs:375
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:534
+#: src/preferences_window.rs:647
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:688
+#: src/preferences_window.rs:801
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:756
+#: src/preferences_window.rs:869
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:782
+#: src/preferences_window.rs:895
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -124,6 +124,117 @@ msgstr ""
 #: src/scene_loader.rs:373
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
+msgstr ""
+
+#: src/profile_view.rs:64
+msgctxt "ProfileViewDialog"
+msgid "not set"
+msgstr ""
+
+#: src/profile_view.rs:96
+msgctxt "ProfileViewDialog"
+msgid "Bundled"
+msgstr ""
+
+#: src/profile_view.rs:97
+msgctxt "ProfileViewDialog"
+msgid "Custom"
+msgstr ""
+
+#: src/profile_view.rs:100
+msgctxt "ProfileViewDialog"
+msgid "Identity"
+msgstr ""
+
+#: src/profile_view.rs:104
+msgctxt "ProfileViewDialog"
+msgid "Brand"
+msgstr ""
+
+#: src/profile_view.rs:108
+msgctxt "ProfileViewDialog"
+msgid "Name"
+msgstr ""
+
+#: src/profile_view.rs:112
+msgctxt "ProfileViewDialog"
+msgid "Family"
+msgstr ""
+
+#: src/profile_view.rs:116
+msgctxt "ProfileViewDialog"
+msgid "Profile version"
+msgstr ""
+
+#: src/profile_view.rs:119
+msgctxt "ProfileViewDialog"
+msgid "Origin"
+msgstr ""
+
+#: src/profile_view.rs:127
+msgctxt "ProfileViewDialog"
+msgid "Intent"
+msgstr ""
+
+#: src/profile_view.rs:131
+msgctxt "ProfileViewDialog"
+msgid "Target energy density (mJ/cm2)"
+msgstr ""
+
+#: src/profile_view.rs:135
+msgctxt "ProfileViewDialog"
+msgid "Target layer height (mm)"
+msgstr ""
+
+#: src/profile_view.rs:156
+msgctxt "ProfileViewDialog"
+msgid "Defaults"
+msgstr ""
+
+#: src/profile_view.rs:160
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation (x/y/z)"
+msgstr ""
+
+#: src/profile_view.rs:164 src/profile_view.rs:261
+msgctxt "ProfileViewDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: src/profile_view.rs:237
+msgctxt "ProfileViewDialog"
+msgid "Generic calibration"
+msgstr ""
+
+#: src/profile_view.rs:239
+#, rust-format
+msgctxt "ProfileViewDialog"
+msgid "Calibration: {}"
+msgstr ""
+
+#: src/profile_view.rs:253
+msgctxt "ProfileViewDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: src/profile_view.rs:257
+msgctxt "ProfileViewDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: src/profile_view.rs:265
+msgctxt "ProfileViewDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: src/profile_view.rs:269
+msgctxt "ProfileViewDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view.rs:273
+msgctxt "ProfileViewDialog"
+msgid "Retract speed (mm/min)"
 msgstr ""
 
 #: src/language.rs:79

@@ -10,6 +10,7 @@ import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { ObjectListPanel } from "./object-list-panel.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
+import { ProfileViewDialog } from "profile-view-dialog.slint";
 import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
 
 // Embeds Noto Sans into the executable and registers it process wide.
@@ -18,7 +19,7 @@ import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-export { AboutWindow, AxisView, ErrorDialog, PointerModifiers, PreferencesWindow, ReplaceSceneDialog, ThemePreference }
+export { AboutWindow, AxisView, ErrorDialog, PointerModifiers, PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, ThemePreference }
 
 // Resize handle between the viewport and the object-list panel. Tracks
 // the cursor in absolute window coordinates so the splitter remains

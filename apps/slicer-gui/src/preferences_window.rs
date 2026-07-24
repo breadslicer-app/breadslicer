@@ -16,7 +16,10 @@ use slint::{
 };
 
 use sc_print_primitives::PrinterId;
-use sc_print_profiles::user_library_dir;
+use sc_print_profiles::{
+    MaterialProfile, load_material_extension_from_library, load_material_profile_by_id,
+    user_library_dir,
+};
 
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
@@ -31,8 +34,9 @@ use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
     run_import,
 };
+use crate::profile_view::{build_profile_view_model, profile_display_name};
 use crate::window_prefs::WindowPreferences;
-use crate::{PillKind, PreferencesWindow, PrinterCard, ResinPill, ResinRow};
+use crate::{PillKind, PreferencesWindow, PrinterCard, ProfileViewDialog, ResinPill, ResinRow};
 
 /// A printer tile plus the fields the manufacturer / search filter
 /// needs but the Slint tile does not carry. Held once per session; the
@@ -257,9 +261,22 @@ pub(crate) fn build_preferences_window(
     prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
     prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
 
-    // The row-level View / Fork / Extend / Edit / Delete callbacks
-    // exist in the UI already but are not wired yet; the viewer,
-    // editor, fork, and extend flows land in the follow-up stages.
+    // Holds the profile viewer while it is open so it is not dropped
+    // (and closed) the moment its opener returns. Opening another
+    // profile replaces (and closes) the previous viewer.
+    let view_dialog: Rc<RefCell<Option<ProfileViewDialog>>> = Rc::new(RefCell::new(None));
+    prefs.on_view_requested({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let view_dialog = view_dialog.clone();
+        move |index| {
+            open_profile_view_dialog(&bus, &catalog_handle, &view_dialog, index);
+        }
+    });
+
+    // The row-level Fork / Extend / Edit / Delete callbacks exist in
+    // the UI already but are not wired yet; the editor, fork, and
+    // extend flows land in the follow-up stages.
 
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
@@ -373,6 +390,102 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
     }) {
         eprintln!("failed to spawn import task: {err}");
     }
+}
+
+/// Load the material profile behind a catalog entry. Regular entries
+/// resolve through the by-id cascade (user library shadowing the
+/// bundled one); an id whose only file is an extension (its base
+/// profile is gone) falls back to the extension file itself so the
+/// data stays viewable.
+fn load_profile_for_view(
+    catalog: &ProfileCatalog,
+    index: i32,
+) -> Option<(MaterialProfile, Option<MaterialProfile>, ProfileSource)> {
+    let entry = catalog.materials().get(index as usize)?;
+    let user_lib = match user_library_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("cannot resolve the user profile library directory: {err}");
+            return None;
+        }
+    };
+    let bundled = sc_app_paths::bundled_data_dir().join("profiles");
+
+    let profile = match load_material_profile_by_id(&entry.id, None, &user_lib, &bundled) {
+        Ok(profile) => profile,
+        Err(base_err) => match load_material_extension_from_library(&user_lib, &entry.id) {
+            Ok(orphan_extension) => orphan_extension,
+            Err(_) => {
+                eprintln!("{base_err}");
+                return None;
+            }
+        },
+    };
+
+    let extension = catalog.extension_for(&entry.id).and_then(|_| {
+        match load_material_extension_from_library(&user_lib, &entry.id) {
+            Ok(extension) => Some(extension),
+            Err(err) => {
+                eprintln!("{err}");
+                None
+            }
+        }
+    });
+
+    Some((profile, extension, entry.source))
+}
+
+/// Open the read-only profile viewer for the resin at `index`: the
+/// base profile's sections plus its extension's calibration blocks,
+/// with the block the default printer would use highlighted.
+fn open_profile_view_dialog(
+    bus: &Rc<PreferencesBus>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    dialog_slot: &Rc<RefCell<Option<ProfileViewDialog>>>,
+    index: i32,
+) {
+    let catalog = catalog_handle.borrow().clone();
+    let Some((profile, extension, source)) = load_profile_for_view(&catalog, index) else {
+        return;
+    };
+
+    let snapshot = bus.snapshot();
+    let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
+    let sections = build_profile_view_model(
+        &profile,
+        extension.as_ref(),
+        catalog.printers(),
+        default_printer.as_ref(),
+        source,
+    );
+
+    let dialog = match ProfileViewDialog::new() {
+        Ok(dialog) => dialog,
+        Err(err) => {
+            eprintln!("failed to create the profile viewer: {err}");
+            return;
+        }
+    };
+    dialog.set_theme(snapshot.theme);
+    dialog.set_profile_name(profile_display_name(&profile).into());
+    dialog.set_sections(ModelRc::new(VecModel::from(sections)));
+
+    let dialog_weak = dialog.as_weak();
+    dialog.on_close_requested({
+        let dialog_slot = dialog_slot.clone();
+        move || {
+            if let Some(d) = dialog_weak.upgrade() {
+                let _ = d.hide();
+            }
+            *dialog_slot.borrow_mut() = None;
+        }
+    });
+
+    if let Err(err) = dialog.show() {
+        eprintln!("failed to show the profile viewer: {err}");
+        return;
+    }
+    *dialog_slot.borrow_mut() = Some(dialog);
 }
 
 /// Push the current selection (printer / resin indices, the derived
