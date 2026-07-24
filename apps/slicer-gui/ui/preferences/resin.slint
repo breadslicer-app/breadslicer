@@ -100,7 +100,7 @@ export component ResinPreferences inherits PreferencesPage {
                 ? Palette.selection-background
                 : transparent;
 
-            ContextMenuArea {
+            row-menu := ContextMenuArea {
                 Menu {
                     MenuItem {
                         title: @tr("PreferencesPage" => "View");
@@ -136,11 +136,21 @@ export component ResinPreferences inherits PreferencesPage {
 
                 // Behind the row content so the row buttons, drawn on
                 // top, still receive their own clicks while a click
-                // anywhere else on the row selects the resin.
+                // anywhere else on the row selects the resin. The
+                // TouchArea grabs presses of every button, so the
+                // right-click that would open the surrounding
+                // ContextMenuArea never reaches it; the menu is opened
+                // explicitly instead.
                 TouchArea {
                     clicked => {
                         root.selected-resin-index = row.id-index;
                         root.resin-selected(row.id-index);
+                    }
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down
+                            && event.button == PointerEventButton.right) {
+                            row-menu.show({ x: self.mouse-x, y: self.mouse-y });
+                        }
                     }
                 }
 
