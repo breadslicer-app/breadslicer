@@ -1,0 +1,144 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+//! Assembling a forked resin profile.
+//!
+//! A fork is a new full custom profile seeded from a source profile:
+//! the identity keeps the source's brand / family / profile version
+//! under a user-entered name and a fresh id derived from it, and the
+//! user picks which parts to carry over (intent, defaults, any of the
+//! source's own calibration blocks). Selected parts are copied
+//! verbatim; unselected ones start empty. The result is an ordinary
+//! material profile, never an extension. The dialog wiring lives in
+//! the preferences window.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use sc_print_primitives::{MaterialId, NonEmptyString, PrinterId};
+use sc_print_profiles::{MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialProfile};
+
+/// Which parts of the source profile the fork carries over.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ForkParts {
+    pub intent: bool,
+    pub defaults: bool,
+    /// The source calibration blocks to copy, by per-printer key.
+    pub blocks: Vec<PrinterId>,
+}
+
+/// Why a fork could not be assembled. Rendered straight into the
+/// dialog's inline error message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ForkError {
+    EmptyName,
+    NoAvailableId,
+}
+
+impl fmt::Display for ForkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => write!(f, "Enter a name for the forked profile"),
+            Self::NoAvailableId => write!(f, "Could not derive a free profile id from that name"),
+        }
+    }
+}
+
+impl std::error::Error for ForkError {}
+
+/// Assemble the fork: a fresh unique id derived from `name`, the
+/// source's other identity fields, and verbatim copies of exactly the
+/// selected parts. `existing` is the set of material ids already in
+/// the catalog, used to keep the derived id unique.
+pub(crate) fn build_fork(
+    source: &MaterialProfile,
+    parts: &ForkParts,
+    name: &str,
+    existing: &BTreeSet<MaterialId>,
+) -> Result<MaterialProfile, ForkError> {
+    let name = NonEmptyString::new(name.trim()).map_err(|_| ForkError::EmptyName)?;
+    let id =
+        unique_material_id(&slugify(name.as_str()), existing).ok_or(ForkError::NoAvailableId)?;
+
+    Ok(MaterialProfile {
+        extension: false,
+        identity: MaterialIdentity {
+            id,
+            brand: source.identity.brand.clone(),
+            family: source.identity.family.clone(),
+            name,
+            profile_version: source.identity.profile_version.clone(),
+        },
+        intent: if parts.intent {
+            source.intent
+        } else {
+            MaterialIntent {
+                target_energy_density_mj_per_cm2: None,
+                target_layer_height_mm: None,
+            }
+        },
+        defaults: if parts.defaults {
+            source.defaults
+        } else {
+            MaterialDefaults {
+                scale_compensation_pct: None,
+                bottom_layer_count: None,
+            }
+        },
+        per_printer: parts
+            .blocks
+            .iter()
+            .filter_map(|printer| {
+                source
+                    .per_printer
+                    .get(printer)
+                    .map(|block| (printer.clone(), *block))
+            })
+            .collect::<BTreeMap<_, _>>(),
+    })
+}
+
+/// Reduce a display name to a slug matching `^[a-z0-9][a-z0-9-]*$`:
+/// lowercase ASCII alphanumerics kept, every other run collapsed to a
+/// single hyphen, no leading or trailing hyphen. May be empty when the
+/// name has no slug-able characters.
+fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    let mut pending_hyphen = false;
+    for ch in name.chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_lowercase() || lower.is_ascii_digit() {
+            if pending_hyphen && !out.is_empty() {
+                out.push('-');
+            }
+            pending_hyphen = false;
+            out.push(lower);
+        } else {
+            pending_hyphen = true;
+        }
+    }
+    out
+}
+
+/// The first free id from `slug`, `slug-2`, `slug-3`, ... that is a
+/// valid [`MaterialId`] and not already present. `None` when `slug` is
+/// empty or every candidate is taken.
+fn unique_material_id(slug: &str, existing: &BTreeSet<MaterialId>) -> Option<MaterialId> {
+    if slug.is_empty() {
+        return None;
+    }
+    let base = MaterialId::new(slug).ok()?;
+    if !existing.contains(&base) {
+        return Some(base);
+    }
+    (2..10_000).find_map(|n| {
+        MaterialId::new(&format!("{slug}-{n}"))
+            .ok()
+            .filter(|id| !existing.contains(id))
+    })
+}
+
+#[cfg(test)]
+mod tests;

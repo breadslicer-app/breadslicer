@@ -32,6 +32,7 @@ mod picking;
 mod preferences_bus;
 mod preferences_window;
 pub mod profile_catalog;
+mod profile_forking;
 mod profile_transfer;
 mod profile_view;
 mod scene_document;

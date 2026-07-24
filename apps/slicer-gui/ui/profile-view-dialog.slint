@@ -65,6 +65,9 @@ export component ProfileViewDialog inherits Window {
 
     // Headline: the resin's display name, plus the profile origin.
     in property <string> profile-name;
+    // Optional notice under the headline (e.g. that a fresh fork is
+    // already saved); hidden when empty.
+    in property <string> note;
     in property <[ProfileViewSection]> sections;
 
     // Edit mode. `editable` turns the edit cards on; extensions keep
@@ -129,6 +132,13 @@ export component ProfileViewDialog inherits Window {
                 text: root.profile-name;
                 font-size: 1.1rem;
                 font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            if root.note != "": Text {
+                text: root.note;
+                font-size: 0.85rem;
+                color: Palette.foreground.transparentize(0.3);
                 wrap: word-wrap;
             }
 

@@ -1,0 +1,154 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Button, CheckBox, LineEdit, Palette, ScrollView } from "std-widgets.slint";
+import { ThemePreference } from "preferences/appearance.slint";
+
+// Fork dialog: names the new profile and picks which parts of the
+// source it carries over (intent, defaults, and any of the source's
+// own calibration blocks; every part starts selected). This component
+// only reports the choices; the fork itself is assembled in Rust.
+export component ForkDialog inherits Window {
+    title: @tr("ForkDialog" => "Fork resin profile");
+    icon: @image-url("../assets/images/soulcrafted.svg");
+    default-font-family: "Noto Sans";
+
+    in-out property <ThemePreference> theme: ThemePreference.System;
+
+    in property <string> source-name;
+    in-out property <string> fork-name;
+    in-out property <bool> copy-intent: true;
+    in-out property <bool> copy-defaults: true;
+    // Labels of the source's calibration blocks, one checkbox each.
+    // Their checked state lives on the Rust side, updated through
+    // `block-toggled`; every block starts selected.
+    in property <[string]> block-labels;
+    in property <string> error-message;
+
+    callback block-toggled(int, bool);
+    callback confirm-requested();
+    callback cancel-requested();
+
+    min-width: 420px;
+    preferred-width: 460px;
+    min-height: 280px;
+    preferred-height: 420px;
+
+    forward-focus: name-input;
+
+    changed theme => {
+        Palette.color-scheme =
+            (root.theme == ThemePreference.Light) ? ColorScheme.light :
+            (root.theme == ThemePreference.Dark) ? ColorScheme.dark :
+            ColorScheme.unknown;
+    }
+
+    // External updates (the caller's prefill) must be pushed back into
+    // the LineEdit explicitly: its text binding breaks the first time
+    // the user types.
+    changed fork-name => {
+        name-input.text = root.fork-name;
+    }
+
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancel-requested();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+
+            Text {
+                text: @tr("ForkDialog" => "Fork {}", root.source-name);
+                font-size: 1.1rem;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: @tr("ForkDialog" => "Name");
+                    font-size: 0.85rem;
+                    color: Palette.foreground.transparentize(0.3);
+                    vertical-alignment: center;
+                }
+                name-input := LineEdit {
+                    text: root.fork-name;
+                    horizontal-stretch: 1;
+                    edited(t) => {
+                        root.fork-name = t;
+                    }
+                }
+            }
+
+            Text {
+                text: @tr("ForkDialog" => "Copy from the source:");
+                font-size: 0.85rem;
+                color: Palette.foreground.transparentize(0.3);
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 6px;
+                    alignment: start;
+
+                    CheckBox {
+                        text: @tr("ForkDialog" => "Intent");
+                        checked <=> root.copy-intent;
+                    }
+                    CheckBox {
+                        text: @tr("ForkDialog" => "Defaults");
+                        checked <=> root.copy-defaults;
+                    }
+                    for label[index] in root.block-labels: CheckBox {
+                        text: @tr("ForkDialog" => "Calibration: {}", label);
+                        checked: true;
+                        toggled => {
+                            root.block-toggled(index, self.checked);
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.error-message;
+                    color: #d32f2f;
+                    font-size: 0.85rem;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: @tr("ForkDialog" => "Create");
+                    primary: true;
+                    clicked => {
+                        root.confirm-requested();
+                    }
+                }
+                Button {
+                    text: @tr("ForkDialog" => "Cancel");
+                    clicked => {
+                        root.cancel-requested();
+                    }
+                }
+            }
+        }
+    }
+}
