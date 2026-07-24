@@ -40,6 +40,9 @@ export component PreferencesWindow inherits Window {
 
     in property <[ResinRow]> resin-rows;
     in-out property <int> selected-resin-index: -1;
+    // The pills' effective font size, resolved from rem against this
+    // window; the Rust side measures pill labels at exactly this size.
+    out property <length> pill-font-size: 0.75rem;
 
     callback close-requested();
     callback theme-changed(ThemePreference);
@@ -48,6 +51,7 @@ export component PreferencesWindow inherits Window {
     callback printer-search-changed(string);
     callback printer-selected(int);
     callback resin-selected(int);
+    callback pill-width-changed(int, bool, length);
     callback view-requested(int);
     callback fork-requested(int);
     callback extend-requested(int);
@@ -125,6 +129,9 @@ export component PreferencesWindow inherits Window {
                 selected-resin-index <=> root.selected-resin-index;
                 resin-selected(i) => {
                     root.resin-selected(i);
+                }
+                pill-width-changed(i, ext, w) => {
+                    root.pill-width-changed(i, ext, w);
                 }
                 view-requested(i) => {
                     root.view-requested(i);

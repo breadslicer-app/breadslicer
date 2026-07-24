@@ -4797,6 +4797,7 @@ dependencies = [
  "image",
  "pollster",
  "rfd",
+ "rustybuzz",
  "sc-app-paths",
  "sc-mesh-core",
  "sc-mesh-formats",

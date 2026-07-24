@@ -4,7 +4,7 @@
  */
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -45,6 +45,7 @@ use crate::profile_view::{
     build_profile_view_model, identity_section, intent_section, ordered_calibration_targets,
     profile_display_name,
 };
+use crate::text_metrics::TextMeasurer;
 use crate::window_prefs::WindowPreferences;
 use crate::{
     ExtendDialog, ForkDialog, PillKind, PreferencesWindow, PrinterCard, ProfileViewDialog,
@@ -87,12 +88,15 @@ pub(crate) fn build_preferences_window(
     // narrow the visible tiles. Never reaches the bus.
     let current_tab = Rc::new(Cell::new(0i32));
     let search_lower = Rc::new(RefCell::new(String::new()));
+    // Text measurer + per-row pill area widths, shared by the full
+    // row derivation and the per-row reflow callback.
+    let pill_layout = Rc::new(PillLayout::new());
 
     let snapshot = bus.snapshot();
     prefs.apply_preferences(&snapshot);
     // Selection first: the visible-cards pass below reads the selected
     // printer index back from the window.
-    apply_printing(&prefs, &snapshot, &catalog);
+    apply_printing(&prefs, &snapshot, &catalog, &pill_layout);
 
     // Start on the selected printer's manufacturer tab rather than
     // "All", so the printer chosen in the persisted settings is in
@@ -137,6 +141,7 @@ pub(crate) fn build_preferences_window(
         let current_tab = current_tab.clone();
         let search_lower = search_lower.clone();
         let thumbnail_timer = thumbnail_timer.clone();
+        let pill_layout = pill_layout.clone();
         Rc::new(move || {
             let Some(w) = prefs_weak.upgrade() else {
                 return;
@@ -147,7 +152,7 @@ pub(crate) fn build_preferences_window(
             // Selection first: catalog indices may have shifted, and
             // the visible-cards pass reads the selected printer index
             // back from the window.
-            apply_printing(&w, &bus.snapshot(), &catalog);
+            apply_printing(&w, &bus.snapshot(), &catalog, &pill_layout);
             set_tabs_model(&w, &tabs.borrow());
             set_visible_cards(
                 &w,
@@ -266,6 +271,24 @@ pub(crate) fn build_preferences_window(
         }
     });
 
+    prefs.on_pill_width_changed({
+        let prefs_weak = prefs_weak.clone();
+        let catalog_handle = catalog_handle.clone();
+        let bus = bus.clone();
+        let pill_layout = pill_layout.clone();
+        move |id_index, is_extension, width| {
+            reflow_row_pills(
+                &prefs_weak,
+                &catalog_handle,
+                &bus,
+                &pill_layout,
+                id_index,
+                is_extension,
+                width,
+            );
+        }
+    });
+
     prefs.on_import_requested({
         let catalog_handle = catalog_handle.clone();
         let refresh_view = refresh_view.clone();
@@ -356,11 +379,12 @@ pub(crate) fn build_preferences_window(
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
         let catalog_handle = catalog_handle.clone();
+        let pill_layout = pill_layout.clone();
         move |snap, _change| {
             if let Some(w) = prefs_weak.upgrade() {
                 w.apply_preferences(snap);
                 let catalog = catalog_handle.borrow().clone();
-                apply_printing(&w, snap, &catalog);
+                apply_printing(&w, snap, &catalog, &pill_layout);
             }
         }
     });
@@ -1144,7 +1168,9 @@ fn apply_printing(
     window: &PreferencesWindow,
     snap: &PreferencesSnapshot,
     catalog: &ProfileCatalog,
+    layout: &PillLayout,
 ) {
+    layout.font_px.set(window.get_pill_font_size());
     // The gallery highlights, the calibration affordances, and the
     // per-printer resin ordering all track the effective printer: the
     // persisted choice, or the first-run soft default until the user
@@ -1170,6 +1196,7 @@ fn apply_printing(
         catalog.extensions(),
         catalog.printers(),
         effective_printer.as_ref(),
+        layout,
     );
     window.set_resin_rows(ModelRc::new(VecModel::from(rows)));
 }
@@ -1395,13 +1422,55 @@ fn set_visible_cards(
     window.set_printer_cards(ModelRc::new(VecModel::from(cards)));
 }
 
-/// Character budget one pill line targets. The estimate only decides
-/// break points: a single pill longer than the budget still gets its
-/// own line in full.
-const PILL_LINE_CHAR_BUDGET: usize = 48;
+/// Horizontal padding a pill rectangle adds around its label text, in
+/// logical px (must match the pill width binding in resin.slint).
+const PILL_PADDING_PX: f32 = 14.0;
 
-/// Estimated character cost of a pill's padding and inter-pill gap.
-const PILL_OVERHEAD_CHARS: usize = 3;
+/// Gap between 2 pills on a line, in logical px (must match the pill
+/// line spacing in resin.slint).
+const PILL_GAP_PX: f32 = 4.0;
+
+/// Pill area width assumed for a row until it reports its real one
+/// through the `pill-width-changed` callback.
+const DEFAULT_PILL_AREA_PX: f32 = 340.0;
+
+/// Shared state of the pill line layout: the text measurer, the
+/// pills' effective font size, and each row's last reported pill area
+/// width, keyed by (catalog index, is-extension-row).
+struct PillLayout {
+    measurer: Option<TextMeasurer>,
+    font_px: Cell<f32>,
+    widths: RefCell<BTreeMap<(i32, bool), f32>>,
+}
+
+impl PillLayout {
+    fn new() -> Self {
+        Self {
+            measurer: TextMeasurer::bundled(),
+            font_px: Cell::new(12.0),
+            widths: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// Width of a pill label at the current font size. Falls back to
+    /// a rough per-char estimate if the bundled font did not parse.
+    fn measure(&self, text: &str) -> f32 {
+        match &self.measurer {
+            Some(measurer) => measurer.width_px(text, self.font_px.get()),
+            None => text.chars().count() as f32 * 0.6 * self.font_px.get(),
+        }
+    }
+
+    /// The line budget for a row, or the default until the row has
+    /// reported its real width.
+    fn budget(&self, id_index: i32, is_extension: bool) -> f32 {
+        self.widths
+            .borrow()
+            .get(&(id_index, is_extension))
+            .copied()
+            .unwrap_or(DEFAULT_PILL_AREA_PX)
+    }
+}
 
 /// Resin rows for the list, in 3 tiers: profiles whose block (the
 /// base profile's own or its extension's) matches the default printer
@@ -1415,10 +1484,12 @@ fn derive_resin_view(
     extensions: &[MaterialExtensionEntry],
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
+    layout: &PillLayout,
 ) -> Vec<ResinRow> {
     let mut matched_rows = Vec::new();
     let mut unmatched_rows = Vec::new();
     let mut dataless_rows = Vec::new();
+    let measure = |text: &str| layout.measure(text);
     for (i, entry) in materials.iter().enumerate() {
         let extension = extensions.iter().find(|ext| ext.id == entry.id);
         // The red no-data marker reflects the whole resin: a base
@@ -1434,30 +1505,30 @@ fn derive_resin_view(
         };
 
         let can_extend = has_uncovered_target(entry, extension, printers);
-        let parent_pills = if union_empty {
-            vec![no_data_pill(default_printer)]
-        } else {
-            build_pills(&entry.calibrated_printers, printers, default_printer)
-        };
         target.push(ResinRow {
             name: SharedString::from(entry.name.as_str()),
             brand: SharedString::from(entry.brand.as_str()),
             family: SharedString::from(entry.family.as_str()),
-            pill_lines: pill_lines_model(chunk_pills(parent_pills, PILL_LINE_CHAR_BUDGET)),
+            pill_lines: pill_lines_model(chunk_pills(
+                row_pill_list(entry, extension, printers, default_printer, false),
+                layout.budget(i as i32, false),
+                &measure,
+            )),
             is_custom: entry.source == ProfileSource::User,
             is_extension: false,
             can_extend,
             id_index: i as i32,
         });
 
-        if let Some(ext) = extension {
+        if extension.is_some() {
             target.push(ResinRow {
                 name: ctr!("PreferencesPage", "{} (extended)", entry.name),
                 brand: SharedString::from(entry.brand.as_str()),
                 family: SharedString::from(entry.family.as_str()),
                 pill_lines: pill_lines_model(chunk_pills(
-                    build_pills(&ext.printers, printers, default_printer),
-                    PILL_LINE_CHAR_BUDGET,
+                    row_pill_list(entry, extension, printers, default_printer, true),
+                    layout.budget(i as i32, true),
+                    &measure,
                 )),
                 is_custom: true,
                 is_extension: true,
@@ -1469,6 +1540,83 @@ fn derive_resin_view(
     matched_rows.extend(unmatched_rows);
     matched_rows.extend(dataless_rows);
     matched_rows
+}
+
+/// Re-lays one row's pills against its freshly reported pill area
+/// width, updating the row in place (which keeps the ListView scroll
+/// position). Sub-pixel report jitter is ignored.
+fn reflow_row_pills(
+    prefs_weak: &slint::Weak<PreferencesWindow>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    bus: &Rc<PreferencesBus>,
+    layout: &Rc<PillLayout>,
+    id_index: i32,
+    is_extension: bool,
+    width: f32,
+) {
+    let key = (id_index, is_extension);
+    {
+        let mut widths = layout.widths.borrow_mut();
+        if widths.get(&key).is_some_and(|w| (w - width).abs() < 0.5) {
+            return;
+        }
+        widths.insert(key, width);
+    }
+    let Some(window) = prefs_weak.upgrade() else {
+        return;
+    };
+    layout.font_px.set(window.get_pill_font_size());
+    let catalog = catalog_handle.borrow().clone();
+    let Some(entry) = catalog.materials().get(id_index as usize) else {
+        return;
+    };
+    let extension = catalog.extension_for(&entry.id);
+    let default_printer =
+        catalog.effective_default_printer(bus.snapshot().default_printer.as_ref());
+    let pills = row_pill_list(
+        entry,
+        extension,
+        catalog.printers(),
+        default_printer.as_ref(),
+        is_extension,
+    );
+    let lines = pill_lines_model(chunk_pills(pills, width, &|text| layout.measure(text)));
+
+    let rows = window.get_resin_rows();
+    for position in 0..rows.row_count() {
+        let Some(mut row) = rows.row_data(position) else {
+            continue;
+        };
+        if row.id_index == id_index && row.is_extension == is_extension {
+            row.pill_lines = lines;
+            rows.set_row_data(position, row);
+            break;
+        }
+    }
+}
+
+/// The unchunked pills of one row: the base profile's calibration
+/// tags (or the red no-data marker when base and extension are both
+/// empty), or, for an extension row, the extension's own tags.
+fn row_pill_list(
+    entry: &MaterialCatalogEntry,
+    extension: Option<&MaterialExtensionEntry>,
+    printers: &[PrinterCatalogEntry],
+    default_printer: Option<&PrinterId>,
+    is_extension_row: bool,
+) -> Vec<ResinPill> {
+    if is_extension_row {
+        return extension
+            .map(|ext| build_pills(&ext.printers, printers, default_printer))
+            .unwrap_or_default();
+    }
+    let union_empty =
+        entry.calibrated_printers.is_empty() && extension.is_none_or(|ext| ext.printers.is_empty());
+    if union_empty {
+        vec![no_data_pill(default_printer)]
+    } else {
+        build_pills(&entry.calibrated_printers, printers, default_printer)
+    }
 }
 
 /// Whether some printer in the catalog has no calibration block in
@@ -1556,21 +1704,31 @@ fn no_data_pill(default_printer: Option<&PrinterId>) -> ResinPill {
     }
 }
 
-/// Greedy line assignment for content-sized pills: a pill starts a new
-/// line when the estimated character cost would overflow the budget.
-/// The estimate never truncates; an oversized pill simply owns its
-/// line.
-fn chunk_pills(pills: Vec<ResinPill>, budget_chars: usize) -> Vec<Vec<ResinPill>> {
+/// Greedy line assignment for content-sized pills: a pill starts a
+/// new line when its measured px cost (label width + pill padding +
+/// inter-pill gap) would overflow the budget. Nothing truncates; an
+/// oversized pill simply owns its line.
+fn chunk_pills(
+    pills: Vec<ResinPill>,
+    budget_px: f32,
+    measure: &dyn Fn(&str) -> f32,
+) -> Vec<Vec<ResinPill>> {
     let mut lines = Vec::new();
     let mut line: Vec<ResinPill> = Vec::new();
-    let mut used = 0usize;
+    let mut used = 0.0f32;
     for pill in pills {
-        let cost = pill.label.chars().count() + PILL_OVERHEAD_CHARS;
-        if !line.is_empty() && used + cost > budget_chars {
+        let cost = measure(&pill.label) + PILL_PADDING_PX;
+        let extended = if line.is_empty() {
+            cost
+        } else {
+            used + PILL_GAP_PX + cost
+        };
+        if !line.is_empty() && extended > budget_px {
             lines.push(std::mem::take(&mut line));
-            used = 0;
+            used = cost;
+        } else {
+            used = extended;
         }
-        used += cost;
         line.push(pill);
     }
     if !line.is_empty() {
@@ -1805,6 +1963,16 @@ mod derive_resin_view_tests {
         }
     }
 
+    /// Layout with no measurer (deterministic per-char estimate) and
+    /// no reported widths (every row uses the default budget).
+    fn test_layout() -> PillLayout {
+        PillLayout {
+            measurer: None,
+            font_px: Cell::new(12.0),
+            widths: RefCell::new(BTreeMap::new()),
+        }
+    }
+
     /// Flatten a row's chunked pill lines back into (label, kind)
     /// pairs for assertions.
     fn row_pills(row: &ResinRow) -> Vec<(String, PillKind)> {
@@ -1823,7 +1991,13 @@ mod derive_resin_view_tests {
             material("c-resin", "Gamma", "C", &[]),
             material("d-resin", "Delta", "D", &["generic-machine"]),
         ];
-        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &[],
+            &[],
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         // Matched (b: specific, d: generic fallback) first in base
         // order, then the rest.
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
@@ -1842,7 +2016,13 @@ mod derive_resin_view_tests {
             material("blu", "Siraya Tech", "Blu", &["saturn-4"]),
             material("build", "Siraya Tech", "Build", &["saturn-4"]),
         ];
-        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("mars-5")));
+        let rows = derive_resin_view(
+            &materials,
+            &[],
+            &[],
+            Some(&printer("mars-5")),
+            &test_layout(),
+        );
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         assert_eq!(ids, vec![2, 3, 0, 1]);
     }
@@ -1856,7 +2036,13 @@ mod derive_resin_view_tests {
             material("empty", "Zeta", "Empty", &[]),
         ];
         let extensions = vec![extension("empty", &["printer-b"])];
-        let rows = derive_resin_view(&materials, &extensions, &[], Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &[],
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         // "empty" (+ its extension row) leads despite sorting after
         // "bare" by brand.
@@ -1871,7 +2057,13 @@ mod derive_resin_view_tests {
             material("z-resin", "Zeta", "Z", &["printer-b"]),
         ];
         let extensions = vec![extension("z-resin", &["printer-a"])];
-        let rows = derive_resin_view(&materials, &extensions, &[], Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &[],
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         // z-resin's extension covers our printer: parent + extension
         // rows lead; a-resin (unmatched) follows.
         assert_eq!(rows.len(), 3);
@@ -1895,6 +2087,7 @@ mod derive_resin_view_tests {
             &extensions,
             &printers,
             Some(&printer("printer-a")),
+            &test_layout(),
         );
         assert_eq!(rows.len(), 2);
         let ext_row = &rows[1];
@@ -1923,7 +2116,13 @@ mod derive_resin_view_tests {
             printer_entry("printer-z", "Printer Z"),
             printer_entry("generic-machine", "Generic Machine"),
         ];
-        let rows = derive_resin_view(&materials, &[], &printers, Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &[],
+            &printers,
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         // Default printer first (green), generic next (yellow), the
         // rest by label (gray).
         assert_eq!(
@@ -1946,6 +2145,7 @@ mod derive_resin_view_tests {
             &[],
             &printers,
             Some(&printer("generic-machine")),
+            &test_layout(),
         );
         assert_eq!(
             row_pills(&rows[0]),
@@ -1956,7 +2156,13 @@ mod derive_resin_view_tests {
     #[test]
     fn a_pill_falls_back_to_the_id_when_the_printer_is_unknown() {
         let materials = vec![material("a-resin", "Alpha", "A", &["gone-printer"])];
-        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &[],
+            &[],
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         assert_eq!(
             row_pills(&rows[0]),
             vec![("gone-printer".to_owned(), PillKind::Other)]
@@ -1966,7 +2172,13 @@ mod derive_resin_view_tests {
     #[test]
     fn zero_block_materials_get_the_red_no_data_pill() {
         let materials = vec![material("a-resin", "Alpha", "A", &[])];
-        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &[],
+            &[],
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         let pills = row_pills(&rows[0]);
         assert_eq!(pills.len(), 1);
         assert_eq!(pills[0].1, PillKind::NoData);
@@ -1976,7 +2188,13 @@ mod derive_resin_view_tests {
     fn a_covering_extension_suppresses_the_parents_no_data_pill() {
         let materials = vec![material("a-resin", "Alpha", "A", &[])];
         let extensions = vec![extension("a-resin", &["printer-b"])];
-        let rows = derive_resin_view(&materials, &extensions, &[], Some(&printer("printer-a")));
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &[],
+            Some(&printer("printer-a")),
+            &test_layout(),
+        );
         // The resin has data (in the extension row); the parent row
         // shows neither pills nor the red marker.
         assert!(row_pills(&rows[0]).is_empty());
@@ -1989,7 +2207,7 @@ mod derive_resin_view_tests {
             material("a-resin", "Alpha", "A", &["printer-a", "generic-machine"]),
             material("b-resin", "Beta", "B", &[]),
         ];
-        let rows = derive_resin_view(&materials, &[], &[], None);
+        let rows = derive_resin_view(&materials, &[], &[], None, &test_layout());
         for (_, kind) in rows.iter().flat_map(row_pills) {
             assert_eq!(kind, PillKind::Other);
         }
@@ -1999,7 +2217,7 @@ mod derive_resin_view_tests {
     fn custom_flag_reflects_the_source() {
         let mut entry = material("a-resin", "Alpha", "A", &[]);
         entry.source = ProfileSource::User;
-        let rows = derive_resin_view(&[entry], &[], &[], None);
+        let rows = derive_resin_view(&[entry], &[], &[], None, &test_layout());
         assert!(rows[0].is_custom);
         assert!(!rows[0].is_extension);
     }
@@ -2017,6 +2235,7 @@ mod derive_resin_view_tests {
             &extensions,
             &all_covered,
             Some(&printer("printer-a")),
+            &test_layout(),
         );
         // Base plus extension cover every catalog printer: nothing
         // left to extend, on either row.
@@ -2033,6 +2252,7 @@ mod derive_resin_view_tests {
             &extensions,
             &with_uncovered,
             Some(&printer("printer-a")),
+            &test_layout(),
         );
         assert!(rows[0].can_extend);
         assert!(rows[1].can_extend);
@@ -2045,16 +2265,40 @@ mod derive_resin_view_tests {
             pill("bbbb", PillKind::Other),
             pill("cccc", PillKind::Other),
         ];
-        // Each pill costs 4 + overhead; a budget of two pills per
-        // line splits 3 pills into 2 lines.
-        let budget = 2 * (4 + PILL_OVERHEAD_CHARS);
-        let lines = chunk_pills(pills, budget);
+        // With 10px per char, each pill costs 40 + padding; a budget
+        // of 2 pills and 1 gap per line splits 3 pills into 2 lines.
+        let measure = |text: &str| text.chars().count() as f32 * 10.0;
+        let budget = 2.0 * (40.0 + PILL_PADDING_PX) + PILL_GAP_PX;
+        let lines = chunk_pills(pills, budget, &measure);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].len(), 2);
         assert_eq!(lines[1].len(), 1);
         assert_eq!(lines[0][0].label.as_str(), "aaaa");
         assert_eq!(lines[0][1].label.as_str(), "bbbb");
         assert_eq!(lines[1][0].label.as_str(), "cccc");
+    }
+
+    #[test]
+    fn a_reported_width_overrides_the_default_budget() {
+        let layout = test_layout();
+        assert_eq!(layout.budget(0, false), DEFAULT_PILL_AREA_PX);
+        layout.widths.borrow_mut().insert((0, false), 500.0);
+        assert_eq!(layout.budget(0, false), 500.0);
+        // The extension row of the same resin keys separately.
+        assert_eq!(layout.budget(0, true), DEFAULT_PILL_AREA_PX);
+    }
+
+    #[test]
+    fn a_wider_reported_width_packs_more_pills_per_line() {
+        let materials = vec![material("a-resin", "Alpha", "A", &["p-a", "p-b", "p-c"])];
+        let narrow = test_layout();
+        narrow.widths.borrow_mut().insert((0, false), 40.0);
+        let wide = test_layout();
+        wide.widths.borrow_mut().insert((0, false), 10000.0);
+        let narrow_rows = derive_resin_view(&materials, &[], &[], None, &narrow);
+        let wide_rows = derive_resin_view(&materials, &[], &[], None, &wide);
+        assert_eq!(narrow_rows[0].pill_lines.row_count(), 3);
+        assert_eq!(wide_rows[0].pill_lines.row_count(), 1);
     }
 
     #[test]
@@ -2066,7 +2310,8 @@ mod derive_resin_view_tests {
             ),
             pill("b", PillKind::Other),
         ];
-        let lines = chunk_pills(pills, 10);
+        let measure = |text: &str| text.chars().count() as f32 * 10.0;
+        let lines = chunk_pills(pills, 100.0, &measure);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].len(), 1);
         assert_eq!(
@@ -2077,7 +2322,7 @@ mod derive_resin_view_tests {
 
     #[test]
     fn no_pills_yield_no_lines() {
-        assert!(chunk_pills(Vec::new(), PILL_LINE_CHAR_BUDGET).is_empty());
+        assert!(chunk_pills(Vec::new(), DEFAULT_PILL_AREA_PX, &|_| 10.0).is_empty());
     }
 }
 

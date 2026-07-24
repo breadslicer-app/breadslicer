@@ -44,6 +44,7 @@ mod selection;
 mod tests_mesh_loader;
 #[cfg(test)]
 mod tests_scene_loader;
+mod text_metrics;
 mod viewport;
 mod window_icon;
 mod window_prefs;
