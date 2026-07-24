@@ -245,7 +245,7 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
 
     let no_auto_place = long("no-auto-place")
         .help(
-            "Skip auto-placement: slice the model at its file coordinates instead of centring it on the build plate with its lowest point at z = 0.",
+            "Skip auto-placement: slice the scene at its file coordinates instead of centring it on the build plate with its lowest point at z = 0. Multi-model scenes keep their relative layout either way.",
         )
         .switch();
 

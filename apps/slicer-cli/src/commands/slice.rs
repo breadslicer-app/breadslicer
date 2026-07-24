@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
-use sc_mesh_core::scene::node::NodeId;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
@@ -24,9 +23,10 @@ use sc_print_profiles::{
     load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_path,
     resolve,
 };
-use sc_sl1cer::error::SliceError;
+use sc_sl1cer::contour::merge_stacks;
+use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::profile::{AaLevel, PackingMode};
-use sc_sl1cer::{VERSION, slice_leaf};
+use sc_sl1cer::{LeafSlices, VERSION, slice_scene};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_slice};
 
@@ -94,14 +94,13 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         }
     }
 
-    let leaf_id = pick_single_reachable_leaf(&loaded.graph)?;
     if !args.no_auto_place {
         place_on_build_plate(&mut loaded.graph)?;
     }
     let z_max = scene_world_z_max(&loaded.graph)?;
     if z_max <= 0.0 {
         return Err(anyhow!(
-            "input mesh has its top at z = {z_max} mm. The slicer slices upward from the build plate at z = 0; reposition your model above z = 0 before slicing.",
+            "input scene has its top at z = {z_max} mm. The slicer slices upward from the build plate at z = 0; reposition your model(s) above z = 0 before slicing.",
         ));
     }
 
@@ -119,23 +118,34 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     )
     .map_err(|e| anyhow!("could not build the slice profile: {e}"))?;
 
-    let stack = match slice_leaf(&loaded.graph, leaf_id, &profile) {
-        Ok(stack) => stack,
-        Err(err @ SliceError::FacesValidationFailed(_))
-        | Err(err @ SliceError::ManifoldCheckFailed(_)) => {
+    let leaf_slices = match slice_scene(&loaded.graph, &profile) {
+        Ok(slices) => slices,
+        Err(err @ SliceSceneError::LeavesValidationFailed(_)) => {
             report_validation_failure(&err, args.verbose, &mut std::io::stderr());
             return Err(anyhow!("mesh validation failed; slicing aborted"));
         }
         Err(other) => return Err(other.into()),
     };
 
+    let model_count = leaf_slices.len();
+    let stacks: Vec<_> = leaf_slices
+        .into_iter()
+        .map(LeafSlices::into_stack)
+        .collect();
+    let stack = merge_stacks(stacks).map_err(|err| {
+        anyhow!(
+            "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
+        )
+    })?;
+
     let options = WriterOptions::from_profile(&profile, VERSION);
     write_slice(&stack, &target_path, target_format, &options)?;
 
+    let models = if model_count == 1 { "model" } else { "models" };
     let layer_count = stack.layers().len();
     let polygon_count: usize = stack.layers().iter().map(|l| l.polygons().len()).sum();
     println!(
-        "Sliced {layer_count} layers ({polygon_count} polygons total) to {}",
+        "Sliced {model_count} {models}: {layer_count} layers ({polygon_count} polygons total) to {}",
         target_path.display(),
     );
     Ok(())
@@ -210,21 +220,6 @@ fn place_on_build_plate(scene: &mut Scene) -> Result<()> {
     Ok(())
 }
 
-/// Pick the scene's only reachable mesh leaf, wherever it sits in the
-/// graph. Loaders disagree on topology: STL installs the mesh as a
-/// root-level leaf, while the OBJ reader wraps every object leaf under
-/// one identity-Group root, so scanning `roots()` alone would miss it.
-fn pick_single_reachable_leaf(scene: &Scene) -> Result<NodeId> {
-    if scene.reachable_leaf_count() > 1 {
-        return Err(anyhow!(
-            "input has more than one mesh leaf; multi-leaf selection is not yet supported",
-        ));
-    }
-    scene
-        .first_leaf_id()
-        .ok_or_else(|| anyhow!("input has no mesh leaf to slice"))
-}
-
 fn scene_world_z_max(scene: &Scene) -> Result<f64> {
     let aabb = scene
         .aabb()
@@ -246,23 +241,37 @@ fn total_layers_for_height(z_max: f64, layer_height: f64, first_layer_height: f6
     1 + extra
 }
 
-/// Render a validation failure to `out`:
+/// `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels the
+/// engine's own error Display uses.
+fn leaf_label(failure: &LeafValidationFailure) -> String {
+    match &failure.leaf_name {
+        Some(name) => format!("leaf #{} (\"{name}\")", failure.leaf.get()),
+        None => format!("leaf #{}", failure.leaf.get()),
+    }
+}
+
+/// Render a scene validation failure to `out`:
 ///
-/// 1. The aggregated `SliceError` summary (count + per-variant breakdown
-///    with up to five face indices each, as produced by `Display for SliceError`).
-/// 2. When `verbose` is set, a blank line followed by a section per
-///    variant listing every offending error via its `Display` impl.
+/// 1. The aggregated summary produced by `Display for SliceSceneError`:
+///    one header naming the invalid-leaf count, then per leaf a label
+///    line with its per-variant breakdown (up to five face indices
+///    each).
+/// 2. When `verbose` is set, one section per invalid leaf: a blank
+///    line, the leaf label, then a section per variant listing every
+///    offending error via its `Display` impl.
 /// 3. Always, a blank line followed by a hint pointing at the `fix`
 ///    subcommand. When `verbose` is unset the hint also advertises
 ///    `--verbose` for the full error list.
-fn report_validation_failure(err: &SliceError, verbose: bool, out: &mut dyn Write) {
+fn report_validation_failure(err: &SliceSceneError, verbose: bool, out: &mut dyn Write) {
     let _ = writeln!(out, "{err}");
-    if verbose {
-        let _ = writeln!(out);
-        match err {
-            SliceError::FacesValidationFailed(errors) => write_grouped_errors(errors, out),
-            SliceError::ManifoldCheckFailed(errors) => write_grouped_errors(errors, out),
-            _ => {}
+    if verbose && let SliceSceneError::LeavesValidationFailed(failures) = err {
+        for failure in failures {
+            let _ = writeln!(out);
+            let _ = writeln!(out, "{}:", leaf_label(failure));
+            match &failure.geometry {
+                InvalidLeafGeometry::Faces(errors) => write_grouped_errors(errors, out),
+                InvalidLeafGeometry::Manifold(errors) => write_grouped_errors(errors, out),
+            }
         }
     }
     let _ = writeln!(out);
@@ -395,11 +404,19 @@ mod write_grouped_errors_tests {
 
 #[cfg(test)]
 mod report_validation_failure_tests {
+    use sc_mesh_core::Scene;
     use sc_mesh_core::indexed_mesh::MeshFaceError;
     use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
-    use sc_sl1cer::error::SliceError;
+    use sc_mesh_core::scene::node::NodeId;
+    use sc_mesh_core::transform::Transform3D;
+    use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 
     use super::report_validation_failure;
+
+    fn mint_node_id() -> NodeId {
+        let mut scene = Scene::new();
+        scene.add_group(None, Transform3D::Identity)
+    }
 
     fn zle(face: usize) -> MeshFaceError {
         MeshFaceError::ZeroLengthEdge {
@@ -410,19 +427,31 @@ mod report_validation_failure_tests {
         }
     }
 
-    fn render(err: &SliceError, verbose: bool) -> String {
+    fn faces_failure(name: Option<&str>) -> SliceSceneError {
+        SliceSceneError::LeavesValidationFailed(vec![LeafValidationFailure {
+            leaf: mint_node_id(),
+            leaf_name: name.map(str::to_string),
+            geometry: InvalidLeafGeometry::Faces(vec![zle(2), zle(5)]),
+        }])
+    }
+
+    fn render(err: &SliceSceneError, verbose: bool) -> String {
         let mut buf: Vec<u8> = Vec::new();
         report_validation_failure(err, verbose, &mut buf);
         String::from_utf8(buf).expect("UTF-8")
     }
 
     #[test]
-    fn non_verbose_emits_summary_and_short_hint() {
-        let err = SliceError::FacesValidationFailed(vec![zle(2), zle(5)]);
+    fn non_verbose_emits_summary_with_leaf_label_and_short_hint() {
+        let err = faces_failure(Some("cracked-part"));
         let out = render(&err, false);
         assert!(
-            out.contains("mesh face validation failed: 2 error(s)"),
+            out.contains("mesh validation failed for 1 of the scene's leaves:"),
             "missing summary header: {out}",
+        );
+        assert!(
+            out.contains("(\"cracked-part\"): mesh face validation failed: 2 error(s)"),
+            "missing labelled per-leaf summary: {out}",
         );
         assert!(
             out.contains("2x ZeroLengthEdge (e.g. faces #2, #5)"),
@@ -439,16 +468,16 @@ mod report_validation_failure_tests {
     }
 
     #[test]
-    fn verbose_emits_summary_grouped_sections_and_short_hint() {
-        let err = SliceError::FacesValidationFailed(vec![zle(2), zle(5)]);
+    fn verbose_emits_labelled_grouped_sections_and_short_hint() {
+        let err = faces_failure(Some("cracked-part"));
         let out = render(&err, true);
         assert!(
-            out.contains("mesh face validation failed: 2 error(s)"),
+            out.contains("mesh validation failed for 1 of the scene's leaves:"),
             "missing summary header: {out}",
         );
         assert!(
-            out.contains("ZeroLengthEdge (2):"),
-            "missing grouped section header: {out}",
+            out.contains("(\"cracked-part\"):\nZeroLengthEdge (2):"),
+            "missing labelled grouped section: {out}",
         );
         assert!(
             out.contains("  - face #2 has a zero-length edge"),
@@ -462,5 +491,13 @@ mod report_validation_failure_tests {
             !out.contains("--verbose for the full error list"),
             "verbose run should not re-advertise --verbose: {out}",
         );
+    }
+
+    #[test]
+    fn unnamed_leaf_renders_without_quotes() {
+        let err = faces_failure(None);
+        let out = render(&err, false);
+        assert!(!out.contains('"'), "unexpected quotes: {out}");
+        assert!(out.contains("leaf #"), "missing bare leaf label: {out}");
     }
 }

@@ -160,6 +160,27 @@ mod discovery_tests {
     }
 
     #[test]
+    fn leaf_name_falls_back_to_the_mesh_metadata_name() {
+        // OBJ-shaped topology: nameless group root, nameless leaf,
+        // object name carried on the mesh itself.
+        let mut scene = Scene::new();
+        let group = scene.add_group(None, Transform3D::Identity);
+        let mut mesh = unit_cube_mesh();
+        mesh.meta = Some(sc_mesh_core::indexed_mesh::MeshMetadata {
+            name: Some("from-the-mesh".to_string()),
+            ..Default::default()
+        });
+        let leaf = scene
+            .add_leaf(None, lift(0.0, 0.0), LeafPayload::Mesh(Arc::new(mesh)))
+            .expect("inline-mesh leaf");
+        scene.add_child(group, leaf).expect("attach leaf to group");
+        scene.add_root(group).expect("group becomes the root");
+
+        let slices = slice_scene(&scene, &four_layer_profile()).expect("cube slices");
+        assert_eq!(slices[0].leaf_name(), Some("from-the-mesh"));
+    }
+
+    #[test]
     fn empty_scene_is_rejected() {
         let scene = Scene::new();
         let err = slice_scene(&scene, &four_layer_profile()).unwrap_err();

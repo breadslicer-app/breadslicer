@@ -202,7 +202,9 @@ pub fn slice_scene(
 }
 
 /// Collect every mesh leaf reachable from the scene roots, in
-/// pre-order, together with its display name. Dangling child ids are
+/// pre-order, together with its display name: the node's metadata
+/// name when present, else the name on the leaf's mesh (where format
+/// readers such as OBJ attach object names). Dangling child ids are
 /// skipped, matching the scene's own traversal helpers. `Csg` and
 /// `Instance` nodes abort the walk: their leaves are operands, not
 /// independent solids, and slicing them as such would silently apply
@@ -216,7 +218,13 @@ fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, S
         };
         match &node.kind {
             NodeKind::Leaf(_) => {
-                let name = node.meta.as_ref().and_then(|m| m.name.clone());
+                let name = node.meta.as_ref().and_then(|m| m.name.clone()).or_else(|| {
+                    scene
+                        .mesh_at_leaf(id)
+                        .ok()
+                        .and_then(|mesh| mesh.meta.as_ref())
+                        .and_then(|meta| meta.name.clone())
+                });
                 leaves.push((id, name));
             }
             NodeKind::Group { children } => {

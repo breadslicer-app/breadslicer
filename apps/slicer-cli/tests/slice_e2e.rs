@@ -539,7 +539,7 @@ fn printer_profile_by_explicit_path_slices_successfully() {
         .env("SC_SLICER_ASSETS_DIR", profiles_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Sliced 5 layers"));
+        .stdout(predicate::str::contains("Sliced 1 model: 5 layers"));
 }
 
 #[test]

@@ -259,6 +259,32 @@ fn write_two_object_obj(path: &Path) {
     sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
 }
 
+/// Writes an OBJ with a clean tetrahedron ("good") next to a single
+/// open triangle ("broken-fin") that fails the manifold check with
+/// three boundary edges. Drives the per-leaf validation reporting of
+/// the slice subcommand.
+fn write_obj_with_broken_object(path: &Path) {
+    let mut graph = Scene::new();
+    let mut broken = single_triangle_mesh();
+    broken.meta = Some(MeshMetadata {
+        name: Some("broken-fin".to_string()),
+        ..Default::default()
+    });
+    for mesh in [tetrahedron_mesh(Some("good")), broken] {
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .expect("add leaf");
+        graph.add_root(leaf).expect("add root");
+    }
+    let file = fs::File::create(path).expect("create obj");
+    let mut writer = std::io::BufWriter::new(file);
+    sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
+}
+
 #[cfg(test)]
 mod version_tests {
     use super::*;
@@ -1557,7 +1583,7 @@ mod slice_auto_place_tests {
 
         run_slice(&source, &output, &[])
             .success()
-            .stdout(predicate::str::contains("Sliced 10 layers"));
+            .stdout(predicate::str::contains("Sliced 1 model: 10 layers"));
     }
 
     #[test]
@@ -1570,7 +1596,7 @@ mod slice_auto_place_tests {
 
         run_slice(&source, &output, &["--no-auto-place"])
             .success()
-            .stdout(predicate::str::contains("Sliced 5 layers"));
+            .stdout(predicate::str::contains("Sliced 1 model: 5 layers"));
     }
 }
 
@@ -1676,11 +1702,13 @@ mod slice_leaf_selection_tests {
 
         run_slice(&source, &output)
             .success()
-            .stdout(predicate::str::contains("Sliced 10 layers"));
+            .stdout(predicate::str::contains("Sliced 1 model: 10 layers"));
     }
 
+    /// Both tetrahedra share the same footprint, so each of the 10
+    /// layers carries one polygon per model: 20 polygons total.
     #[test]
-    fn slice_multi_object_obj_is_rejected_until_multi_leaf_support_lands() {
+    fn slice_multi_object_obj_slices_every_object() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("two.obj");
         let output = tmp.path().join("layers");
@@ -1688,8 +1716,117 @@ mod slice_leaf_selection_tests {
         write_two_object_obj(&source);
 
         run_slice(&source, &output)
-            .failure()
-            .stderr(predicate::str::contains("more than one mesh leaf"))
+            .success()
+            .stdout(predicate::str::contains(
+                "Sliced 2 models: 10 layers (20 polygons total)",
+            ))
             .stderr(no_panic_in_stderr().not());
+        let svg_count = fs::read_dir(&output).unwrap().count();
+        assert_eq!(svg_count, 10, "one SVG file per layer");
+    }
+}
+
+#[cfg(test)]
+mod slice_multi_mesh_tests {
+    use super::*;
+
+    fn run_slice(
+        source: &Path,
+        output_dir: &Path,
+        format: &str,
+        extra_args: &[&str],
+    ) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            output_dir.to_str().unwrap(),
+            "--target-format",
+            format,
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
+        ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
+        cmd.args(extra_args);
+        cmd.assert()
+    }
+
+    #[test]
+    fn multi_object_obj_slices_to_png_layers() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two.obj");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_two_object_obj(&source);
+
+        run_slice(&source, &output, "png-per-layer", &[])
+            .success()
+            .stdout(predicate::str::contains("Sliced 2 models: 10 layers"))
+            .stderr(no_panic_in_stderr().not());
+        assert_eq!(
+            fs::read_dir(&output).unwrap().count(),
+            10,
+            "one PNG file per layer",
+        );
+    }
+
+    /// Without auto-placement the tetrahedra keep their file
+    /// coordinates (`z in [-1, 1]`), so only the upper half is above
+    /// the plate: 5 layers, still 2 polygons per layer.
+    #[test]
+    fn no_auto_place_keeps_the_multi_model_layout() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two.obj");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_two_object_obj(&source);
+
+        run_slice(&source, &output, "svg-per-layer", &["--no-auto-place"])
+            .success()
+            .stdout(predicate::str::contains(
+                "Sliced 2 models: 5 layers (10 polygons total)",
+            ));
+    }
+
+    #[test]
+    fn validation_failure_names_the_broken_leaf_only() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("broken.obj");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_obj_with_broken_object(&source);
+
+        run_slice(&source, &output, "svg-per-layer", &[])
+            .failure()
+            .stderr(predicate::str::contains(
+                "mesh validation failed for 1 of the scene's leaves:",
+            ))
+            .stderr(predicate::str::contains("(\"broken-fin\")"))
+            .stderr(predicate::str::contains("mesh manifold validation failed"))
+            .stderr(predicate::str::contains("BoundaryEdge"))
+            .stderr(predicate::str::contains("(\"good\")").not())
+            .stderr(predicate::str::contains(
+                "re-run with --verbose for the full error list",
+            ))
+            .stderr(no_panic_in_stderr().not());
+    }
+
+    #[test]
+    fn verbose_validation_failure_lists_every_boundary_edge() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("broken.obj");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_obj_with_broken_object(&source);
+
+        run_slice(&source, &output, "svg-per-layer", &["--verbose"])
+            .failure()
+            .stderr(predicate::str::contains("BoundaryEdge (3):"))
+            .stderr(predicate::str::contains("(\"broken-fin\"):\nBoundaryEdge"))
+            .stderr(predicate::str::contains("--verbose for the full error list").not());
     }
 }
