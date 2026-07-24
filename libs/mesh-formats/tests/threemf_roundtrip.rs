@@ -8,15 +8,18 @@
 //! workspace's cube and tunnel-prism fixtures and a vendored official
 //! sample as sources.
 
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sc_3mf::package::Package;
 use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, MeshMetadata, Scene};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
+use sc_mesh_formats::threemf::{read_threemf, read_threemf_from_package, write_threemf};
 use sc_mesh_formats::{LoadedMesh, load_mesh_from_path};
 
 fn named(mesh: IndexedMesh, name: &str) -> IndexedMesh {
@@ -149,4 +152,34 @@ fn official_box_sample_survives_a_load_write_load_cycle() {
         .mesh_resource(leaf_resource(&first.graph, first_children[0]))
         .expect("resource lives");
     assert_eq!(mesh.vertices, first_mesh.vertices);
+}
+
+#[test]
+fn the_package_level_reader_matches_the_stream_reader() {
+    let mut bytes = Vec::new();
+    write_threemf(&prism_trio_scene(), &mut bytes).expect("write succeeds");
+
+    let package = Package::read_from(Cursor::new(bytes.clone())).expect("package parses");
+    let (package_scene, package_warnings) =
+        read_threemf_from_package(&package).expect("package-level read succeeds");
+    let (stream_scene, stream_warnings) =
+        read_threemf(&mut Cursor::new(bytes)).expect("stream-level read succeeds");
+
+    assert_eq!(package_warnings, stream_warnings);
+    let package_children = root_children(&package_scene);
+    let stream_children = root_children(&stream_scene);
+    assert_eq!(package_children.len(), stream_children.len());
+    for (&from_package, &from_stream) in package_children.iter().zip(&stream_children) {
+        let package_mesh = package_scene
+            .mesh_resource(leaf_resource(&package_scene, from_package))
+            .expect("resource lives");
+        let stream_mesh = stream_scene
+            .mesh_resource(leaf_resource(&stream_scene, from_stream))
+            .expect("resource lives");
+        assert_eq!(package_mesh.vertices, stream_mesh.vertices);
+        assert_eq!(
+            package_mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
+            stream_mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
+        );
+    }
 }

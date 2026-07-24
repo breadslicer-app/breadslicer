@@ -55,6 +55,16 @@ where
     R: Read + Seek,
 {
     let package = Package::read_from(read)?;
+    read_threemf_from_package(&package)
+}
+
+/// Converts an already-parsed OPC package into a [`Scene`], with the
+/// same semantics as [`read_threemf`]. Public so package-level
+/// callers (project-file readers) can parse the container once and
+/// consume other parts from the same [`Package`].
+pub fn read_threemf_from_package(
+    package: &Package,
+) -> Result<(Scene, Vec<LoadThreeMfWarning>), LoadThreeMfError> {
     let start_part = package.start_part()?;
     let content_type = package
         .part_content_type(&start_part)

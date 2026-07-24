@@ -14,6 +14,7 @@ members = [
     "libs/print-glue",
     "libs/print-primitives",
     "libs/print-profiles",
+    "libs/project-formats",
     "libs/sl1cer",
     "libs/sla-formats",
 ]
@@ -38,6 +39,7 @@ sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.1.0" }
 sc-print-glue = { path = "libs/print-glue", version = "0.1.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.1.0" }
 sc-print-profiles = { path = "libs/print-profiles", version = "0.1.0" }
+sc-project-formats = { path = "libs/project-formats", version = "0.1.0" }
 sc-sl1cer = { path = "libs/sl1cer", version = "0.1.0" }
 sc-sla-formats = { path = "libs/sla-formats", version = "0.1.0" }
 

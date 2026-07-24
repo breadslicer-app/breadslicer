@@ -1,0 +1,10 @@
+version = 1
+comment = "written by a newer build that added keys without a version bump"
+
+[profiles]
+printer = "test-printer"
+resin = "test-resin"
+intent = "matte"
+
+[plate]
+columns = 3

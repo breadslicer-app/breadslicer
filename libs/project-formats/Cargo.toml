@@ -1,0 +1,24 @@
+[package]
+name = "sc-project-formats"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Read & write support for slicer project files."
+categories = ["rendering::data-formats"]
+keywords = ["3d", "slicer", "resin", "project"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+sc-3mf.workspace = true
+sc-mesh-core.workspace = true
+sc-mesh-formats.workspace = true
+sc-print-primitives = { workspace = true, features = ["serde"] }
+
+serde.workspace = true
+toml_edit.workspace = true
+
+[dev-dependencies]
+sc-mesh-fixtures.workspace = true
+
+zip.workspace = true

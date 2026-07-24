@@ -1,0 +1,5 @@
+version = 1
+
+[profiles]
+printer = "test-printer"
+resin = "test-resin"

@@ -1,0 +1,296 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! End-to-end 3MF project round trips through the public
+//! `write_project` / `read_project` entry points, using the
+//! workspace's cube and tunnel-prism fixtures as the scene and
+//! profile-shaped TOML fixtures as the embedded documents.
+
+use std::io::{Cursor, Read};
+use std::path::Path;
+use std::sync::Arc;
+
+use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_core::{IndexedMesh, MeshMetadata, Scene};
+use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_formats::filetypes::MeshFileType;
+use sc_mesh_formats::load_mesh_from_reader;
+use sc_mesh_formats::messages::{LoadMeshWarning, SceneLoadWarning};
+use sc_mesh_formats::threemf::write_threemf;
+use sc_print_primitives::{MaterialId, PrinterId};
+use sc_project_formats::{
+    EmbedProfiles, EmbeddedProfile, LoadedProject, ProfileRefWarning, ProjectFileType,
+    ProjectPayload, infer_project_file_type_from_extension, read_project, write_project,
+};
+
+const TEST_PRINTER_TOML: &[u8] = include_bytes!("fixtures/test-printer.toml");
+const TEST_RESIN_TOML: &[u8] = include_bytes!("fixtures/test-resin.toml");
+const TEST_RESIN_EXTENSION_TOML: &[u8] = include_bytes!("fixtures/test-resin-extension.toml");
+
+fn printer_id(raw: &str) -> PrinterId {
+    PrinterId::new(raw).expect("test id is a valid slug")
+}
+
+fn material_id(raw: &str) -> MaterialId {
+    MaterialId::new(raw).expect("test id is a valid slug")
+}
+
+fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
+    mesh.set_meta(Some(MeshMetadata {
+        name: Some(name.to_string()),
+        header_comment: None,
+    }));
+    mesh
+}
+
+/// Loader-shape scene carrying the cube and both tunnel prisms as
+/// named leaves with distinct translations.
+fn prism_trio_scene() -> Scene {
+    let mut scene = Scene::new();
+    let root = scene.add_group(None, Transform3D::Identity);
+    scene.add_root(root).expect("group root");
+    let sources = [
+        ("Cube", unit_cube_mesh(), [0.0, 0.0, 0.0]),
+        ("ZTunnel", cuboid_with_z_tunnel(), [5.0, 0.0, 0.0]),
+        ("YTunnel", cuboid_with_y_tunnel(), [-5.0, 0.0, 0.0]),
+    ];
+    for (name, mesh, translation) in sources {
+        let transform = if translation == [0.0, 0.0, 0.0] {
+            Transform3D::Identity
+        } else {
+            Transform3D::Affine(AffineTransform3D::from_translation(translation))
+        };
+        let leaf = scene
+            .add_leaf(
+                None,
+                transform,
+                LeafPayload::Mesh(Arc::new(named(mesh, name))),
+            )
+            .expect("add leaf");
+        scene.add_child(root, leaf).expect("attach leaf");
+    }
+    scene
+}
+
+fn full_payload() -> ProjectPayload {
+    ProjectPayload {
+        printer: Some(printer_id("test-printer")),
+        resin: Some(material_id("test-resin")),
+        embedded: vec![
+            EmbeddedProfile::Printer {
+                id: printer_id("test-printer"),
+                bytes: TEST_PRINTER_TOML.to_vec(),
+            },
+            EmbeddedProfile::Material {
+                id: material_id("test-resin"),
+                bytes: TEST_RESIN_TOML.to_vec(),
+            },
+            EmbeddedProfile::MaterialExtension {
+                id: material_id("test-resin"),
+                bytes: TEST_RESIN_EXTENSION_TOML.to_vec(),
+            },
+        ],
+    }
+}
+
+fn project_file_type() -> ProjectFileType {
+    infer_project_file_type_from_extension(Path::new("plate.3mf"))
+        .expect("the 3mf extension is a project format")
+}
+
+fn write_bytes(scene: &Scene, payload: &ProjectPayload, embed: EmbedProfiles) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    write_project(scene, payload, embed, project_file_type(), &mut bytes)
+        .expect("the project writes cleanly");
+    bytes
+}
+
+fn read_back(bytes: Vec<u8>) -> LoadedProject {
+    read_project(&mut Cursor::new(bytes), project_file_type()).expect("the project reads back")
+}
+
+/// The children of the scene's single root, which must be a group
+/// (the loader convention both readers follow).
+fn root_children(scene: &Scene) -> Vec<NodeId> {
+    assert_eq!(scene.roots().len(), 1);
+    let root = scene.node(scene.roots()[0]).expect("root resolves");
+    match &root.kind {
+        NodeKind::Group { children } => children.clone(),
+        other => panic!("the root should be a group, got {other:?}"),
+    }
+}
+
+/// The mesh names of every leaf under the root group, sorted.
+fn leaf_names(scene: &Scene) -> Vec<String> {
+    let mut names: Vec<String> = root_children(scene)
+        .into_iter()
+        .map(|child| {
+            let mesh = scene
+                .leaf_mesh_arc(child)
+                .expect("every child is a mesh leaf");
+            mesh.meta()
+                .as_ref()
+                .and_then(|meta| meta.name.clone())
+                .expect("every test mesh is named")
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+mod round_trip_tests {
+    use super::*;
+
+    #[test]
+    fn a_full_project_round_trips_scene_references_and_documents() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::Yes);
+        let loaded = read_back(bytes);
+
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(
+            leaf_names(&loaded.scene),
+            vec!["Cube", "YTunnel", "ZTunnel"]
+        );
+
+        let payload = loaded.payload.expect("the payload is present");
+        assert_eq!(payload, full_payload());
+    }
+
+    #[test]
+    fn a_references_only_project_keeps_references_and_drops_documents() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::No);
+        let loaded = read_back(bytes);
+
+        assert!(loaded.warnings.is_empty());
+        let payload = loaded.payload.expect("the payload is present");
+        assert_eq!(payload.printer, Some(printer_id("test-printer")));
+        assert_eq!(payload.resin, Some(material_id("test-resin")));
+        assert!(payload.embedded.is_empty());
+    }
+
+    #[test]
+    fn an_empty_payload_round_trips_as_a_project_without_references() {
+        let bytes = write_bytes(
+            &prism_trio_scene(),
+            &ProjectPayload::default(),
+            EmbedProfiles::Yes,
+        );
+        let loaded = read_back(bytes);
+        assert_eq!(loaded.payload, Some(ProjectPayload::default()));
+    }
+}
+
+mod warning_tier_tests {
+    use super::*;
+
+    #[test]
+    fn missing_profiles_warn_softly_when_the_file_embeds_them() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::Yes);
+        let payload = read_back(bytes).payload.expect("the payload is present");
+        assert_eq!(
+            payload.profile_ref_warnings(|_| false, |_| false),
+            vec![
+                ProfileRefWarning::PrinterEmbeddedOnly {
+                    id: printer_id("test-printer"),
+                },
+                ProfileRefWarning::ResinEmbeddedOnly {
+                    id: material_id("test-resin"),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn missing_profiles_warn_hard_when_the_file_is_references_only() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::No);
+        let payload = read_back(bytes).payload.expect("the payload is present");
+        assert_eq!(
+            payload.profile_ref_warnings(|_| false, |_| false),
+            vec![
+                ProfileRefWarning::PrinterMissing {
+                    id: printer_id("test-printer"),
+                },
+                ProfileRefWarning::ResinMissing {
+                    id: material_id("test-resin"),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn installed_profiles_produce_no_warnings_either_way() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::No);
+        let payload = read_back(bytes).payload.expect("the payload is present");
+        assert!(payload.profile_ref_warnings(|_| true, |_| true).is_empty());
+    }
+}
+
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_model_package_reads_as_a_project_without_a_payload() {
+        let mut bytes = Vec::new();
+        write_threemf(&prism_trio_scene(), &mut bytes).expect("the plain model writes");
+        let loaded = read_back(bytes);
+
+        assert!(loaded.payload.is_none());
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(
+            leaf_names(&loaded.scene),
+            vec!["Cube", "YTunnel", "ZTunnel"]
+        );
+    }
+
+    #[test]
+    fn a_project_package_opens_in_the_plain_mesh_loader() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::Yes);
+        let loaded = load_mesh_from_reader(MeshFileType::_3mf, &mut Cursor::new(bytes))
+            .expect("the plain loader opens the project");
+
+        // The tunnel prisms share their outer-corner coordinates, so
+        // the loader's coincident-vertex observation always fires for
+        // this trio; nothing else (in particular nothing about the
+        // project parts) may be reported.
+        assert!(
+            loaded.warnings.iter().all(|warning| matches!(
+                warning,
+                LoadMeshWarning::Scene(SceneLoadWarning::SharedVertices { .. }),
+            )),
+            "unexpected warnings: {:?}",
+            loaded.warnings,
+        );
+        assert_eq!(
+            leaf_names(&loaded.graph),
+            vec!["Cube", "YTunnel", "ZTunnel"]
+        );
+    }
+}
+
+mod content_type_tests {
+    use super::*;
+
+    #[test]
+    fn the_project_part_gets_an_override_when_profile_parts_share_its_extension() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::Yes);
+        let mut archive =
+            zip::ZipArchive::new(Cursor::new(bytes)).expect("the package is a zip archive");
+        let mut entry = archive
+            .by_name("[Content_Types].xml")
+            .expect("the content-types part exists");
+        let mut xml = String::new();
+        entry
+            .read_to_string(&mut xml)
+            .expect("the content-types part is UTF-8");
+
+        // Two content types share the toml extension, so at least
+        // the project part must be declared with an Override entry.
+        assert!(xml.contains("Override"));
+        assert!(xml.contains("/Metadata/soulcrafted-project.toml"));
+        assert!(xml.contains("application/vnd.soulcrafted.project+toml"));
+        assert!(xml.contains("application/toml"));
+    }
+}

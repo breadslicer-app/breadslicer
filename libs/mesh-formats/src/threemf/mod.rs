@@ -27,8 +27,10 @@ use crate::messages::LoadThreeMfWarning;
 use crate::ports::{MeshReader, MeshWriter, sealed};
 use crate::scene_writer::FlattenWarning;
 
-pub use reader::{MAX_COMPONENT_DEPTH, MAX_EXPANDED_LEAF_COUNT, read_threemf};
-pub use writer::{mesh_to_model_data, write_threemf};
+pub use reader::{
+    MAX_COMPONENT_DEPTH, MAX_EXPANDED_LEAF_COUNT, read_threemf, read_threemf_from_package,
+};
+pub use writer::{mesh_to_model_data, scene_to_model_document, write_threemf};
 
 /// Format marker for 3MF packages. Implements [`MeshReader`] via
 /// static dispatch; the dispatcher in [`crate::loader`] invokes

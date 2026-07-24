@@ -1,0 +1,12 @@
+[identity]
+id = "test-resin"
+brand = "SoulCrafted"
+family = "test"
+name = "Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5

@@ -4753,6 +4753,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-project-formats"
+version = "0.1.0"
+dependencies = [
+ "sc-3mf",
+ "sc-mesh-core",
+ "sc-mesh-fixtures",
+ "sc-mesh-formats",
+ "sc-print-primitives",
+ "serde",
+ "toml_edit",
+ "zip",
+]
+
+[[package]]
 name = "sc-sl1cer"
 version = "0.1.0"
 dependencies = [

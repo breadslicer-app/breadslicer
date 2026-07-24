@@ -40,7 +40,7 @@ pub fn write_threemf<W>(graph: &Scene, writer: &mut W) -> Result<(), WriteThreeM
 where
     W: Write,
 {
-    let document = build_document(graph)?;
+    let document = scene_to_model_document(graph)?;
     let mut model_xml = Vec::new();
     write_model(&document, &mut model_xml)?;
 
@@ -68,7 +68,12 @@ struct DocumentBuilder<'graph> {
     next_id: u32,
 }
 
-fn build_document(graph: &Scene) -> Result<ModelDocument, WriteThreeMfError> {
+/// Converts `graph` into a 3MF model document without touching any
+/// container concerns. Scene roots map to build items through the
+/// same collapse rule as [`write_threemf`]. Public so writers that
+/// assemble their own packages (project files, slice packages) can
+/// reuse the scene conversion.
+pub fn scene_to_model_document(graph: &Scene) -> Result<ModelDocument, WriteThreeMfError> {
     let mut builder = DocumentBuilder {
         graph,
         document: ModelDocument::default(),

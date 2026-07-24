@@ -1,0 +1,23 @@
+[identity]
+id = "test-printer"
+manufacturer = "SoulCrafted"
+family = "Test"
+name = "Test Printer"
+profile_version = "1.0.0"
+
+[hardware.build_volume]
+x_mm = 120.0
+y_mm = 68.0
+z_mm = 150.0
+
+[hardware.pixel_resolution]
+x = 1920
+y = 1080
+
+[hardware.pixel_size_microns]
+x = 50.0
+y = 50.0
+
+[hardware.mirror]
+x = false
+y = false
