@@ -159,6 +159,151 @@ impl From<SceneError> for SliceError {
     }
 }
 
+/// Which validation stage rejected a leaf's baked mesh. The stages
+/// run in order and the second requires the first to pass, so one
+/// leaf carries exactly one of the two error lists.
+#[derive(Debug)]
+pub enum InvalidLeafGeometry {
+    /// Face-index / zero-length-edge validation failed.
+    Faces(Vec<MeshFaceError>),
+    /// The mesh passed face validation but is not a closed manifold.
+    Manifold(Vec<MeshManifoldError>),
+}
+
+impl From<InvalidLeafGeometry> for SliceError {
+    fn from(geometry: InvalidLeafGeometry) -> Self {
+        match geometry {
+            InvalidLeafGeometry::Faces(errors) => Self::FacesValidationFailed(errors),
+            InvalidLeafGeometry::Manifold(errors) => Self::ManifoldCheckFailed(errors),
+        }
+    }
+}
+
+/// One leaf that failed pre-slice geometry validation, identified for
+/// reporting.
+#[derive(Debug)]
+pub struct LeafValidationFailure {
+    /// The failing leaf node.
+    pub leaf: NodeId,
+    /// The leaf's display name from its scene metadata, when present.
+    pub leaf_name: Option<String>,
+    /// What the validation stages rejected.
+    pub geometry: InvalidLeafGeometry,
+}
+
+/// Failure modes of `slice_scene`.
+///
+/// Geometry validation aggregates: every reachable leaf is validated
+/// even after the first failure, so `LeavesValidationFailed` always
+/// lists all invalid leaves of the scene. All other variants abort
+/// immediately.
+#[derive(Debug)]
+pub enum SliceSceneError {
+    /// No mesh leaves are reachable from the scene roots.
+    EmptyScene,
+    /// Discovery reached a CSG combinator. Slicing its operand leaves
+    /// as independent solids would silently produce union semantics
+    /// regardless of the operator, so the scene is rejected instead.
+    CsgNotYetSupported { node_id: NodeId },
+    /// Discovery reached an `Instance` reference. Instance slicing is
+    /// deferred together with CSG.
+    InstanceNotYetSupported { node_id: NodeId },
+    /// Baking or slicing one specific leaf failed. In practice the
+    /// wrapped error is `BakeFailed` or `NonManifoldDuringStitching`;
+    /// validation failures never take this path.
+    LeafSlicingFailed {
+        leaf: NodeId,
+        leaf_name: Option<String>,
+        error: SliceError,
+    },
+    /// One or more leaves failed geometry validation. Non-empty, in
+    /// leaf discovery order.
+    LeavesValidationFailed(Vec<LeafValidationFailure>),
+}
+
+/// Write `leaf #<id>` or `leaf #<id> ("<name>")` to `f`.
+fn write_leaf_label(
+    f: &mut fmt::Formatter<'_>,
+    leaf: NodeId,
+    leaf_name: &Option<String>,
+) -> fmt::Result {
+    match leaf_name {
+        Some(name) => write!(f, "leaf #{} (\"{name}\")", leaf.get()),
+        None => write!(f, "leaf #{}", leaf.get()),
+    }
+}
+
+impl fmt::Display for InvalidLeafGeometry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Faces(errors) => {
+                write!(f, "mesh face validation failed: {} error(s)", errors.len())?;
+                write_aggregated_summary(f, errors)
+            }
+            Self::Manifold(errors) => {
+                write!(
+                    f,
+                    "mesh manifold validation failed: {} error(s)",
+                    errors.len(),
+                )?;
+                write_aggregated_summary(f, errors)
+            }
+        }
+    }
+}
+
+impl fmt::Display for SliceSceneError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyScene => write!(f, "scene has no mesh leaves to slice"),
+            Self::CsgNotYetSupported { node_id } => write!(
+                f,
+                "node #{} is a CSG combinator; CSG slicing is not yet supported",
+                node_id.get(),
+            ),
+            Self::InstanceNotYetSupported { node_id } => write!(
+                f,
+                "node #{} is an Instance reference; instance slicing is not yet supported",
+                node_id.get(),
+            ),
+            Self::LeafSlicingFailed {
+                leaf,
+                leaf_name,
+                error,
+            } => {
+                write!(f, "slicing ")?;
+                write_leaf_label(f, *leaf, leaf_name)?;
+                write!(f, " failed: {error}")
+            }
+            Self::LeavesValidationFailed(failures) => {
+                write!(
+                    f,
+                    "mesh validation failed for {} of the scene's leaves:",
+                    failures.len(),
+                )?;
+                for failure in failures {
+                    writeln!(f)?;
+                    write_leaf_label(f, failure.leaf, &failure.leaf_name)?;
+                    write!(f, ": {}", failure.geometry)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for SliceSceneError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::LeafSlicingFailed { error, .. } => Some(error),
+            Self::EmptyScene
+            | Self::CsgNotYetSupported { .. }
+            | Self::InstanceNotYetSupported { .. }
+            | Self::LeavesValidationFailed(_) => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod slice_error_tests {
     use std::error::Error as _;
@@ -377,5 +522,143 @@ mod manifold_check_summary_tests {
         assert_eq!(lines[0], "mesh manifold validation failed: 3 error(s)");
         assert_eq!(lines[1], "  2x BoundaryEdge (e.g. faces #17, #42)");
         assert_eq!(lines[2], "  1x InconsistentWindingOrder (e.g. faces #4)");
+    }
+}
+
+#[cfg(test)]
+mod slice_scene_error_tests {
+    use std::error::Error as _;
+
+    use sc_mesh_core::Scene;
+    use sc_mesh_core::indexed_mesh::MeshManifoldError;
+    use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
+    use sc_mesh_core::transform::Transform3D;
+
+    use super::*;
+
+    fn mint_node_id() -> NodeId {
+        let mut scene = Scene::new();
+        scene.add_group(None, Transform3D::Identity)
+    }
+
+    fn zle(face: usize) -> MeshFaceError {
+        MeshFaceError::ZeroLengthEdge {
+            face_idx: face.into(),
+            vertex_pos_a: TriVertexSlot::V0,
+            vertex_pos_b: TriVertexSlot::V1,
+            vertex_idx: VertexIndex::from(0_u32),
+        }
+    }
+
+    #[test]
+    fn display_empty_scene_mentions_leaves() {
+        let msg = format!("{}", SliceSceneError::EmptyScene);
+        assert!(msg.contains("no mesh leaves"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_csg_not_yet_supported_mentions_csg() {
+        let id = mint_node_id();
+        let msg = format!("{}", SliceSceneError::CsgNotYetSupported { node_id: id });
+        assert!(msg.contains("CSG"), "msg: {msg}");
+        assert!(msg.contains(&format!("#{}", id.get())), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_instance_not_yet_supported_mentions_instance() {
+        let id = mint_node_id();
+        let msg = format!(
+            "{}",
+            SliceSceneError::InstanceNotYetSupported { node_id: id },
+        );
+        assert!(msg.contains("Instance"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_leaf_slicing_failed_renders_label_and_inner_error() {
+        let id = mint_node_id();
+        let msg = format!(
+            "{}",
+            SliceSceneError::LeafSlicingFailed {
+                leaf: id,
+                leaf_name: Some("front-cover".to_string()),
+                error: SliceError::NonManifoldDuringStitching {
+                    z_mm: 0.42,
+                    dangling_endpoints: 3,
+                },
+            },
+        );
+        assert!(
+            msg.contains(&format!("leaf #{} (\"front-cover\")", id.get())),
+            "msg: {msg}",
+        );
+        assert!(msg.contains("0.42"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_leaves_validation_failed_lists_each_leaf_with_its_summary() {
+        let a = mint_node_id();
+        let b = mint_node_id();
+        let err = SliceSceneError::LeavesValidationFailed(vec![
+            LeafValidationFailure {
+                leaf: a,
+                leaf_name: Some("cracked".to_string()),
+                geometry: InvalidLeafGeometry::Faces(vec![zle(2), zle(5)]),
+            },
+            LeafValidationFailure {
+                leaf: b,
+                leaf_name: None,
+                geometry: InvalidLeafGeometry::Manifold(vec![MeshManifoldError::EmptyMesh]),
+            },
+        ]);
+        let msg = format!("{err}");
+        assert!(
+            msg.starts_with("mesh validation failed for 2 of the scene's leaves:"),
+            "msg: {msg}",
+        );
+        assert!(
+            msg.contains(&format!(
+                "leaf #{} (\"cracked\"): mesh face validation failed: 2 error(s)",
+                a.get(),
+            )),
+            "msg: {msg}",
+        );
+        assert!(msg.contains("2x ZeroLengthEdge"), "msg: {msg}");
+        assert!(
+            msg.contains(&format!(
+                "leaf #{}: mesh manifold validation failed: 1 error(s)",
+                b.get(),
+            )),
+            "unnamed leaf must render without quotes; msg: {msg}",
+        );
+    }
+
+    #[test]
+    fn source_returns_inner_only_for_leaf_slicing_failed() {
+        let id = mint_node_id();
+        let failed = SliceSceneError::LeafSlicingFailed {
+            leaf: id,
+            leaf_name: None,
+            error: SliceError::EmptyScene,
+        };
+        assert!(failed.source().is_some());
+        assert!(SliceSceneError::EmptyScene.source().is_none());
+        assert!(
+            SliceSceneError::LeavesValidationFailed(vec![])
+                .source()
+                .is_none(),
+        );
+    }
+
+    #[test]
+    fn invalid_leaf_geometry_converts_into_the_matching_slice_error_variant() {
+        let faces: SliceError = InvalidLeafGeometry::Faces(vec![zle(1)]).into();
+        assert!(matches!(faces, SliceError::FacesValidationFailed(v) if v.len() == 1));
+        let manifold: SliceError =
+            InvalidLeafGeometry::Manifold(vec![MeshManifoldError::EmptyMesh]).into();
+        assert!(matches!(
+            manifold,
+            SliceError::ManifoldCheckFailed(v) if v.len() == 1,
+        ));
     }
 }

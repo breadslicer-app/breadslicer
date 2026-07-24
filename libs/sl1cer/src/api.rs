@@ -3,21 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Public slicer entry point.
+//! Public slicer entry points.
 //!
-//! [`slice_leaf`] is the single function the rest of the workspace
-//! calls to turn a baked, manifold leaf into a vector
-//! [`ContourStack`]. It composes the per-Z slice, stitch, winding
+//! [`slice_leaf`] turns one baked, manifold leaf into a vector
+//! [`ContourStack`]; [`slice_scene`] applies the same pipeline to
+//! every mesh leaf reachable from the scene roots and returns one
+//! stack per leaf. Both compose the per-Z slice, stitch, winding
 //! canonicalisation, and outer/hole grouping steps from the rest of
 //! the crate into one end-to-end pipeline.
 
-use sc_mesh_core::Scene;
-use sc_mesh_core::indexed_mesh::MeshTopology;
+use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedManifoldMesh};
 use sc_mesh_core::scene::bake::bake_leaf_to_world;
 use sc_mesh_core::scene::node::{NodeId, NodeKind};
+use sc_mesh_core::{IndexedMesh, Scene};
 
 use crate::contour::{ContourLayer, ContourStack};
-use crate::error::SliceError;
+use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
 use crate::grouping::group_into_polygons;
 use crate::mesh_slice::segments_at_z;
 use crate::profile::SliceProfile;
@@ -77,17 +78,187 @@ pub fn slice_leaf(
     }
 
     let baked = bake_leaf_to_world(scene, leaf)?;
+    let mesh = validate_baked(&baked).map_err(SliceError::from)?;
+    slice_manifold_mesh(&mesh, profile)
+}
+
+/// Contours produced for one leaf of a scene by [`slice_scene`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeafSlices {
+    leaf: NodeId,
+    leaf_name: Option<String>,
+    stack: ContourStack,
+}
+
+impl LeafSlices {
+    /// The leaf node these contours belong to.
+    #[inline]
+    pub fn leaf(&self) -> NodeId {
+        self.leaf
+    }
+
+    /// The leaf's display name from its scene metadata, when present.
+    #[inline]
+    pub fn leaf_name(&self) -> Option<&str> {
+        self.leaf_name.as_deref()
+    }
+
+    #[inline]
+    pub fn stack(&self) -> &ContourStack {
+        &self.stack
+    }
+
+    /// Consume the record, keeping only the contour stack.
+    #[inline]
+    pub fn into_stack(self) -> ContourStack {
+        self.stack
+    }
+}
+
+/// Slice every mesh leaf reachable from the roots of `scene` into its
+/// own [`ContourStack`], all under the single layer schedule carried
+/// by `profile`.
+///
+/// Leaves are discovered by a pre-order walk over `roots()`, entering
+/// `Group` containers at any depth. The returned records preserve
+/// that discovery order, and every stack has the same layer count and
+/// the same per-layer Z values (the schedule is shared), so stacks
+/// can be merged layer-by-layer with
+/// [`merge_stacks`](crate::contour::merge_stacks). A leaf shorter
+/// than the schedule's span simply carries empty layers above its
+/// top.
+///
+/// Geometry validation aggregates: every leaf is baked and validated
+/// even after a failure is found, so
+/// [`SliceSceneError::LeavesValidationFailed`] lists all invalid
+/// leaves of the scene in one round trip. Slicing work stops at the
+/// first failure; the other error variants abort immediately.
+///
+/// # Determinism
+///
+/// Same guarantee as [`slice_leaf`]: for a fixed `(scene, profile)`
+/// and code revision the output is bitwise identical across runs.
+///
+/// # Errors
+///
+/// - [`SliceSceneError::EmptyScene`] when no mesh leaf is reachable.
+/// - [`SliceSceneError::CsgNotYetSupported`] /
+///   [`SliceSceneError::InstanceNotYetSupported`] when discovery
+///   reaches one of the deferred node kinds, anywhere in the scene.
+/// - [`SliceSceneError::LeavesValidationFailed`] with every invalid
+///   leaf when geometry validation rejects at least one of them.
+/// - [`SliceSceneError::LeafSlicingFailed`] when baking or stitching
+///   one leaf fails.
+pub fn slice_scene(
+    scene: &Scene,
+    profile: &SliceProfile,
+) -> Result<Vec<LeafSlices>, SliceSceneError> {
+    let leaves = collect_mesh_leaves(scene)?;
+
+    let mut failures: Vec<LeafValidationFailure> = Vec::new();
+    let mut slices: Vec<LeafSlices> = Vec::new();
+    for (leaf, leaf_name) in leaves {
+        let baked =
+            bake_leaf_to_world(scene, leaf).map_err(|err| SliceSceneError::LeafSlicingFailed {
+                leaf,
+                leaf_name: leaf_name.clone(),
+                error: SliceError::BakeFailed(err),
+            })?;
+        let mesh = match validate_baked(&baked) {
+            Ok(mesh) => mesh,
+            Err(geometry) => {
+                failures.push(LeafValidationFailure {
+                    leaf,
+                    leaf_name,
+                    geometry,
+                });
+                continue;
+            }
+        };
+        // Once any leaf has failed validation the loop keeps
+        // validating (the failure report must be complete) but stops
+        // slicing: those contours would be discarded anyway.
+        if failures.is_empty() {
+            let stack = slice_manifold_mesh(&mesh, profile).map_err(|error| {
+                SliceSceneError::LeafSlicingFailed {
+                    leaf,
+                    leaf_name: leaf_name.clone(),
+                    error,
+                }
+            })?;
+            slices.push(LeafSlices {
+                leaf,
+                leaf_name,
+                stack,
+            });
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(slices)
+    } else {
+        Err(SliceSceneError::LeavesValidationFailed(failures))
+    }
+}
+
+/// Collect every mesh leaf reachable from the scene roots, in
+/// pre-order, together with its display name. Dangling child ids are
+/// skipped, matching the scene's own traversal helpers. `Csg` and
+/// `Instance` nodes abort the walk: their leaves are operands, not
+/// independent solids, and slicing them as such would silently apply
+/// union semantics regardless of the operator.
+fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, SliceSceneError> {
+    let mut stack: Vec<NodeId> = scene.roots().iter().rev().copied().collect();
+    let mut leaves: Vec<(NodeId, Option<String>)> = Vec::new();
+    while let Some(id) = stack.pop() {
+        let Some(node) = scene.node(id) else {
+            continue;
+        };
+        match &node.kind {
+            NodeKind::Leaf(_) => {
+                let name = node.meta.as_ref().and_then(|m| m.name.clone());
+                leaves.push((id, name));
+            }
+            NodeKind::Group { children } => {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+            NodeKind::Csg { .. } => {
+                return Err(SliceSceneError::CsgNotYetSupported { node_id: id });
+            }
+            NodeKind::Instance { .. } => {
+                return Err(SliceSceneError::InstanceNotYetSupported { node_id: id });
+            }
+        }
+    }
+    if leaves.is_empty() {
+        return Err(SliceSceneError::EmptyScene);
+    }
+    Ok(leaves)
+}
+
+/// Run both geometry validation stages on a baked mesh.
+fn validate_baked(baked: &IndexedMesh) -> Result<ValidatedManifoldMesh<'_>, InvalidLeafGeometry> {
     let faces = baked
         .validated_faces()
-        .map_err(SliceError::FacesValidationFailed)?;
-    let mesh = faces
+        .map_err(InvalidLeafGeometry::Faces)?;
+    faces
         .validated_manifold()
-        .map_err(SliceError::ManifoldCheckFailed)?;
+        .map_err(InvalidLeafGeometry::Manifold)
+}
 
-    let topology = MeshTopology::from_manifold(&mesh);
+/// The shared per-leaf pipeline: intersect every scheduled Z plane
+/// with the validated mesh, stitch the crossing segments into rings,
+/// canonicalise winding, and group outers with their holes.
+fn slice_manifold_mesh(
+    mesh: &ValidatedManifoldMesh<'_>,
+    profile: &SliceProfile,
+) -> Result<ContourStack, SliceError> {
+    let topology = MeshTopology::from_manifold(mesh);
     let mut layers = Vec::new();
     for z_mm in profile.layer_schedule().iter_z() {
-        let segments = segments_at_z(&mesh, z_mm, &topology);
+        let segments = segments_at_z(mesh, z_mm, &topology);
         let mut rings = stitch_layer(&segments, z_mm, &topology)?;
         normalise_to_ccw(&mut rings);
         let polygons = group_into_polygons(rings);

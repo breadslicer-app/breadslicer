@@ -260,6 +260,66 @@ impl ContourStack {
     }
 }
 
+/// Why merging per-leaf stacks into one plate-level stack failed:
+/// the inputs do not share a layer grid. `stack_idx` is the offending
+/// stack's position in the input vector; the expectation comes from
+/// stack 0.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayerAlignmentError {
+    /// A stack has a different number of layers than stack 0.
+    LayerCountMismatch {
+        stack_idx: usize,
+        expected: usize,
+        found: usize,
+    },
+    /// Two stacks disagree on a layer's Z value.
+    LayerZMismatch {
+        stack_idx: usize,
+        layer_idx: usize,
+        expected_z_mm: f64,
+        found_z_mm: f64,
+    },
+}
+
+/// Merge stacks sliced under one shared `LayerSchedule` into a single
+/// stack whose layer `i` carries every input's layer-`i` polygons,
+/// concatenated in input order. Under the writers' fill rules that
+/// concatenation renders as the union of the input solids.
+///
+/// The Z comparison is exact, not tolerance-based: stacks produced by
+/// the same schedule carry bitwise-identical Z values, so any
+/// difference means the inputs were sliced under different schedules
+/// and must not be merged. Merging zero stacks yields an empty stack.
+pub fn merge_stacks(stacks: Vec<ContourStack>) -> Result<ContourStack, LayerAlignmentError> {
+    let mut stacks = stacks.into_iter();
+    let Some(first) = stacks.next() else {
+        return Ok(ContourStack::new_unchecked(Vec::new()));
+    };
+    let mut merged = first.layers;
+    for (idx, stack) in stacks.enumerate() {
+        let stack_idx = idx + 1;
+        if stack.layers.len() != merged.len() {
+            return Err(LayerAlignmentError::LayerCountMismatch {
+                stack_idx,
+                expected: merged.len(),
+                found: stack.layers.len(),
+            });
+        }
+        for (layer_idx, (dst, src)) in merged.iter_mut().zip(stack.layers).enumerate() {
+            if src.z_mm != dst.z_mm {
+                return Err(LayerAlignmentError::LayerZMismatch {
+                    stack_idx,
+                    layer_idx,
+                    expected_z_mm: dst.z_mm,
+                    found_z_mm: src.z_mm,
+                });
+            }
+            dst.polygons.extend(src.polygons);
+        }
+    }
+    Ok(ContourStack::new_unchecked(merged))
+}
+
 #[cfg(test)]
 mod contour_tests {
     use super::*;
@@ -396,5 +456,115 @@ mod contour_tests {
     fn contour_stack_new_accepts_empty_input() {
         let stack = ContourStack::new(vec![]).unwrap();
         assert!(stack.layers().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod merge_stacks_tests {
+    use super::*;
+
+    fn p(x: f64, y: f64) -> Point2D {
+        Point2D::new(x, y)
+    }
+
+    /// CCW unit square with its lower-left corner at `(x0, 0)`. The
+    /// x offset tags the polygon so merge-order assertions can tell
+    /// the sources apart.
+    fn square_at(x0: f64) -> Polygon {
+        let outer = ClosedRing::new(vec![
+            p(x0, 0.0),
+            p(x0 + 1.0, 0.0),
+            p(x0 + 1.0, 1.0),
+            p(x0, 1.0),
+        ]);
+        Polygon::new(outer, vec![]).unwrap()
+    }
+
+    fn stack_of(zs: &[f64], x0: f64) -> ContourStack {
+        let layers = zs
+            .iter()
+            .map(|&z| ContourLayer::new(z, vec![square_at(x0)]))
+            .collect();
+        ContourStack::new(layers).unwrap()
+    }
+
+    #[test]
+    fn merging_zero_stacks_yields_an_empty_stack() {
+        let merged = merge_stacks(vec![]).unwrap();
+        assert!(merged.layers().is_empty());
+    }
+
+    #[test]
+    fn merging_one_stack_returns_it_unchanged() {
+        let stack = stack_of(&[0.1, 0.3], 0.0);
+        let merged = merge_stacks(vec![stack.clone()]).unwrap();
+        assert_eq!(merged, stack);
+    }
+
+    #[test]
+    fn merged_layers_concatenate_polygons_in_input_order() {
+        let a = stack_of(&[0.1, 0.3], 0.0);
+        let b = stack_of(&[0.1, 0.3], 10.0);
+        let c = stack_of(&[0.1, 0.3], 20.0);
+        let merged = merge_stacks(vec![a, b, c]).unwrap();
+        assert_eq!(merged.layers().len(), 2);
+        for layer in merged.layers() {
+            let x_mins: Vec<f64> = layer
+                .polygons()
+                .iter()
+                .map(|poly| poly.outer().vertices()[0].x)
+                .collect();
+            assert_eq!(x_mins, vec![0.0, 10.0, 20.0]);
+        }
+        assert_eq!(merged.layers()[0].z_mm(), 0.1);
+        assert_eq!(merged.layers()[1].z_mm(), 0.3);
+    }
+
+    #[test]
+    fn merged_layers_may_stay_empty_where_every_input_is_empty() {
+        let a = ContourStack::new(vec![
+            ContourLayer::new(0.1, vec![square_at(0.0)]),
+            ContourLayer::new(0.3, vec![]),
+        ])
+        .unwrap();
+        let b = ContourStack::new(vec![
+            ContourLayer::new(0.1, vec![square_at(5.0)]),
+            ContourLayer::new(0.3, vec![]),
+        ])
+        .unwrap();
+        let merged = merge_stacks(vec![a, b]).unwrap();
+        assert_eq!(merged.layers()[0].polygons().len(), 2);
+        assert!(merged.layers()[1].polygons().is_empty());
+    }
+
+    #[test]
+    fn layer_count_mismatch_names_the_offending_stack() {
+        let a = stack_of(&[0.1, 0.3], 0.0);
+        let b = stack_of(&[0.1], 10.0);
+        let err = merge_stacks(vec![a, b]).unwrap_err();
+        assert_eq!(
+            err,
+            LayerAlignmentError::LayerCountMismatch {
+                stack_idx: 1,
+                expected: 2,
+                found: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn layer_z_mismatch_names_stack_and_layer() {
+        let a = stack_of(&[0.1, 0.3], 0.0);
+        let b = stack_of(&[0.1, 0.35], 10.0);
+        let err = merge_stacks(vec![a, b]).unwrap_err();
+        assert_eq!(
+            err,
+            LayerAlignmentError::LayerZMismatch {
+                stack_idx: 1,
+                layer_idx: 1,
+                expected_z_mm: 0.3,
+                found_z_mm: 0.35,
+            },
+        );
     }
 }
