@@ -153,15 +153,17 @@ pub(crate) fn import(input: OsString, force: bool) -> Result<()> {
 }
 
 /// Render a collision report in the form documented for the import
-/// command: a headline, then a `Printer conflicts:` and/or
-/// `Material conflicts:` section listing each profile with the library
-/// file it would overwrite. Ids are left-padded to a common width so
-/// the file paths line up.
+/// command: a headline, then a `Printer conflicts:`,
+/// `Material conflicts:`, and/or `Material extension conflicts:`
+/// section listing each profile with the library file it would
+/// overwrite. Ids are left-padded to a common width so the file paths
+/// line up.
 fn format_collision_report(report: &CollisionReport) -> String {
     let width = report
         .printers
         .iter()
         .chain(report.materials.iter())
+        .chain(report.material_extensions.iter())
         .map(|c| c.id.len())
         .max()
         .unwrap_or(0);
@@ -170,6 +172,12 @@ fn format_collision_report(report: &CollisionReport) -> String {
         String::from("import would overwrite existing profiles. Use --force to overwrite.");
     append_conflict_section(&mut out, "Printer conflicts:", &report.printers, width);
     append_conflict_section(&mut out, "Material conflicts:", &report.materials, width);
+    append_conflict_section(
+        &mut out,
+        "Material extension conflicts:",
+        &report.material_extensions,
+        width,
+    );
     out
 }
 
@@ -377,6 +385,7 @@ mod format_collision_report_tests {
                 "sirayatech-blu",
                 "/lib/materials/sirayatech-blu.toml",
             )],
+            material_extensions: Vec::new(),
         };
         let text = format_collision_report(&report);
         let lines: Vec<&str> = text.lines().collect();
@@ -412,9 +421,35 @@ mod format_collision_report_tests {
                 "sirayatech-blu",
                 "/lib/materials/sirayatech-blu.toml",
             )],
+            material_extensions: Vec::new(),
         };
         let text = format_collision_report(&report);
         assert!(!text.contains("Printer conflicts:"), "got: {text}");
         assert!(text.contains("Material conflicts:"), "got: {text}");
+        assert!(
+            !text.contains("Material extension conflicts:"),
+            "got: {text}"
+        );
+    }
+
+    #[test]
+    fn renders_material_extension_conflicts_in_their_own_section() {
+        let report = CollisionReport {
+            printers: Vec::new(),
+            materials: Vec::new(),
+            material_extensions: vec![collision(
+                "sirayatech-blu",
+                "/lib/materials/extensions/sirayatech-blu.toml",
+            )],
+        };
+        let text = format_collision_report(&report);
+        assert!(
+            text.contains("Material extension conflicts:"),
+            "got: {text}"
+        );
+        assert!(
+            text.contains("/lib/materials/extensions/sirayatech-blu.toml"),
+            "got: {text}"
+        );
     }
 }

@@ -9,7 +9,7 @@ use std::path::Path;
 use sc_print_primitives::{MaterialId, PrinterId};
 use tempfile::TempDir;
 
-use super::listing::{list_material_ids, list_printer_ids};
+use super::listing::{list_material_extension_ids, list_material_ids, list_printer_ids};
 
 fn touch(path: &Path) {
     if let Some(parent) = path.parent() {
@@ -88,4 +88,46 @@ fn empty_subdir_yields_an_empty_list() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("printers")).unwrap();
     assert!(list_printer_ids(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn list_material_extension_ids_returns_sorted_ids_from_the_extensions_subdir() {
+    let dir = TempDir::new().unwrap();
+    let extensions = dir.path().join("materials").join("extensions");
+    touch(&extensions.join("sirayatech-blu.toml"));
+    touch(&extensions.join("elegoo-standard-grey.toml"));
+
+    let ids = list_material_extension_ids(dir.path()).unwrap();
+    assert_eq!(
+        ids,
+        vec![
+            MaterialId::new("elegoo-standard-grey").unwrap(),
+            MaterialId::new("sirayatech-blu").unwrap(),
+        ],
+    );
+}
+
+#[test]
+fn missing_extensions_subdir_yields_an_empty_list() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("materials")).unwrap();
+    assert!(list_material_extension_ids(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn material_and_extension_listings_do_not_leak_into_each_other() {
+    let dir = TempDir::new().unwrap();
+    touch(&dir.path().join("materials").join("plain-resin.toml"));
+    touch(
+        &dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("extended-resin.toml"),
+    );
+
+    let materials = list_material_ids(dir.path()).unwrap();
+    assert_eq!(materials, vec![MaterialId::new("plain-resin").unwrap()]);
+
+    let extensions = list_material_extension_ids(dir.path()).unwrap();
+    assert_eq!(extensions, vec![MaterialId::new("extended-resin").unwrap()]);
 }

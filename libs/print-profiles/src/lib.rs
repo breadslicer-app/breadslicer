@@ -44,13 +44,15 @@ pub mod value_source;
 pub mod writer;
 
 pub use library::{UserLibraryDirError, user_library_dir};
-pub use listing::{ListLibraryError, list_material_ids, list_printer_ids};
+pub use listing::{
+    ListLibraryError, list_material_extension_ids, list_material_ids, list_printer_ids,
+};
 pub use loader::{
-    LoadMaterialProfileByIdError, LoadMaterialProfileError, LoadMaterialProfileErrorKind,
-    LoadPrinterProfileByIdError, LoadPrinterProfileError, LoadPrinterProfileErrorKind,
-    load_material_profile_by_id, load_material_profile_from_library,
-    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_library,
-    load_printer_profile_from_path,
+    LoadMaterialExtensionError, LoadMaterialProfileByIdError, LoadMaterialProfileError,
+    LoadMaterialProfileErrorKind, LoadPrinterProfileByIdError, LoadPrinterProfileError,
+    LoadPrinterProfileErrorKind, load_material_extension_from_library, load_material_profile_by_id,
+    load_material_profile_from_library, load_material_profile_from_path,
+    load_printer_profile_by_id, load_printer_profile_from_library, load_printer_profile_from_path,
 };
 pub use material_defaults::MaterialDefaults;
 pub use material_identity::MaterialIdentity;
@@ -76,8 +78,9 @@ pub use resolver::resolve;
 pub use scene_overrides::SceneOverrides;
 pub use value_source::ValueSource;
 pub use writer::{
-    SaveMaterialProfileError, SaveMaterialProfileErrorKind, save_material_profile_to_library,
-    save_material_profile_to_path,
+    SaveMaterialExtensionError, SaveMaterialExtensionErrorKind, SaveMaterialProfileError,
+    SaveMaterialProfileErrorKind, save_material_extension_to_library,
+    save_material_profile_to_library, save_material_profile_to_path,
 };
 
 #[cfg(test)]

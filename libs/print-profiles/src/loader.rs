@@ -34,6 +34,16 @@ use crate::printer_profile::PrinterProfile;
 
 pub(crate) const PRINTERS_SUBDIR: &str = "printers";
 pub(crate) const MATERIALS_SUBDIR: &str = "materials";
+pub(crate) const MATERIAL_EXTENSIONS_SUBDIR: &str = "extensions";
+
+/// Directory holding material extension profiles:
+/// `<library_dir>/materials/extensions/`. Extensions live apart from
+/// full profiles so the by-id material loaders never resolve them.
+pub(crate) fn material_extensions_dir(library_dir: &Path) -> PathBuf {
+    library_dir
+        .join(MATERIALS_SUBDIR)
+        .join(MATERIAL_EXTENSIONS_SUBDIR)
+}
 
 /// Returned by [`load_printer_profile_from_path`] when the read or
 /// the parse fails. The path field names the file that was being
@@ -184,6 +194,58 @@ pub fn load_material_profile_from_library(
         .join(MATERIALS_SUBDIR)
         .join(format!("{}.toml", id.as_str()));
     load_material_profile_from_path(&path)
+}
+
+/// Returned by [`load_material_extension_from_library`] when the file
+/// cannot be loaded as a material profile or loads fine but does not
+/// carry the extension flag.
+#[derive(Debug)]
+pub enum LoadMaterialExtensionError {
+    /// The file failed to load or parse as a material profile.
+    Profile(LoadMaterialProfileError),
+    /// The file parsed as a material profile but its `extension` flag
+    /// is false, so it is a full profile misplaced in the extensions
+    /// directory.
+    NotAnExtension { path: PathBuf },
+}
+
+impl fmt::Display for LoadMaterialExtensionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Profile(err) => err.fmt(f),
+            Self::NotAnExtension { path } => write!(
+                f,
+                "the file {} is not a material extension: its extension flag is missing or false",
+                path.display(),
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LoadMaterialExtensionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Profile(err) => Some(err),
+            Self::NotAnExtension { .. } => None,
+        }
+    }
+}
+
+/// Load a material extension from a library directory by id. Resolves
+/// to `<library_dir>/materials/extensions/<id>.toml`, delegates to
+/// [`load_material_profile_from_path`], and rejects files whose
+/// `extension` flag is false.
+pub fn load_material_extension_from_library(
+    library_dir: &Path,
+    id: &MaterialId,
+) -> Result<MaterialProfile, LoadMaterialExtensionError> {
+    let path = material_extensions_dir(library_dir).join(format!("{}.toml", id.as_str()));
+    let profile =
+        load_material_profile_from_path(&path).map_err(LoadMaterialExtensionError::Profile)?;
+    if !profile.extension {
+        return Err(LoadMaterialExtensionError::NotAnExtension { path });
+    }
+    Ok(profile)
 }
 
 /// Returned by [`load_printer_profile_by_id`] when no source had

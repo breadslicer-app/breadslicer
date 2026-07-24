@@ -95,6 +95,7 @@ pub(crate) fn format_collision_report(report: &CollisionReport) -> String {
     let mut out = String::from("Importing this package would overwrite existing profiles:");
     append_conflict_section(&mut out, "Printers", &report.printers);
     append_conflict_section(&mut out, "Materials", &report.materials);
+    append_conflict_section(&mut out, "Material extensions", &report.material_extensions);
     out
 }
 

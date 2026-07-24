@@ -7,9 +7,14 @@
 //! equal, and the library writer creates the `materials/` subdirectory
 //! when absent.
 
-use crate::loader::load_material_profile_from_path;
+use sc_print_primitives::MaterialId;
+
+use crate::loader::{load_material_extension_from_library, load_material_profile_from_path};
 use crate::material_profile::MaterialProfile;
-use crate::writer::{save_material_profile_to_library, save_material_profile_to_path};
+use crate::writer::{
+    SaveMaterialExtensionErrorKind, save_material_extension_to_library,
+    save_material_profile_to_library, save_material_profile_to_path,
+};
 
 const MINIMAL_TOML: &str = "\
 [identity]
@@ -108,4 +113,113 @@ fn save_to_library_creates_the_materials_subdir_and_places_the_file_by_id() {
     assert!(expected.is_file());
     let loaded = load_material_profile_from_path(&expected).unwrap();
     assert_eq!(loaded, original);
+}
+
+/// An extension with empty `[intent]` / `[defaults]` sections and one
+/// per-printer block, as the extend flow produces.
+const EXTENSION_TOML: &str = "\
+extension = true
+
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"other\"
+name = \"Resin\"
+profile_version = \"1.0.0\"
+
+[intent]
+
+[defaults]
+
+[per_printer.elegoo-saturn-4-ctb]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+";
+
+#[test]
+fn save_extension_rejects_a_profile_without_the_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = parse(MINIMAL_TOML);
+    assert!(!profile.extension);
+
+    let err = save_material_extension_to_library(dir.path(), &profile).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        SaveMaterialExtensionErrorKind::NotAnExtension
+    ));
+    assert!(
+        !dir.path().join("materials").exists(),
+        "nothing may be written on rejection"
+    );
+}
+
+#[test]
+fn save_extension_creates_the_subdir_and_places_the_file_by_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = parse(EXTENSION_TOML);
+
+    save_material_extension_to_library(dir.path(), &original).unwrap();
+
+    let expected = dir
+        .path()
+        .join("materials")
+        .join("extensions")
+        .join("brand-resin.toml");
+    assert!(expected.is_file());
+}
+
+#[test]
+fn save_extension_round_trips_through_the_extension_loader() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = parse(EXTENSION_TOML);
+
+    save_material_extension_to_library(dir.path(), &original).unwrap();
+
+    let id = MaterialId::new("brand-resin").unwrap();
+    let loaded = load_material_extension_from_library(dir.path(), &id).unwrap();
+    assert_eq!(loaded, original);
+}
+
+#[test]
+fn save_extension_annotates_empty_intent_and_defaults_sections() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = parse(EXTENSION_TOML);
+
+    save_material_extension_to_library(dir.path(), &original).unwrap();
+
+    let written = std::fs::read_to_string(
+        dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("brand-resin.toml"),
+    )
+    .unwrap();
+    let comment = "# Values are inherited from the parent profile.";
+    let occurrences = written.matches(comment).count();
+    assert_eq!(occurrences, 2, "written file:\n{written}");
+    let intent_pos = written.find("[intent]").unwrap();
+    let comment_pos = written.find(comment).unwrap();
+    assert!(comment_pos < intent_pos, "written file:\n{written}");
+}
+
+#[test]
+fn save_extension_does_not_annotate_populated_sections() {
+    let dir = tempfile::tempdir().unwrap();
+    // Full sections, still flagged as an extension: no comment applies.
+    let toml = format!("extension = true\n{WITH_PER_PRINTER_TOML}");
+    let original = parse(&toml);
+
+    save_material_extension_to_library(dir.path(), &original).unwrap();
+
+    let written = std::fs::read_to_string(
+        dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("brand-resin.toml"),
+    )
+    .unwrap();
+    assert!(
+        !written.contains("inherited from the parent profile"),
+        "written file:\n{written}"
+    );
 }

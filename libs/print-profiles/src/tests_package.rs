@@ -90,6 +90,8 @@ struct PackageDoc {
 struct ContentsDoc {
     printers: Vec<String>,
     materials: Vec<String>,
+    #[serde(default)]
+    material_extensions: Vec<String>,
 }
 
 fn parse_manifest(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> ManifestDoc {
@@ -367,7 +369,7 @@ fn import_with_force_overwrites_colliding_profiles() {
     assert_eq!(read_dest(dest.path(), "materials", "m-one"), M1_TOML);
 }
 
-/// Build a package by hand so we can plant entries an honest export
+/// Build a package by hand so we can plant entries [`export_package`]
 /// would never produce: a path-traversal name, a nested path, an
 /// invalid slug, and one well-formed profile.
 fn hostile_package() -> Cursor<Vec<u8>> {
@@ -415,4 +417,186 @@ fn import_of_an_empty_archive_writes_nothing_and_succeeds() {
     import_package(package, dest.path(), false).unwrap();
     assert!(!dest.path().join("printers").exists());
     assert!(!dest.path().join("materials").exists());
+}
+
+const E1_TOML: &str = "# extension one\nlabel = \"e1\"\n";
+
+/// Add an extension file for `id` to a library built by
+/// [`write_library`].
+fn write_extension(dir: &Path, id: &str, contents: &str) {
+    let extensions = dir.join("materials").join("extensions");
+    fs::create_dir_all(&extensions).unwrap();
+    fs::write(extensions.join(format!("{id}.toml")), contents).unwrap();
+}
+
+#[test]
+fn export_all_includes_material_extensions() {
+    let dir = write_library();
+    write_extension(dir.path(), "m-one", E1_TOML);
+
+    let mut archive = export_to_archive(dir.path(), &ExportSelection::All, &manifest()).unwrap();
+    assert_eq!(
+        entry_names(&mut archive),
+        vec![
+            "manifest.toml".to_owned(),
+            "materials/extensions/m-one.toml".to_owned(),
+            "materials/m-one.toml".to_owned(),
+            "materials/m-two.toml".to_owned(),
+            "printers/p-one.toml".to_owned(),
+            "printers/p-two.toml".to_owned(),
+        ],
+    );
+    assert_eq!(
+        entry_text(&mut archive, "materials/extensions/m-one.toml"),
+        E1_TOML,
+    );
+    let doc = parse_manifest(&mut archive);
+    assert_eq!(doc.contents.material_extensions, vec!["m-one"]);
+}
+
+#[test]
+fn export_materials_includes_material_extensions() {
+    let dir = write_library();
+    write_extension(dir.path(), "m-one", E1_TOML);
+
+    let mut archive =
+        export_to_archive(dir.path(), &ExportSelection::Materials, &manifest()).unwrap();
+    let names = entry_names(&mut archive);
+    assert!(
+        names.contains(&"materials/extensions/m-one.toml".to_owned()),
+        "names: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name.starts_with("printers/")),
+        "names: {names:?}"
+    );
+}
+
+#[test]
+fn export_printers_omits_material_extensions() {
+    let dir = write_library();
+    write_extension(dir.path(), "m-one", E1_TOML);
+
+    let mut archive =
+        export_to_archive(dir.path(), &ExportSelection::Printers, &manifest()).unwrap();
+    let names = entry_names(&mut archive);
+    assert!(
+        !names.iter().any(|name| name.contains("extensions")),
+        "names: {names:?}"
+    );
+}
+
+#[test]
+fn export_by_id_matches_an_extension_only_id() {
+    let dir = write_library();
+    // The extension id resolves to no plain material file: only the
+    // extension entry is exported for it.
+    write_extension(dir.path(), "m-three", E1_TOML);
+
+    let selection = ExportSelection::Ids(vec!["m-three".to_owned()]);
+    let mut archive = export_to_archive(dir.path(), &selection, &manifest()).unwrap();
+    assert_eq!(
+        entry_names(&mut archive),
+        vec![
+            "manifest.toml".to_owned(),
+            "materials/extensions/m-three.toml".to_owned(),
+        ],
+    );
+}
+
+#[test]
+fn export_by_id_includes_both_the_material_and_its_extension() {
+    let dir = write_library();
+    write_extension(dir.path(), "m-one", E1_TOML);
+
+    let selection = ExportSelection::Ids(vec!["m-one".to_owned()]);
+    let mut archive = export_to_archive(dir.path(), &selection, &manifest()).unwrap();
+    assert_eq!(
+        entry_names(&mut archive),
+        vec![
+            "manifest.toml".to_owned(),
+            "materials/extensions/m-one.toml".to_owned(),
+            "materials/m-one.toml".to_owned(),
+        ],
+    );
+}
+
+#[test]
+fn import_writes_material_extensions_into_the_extensions_subdir() {
+    let src = write_library();
+    write_extension(src.path(), "m-one", E1_TOML);
+    let package = package_of(src.path());
+    let dest = TempDir::new().unwrap();
+
+    import_package(package, dest.path(), false).unwrap();
+
+    let written = dest
+        .path()
+        .join("materials")
+        .join("extensions")
+        .join("m-one.toml");
+    assert!(written.is_file());
+    assert_eq!(fs::read_to_string(written).unwrap(), E1_TOML);
+}
+
+#[test]
+fn import_detects_collisions_on_existing_extensions() {
+    let src = write_library();
+    write_extension(src.path(), "m-one", E1_TOML);
+    let package = package_of(src.path());
+
+    let dest = TempDir::new().unwrap();
+    write_extension(dest.path(), "m-one", "OLD");
+
+    let err = import_package(package, dest.path(), false).unwrap_err();
+    let ImportError::Collisions(report) = err else {
+        panic!("expected Collisions, got {err:?}");
+    };
+    assert!(report.printers.is_empty());
+    assert!(report.materials.is_empty());
+    assert_eq!(report.material_extensions.len(), 1);
+    assert_eq!(report.material_extensions[0].id, "m-one");
+    assert_eq!(
+        report.material_extensions[0].library_path,
+        dest.path()
+            .join("materials")
+            .join("extensions")
+            .join("m-one.toml"),
+    );
+
+    // Nothing was written.
+    let old = dest
+        .path()
+        .join("materials")
+        .join("extensions")
+        .join("m-one.toml");
+    assert_eq!(fs::read_to_string(old).unwrap(), "OLD");
+    assert!(!dest.path().join("materials").join("m-one.toml").exists());
+}
+
+#[test]
+fn import_ignores_entries_nested_below_the_extensions_dir() {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zip = ZipWriter::new(&mut buf);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for name in [
+            "materials/extensions/sub/nested.toml",
+            "materials/extensions/Bad-Slug.toml",
+            "materials/extensions/good.toml",
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(b"x = 1\n").unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    buf.set_position(0);
+
+    let dest = TempDir::new().unwrap();
+    import_package(buf, dest.path(), false).unwrap();
+
+    let extensions = dest.path().join("materials").join("extensions");
+    assert!(extensions.join("good.toml").is_file());
+    assert!(!extensions.join("sub").exists());
+    assert!(!extensions.join("Bad-Slug.toml").exists());
 }

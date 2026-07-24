@@ -34,14 +34,26 @@ use crate::material_per_printer::MaterialPerPrinter;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(try_from = "RawMaterialProfile")]
 pub struct MaterialProfile {
+    /// True for a profile that supplements the same-id base profile
+    /// with additional per-printer calibration blocks instead of
+    /// replacing it. Declared first so it serialises above the
+    /// section tables; omitted from the TOML when false.
+    #[serde(skip_serializing_if = "is_false")]
+    pub extension: bool,
     pub identity: MaterialIdentity,
     pub intent: MaterialIntent,
     pub defaults: MaterialDefaults,
     pub per_printer: BTreeMap<PrinterId, MaterialPerPrinter>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Deserialize)]
 struct RawMaterialProfile {
+    #[serde(default)]
+    extension: bool,
     identity: MaterialIdentity,
     intent: MaterialIntent,
     defaults: MaterialDefaults,
@@ -110,6 +122,7 @@ impl TryFrom<RawMaterialProfile> for MaterialProfile {
             per_printer.insert(printer_id, entry.inner);
         }
         Ok(Self {
+            extension: raw.extension,
             identity: raw.identity,
             intent: raw.intent,
             defaults: raw.defaults,

@@ -145,9 +145,26 @@ fn collision_report_lists_the_conflicting_ids() {
             library_path: "/lib/printers/test-printer.toml".into(),
         }],
         materials: Vec::new(),
+        material_extensions: Vec::new(),
     };
     let text = format_collision_report(&report);
     assert!(text.contains("Printers:"), "got: {text}");
     assert!(text.contains("test-printer"), "got: {text}");
     assert!(!text.contains("Materials:"), "got: {text}");
+    assert!(!text.contains("Material extensions:"), "got: {text}");
+}
+
+#[test]
+fn collision_report_lists_material_extension_ids_in_their_own_section() {
+    let report = CollisionReport {
+        printers: Vec::new(),
+        materials: Vec::new(),
+        material_extensions: vec![Collision {
+            id: "test-resin".to_owned(),
+            library_path: "/lib/materials/extensions/test-resin.toml".into(),
+        }],
+    };
+    let text = format_collision_report(&report);
+    assert!(text.contains("Material extensions:"), "got: {text}");
+    assert!(text.contains("test-resin"), "got: {text}");
 }

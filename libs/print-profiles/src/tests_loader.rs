@@ -10,11 +10,11 @@ use std::path::Path;
 use sc_print_primitives::{MaterialId, PrinterId};
 
 use super::loader::{
-    LoadMaterialProfileByIdError, LoadMaterialProfileError, LoadMaterialProfileErrorKind,
-    LoadPrinterProfileByIdError, LoadPrinterProfileError, LoadPrinterProfileErrorKind,
-    load_material_profile_by_id, load_material_profile_from_library,
-    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_library,
-    load_printer_profile_from_path,
+    LoadMaterialExtensionError, LoadMaterialProfileByIdError, LoadMaterialProfileError,
+    LoadMaterialProfileErrorKind, LoadPrinterProfileByIdError, LoadPrinterProfileError,
+    LoadPrinterProfileErrorKind, load_material_extension_from_library, load_material_profile_by_id,
+    load_material_profile_from_library, load_material_profile_from_path,
+    load_printer_profile_by_id, load_printer_profile_from_library, load_printer_profile_from_path,
 };
 
 const VALID_PRINTER_TOML: &str = r#"
@@ -468,4 +468,76 @@ fn load_by_id_error_types_implement_error_trait() {
     fn assert_error<E: std::error::Error>() {}
     assert_error::<LoadPrinterProfileByIdError>();
     assert_error::<LoadMaterialProfileByIdError>();
+    assert_error::<LoadMaterialExtensionError>();
+}
+
+fn write_extension_file(library_dir: &Path, id: &str, contents: &str) {
+    let extensions_dir = library_dir.join("materials").join("extensions");
+    fs::create_dir_all(&extensions_dir).unwrap();
+    fs::write(extensions_dir.join(format!("{id}.toml")), contents).unwrap();
+}
+
+#[test]
+fn load_material_extension_accepts_a_flagged_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let toml = format!("extension = true\n{VALID_MATERIAL_TOML}");
+    write_extension_file(dir.path(), "sirayatech-blu", &toml);
+
+    let id = MaterialId::new("sirayatech-blu").unwrap();
+    let profile = load_material_extension_from_library(dir.path(), &id).unwrap();
+    assert!(profile.extension);
+    assert_eq!(profile.identity.brand.as_str(), "Siraya Tech");
+}
+
+#[test]
+fn load_material_extension_rejects_an_unflagged_file() {
+    let dir = tempfile::tempdir().unwrap();
+    write_extension_file(dir.path(), "sirayatech-blu", VALID_MATERIAL_TOML);
+
+    let id = MaterialId::new("sirayatech-blu").unwrap();
+    let err = load_material_extension_from_library(dir.path(), &id).unwrap_err();
+    match &err {
+        LoadMaterialExtensionError::NotAnExtension { path } => {
+            assert_eq!(
+                path,
+                &dir.path()
+                    .join("materials")
+                    .join("extensions")
+                    .join("sirayatech-blu.toml"),
+            );
+            let msg = format!("{err}");
+            assert!(msg.contains("sirayatech-blu.toml"), "msg: {msg}");
+            assert!(msg.contains("extension flag"), "msg: {msg}");
+        }
+        other => panic!("expected NotAnExtension, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_material_extension_from_missing_file_wraps_the_profile_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = MaterialId::new("does-not-exist").unwrap();
+    let err = load_material_extension_from_library(dir.path(), &id).unwrap_err();
+    match err {
+        LoadMaterialExtensionError::Profile(inner) => match inner.kind {
+            LoadMaterialProfileErrorKind::Io(io_err) => {
+                assert_eq!(io_err.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected Io kind, got {other:?}"),
+        },
+        other => panic!("expected Profile, got {other:?}"),
+    }
+}
+
+#[test]
+fn load_material_extension_does_not_resolve_plain_material_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let materials_dir = dir.path().join("materials");
+    fs::create_dir_all(&materials_dir).unwrap();
+    let toml = format!("extension = true\n{VALID_MATERIAL_TOML}");
+    fs::write(materials_dir.join("sirayatech-blu.toml"), toml).unwrap();
+
+    let id = MaterialId::new("sirayatech-blu").unwrap();
+    let err = load_material_extension_from_library(dir.path(), &id).unwrap_err();
+    assert!(matches!(err, LoadMaterialExtensionError::Profile(_)));
 }

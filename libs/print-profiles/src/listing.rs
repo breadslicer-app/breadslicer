@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
-use crate::loader::{MATERIALS_SUBDIR, PRINTERS_SUBDIR};
+use crate::loader::{MATERIALS_SUBDIR, PRINTERS_SUBDIR, material_extensions_dir};
 
 /// Returned when a library subdirectory cannot be read (other than
 /// it simply not existing, which yields an empty list).
@@ -55,9 +55,20 @@ pub fn list_printer_ids(library_dir: &Path) -> Result<Vec<PrinterId>, ListLibrar
 }
 
 /// List the material ids present in `<library_dir>/materials/`,
-/// sorted.
+/// sorted. Extension profiles under `materials/extensions/` are not
+/// included; see [`list_material_extension_ids`].
 pub fn list_material_ids(library_dir: &Path) -> Result<Vec<MaterialId>, ListLibraryError> {
     list_ids(&library_dir.join(MATERIALS_SUBDIR), |stem| {
+        MaterialId::new(stem).ok()
+    })
+}
+
+/// List the material ids that have an extension profile under
+/// `<library_dir>/materials/extensions/`, sorted.
+pub fn list_material_extension_ids(
+    library_dir: &Path,
+) -> Result<Vec<MaterialId>, ListLibraryError> {
+    list_ids(&material_extensions_dir(library_dir), |stem| {
         MaterialId::new(stem).ok()
     })
 }

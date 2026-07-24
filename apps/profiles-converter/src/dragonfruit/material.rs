@@ -198,6 +198,7 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
     }
 
     Ok(MaterialProfile {
+        extension: false,
         identity: MaterialIdentity {
             id,
             brand,

@@ -131,6 +131,51 @@ fn deserialise_rejects_invalid_per_printer_id() {
 }
 
 #[test]
+fn extension_flag_defaults_to_false() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    assert!(!parsed.extension);
+}
+
+#[test]
+fn extension_flag_parses_when_present() {
+    let toml = format!("extension = true\n{MINIMAL_TOML}");
+    let parsed: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    assert!(parsed.extension);
+}
+
+#[test]
+fn serialise_omits_the_extension_flag_when_false() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    let serialised = toml_edit::ser::to_string(&parsed).unwrap();
+    assert!(
+        !serialised.contains("extension"),
+        "should not emit extension when false: {serialised}"
+    );
+}
+
+#[test]
+fn serialise_emits_the_extension_flag_before_the_sections_when_true() {
+    let toml = format!("extension = true\n{MINIMAL_TOML}");
+    let parsed: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    // The pretty serialiser renders the sections as standard tables,
+    // making the flag-before-tables ordering observable.
+    let serialised = toml_edit::ser::to_string_pretty(&parsed).unwrap();
+    let flag_pos = serialised.find("extension = true").unwrap();
+    let identity_pos = serialised.find("[identity]").unwrap();
+    assert!(flag_pos < identity_pos, "serialised: {serialised}");
+}
+
+#[test]
+fn roundtrip_preserves_the_extension_flag() {
+    let toml = format!("extension = true\n{MINIMAL_TOML}");
+    let original: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: MaterialProfile = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+    assert!(roundtripped.extension);
+}
+
+#[test]
 fn roundtrip_with_per_printer_entries_preserves_value() {
     let original: MaterialProfile = toml_edit::de::from_str(WITH_PER_PRINTER_TOML).unwrap();
     let serialised = toml_edit::ser::to_string(&original).unwrap();

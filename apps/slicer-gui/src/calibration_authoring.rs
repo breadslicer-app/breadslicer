@@ -116,6 +116,7 @@ pub(crate) fn build_material_profile(
     validated: ValidatedCalibration,
 ) -> MaterialProfile {
     MaterialProfile {
+        extension: false,
         identity: MaterialIdentity {
             id: validated.id,
             brand: source.identity.brand.clone(),

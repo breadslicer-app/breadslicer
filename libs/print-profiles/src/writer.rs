@@ -12,13 +12,18 @@
 //! the profile-TOML shape owned by this crate rather than hand-rolled
 //! by callers. Serialisation uses the same `toml_edit` path the
 //! round-trip tests exercise, so a written file loads back equal.
+//!
+//! The extension writer places extension-flagged profiles at
+//! `<library_dir>/materials/extensions/<id>.toml` and annotates their
+//! empty `[intent]` / `[defaults]` sections with a comment explaining
+//! that the values come from the parent profile.
 
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::loader::MATERIALS_SUBDIR;
+use crate::loader::{MATERIALS_SUBDIR, material_extensions_dir};
 use crate::material_profile::MaterialProfile;
 
 /// Returned by the material-profile writers when serialisation or the
@@ -100,4 +105,130 @@ pub fn save_material_profile_to_library(
         .join(MATERIALS_SUBDIR)
         .join(format!("{}.toml", profile.identity.id.as_str()));
     save_material_profile_to_path(&path, profile)
+}
+
+/// Returned by [`save_material_extension_to_library`] when the profile
+/// is not flagged as an extension, or when serialisation or the write
+/// fails. The path field names the file that was being written.
+#[derive(Debug)]
+pub struct SaveMaterialExtensionError {
+    pub path: PathBuf,
+    pub kind: SaveMaterialExtensionErrorKind,
+}
+
+#[derive(Debug)]
+pub enum SaveMaterialExtensionErrorKind {
+    /// The profile's `extension` flag is false; writing it into the
+    /// extensions directory would misfile a full profile.
+    NotAnExtension,
+    Io(io::Error),
+    TomlSerialize(toml_edit::ser::Error),
+    /// Reparsing the serialised profile to attach the section
+    /// comments failed.
+    TomlReparse(toml_edit::TomlError),
+}
+
+impl fmt::Display for SaveMaterialExtensionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to save material extension to {}: {}",
+            self.path.display(),
+            self.kind,
+        )
+    }
+}
+
+impl fmt::Display for SaveMaterialExtensionErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotAnExtension => {
+                write!(f, "the profile's extension flag is false")
+            }
+            Self::Io(err) => write!(f, "{err}"),
+            Self::TomlSerialize(err) => write!(f, "{err}"),
+            Self::TomlReparse(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for SaveMaterialExtensionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            SaveMaterialExtensionErrorKind::NotAnExtension => None,
+            SaveMaterialExtensionErrorKind::Io(err) => Some(err),
+            SaveMaterialExtensionErrorKind::TomlSerialize(err) => Some(err),
+            SaveMaterialExtensionErrorKind::TomlReparse(err) => Some(err),
+        }
+    }
+}
+
+/// Comment attached above the empty `[intent]` and `[defaults]`
+/// sections of a written extension file.
+const INHERITED_SECTION_COMMENT: &str = "# Values are inherited from the parent profile.";
+
+/// Write an extension profile into a library directory at
+/// `<library_dir>/materials/extensions/<id>.toml`, creating the
+/// subdirectory when absent. Rejects profiles whose `extension` flag
+/// is false. When the `[intent]` or `[defaults]` section is empty, a
+/// comment explaining that the values are inherited from the parent
+/// profile is attached above it.
+pub fn save_material_extension_to_library(
+    library_dir: &Path,
+    profile: &MaterialProfile,
+) -> Result<(), SaveMaterialExtensionError> {
+    let path =
+        material_extensions_dir(library_dir).join(format!("{}.toml", profile.identity.id.as_str()));
+    if !profile.extension {
+        return Err(SaveMaterialExtensionError {
+            path,
+            kind: SaveMaterialExtensionErrorKind::NotAnExtension,
+        });
+    }
+    // The pretty serialiser renders standard `[section]` tables (the
+    // plain one emits inline tables), which the inherited-values
+    // comments need as anchors.
+    let serialised =
+        toml_edit::ser::to_string_pretty(profile).map_err(|err| SaveMaterialExtensionError {
+            path: path.clone(),
+            kind: SaveMaterialExtensionErrorKind::TomlSerialize(err),
+        })?;
+    let mut doc: toml_edit::DocumentMut =
+        serialised
+            .parse()
+            .map_err(|err| SaveMaterialExtensionError {
+                path: path.clone(),
+                kind: SaveMaterialExtensionErrorKind::TomlReparse(err),
+            })?;
+    annotate_inherited_section(&mut doc, "intent");
+    annotate_inherited_section(&mut doc, "defaults");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| SaveMaterialExtensionError {
+            path: parent.to_owned(),
+            kind: SaveMaterialExtensionErrorKind::Io(err),
+        })?;
+    }
+    fs::write(&path, doc.to_string()).map_err(|err| SaveMaterialExtensionError {
+        path,
+        kind: SaveMaterialExtensionErrorKind::Io(err),
+    })
+}
+
+/// Attach the inherited-values comment above the named section when
+/// the section is an empty table, keeping whatever whitespace prefix
+/// the serialiser produced.
+fn annotate_inherited_section(doc: &mut toml_edit::DocumentMut, key: &str) {
+    if let Some(table) = doc.get_mut(key).and_then(|item| item.as_table_mut())
+        && table.is_empty()
+    {
+        let existing = table
+            .decor()
+            .prefix()
+            .and_then(|prefix| prefix.as_str())
+            .unwrap_or("")
+            .to_owned();
+        table
+            .decor_mut()
+            .set_prefix(format!("{existing}{INHERITED_SECTION_COMMENT}\n"));
+    }
 }
