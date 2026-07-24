@@ -50,8 +50,8 @@ impl FromStr for MeshFileType {
 
 /// Formats `scene_writer::write_scene` can produce. Distinct from
 /// [`MeshFileType`] because the read side carries variants, `Stl`
-/// (auto-detect ASCII vs binary at parse time), `Ply`, `Amf`, `_3mf`,
-/// that are either ambiguous or unimplemented on the write side. Going
+/// (auto-detect ASCII vs binary at parse time), `Ply`, `Amf`, that
+/// are either ambiguous or unimplemented on the write side. Going
 /// through this enum makes the writer's domain a compile-time invariant
 /// instead of a runtime `unreachable!` / "not implemented" arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,10 +59,11 @@ pub enum WriteFormat {
     StlAscii,
     StlBin,
     Obj,
+    ThreeMf,
 }
 
 /// Returned by `WriteFormat::try_from(MeshFileType)` when the source
-/// format has no write-side counterpart (e.g. `Ply`, `Amf`, `_3mf`).
+/// format has no write-side counterpart (e.g. `Ply`, `Amf`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedWriteFormat(pub MeshFileType);
 
@@ -85,9 +86,8 @@ impl TryFrom<MeshFileType> for WriteFormat {
             MeshFileType::Stl | MeshFileType::StlBin => Ok(Self::StlBin),
             MeshFileType::StlAscii => Ok(Self::StlAscii),
             MeshFileType::Obj => Ok(Self::Obj),
-            MeshFileType::Ply | MeshFileType::Amf | MeshFileType::_3mf => {
-                Err(UnsupportedWriteFormat(value))
-            }
+            MeshFileType::_3mf => Ok(Self::ThreeMf),
+            MeshFileType::Ply | MeshFileType::Amf => Err(UnsupportedWriteFormat(value)),
         }
     }
 }
@@ -205,6 +205,7 @@ mod write_format_tests {
             (MeshFileType::StlBin, WriteFormat::StlBin),
             (MeshFileType::StlAscii, WriteFormat::StlAscii),
             (MeshFileType::Obj, WriteFormat::Obj),
+            (MeshFileType::_3mf, WriteFormat::ThreeMf),
         ];
         for (input, expected) in cases {
             assert_eq!(WriteFormat::try_from(input).unwrap(), expected);
@@ -213,7 +214,7 @@ mod write_format_tests {
 
     #[test]
     fn unwriteable_variants_carry_their_input_in_the_error() {
-        for input in [MeshFileType::Ply, MeshFileType::Amf, MeshFileType::_3mf] {
+        for input in [MeshFileType::Ply, MeshFileType::Amf] {
             assert_eq!(
                 WriteFormat::try_from(input).unwrap_err(),
                 UnsupportedWriteFormat(input)

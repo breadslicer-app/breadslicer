@@ -24,8 +24,8 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 use std::str::Utf8Error;
 
-use sc_3mf::error::{ModelParseError, PackageReadError};
-use sc_mesh_core::{IndexedMeshBuildError, SceneError};
+use sc_3mf::error::{ModelParseError, ModelWriteError, PackageReadError, PackageWriteError};
+use sc_mesh_core::{IndexedMeshBuildError, NodeId, SceneError};
 
 use crate::filetypes::MeshFileType;
 
@@ -124,6 +124,7 @@ pub enum WriteSceneError {
     Graph(SceneError),
     Stl(WriteStlError),
     Obj(WriteObjError),
+    ThreeMf(WriteThreeMfError),
 }
 
 impl fmt::Display for WriteSceneError {
@@ -146,6 +147,7 @@ impl fmt::Display for WriteSceneError {
             Self::Graph(e) => write!(f, "{e}"),
             Self::Stl(e) => write!(f, "{e}"),
             Self::Obj(e) => write!(f, "{e}"),
+            Self::ThreeMf(e) => write!(f, "{e}"),
         }
     }
 }
@@ -158,6 +160,7 @@ impl std::error::Error for WriteSceneError {
             Self::Graph(e) => Some(e),
             Self::Stl(e) => Some(e),
             Self::Obj(e) => Some(e),
+            Self::ThreeMf(e) => Some(e),
             Self::EmptyScene | Self::PathHasNoFileName(_) => None,
         }
     }
@@ -184,6 +187,12 @@ impl From<WriteStlError> for WriteSceneError {
 impl From<WriteObjError> for WriteSceneError {
     fn from(e: WriteObjError) -> Self {
         Self::Obj(e)
+    }
+}
+
+impl From<WriteThreeMfError> for WriteSceneError {
+    fn from(e: WriteThreeMfError) -> Self {
+        Self::ThreeMf(e)
     }
 }
 
@@ -628,6 +637,84 @@ impl From<std::io::Error> for WriteObjError {
 }
 
 impl From<SceneError> for WriteObjError {
+    fn from(e: SceneError) -> Self {
+        Self::Graph(e)
+    }
+}
+
+// --- per-format: 3MF write -------------------------------------------
+
+#[derive(Debug)]
+pub enum WriteThreeMfError {
+    /// The OPC container could not be serialized.
+    Package(PackageWriteError),
+    /// The model XML could not be serialized.
+    Model(ModelWriteError),
+    /// Copying the buffered package to the caller's writer failed.
+    Io(std::io::Error),
+    /// A graph accessor failed while walking the scene.
+    Graph(SceneError),
+    /// The scene contains a CSG node. 3MF has no CSG concept, and
+    /// exporting the operands as plain objects would misrepresent
+    /// the geometry the user sees.
+    CsgUnrepresentable { node_id: NodeId },
+    /// The scene contains an Instance node; subtree-resource
+    /// expansion on export is not implemented.
+    InstanceUnrepresentable { node_id: NodeId },
+}
+
+impl fmt::Display for WriteThreeMfError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Package(e) => write!(f, "3MF writer: {e}"),
+            Self::Model(e) => write!(f, "3MF writer: {e}"),
+            Self::Io(e) => write!(f, "3MF writer I/O error: {e}"),
+            Self::Graph(e) => write!(f, "3MF writer: {e}"),
+            Self::CsgUnrepresentable { node_id } => write!(
+                f,
+                "3MF writer: node {} is a CSG operation, which 3MF cannot represent",
+                node_id.get(),
+            ),
+            Self::InstanceUnrepresentable { node_id } => write!(
+                f,
+                "3MF writer: node {} is an instance reference, which this writer cannot represent yet",
+                node_id.get(),
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WriteThreeMfError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Package(e) => Some(e),
+            Self::Model(e) => Some(e),
+            Self::Io(e) => Some(e),
+            Self::Graph(e) => Some(e),
+            Self::CsgUnrepresentable { .. } | Self::InstanceUnrepresentable { .. } => None,
+        }
+    }
+}
+
+impl From<PackageWriteError> for WriteThreeMfError {
+    fn from(e: PackageWriteError) -> Self {
+        Self::Package(e)
+    }
+}
+
+impl From<ModelWriteError> for WriteThreeMfError {
+    fn from(e: ModelWriteError) -> Self {
+        Self::Model(e)
+    }
+}
+
+impl From<std::io::Error> for WriteThreeMfError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<SceneError> for WriteThreeMfError {
     fn from(e: SceneError) -> Self {
         Self::Graph(e)
     }

@@ -3,26 +3,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Unit tests for the 3MF reader adapter: document-to-scene mapping,
-//! transform orientation, unit scaling, warnings, and error paths.
-//! Packages are built in memory through `sc-3mf` so every test goes
-//! through the real container path.
+//! Unit tests for the 3MF adapter, both directions: document-to-scene
+//! mapping, transform orientation, unit scaling, warnings, error
+//! paths, and the scene-to-document writer. Packages are built in
+//! memory through `sc-3mf` so every test goes through the real
+//! container path.
 
 use std::io::Cursor;
+use std::sync::Arc;
 
 use sc_3mf::error::ModelParseError;
-use sc_3mf::model::ObjectType;
+use sc_3mf::model::{Matrix3D, ModelDocument, ObjectPayload, ObjectType, parse_model};
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
-use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, Normal, Scene, Vertex, bake_leaf_to_world};
+use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata};
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_core::{
+    CsgOp, IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex, bake_leaf_to_world,
+};
 
-use crate::error::{LoadMeshError, LoadThreeMfError};
+use crate::error::{LoadMeshError, LoadThreeMfError, WriteThreeMfError};
 use crate::filetypes::MeshFileType;
 use crate::loader::load_mesh_from_reader;
 use crate::messages::{LoadMeshWarning, LoadThreeMfWarning};
-use crate::threemf::{MAX_COMPONENT_DEPTH, MAX_EXPANDED_LEAF_COUNT, read_threemf};
+use crate::threemf::{MAX_COMPONENT_DEPTH, MAX_EXPANDED_LEAF_COUNT, read_threemf, write_threemf};
 
 /// Tetrahedron with vertices at the origin and 10 units along each
 /// axis, following the manifold winding used across the workspace.
@@ -447,6 +451,341 @@ mod error_tests {
         assert!(matches!(
             err,
             LoadThreeMfError::LeafBudgetExceeded { limit } if limit == MAX_EXPANDED_LEAF_COUNT,
+        ));
+    }
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+
+    fn tri_mesh(name: Option<&str>) -> IndexedMesh {
+        IndexedMesh {
+            meta: name.map(|n| MeshMetadata {
+                name: Some(n.to_string()),
+                ..Default::default()
+            }),
+            vertices: vec![
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+                Vertex::new([0.0, 0.0, 1.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.577, 0.577, 0.577]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    /// Writes the scene and parses the resulting package back into a
+    /// document, so assertions run on the emitted structure. A
+    /// successful parse also proves definition-before-use ordering,
+    /// which `parse_model` enforces.
+    fn written_document(scene: &Scene) -> ModelDocument {
+        let mut bytes = Vec::new();
+        write_threemf(scene, &mut bytes).expect("write succeeds");
+        let package = Package::read_from(Cursor::new(bytes)).expect("package parses");
+        let start = package.start_part().expect("start part resolves");
+        parse_model(package.part_data(&start).expect("start part present")).expect("model parses")
+    }
+
+    /// Loader-shape scene: anonymous identity Group root with the
+    /// given leaf payloads as children.
+    fn loader_shape_scene(payloads: Vec<(LeafPayload, Transform3D)>) -> Scene {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        for (payload, transform) in payloads {
+            let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
+            g.add_child(root, leaf).expect("attach leaf");
+        }
+        g
+    }
+
+    #[test]
+    fn bare_leaf_root_writes_one_object_and_one_item() {
+        let scene = Scene::from(tri_mesh(Some("Solo")));
+        let document = written_document(&scene);
+        assert_eq!(document.objects.len(), 1);
+        assert_eq!(document.objects[0].name.as_deref(), Some("Solo"));
+        match &document.objects[0].payload {
+            ObjectPayload::Mesh(data) => {
+                assert_eq!(data.vertices.len(), 3);
+                assert_eq!(data.triangles.len(), 1);
+                assert_eq!(data.vertices[0].x, 1.0);
+            }
+            other => panic!("expected a mesh payload, got {other:?}"),
+        }
+        assert_eq!(document.build.len(), 1);
+        assert_eq!(document.build[0].object_id, document.objects[0].id);
+        assert!(document.build[0].transform.is_none());
+    }
+
+    #[test]
+    fn loader_shaped_root_group_collapses_into_build_items() {
+        let scene = loader_shape_scene(vec![
+            (
+                LeafPayload::Mesh(Arc::new(tri_mesh(Some("A")))),
+                Transform3D::Identity,
+            ),
+            (
+                LeafPayload::Mesh(Arc::new(tri_mesh(Some("B")))),
+                Transform3D::Affine(AffineTransform3D::from_translation([4.0, 0.0, 0.0])),
+            ),
+        ]);
+        let document = written_document(&scene);
+        // The wrapping group vanishes: 2 mesh objects, 2 items, no
+        // components object.
+        assert_eq!(document.objects.len(), 2);
+        assert!(
+            document
+                .objects
+                .iter()
+                .all(|o| matches!(o.payload, ObjectPayload::Mesh(_))),
+        );
+        assert_eq!(document.build.len(), 2);
+        assert_eq!(
+            document.build[1].transform,
+            Some(Matrix3D([
+                1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0, //
+                4.0, 0.0, 0.0,
+            ])),
+        );
+    }
+
+    #[test]
+    fn named_root_group_stays_a_components_object() {
+        let mut g = Scene::new();
+        let root = g.add_group(
+            Some(SceneMetadata {
+                name: Some("Assembly".to_string()),
+                comment: None,
+            }),
+            Transform3D::Identity,
+        );
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+
+        let document = written_document(&g);
+        assert_eq!(document.build.len(), 1);
+        let root_object = document
+            .object(document.build[0].object_id)
+            .expect("build references the group object");
+        assert_eq!(root_object.name.as_deref(), Some("Assembly"));
+        match &root_object.payload {
+            ObjectPayload::Components(components) => assert_eq!(components.len(), 1),
+            other => panic!("expected components, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transformed_anonymous_root_group_stays_a_components_object() {
+        let mut g = Scene::new();
+        let root = g.add_group(
+            None,
+            Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 9.0])),
+        );
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+
+        let document = written_document(&g);
+        assert_eq!(document.build.len(), 1);
+        assert_eq!(
+            document.build[0].transform,
+            Some(Matrix3D([
+                1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0, //
+                0.0, 0.0, 9.0,
+            ])),
+        );
+        let root_object = document
+            .object(document.build[0].object_id)
+            .expect("build references the group object");
+        assert!(matches!(&root_object.payload, ObjectPayload::Components(_)));
+    }
+
+    #[test]
+    fn shared_mesh_resource_dedupes_into_one_object() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let rid = g.add_mesh_resource(tri_mesh(Some("Shared")));
+        for x in [0.0, 12.0] {
+            let leaf = g
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                    LeafPayload::MeshResource(rid),
+                )
+                .expect("add leaf");
+            g.add_child(root, leaf).expect("attach leaf");
+        }
+
+        let document = written_document(&g);
+        assert_eq!(document.objects.len(), 1);
+        assert_eq!(document.build.len(), 2);
+        assert_eq!(document.build[0].object_id, document.build[1].object_id);
+    }
+
+    #[test]
+    fn rotation_transform_writes_in_row_vector_form() {
+        // Exact 90-degree rotation about +Z in our column-vector
+        // layout; the written attribute must transpose into the
+        // row-vector layout the reader test pins from the other side.
+        let rotation = AffineTransform3D::from_linear_and_translation(
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [5.0, 6.0, 7.0],
+        );
+        let scene = loader_shape_scene(vec![(
+            LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            Transform3D::Affine(rotation),
+        )]);
+        let document = written_document(&scene);
+        assert_eq!(
+            document.build[0].transform,
+            Some(Matrix3D([
+                0.0, 1.0, 0.0, //
+                -1.0, 0.0, 0.0, //
+                0.0, 0.0, 1.0, //
+                5.0, 6.0, 7.0,
+            ])),
+        );
+    }
+
+    #[test]
+    fn scene_metadata_writes_title_and_description() {
+        let mut scene = Scene::from(tri_mesh(None));
+        scene.set_meta(Some(SceneMetadata {
+            name: Some("Plate 1".to_string()),
+            comment: Some("Two prisms".to_string()),
+        }));
+        let document = written_document(&scene);
+        let title = document
+            .metadata
+            .iter()
+            .find(|m| m.name == "Title")
+            .expect("Title present");
+        assert_eq!(title.value, "Plate 1");
+        let description = document
+            .metadata
+            .iter()
+            .find(|m| m.name == "Description")
+            .expect("Description present");
+        assert_eq!(description.value, "Two prisms");
+    }
+
+    #[test]
+    fn nested_groups_emit_children_before_parents() {
+        let mut g = Scene::new();
+        let outer = g.add_group(
+            Some(SceneMetadata {
+                name: Some("Outer".to_string()),
+                comment: None,
+            }),
+            Transform3D::Identity,
+        );
+        g.add_root(outer).expect("outer root");
+        let inner = g.add_group(
+            Some(SceneMetadata {
+                name: Some("Inner".to_string()),
+                comment: None,
+            }),
+            Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
+        );
+        g.add_child(outer, inner).expect("attach inner");
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            )
+            .expect("add leaf");
+        g.add_child(inner, leaf).expect("attach leaf");
+
+        // `written_document` parsing succeeding is itself the
+        // definition-before-use proof; pin the id order too.
+        let document = written_document(&g);
+        assert_eq!(document.objects.len(), 3);
+        assert!(matches!(
+            &document.objects[0].payload,
+            ObjectPayload::Mesh(_),
+        ));
+        assert_eq!(document.objects[1].name.as_deref(), Some("Inner"));
+        assert_eq!(document.objects[2].name.as_deref(), Some("Outer"));
+    }
+
+    #[test]
+    fn empty_scene_writes_an_empty_document() {
+        let scene = Scene::new();
+        let document = written_document(&scene);
+        assert!(document.objects.is_empty());
+        assert!(document.build.is_empty());
+
+        // Reading the same bytes back surfaces the empty build as the
+        // reader's EmptyBuild warning.
+        let mut bytes = Vec::new();
+        write_threemf(&scene, &mut bytes).expect("write succeeds");
+        let (_, warnings) = read_threemf(&mut Cursor::new(bytes)).expect("read succeeds");
+        assert_eq!(warnings, vec![LoadThreeMfWarning::EmptyBuild]);
+    }
+
+    #[test]
+    fn csg_nodes_are_refused() {
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            )
+            .expect("add leaf");
+        let csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![leaf])
+            .expect("add csg");
+        g.add_root(csg).expect("csg root");
+
+        let mut bytes = Vec::new();
+        let err = write_threemf(&g, &mut bytes).expect_err("csg refused");
+        assert!(matches!(
+            err,
+            WriteThreeMfError::CsgUnrepresentable { node_id } if node_id == csg,
+        ));
+    }
+
+    #[test]
+    fn instance_nodes_are_refused() {
+        let mut g = Scene::new();
+        let subtree_root = g.add_group(None, Transform3D::Identity);
+        let resource = g
+            .register_subtree_resource(subtree_root)
+            .expect("register subtree");
+        let instance = g
+            .add_instance(None, Transform3D::Identity, resource)
+            .expect("add instance");
+        g.add_root(instance).expect("instance root");
+
+        let mut bytes = Vec::new();
+        let err = write_threemf(&g, &mut bytes).expect_err("instance refused");
+        assert!(matches!(
+            err,
+            WriteThreeMfError::InstanceUnrepresentable { node_id } if node_id == instance,
         ));
     }
 }

@@ -31,6 +31,7 @@ use crate::filetypes::WriteFormat;
 use crate::obj::Obj;
 use crate::ports::MeshWriter;
 use crate::stl::{StlAscii, StlBin};
+use crate::threemf::ThreeMf;
 
 type Result<T> = std::result::Result<T, WriteSceneError>;
 
@@ -195,6 +196,7 @@ pub fn write_scene(
             WriteFormat::Obj => Obj::write(graph, writer)?,
             WriteFormat::StlBin => StlBin::write(graph, writer)?,
             WriteFormat::StlAscii => StlAscii::write(graph, writer)?,
+            WriteFormat::ThreeMf => ThreeMf::write(graph, writer)?,
         };
         Ok(())
     })?;

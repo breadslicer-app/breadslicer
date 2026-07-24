@@ -29,8 +29,8 @@ pub(crate) fn default_export_stem(doc: &SceneDocument) -> Option<String> {
 
 /// Default extension to seed the dialog with. Matches the source
 /// path's extension when it's one of the formats this app can write
-/// back out (`.obj`, `.stl`, `.stla`); otherwise falls back to the
-/// project default of binary STL.
+/// back out (`.obj`, `.stl`, `.stla`, `.3mf`); otherwise falls back
+/// to the project default of binary STL.
 ///
 /// rfd 0.17 does not expose which filter the user actually picked, so
 /// the seeded extension is the only signal that tells the user which
@@ -49,6 +49,7 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
         Some("stla") => "stla",
         // `.stl` and `.stlb` both round-trip via binary STL.
         Some("stl") | Some("stlb") => "stl",
+        Some("3mf") => "3mf",
         _ => DEFAULT_EXPORT_EXTENSION,
     }
 }
@@ -199,6 +200,13 @@ mod scene_export_tests {
     }
 
     #[test]
+    fn default_export_extension_keeps_threemf_source() {
+        let doc = SceneDocument::new();
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.3mf"));
+        assert_eq!(default_export_extension(&doc), "3mf");
+    }
+
+    #[test]
     fn default_export_extension_falls_back_for_unknown_or_missing_extension() {
         let doc = SceneDocument::new();
         doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.ply"));
@@ -254,6 +262,26 @@ mod scene_export_tests {
         let text = std::fs::read_to_string(&target).expect("file should exist");
         assert!(text.contains("v "), "OBJ file must contain vertex lines");
         assert!(text.contains("f "), "OBJ file must contain face lines");
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn export_multi_object_threemf_writes_a_loadable_package() {
+        let doc = SceneDocument::new();
+        doc.install_graph(two_object_graph(), PathBuf::from("/tmp/multi.obj"));
+        let target = tmp_path("multi_3mf");
+        let warnings =
+            export_scene_as(&doc, &target, WriteFormat::ThreeMf).expect("write should succeed");
+        assert!(warnings.is_empty(), "3MF export preserves everything");
+        // The tmp_path helper appends `.tmp`, so extension inference
+        // cannot run; name the format explicitly for the load-back.
+        let loaded = sc_mesh_formats::load_mesh_from_path(
+            &target,
+            Some(sc_mesh_formats::filetypes::MeshFileType::_3mf),
+            None,
+        )
+        .expect("exported 3MF must load back");
+        assert_eq!(loaded.graph.reachable_leaf_count(), 2);
         let _ = std::fs::remove_file(&target);
     }
 

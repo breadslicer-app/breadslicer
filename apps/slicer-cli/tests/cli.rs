@@ -731,13 +731,13 @@ mod convert_tests {
 
     // -----------------------------------------------------------------
     // Format-pair sweep. The CLI's effective conversion matrix is
-    // 5 readable (Stl, StlAscii, StlBin, Obj, _3mf) by 3 writable
-    // (StlAscii, StlBin, Obj). The tests above cover obj->stla
-    // (extension inference) and stla->stla (same-format short
-    // circuit); the tests below add the remaining round-trip pairs
-    // and a 3MF source, plus a single PLY-as-source rejection test
-    // that also covers AMF since the two share one dispatch arm in
-    // `load_mesh_from_reader`.
+    // 5 readable (Stl, StlAscii, StlBin, Obj, _3mf) by 4 writable
+    // (StlAscii, StlBin, Obj, ThreeMf). The tests above cover
+    // obj->stla (extension inference) and stla->stla (same-format
+    // short circuit); the tests below add the remaining round-trip
+    // pairs, 3MF as source and target, plus a single PLY-as-source
+    // rejection test that also covers AMF since the two share one
+    // dispatch arm in `load_mesh_from_reader`.
     // -----------------------------------------------------------------
 
     #[test]
@@ -888,6 +888,41 @@ mod convert_tests {
                 "convert",
                 "-s",
                 source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        let content = fs::read_to_string(&target).unwrap();
+        assert_eq!(content.lines().filter(|l| l.starts_with("v ")).count(), 4);
+        assert_eq!(content.lines().filter(|l| l.starts_with("f ")).count(), 4);
+    }
+
+    #[test]
+    fn convert_stla_to_3mf_and_back_preserves_the_tetrahedron() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.stla");
+        let packaged = tmp.path().join("mid.3mf");
+        let target = tmp.path().join("out.obj");
+        write_clean_stla(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                packaged.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                packaged.to_str().unwrap(),
                 "-t",
                 target.to_str().unwrap(),
             ])

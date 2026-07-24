@@ -311,7 +311,7 @@ pub(crate) async fn run_export_as_flow(
         ExportDispatch::UnsupportedExtension(target) => {
             let err = anyhow::anyhow!(
                 "Unable to infer file format from filename. Use one of: \
-                 .stl (binary STL), .stla (ASCII STL), or .obj."
+                 .stl (binary STL), .stla (ASCII STL), .obj, or .3mf."
             );
             dialogs.show_error(
                 ctr!("ErrorDialog", "Failed to export").as_str(),
@@ -363,11 +363,16 @@ async fn pick_export_target(
         ctr!("FileDialog", "OBJ files").to_string(),
         ["obj"].as_slice(),
     );
-    let ordered: [&(String, &[&str]); 3] = match default_extension {
-        "obj" => [&obj, &stl_bin, &stl_ascii],
-        "stla" => [&stl_ascii, &stl_bin, &obj],
+    let threemf = (
+        ctr!("FileDialog", "3MF files").to_string(),
+        ["3mf"].as_slice(),
+    );
+    let ordered: [&(String, &[&str]); 4] = match default_extension {
+        "obj" => [&obj, &stl_bin, &stl_ascii, &threemf],
+        "stla" => [&stl_ascii, &stl_bin, &obj, &threemf],
+        "3mf" => [&threemf, &stl_bin, &stl_ascii, &obj],
         // "stl" or fallback.
-        _ => [&stl_bin, &stl_ascii, &obj],
+        _ => [&stl_bin, &stl_ascii, &obj, &threemf],
     };
     let mut dialog = rfd::AsyncFileDialog::new();
     for (name, exts) in ordered {
@@ -412,11 +417,11 @@ mod export_flow_dispatch_tests {
 
     #[test]
     fn readable_but_unwriteable_extensions_classify_as_unsupported() {
-        // PLY / AMF / 3MF are inferrable as `MeshFileType` but
+        // PLY / AMF are inferrable as `MeshFileType` but
         // `WriteFormat::try_from` rejects them, so the dispatch must
         // collapse them into `UnsupportedExtension` rather than letting
         // them escape as a "Ready" variant the exporter can't handle.
-        for name in ["model.ply", "model.amf", "model.3mf"] {
+        for name in ["model.ply", "model.amf"] {
             let path = PathBuf::from(name);
             assert_eq!(
                 decide_export_dispatch(Some(path.clone())),
@@ -436,6 +441,7 @@ mod export_flow_dispatch_tests {
             ("/tmp/out.stlb", WriteFormat::StlBin),
             ("/tmp/out.stla", WriteFormat::StlAscii),
             ("/tmp/out.obj", WriteFormat::Obj),
+            ("/tmp/out.3mf", WriteFormat::ThreeMf),
         ];
         for (name, expected_format) in cases {
             let path = PathBuf::from(name);
