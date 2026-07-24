@@ -47,7 +47,7 @@ pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = MAX_MESH_FILE_SIZE_BYTES / (1024 
 /// (argv, drag-and-drop) reject paths whose extension isn't in it.
 /// Per-format dialog sub-filters ("OBJ files", "STL files") are
 /// independent.
-pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = &["obj", "stl", "stla", "stlb"];
+pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = &["3mf", "obj", "stl", "stla", "stlb"];
 
 /// Returns `true` if `path` has an extension matching one of
 /// `SUPPORTED_MESH_EXTENSIONS`. Matching is case-insensitive: Windows
@@ -286,7 +286,7 @@ mod is_supported_mesh_extension_tests {
 
     #[test]
     fn unsupported_extensions_are_rejected() {
-        for ext in ["png", "txt", "ply", "amf", "3mf"] {
+        for ext in ["png", "txt", "ply", "amf"] {
             let path = PathBuf::from(format!("/tmp/model.{ext}"));
             assert!(
                 !is_supported_mesh_extension(&path),

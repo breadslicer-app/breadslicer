@@ -15,6 +15,12 @@ use std::sync::Arc;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use sc_3mf::model::{
+    BuildItem, MeshData, ModelDocument, ObjectPayload, ObjectResource, ObjectType, ResourceId,
+    ResourceIndex, TriangleRef, Vertex3, write_model,
+};
+use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
+use sc_3mf::package::{Package, PartName, Relationship};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{
@@ -89,6 +95,64 @@ fn write_clean_stlb(path: &Path) {
     let file = fs::File::create(path).expect("create stlb");
     let mut writer = std::io::BufWriter::new(file);
     write_stlb(&tetrahedron_mesh(None), &mut writer).expect("write_stlb");
+}
+
+/// Writes a millimetre 3MF package holding the clean tetrahedron at
+/// `path`, built through `sc-3mf` so the CLI test exercises the same
+/// container layout the reader expects.
+fn write_clean_3mf(path: &Path) {
+    let mesh = tetrahedron_mesh(None);
+    let document = ModelDocument {
+        objects: vec![ObjectResource {
+            id: ResourceId::new(1).expect("valid id"),
+            object_type: ObjectType::Model,
+            name: None,
+            partnumber: None,
+            property_ref: None,
+            payload: ObjectPayload::Mesh(MeshData {
+                vertices: mesh
+                    .vertices
+                    .iter()
+                    .map(|v| Vertex3 {
+                        x: f64::from(v[0]),
+                        y: f64::from(v[1]),
+                        z: f64::from(v[2]),
+                    })
+                    .collect(),
+                triangles: mesh
+                    .faces
+                    .iter()
+                    .map(|f| TriangleRef {
+                        v1: ResourceIndex::new(f.vertices[0].get()).expect("small index"),
+                        v2: ResourceIndex::new(f.vertices[1].get()).expect("small index"),
+                        v3: ResourceIndex::new(f.vertices[2].get()).expect("small index"),
+                    })
+                    .collect(),
+            }),
+        }],
+        build: vec![BuildItem {
+            object_id: ResourceId::new(1).expect("valid id"),
+            transform: None,
+            partnumber: None,
+        }],
+        ..ModelDocument::default()
+    };
+    let mut model_xml = Vec::new();
+    write_model(&document, &mut model_xml).expect("document serializes");
+    let mut package = Package::new();
+    let part = PartName::new("/3D/3dmodel.model").expect("valid part name");
+    package
+        .add_part(part, MODEL_PART_CONTENT_TYPE, model_xml)
+        .expect("unique part name");
+    package.add_root_relationship(Relationship {
+        id: "rel-1".to_string(),
+        rel_type: START_PART_REL_TYPE.to_string(),
+        target: "/3D/3dmodel.model".to_string(),
+    });
+    let file = fs::File::create(path).expect("create 3mf");
+    package
+        .write_to(std::io::BufWriter::new(file))
+        .expect("write 3mf package");
 }
 
 /// Tetrahedron with face 0's winding reversed. The other three faces
@@ -667,12 +731,13 @@ mod convert_tests {
 
     // -----------------------------------------------------------------
     // Format-pair sweep. The CLI's effective conversion matrix is
-    // 4 readable (Stl, StlAscii, StlBin, Obj) by 3 writable (StlAscii,
-    // StlBin, Obj). The tests above cover obj->stla (extension
-    // inference) and stla->stla (same-format short circuit); the
-    // tests below add the remaining round-trip pairs, plus a single
-    // PLY-as-source rejection test that also covers AMF and 3MF since
-    // the three share one dispatch arm in `load_mesh_from_reader`.
+    // 5 readable (Stl, StlAscii, StlBin, Obj, _3mf) by 3 writable
+    // (StlAscii, StlBin, Obj). The tests above cover obj->stla
+    // (extension inference) and stla->stla (same-format short
+    // circuit); the tests below add the remaining round-trip pairs
+    // and a 3MF source, plus a single PLY-as-source rejection test
+    // that also covers AMF since the two share one dispatch arm in
+    // `load_mesh_from_reader`.
     // -----------------------------------------------------------------
 
     #[test]
@@ -811,10 +876,33 @@ mod convert_tests {
     }
 
     #[test]
+    fn convert_3mf_to_obj_writes_the_tetrahedron() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("in.3mf");
+        let target = tmp.path().join("out.obj");
+        write_clean_3mf(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "convert",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+        let content = fs::read_to_string(&target).unwrap();
+        assert_eq!(content.lines().filter(|l| l.starts_with("v ")).count(), 4);
+        assert_eq!(content.lines().filter(|l| l.starts_with("f ")).count(), 4);
+    }
+
+    #[test]
     fn convert_ply_source_errors_with_unsupported_message() {
-        // PLY/AMF/3MF have no reader implementation; the loader
-        // rejects them at dispatch time with "Unsupported mesh file
-        // type" before parsing the file body.
+        // PLY/AMF have no reader implementation; the loader rejects
+        // them at dispatch time with "Unsupported mesh file type"
+        // before parsing the file body.
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("dummy.ply");
         let target = tmp.path().join("out.stla");

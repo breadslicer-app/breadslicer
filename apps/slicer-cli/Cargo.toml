@@ -25,6 +25,7 @@ chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+sc-3mf.workspace = true
 sc-mesh-fixtures.workspace = true
 
 assert_cmd = "2.0.18"

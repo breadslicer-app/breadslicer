@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use sc_3mf::model::ObjectType;
 use sc_mesh_core::NodeId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +55,26 @@ pub enum LoadObjWarning {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadStlWarning {}
 
+/// Warnings emitted by the 3MF reader for document content that
+/// loads incompletely: the geometry always arrives intact, but a
+/// property or object the file carries has no representation in the
+/// scene graph yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadThreeMfWarning {
+    /// The document defines base-material groups; the scene graph
+    /// has no material concept, so their assignments are dropped.
+    MaterialsDropped { group_count: usize },
+    /// An object resource is never reachable from the build section
+    /// (directly or through components), so it loads as nothing.
+    UnbuiltObjectSkipped { id: u32, name: Option<String> },
+    /// A build item pulled in an object typed support, solidsupport,
+    /// or surface; it loads as plain model geometry and the type
+    /// distinction is dropped.
+    NonModelObjectTypeFlattened { id: u32, object_type: ObjectType },
+    /// The build section lists no items; the loaded scene is empty.
+    EmptyBuild,
+}
+
 /// One entry in a scene-level `SharedVertices` warning. Pairs the
 /// offending leaf's `NodeId` with the leaf's mesh-metadata name so
 /// display surfaces can show a human label without re-borrowing the
@@ -81,5 +102,6 @@ pub enum SceneLoadWarning {
 pub enum LoadMeshWarning {
     Obj(LoadObjWarning),
     Stl(LoadStlWarning),
+    ThreeMf(LoadThreeMfWarning),
     Scene(SceneLoadWarning),
 }

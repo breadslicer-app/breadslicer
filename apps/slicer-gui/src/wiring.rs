@@ -261,6 +261,7 @@ async fn pick_mesh_file() -> Option<PathBuf> {
             ctr!("FileDialog", "All supported files").to_string(),
             mesh_loader::SUPPORTED_MESH_EXTENSIONS,
         )
+        .add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"])
         .add_filter(ctr!("FileDialog", "OBJ files").to_string(), &["obj"])
         .add_filter(
             ctr!("FileDialog", "STL files").to_string(),

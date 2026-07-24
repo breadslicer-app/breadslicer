@@ -16,7 +16,9 @@ use crate::messages::{LoadMeshWarning, SceneLoadWarning, SharedVertexLeaf};
 use crate::obj::Obj;
 use crate::ports::MeshReader;
 use crate::stl::{Stl, StlAscii, StlBin};
+use crate::threemf::ThreeMf;
 
+#[derive(Debug)]
 pub struct LoadedMesh {
     pub graph: Scene,
     pub warnings: Vec<LoadMeshWarning>,
@@ -85,6 +87,11 @@ where
         MeshFileType::Obj => {
             let (graph, obj_warnings) = Obj::read(reader)?;
             warnings.extend(obj_warnings.into_iter().map(LoadMeshWarning::Obj));
+            graph
+        }
+        MeshFileType::_3mf => {
+            let (graph, threemf_warnings) = ThreeMf::read(reader)?;
+            warnings.extend(threemf_warnings.into_iter().map(LoadMeshWarning::ThreeMf));
             graph
         }
         other => return Err(LoadMeshError::UnsupportedFormat(other)),

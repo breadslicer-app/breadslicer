@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-24 12:31+0200\n"
+"POT-Creation-Date: 2026-07-24 21:25+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -113,54 +113,59 @@ msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:264 src/wiring.rs:362
+#: src/wiring.rs:264
+msgctxt "FileDialog"
+msgid "3MF files"
+msgstr ""
+
+#: src/wiring.rs:265 src/wiring.rs:363
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:266
+#: src/wiring.rs:267
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:269
+#: src/wiring.rs:270
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:316 src/wiring.rs:333
+#: src/wiring.rs:317 src/wiring.rs:334
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:317 src/wiring.rs:334 src/scene_loader.rs:374
+#: src/wiring.rs:318 src/wiring.rs:335 src/scene_loader.rs:376
 #: src/app_state.rs:523
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:354
+#: src/wiring.rs:355
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:358
+#: src/wiring.rs:359
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
 
-#: src/scene_loader.rs:339
+#: src/scene_loader.rs:341
 msgctxt "ErrorDialog"
 msgid "Failed to load the 3D model"
 msgstr ""
 
-#: src/scene_loader.rs:343
+#: src/scene_loader.rs:345
 msgctxt "ErrorDialog"
 msgid "The mesh could not be prepared for rendering."
 msgstr ""
 
-#: src/scene_loader.rs:373
+#: src/scene_loader.rs:375
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""

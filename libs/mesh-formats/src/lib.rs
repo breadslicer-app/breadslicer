@@ -14,6 +14,7 @@ pub mod obj;
 pub mod ports;
 pub mod scene_writer;
 pub mod stl;
+pub mod threemf;
 
 #[cfg(test)]
 mod tests_infer_file_type_error;
@@ -23,6 +24,8 @@ mod tests_load_mesh_error;
 mod tests_load_obj_error;
 #[cfg(test)]
 mod tests_load_stl_error;
+#[cfg(test)]
+mod tests_threemf;
 #[cfg(test)]
 mod tests_write_obj_error;
 #[cfg(test)]

@@ -42,7 +42,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning, SceneLoadWarning};
+use sc_mesh_formats::messages::{
+    LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
+};
 use sc_mesh_spatial::SceneSpatial;
 use slint::ComponentHandle;
 use slint::wgpu_29::wgpu;
@@ -426,6 +428,7 @@ fn log_load_warnings(path: &Path, warnings: &[LoadMeshWarning]) {
         let line = match warning {
             LoadMeshWarning::Obj(w) => describe_obj_warning(w),
             LoadMeshWarning::Stl(stl) => match *stl {},
+            LoadMeshWarning::ThreeMf(w) => describe_threemf_warning(w),
             LoadMeshWarning::Scene(w) => describe_scene_warning(w),
         };
         eprintln!("WARNING [{}]: {}", path.display(), line);
@@ -458,6 +461,28 @@ pub(crate) fn describe_obj_warning(warning: &LoadObjWarning) -> String {
         LoadObjWarning::SkippedUnknownDirective { line, directive } => {
             format!("line {line}: skipped OBJ directive '{directive}'")
         }
+    }
+}
+
+pub(crate) fn describe_threemf_warning(warning: &LoadThreeMfWarning) -> String {
+    match warning {
+        LoadThreeMfWarning::MaterialsDropped { group_count } => {
+            format!("dropped {group_count} material group(s); materials are not supported yet")
+        }
+        LoadThreeMfWarning::UnbuiltObjectSkipped { id, name } => {
+            let label = match name {
+                Some(name) => format!("'{name}' (id {id})"),
+                None => format!("id {id}"),
+            };
+            format!("skipped object {label}: it is not referenced by the build")
+        }
+        LoadThreeMfWarning::NonModelObjectTypeFlattened { id, object_type } => {
+            format!(
+                "object {id} has type '{}'; it was loaded as plain model geometry",
+                object_type.as_str(),
+            )
+        }
+        LoadThreeMfWarning::EmptyBuild => "the 3MF build section lists no items".to_string(),
     }
 }
 

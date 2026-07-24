@@ -4687,7 +4687,9 @@ dependencies = [
  "float-cmp 0.10.0",
  "proptest",
  "regex",
+ "sc-3mf",
  "sc-mesh-core",
+ "sc-mesh-fixtures",
  "tempfile",
 ]
 
@@ -4779,6 +4781,7 @@ dependencies = [
  "chrono",
  "png 0.18.1",
  "predicates",
+ "sc-3mf",
  "sc-app-paths",
  "sc-mesh-core",
  "sc-mesh-fixtures",

@@ -24,6 +24,7 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 use std::str::Utf8Error;
 
+use sc_3mf::error::{ModelParseError, PackageReadError};
 use sc_mesh_core::{IndexedMeshBuildError, SceneError};
 
 use crate::filetypes::MeshFileType;
@@ -38,6 +39,7 @@ pub enum LoadMeshError {
     UnsupportedFormat(MeshFileType),
     Stl(LoadStlError),
     Obj(LoadObjError),
+    ThreeMf(LoadThreeMfError),
 }
 
 impl fmt::Display for LoadMeshError {
@@ -55,6 +57,7 @@ impl fmt::Display for LoadMeshError {
             Self::UnsupportedFormat(kind) => write!(f, "Unsupported mesh file type: {kind:?}"),
             Self::Stl(e) => write!(f, "{e}"),
             Self::Obj(e) => write!(f, "{e}"),
+            Self::ThreeMf(e) => write!(f, "{e}"),
         }
     }
 }
@@ -66,6 +69,7 @@ impl std::error::Error for LoadMeshError {
             Self::InferType(e) => Some(e),
             Self::Stl(e) => Some(e),
             Self::Obj(e) => Some(e),
+            Self::ThreeMf(e) => Some(e),
             Self::FileTooLarge { .. } | Self::UnsupportedFormat(_) => None,
         }
     }
@@ -92,6 +96,12 @@ impl From<LoadStlError> for LoadMeshError {
 impl From<LoadObjError> for LoadMeshError {
     fn from(e: LoadObjError) -> Self {
         Self::Obj(e)
+    }
+}
+
+impl From<LoadThreeMfError> for LoadMeshError {
+    fn from(e: LoadThreeMfError) -> Self {
+        Self::ThreeMf(e)
     }
 }
 
@@ -461,6 +471,77 @@ impl From<std::io::Error> for LoadObjError {
 impl From<IndexedMeshBuildError> for LoadObjError {
     fn from(e: IndexedMeshBuildError) -> Self {
         Self::IndexedMeshBuild(e)
+    }
+}
+
+// --- per-format: 3MF load --------------------------------------------
+
+#[derive(Debug)]
+pub enum LoadThreeMfError {
+    /// The OPC container could not be read (ZIP damage, missing
+    /// content types, missing or dangling start-part relationship).
+    Package(PackageReadError),
+    /// The 3D Model part's XML violates the core specification.
+    Model(ModelParseError),
+    /// The start-part relationship points at a part whose declared
+    /// content type is not the 3D Model type.
+    StartPartNotAModel { content_type: String },
+    /// A vertex coordinate overflowed to infinity when the
+    /// millimetre-scaled f64 value was downcast to f32.
+    NonFiniteVertex { object_id: u32 },
+    /// Component expansion produced more leaves than the reader
+    /// accepts (see `crate::threemf::MAX_EXPANDED_LEAF_COUNT`).
+    LeafBudgetExceeded { limit: usize },
+    /// Component objects nest deeper than the reader accepts (see
+    /// `crate::threemf::MAX_COMPONENT_DEPTH`).
+    ComponentDepthExceeded { limit: usize },
+}
+
+impl fmt::Display for LoadThreeMfError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Package(e) => write!(f, "3MF package error: {e}"),
+            Self::Model(e) => write!(f, "3MF model error: {e}"),
+            Self::StartPartNotAModel { content_type } => write!(
+                f,
+                "the package's start part declares content type \"{content_type}\", not a 3D Model",
+            ),
+            Self::NonFiniteVertex { object_id } => write!(
+                f,
+                "object {object_id} has a vertex coordinate too large for 32-bit floats after unit conversion",
+            ),
+            Self::LeafBudgetExceeded { limit } => {
+                write!(f, "the build expands to more than {limit} mesh placements",)
+            }
+            Self::ComponentDepthExceeded { limit } => {
+                write!(f, "component objects nest deeper than {limit} levels",)
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoadThreeMfError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Package(e) => Some(e),
+            Self::Model(e) => Some(e),
+            Self::StartPartNotAModel { .. }
+            | Self::NonFiniteVertex { .. }
+            | Self::LeafBudgetExceeded { .. }
+            | Self::ComponentDepthExceeded { .. } => None,
+        }
+    }
+}
+
+impl From<PackageReadError> for LoadThreeMfError {
+    fn from(e: PackageReadError) -> Self {
+        Self::Package(e)
+    }
+}
+
+impl From<ModelParseError> for LoadThreeMfError {
+    fn from(e: ModelParseError) -> Self {
+        Self::Model(e)
     }
 }
 

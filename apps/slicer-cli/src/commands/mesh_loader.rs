@@ -7,13 +7,16 @@
 
 use std::io::Write;
 
-use sc_mesh_formats::messages::{LoadMeshWarning, LoadObjWarning, SceneLoadWarning};
+use sc_mesh_formats::messages::{
+    LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
+};
 
 pub(crate) fn display_warnings(warnings: &[LoadMeshWarning], out: &mut dyn Write) {
     for warning in warnings {
         match warning {
             LoadMeshWarning::Obj(w) => display_obj_warning(w, out),
             LoadMeshWarning::Stl(stl) => match *stl {},
+            LoadMeshWarning::ThreeMf(w) => display_threemf_warning(w, out),
             LoadMeshWarning::Scene(w) => display_scene_warning(w, out),
         }
     }
@@ -63,6 +66,37 @@ fn display_obj_warning(warning: &LoadObjWarning, out: &mut dyn Write) {
     }
 }
 
+fn display_threemf_warning(warning: &LoadThreeMfWarning, out: &mut dyn Write) {
+    match warning {
+        LoadThreeMfWarning::MaterialsDropped { group_count } => {
+            let _ = writeln!(
+                out,
+                "WARNING: Dropped {group_count} material group(s); materials are not supported yet"
+            );
+        }
+        LoadThreeMfWarning::UnbuiltObjectSkipped { id, name } => {
+            let label = match name {
+                Some(name) => format!("'{name}' (id {id})"),
+                None => format!("id {id}"),
+            };
+            let _ = writeln!(
+                out,
+                "WARNING: Skipped object {label}: it is not referenced by the build"
+            );
+        }
+        LoadThreeMfWarning::NonModelObjectTypeFlattened { id, object_type } => {
+            let _ = writeln!(
+                out,
+                "WARNING: Object {id} has type '{}'; it was loaded as plain model geometry",
+                object_type.as_str()
+            );
+        }
+        LoadThreeMfWarning::EmptyBuild => {
+            let _ = writeln!(out, "WARNING: The 3MF build section lists no items");
+        }
+    }
+}
+
 fn display_scene_warning(warning: &SceneLoadWarning, out: &mut dyn Write) {
     match warning {
         SceneLoadWarning::SharedVertices { leaves } => {
@@ -85,10 +119,11 @@ fn display_scene_warning(warning: &SceneLoadWarning, out: &mut dyn Write) {
 #[cfg(test)]
 mod display_warnings_tests {
     use super::display_warnings;
+    use sc_3mf::model::ObjectType;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{NodeId, Scene};
     use sc_mesh_formats::messages::{
-        LoadMeshWarning, LoadObjWarning, SceneLoadWarning, SharedVertexLeaf,
+        LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning, SharedVertexLeaf,
     };
 
     /// Allocates `count` fresh NodeIds out of a throw-away scene so
@@ -171,6 +206,35 @@ mod display_warnings_tests {
                 && lines[9].contains("OBJ directive")
                 && lines[9].contains("vt2")
         );
+    }
+
+    #[test]
+    fn every_load_threemf_warning_variant_is_formatted() {
+        let warnings: Vec<LoadMeshWarning> = vec![
+            LoadThreeMfWarning::MaterialsDropped { group_count: 2 },
+            LoadThreeMfWarning::UnbuiltObjectSkipped {
+                id: 7,
+                name: Some("Spare".to_string()),
+            },
+            LoadThreeMfWarning::UnbuiltObjectSkipped { id: 8, name: None },
+            LoadThreeMfWarning::NonModelObjectTypeFlattened {
+                id: 9,
+                object_type: ObjectType::Support,
+            },
+            LoadThreeMfWarning::EmptyBuild,
+        ]
+        .into_iter()
+        .map(LoadMeshWarning::ThreeMf)
+        .collect();
+
+        let out = render(&warnings);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 5, "one line per warning, got: {out}");
+        assert!(lines[0].contains("2 material group"));
+        assert!(lines[1].contains("'Spare'") && lines[1].contains("id 7"));
+        assert!(lines[2].contains("id 8"));
+        assert!(lines[3].contains("9") && lines[3].contains("'support'"));
+        assert!(lines[4].contains("no items"));
     }
 
     #[test]
