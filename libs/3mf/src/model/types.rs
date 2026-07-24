@@ -10,6 +10,8 @@
 
 use std::num::NonZeroU32;
 
+use super::slice::{MeshResolution, SliceStack};
+
 /// The unit all lengths in a model document are expressed in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Unit {
@@ -258,6 +260,13 @@ pub struct ObjectResource {
     pub name: Option<String>,
     pub partnumber: Option<String>,
     pub property_ref: Option<PropertyRef>,
+    /// `s:slicestackid`: the slice stack carrying this object's
+    /// per-layer contours, when the document uses the slice
+    /// extension.
+    pub slice_stack: Option<ResourceId>,
+    /// `s:meshresolution`: whether the mesh payload is authoritative
+    /// geometry (fullres, the default) or a decimated stand-in.
+    pub mesh_resolution: MeshResolution,
     pub payload: ObjectPayload,
 }
 
@@ -276,6 +285,7 @@ pub struct ModelDocument {
     pub unit: Unit,
     pub metadata: Vec<Metadata>,
     pub base_materials: Vec<BaseMaterialsGroup>,
+    pub slice_stacks: Vec<SliceStack>,
     pub objects: Vec<ObjectResource>,
     pub build: Vec<BuildItem>,
 }
@@ -284,6 +294,11 @@ impl ModelDocument {
     /// Look an object up by id.
     pub fn object(&self, id: ResourceId) -> Option<&ObjectResource> {
         self.objects.iter().find(|o| o.id == id)
+    }
+
+    /// Look a slice stack up by id.
+    pub fn slice_stack(&self, id: ResourceId) -> Option<&SliceStack> {
+        self.slice_stacks.iter().find(|s| s.id == id)
     }
 }
 

@@ -91,6 +91,12 @@ fn display_threemf_warning(warning: &LoadThreeMfWarning, out: &mut dyn Write) {
                 object_type.as_str()
             );
         }
+        LoadThreeMfWarning::SliceDataIgnored { stack_count } => {
+            let _ = writeln!(
+                out,
+                "WARNING: Ignored {stack_count} slice stack(s); the full-resolution meshes were loaded instead"
+            );
+        }
         LoadThreeMfWarning::EmptyBuild => {
             let _ = writeln!(out, "WARNING: The 3MF build section lists no items");
         }
@@ -221,6 +227,7 @@ mod display_warnings_tests {
                 id: 9,
                 object_type: ObjectType::Support,
             },
+            LoadThreeMfWarning::SliceDataIgnored { stack_count: 3 },
             LoadThreeMfWarning::EmptyBuild,
         ]
         .into_iter()
@@ -229,12 +236,13 @@ mod display_warnings_tests {
 
         let out = render(&warnings);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 5, "one line per warning, got: {out}");
+        assert_eq!(lines.len(), 6, "one line per warning, got: {out}");
         assert!(lines[0].contains("2 material group"));
         assert!(lines[1].contains("'Spare'") && lines[1].contains("id 7"));
         assert!(lines[2].contains("id 8"));
         assert!(lines[3].contains("9") && lines[3].contains("'support'"));
-        assert!(lines[4].contains("no items"));
+        assert!(lines[4].contains("3 slice stack"));
+        assert!(lines[5].contains("no items"));
     }
 
     #[test]

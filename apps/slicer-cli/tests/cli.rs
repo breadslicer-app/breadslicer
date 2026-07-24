@@ -16,8 +16,8 @@ use std::sync::Arc;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use sc_3mf::model::{
-    BuildItem, MeshData, ModelDocument, ObjectPayload, ObjectResource, ObjectType, ResourceId,
-    ResourceIndex, TriangleRef, Vertex3, write_model,
+    BuildItem, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
+    ResourceId, ResourceIndex, TriangleRef, Vertex3, write_model,
 };
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -109,6 +109,8 @@ fn write_clean_3mf(path: &Path) {
             name: None,
             partnumber: None,
             property_ref: None,
+            slice_stack: None,
+            mesh_resolution: MeshResolution::default(),
             payload: ObjectPayload::Mesh(MeshData {
                 vertices: mesh
                     .vertices

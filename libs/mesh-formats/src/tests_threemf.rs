@@ -65,6 +65,17 @@ fn read_err(unit: &str, body: &str) -> LoadThreeMfError {
     read_threemf(&mut cursor).expect_err("load fails")
 }
 
+fn sliced_model_xml(body: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:s="http://schemas.microsoft.com/3dmanufacturing/slice/2015/07">{body}</model>"#,
+    )
+}
+
+fn read_sliced(body: &str) -> (Scene, Vec<LoadThreeMfWarning>) {
+    let mut cursor = build_package(&sliced_model_xml(body));
+    read_threemf(&mut cursor).expect("load succeeds")
+}
+
 /// Asserts the loader's root convention (a single identity Group)
 /// and returns its children.
 fn root_children(scene: &Scene) -> Vec<NodeId> {
@@ -356,6 +367,23 @@ mod warning_tests {
         assert!(root_children(&scene).is_empty());
         assert_eq!(warnings, vec![LoadThreeMfWarning::EmptyBuild]);
     }
+
+    #[test]
+    fn slice_stacks_load_the_mesh_and_warn_slice_data_ignored() {
+        let body = format!(
+            r#"<resources><s:slicestack id="9" zbottom="0"><s:slice ztop="0.5"/></s:slicestack>{}</resources><build><item objectid="1"/></build>"#,
+            TETRA_OBJECT.replace(
+                r#"<object id="1" name="Tetra">"#,
+                r#"<object id="1" name="Tetra" s:slicestackid="9">"#
+            ),
+        );
+        let (scene, warnings) = read_sliced(&body);
+        assert_eq!(root_children(&scene).len(), 1);
+        assert_eq!(
+            warnings,
+            vec![LoadThreeMfWarning::SliceDataIgnored { stack_count: 1 }],
+        );
+    }
 }
 
 #[cfg(test)]
@@ -409,6 +437,17 @@ mod error_tests {
         assert!(matches!(
             err,
             LoadThreeMfError::NonFiniteVertex { object_id: 1 },
+        ));
+    }
+
+    #[test]
+    fn lowres_stand_in_meshes_are_refused() {
+        let body = r#"<resources><object id="1" s:meshresolution="lowres"><mesh/></object></resources><build><item objectid="1"/></build>"#;
+        let mut cursor = build_package(&sliced_model_xml(body));
+        let err = read_threemf(&mut cursor).expect_err("lowres refused");
+        assert!(matches!(
+            err,
+            LoadThreeMfError::LowresMeshUnsupported { object_id: 1 },
         ));
     }
 

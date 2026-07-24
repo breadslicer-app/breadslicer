@@ -10,9 +10,9 @@
 use std::io::Cursor;
 
 use sc_3mf::model::{
-    BuildItem, Component, Matrix3D, MeshData, Metadata, ModelDocument, ObjectPayload,
-    ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit, Vertex3, parse_model,
-    write_model,
+    BuildItem, Component, Matrix3D, MeshData, MeshResolution, Metadata, ModelDocument,
+    ObjectPayload, ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit,
+    Vertex3, parse_model, write_model,
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -84,6 +84,7 @@ fn sample_document() -> ModelDocument {
             value_type: None,
         }],
         base_materials: Vec::new(),
+        slice_stacks: Vec::new(),
         objects: vec![
             ObjectResource {
                 id: id(1),
@@ -91,6 +92,8 @@ fn sample_document() -> ModelDocument {
                 name: Some("tetra".to_string()),
                 partnumber: None,
                 property_ref: None,
+                slice_stack: None,
+                mesh_resolution: MeshResolution::default(),
                 payload: ObjectPayload::Mesh(tetrahedron_mesh()),
             },
             ObjectResource {
@@ -99,6 +102,8 @@ fn sample_document() -> ModelDocument {
                 name: Some("pair-of-tetras".to_string()),
                 partnumber: None,
                 property_ref: None,
+                slice_stack: None,
+                mesh_resolution: MeshResolution::default(),
                 payload: ObjectPayload::Components(vec![
                     Component {
                         object_id: id(1),

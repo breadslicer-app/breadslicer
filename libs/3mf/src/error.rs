@@ -251,6 +251,23 @@ pub enum ModelParseError {
     /// (`p:path`); loading it without that extension would silently
     /// produce an incomplete scene, so it is refused.
     ProductionPathUnsupported,
+    /// A slice stack contains both inline slices and slicerefs,
+    /// which the slice extension forbids.
+    SliceStackMixesSlicesAndRefs { id: u32 },
+    /// An object's `s:slicestackid` references a slice stack that
+    /// has not been defined before the reference.
+    UnknownSliceStackReference { object_id: u32, stack_id: u32 },
+    /// The value of an `s:meshresolution` attribute is unknown.
+    InvalidMeshResolution { value: String },
+    /// A slice polygon carries no segments.
+    PolygonWithoutSegments { stack_id: u32 },
+    /// A slice polygon references a vertex index outside the slice's
+    /// vertex list.
+    SliceIndexOutOfRange {
+        stack_id: u32,
+        index: u32,
+        vertex_count: usize,
+    },
 }
 
 impl fmt::Display for ModelParseError {
@@ -331,6 +348,31 @@ impl fmt::Display for ModelParseError {
                 f,
                 "model splits objects across parts via the production extension (p:path), which is not yet supported",
             ),
+            Self::SliceStackMixesSlicesAndRefs { id } => write!(
+                f,
+                "slice stack {id} mixes inline slices with slicerefs, which the slice extension forbids",
+            ),
+            Self::UnknownSliceStackReference {
+                object_id,
+                stack_id,
+            } => write!(
+                f,
+                "object {object_id} references slice stack {stack_id}, which is not defined at this point",
+            ),
+            Self::InvalidMeshResolution { value } => {
+                write!(f, "\"{value}\" is not a valid mesh resolution")
+            }
+            Self::PolygonWithoutSegments { stack_id } => {
+                write!(f, "slice stack {stack_id} has a polygon with no segments")
+            }
+            Self::SliceIndexOutOfRange {
+                stack_id,
+                index,
+                vertex_count,
+            } => write!(
+                f,
+                "slice stack {stack_id} references slice vertex {index}, but only {vertex_count} vertices exist",
+            ),
         }
     }
 }
@@ -363,18 +405,86 @@ impl From<quick_xml::encoding::EncodingError> for ModelParseError {
     }
 }
 
-/// Why serializing a 3D Model part failed. The writer assumes a
-/// well-formed document (adapters build them), so only the output
-/// channel can fail.
+/// Why serializing a 3D Model part failed: the output channel broke,
+/// or the document violates a slice-extension invariant the writer
+/// must not put on disk.
 #[derive(Debug)]
 pub enum ModelWriteError {
     Io(io::Error),
+    /// Slice boundaries must strictly increase, starting above the
+    /// stack's zbottom. `index` is the offending slice's position.
+    SliceZNotIncreasing {
+        stack_id: u32,
+        index: usize,
+    },
+    /// A slice polygon carries no segments.
+    PolygonWithoutSegments {
+        stack_id: u32,
+    },
+    /// A slice polygon references a vertex index outside the slice's
+    /// vertex list.
+    SliceIndexOutOfRange {
+        stack_id: u32,
+        index: u32,
+        vertex_count: usize,
+    },
+    /// A stack referenced by a model or solidsupport object contains
+    /// an open polygon; such objects require closed contours.
+    OpenPolygonOnModelObject {
+        object_id: u32,
+        stack_id: u32,
+    },
+    /// An object's `slice_stack` id has no matching stack in the
+    /// document.
+    UnknownSliceStackReference {
+        object_id: u32,
+        stack_id: u32,
+    },
+    /// A transform applied (directly or through components) to a
+    /// sliced object is not planar: the slice extension requires
+    /// m02, m12, m20, m21 to equal 0 and m22 to equal 1.
+    NonPlanarSlicedTransform {
+        object_id: u32,
+    },
 }
 
 impl fmt::Display for ModelWriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(err) => write!(f, "could not write model XML: {err}"),
+            Self::SliceZNotIncreasing { stack_id, index } => write!(
+                f,
+                "slice stack {stack_id}: slice {index} does not increase the stack's z",
+            ),
+            Self::PolygonWithoutSegments { stack_id } => {
+                write!(f, "slice stack {stack_id} has a polygon with no segments")
+            }
+            Self::SliceIndexOutOfRange {
+                stack_id,
+                index,
+                vertex_count,
+            } => write!(
+                f,
+                "slice stack {stack_id} references slice vertex {index}, but only {vertex_count} vertices exist",
+            ),
+            Self::OpenPolygonOnModelObject {
+                object_id,
+                stack_id,
+            } => write!(
+                f,
+                "object {object_id} requires closed slice contours, but stack {stack_id} has an open polygon",
+            ),
+            Self::UnknownSliceStackReference {
+                object_id,
+                stack_id,
+            } => write!(
+                f,
+                "object {object_id} references slice stack {stack_id}, which the document does not define",
+            ),
+            Self::NonPlanarSlicedTransform { object_id } => write!(
+                f,
+                "a transform applied to sliced object {object_id} is not planar",
+            ),
         }
     }
 }
@@ -383,6 +493,12 @@ impl std::error::Error for ModelWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
+            Self::SliceZNotIncreasing { .. }
+            | Self::PolygonWithoutSegments { .. }
+            | Self::SliceIndexOutOfRange { .. }
+            | Self::OpenPolygonOnModelObject { .. }
+            | Self::UnknownSliceStackReference { .. }
+            | Self::NonPlanarSlicedTransform { .. } => None,
         }
     }
 }

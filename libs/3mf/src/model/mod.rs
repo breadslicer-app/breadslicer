@@ -9,10 +9,15 @@
 //! [`Unit::scale_to_mm`].
 
 mod read;
+mod slice;
 mod types;
 mod write;
 
 pub use read::parse_model;
+pub use slice::{
+    MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
+    SliceVertex,
+};
 pub use types::{
     BaseMaterial, BaseMaterialsGroup, BuildItem, Component, Matrix3D, MeshData, Metadata,
     ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, ResourceId,

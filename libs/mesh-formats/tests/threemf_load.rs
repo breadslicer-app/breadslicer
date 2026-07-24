@@ -12,8 +12,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use sc_3mf::model::{
-    BuildItem, Matrix3D, MeshData, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
-    ResourceId, ResourceIndex, TriangleRef, Unit, Vertex3, write_model,
+    BuildItem, Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource,
+    ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit, Vertex3, write_model,
 };
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -22,7 +22,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, Scene, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::MeshFileType;
-use sc_mesh_formats::messages::{LoadMeshWarning, SceneLoadWarning};
+use sc_mesh_formats::messages::{LoadMeshWarning, LoadThreeMfWarning, SceneLoadWarning};
 use sc_mesh_formats::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -123,6 +123,20 @@ fn torus_sample_loads_with_known_counts() {
     assert_eq!(mesh.faces.len(), 2200);
 }
 
+#[test]
+fn box_sliced_sample_loads_its_fullres_mesh_and_reports_dropped_slices() {
+    let loaded = load_official("box_sliced.3mf");
+    assert_eq!(
+        loaded.warnings,
+        vec![LoadMeshWarning::ThreeMf(
+            LoadThreeMfWarning::SliceDataIgnored { stack_count: 1 },
+        )],
+    );
+    let mesh = single_leaf_mesh(&loaded.graph);
+    assert_eq!(mesh.vertices.len(), 8);
+    assert_eq!(mesh.faces.len(), 12);
+}
+
 // ---------------------------------------------------------------------
 // Generated multi-object scene: the workspace's cube and tunnel-prism
 // fixtures written through sc-3mf and read back through the loader.
@@ -182,6 +196,8 @@ fn prism_scene_document(unit: Unit) -> ModelDocument {
             name: Some((*name).to_string()),
             partnumber: None,
             property_ref: None,
+            slice_stack: None,
+            mesh_resolution: MeshResolution::default(),
             payload: ObjectPayload::Mesh(to_mesh_data(mesh)),
         });
         document.build.push(BuildItem {

@@ -10,7 +10,8 @@ use std::collections::HashSet;
 use std::io::{Read, Seek};
 
 use sc_3mf::model::{
-    Matrix3D, MeshData, ModelDocument, ObjectPayload, ObjectResource, ObjectType, parse_model,
+    Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
+    parse_model,
 };
 use sc_3mf::names::MODEL_PART_CONTENT_TYPE;
 use sc_3mf::package::Package;
@@ -141,6 +142,13 @@ fn convert_document(
                 group_count: document.base_materials.len(),
             });
     }
+    if !document.slice_stacks.is_empty() {
+        converter
+            .warnings
+            .push(LoadThreeMfWarning::SliceDataIgnored {
+                stack_count: document.slice_stacks.len(),
+            });
+    }
     if document.build.is_empty() {
         converter.warnings.push(LoadThreeMfWarning::EmptyBuild);
     }
@@ -207,6 +215,11 @@ impl Converter<'_> {
         if depth > MAX_COMPONENT_DEPTH {
             return Err(LoadThreeMfError::ComponentDepthExceeded {
                 limit: MAX_COMPONENT_DEPTH,
+            });
+        }
+        if object.mesh_resolution == MeshResolution::Lowres {
+            return Err(LoadThreeMfError::LowresMeshUnsupported {
+                object_id: object.id.get(),
             });
         }
         if self.reached.insert(object.id.get()) && object.object_type != ObjectType::Model {

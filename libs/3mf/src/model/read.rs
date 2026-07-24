@@ -7,6 +7,8 @@
 //!
 //! Conformance behavior:
 //! - DTD content is rejected (the spec forbids it).
+//! - Slice-extension content (slicestack resources, the object
+//!   attributes) is parsed into the document model.
 //! - Elements and attributes from namespaces this crate does not know
 //!   are ignored, as the spec instructs consumers to do, with one
 //!   exception: production-extension `path` attributes are refused,
@@ -31,8 +33,12 @@ use quick_xml::name::{PrefixDeclaration, QName, ResolveResult};
 use quick_xml::reader::NsReader;
 
 use crate::error::ModelParseError;
-use crate::names::{CORE_NS, PRODUCTION_NS};
+use crate::names::{CORE_NS, PRODUCTION_NS, SLICE_NS};
 
+use super::slice::{
+    MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
+    SliceVertex,
+};
 use super::types::{
     BaseMaterial, BaseMaterialsGroup, BuildItem, Component, Matrix3D, MeshData, Metadata,
     ModelDocument, ObjectPayload, ObjectResource, ObjectType, PropertyRef, ResourceId,
@@ -41,7 +47,7 @@ use super::types::{
 
 /// Extension namespaces this parser fully understands. The core
 /// namespace is implied and never listed in `requiredextensions`.
-const SUPPORTED_EXTENSION_NAMESPACES: &[&str] = &[];
+const SUPPORTED_EXTENSION_NAMESPACES: &[&str] = &[SLICE_NS];
 
 type Reader<'a> = NsReader<&'a [u8]>;
 
@@ -89,17 +95,27 @@ fn is_production_ns(result: &ResolveResult<'_>) -> bool {
     matches!(result, ResolveResult::Bound(ns) if ns.as_ref() == PRODUCTION_NS.as_bytes())
 }
 
+fn is_slice_ns(result: &ResolveResult<'_>) -> bool {
+    matches!(result, ResolveResult::Bound(ns) if ns.as_ref() == SLICE_NS.as_bytes())
+}
+
 /// The attributes of one element, split into locally-relevant ones
-/// (unprefixed) and the xmlns declarations. Attributes from foreign
-/// namespaces are dropped here, after the production-path guard.
+/// (unprefixed), slice-extension ones, and the xmlns declarations.
+/// Attributes from other foreign namespaces are dropped here, after
+/// the production-path guard.
 struct ElementAttributes {
     local: BTreeMap<Vec<u8>, String>,
+    slice: BTreeMap<Vec<u8>, String>,
     xmlns: BTreeMap<String, String>,
 }
 
 impl ElementAttributes {
     fn get(&self, name: &str) -> Option<&str> {
         self.local.get(name.as_bytes()).map(String::as_str)
+    }
+
+    fn get_slice(&self, name: &str) -> Option<&str> {
+        self.slice.get(name.as_bytes()).map(String::as_str)
     }
 
     fn require(&self, element: &'static str, name: &'static str) -> Result<&str, ModelParseError> {
@@ -116,6 +132,7 @@ fn collect_attributes(
     e: &BytesStart<'_>,
 ) -> Result<ElementAttributes, ModelParseError> {
     let mut local = BTreeMap::new();
+    let mut slice = BTreeMap::new();
     let mut xmlns = BTreeMap::new();
     for attr in e.attributes() {
         let attr = attr?;
@@ -136,13 +153,23 @@ fn collect_attributes(
                     attr.unescape_value()?.into_owned(),
                 );
             }
+            _ if is_slice_ns(&ns) => {
+                slice.insert(
+                    local_name.as_ref().to_vec(),
+                    attr.unescape_value()?.into_owned(),
+                );
+            }
             _ if is_production_ns(&ns) && local_name.as_ref() == b"path" => {
                 return Err(ModelParseError::ProductionPathUnsupported);
             }
             _ => {}
         }
     }
-    Ok(ElementAttributes { local, xmlns })
+    Ok(ElementAttributes {
+        local,
+        slice,
+        xmlns,
+    })
 }
 
 fn parse_resource_id(value: &str) -> Result<ResourceId, ModelParseError> {
@@ -365,9 +392,7 @@ fn parse_resources(
             Event::Start(e) => {
                 let owned = e.into_owned();
                 let (ns, local) = reader.resolver().resolve_element(owned.name());
-                if !is_core_ns(&ns) {
-                    skip_subtree(reader, &owned)?;
-                } else {
+                if is_core_ns(&ns) {
                     match local.as_ref() {
                         b"basematerials" => {
                             let group = parse_base_materials(reader, &owned)?;
@@ -381,6 +406,12 @@ fn parse_resources(
                         }
                         _ => skip_subtree(reader, &owned)?,
                     }
+                } else if is_slice_ns(&ns) && local.as_ref() == b"slicestack" {
+                    let stack = parse_slice_stack(reader, &owned)?;
+                    register_id(seen_ids, stack.id)?;
+                    document.slice_stacks.push(stack);
+                } else {
+                    skip_subtree(reader, &owned)?;
                 }
             }
             Event::Empty(e) => {
@@ -406,6 +437,14 @@ fn parse_resources(
                         }
                         _ => {}
                     }
+                } else if is_slice_ns(&ns) && local.as_ref() == b"slicestack" {
+                    let (id, z_bottom) = parse_slice_stack_attributes(reader, &owned)?;
+                    register_id(seen_ids, id)?;
+                    document.slice_stacks.push(SliceStack {
+                        id,
+                        z_bottom,
+                        content: SliceStackContent::Slices(Vec::new()),
+                    });
                 }
             }
             Event::End(_) => break,
@@ -465,6 +504,277 @@ fn parse_base_attributes(
     }))
 }
 
+fn parse_slice_stack_attributes(
+    reader: &Reader<'_>,
+    e: &BytesStart<'static>,
+) -> Result<(ResourceId, f64), ModelParseError> {
+    let attributes = collect_attributes(reader, e)?;
+    let id = parse_resource_id(attributes.require("slicestack", "id")?)?;
+    let z_bottom = match attributes.get("zbottom") {
+        None => 0.0,
+        Some(value) => parse_f64("slicestack", "zbottom", value)?,
+    };
+    Ok((id, z_bottom))
+}
+
+fn parse_slice_stack(
+    reader: &mut Reader<'_>,
+    start: &BytesStart<'static>,
+) -> Result<SliceStack, ModelParseError> {
+    let (id, z_bottom) = parse_slice_stack_attributes(reader, start)?;
+    let mut slices: Vec<Slice> = Vec::new();
+    let mut refs: Vec<SliceRef> = Vec::new();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(e) => {
+                let owned = e.into_owned();
+                let (ns, local) = reader.resolver().resolve_element(owned.name());
+                if is_slice_ns(&ns) {
+                    match local.as_ref() {
+                        b"slice" => slices.push(parse_slice(reader, &owned, id)?),
+                        b"sliceref" => {
+                            refs.push(parse_sliceref_attributes(reader, &owned)?);
+                            skip_subtree(reader, &owned)?;
+                        }
+                        _ => skip_subtree(reader, &owned)?,
+                    }
+                } else {
+                    skip_subtree(reader, &owned)?;
+                }
+            }
+            Event::Empty(e) => {
+                let owned = e.into_owned();
+                let (ns, local) = reader.resolver().resolve_element(owned.name());
+                if is_slice_ns(&ns) {
+                    match local.as_ref() {
+                        b"slice" => {
+                            // An empty-element slice is a void layer.
+                            let attributes = collect_attributes(reader, &owned)?;
+                            let z_top =
+                                parse_f64("slice", "ztop", attributes.require("slice", "ztop")?)?;
+                            slices.push(Slice {
+                                z_top,
+                                vertices: Vec::new(),
+                                polygons: Vec::new(),
+                            });
+                        }
+                        b"sliceref" => refs.push(parse_sliceref_attributes(reader, &owned)?),
+                        _ => {}
+                    }
+                }
+            }
+            Event::End(_) => break,
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let content = match (slices.is_empty(), refs.is_empty()) {
+        (false, false) => {
+            return Err(ModelParseError::SliceStackMixesSlicesAndRefs { id: id.get() });
+        }
+        (true, false) => SliceStackContent::Refs(refs),
+        (_, true) => SliceStackContent::Slices(slices),
+    };
+    Ok(SliceStack {
+        id,
+        z_bottom,
+        content,
+    })
+}
+
+/// `slicestackid` here names a stack inside the TARGET part, so it is
+/// deliberately not resolved against this document's resources.
+fn parse_sliceref_attributes(
+    reader: &Reader<'_>,
+    e: &BytesStart<'static>,
+) -> Result<SliceRef, ModelParseError> {
+    let attributes = collect_attributes(reader, e)?;
+    Ok(SliceRef {
+        slice_stack: parse_resource_id(attributes.require("sliceref", "slicestackid")?)?,
+        slice_path: attributes.require("sliceref", "slicepath")?.to_string(),
+    })
+}
+
+fn parse_slice(
+    reader: &mut Reader<'_>,
+    start: &BytesStart<'static>,
+    stack_id: ResourceId,
+) -> Result<Slice, ModelParseError> {
+    let attributes = collect_attributes(reader, start)?;
+    let z_top = parse_f64("slice", "ztop", attributes.require("slice", "ztop")?)?;
+    let mut vertices: Vec<SliceVertex> = Vec::new();
+    let mut polygons: Vec<SlicePolygon> = Vec::new();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(e) => {
+                let owned = e.into_owned();
+                let (ns, local) = reader.resolver().resolve_element(owned.name());
+                if is_slice_ns(&ns) {
+                    match local.as_ref() {
+                        b"vertices" => parse_slice_vertices(reader, &mut vertices)?,
+                        b"polygon" => {
+                            polygons.push(parse_slice_polygon(
+                                reader,
+                                &owned,
+                                stack_id,
+                                vertices.len(),
+                            )?);
+                        }
+                        _ => skip_subtree(reader, &owned)?,
+                    }
+                } else {
+                    skip_subtree(reader, &owned)?;
+                }
+            }
+            Event::Empty(e) => {
+                let owned = e.into_owned();
+                let (ns, local) = reader.resolver().resolve_element(owned.name());
+                if is_slice_ns(&ns) && local.as_ref() == b"polygon" {
+                    // A polygon without children cannot carry the
+                    // required segment chain.
+                    return Err(ModelParseError::PolygonWithoutSegments {
+                        stack_id: stack_id.get(),
+                    });
+                }
+            }
+            Event::End(_) => break,
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(Slice {
+        z_top,
+        vertices,
+        polygons,
+    })
+}
+
+fn parse_slice_vertices(
+    reader: &mut Reader<'_>,
+    vertices: &mut Vec<SliceVertex>,
+) -> Result<(), ModelParseError> {
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(e) => {
+                let owned = e.into_owned();
+                parse_slice_vertex_attributes(reader, &owned, vertices)?;
+                skip_subtree(reader, &owned)?;
+            }
+            Event::Empty(e) => {
+                let owned = e.into_owned();
+                parse_slice_vertex_attributes(reader, &owned, vertices)?;
+            }
+            Event::End(_) => break,
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(())
+}
+
+fn parse_slice_vertex_attributes(
+    reader: &Reader<'_>,
+    e: &BytesStart<'static>,
+    vertices: &mut Vec<SliceVertex>,
+) -> Result<(), ModelParseError> {
+    let (ns, local) = reader.resolver().resolve_element(e.name());
+    if !(is_slice_ns(&ns) && local.as_ref() == b"vertex") {
+        return Ok(());
+    }
+    let attributes = collect_attributes(reader, e)?;
+    vertices.push(SliceVertex {
+        x: parse_f64("vertex", "x", attributes.require("vertex", "x")?)?,
+        y: parse_f64("vertex", "y", attributes.require("vertex", "y")?)?,
+    });
+    Ok(())
+}
+
+fn parse_slice_polygon(
+    reader: &mut Reader<'_>,
+    start: &BytesStart<'static>,
+    stack_id: ResourceId,
+    vertex_count: usize,
+) -> Result<SlicePolygon, ModelParseError> {
+    let check_index = |index: ResourceIndex| -> Result<ResourceIndex, ModelParseError> {
+        if index.get() as usize >= vertex_count {
+            return Err(ModelParseError::SliceIndexOutOfRange {
+                stack_id: stack_id.get(),
+                index: index.get(),
+                vertex_count,
+            });
+        }
+        Ok(index)
+    };
+    let attributes = collect_attributes(reader, start)?;
+    let polygon_start = check_index(parse_index(
+        "polygon",
+        "startv",
+        attributes.require("polygon", "startv")?,
+    )?)?;
+
+    let mut segments: Vec<SliceSegment> = Vec::new();
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Start(e) => {
+                let owned = e.into_owned();
+                if let Some(end) = parse_segment_end(reader, &owned)? {
+                    segments.push(SliceSegment {
+                        end: check_index(end)?,
+                    });
+                }
+                skip_subtree(reader, &owned)?;
+            }
+            Event::Empty(e) => {
+                let owned = e.into_owned();
+                if let Some(end) = parse_segment_end(reader, &owned)? {
+                    segments.push(SliceSegment {
+                        end: check_index(end)?,
+                    });
+                }
+            }
+            Event::End(_) => break,
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if segments.is_empty() {
+        return Err(ModelParseError::PolygonWithoutSegments {
+            stack_id: stack_id.get(),
+        });
+    }
+    Ok(SlicePolygon {
+        start: polygon_start,
+        segments,
+    })
+}
+
+/// The optional segment properties (p1, p2, pid) land in the
+/// attribute map and are dropped: this crate does not interpret
+/// property semantics.
+fn parse_segment_end(
+    reader: &Reader<'_>,
+    e: &BytesStart<'static>,
+) -> Result<Option<ResourceIndex>, ModelParseError> {
+    let (ns, local) = reader.resolver().resolve_element(e.name());
+    if !(is_slice_ns(&ns) && local.as_ref() == b"segment") {
+        return Ok(None);
+    }
+    let attributes = collect_attributes(reader, e)?;
+    Ok(Some(parse_index(
+        "segment",
+        "v2",
+        attributes.require("segment", "v2")?,
+    )?))
+}
+
 fn parse_object(
     reader: &mut Reader<'_>,
     start: &BytesStart<'static>,
@@ -486,6 +796,27 @@ fn parse_object(
             index: parse_index("object", "pindex", pindex)?,
         }),
         _ => None,
+    };
+    let slice_stack = match attributes.get_slice("slicestackid") {
+        None => None,
+        Some(value) => {
+            let stack_id = parse_resource_id(value)?;
+            if document.slice_stack(stack_id).is_none() {
+                return Err(ModelParseError::UnknownSliceStackReference {
+                    object_id: id.get(),
+                    stack_id: stack_id.get(),
+                });
+            }
+            Some(stack_id)
+        }
+    };
+    let mesh_resolution = match attributes.get_slice("meshresolution") {
+        None => MeshResolution::default(),
+        Some(value) => {
+            MeshResolution::parse(value).ok_or_else(|| ModelParseError::InvalidMeshResolution {
+                value: value.to_string(),
+            })?
+        }
     };
 
     let mut payload: Option<ObjectPayload> = None;
@@ -555,6 +886,8 @@ fn parse_object(
         name: attributes.get("name").map(str::to_string),
         partnumber: attributes.get("partnumber").map(str::to_string),
         property_ref,
+        slice_stack,
+        mesh_resolution,
         payload,
     })
 }

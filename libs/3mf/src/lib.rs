@@ -28,3 +28,5 @@ pub mod package;
 mod tests_model;
 #[cfg(test)]
 mod tests_package;
+#[cfg(test)]
+mod tests_slice;

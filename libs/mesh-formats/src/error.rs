@@ -504,6 +504,12 @@ pub enum LoadThreeMfError {
     /// Component objects nest deeper than the reader accepts (see
     /// `crate::threemf::MAX_COMPONENT_DEPTH`).
     ComponentDepthExceeded { limit: usize },
+    /// An object in the build is marked `s:meshresolution="lowres"`:
+    /// its mesh is a decimated stand-in and the real shape lives in
+    /// the slice data, which this loader does not consume yet.
+    /// Loading the stand-in as the model would misrepresent the
+    /// geometry, so the file is refused.
+    LowresMeshUnsupported { object_id: u32 },
 }
 
 impl fmt::Display for LoadThreeMfError {
@@ -525,6 +531,10 @@ impl fmt::Display for LoadThreeMfError {
             Self::ComponentDepthExceeded { limit } => {
                 write!(f, "component objects nest deeper than {limit} levels",)
             }
+            Self::LowresMeshUnsupported { object_id } => write!(
+                f,
+                "object {object_id} carries a low-resolution stand-in mesh; loading sliced 3MF geometry is not supported yet",
+            ),
         }
     }
 }
@@ -537,7 +547,8 @@ impl std::error::Error for LoadThreeMfError {
             Self::StartPartNotAModel { .. }
             | Self::NonFiniteVertex { .. }
             | Self::LeafBudgetExceeded { .. }
-            | Self::ComponentDepthExceeded { .. } => None,
+            | Self::ComponentDepthExceeded { .. }
+            | Self::LowresMeshUnsupported { .. } => None,
         }
     }
 }

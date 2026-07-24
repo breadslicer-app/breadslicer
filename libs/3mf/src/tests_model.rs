@@ -9,7 +9,7 @@ use crate::error::ModelParseError;
 use crate::model::{
     Matrix3D, ModelDocument, ObjectPayload, ObjectType, ResourceId, Unit, parse_model, write_model,
 };
-use crate::names::SLICE_NS;
+use crate::names::{PRODUCTION_NS, SLICE_NS};
 
 /// The core-spec appendix metadata example (ASCII-adjusted): vendor
 /// metadata with preserve flags, a base-materials group, a mesh
@@ -119,12 +119,22 @@ mod conformance_tests {
     #[test]
     fn unsupported_required_extension_is_refused_by_namespace() {
         let xml = format!(
-            r#"<model unit="millimeter" requiredextensions="s" xmlns:s="{SLICE_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#,
+            r#"<model unit="millimeter" requiredextensions="p" xmlns:p="{PRODUCTION_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#,
         );
         let err = parse(&xml).unwrap_err();
         assert!(
-            matches!(err, ModelParseError::UnsupportedRequiredExtension { namespace } if namespace == SLICE_NS),
+            matches!(err, ModelParseError::UnsupportedRequiredExtension { namespace } if namespace == PRODUCTION_NS),
         );
+    }
+
+    #[test]
+    fn required_slice_extension_is_accepted() {
+        // The slice namespace is in the parser's supported set, so
+        // requiring it no longer refuses the document.
+        let xml = format!(
+            r#"<model unit="millimeter" requiredextensions="s" xmlns:s="{SLICE_NS}" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>"#,
+        );
+        parse(&xml).expect("slice-required document parses");
     }
 
     #[test]

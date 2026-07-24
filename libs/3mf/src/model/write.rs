@@ -3,21 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Serializer for the 3D Model part. Assumes a well-formed
-//! [`ModelDocument`] (adapters construct them); only the output
-//! channel can fail. Numbers use Rust's shortest-round-trip decimal
-//! form; text and attribute values are XML-escaped by quick-xml.
+//! Serializer for the 3D Model part. Assumes a structurally
+//! well-formed [`ModelDocument`] (adapters construct them), but
+//! enforces the slice-extension invariants a conforming file must
+//! satisfy: strictly increasing slice boundaries, closed contours
+//! for model-type objects, resolvable stack references, and planar
+//! transforms on sliced objects. Numbers use Rust's
+//! shortest-round-trip decimal form; text and attribute values are
+//! XML-escaped by quick-xml.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::writer::Writer;
 
 use crate::error::ModelWriteError;
-use crate::names::CORE_NS;
+use crate::names::{CORE_NS, SLICE_NS};
 
+use super::slice::{MeshResolution, Slice, SliceStack, SliceStackContent};
 use super::types::{
-    BaseMaterialsGroup, BuildItem, MeshData, Metadata, ModelDocument, ObjectPayload,
+    BaseMaterialsGroup, BuildItem, Matrix3D, MeshData, Metadata, ModelDocument, ObjectPayload,
     ObjectResource, ObjectType,
 };
 
@@ -26,12 +32,34 @@ pub fn write_model(
     document: &ModelDocument,
     output: &mut impl Write,
 ) -> Result<(), ModelWriteError> {
+    let sliced = validate_slice_content(document)?;
+    let has_slice_content = !document.slice_stacks.is_empty()
+        || document
+            .objects
+            .iter()
+            .any(|o| o.slice_stack.is_some() || o.mesh_resolution != MeshResolution::Fullres);
+
     let mut writer = Writer::new(output);
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
 
     let mut model = BytesStart::new("model");
     model.push_attribute(("unit", document.unit.as_str()));
     model.push_attribute(("xmlns", CORE_NS));
+    if has_slice_content {
+        model.push_attribute(("xmlns:s", SLICE_NS));
+        let any_lowres = document
+            .objects
+            .iter()
+            .any(|o| o.mesh_resolution == MeshResolution::Lowres);
+        // With full-resolution meshes the file stays usable for
+        // core-only consumers, so the extension is only recommended;
+        // a lowres stand-in makes slice support mandatory.
+        if any_lowres {
+            model.push_attribute(("requiredextensions", "s"));
+        } else {
+            model.push_attribute(("recommendedextensions", "s"));
+        }
+    }
     writer.write_event(Event::Start(model))?;
 
     for metadata in &document.metadata {
@@ -39,21 +67,226 @@ pub fn write_model(
     }
 
     writer.write_event(Event::Start(BytesStart::new("resources")))?;
+    for stack in &document.slice_stacks {
+        write_slice_stack(&mut writer, stack)?;
+    }
     for group in &document.base_materials {
         write_base_materials(&mut writer, group)?;
     }
     for object in &document.objects {
-        write_object(&mut writer, object)?;
+        write_object(&mut writer, object, &sliced)?;
     }
     writer.write_event(Event::End(BytesEnd::new("resources")))?;
 
     writer.write_event(Event::Start(BytesStart::new("build")))?;
     for item in &document.build {
-        write_item(&mut writer, item)?;
+        write_item(&mut writer, item, &sliced)?;
     }
     writer.write_event(Event::End(BytesEnd::new("build")))?;
 
     writer.write_event(Event::End(BytesEnd::new("model")))?;
+    Ok(())
+}
+
+/// Checks every slice-extension invariant the writer enforces and
+/// returns the set of transitively sliced object ids: objects with a
+/// stack of their own, plus components objects containing one. The
+/// propagation runs in definition order, which is also reference
+/// order for any document that can parse back.
+fn validate_slice_content(document: &ModelDocument) -> Result<BTreeSet<u32>, ModelWriteError> {
+    for stack in &document.slice_stacks {
+        if let SliceStackContent::Slices(slices) = &stack.content {
+            let mut previous = stack.z_bottom;
+            for (index, slice) in slices.iter().enumerate() {
+                if slice.z_top <= previous {
+                    return Err(ModelWriteError::SliceZNotIncreasing {
+                        stack_id: stack.id.get(),
+                        index,
+                    });
+                }
+                previous = slice.z_top;
+                for polygon in &slice.polygons {
+                    if polygon.segments.is_empty() {
+                        return Err(ModelWriteError::PolygonWithoutSegments {
+                            stack_id: stack.id.get(),
+                        });
+                    }
+                    let indices = std::iter::once(polygon.start)
+                        .chain(polygon.segments.iter().map(|s| s.end));
+                    for index in indices {
+                        if index.get() as usize >= slice.vertices.len() {
+                            return Err(ModelWriteError::SliceIndexOutOfRange {
+                                stack_id: stack.id.get(),
+                                index: index.get(),
+                                vertex_count: slice.vertices.len(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for object in &document.objects {
+        let Some(stack_id) = object.slice_stack else {
+            continue;
+        };
+        let Some(stack) = document.slice_stack(stack_id) else {
+            return Err(ModelWriteError::UnknownSliceStackReference {
+                object_id: object.id.get(),
+                stack_id: stack_id.get(),
+            });
+        };
+        let closed_required = matches!(
+            object.object_type,
+            ObjectType::Model | ObjectType::SolidSupport,
+        );
+        if closed_required && let SliceStackContent::Slices(slices) = &stack.content {
+            for slice in slices {
+                if slice.polygons.iter().any(|p| !p.is_closed()) {
+                    return Err(ModelWriteError::OpenPolygonOnModelObject {
+                        object_id: object.id.get(),
+                        stack_id: stack_id.get(),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut sliced: BTreeSet<u32> = BTreeSet::new();
+    for object in &document.objects {
+        let is_sliced = object.slice_stack.is_some()
+            || matches!(
+                &object.payload,
+                ObjectPayload::Components(components)
+                    if components.iter().any(|c| sliced.contains(&c.object_id.get())),
+            );
+        if is_sliced {
+            sliced.insert(object.id.get());
+        }
+    }
+
+    for object in &document.objects {
+        if let ObjectPayload::Components(components) = &object.payload {
+            for component in components {
+                if sliced.contains(&component.object_id.get())
+                    && let Some(transform) = &component.transform
+                    && !is_planar(transform)
+                {
+                    return Err(ModelWriteError::NonPlanarSlicedTransform {
+                        object_id: component.object_id.get(),
+                    });
+                }
+            }
+        }
+    }
+    for item in &document.build {
+        if sliced.contains(&item.object_id.get())
+            && let Some(transform) = &item.transform
+            && !is_planar(transform)
+        {
+            return Err(ModelWriteError::NonPlanarSlicedTransform {
+                object_id: item.object_id.get(),
+            });
+        }
+    }
+
+    Ok(sliced)
+}
+
+/// The slice extension's planar requirement, checked numerically:
+/// the consortium's own sliced sample writes these cells as
+/// "0.0000"/"1.0000", so a textual comparison would be stricter than
+/// the ecosystem.
+fn is_planar(matrix: &Matrix3D) -> bool {
+    let m = &matrix.0;
+    m[2] == 0.0 && m[5] == 0.0 && m[6] == 0.0 && m[7] == 0.0 && m[8] == 1.0
+}
+
+/// Overwrites the 5 planarity cells with exact constants so a -0.0
+/// that passed the numeric check cannot serialize as "-0".
+fn planar_normalized(matrix: &Matrix3D) -> Matrix3D {
+    let mut m = matrix.0;
+    m[2] = 0.0;
+    m[5] = 0.0;
+    m[6] = 0.0;
+    m[7] = 0.0;
+    m[8] = 1.0;
+    Matrix3D(m)
+}
+
+/// Attribute form of a transform on a reference to `object_id`:
+/// planar-normalized when the target is sliced.
+fn transform_attribute(matrix: &Matrix3D, target_sliced: bool) -> String {
+    if target_sliced {
+        planar_normalized(matrix).to_attribute()
+    } else {
+        matrix.to_attribute()
+    }
+}
+
+fn write_slice_stack<W: Write>(
+    writer: &mut Writer<W>,
+    stack: &SliceStack,
+) -> Result<(), ModelWriteError> {
+    let mut e = BytesStart::new("s:slicestack");
+    e.push_attribute(("id", stack.id.get().to_string().as_str()));
+    e.push_attribute(("zbottom", stack.z_bottom.to_string().as_str()));
+    writer.write_event(Event::Start(e))?;
+    match &stack.content {
+        SliceStackContent::Slices(slices) => {
+            for slice in slices {
+                write_slice(writer, slice)?;
+            }
+        }
+        SliceStackContent::Refs(refs) => {
+            for slice_ref in refs {
+                let mut r = BytesStart::new("s:sliceref");
+                r.push_attribute((
+                    "slicestackid",
+                    slice_ref.slice_stack.get().to_string().as_str(),
+                ));
+                r.push_attribute(("slicepath", slice_ref.slice_path.as_str()));
+                writer.write_event(Event::Empty(r))?;
+            }
+        }
+    }
+    writer.write_event(Event::End(BytesEnd::new("s:slicestack")))?;
+    Ok(())
+}
+
+fn write_slice<W: Write>(writer: &mut Writer<W>, slice: &Slice) -> Result<(), ModelWriteError> {
+    let mut e = BytesStart::new("s:slice");
+    e.push_attribute(("ztop", slice.z_top.to_string().as_str()));
+    if slice.vertices.is_empty() && slice.polygons.is_empty() {
+        // A void layer.
+        writer.write_event(Event::Empty(e))?;
+        return Ok(());
+    }
+    writer.write_event(Event::Start(e))?;
+
+    writer.write_event(Event::Start(BytesStart::new("s:vertices")))?;
+    for vertex in &slice.vertices {
+        let mut v = BytesStart::new("s:vertex");
+        v.push_attribute(("x", vertex.x.to_string().as_str()));
+        v.push_attribute(("y", vertex.y.to_string().as_str()));
+        writer.write_event(Event::Empty(v))?;
+    }
+    writer.write_event(Event::End(BytesEnd::new("s:vertices")))?;
+
+    for polygon in &slice.polygons {
+        let mut p = BytesStart::new("s:polygon");
+        p.push_attribute(("startv", polygon.start.get().to_string().as_str()));
+        writer.write_event(Event::Start(p))?;
+        for segment in &polygon.segments {
+            let mut s = BytesStart::new("s:segment");
+            s.push_attribute(("v2", segment.end.get().to_string().as_str()));
+            writer.write_event(Event::Empty(s))?;
+        }
+        writer.write_event(Event::End(BytesEnd::new("s:polygon")))?;
+    }
+
+    writer.write_event(Event::End(BytesEnd::new("s:slice")))?;
     Ok(())
 }
 
@@ -95,6 +328,7 @@ fn write_base_materials<W: Write>(
 fn write_object<W: Write>(
     writer: &mut Writer<W>,
     object: &ObjectResource,
+    sliced: &BTreeSet<u32>,
 ) -> Result<(), ModelWriteError> {
     let mut e = BytesStart::new("object");
     e.push_attribute(("id", object.id.get().to_string().as_str()));
@@ -111,6 +345,12 @@ fn write_object<W: Write>(
         e.push_attribute(("pid", property_ref.group.get().to_string().as_str()));
         e.push_attribute(("pindex", property_ref.index.get().to_string().as_str()));
     }
+    if let Some(stack_id) = &object.slice_stack {
+        e.push_attribute(("s:slicestackid", stack_id.get().to_string().as_str()));
+    }
+    if object.mesh_resolution != MeshResolution::Fullres {
+        e.push_attribute(("s:meshresolution", object.mesh_resolution.as_str()));
+    }
     writer.write_event(Event::Start(e))?;
     match &object.payload {
         ObjectPayload::Mesh(mesh) => write_mesh(writer, mesh)?,
@@ -120,7 +360,11 @@ fn write_object<W: Write>(
                 let mut c = BytesStart::new("component");
                 c.push_attribute(("objectid", component.object_id.get().to_string().as_str()));
                 if let Some(transform) = &component.transform {
-                    c.push_attribute(("transform", transform.to_attribute().as_str()));
+                    let target_sliced = sliced.contains(&component.object_id.get());
+                    c.push_attribute((
+                        "transform",
+                        transform_attribute(transform, target_sliced).as_str(),
+                    ));
                 }
                 writer.write_event(Event::Empty(c))?;
             }
@@ -158,11 +402,19 @@ fn write_mesh<W: Write>(writer: &mut Writer<W>, mesh: &MeshData) -> Result<(), M
     Ok(())
 }
 
-fn write_item<W: Write>(writer: &mut Writer<W>, item: &BuildItem) -> Result<(), ModelWriteError> {
+fn write_item<W: Write>(
+    writer: &mut Writer<W>,
+    item: &BuildItem,
+    sliced: &BTreeSet<u32>,
+) -> Result<(), ModelWriteError> {
     let mut e = BytesStart::new("item");
     e.push_attribute(("objectid", item.object_id.get().to_string().as_str()));
     if let Some(transform) = &item.transform {
-        e.push_attribute(("transform", transform.to_attribute().as_str()));
+        let target_sliced = sliced.contains(&item.object_id.get());
+        e.push_attribute((
+            "transform",
+            transform_attribute(transform, target_sliced).as_str(),
+        ));
     }
     if let Some(partnumber) = &item.partnumber {
         e.push_attribute(("partnumber", partnumber.as_str()));

@@ -16,8 +16,9 @@ use std::io::Write;
 use std::sync::Arc;
 
 use sc_3mf::model::{
-    BuildItem, Component, Matrix3D, MeshData, Metadata, ModelDocument, ObjectPayload,
-    ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Vertex3, write_model,
+    BuildItem, Component, Matrix3D, MeshData, MeshResolution, Metadata, ModelDocument,
+    ObjectPayload, ObjectResource, ObjectType, ResourceId, ResourceIndex, TriangleRef, Vertex3,
+    write_model,
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
@@ -174,6 +175,8 @@ impl<'graph> DocumentBuilder<'graph> {
                     name: mesh.meta().as_ref().and_then(|m| m.name.clone()),
                     partnumber: None,
                     property_ref: None,
+                    slice_stack: None,
+                    mesh_resolution: MeshResolution::default(),
                     payload: ObjectPayload::Mesh(mesh_to_data(mesh)),
                 });
                 self.mesh_objects.insert(key, id);
@@ -196,6 +199,8 @@ impl<'graph> DocumentBuilder<'graph> {
                     name: node.meta.as_ref().and_then(|m| m.name.clone()),
                     partnumber: None,
                     property_ref: None,
+                    slice_stack: None,
+                    mesh_resolution: MeshResolution::default(),
                     payload: ObjectPayload::Components(components),
                 });
                 Ok((id, transform))

@@ -482,6 +482,11 @@ pub(crate) fn describe_threemf_warning(warning: &LoadThreeMfWarning) -> String {
                 object_type.as_str(),
             )
         }
+        LoadThreeMfWarning::SliceDataIgnored { stack_count } => {
+            format!(
+                "ignored {stack_count} slice stack(s); the full-resolution meshes were loaded instead"
+            )
+        }
         LoadThreeMfWarning::EmptyBuild => "the 3MF build section lists no items".to_string(),
     }
 }

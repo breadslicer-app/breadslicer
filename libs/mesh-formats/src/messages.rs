@@ -71,6 +71,9 @@ pub enum LoadThreeMfWarning {
     /// or surface; it loads as plain model geometry and the type
     /// distinction is dropped.
     NonModelObjectTypeFlattened { id: u32, object_type: ObjectType },
+    /// The document carries slice-extension stacks; the loader takes
+    /// the full-resolution meshes and drops the per-layer contours.
+    SliceDataIgnored { stack_count: usize },
     /// The build section lists no items; the loaded scene is empty.
     EmptyBuild,
 }
