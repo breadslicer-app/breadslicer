@@ -161,10 +161,14 @@ fn parse_f64(
     attribute: &'static str,
     value: &str,
 ) -> Result<f64, ModelParseError> {
+    // ST_Number is a decimal pattern with no NaN or infinity
+    // spelling; Rust's f64 parser accepts both, so filter them out.
     value
         .trim()
         .parse::<f64>()
-        .map_err(|_| ModelParseError::InvalidNumber {
+        .ok()
+        .filter(|number| number.is_finite())
+        .ok_or_else(|| ModelParseError::InvalidNumber {
             element,
             attribute,
             value: value.to_string(),

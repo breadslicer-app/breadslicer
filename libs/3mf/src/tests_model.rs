@@ -160,6 +160,30 @@ mod conformance_tests {
     }
 
     #[test]
+    fn non_finite_vertex_coordinates_are_rejected() {
+        // The spec's ST_Number is a decimal pattern; "NaN" and "inf"
+        // are not expressible in it even though Rust's f64 parser
+        // accepts them.
+        for bad in ["NaN", "inf", "-inf", "infinity"] {
+            let body = format!(
+                r#"<resources><object id="1"><mesh><vertices><vertex x="{bad}" y="0" z="0"/></vertices><triangles/></mesh></object></resources><build/>"#,
+            );
+            let err = parse(&minimal_model(&body)).unwrap_err();
+            assert!(
+                matches!(err, ModelParseError::InvalidNumber { ref value, .. } if value == bad),
+                "expected InvalidNumber for vertex x={bad}",
+            );
+        }
+    }
+
+    #[test]
+    fn non_finite_transform_values_are_rejected() {
+        let body = r#"<resources><object id="1"><components/></object></resources><build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 NaN 0 0"/></build>"#;
+        let err = parse(&minimal_model(body)).unwrap_err();
+        assert!(matches!(err, ModelParseError::InvalidMatrix { .. }));
+    }
+
+    #[test]
     fn missing_core_namespace_is_an_unexpected_root() {
         let err = parse(r#"<model unit="millimeter"><resources/><build/></model>"#).unwrap_err();
         assert!(

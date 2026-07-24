@@ -113,7 +113,8 @@ impl Matrix3D {
 
     /// Parse the attribute form: 12 whitespace-separated decimal
     /// numbers (scientific notation allowed; surrounding/collapsed
-    /// whitespace tolerated).
+    /// whitespace tolerated). Every entry must be finite: ST_Number
+    /// is a decimal pattern with no NaN or infinity spelling.
     pub fn parse(value: &str) -> Option<Self> {
         let mut values = [0.0_f64; 12];
         let mut count = 0;
@@ -121,7 +122,11 @@ impl Matrix3D {
             if count == 12 {
                 return None;
             }
-            values[count] = token.parse().ok()?;
+            let number: f64 = token.parse().ok()?;
+            if !number.is_finite() {
+                return None;
+            }
+            values[count] = number;
             count += 1;
         }
         if count != 12 {
@@ -332,6 +337,15 @@ mod unit_tests {
         assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 0 0").is_none());
         assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 0 0 0 0").is_none());
         assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 x 0 0 0").is_none());
+    }
+
+    #[test]
+    fn matrix_rejects_non_finite_values() {
+        // ST_Matrix3D entries are ST_Number, a decimal pattern that
+        // cannot express NaN or an infinity.
+        assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 NaN 0 0").is_none());
+        assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 inf 0 0").is_none());
+        assert!(Matrix3D::parse("1 0 0 0 1 0 0 0 1 -inf 0 0").is_none());
     }
 
     #[test]
