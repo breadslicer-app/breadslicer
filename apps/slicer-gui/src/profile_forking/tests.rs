@@ -146,6 +146,7 @@ fn a_whitespace_name_is_rejected() {
     let source = source_profile();
     let err = build_fork(&source, &ForkParts::default(), "   ", "Brand", &no_ids()).unwrap_err();
     assert_eq!(err, ForkError::EmptyName);
+    assert_eq!(err.user_message(), "Enter a name for the forked profile");
 }
 
 #[test]

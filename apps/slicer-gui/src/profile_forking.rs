@@ -17,8 +17,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use slint::SharedString;
+
 use sc_print_primitives::{MaterialId, NonEmptyString, PrinterId};
 use sc_print_profiles::{MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialProfile};
+
+use crate::i18n::ctr;
 
 /// Which parts of the source profile the fork carries over.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -29,13 +33,30 @@ pub(crate) struct ForkParts {
     pub blocks: Vec<PrinterId>,
 }
 
-/// Why a fork could not be assembled. Rendered straight into the
-/// dialog's inline error message.
+/// Why a fork could not be assembled. `Display` keeps the English
+/// text for logs; the dialog shows [`Self::user_message`] instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ForkError {
     EmptyName,
     EmptyBrand,
     NoAvailableId,
+}
+
+impl ForkError {
+    /// The message shown in the fork dialog's inline error line, in
+    /// the user's language.
+    pub(crate) fn user_message(&self) -> SharedString {
+        match self {
+            Self::EmptyName => ctr!("ForkDialog", "Enter a name for the forked profile"),
+            Self::EmptyBrand => ctr!("ForkDialog", "Enter a brand for the forked profile"),
+            Self::NoAvailableId => {
+                ctr!(
+                    "ForkDialog",
+                    "Could not derive a free profile id from that name"
+                )
+            }
+        }
+    }
 }
 
 impl fmt::Display for ForkError {

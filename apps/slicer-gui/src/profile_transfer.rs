@@ -24,6 +24,8 @@ use sc_print_profiles::{
     import_package,
 };
 
+use crate::i18n::ctr;
+
 /// Which kind of profile a page's "Export ..." action packages. The
 /// page implies the scope, so no separate selector is needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,12 +92,29 @@ pub(crate) fn run_import(library_dir: &Path, src: &Path, force: bool) -> Result<
 }
 
 /// Render a collision report for the confirm dialog: a headline plus a
-/// per-kind list of the profiles that would be overwritten.
+/// per-kind list of the profiles that would be overwritten, in the
+/// user's language. The profile ids stay verbatim.
 pub(crate) fn format_collision_report(report: &CollisionReport) -> String {
-    let mut out = String::from("Importing this package would overwrite existing profiles:");
-    append_conflict_section(&mut out, "Printers", &report.printers);
-    append_conflict_section(&mut out, "Materials", &report.materials);
-    append_conflict_section(&mut out, "Material extensions", &report.material_extensions);
+    let mut out = ctr!(
+        "PreferencesPage",
+        "Importing this package would overwrite existing profiles:"
+    )
+    .to_string();
+    append_conflict_section(
+        &mut out,
+        &ctr!("PreferencesPage", "Printers"),
+        &report.printers,
+    );
+    append_conflict_section(
+        &mut out,
+        &ctr!("PreferencesPage", "Materials"),
+        &report.materials,
+    );
+    append_conflict_section(
+        &mut out,
+        &ctr!("PreferencesPage", "Material extensions"),
+        &report.material_extensions,
+    );
     out
 }
 

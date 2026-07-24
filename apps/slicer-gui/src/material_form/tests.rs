@@ -57,10 +57,11 @@ fn a_non_numeric_calibration_field_names_itself_in_the_error() {
     assert_eq!(
         err,
         InvalidFormValue::NotANumber {
-            field: "Normal exposure"
+            field: FormField::NormalExposure
         }
     );
     assert!(format!("{err}").contains("Normal exposure"));
+    assert_eq!(err.user_message(), "Normal exposure must be a number");
 }
 
 #[test]
@@ -73,9 +74,10 @@ fn a_non_positive_calibration_field_is_out_of_range() {
     assert_eq!(
         err,
         InvalidFormValue::OutOfRange {
-            field: "Lift distance"
+            field: FormField::LiftDistance
         }
     );
+    assert_eq!(err.user_message(), "Lift distance is out of range");
 }
 
 #[test]
@@ -88,7 +90,7 @@ fn a_negative_layer_count_is_not_a_number() {
     assert_eq!(
         err,
         InvalidFormValue::NotANumber {
-            field: "Bottom layer count"
+            field: FormField::BottomLayerCount
         }
     );
 }
@@ -122,9 +124,11 @@ fn a_partially_filled_scale_compensation_is_rejected() {
         scale_x_pct: "0.1".to_owned(),
         ..DefaultsFormInput::default()
     };
+    let err = parse_defaults_form(&input).unwrap_err();
+    assert_eq!(err, InvalidFormValue::PartialScaleCompensation);
     assert_eq!(
-        parse_defaults_form(&input).unwrap_err(),
-        InvalidFormValue::PartialScaleCompensation,
+        err.user_message(),
+        "Fill all three scale compensation axes, or leave all three empty",
     );
 }
 
@@ -139,7 +143,7 @@ fn an_out_of_bound_scale_axis_is_rejected() {
     assert_eq!(
         parse_defaults_form(&input).unwrap_err(),
         InvalidFormValue::OutOfRange {
-            field: "Scale compensation z"
+            field: FormField::ScaleCompensationZ
         },
     );
 }

@@ -419,7 +419,7 @@ fn spawn_export(scope: ExportScope) {
         };
         let Some(handle) = rfd::AsyncFileDialog::new()
             .set_file_name(scope.default_file_name())
-            .add_filter("Profile package", &["zip"])
+            .add_filter(ctr!("FileDialog", "Profile package").to_string(), &["zip"])
             .save_file()
             .await
         else {
@@ -444,7 +444,7 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
             return;
         };
         let Some(handle) = rfd::AsyncFileDialog::new()
-            .add_filter("Profile package", &["zip"])
+            .add_filter(ctr!("FileDialog", "Profile package").to_string(), &["zip"])
             .pick_file()
             .await
         else {
@@ -736,7 +736,7 @@ fn open_profile_editor(
                 match parse_defaults_form(&input) {
                     Ok(defaults) => profile.defaults = defaults,
                     Err(err) => {
-                        d.set_error_message(err.to_string().into());
+                        d.set_error_message(err.user_message());
                         return;
                     }
                 }
@@ -759,7 +759,7 @@ fn open_profile_editor(
                         profile.per_printer.insert(id.clone(), block);
                     }
                     Err(err) => {
-                        d.set_error_message(err.to_string().into());
+                        d.set_error_message(err.user_message());
                         return;
                     }
                 }
@@ -901,7 +901,7 @@ fn open_fork_dialog(
             ) {
                 Ok(fork) => fork,
                 Err(err) => {
-                    d.set_error_message(err.to_string().into());
+                    d.set_error_message(err.user_message());
                     return;
                 }
             };
@@ -1033,7 +1033,7 @@ fn open_extend_dialog(
             let block = match parse_calibration_form(&input) {
                 Ok(block) => block,
                 Err(err) => {
-                    d.set_error_message(err.to_string().into());
+                    d.set_error_message(err.user_message());
                     return;
                 }
             };

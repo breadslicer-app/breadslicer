@@ -605,67 +605,72 @@ msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: src/preferences_window.rs:444
+#: src/preferences_window.rs:422 src/preferences_window.rs:447
+msgctxt "FileDialog"
+msgid "Profile package"
+msgstr ""
+
+#: src/preferences_window.rs:468
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:446
+#: src/preferences_window.rs:470
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:450 src/preferences_window.rs:1108
+#: src/preferences_window.rs:474 src/preferences_window.rs:1139
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:640 src/preferences_window.rs:1443
+#: src/preferences_window.rs:664 src/preferences_window.rs:1525
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:814
+#: src/preferences_window.rs:838
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:906
+#: src/preferences_window.rs:937
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1086
+#: src/preferences_window.rs:1117
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1096
+#: src/preferences_window.rs:1127
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1102
+#: src/preferences_window.rs:1133
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1104
+#: src/preferences_window.rs:1135
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1289
+#: src/preferences_window.rs:1323
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1511
+#: src/preferences_window.rs:1672
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
@@ -824,6 +829,68 @@ msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr ""
 
+#: src/material_form.rs:84
+msgctxt "MaterialForm"
+msgid "Normal exposure"
+msgstr ""
+
+#: src/material_form.rs:85
+msgctxt "MaterialForm"
+msgid "Bottom exposure"
+msgstr ""
+
+#: src/material_form.rs:86
+msgctxt "MaterialForm"
+msgid "Bottom layer count"
+msgstr ""
+
+#: src/material_form.rs:87
+msgctxt "MaterialForm"
+msgid "Lift distance"
+msgstr ""
+
+#: src/material_form.rs:88
+msgctxt "MaterialForm"
+msgid "Lift speed"
+msgstr ""
+
+#: src/material_form.rs:89
+msgctxt "MaterialForm"
+msgid "Retract speed"
+msgstr ""
+
+#: src/material_form.rs:90
+msgctxt "MaterialForm"
+msgid "Scale compensation x"
+msgstr ""
+
+#: src/material_form.rs:91
+msgctxt "MaterialForm"
+msgid "Scale compensation y"
+msgstr ""
+
+#: src/material_form.rs:92
+msgctxt "MaterialForm"
+msgid "Scale compensation z"
+msgstr ""
+
+#: src/material_form.rs:120
+#, rust-format
+msgctxt "MaterialForm"
+msgid "{} must be a number"
+msgstr ""
+
+#: src/material_form.rs:127
+#, rust-format
+msgctxt "MaterialForm"
+msgid "{} is out of range"
+msgstr ""
+
+#: src/material_form.rs:133
+msgctxt "MaterialForm"
+msgid "Fill all three scale compensation axes, or leave all three empty"
+msgstr ""
+
 #: src/app_state.rs:522
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
@@ -835,6 +902,21 @@ msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
 msgstr ""
 
+#: src/profile_forking.rs:50
+msgctxt "ForkDialog"
+msgid "Enter a name for the forked profile"
+msgstr ""
+
+#: src/profile_forking.rs:51
+msgctxt "ForkDialog"
+msgid "Enter a brand for the forked profile"
+msgstr ""
+
+#: src/profile_forking.rs:55
+msgctxt "ForkDialog"
+msgid "Could not derive a free profile id from that name"
+msgstr ""
+
 #: src/mesh_loader.rs:81
 #, rust-format
 msgctxt "ErrorDialog"
@@ -844,4 +926,24 @@ msgstr ""
 #: src/profile_extending.rs:58
 msgctxt "ExtendDialog"
 msgid "Generic"
+msgstr ""
+
+#: src/profile_transfer.rs:100
+msgctxt "PreferencesPage"
+msgid "Importing this package would overwrite existing profiles:"
+msgstr ""
+
+#: src/profile_transfer.rs:105
+msgctxt "PreferencesPage"
+msgid "Printers"
+msgstr ""
+
+#: src/profile_transfer.rs:110
+msgctxt "PreferencesPage"
+msgid "Materials"
+msgstr ""
+
+#: src/profile_transfer.rs:115
+msgctxt "PreferencesPage"
+msgid "Material extensions"
 msgstr ""

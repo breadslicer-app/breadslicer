@@ -14,6 +14,8 @@
 use std::fmt;
 use std::path::Path;
 
+use slint::SharedString;
+
 use sc_print_primitives::{
     PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
     ScaleCompensationPercent,
@@ -22,6 +24,8 @@ use sc_print_profiles::{
     MaterialDefaults, MaterialPerPrinter, MaterialProfile, save_material_extension_to_library,
     save_material_profile_to_library,
 };
+
+use crate::i18n::ctr;
 
 /// The raw texts of the six calibration value fields, straight out of
 /// the editor inputs.
@@ -44,26 +48,99 @@ pub(crate) struct DefaultsFormInput {
     pub bottom_layer_count: String,
 }
 
-/// Why a form value could not be accepted. Rendered straight into the
-/// editor's inline error message.
+/// The editor field a form error refers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FormField {
+    NormalExposure,
+    BottomExposure,
+    BottomLayerCount,
+    LiftDistance,
+    LiftSpeed,
+    RetractSpeed,
+    ScaleCompensationX,
+    ScaleCompensationY,
+    ScaleCompensationZ,
+}
+
+impl FormField {
+    /// English field name, for log / `Display` presentation.
+    fn english_name(self) -> &'static str {
+        match self {
+            Self::NormalExposure => "Normal exposure",
+            Self::BottomExposure => "Bottom exposure",
+            Self::BottomLayerCount => "Bottom layer count",
+            Self::LiftDistance => "Lift distance",
+            Self::LiftSpeed => "Lift speed",
+            Self::RetractSpeed => "Retract speed",
+            Self::ScaleCompensationX => "Scale compensation x",
+            Self::ScaleCompensationY => "Scale compensation y",
+            Self::ScaleCompensationZ => "Scale compensation z",
+        }
+    }
+
+    /// Field name in the user's language, for the dialogs.
+    fn translated_name(self) -> SharedString {
+        match self {
+            Self::NormalExposure => ctr!("MaterialForm", "Normal exposure"),
+            Self::BottomExposure => ctr!("MaterialForm", "Bottom exposure"),
+            Self::BottomLayerCount => ctr!("MaterialForm", "Bottom layer count"),
+            Self::LiftDistance => ctr!("MaterialForm", "Lift distance"),
+            Self::LiftSpeed => ctr!("MaterialForm", "Lift speed"),
+            Self::RetractSpeed => ctr!("MaterialForm", "Retract speed"),
+            Self::ScaleCompensationX => ctr!("MaterialForm", "Scale compensation x"),
+            Self::ScaleCompensationY => ctr!("MaterialForm", "Scale compensation y"),
+            Self::ScaleCompensationZ => ctr!("MaterialForm", "Scale compensation z"),
+        }
+    }
+}
+
+/// Why a form value could not be accepted. `Display` keeps the English
+/// text for logs; the dialogs show [`Self::user_message`] instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InvalidFormValue {
     NotANumber {
-        field: &'static str,
+        field: FormField,
     },
     OutOfRange {
-        field: &'static str,
+        field: FormField,
     },
     /// Scale compensation had some axes filled and some empty; the
     /// three are set together or not at all.
     PartialScaleCompensation,
 }
 
+impl InvalidFormValue {
+    /// The message shown in a dialog's inline error line, in the
+    /// user's language.
+    pub(crate) fn user_message(&self) -> SharedString {
+        match self {
+            Self::NotANumber { field } => {
+                ctr!(
+                    "MaterialForm",
+                    "{} must be a number",
+                    field.translated_name()
+                )
+            }
+            Self::OutOfRange { field } => {
+                ctr!(
+                    "MaterialForm",
+                    "{} is out of range",
+                    field.translated_name()
+                )
+            }
+            Self::PartialScaleCompensation => ctr!(
+                "MaterialForm",
+                "Fill all three scale compensation axes, or leave all three empty",
+            ),
+        }
+    }
+}
+
 impl fmt::Display for InvalidFormValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotANumber { field } => write!(f, "{field} must be a number"),
-            Self::OutOfRange { field } => write!(f, "{field} is out of range"),
+            Self::NotANumber { field } => write!(f, "{} must be a number", field.english_name()),
+            Self::OutOfRange { field } => write!(f, "{} is out of range", field.english_name()),
             Self::PartialScaleCompensation => write!(
                 f,
                 "Fill all three scale compensation axes, or leave all three empty",
@@ -81,12 +158,24 @@ pub(crate) fn parse_calibration_form(
     input: &CalibrationFormInput,
 ) -> Result<MaterialPerPrinter, InvalidFormValue> {
     Ok(MaterialPerPrinter {
-        normal_exposure_sec: parse_optional_sec("Normal exposure", &input.normal_exposure_sec)?,
-        bottom_exposure_sec: parse_optional_sec("Bottom exposure", &input.bottom_exposure_sec)?,
-        bottom_layer_count: parse_optional_count("Bottom layer count", &input.bottom_layer_count)?,
-        lift_distance_mm: parse_optional_mm("Lift distance", &input.lift_distance_mm)?,
-        lift_speed_mm_min: parse_optional_speed("Lift speed", &input.lift_speed_mm_min)?,
-        retract_speed_mm_min: parse_optional_speed("Retract speed", &input.retract_speed_mm_min)?,
+        normal_exposure_sec: parse_optional_sec(
+            FormField::NormalExposure,
+            &input.normal_exposure_sec,
+        )?,
+        bottom_exposure_sec: parse_optional_sec(
+            FormField::BottomExposure,
+            &input.bottom_exposure_sec,
+        )?,
+        bottom_layer_count: parse_optional_count(
+            FormField::BottomLayerCount,
+            &input.bottom_layer_count,
+        )?,
+        lift_distance_mm: parse_optional_mm(FormField::LiftDistance, &input.lift_distance_mm)?,
+        lift_speed_mm_min: parse_optional_speed(FormField::LiftSpeed, &input.lift_speed_mm_min)?,
+        retract_speed_mm_min: parse_optional_speed(
+            FormField::RetractSpeed,
+            &input.retract_speed_mm_min,
+        )?,
     })
 }
 
@@ -104,15 +193,18 @@ pub(crate) fn parse_defaults_form(
     let scale_compensation_pct = match filled {
         0 => None,
         3 => Some(ScaleCompensation {
-            x: parse_scale_axis("Scale compensation x", axes[0])?,
-            y: parse_scale_axis("Scale compensation y", axes[1])?,
-            z: parse_scale_axis("Scale compensation z", axes[2])?,
+            x: parse_scale_axis(FormField::ScaleCompensationX, axes[0])?,
+            y: parse_scale_axis(FormField::ScaleCompensationY, axes[1])?,
+            z: parse_scale_axis(FormField::ScaleCompensationZ, axes[2])?,
         }),
         _ => return Err(InvalidFormValue::PartialScaleCompensation),
     };
     Ok(MaterialDefaults {
         scale_compensation_pct,
-        bottom_layer_count: parse_optional_count("Bottom layer count", &input.bottom_layer_count)?,
+        bottom_layer_count: parse_optional_count(
+            FormField::BottomLayerCount,
+            &input.bottom_layer_count,
+        )?,
     })
 }
 
@@ -188,14 +280,14 @@ fn fmt_opt_u32(value: Option<u32>) -> String {
     value.map(|v| format!("{v}")).unwrap_or_default()
 }
 
-fn parse_f64(field: &'static str, text: &str) -> Result<f64, InvalidFormValue> {
+fn parse_f64(field: FormField, text: &str) -> Result<f64, InvalidFormValue> {
     text.trim()
         .parse::<f64>()
         .map_err(|_| InvalidFormValue::NotANumber { field })
 }
 
 fn parse_optional_sec(
-    field: &'static str,
+    field: FormField,
     text: &str,
 ) -> Result<Option<PositiveFiniteSec>, InvalidFormValue> {
     if text.trim().is_empty() {
@@ -207,7 +299,7 @@ fn parse_optional_sec(
 }
 
 fn parse_optional_mm(
-    field: &'static str,
+    field: FormField,
     text: &str,
 ) -> Result<Option<PositiveFiniteMm>, InvalidFormValue> {
     if text.trim().is_empty() {
@@ -219,7 +311,7 @@ fn parse_optional_mm(
 }
 
 fn parse_optional_speed(
-    field: &'static str,
+    field: FormField,
     text: &str,
 ) -> Result<Option<PositiveFiniteMmPerMin>, InvalidFormValue> {
     if text.trim().is_empty() {
@@ -230,7 +322,7 @@ fn parse_optional_speed(
         .map_err(|_| InvalidFormValue::OutOfRange { field })
 }
 
-fn parse_optional_count(field: &'static str, text: &str) -> Result<Option<u32>, InvalidFormValue> {
+fn parse_optional_count(field: FormField, text: &str) -> Result<Option<u32>, InvalidFormValue> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -242,7 +334,7 @@ fn parse_optional_count(field: &'static str, text: &str) -> Result<Option<u32>, 
 }
 
 fn parse_scale_axis(
-    field: &'static str,
+    field: FormField,
     text: &str,
 ) -> Result<ScaleCompensationPercent, InvalidFormValue> {
     ScaleCompensationPercent::new(parse_f64(field, text)?)
