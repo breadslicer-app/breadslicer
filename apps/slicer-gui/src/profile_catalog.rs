@@ -32,7 +32,7 @@ use sc_print_profiles::{
 
 /// Id of the generic printer profile. Its calibration blocks apply as
 /// a fallback to any printer without a specific block.
-const GENERIC_PRINTER_ID: &str = "generic-machine";
+pub(crate) const GENERIC_PRINTER_ID: &str = "generic-machine";
 
 /// Which on-disk library a catalog entry's winning id resolved from.
 ///
@@ -208,6 +208,11 @@ impl ProfileCatalog {
 
     pub fn materials(&self) -> &[MaterialCatalogEntry] {
         &self.materials
+    }
+
+    /// The material extensions attached to base entries, sorted by id.
+    pub fn extensions(&self) -> &[MaterialExtensionEntry] {
+        &self.extensions
     }
 
     /// The extension attached to the material with this id, if any.

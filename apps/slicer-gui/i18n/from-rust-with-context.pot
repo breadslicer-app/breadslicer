@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 17:09+0200\n"
+"POT-Creation-Date: 2026-07-24 09:02+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,24 +17,40 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:303
+#: src/preferences_window.rs:352
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:305
+#: src/preferences_window.rs:354
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:309
+#: src/preferences_window.rs:358
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:397
+#: src/preferences_window.rs:534
 msgctxt "PreferencesPage"
 msgid "All"
+msgstr ""
+
+#: src/preferences_window.rs:688
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "{} (extended)"
+msgstr ""
+
+#: src/preferences_window.rs:756
+msgctxt "PreferencesPage"
+msgid "Generic"
+msgstr ""
+
+#: src/preferences_window.rs:782
+msgctxt "PreferencesPage"
+msgid "No calibration data"
 msgstr ""
 
 #: src/viewport/controller.rs:1035
@@ -79,7 +95,7 @@ msgid "Failed to export"
 msgstr ""
 
 #: src/wiring.rs:317 src/wiring.rs:334 src/scene_loader.rs:374
-#: src/app_state.rs:517
+#: src/app_state.rs:523
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -115,12 +131,12 @@ msgctxt "AppearancePreferences"
 msgid "System"
 msgstr ""
 
-#: src/app_state.rs:516
+#: src/app_state.rs:522
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:520
+#: src/app_state.rs:526
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"

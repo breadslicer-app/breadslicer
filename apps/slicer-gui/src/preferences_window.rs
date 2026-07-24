@@ -15,24 +15,24 @@ use slint::{
     TimerMode, VecModel,
 };
 
-use sc_print_primitives::MaterialId;
-use sc_print_profiles::{
-    load_material_profile_by_id, save_material_profile_to_library, user_library_dir,
-};
+use sc_print_primitives::PrinterId;
+use sc_print_profiles::user_library_dir;
 
-use crate::calibration_authoring::{CalibrationInput, build_material_profile, validate_input};
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
-use crate::profile_catalog::{MaterialCatalogEntry, ProfileCatalog, ProfileSource};
+use crate::profile_catalog::{
+    GENERIC_PRINTER_ID, MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry,
+    ProfileCatalog, ProfileSource, has_active_matcher,
+};
 use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
     run_import,
 };
 use crate::window_prefs::WindowPreferences;
-use crate::{CreateCalibrationDialog, PreferencesWindow, PrinterCard, ResinRow};
+use crate::{PillKind, PreferencesWindow, PrinterCard, ResinPill, ResinRow};
 
 /// A printer tile plus the fields the manufacturer / search filter
 /// needs but the Slint tile does not carry. Held once per session; the
@@ -147,10 +147,6 @@ pub(crate) fn build_preferences_window(
         })
     };
 
-    // Holds the create-calibration dialog while it is open so it is not
-    // dropped (and closed) the moment its opener returns.
-    let calibration_dialog: Rc<RefCell<Option<CreateCalibrationDialog>>> =
-        Rc::new(RefCell::new(None));
     prefs.on_close_requested({
         let prefs_weak = prefs_weak.clone();
         move || {
@@ -261,21 +257,9 @@ pub(crate) fn build_preferences_window(
     prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
     prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
 
-    prefs.on_create_calibration_requested({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        let calibration_dialog = calibration_dialog.clone();
-        move |index| {
-            open_calibration_dialog(
-                &bus,
-                &catalog_handle,
-                &refresh_view,
-                &calibration_dialog,
-                index,
-            );
-        }
-    });
+    // The row-level View / Fork / Extend / Edit / Delete callbacks
+    // exist in the UI already but are not wired yet; the viewer,
+    // editor, fork, and extend flows land in the follow-up stages.
 
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
@@ -391,128 +375,6 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
     }
 }
 
-/// Open the create-calibration dialog for the resin at `source_index`,
-/// seeded with the source resin and the currently selected printer. On
-/// save it authors a new profile, refreshes the catalog and views, and
-/// selects the new resin; on a validation error it reports inline and
-/// stays open.
-fn open_calibration_dialog(
-    bus: &Rc<PreferencesBus>,
-    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
-    refresh_view: &Rc<dyn Fn()>,
-    dialog_slot: &Rc<RefCell<Option<CreateCalibrationDialog>>>,
-    source_index: i32,
-) {
-    let catalog = catalog_handle.borrow().clone();
-    let Some(material) = catalog.materials().get(source_index as usize) else {
-        return;
-    };
-    let source_id = material.id.clone();
-    let source_name = format!("{} {}", material.brand, material.name);
-
-    let snapshot = bus.snapshot();
-    let Some(printer_id) = catalog.effective_default_printer(snapshot.default_printer.as_ref())
-    else {
-        return;
-    };
-    let printer_name = catalog
-        .printers()
-        .iter()
-        .find(|p| p.id == printer_id)
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| printer_id.as_str().to_owned());
-
-    let dialog = match CreateCalibrationDialog::new() {
-        Ok(dialog) => dialog,
-        Err(err) => {
-            eprintln!("failed to create the calibration dialog: {err}");
-            return;
-        }
-    };
-    dialog.set_theme(snapshot.theme);
-    dialog.set_source_name(source_name.into());
-    dialog.set_printer_name(printer_name.into());
-
-    let dialog_weak = dialog.as_weak();
-    dialog.on_cancel_requested({
-        let dialog_weak = dialog_weak.clone();
-        let dialog_slot = dialog_slot.clone();
-        move || {
-            if let Some(d) = dialog_weak.upgrade() {
-                let _ = d.hide();
-            }
-            *dialog_slot.borrow_mut() = None;
-        }
-    });
-    dialog.on_save_requested({
-        let dialog_weak = dialog_weak.clone();
-        let dialog_slot = dialog_slot.clone();
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        move || {
-            let Some(d) = dialog_weak.upgrade() else {
-                return;
-            };
-            let input = CalibrationInput {
-                name: d.get_name_text().to_string(),
-                normal_exposure_sec: d.get_normal_exposure_text().to_string(),
-                bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
-                bottom_layer_count: d.get_bottom_layer_count_text().to_string(),
-                lift_distance_mm: d.get_lift_distance_text().to_string(),
-                lift_speed_mm_min: d.get_lift_speed_text().to_string(),
-                retract_speed_mm_min: d.get_retract_speed_text().to_string(),
-            };
-            match author_calibration(&catalog_handle, &source_id, &printer_id, &input) {
-                Ok(new_id) => {
-                    refresh_catalog(&catalog_handle);
-                    refresh_view();
-                    bus.update(move |snap| {
-                        snap.default_resin = Some(new_id);
-                        PreferencesChange::DefaultResin
-                    });
-                    let _ = d.hide();
-                    *dialog_slot.borrow_mut() = None;
-                }
-                Err(message) => d.set_error_message(message.into()),
-            }
-        }
-    });
-
-    if let Err(err) = dialog.show() {
-        eprintln!("failed to show the calibration dialog: {err}");
-        return;
-    }
-    *dialog_slot.borrow_mut() = Some(dialog);
-}
-
-/// Load the source resin, validate the form, build the new profile and
-/// write it to the user library. Returns the new id on success or a
-/// user-facing message on failure.
-fn author_calibration(
-    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
-    source_id: &MaterialId,
-    printer_id: &sc_print_primitives::PrinterId,
-    input: &CalibrationInput,
-) -> Result<MaterialId, String> {
-    let user_lib = user_library_dir().map_err(|e| e.to_string())?;
-    let bundled = sc_app_paths::bundled_data_dir().join("profiles");
-    let source = load_material_profile_by_id(source_id, None, &user_lib, &bundled)
-        .map_err(|e| e.to_string())?;
-
-    let existing: BTreeSet<MaterialId> = catalog_handle
-        .borrow()
-        .materials()
-        .iter()
-        .map(|m| m.id.clone())
-        .collect();
-    let validated = validate_input(input, &existing).map_err(|e| e.to_string())?;
-    let new_id = validated.id.clone();
-    let profile = build_material_profile(&source, printer_id, validated);
-    save_material_profile_to_library(&user_lib, &profile).map_err(|e| e.to_string())?;
-    Ok(new_id)
-}
-
 /// Push the current selection (printer / resin indices, the derived
 /// resin ordering, and whether a printer is chosen) into the window.
 /// Does not touch the manufacturer / search filter, which is view-local.
@@ -541,9 +403,12 @@ fn apply_printing(
         .unwrap_or(-1);
     window.set_selected_resin_index(resin_index);
 
-    window.set_has_selected_printer(effective_printer.is_some());
-
-    let rows = derive_resin_rows(catalog.materials(), effective_printer.as_ref());
+    let rows = derive_resin_view(
+        catalog.materials(),
+        catalog.extensions(),
+        catalog.printers(),
+        effective_printer.as_ref(),
+    );
     window.set_resin_rows(ModelRc::new(VecModel::from(rows)));
 }
 
@@ -768,34 +633,193 @@ fn set_visible_cards(
     window.set_printer_cards(ModelRc::new(VecModel::from(cards)));
 }
 
-/// Resin rows for the list, ordered calibrated-first relative to the
-/// selected printer (uncalibrated last). With no printer selected,
-/// nothing is calibrated and the base catalog order is preserved. Each
-/// row keeps its catalog index in `id-index`.
-fn derive_resin_rows(
+/// Character budget one pill line targets. The estimate only decides
+/// break points: a single pill longer than the budget still gets its
+/// own line in full.
+const PILL_LINE_CHAR_BUDGET: usize = 48;
+
+/// Estimated character cost of a pill's padding and inter-pill gap.
+const PILL_OVERHEAD_CHARS: usize = 3;
+
+/// Resin rows for the list. Group 1 holds the profiles whose block
+/// (the base profile's own or its extension's) matches the default
+/// printer or generic; group 2 the rest; the catalog's `(brand, name)`
+/// order is kept within each group. An extension renders as its own
+/// row right below its parent, sharing the parent's catalog index.
+fn derive_resin_view(
     materials: &[MaterialCatalogEntry],
-    selected_printer: Option<&sc_print_primitives::PrinterId>,
+    extensions: &[MaterialExtensionEntry],
+    printers: &[PrinterCatalogEntry],
+    default_printer: Option<&PrinterId>,
 ) -> Vec<ResinRow> {
-    let mut calibrated_rows = Vec::new();
-    let mut uncalibrated_rows = Vec::new();
+    let mut matched_rows = Vec::new();
+    let mut unmatched_rows = Vec::new();
     for (i, entry) in materials.iter().enumerate() {
-        let calibrated = selected_printer.is_some_and(|p| entry.calibrated_printers.contains(p));
-        let row = ResinRow {
+        let extension = extensions.iter().find(|ext| ext.id == entry.id);
+        let target = if has_active_matcher(entry, extension, default_printer) {
+            &mut matched_rows
+        } else {
+            &mut unmatched_rows
+        };
+
+        let can_extend = has_uncovered_target(entry, extension, printers);
+        // The red no-data marker reflects the whole resin: a base
+        // profile whose extension carries blocks is not data-less.
+        let union_empty = entry.calibrated_printers.is_empty()
+            && extension.is_none_or(|ext| ext.printers.is_empty());
+        let parent_pills = if union_empty {
+            vec![no_data_pill(default_printer)]
+        } else {
+            build_pills(&entry.calibrated_printers, printers, default_printer)
+        };
+        target.push(ResinRow {
             name: SharedString::from(entry.name.as_str()),
             brand: SharedString::from(entry.brand.as_str()),
             family: SharedString::from(entry.family.as_str()),
-            calibrated,
+            pill_lines: pill_lines_model(chunk_pills(parent_pills, PILL_LINE_CHAR_BUDGET)),
             is_custom: entry.source == ProfileSource::User,
+            is_extension: false,
+            can_extend,
             id_index: i as i32,
-        };
-        if calibrated {
-            calibrated_rows.push(row);
-        } else {
-            uncalibrated_rows.push(row);
+        });
+
+        if let Some(ext) = extension {
+            target.push(ResinRow {
+                name: ctr!("PreferencesPage", "{} (extended)", entry.name),
+                brand: SharedString::from(entry.brand.as_str()),
+                family: SharedString::from(entry.family.as_str()),
+                pill_lines: pill_lines_model(chunk_pills(
+                    build_pills(&ext.printers, printers, default_printer),
+                    PILL_LINE_CHAR_BUDGET,
+                )),
+                is_custom: true,
+                is_extension: true,
+                can_extend,
+                id_index: i as i32,
+            });
         }
     }
-    calibrated_rows.extend(uncalibrated_rows);
-    calibrated_rows
+    matched_rows.extend(unmatched_rows);
+    matched_rows
+}
+
+/// Whether some printer in the catalog has no calibration block in
+/// either the base profile or its extension, i.e. whether the extend
+/// flow has a target to offer.
+fn has_uncovered_target(
+    entry: &MaterialCatalogEntry,
+    extension: Option<&MaterialExtensionEntry>,
+    printers: &[PrinterCatalogEntry],
+) -> bool {
+    printers.iter().any(|printer| {
+        !entry.calibrated_printers.contains(&printer.id)
+            && extension.is_none_or(|ext| !ext.printers.contains(&printer.id))
+    })
+}
+
+/// Display label of a calibration tag: the printer's name, or its id
+/// when the printer is not in the catalog.
+fn printer_pill_label(printers: &[PrinterCatalogEntry], id: &PrinterId) -> SharedString {
+    printers
+        .iter()
+        .find(|printer| &printer.id == id)
+        .map(|printer| SharedString::from(printer.name.as_str()))
+        .unwrap_or_else(|| SharedString::from(id.as_str()))
+}
+
+/// One pill per calibration block, ordered: the default printer's tag
+/// first, the generic tag next, the rest by label. Kinds follow the
+/// tag colors: green for the default printer's tag, yellow/orange for
+/// generic, gray otherwise; with no default printer everything is
+/// gray (the whole list renders dim).
+fn build_pills(
+    calibrated: &BTreeSet<PrinterId>,
+    printers: &[PrinterCatalogEntry],
+    default_printer: Option<&PrinterId>,
+) -> Vec<ResinPill> {
+    let mut default_pill = None;
+    let mut generic_pill = None;
+    let mut other_pills = Vec::new();
+    for id in calibrated {
+        let is_default = default_printer == Some(id);
+        let is_generic = id.as_str() == GENERIC_PRINTER_ID;
+        let kind = if default_printer.is_none() {
+            PillKind::Other
+        } else if is_default {
+            PillKind::OurPrinter
+        } else if is_generic {
+            PillKind::Generic
+        } else {
+            PillKind::Other
+        };
+        let label = if is_generic {
+            ctr!("PreferencesPage", "Generic")
+        } else {
+            printer_pill_label(printers, id)
+        };
+        let pill = ResinPill { label, kind };
+        if is_default {
+            default_pill = Some(pill);
+        } else if is_generic {
+            generic_pill = Some(pill);
+        } else {
+            other_pills.push(pill);
+        }
+    }
+    other_pills.sort_by(|a, b| a.label.cmp(&b.label));
+    default_pill
+        .into_iter()
+        .chain(generic_pill)
+        .chain(other_pills)
+        .collect()
+}
+
+/// The salient marker for a profile without any calibration data. It
+/// renders gray like everything else when no default printer is
+/// configured.
+fn no_data_pill(default_printer: Option<&PrinterId>) -> ResinPill {
+    ResinPill {
+        label: ctr!("PreferencesPage", "No calibration data"),
+        kind: if default_printer.is_some() {
+            PillKind::NoData
+        } else {
+            PillKind::Other
+        },
+    }
+}
+
+/// Greedy line assignment for content-sized pills: a pill starts a new
+/// line when the estimated character cost would overflow the budget.
+/// The estimate never truncates; an oversized pill simply owns its
+/// line.
+fn chunk_pills(pills: Vec<ResinPill>, budget_chars: usize) -> Vec<Vec<ResinPill>> {
+    let mut lines = Vec::new();
+    let mut line: Vec<ResinPill> = Vec::new();
+    let mut used = 0usize;
+    for pill in pills {
+        let cost = pill.label.chars().count() + PILL_OVERHEAD_CHARS;
+        if !line.is_empty() && used + cost > budget_chars {
+            lines.push(std::mem::take(&mut line));
+            used = 0;
+        }
+        used += cost;
+        line.push(pill);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// Wrap chunked pill lines into the nested model shape the Slint row
+/// consumes.
+fn pill_lines_model(lines: Vec<Vec<ResinPill>>) -> ModelRc<ModelRc<ResinPill>> {
+    ModelRc::new(VecModel::from(
+        lines
+            .into_iter()
+            .map(|line| ModelRc::new(VecModel::from(line)))
+            .collect::<Vec<_>>(),
+    ))
 }
 
 #[cfg(test)]
@@ -955,10 +979,10 @@ mod apply_thumbnails_tests {
 }
 
 #[cfg(test)]
-mod derive_resin_rows_tests {
+mod derive_resin_view_tests {
     use std::collections::BTreeSet;
 
-    use sc_print_primitives::{MaterialId, PrinterId};
+    use sc_print_primitives::{BuildVolume, MaterialId};
 
     use super::*;
 
@@ -981,47 +1005,276 @@ mod derive_resin_rows_tests {
         }
     }
 
+    fn extension(id: &str, printers: &[&str]) -> MaterialExtensionEntry {
+        MaterialExtensionEntry {
+            id: MaterialId::new(id).unwrap(),
+            printers: printers
+                .iter()
+                .map(|p| PrinterId::new(p).unwrap())
+                .collect(),
+        }
+    }
+
+    fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
+        PrinterCatalogEntry {
+            id: PrinterId::new(id).unwrap(),
+            manufacturer: "Maker".to_owned(),
+            name: name.to_owned(),
+            build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
+            image_path: None,
+            source: ProfileSource::Bundled,
+        }
+    }
+
     fn printer(id: &str) -> PrinterId {
         PrinterId::new(id).unwrap()
     }
 
-    #[test]
-    fn no_selected_printer_keeps_base_order_and_no_calibration() {
-        let materials = vec![
-            material("a-resin", "Alpha", "A", &["printer-a"]),
-            material("b-resin", "Beta", "B", &[]),
-        ];
-        let rows = derive_resin_rows(&materials, None);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id_index, 0);
-        assert_eq!(rows[1].id_index, 1);
-        assert!(!rows[0].calibrated);
-        assert!(!rows[1].calibrated);
+    fn pill(label: &str, kind: PillKind) -> ResinPill {
+        ResinPill {
+            label: label.into(),
+            kind,
+        }
+    }
+
+    /// Flatten a row's chunked pill lines back into (label, kind)
+    /// pairs for assertions.
+    fn row_pills(row: &ResinRow) -> Vec<(String, PillKind)> {
+        row.pill_lines
+            .iter()
+            .flat_map(|line| line.iter().collect::<Vec<_>>())
+            .map(|p| (p.label.to_string(), p.kind))
+            .collect()
     }
 
     #[test]
-    fn calibrated_rows_are_ordered_first() {
+    fn matched_group_comes_first_keeping_brand_name_order_within_groups() {
         let materials = vec![
             material("a-resin", "Alpha", "A", &[]),
             material("b-resin", "Beta", "B", &["printer-a"]),
             material("c-resin", "Gamma", "C", &[]),
-            material("d-resin", "Delta", "D", &["printer-a"]),
+            material("d-resin", "Delta", "D", &["generic-machine"]),
         ];
-        let rows = derive_resin_rows(&materials, Some(&printer("printer-a")));
-        // Calibrated (b, d) first in base order, then uncalibrated (a, c).
+        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("printer-a")));
+        // Matched (b: specific, d: generic fallback) first in base
+        // order, then the rest.
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
         assert_eq!(ids, vec![1, 3, 0, 2]);
-        assert!(rows[0].calibrated);
-        assert!(rows[1].calibrated);
-        assert!(!rows[2].calibrated);
-        assert!(!rows[3].calibrated);
+    }
+
+    #[test]
+    fn an_extension_match_pulls_the_parent_into_the_matched_group() {
+        let materials = vec![
+            material("a-resin", "Alpha", "A", &["printer-b"]),
+            material("z-resin", "Zeta", "Z", &["printer-b"]),
+        ];
+        let extensions = vec![extension("z-resin", &["printer-a"])];
+        let rows = derive_resin_view(&materials, &extensions, &[], Some(&printer("printer-a")));
+        // z-resin's extension covers our printer: parent + extension
+        // rows lead; a-resin (unmatched) follows.
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].id_index, 1);
+        assert!(!rows[0].is_extension);
+        assert_eq!(rows[1].id_index, 1);
+        assert!(rows[1].is_extension);
+        assert_eq!(rows[2].id_index, 0);
+    }
+
+    #[test]
+    fn extension_rows_sit_below_their_parent_with_a_derived_name() {
+        let materials = vec![material("a-resin", "Alpha", "Standard", &["printer-a"])];
+        let extensions = vec![extension("a-resin", &["printer-b"])];
+        let printers = vec![
+            printer_entry("printer-a", "Printer A"),
+            printer_entry("printer-b", "Printer B"),
+        ];
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &printers,
+            Some(&printer("printer-a")),
+        );
+        assert_eq!(rows.len(), 2);
+        let ext_row = &rows[1];
+        assert!(ext_row.is_extension);
+        assert!(ext_row.is_custom);
+        assert_eq!(ext_row.name.as_str(), "Standard (extended)");
+        assert_eq!(ext_row.brand.as_str(), "Alpha");
+        // The extension row carries its own pills only.
+        assert_eq!(
+            row_pills(ext_row),
+            vec![("Printer B".to_owned(), PillKind::Other)]
+        );
+    }
+
+    #[test]
+    fn pill_kinds_and_order_follow_the_default_printer_and_generic() {
+        let materials = vec![material(
+            "a-resin",
+            "Alpha",
+            "A",
+            &["printer-z", "printer-a", "generic-machine", "printer-b"],
+        )];
+        let printers = vec![
+            printer_entry("printer-a", "Printer A"),
+            printer_entry("printer-b", "Printer B"),
+            printer_entry("printer-z", "Printer Z"),
+            printer_entry("generic-machine", "Generic Machine"),
+        ];
+        let rows = derive_resin_view(&materials, &[], &printers, Some(&printer("printer-a")));
+        // Default printer first (green), generic next (yellow), the
+        // rest by label (gray).
+        assert_eq!(
+            row_pills(&rows[0]),
+            vec![
+                ("Printer A".to_owned(), PillKind::OurPrinter),
+                ("Generic".to_owned(), PillKind::Generic),
+                ("Printer B".to_owned(), PillKind::Other),
+                ("Printer Z".to_owned(), PillKind::Other),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_generic_default_printer_gets_the_our_printer_kind() {
+        let materials = vec![material("a-resin", "Alpha", "A", &["generic-machine"])];
+        let printers = vec![printer_entry("generic-machine", "Generic Machine")];
+        let rows = derive_resin_view(
+            &materials,
+            &[],
+            &printers,
+            Some(&printer("generic-machine")),
+        );
+        assert_eq!(
+            row_pills(&rows[0]),
+            vec![("Generic".to_owned(), PillKind::OurPrinter)]
+        );
+    }
+
+    #[test]
+    fn a_pill_falls_back_to_the_id_when_the_printer_is_unknown() {
+        let materials = vec![material("a-resin", "Alpha", "A", &["gone-printer"])];
+        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("printer-a")));
+        assert_eq!(
+            row_pills(&rows[0]),
+            vec![("gone-printer".to_owned(), PillKind::Other)]
+        );
+    }
+
+    #[test]
+    fn zero_block_materials_get_the_red_no_data_pill() {
+        let materials = vec![material("a-resin", "Alpha", "A", &[])];
+        let rows = derive_resin_view(&materials, &[], &[], Some(&printer("printer-a")));
+        let pills = row_pills(&rows[0]);
+        assert_eq!(pills.len(), 1);
+        assert_eq!(pills[0].1, PillKind::NoData);
+    }
+
+    #[test]
+    fn a_covering_extension_suppresses_the_parents_no_data_pill() {
+        let materials = vec![material("a-resin", "Alpha", "A", &[])];
+        let extensions = vec![extension("a-resin", &["printer-b"])];
+        let rows = derive_resin_view(&materials, &extensions, &[], Some(&printer("printer-a")));
+        // The resin has data (in the extension row); the parent row
+        // shows neither pills nor the red marker.
+        assert!(row_pills(&rows[0]).is_empty());
+        assert_eq!(row_pills(&rows[1]).len(), 1);
+    }
+
+    #[test]
+    fn without_a_default_printer_every_pill_is_dim() {
+        let materials = vec![
+            material("a-resin", "Alpha", "A", &["printer-a", "generic-machine"]),
+            material("b-resin", "Beta", "B", &[]),
+        ];
+        let rows = derive_resin_view(&materials, &[], &[], None);
+        for (_, kind) in rows.iter().flat_map(row_pills) {
+            assert_eq!(kind, PillKind::Other);
+        }
     }
 
     #[test]
     fn custom_flag_reflects_the_source() {
         let mut entry = material("a-resin", "Alpha", "A", &[]);
         entry.source = ProfileSource::User;
-        let rows = derive_resin_rows(&[entry], None);
+        let rows = derive_resin_view(&[entry], &[], &[], None);
         assert!(rows[0].is_custom);
+        assert!(!rows[0].is_extension);
+    }
+
+    #[test]
+    fn can_extend_reflects_uncovered_targets() {
+        let materials = vec![material("a-resin", "Alpha", "A", &["printer-a"])];
+        let extensions = vec![extension("a-resin", &["printer-b"])];
+        let all_covered = vec![
+            printer_entry("printer-a", "Printer A"),
+            printer_entry("printer-b", "Printer B"),
+        ];
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &all_covered,
+            Some(&printer("printer-a")),
+        );
+        // Base plus extension cover every catalog printer: nothing
+        // left to extend, on either row.
+        assert!(!rows[0].can_extend);
+        assert!(!rows[1].can_extend);
+
+        let with_uncovered = vec![
+            printer_entry("printer-a", "Printer A"),
+            printer_entry("printer-b", "Printer B"),
+            printer_entry("printer-c", "Printer C"),
+        ];
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &with_uncovered,
+            Some(&printer("printer-a")),
+        );
+        assert!(rows[0].can_extend);
+        assert!(rows[1].can_extend);
+    }
+
+    #[test]
+    fn chunking_respects_the_budget_and_preserves_order() {
+        let pills = vec![
+            pill("aaaa", PillKind::Other),
+            pill("bbbb", PillKind::Other),
+            pill("cccc", PillKind::Other),
+        ];
+        // Each pill costs 4 + overhead; a budget of two pills per
+        // line splits 3 pills into 2 lines.
+        let budget = 2 * (4 + PILL_OVERHEAD_CHARS);
+        let lines = chunk_pills(pills, budget);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), 2);
+        assert_eq!(lines[1].len(), 1);
+        assert_eq!(lines[0][0].label.as_str(), "aaaa");
+        assert_eq!(lines[0][1].label.as_str(), "bbbb");
+        assert_eq!(lines[1][0].label.as_str(), "cccc");
+    }
+
+    #[test]
+    fn an_oversized_pill_still_gets_a_full_line() {
+        let pills = vec![
+            pill(
+                "this label is far longer than the whole budget",
+                PillKind::Other,
+            ),
+            pill("b", PillKind::Other),
+        ];
+        let lines = chunk_pills(pills, 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), 1);
+        assert_eq!(
+            lines[0][0].label.as_str(),
+            "this label is far longer than the whole budget"
+        );
+    }
+
+    #[test]
+    fn no_pills_yield_no_lines() {
+        assert!(chunk_pills(Vec::new(), PILL_LINE_CHAR_BUDGET).is_empty());
     }
 }

@@ -40,7 +40,6 @@ export component PreferencesWindow inherits Window {
 
     in property <[ResinRow]> resin-rows;
     in-out property <int> selected-resin-index: -1;
-    in property <bool> has-selected-printer;
 
     callback close-requested();
     callback theme-changed(ThemePreference);
@@ -49,7 +48,11 @@ export component PreferencesWindow inherits Window {
     callback printer-search-changed(string);
     callback printer-selected(int);
     callback resin-selected(int);
-    callback create-calibration-requested(int);
+    callback view-requested(int);
+    callback fork-requested(int);
+    callback extend-requested(int);
+    callback edit-requested(int);
+    callback delete-requested(int);
     callback import-requested();
     callback export-printers-requested();
     callback export-materials-requested();
@@ -120,12 +123,23 @@ export component PreferencesWindow inherits Window {
             if(side-bar.current-item == 2) : ResinPreferences {
                 resin-rows: root.resin-rows;
                 selected-resin-index <=> root.selected-resin-index;
-                has-selected-printer: root.has-selected-printer;
                 resin-selected(i) => {
                     root.resin-selected(i);
                 }
-                create-calibration-requested(i) => {
-                    root.create-calibration-requested(i);
+                view-requested(i) => {
+                    root.view-requested(i);
+                }
+                fork-requested(i) => {
+                    root.fork-requested(i);
+                }
+                extend-requested(i) => {
+                    root.extend-requested(i);
+                }
+                edit-requested(i) => {
+                    root.edit-requested(i);
+                }
+                delete-requested(i) => {
+                    root.delete-requested(i);
                 }
                 import-requested => {
                     root.import-requested();

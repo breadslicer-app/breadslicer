@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-15 15:55+0000\n"
+"POT-Creation-Date: 2026-07-24 07:02+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -10,34 +10,34 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: \n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 
 #: ui/about-window.slint:10
 msgctxt "AboutWindow"
 msgid "About SoulCrafted Slicer"
 msgstr ""
 
-#: ui/about-window.slint:54
+#: ui/about-window.slint:55
 msgctxt "AboutWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/about-window.slint:61
+#: ui/about-window.slint:62
 msgctxt "About"
 msgid "Version {0}"
 msgstr ""
 
-#: ui/about-window.slint:67
+#: ui/about-window.slint:68
 msgctxt "About"
 msgid "An open source slicer for resin 3D printers."
 msgstr ""
 
-#: ui/about-window.slint:73
+#: ui/about-window.slint:74
 msgctxt "About"
 msgid "Licensed under AGPL-3.0-only"
 msgstr ""
 
-#: ui/about-window.slint:83
+#: ui/about-window.slint:84
 msgctxt "About"
 msgid "Close"
 msgstr ""
@@ -47,39 +47,39 @@ msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:61
+#: ui/replace-scene-dialog.slint:62
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:67
+#: ui/replace-scene-dialog.slint:68
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:80
+#: ui/replace-scene-dialog.slint:81
 msgctxt "ReplaceSceneDialog"
 msgid ""
 "The current scene will be closed. Export it first to keep any changes you've "
 "made."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:84
+#: ui/replace-scene-dialog.slint:85
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:98
+#: ui/replace-scene-dialog.slint:99
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:105
+#: ui/replace-scene-dialog.slint:106
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:112
+#: ui/replace-scene-dialog.slint:113
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""
@@ -89,52 +89,82 @@ msgctxt "PreferencesPage"
 msgid "Printer"
 msgstr ""
 
-#: ui/preferences/printer.slint:61
+#: ui/preferences/printer.slint:71
 msgctxt "PreferencesPage"
 msgid "Search models"
 msgstr ""
 
-#: ui/preferences/printer.slint:63
+#: ui/preferences/printer.slint:73
 msgctxt "PreferencesPage"
 msgid "Search printer models"
 msgstr ""
 
-#: ui/preferences/printer.slint:109
+#: ui/preferences/printer.slint:159
 msgctxt "PreferencesPage"
 msgid "No image"
 msgstr ""
 
-#: ui/preferences/printer.slint:122 ui/preferences/resin.slint:82
+#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:175
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr ""
 
-#: ui/preferences/printer.slint:135 ui/preferences/resin.slint:101
+#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:243
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr ""
 
-#: ui/preferences/printer.slint:141
+#: ui/preferences/printer.slint:192
 msgctxt "PreferencesPage"
 msgid "Export printers..."
 msgstr ""
 
-#: ui/preferences/resin.slint:22
+#: ui/preferences/resin.slint:47
 msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/resin.slint:76
+#: ui/preferences/resin.slint:103 ui/preferences/resin.slint:220
 msgctxt "PreferencesPage"
-msgid "calibrated"
+msgid "View"
 msgstr ""
 
-#: ui/preferences/resin.slint:88
+#: ui/preferences/resin.slint:109
 msgctxt "PreferencesPage"
-msgid "Calibrate"
+msgid "Fork..."
 msgstr ""
 
-#: ui/preferences/resin.slint:107
+#: ui/preferences/resin.slint:115
+msgctxt "PreferencesPage"
+msgid "Extend..."
+msgstr ""
+
+#: ui/preferences/resin.slint:121 ui/preferences/resin.slint:226
+msgctxt "PreferencesPage"
+msgid "Edit"
+msgstr ""
+
+#: ui/preferences/resin.slint:127
+msgctxt "PreferencesPage"
+msgid "Delete..."
+msgstr ""
+
+#: ui/preferences/resin.slint:189
+msgctxt "PreferencesPage"
+msgid "No calibration data"
+msgstr ""
+
+#: ui/preferences/resin.slint:191
+msgctxt "PreferencesPage"
+msgid "Generic calibration"
+msgstr ""
+
+#: ui/preferences/resin.slint:192
+msgctxt "PreferencesPage"
+msgid "Calibration: {}"
+msgstr ""
+
+#: ui/preferences/resin.slint:249
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr ""
@@ -144,22 +174,22 @@ msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:69
+#: ui/preferences/preferences-window.slint:78
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:71
+#: ui/preferences/preferences-window.slint:80
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:72
+#: ui/preferences/preferences-window.slint:81
 msgctxt "PreferencesMenu"
 msgid "Printer"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:73
+#: ui/preferences/preferences-window.slint:82
 msgctxt "PreferencesMenu"
 msgid "Resin"
 msgstr ""
@@ -199,29 +229,29 @@ msgctxt "ErrorDialog"
 msgid "Error"
 msgstr ""
 
-#: ui/error-dialog.slint:12
+#: ui/error-dialog.slint:13
 msgctxt "ErrorDialog"
 msgid "An error occurred"
 msgstr ""
 
-#: ui/error-dialog.slint:73
+#: ui/error-dialog.slint:74
 msgctxt "ErrorDialog"
 msgid "Warning"
 msgstr ""
 
 #. runs automatically.
-#: ui/error-dialog.slint:115
+#: ui/error-dialog.slint:116
 msgctxt "ErrorDialog"
 msgid "Hide technical details"
 msgstr ""
 
 #. runs automatically.
-#: ui/error-dialog.slint:115
+#: ui/error-dialog.slint:116
 msgctxt "ErrorDialog"
 msgid "Show technical details"
 msgstr ""
 
-#: ui/error-dialog.slint:142
+#: ui/error-dialog.slint:143
 msgctxt "ErrorDialog"
 msgid "Close"
 msgstr ""
@@ -241,189 +271,129 @@ msgctxt "ObjectList"
 msgid "No objects to display"
 msgstr ""
 
-#: ui/main-window.slint:62
+#: ui/main-window.slint:67
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:158
+#: ui/main-window.slint:164
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:161
+#: ui/main-window.slint:167
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:171
+#: ui/main-window.slint:177
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:180
+#: ui/main-window.slint:186
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:191
+#: ui/main-window.slint:197
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:197
+#: ui/main-window.slint:203
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:205
+#: ui/main-window.slint:211
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:215
+#: ui/main-window.slint:221
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:217
+#: ui/main-window.slint:223
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:226
+#: ui/main-window.slint:232
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:237
+#: ui/main-window.slint:243
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:247
+#: ui/main-window.slint:253
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:256
+#: ui/main-window.slint:262
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:260
+#: ui/main-window.slint:266
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:261
+#: ui/main-window.slint:267
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:271
+#: ui/main-window.slint:277
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:273
+#: ui/main-window.slint:279
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:278
+#: ui/main-window.slint:284
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:285
+#: ui/main-window.slint:291
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:292
+#: ui/main-window.slint:298
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:299
+#: ui/main-window.slint:305
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:306
+#: ui/main-window.slint:312
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:318
+#: ui/main-window.slint:324
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:429
+#: ui/main-window.slint:435
 msgctxt "MainWindow"
 msgid "Drop to open"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:14
-msgctxt "CreateCalibrationDialog"
-msgid "New calibration"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:63
-msgctxt "CreateCalibrationDialog"
-msgid "Calibrate {} for {}"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:74
-msgctxt "CreateCalibrationDialog"
-msgid "Name"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:79
-msgctxt "CreateCalibrationDialog"
-msgid "e.g. My Grey 0.05mm"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:84
-msgctxt "CreateCalibrationDialog"
-msgid "Normal exposure (s)"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:94
-msgctxt "CreateCalibrationDialog"
-msgid "Bottom exposure (s)"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:104
-msgctxt "CreateCalibrationDialog"
-msgid "Bottom layers"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:114
-msgctxt "CreateCalibrationDialog"
-msgid "Lift distance (mm)"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:124
-msgctxt "CreateCalibrationDialog"
-msgid "Lift speed (mm/min)"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:134
-msgctxt "CreateCalibrationDialog"
-msgid "Retract speed (mm/min)"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:155
-msgctxt "CreateCalibrationDialog"
-msgid "Save"
-msgstr ""
-
-#: ui/create-calibration-dialog.slint:162
-msgctxt "CreateCalibrationDialog"
-msgid "Cancel"
 msgstr ""
 
 #: ui/mesh-viewer.slint:136
@@ -460,24 +430,35 @@ msgctxt "MeshViewer"
 msgid "Paste"
 msgstr ""
 
-#: src/preferences_window.rs:303
+#: src/preferences_window.rs:352
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:305
+#: src/preferences_window.rs:354
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:309
+#: src/preferences_window.rs:358
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:397
+#: src/preferences_window.rs:534
 msgctxt "PreferencesPage"
 msgid "All"
+msgstr ""
+
+#: src/preferences_window.rs:688
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "{} (extended)"
+msgstr ""
+
+#: src/preferences_window.rs:756
+msgctxt "PreferencesPage"
+msgid "Generic"
 msgstr ""
 
 #: src/viewport/controller.rs:1035
@@ -522,7 +503,7 @@ msgid "Failed to export"
 msgstr ""
 
 #: src/wiring.rs:317 src/wiring.rs:334 src/scene_loader.rs:374
-#: src/app_state.rs:517
+#: src/app_state.rs:523
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -553,12 +534,12 @@ msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/app_state.rs:516
+#: src/app_state.rs:522
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:520
+#: src/app_state.rs:526
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"

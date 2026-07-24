@@ -6,15 +6,40 @@
 import { Button, ListView, Palette } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 
+// Kind of a calibration tag; decides its colors.
+export enum PillKind {
+    // Calibration for the configured default printer.
+    our-printer,
+    // The generic calibration, applying as a fallback to any printer
+    // without a specific block.
+    generic,
+    // Calibration for another printer. Also used for every tag when no
+    // default printer is configured, so the whole list renders dim.
+    other,
+    // Salient marker for a profile without any calibration data.
+    no-data,
+}
+
+// One calibration tag: the printer name, or the translated "Generic" /
+// "No calibration data" texts.
+export struct ResinPill {
+    label: string,
+    kind: PillKind,
+}
+
 // One resin row. `id-index` is the material's index in the Rust
-// catalog and the stable handle carried through the callbacks.
-// `calibrated` is relative to the currently selected printer.
+// catalog and the stable handle carried through the callbacks; an
+// extension row shares its parent's index, so selecting either row
+// selects the same resin. Pill lines are pre-chunked on the Rust side
+// because Slint layouts do not wrap.
 export struct ResinRow {
     name: string,
     brand: string,
     family: string,
-    calibrated: bool,
+    pill-lines: [[ResinPill]],
     is-custom: bool,
+    is-extension: bool,
+    can-extend: bool,
     id-index: int,
 }
 
@@ -25,70 +50,185 @@ export component ResinPreferences inherits PreferencesPage {
     in property <[ResinRow]> resin-rows;
     // Catalog index of the selected resin, or -1 when none is chosen.
     in-out property <int> selected-resin-index: -1;
-    // Whether a default printer is currently selected; gates the
-    // per-row create-calibration affordance.
-    in property <bool> has-selected-printer;
 
     callback resin-selected(int);
-    callback create-calibration-requested(int);
+    callback view-requested(int);
+    callback fork-requested(int);
+    callback extend-requested(int);
+    callback edit-requested(int);
+    callback delete-requested(int);
     callback import-requested();
     callback export-materials-requested();
+
+    // Tag palette: green shade for the default printer's tag,
+    // yellow/orange for generic, gray for unmatched printers, red for
+    // the no-data marker; light and dark variants follow the theme.
+    pure function pill-background(kind: PillKind) -> brush {
+        if (kind == PillKind.our-printer) {
+            return Palette.color-scheme == ColorScheme.dark ? #1d4a29 : #cdeed6;
+        }
+        if (kind == PillKind.generic) {
+            return Palette.color-scheme == ColorScheme.dark ? #4a3d14 : #fcecc5;
+        }
+        if (kind == PillKind.no-data) {
+            return Palette.color-scheme == ColorScheme.dark ? #571e24 : #f6d3d7;
+        }
+        return Palette.foreground.transparentize(0.92);
+    }
+
+    pure function pill-foreground(kind: PillKind) -> brush {
+        if (kind == PillKind.our-printer) {
+            return Palette.color-scheme == ColorScheme.dark ? #a9e8b8 : #0d5223;
+        }
+        if (kind == PillKind.generic) {
+            return Palette.color-scheme == ColorScheme.dark ? #f0d284 : #6b4e00;
+        }
+        if (kind == PillKind.no-data) {
+            return Palette.color-scheme == ColorScheme.dark ? #f2b4bc : #8a1c28;
+        }
+        return Palette.foreground.transparentize(0.45);
+    }
 
     ListView {
         vertical-stretch: 1;
         for row in root.resin-rows: Rectangle {
-            height: 56px;
+            height: row-content.preferred-height;
             background: row.id-index == root.selected-resin-index
                 ? Palette.selection-background
                 : transparent;
 
-            // Behind the row content so the Calibrate button, drawn on
-            // top, still receives its own clicks while a click anywhere
-            // else on the row selects the resin.
-            TouchArea {
-                clicked => {
-                    root.selected-resin-index = row.id-index;
-                    root.resin-selected(row.id-index);
-                }
-            }
-
-            HorizontalLayout {
-                padding: 8px;
-                spacing: 8px;
-
-                VerticalLayout {
-                    alignment: center;
-                    Text {
-                        text: row.brand + " " + row.name;
-                        font-size: 0.95rem;
+            ContextMenuArea {
+                Menu {
+                    MenuItem {
+                        title: @tr("PreferencesPage" => "View");
+                        activated => {
+                            root.view-requested(row.id-index);
+                        }
                     }
-                    Text {
-                        text: row.family;
-                        font-size: 0.75rem;
-                        color: Palette.foreground.transparentize(0.4);
+                    MenuItem {
+                        title: @tr("PreferencesPage" => "Fork...");
+                        activated => {
+                            root.fork-requested(row.id-index);
+                        }
+                    }
+                    if row.can-extend: MenuItem {
+                        title: @tr("PreferencesPage" => "Extend...");
+                        activated => {
+                            root.extend-requested(row.id-index);
+                        }
+                    }
+                    if row.is-custom: MenuItem {
+                        title: @tr("PreferencesPage" => "Edit");
+                        activated => {
+                            root.edit-requested(row.id-index);
+                        }
+                    }
+                    if row.is-custom: MenuItem {
+                        title: @tr("PreferencesPage" => "Delete...");
+                        activated => {
+                            root.delete-requested(row.id-index);
+                        }
                     }
                 }
 
-                Rectangle {
-                    horizontal-stretch: 1;
-                }
-
-                if row.calibrated: Text {
-                    text: @tr("PreferencesPage" => "calibrated");
-                    vertical-alignment: center;
-                    color: Palette.accent-background;
-                    font-size: 0.75rem;
-                }
-                if row.is-custom: Text {
-                    text: @tr("PreferencesPage" => "custom");
-                    vertical-alignment: center;
-                    color: Palette.foreground.transparentize(0.4);
-                    font-size: 0.75rem;
-                }
-                if !row.calibrated && root.has-selected-printer: Button {
-                    text: @tr("PreferencesPage" => "Calibrate");
+                // Behind the row content so the row buttons, drawn on
+                // top, still receive their own clicks while a click
+                // anywhere else on the row selects the resin.
+                TouchArea {
                     clicked => {
-                        root.create-calibration-requested(row.id-index);
+                        root.selected-resin-index = row.id-index;
+                        root.resin-selected(row.id-index);
+                    }
+                }
+
+                row-content := HorizontalLayout {
+                    padding: 8px;
+                    // Extension rows indent under their parent.
+                    padding-left: row.is-extension ? 32px : 8px;
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 8px;
+                            Text {
+                                text: row.brand + " " + row.name;
+                                font-size: 0.95rem;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: row.family;
+                                font-size: 0.75rem;
+                                color: Palette.foreground.transparentize(0.4);
+                                vertical-alignment: center;
+                            }
+                            // The custom mark: set apart from the
+                            // calibration tags, own color family.
+                            if row.is-custom: Rectangle {
+                                background: Palette.color-scheme == ColorScheme.dark ? #3d2a5e : #e6dcf5;
+                                border-radius: 4px;
+                                width: custom-text.preferred-width + 10px;
+                                custom-text := Text {
+                                    text: @tr("PreferencesPage" => "custom");
+                                    color: Palette.color-scheme == ColorScheme.dark ? #cdb8f0 : #4b2a82;
+                                    font-size: 0.7rem;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        for line in row.pill-lines: HorizontalLayout {
+                            alignment: start;
+                            spacing: 4px;
+                            for pill in line: pill-tag := Rectangle {
+                                property <string> tip: pill.kind == PillKind.no-data
+                                    ? @tr("PreferencesPage" => "No calibration data")
+                                    : pill.kind == PillKind.generic
+                                        ? @tr("PreferencesPage" => "Generic calibration")
+                                        : @tr("PreferencesPage" => "Calibration: {}", pill.label);
+                                background: root.pill-background(pill.kind);
+                                border-radius: 9px;
+                                width: pill-text.preferred-width + 14px;
+                                height: pill-text.preferred-height + 6px;
+                                pill-text := Text {
+                                    text: pill.label;
+                                    color: root.pill-foreground(pill.kind);
+                                    font-size: 0.75rem;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                Tooltip {
+                                    text: @markdown("\{pill-tag.tip}");
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Button {
+                                text: @tr("PreferencesPage" => "View");
+                                clicked => {
+                                    root.view-requested(row.id-index);
+                                }
+                            }
+                            if row.is-custom: Button {
+                                text: @tr("PreferencesPage" => "Edit");
+                                clicked => {
+                                    root.edit-requested(row.id-index);
+                                }
+                            }
+                        }
                     }
                 }
             }
