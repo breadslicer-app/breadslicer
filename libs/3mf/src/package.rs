@@ -1,0 +1,545 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! OPC (Open Packaging Conventions) container layer: a ZIP archive
+//! holding named parts with content types, plus relationship parts
+//! that link them. This layer knows nothing about 3MF documents; it
+//! stores and retrieves bytes.
+//!
+//! Scope notes: content types support both Default (by extension) and
+//! Override (by part) entries in both directions; relationship
+//! targets are resolved against the source part's directory when
+//! relative. Interleaved packages and ZIP64 writing are out of scope
+//! (ZIP64 reading comes with the `zip` crate).
+
+use std::collections::BTreeMap;
+use std::io::{Read, Seek, Write};
+
+use quick_xml::events::attributes::Attribute;
+use quick_xml::events::{BytesDecl, BytesStart, Event};
+use quick_xml::reader::NsReader;
+use quick_xml::writer::Writer;
+use zip::read::ZipArchive;
+use zip::write::{SimpleFileOptions, ZipWriter};
+
+use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
+use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
+
+/// Absolute, `/`-rooted name of a part inside the package.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PartName(String);
+
+impl PartName {
+    pub fn new(name: &str) -> Result<Self, MalformedPartNameError> {
+        if name.is_empty() {
+            return Err(MalformedPartNameError::Empty);
+        }
+        let Some(rest) = name.strip_prefix('/') else {
+            return Err(MalformedPartNameError::NotAbsolute);
+        };
+        if rest.is_empty() {
+            return Err(MalformedPartNameError::EmptySegment);
+        }
+        for segment in rest.split('/') {
+            if segment.is_empty() {
+                return Err(MalformedPartNameError::EmptySegment);
+            }
+        }
+        if rest.ends_with('.') {
+            return Err(MalformedPartNameError::TrailingDot);
+        }
+        Ok(Self(name.to_string()))
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The name as a ZIP entry path (no leading slash).
+    #[inline]
+    pub(crate) fn zip_entry(&self) -> &str {
+        &self.0[1..]
+    }
+
+    /// The extension of the final segment, lowercased, if any.
+    fn extension_lowercase(&self) -> Option<String> {
+        let file = self.0.rsplit('/').next()?;
+        let (stem, ext) = file.rsplit_once('.')?;
+        if stem.is_empty() {
+            return None;
+        }
+        Some(ext.to_ascii_lowercase())
+    }
+
+    /// The directory prefix including the trailing slash (`"/3D/"`
+    /// for `"/3D/3dmodel.model"`, `"/"` for a root-level part).
+    fn directory(&self) -> &str {
+        match self.0.rfind('/') {
+            Some(idx) => &self.0[..=idx],
+            None => "/",
+        }
+    }
+
+    /// The name of this part's relationships part
+    /// (`/3D/_rels/3dmodel.model.rels`).
+    fn rels_part_name(&self) -> String {
+        let dir = self.directory();
+        let file = &self.0[dir.len()..];
+        format!("{dir}_rels/{file}.rels")
+    }
+}
+
+impl std::fmt::Display for PartName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// One OPC relationship: a typed, identified link from a source (the
+/// package root or a part) to a target part.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Relationship {
+    pub id: String,
+    pub rel_type: String,
+    /// Target part name; absolute (`/`-rooted) or relative to the
+    /// source's directory.
+    pub target: String,
+}
+
+#[derive(Debug)]
+struct Part {
+    name: PartName,
+    content_type: String,
+    data: Vec<u8>,
+}
+
+/// An in-memory OPC package: ordered parts plus relationships.
+#[derive(Debug, Default)]
+pub struct Package {
+    parts: Vec<Part>,
+    /// Package-root relationships (stored at `/_rels/.rels`).
+    root_relationships: Vec<Relationship>,
+    /// Per-part relationships, keyed by source part name.
+    part_relationships: BTreeMap<PartName, Vec<Relationship>>,
+}
+
+impl Package {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a part. Part names must be unique.
+    pub fn add_part(
+        &mut self,
+        name: PartName,
+        content_type: &str,
+        data: Vec<u8>,
+    ) -> Result<(), PackageWriteError> {
+        if self.parts.iter().any(|p| p.name == name) {
+            return Err(PackageWriteError::DuplicatePartName {
+                name: name.as_str().to_string(),
+            });
+        }
+        self.parts.push(Part {
+            name,
+            content_type: content_type.to_string(),
+            data,
+        });
+        Ok(())
+    }
+
+    pub fn add_root_relationship(&mut self, relationship: Relationship) {
+        self.root_relationships.push(relationship);
+    }
+
+    pub fn add_part_relationship(&mut self, source: &PartName, relationship: Relationship) {
+        self.part_relationships
+            .entry(source.clone())
+            .or_default()
+            .push(relationship);
+    }
+
+    pub fn part_names(&self) -> impl Iterator<Item = &PartName> {
+        self.parts.iter().map(|p| &p.name)
+    }
+
+    pub fn part_content_type(&self, name: &PartName) -> Option<&str> {
+        self.parts
+            .iter()
+            .find(|p| &p.name == name)
+            .map(|p| p.content_type.as_str())
+    }
+
+    pub fn part_data(&self, name: &PartName) -> Option<&[u8]> {
+        self.parts
+            .iter()
+            .find(|p| &p.name == name)
+            .map(|p| p.data.as_slice())
+    }
+
+    pub fn root_relationships(&self) -> &[Relationship] {
+        &self.root_relationships
+    }
+
+    pub fn part_relationships(&self, source: &PartName) -> &[Relationship] {
+        self.part_relationships
+            .get(source)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Resolve the StartPart relationship to the primary 3D Model
+    /// part's name.
+    pub fn start_part(&self) -> Result<PartName, PackageReadError> {
+        let rel = self
+            .root_relationships
+            .iter()
+            .find(|r| r.rel_type == START_PART_REL_TYPE)
+            .ok_or(PackageReadError::MissingStartPartRelationship)?;
+        let target = resolve_target("/", &rel.target);
+        let name =
+            PartName::new(&target).map_err(|source| PackageReadError::MalformedPartName {
+                name: target.clone(),
+                source,
+            })?;
+        if self.part_data(&name).is_none() {
+            return Err(PackageReadError::StartPartNotFound { target });
+        }
+        Ok(name)
+    }
+
+    /// Serialize the package as a plain deflate-compressed ZIP.
+    pub fn write_to<W: Write + Seek>(&self, writer: W) -> Result<(), PackageWriteError> {
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let mut archive = ZipWriter::new(writer);
+
+        archive.start_file("[Content_Types].xml", options)?;
+        archive.write_all(&self.content_types_xml()?)?;
+
+        archive.start_file("_rels/.rels", options)?;
+        archive.write_all(&relationships_xml(&self.root_relationships)?)?;
+
+        for (source, relationships) in &self.part_relationships {
+            if relationships.is_empty() {
+                continue;
+            }
+            let rels_name = source.rels_part_name();
+            archive.start_file(&rels_name[1..], options)?;
+            archive.write_all(&relationships_xml(relationships)?)?;
+        }
+
+        for part in &self.parts {
+            archive.start_file(part.name.zip_entry(), options)?;
+            archive.write_all(&part.data)?;
+        }
+
+        archive.finish()?;
+        Ok(())
+    }
+
+    /// Read a package from a ZIP stream.
+    pub fn read_from<R: Read + Seek>(reader: R) -> Result<Self, PackageReadError> {
+        let mut archive = ZipArchive::new(reader)?;
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index)?;
+            if file.is_dir() {
+                continue;
+            }
+            let raw_name = file.name().to_string();
+            let name = if raw_name.starts_with('/') {
+                raw_name
+            } else {
+                format!("/{raw_name}")
+            };
+            let mut data = Vec::with_capacity(file.size() as usize);
+            file.read_to_end(&mut data)
+                .map_err(|source| PackageReadError::PartRead {
+                    part: name.clone(),
+                    source,
+                })?;
+            entries.push((name, data));
+        }
+
+        let content_types_bytes = entries
+            .iter()
+            .find(|(name, _)| name == "/[Content_Types].xml")
+            .map(|(_, data)| data.clone())
+            .ok_or(PackageReadError::MissingContentTypes)?;
+        let content_types = parse_content_types(&content_types_bytes)?;
+
+        let mut package = Package::new();
+        for (name, data) in entries {
+            if name == "/[Content_Types].xml" {
+                continue;
+            }
+            let part_name =
+                PartName::new(&name).map_err(|source| PackageReadError::MalformedPartName {
+                    name: name.clone(),
+                    source,
+                })?;
+            if is_relationships_part(&part_name) {
+                let relationships = parse_relationships(&data, part_name.as_str())?;
+                match relationships_source(&part_name) {
+                    None => package.root_relationships = relationships,
+                    Some(source) => {
+                        package.part_relationships.insert(source, relationships);
+                    }
+                }
+                continue;
+            }
+            let content_type = content_types.lookup(&part_name).ok_or_else(|| {
+                PackageReadError::PartWithoutContentType {
+                    part: part_name.as_str().to_string(),
+                }
+            })?;
+            package.parts.push(Part {
+                content_type: content_type.to_string(),
+                name: part_name,
+                data,
+            });
+        }
+        Ok(package)
+    }
+
+    /// Build the `[Content_Types].xml` payload: Default entries for
+    /// extensions whose parts all share one content type, Override
+    /// entries for everything else.
+    fn content_types_xml(&self) -> Result<Vec<u8>, PackageWriteError> {
+        // extension -> unanimous content type (None once conflicting).
+        let mut defaults: BTreeMap<String, Option<String>> = BTreeMap::new();
+        defaults.insert(
+            "rels".to_string(),
+            Some(RELATIONSHIPS_CONTENT_TYPE.to_string()),
+        );
+        for part in &self.parts {
+            let Some(ext) = part.name.extension_lowercase() else {
+                continue;
+            };
+            defaults
+                .entry(ext)
+                .and_modify(|ct| {
+                    if ct.as_deref() != Some(part.content_type.as_str()) {
+                        *ct = None;
+                    }
+                })
+                .or_insert_with(|| Some(part.content_type.clone()));
+        }
+
+        let mut buffer = Vec::new();
+        let mut writer = Writer::new(&mut buffer);
+        writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+        let mut types = BytesStart::new("Types");
+        types.push_attribute(("xmlns", crate::names::CONTENT_TYPES_NS));
+        writer.write_event(Event::Start(types))?;
+        for (extension, content_type) in &defaults {
+            if let Some(content_type) = content_type {
+                let mut e = BytesStart::new("Default");
+                e.push_attribute(("Extension", extension.as_str()));
+                e.push_attribute(("ContentType", content_type.as_str()));
+                writer.write_event(Event::Empty(e))?;
+            }
+        }
+        for part in &self.parts {
+            let covered = part
+                .name
+                .extension_lowercase()
+                .and_then(|ext| defaults.get(&ext).cloned())
+                .flatten()
+                .is_some_and(|ct| ct == part.content_type);
+            if !covered {
+                let mut e = BytesStart::new("Override");
+                e.push_attribute(("PartName", part.name.as_str()));
+                e.push_attribute(("ContentType", part.content_type.as_str()));
+                writer.write_event(Event::Empty(e))?;
+            }
+        }
+        writer.write_event(Event::End(BytesStart::new("Types").to_end()))?;
+        Ok(buffer)
+    }
+}
+
+/// The parsed content-type map of a package.
+struct ContentTypes {
+    defaults: BTreeMap<String, String>,
+    overrides: BTreeMap<String, String>,
+}
+
+impl ContentTypes {
+    fn lookup(&self, part: &PartName) -> Option<&str> {
+        if let Some(ct) = self.overrides.get(part.as_str()) {
+            return Some(ct);
+        }
+        let ext = part.extension_lowercase()?;
+        self.defaults.get(&ext).map(String::as_str)
+    }
+}
+
+fn attr_value(attr: &Attribute<'_>) -> Option<String> {
+    attr.unescape_value().ok().map(|v| v.into_owned())
+}
+
+fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {
+    let mut reader = NsReader::from_reader(bytes);
+    let mut buffer = Vec::new();
+    let mut defaults = BTreeMap::new();
+    let mut overrides = BTreeMap::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(PackageReadError::ContentTypesXml)?
+        {
+            Event::Start(e) | Event::Empty(e) => {
+                let local = e.local_name();
+                if local.as_ref() == b"Default" {
+                    let mut extension = None;
+                    let mut content_type = None;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.local_name().as_ref() {
+                            b"Extension" => extension = attr_value(&attr),
+                            b"ContentType" => content_type = attr_value(&attr),
+                            _ => {}
+                        }
+                    }
+                    let extension =
+                        extension.ok_or(PackageReadError::ContentTypeMissingAttribute {
+                            attribute: "Extension",
+                        })?;
+                    let content_type =
+                        content_type.ok_or(PackageReadError::ContentTypeMissingAttribute {
+                            attribute: "ContentType",
+                        })?;
+                    defaults.insert(extension.to_ascii_lowercase(), content_type);
+                } else if local.as_ref() == b"Override" {
+                    let mut part_name = None;
+                    let mut content_type = None;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.local_name().as_ref() {
+                            b"PartName" => part_name = attr_value(&attr),
+                            b"ContentType" => content_type = attr_value(&attr),
+                            _ => {}
+                        }
+                    }
+                    let part_name =
+                        part_name.ok_or(PackageReadError::ContentTypeMissingAttribute {
+                            attribute: "PartName",
+                        })?;
+                    let content_type =
+                        content_type.ok_or(PackageReadError::ContentTypeMissingAttribute {
+                            attribute: "ContentType",
+                        })?;
+                    overrides.insert(part_name, content_type);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(ContentTypes {
+        defaults,
+        overrides,
+    })
+}
+
+fn parse_relationships(bytes: &[u8], part: &str) -> Result<Vec<Relationship>, PackageReadError> {
+    let mut reader = NsReader::from_reader(bytes);
+    let mut buffer = Vec::new();
+    let mut relationships = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer).map_err(|source| {
+            PackageReadError::RelationshipsXml {
+                part: part.to_string(),
+                source,
+            }
+        })? {
+            Event::Start(e) | Event::Empty(e) => {
+                if e.local_name().as_ref() != b"Relationship" {
+                    continue;
+                }
+                let mut id = None;
+                let mut rel_type = None;
+                let mut target = None;
+                for attr in e.attributes().flatten() {
+                    match attr.key.local_name().as_ref() {
+                        b"Id" => id = attr_value(&attr),
+                        b"Type" => rel_type = attr_value(&attr),
+                        b"Target" => target = attr_value(&attr),
+                        _ => {}
+                    }
+                }
+                let missing = |attribute| PackageReadError::RelationshipMissingAttribute {
+                    part: part.to_string(),
+                    attribute,
+                };
+                relationships.push(Relationship {
+                    id: id.ok_or_else(|| missing("Id"))?,
+                    rel_type: rel_type.ok_or_else(|| missing("Type"))?,
+                    target: target.ok_or_else(|| missing("Target"))?,
+                });
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(relationships)
+}
+
+fn relationships_xml(relationships: &[Relationship]) -> Result<Vec<u8>, PackageWriteError> {
+    let mut buffer = Vec::new();
+    let mut writer = Writer::new(&mut buffer);
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+    let mut root = BytesStart::new("Relationships");
+    root.push_attribute(("xmlns", crate::names::RELATIONSHIPS_NS));
+    writer.write_event(Event::Start(root))?;
+    for relationship in relationships {
+        let mut e = BytesStart::new("Relationship");
+        e.push_attribute(("Id", relationship.id.as_str()));
+        e.push_attribute(("Type", relationship.rel_type.as_str()));
+        e.push_attribute(("Target", relationship.target.as_str()));
+        writer.write_event(Event::Empty(e))?;
+    }
+    writer.write_event(Event::End(BytesStart::new("Relationships").to_end()))?;
+    Ok(buffer)
+}
+
+/// Whether a part is a relationships part (`.../_rels/<name>.rels`).
+fn is_relationships_part(name: &PartName) -> bool {
+    name.as_str().ends_with(".rels")
+        && name
+            .as_str()
+            .rsplit('/')
+            .nth(1)
+            .is_some_and(|dir| dir == "_rels")
+}
+
+/// The source a relationships part describes: `None` for the package
+/// root (`/_rels/.rels`), otherwise the part name.
+fn relationships_source(rels: &PartName) -> Option<PartName> {
+    if rels.as_str() == "/_rels/.rels" {
+        return None;
+    }
+    let full = rels.as_str();
+    let file = full.rsplit('/').next().unwrap_or("");
+    let source_file = file.strip_suffix(".rels").unwrap_or(file);
+    let dir_with_rels = &full[..full.len() - file.len()];
+    let dir = dir_with_rels
+        .strip_suffix("_rels/")
+        .unwrap_or(dir_with_rels);
+    PartName::new(&format!("{dir}{source_file}")).ok()
+}
+
+/// Resolve a relationship target against its source directory.
+/// Absolute targets pass through; relative ones are joined.
+fn resolve_target(source_dir: &str, target: &str) -> String {
+    if target.starts_with('/') {
+        target.to_string()
+    } else {
+        format!("{source_dir}{target}")
+    }
+}

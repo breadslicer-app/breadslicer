@@ -4640,6 +4640,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-3mf"
+version = "0.1.0"
+dependencies = [
+ "quick-xml",
+ "zip",
+]
+
+[[package]]
 name = "sc-app-paths"
 version = "0.1.0"
 dependencies = [

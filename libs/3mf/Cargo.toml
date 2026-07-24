@@ -1,0 +1,8 @@
+[package]
+name = "sc-3mf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quick-xml.workspace = true
+zip.workspace = true
