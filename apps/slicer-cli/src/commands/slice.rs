@@ -28,7 +28,7 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::profile::{AaLevel, PackingMode};
 use sc_sl1cer::{LeafSlices, VERSION, slice_scene};
 use sc_sla_formats::format::format_from_path;
-use sc_sla_formats::{Format, WriterOptions, write_slice};
+use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
 use crate::commands::fix::{FixOptions, repair_scene_meshes, show_applied_fixes};
 use crate::commands::mesh_loader::display_warnings;
@@ -63,7 +63,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         Some(f) => f,
         None => format_from_path(&target_path).ok_or_else(|| {
             anyhow!(
-                "could not infer target format from path \"{}\"; pass --target-format with one of: svg-per-layer, svg-combined, png-per-layer",
+                "could not infer target format from path \"{}\"; pass --target-format with one of: svg-per-layer, svg-combined, png-per-layer, 3mf",
                 target_path.display(),
             )
         })?,
@@ -128,22 +128,38 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     };
 
     let model_count = leaf_slices.len();
-    let stacks: Vec<_> = leaf_slices
-        .into_iter()
-        .map(LeafSlices::into_stack)
-        .collect();
-    let stack = merge_stacks(stacks).map_err(|err| {
-        anyhow!(
-            "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
-        )
-    })?;
+    // Every stack shares the schedule's layer grid, and merging only
+    // concatenates polygons per layer, so the totals are the same
+    // whichever writer path runs below.
+    let layer_count = leaf_slices
+        .first()
+        .map_or(0, |slices| slices.stack().layers().len());
+    let polygon_count: usize = leaf_slices
+        .iter()
+        .flat_map(|slices| slices.stack().layers())
+        .map(|layer| layer.polygons().len())
+        .sum();
 
     let options = WriterOptions::from_profile(&profile, VERSION);
-    write_slice(&stack, &target_path, target_format, &options)?;
+    match target_format {
+        Format::ThreeMf => {
+            write_scene_slices(&loaded.graph, &leaf_slices, &target_path, &options)?;
+        }
+        Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer => {
+            let stacks: Vec<_> = leaf_slices
+                .into_iter()
+                .map(LeafSlices::into_stack)
+                .collect();
+            let stack = merge_stacks(stacks).map_err(|err| {
+                anyhow!(
+                    "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
+                )
+            })?;
+            write_slice(&stack, &target_path, target_format, &options)?;
+        }
+    }
 
     let models = if model_count == 1 { "model" } else { "models" };
-    let layer_count = stack.layers().len();
-    let polygon_count: usize = stack.layers().iter().map(|l| l.polygons().len()).sum();
     println!(
         "Sliced {model_count} {models}: {layer_count} layers ({polygon_count} polygons total) to {}",
         target_path.display(),

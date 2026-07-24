@@ -18,8 +18,8 @@ use std::str::FromStr;
 /// On-disk output format.
 ///
 /// Variants are kebab-cased in CLI input via [`FromStr`]:
-/// `svg-per-layer`, `svg-combined`, `png-per-layer`. As more writers
-/// land (SL1, CTB, GOO, 3MF Slice) they extend this enum.
+/// `svg-per-layer`, `svg-combined`, `png-per-layer`, `3mf`.
+/// As more writers land (SL1, CTB, GOO) they extend this enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     /// One SVG file per layer, written into a target directory.
@@ -29,6 +29,13 @@ pub enum Format {
     /// One 8-bit grayscale PNG per layer, written into a target
     /// directory.
     PngPerLayer,
+    /// A single 3MF package using the Slice Extension: one slice
+    /// stack per sliced scene leaf plus the leaf's full-resolution
+    /// mesh, conventionally named `*.slices.3mf`. Needs the scene
+    /// and the per-leaf contour stacks, so it is written through
+    /// [`write_scene_slices`](crate::write_scene_slices), not
+    /// [`write_slice`](crate::write_slice).
+    ThreeMf,
 }
 
 impl Format {
@@ -39,7 +46,7 @@ impl Format {
     pub fn is_directory_format(self) -> bool {
         match self {
             Self::SvgPerLayer | Self::PngPerLayer => true,
-            Self::SvgCombined => false,
+            Self::SvgCombined | Self::ThreeMf => false,
         }
     }
 
@@ -51,6 +58,7 @@ impl Format {
             Self::SvgPerLayer => "svg-per-layer",
             Self::SvgCombined => "svg-combined",
             Self::PngPerLayer => "png-per-layer",
+            Self::ThreeMf => "3mf",
         }
     }
 }
@@ -71,7 +79,7 @@ impl fmt::Display for UnknownFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown format \"{}\"; expected one of: svg-per-layer, svg-combined, png-per-layer",
+            "unknown format \"{}\"; expected one of: svg-per-layer, svg-combined, png-per-layer, 3mf",
             self.got,
         )
     }
@@ -87,6 +95,7 @@ impl FromStr for Format {
             "svg-per-layer" => Ok(Self::SvgPerLayer),
             "svg-combined" => Ok(Self::SvgCombined),
             "png-per-layer" => Ok(Self::PngPerLayer),
+            "3mf" => Ok(Self::ThreeMf),
             other => Err(UnknownFormat {
                 got: other.to_owned(),
             }),
@@ -96,15 +105,19 @@ impl FromStr for Format {
 
 /// Infer a [`Format`] from an output path's extension.
 ///
-/// Today the only file-target format is [`Format::SvgCombined`]
-/// (`.svg`). Directory-target formats have no extension to infer
-/// from, so callers must supply an explicit `--format` for them.
-/// As packed printer formats land (`.sl1`, `.ctb`, `.goo`, ...) they
-/// extend the match below.
+/// File-target formats map from their extension: `.svg` to
+/// [`Format::SvgCombined`], `.3mf` to [`Format::ThreeMf`]
+/// (which covers the conventional `.slices.3mf` double extension,
+/// since the path's final extension is `3mf` either way).
+/// Directory-target formats have no extension to infer from, so
+/// callers must supply an explicit `--format` for them. As packed
+/// printer formats land (`.sl1`, `.ctb`, `.goo`, ...) they extend
+/// the match below.
 pub fn format_from_path(path: &Path) -> Option<Format> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "svg" => Some(Format::SvgCombined),
+        "3mf" => Some(Format::ThreeMf),
         _ => None,
     }
 }
@@ -131,6 +144,11 @@ mod format_tests {
     }
 
     #[test]
+    fn from_str_parses_3mf() {
+        assert_eq!(Format::from_str("3mf"), Ok(Format::ThreeMf));
+    }
+
+    #[test]
     fn from_str_rejects_unknown_name() {
         let err = Format::from_str("ctb").unwrap_err();
         assert_eq!(err.got, "ctb");
@@ -148,6 +166,7 @@ mod format_tests {
         assert!(msg.contains("svg-per-layer"), "msg: {msg}");
         assert!(msg.contains("svg-combined"), "msg: {msg}");
         assert!(msg.contains("png-per-layer"), "msg: {msg}");
+        assert!(msg.contains("3mf"), "msg: {msg}");
     }
 
     #[test]
@@ -157,8 +176,9 @@ mod format_tests {
     }
 
     #[test]
-    fn is_directory_format_for_combined_svg_is_false() {
+    fn is_directory_format_for_single_file_variants_is_false() {
         assert!(!Format::SvgCombined.is_directory_format());
+        assert!(!Format::ThreeMf.is_directory_format());
     }
 
     #[test]
@@ -167,6 +187,7 @@ mod format_tests {
             Format::SvgPerLayer,
             Format::SvgCombined,
             Format::PngPerLayer,
+            Format::ThreeMf,
         ] {
             assert_eq!(Format::from_str(f.as_str()), Ok(f));
         }
@@ -189,6 +210,22 @@ mod format_tests {
     }
 
     #[test]
+    fn format_from_path_returns_3mf_for_dot_3mf() {
+        assert_eq!(
+            format_from_path(&PathBuf::from("out.3mf")),
+            Some(Format::ThreeMf),
+        );
+    }
+
+    #[test]
+    fn format_from_path_returns_3mf_for_double_extension() {
+        assert_eq!(
+            format_from_path(&PathBuf::from("out.slices.3mf")),
+            Some(Format::ThreeMf),
+        );
+    }
+
+    #[test]
     fn format_from_path_returns_none_for_unknown_extension() {
         assert_eq!(format_from_path(&PathBuf::from("out.ctb")), None);
     }
@@ -203,5 +240,6 @@ mod format_tests {
         assert_eq!(format!("{}", Format::SvgPerLayer), "svg-per-layer");
         assert_eq!(format!("{}", Format::SvgCombined), "svg-combined");
         assert_eq!(format!("{}", Format::PngPerLayer), "png-per-layer");
+        assert_eq!(format!("{}", Format::ThreeMf), "3mf");
     }
 }

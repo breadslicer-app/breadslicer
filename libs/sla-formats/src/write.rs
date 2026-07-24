@@ -8,7 +8,11 @@
 //! [`write_slice`] validates the output path against the chosen
 //! [`Format`]'s expectations (file vs directory, exists vs absent)
 //! and routes to the matching writer. Every writer that has not
-//! landed yet returns [`WriterError::NotImplemented`].
+//! landed yet returns [`WriterError::NotImplemented`]. The 3MF
+//! slice format needs the scene and the per-leaf stacks and is
+//! served by [`write_scene_slices`](crate::write_scene_slices)
+//! instead; requesting it here returns
+//! [`WriterError::SceneContextRequired`].
 
 use std::fs;
 use std::path::Path;
@@ -44,10 +48,14 @@ pub fn write_slice(
         Format::SvgPerLayer => crate::debug::svg::write_per_layer(stack, output, options),
         Format::SvgCombined => crate::debug::svg::write_combined(stack, output, options),
         Format::PngPerLayer => crate::debug::png::write_per_layer(stack, output, options),
+        // The 3MF slice format records one stack per scene leaf; a
+        // merged stack has already lost that association, so this
+        // entry point cannot produce it.
+        Format::ThreeMf => Err(WriterError::SceneContextRequired { format }),
     }
 }
 
-fn validate_output_path(output: &Path, format: Format) -> Result<(), WriterError> {
+pub(crate) fn validate_output_path(output: &Path, format: Format) -> Result<(), WriterError> {
     if format.is_directory_format() {
         match fs::metadata(output) {
             Ok(meta) if meta.is_dir() => {
@@ -154,6 +162,21 @@ mod write_slice_tests {
         )
         .unwrap();
         assert!(out.is_dir());
+    }
+
+    #[test]
+    fn threemf_through_the_merged_stack_entry_point_is_refused() {
+        let dir = tempdir().unwrap();
+        let out = dir.path().join("out.slices.3mf");
+        let err =
+            write_slice(&empty_stack(), &out, Format::ThreeMf, &default_options()).unwrap_err();
+        assert!(matches!(
+            err,
+            WriterError::SceneContextRequired {
+                format: Format::ThreeMf,
+            },
+        ));
+        assert!(!out.exists(), "the refusal must not create the file");
     }
 
     #[test]

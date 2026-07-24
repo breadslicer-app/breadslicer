@@ -194,13 +194,13 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
     let target = short('t')
         .long("target")
         .help(
-            "Specify the output path. A single file for packed formats (e.g. svg-combined), a directory for per-layer formats (svg-per-layer, png-per-layer).",
+            "Specify the output path. A single file for packed formats (e.g. svg-combined, 3mf), a directory for per-layer formats (svg-per-layer, png-per-layer).",
         )
         .argument::<OsString>("TARGET_PATH");
 
     let target_format = long("target-format")
         .help(
-            "Specify the output format. Accepted values: svg-per-layer, svg-combined, png-per-layer. Inferred from the target file extension when omitted.",
+            "Specify the output format. Accepted values: svg-per-layer, svg-combined, png-per-layer, 3mf. Inferred from the target file extension when omitted.",
         )
         .argument::<Format>("TARGET_FORMAT")
         .optional();

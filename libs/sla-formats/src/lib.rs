@@ -12,17 +12,24 @@
 //! dispatcher validates the target and routes to the right writer.
 //!
 //! Debug-tier writers (per-layer SVG, combined SVG, per-layer PNG)
-//! live under [`debug`]. Printer-format writers (SL1, CTB, GOO,
-//! 3MF Slice) will live at the crate root in their own modules as
-//! they land.
+//! live under [`debug`]. Printer-format writers live at the crate
+//! root in their own modules: 3MF Slice Extension packages under
+//! [`threemf`] (whose [`write_scene_slices`] takes the scene and the
+//! per-leaf stacks instead of the merged one); SL1, CTB and GOO are
+//! still to come.
 
 pub mod debug;
 pub mod error;
 pub mod format;
 pub mod options;
+pub mod threemf;
 pub mod write;
+
+#[cfg(test)]
+mod tests_threemf;
 
 pub use error::WriterError;
 pub use format::Format;
 pub use options::WriterOptions;
+pub use threemf::write_scene_slices;
 pub use write::write_slice;

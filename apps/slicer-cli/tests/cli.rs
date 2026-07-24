@@ -1955,3 +1955,86 @@ mod slice_multi_mesh_tests {
             .stderr(predicate::str::contains("--verbose for the full error list").not());
     }
 }
+
+#[cfg(test)]
+mod slice_threemf_tests {
+    use super::*;
+
+    fn run_slice(source: &Path, target: &Path, extra_args: &[&str]) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            target.to_str().unwrap(),
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
+        ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
+        cmd.args(extra_args);
+        cmd.assert()
+    }
+
+    fn model_part(package: &Package, name: &str) -> ModelDocument {
+        let part = PartName::new(name).expect("valid part name");
+        let data = package.part_data(&part).expect("part is present");
+        sc_3mf::model::parse_model(data).expect("part parses as a model document")
+    }
+
+    /// Same scene and schedule as the multi-object SVG test: 10
+    /// layers, 2 polygons per layer. The `.slices.3mf` extension
+    /// selects the 3MF writer without an explicit format flag.
+    #[test]
+    fn multi_object_obj_slices_to_a_3mf_package() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two.obj");
+        let target = tmp.path().join("two.slices.3mf");
+        write_two_object_obj(&source);
+
+        run_slice(&source, &target, &[])
+            .success()
+            .stdout(predicate::str::contains(
+                "Sliced 2 models: 10 layers (20 polygons total)",
+            ))
+            .stderr(no_panic_in_stderr().not());
+
+        let bytes = fs::read(&target).expect("package written");
+        let package = Package::read_from(std::io::Cursor::new(bytes)).expect("package parses");
+        let root = model_part(&package, package.start_part().expect("start part").as_str());
+        assert_eq!(root.objects.len(), 2);
+        assert_eq!(root.slice_stacks.len(), 2);
+        let names: Vec<Option<&str>> = root.objects.iter().map(|o| o.name.as_deref()).collect();
+        assert_eq!(names, vec![Some("A"), Some("B")]);
+
+        for ordinal in 1..=2 {
+            let part = model_part(&package, &format!("/2D/slices-{ordinal}.model"));
+            let stack = &part.slice_stacks[0];
+            let sc_3mf::model::SliceStackContent::Slices(slices) = &stack.content else {
+                panic!("slice parts hold inline slices");
+            };
+            assert_eq!(slices.len(), 10);
+            assert!((slices[9].z_top - 2.0).abs() < 1e-9);
+        }
+    }
+
+    /// `--target-format 3mf` overrides an extension the inference
+    /// would not recognize.
+    #[test]
+    fn explicit_3mf_format_wins_over_the_target_extension() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two.obj");
+        let target = tmp.path().join("plate.bin");
+        write_two_object_obj(&source);
+
+        run_slice(&source, &target, &["--target-format", "3mf"])
+            .success()
+            .stdout(predicate::str::contains("Sliced 2 models: 10 layers"));
+
+        let bytes = fs::read(&target).expect("package written");
+        let package = Package::read_from(std::io::Cursor::new(bytes)).expect("package parses");
+        assert!(package.start_part().is_ok());
+    }
+}

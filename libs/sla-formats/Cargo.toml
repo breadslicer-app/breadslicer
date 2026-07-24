@@ -10,9 +10,14 @@ keywords = ["3d", "slicer", "resin", "sla"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
+sc-3mf.workspace = true
+sc-mesh-core.workspace = true
+sc-mesh-formats.workspace = true
 sc-sl1cer.workspace = true
 
 png = "0.18.1"
 
 [dev-dependencies]
+sc-mesh-fixtures.workspace = true
+
 tempfile = "3.23.0"

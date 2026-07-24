@@ -14,6 +14,10 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use sc_3mf::error::{ModelWriteError, PackageWriteError};
+use sc_mesh_core::SceneError;
+use sc_mesh_core::scene::node::NodeId;
+
 use crate::format::Format;
 
 #[derive(Debug)]
@@ -36,6 +40,28 @@ pub enum WriterError {
     /// The format's encoder rejected our request for reasons other
     /// than I/O (bad parameter, malformed text chunk, ...).
     EncodingFailed { format: Format, reason: String },
+    /// The format encodes per-model data that a merged
+    /// [`ContourStack`](sc_sl1cer::contour::ContourStack) no longer
+    /// carries, so [`write_slice`](crate::write_slice) cannot
+    /// produce it; callers must go through
+    /// [`write_scene_slices`](crate::write_scene_slices).
+    SceneContextRequired { format: Format },
+    /// The per-leaf slices list is empty: there is nothing to
+    /// package.
+    NoModelsToWrite,
+    /// One leaf's contour stack does not span the layer schedule's
+    /// grid, so layers cannot be paired with their slab tops.
+    LayerGridMismatch {
+        leaf: NodeId,
+        schedule_layers: usize,
+        stack_layers: usize,
+    },
+    /// Baking a leaf's mesh into world space failed.
+    SceneBakeFailed(SceneError),
+    /// Serializing a 3MF model document failed.
+    ModelSerializationFailed(ModelWriteError),
+    /// Assembling or compressing the 3MF package failed.
+    PackageWriteFailed(PackageWriteError),
 }
 
 impl fmt::Display for WriterError {
@@ -62,6 +88,31 @@ impl fmt::Display for WriterError {
                 f,
                 "encoder for format \"{format}\" rejected the request: {reason}",
             ),
+            Self::SceneContextRequired { format } => write!(
+                f,
+                "format \"{format}\" stores per-model slice stacks; it cannot be written from a merged contour stack alone",
+            ),
+            Self::NoModelsToWrite => {
+                write!(f, "the per-leaf slices list is empty; nothing to write")
+            }
+            Self::LayerGridMismatch {
+                leaf,
+                schedule_layers,
+                stack_layers,
+            } => write!(
+                f,
+                "leaf #{} carries {stack_layers} layer(s) but the layer schedule defines {schedule_layers}",
+                leaf.get(),
+            ),
+            Self::SceneBakeFailed(err) => {
+                write!(f, "baking a leaf mesh into world space failed: {err}")
+            }
+            Self::ModelSerializationFailed(err) => {
+                write!(f, "serializing a 3MF model document failed: {err}")
+            }
+            Self::PackageWriteFailed(err) => {
+                write!(f, "writing the 3MF package failed: {err}")
+            }
         }
     }
 }
@@ -70,11 +121,17 @@ impl std::error::Error for WriterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
+            Self::SceneBakeFailed(err) => Some(err),
+            Self::ModelSerializationFailed(err) => Some(err),
+            Self::PackageWriteFailed(err) => Some(err),
             Self::NotImplemented { .. }
             | Self::OutputPathInvalid { .. }
             | Self::OutputPathExistsAndIsNotADirectory { .. }
             | Self::OutputPathExistsAndIsNotEmpty { .. }
-            | Self::EncodingFailed { .. } => None,
+            | Self::EncodingFailed { .. }
+            | Self::SceneContextRequired { .. }
+            | Self::NoModelsToWrite
+            | Self::LayerGridMismatch { .. } => None,
         }
     }
 }
@@ -82,6 +139,18 @@ impl std::error::Error for WriterError {
 impl From<io::Error> for WriterError {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
+    }
+}
+
+impl From<ModelWriteError> for WriterError {
+    fn from(err: ModelWriteError) -> Self {
+        Self::ModelSerializationFailed(err)
+    }
+}
+
+impl From<PackageWriteError> for WriterError {
+    fn from(err: PackageWriteError) -> Self {
+        Self::PackageWriteFailed(err)
     }
 }
 
@@ -207,5 +276,71 @@ mod writer_error_tests {
         );
         assert!(msg.contains("png-per-layer"), "msg: {msg}");
         assert!(msg.contains("image data length mismatch"), "msg: {msg}");
+    }
+
+    fn mint_node_id() -> NodeId {
+        let mut scene = sc_mesh_core::Scene::new();
+        scene.add_group(None, sc_mesh_core::transform::Transform3D::Identity)
+    }
+
+    #[test]
+    fn display_scene_context_required_names_the_format() {
+        let msg = format!(
+            "{}",
+            WriterError::SceneContextRequired {
+                format: Format::ThreeMf,
+            },
+        );
+        assert!(msg.contains("3mf"), "msg: {msg}");
+        assert!(msg.contains("merged contour stack"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_no_models_to_write_mentions_the_empty_list() {
+        let msg = format!("{}", WriterError::NoModelsToWrite);
+        assert!(msg.contains("empty"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_layer_grid_mismatch_reports_both_counts_and_the_leaf() {
+        let leaf = mint_node_id();
+        let msg = format!(
+            "{}",
+            WriterError::LayerGridMismatch {
+                leaf,
+                schedule_layers: 10,
+                stack_layers: 7,
+            },
+        );
+        assert!(msg.contains(&format!("#{}", leaf.get())), "msg: {msg}");
+        assert!(msg.contains("7 layer(s)"), "msg: {msg}");
+        assert!(msg.contains("defines 10"), "msg: {msg}");
+    }
+
+    #[test]
+    fn source_returns_inner_for_wrapped_3mf_and_scene_errors() {
+        let bake = WriterError::SceneBakeFailed(SceneError::DanglingNodeId { id: mint_node_id() });
+        assert!(bake.source().is_some());
+    }
+
+    #[test]
+    fn source_returns_none_for_new_leaf_variants() {
+        assert!(
+            WriterError::SceneContextRequired {
+                format: Format::ThreeMf,
+            }
+            .source()
+            .is_none(),
+        );
+        assert!(WriterError::NoModelsToWrite.source().is_none());
+        assert!(
+            WriterError::LayerGridMismatch {
+                leaf: mint_node_id(),
+                schedule_layers: 2,
+                stack_layers: 1,
+            }
+            .source()
+            .is_none(),
+        );
     }
 }

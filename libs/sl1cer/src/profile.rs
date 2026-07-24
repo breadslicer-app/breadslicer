@@ -128,6 +128,22 @@ impl LayerSchedule {
             }),
         }
     }
+
+    /// Iterator of each slab's TOP surface in absolute Z (millimetres
+    /// above the build plate): `h0` for slab 0, `h0 + k * h` for slab
+    /// `k >= 1`. Strictly monotonically increasing under the
+    /// constructor's invariants. Writers that record cured-layer
+    /// extents (e.g. slice-file formats) want these values, not the
+    /// centred sampling planes of [`iter_z`](Self::iter_z).
+    pub fn iter_slab_tops(&self) -> impl Iterator<Item = f64> {
+        match *self {
+            Self::Uniform {
+                layer_height_mm: h,
+                first_layer_height_mm: h0,
+                total_layers: n,
+            } => (0..n).map(move |k| f64::from(k).mul_add(h, h0)),
+        }
+    }
 }
 
 /// Slicer-side print profile: only the fields the slicer itself reads.
@@ -264,6 +280,37 @@ mod profile_tests {
                 "iter_z produced {got}, classical formula produced {want}",
             );
         }
+    }
+
+    #[test]
+    fn layer_schedule_iter_slab_tops_three_layers_with_thicker_first() {
+        let schedule = LayerSchedule::uniform(0.1, 0.3, 3).unwrap();
+        let tops: Vec<f64> = schedule.iter_slab_tops().collect();
+        assert_eq!(tops, vec![0.3, 0.4, 0.5]);
+    }
+
+    #[test]
+    fn layer_schedule_iter_slab_tops_uniform_heights_land_on_multiples() {
+        // `k * h + h0` and the mathematical `(k + 1) * h` take
+        // different f64 rounding paths, so compare with a small
+        // absolute tolerance instead of bit-equality.
+        let schedule = LayerSchedule::uniform(0.05, 0.05, 4).unwrap();
+        let tops: Vec<f64> = schedule.iter_slab_tops().collect();
+        let expected = [0.05, 0.1, 0.15, 0.2];
+        assert_eq!(tops.len(), expected.len());
+        for (got, want) in tops.iter().zip(expected.iter()) {
+            assert!(
+                (got - want).abs() < 1e-12,
+                "iter_slab_tops produced {got}, expected {want}",
+            );
+        }
+    }
+
+    #[test]
+    fn layer_schedule_iter_slab_tops_single_layer_returns_first_height() {
+        let schedule = LayerSchedule::uniform(0.1, 0.06, 1).unwrap();
+        let tops: Vec<f64> = schedule.iter_slab_tops().collect();
+        assert_eq!(tops, vec![0.06]);
     }
 
     #[test]

@@ -177,7 +177,7 @@ impl<'graph> DocumentBuilder<'graph> {
                     property_ref: None,
                     slice_stack: None,
                     mesh_resolution: MeshResolution::default(),
-                    payload: ObjectPayload::Mesh(mesh_to_data(mesh)),
+                    payload: ObjectPayload::Mesh(mesh_to_model_data(mesh)),
                 });
                 self.mesh_objects.insert(key, id);
                 Ok((id, transform))
@@ -213,7 +213,13 @@ impl<'graph> DocumentBuilder<'graph> {
     }
 }
 
-fn mesh_to_data(mesh: &IndexedMesh) -> MeshData {
+/// Converts an [`IndexedMesh`] into the 3MF mesh payload: vertices
+/// widened to f64 (millimetres both sides) and faces mapped to
+/// vertex-index triples. Face normals are not part of the 3MF data
+/// model and are dropped; readers rederive them from the CCW
+/// winding. Public so slice-format writers can embed meshes without
+/// re-implementing the mapping.
+pub fn mesh_to_model_data(mesh: &IndexedMesh) -> MeshData {
     MeshData {
         vertices: mesh
             .vertices

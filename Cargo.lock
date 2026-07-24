@@ -4767,6 +4767,10 @@ name = "sc-sla-formats"
 version = "0.1.0"
 dependencies = [
  "png 0.18.1",
+ "sc-3mf",
+ "sc-mesh-core",
+ "sc-mesh-fixtures",
+ "sc-mesh-formats",
  "sc-sl1cer",
  "tempfile",
 ]
