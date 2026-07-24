@@ -4,7 +4,7 @@ msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-21 18:10+0000\n"
 "PO-Revision-Date: 2026-07-24 13:11+0000\n"
-"Last-Translator: gallegonovato <gallegonovato@noreply.codeberg.org>\n"
+"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
 "Language-Team: Spanish <https://translate.codeberg.org/projects/soulcrafted-"
 "slicer/slicer-gui/es/>\n"
 "Language: es\n"
@@ -106,7 +106,7 @@ msgstr "Interfaz de usuario y tema"
 #: ui/preferences/preferences-window.slint:59
 msgctxt "PreferencesMenu"
 msgid "3D View"
-msgstr "Vista en 3D"
+msgstr "Vista 3D"
 
 #: ui/preferences/3dview.slint:10
 msgctxt "PreferencesPage"
