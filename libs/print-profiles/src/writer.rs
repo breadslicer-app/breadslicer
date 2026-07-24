@@ -23,7 +23,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::loader::{MATERIALS_SUBDIR, material_extensions_dir};
+use crate::loader::{material_extension_path_in_library, material_profile_path_in_library};
 use crate::material_profile::MaterialProfile;
 
 /// Returned by the material-profile writers when serialisation or the
@@ -101,9 +101,7 @@ pub fn save_material_profile_to_library(
     library_dir: &Path,
     profile: &MaterialProfile,
 ) -> Result<(), SaveMaterialProfileError> {
-    let path = library_dir
-        .join(MATERIALS_SUBDIR)
-        .join(format!("{}.toml", profile.identity.id.as_str()));
+    let path = material_profile_path_in_library(library_dir, &profile.identity.id);
     save_material_profile_to_path(&path, profile)
 }
 
@@ -177,8 +175,7 @@ pub fn save_material_extension_to_library(
     library_dir: &Path,
     profile: &MaterialProfile,
 ) -> Result<(), SaveMaterialExtensionError> {
-    let path =
-        material_extensions_dir(library_dir).join(format!("{}.toml", profile.identity.id.as_str()));
+    let path = material_extension_path_in_library(library_dir, &profile.identity.id);
     if !profile.extension {
         return Err(SaveMaterialExtensionError {
             path,

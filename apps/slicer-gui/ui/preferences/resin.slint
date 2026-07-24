@@ -55,8 +55,11 @@ export component ResinPreferences inherits PreferencesPage {
     callback view-requested(int);
     callback fork-requested(int);
     callback extend-requested(int);
-    callback edit-requested(int);
-    callback delete-requested(int);
+    // Edit and Delete carry whether the request came from an
+    // extension row: the same catalog index then targets the
+    // extension file instead of the full profile.
+    callback edit-requested(int, bool);
+    callback delete-requested(int, bool);
     callback import-requested();
     callback export-materials-requested();
 
@@ -120,13 +123,13 @@ export component ResinPreferences inherits PreferencesPage {
                     if row.is-custom: MenuItem {
                         title: @tr("PreferencesPage" => "Edit");
                         activated => {
-                            root.edit-requested(row.id-index);
+                            root.edit-requested(row.id-index, row.is-extension);
                         }
                     }
                     if row.is-custom: MenuItem {
                         title: @tr("PreferencesPage" => "Delete...");
                         activated => {
-                            root.delete-requested(row.id-index);
+                            root.delete-requested(row.id-index, row.is-extension);
                         }
                     }
                 }
@@ -225,7 +228,7 @@ export component ResinPreferences inherits PreferencesPage {
                             if row.is-custom: Button {
                                 text: @tr("PreferencesPage" => "Edit");
                                 clicked => {
-                                    root.edit-requested(row.id-index);
+                                    root.edit-requested(row.id-index, row.is-extension);
                                 }
                             }
                         }

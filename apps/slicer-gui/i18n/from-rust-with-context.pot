@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-24 09:14+0200\n"
+"POT-Creation-Date: 2026-07-24 10:09+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,38 +17,60 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:369
+#: src/preferences_window.rs:408
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:371
+#: src/preferences_window.rs:410
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:375
+#: src/preferences_window.rs:414 src/preferences_window.rs:802
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:647
-msgctxt "PreferencesPage"
-msgid "All"
-msgstr ""
-
-#: src/preferences_window.rs:801
+#: src/preferences_window.rs:603 src/preferences_window.rs:1137
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:869
+#: src/preferences_window.rs:780
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "Deleting the extension of {} removes every calibration pair it adds."
+msgstr ""
+
+#: src/preferences_window.rs:790
+#, rust-format
+msgctxt "PreferencesPage"
+msgid "Deleting {} removes the custom profile file."
+msgstr ""
+
+#: src/preferences_window.rs:796
+msgctxt "PreferencesPage"
+msgid "Delete"
+msgstr ""
+
+#: src/preferences_window.rs:798
+msgctxt "PreferencesPage"
+msgid "Delete profile?"
+msgstr ""
+
+#: src/preferences_window.rs:983
+msgctxt "PreferencesPage"
+msgid "All"
+msgstr ""
+
+#: src/preferences_window.rs:1205
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:895
+#: src/preferences_window.rs:1231
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -131,108 +153,113 @@ msgctxt "ProfileViewDialog"
 msgid "not set"
 msgstr ""
 
-#: src/profile_view.rs:96
+#: src/profile_view.rs:99
 msgctxt "ProfileViewDialog"
 msgid "Bundled"
 msgstr ""
 
-#: src/profile_view.rs:97
+#: src/profile_view.rs:100
 msgctxt "ProfileViewDialog"
 msgid "Custom"
 msgstr ""
 
-#: src/profile_view.rs:100
+#: src/profile_view.rs:103
 msgctxt "ProfileViewDialog"
 msgid "Identity"
 msgstr ""
 
-#: src/profile_view.rs:104
+#: src/profile_view.rs:107
 msgctxt "ProfileViewDialog"
 msgid "Brand"
 msgstr ""
 
-#: src/profile_view.rs:108
+#: src/profile_view.rs:111
 msgctxt "ProfileViewDialog"
 msgid "Name"
 msgstr ""
 
-#: src/profile_view.rs:112
+#: src/profile_view.rs:115
 msgctxt "ProfileViewDialog"
 msgid "Family"
 msgstr ""
 
-#: src/profile_view.rs:116
+#: src/profile_view.rs:119
 msgctxt "ProfileViewDialog"
 msgid "Profile version"
 msgstr ""
 
-#: src/profile_view.rs:119
+#: src/profile_view.rs:122
 msgctxt "ProfileViewDialog"
 msgid "Origin"
 msgstr ""
 
-#: src/profile_view.rs:127
+#: src/profile_view.rs:130
 msgctxt "ProfileViewDialog"
 msgid "Intent"
 msgstr ""
 
-#: src/profile_view.rs:131
+#: src/profile_view.rs:134
 msgctxt "ProfileViewDialog"
 msgid "Target energy density (mJ/cm2)"
 msgstr ""
 
-#: src/profile_view.rs:135
+#: src/profile_view.rs:138
 msgctxt "ProfileViewDialog"
 msgid "Target layer height (mm)"
 msgstr ""
 
-#: src/profile_view.rs:156
+#: src/profile_view.rs:159
 msgctxt "ProfileViewDialog"
 msgid "Defaults"
 msgstr ""
 
-#: src/profile_view.rs:160
+#: src/profile_view.rs:163
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation (x/y/z)"
 msgstr ""
 
-#: src/profile_view.rs:164 src/profile_view.rs:261
+#: src/profile_view.rs:167 src/profile_view.rs:308
 msgctxt "ProfileViewDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: src/profile_view.rs:237
+#: src/profile_view.rs:209
+msgctxt "ProfileViewDialog"
+msgid "Generic"
+msgstr ""
+
+#: src/profile_view.rs:284
 msgctxt "ProfileViewDialog"
 msgid "Generic calibration"
 msgstr ""
 
-#: src/profile_view.rs:239
+#: src/profile_view.rs:286
 #, rust-format
 msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr ""
 
-#: src/profile_view.rs:253
+#: src/profile_view.rs:300
 msgctxt "ProfileViewDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: src/profile_view.rs:257
+#: src/profile_view.rs:304
 msgctxt "ProfileViewDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: src/profile_view.rs:265
+#: src/profile_view.rs:312
 msgctxt "ProfileViewDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: src/profile_view.rs:269
+#: src/profile_view.rs:316
 msgctxt "ProfileViewDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: src/profile_view.rs:273
+#: src/profile_view.rs:320
 msgctxt "ProfileViewDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""

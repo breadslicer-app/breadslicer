@@ -53,6 +53,7 @@ pub use loader::{
     LoadPrinterProfileErrorKind, load_material_extension_from_library, load_material_profile_by_id,
     load_material_profile_from_library, load_material_profile_from_path,
     load_printer_profile_by_id, load_printer_profile_from_library, load_printer_profile_from_path,
+    material_extension_path_in_library, material_profile_path_in_library,
 };
 pub use material_defaults::MaterialDefaults;
 pub use material_identity::MaterialIdentity;

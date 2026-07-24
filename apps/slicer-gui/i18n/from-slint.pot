@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-24 07:14+0000\n"
+"POT-Creation-Date: 2026-07-24 08:09+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -104,12 +104,12 @@ msgctxt "PreferencesPage"
 msgid "No image"
 msgstr ""
 
-#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:175
+#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:178
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr ""
 
-#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:243
+#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:246
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr ""
@@ -124,47 +124,47 @@ msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/resin.slint:103 ui/preferences/resin.slint:220
+#: ui/preferences/resin.slint:106 ui/preferences/resin.slint:223
 msgctxt "PreferencesPage"
 msgid "View"
 msgstr ""
 
-#: ui/preferences/resin.slint:109
+#: ui/preferences/resin.slint:112
 msgctxt "PreferencesPage"
 msgid "Fork..."
 msgstr ""
 
-#: ui/preferences/resin.slint:115
+#: ui/preferences/resin.slint:118
 msgctxt "PreferencesPage"
 msgid "Extend..."
 msgstr ""
 
-#: ui/preferences/resin.slint:121 ui/preferences/resin.slint:226
+#: ui/preferences/resin.slint:124 ui/preferences/resin.slint:229
 msgctxt "PreferencesPage"
 msgid "Edit"
 msgstr ""
 
-#: ui/preferences/resin.slint:127
+#: ui/preferences/resin.slint:130
 msgctxt "PreferencesPage"
 msgid "Delete..."
 msgstr ""
 
-#: ui/preferences/resin.slint:189
+#: ui/preferences/resin.slint:192
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: ui/preferences/resin.slint:191
+#: ui/preferences/resin.slint:194
 msgctxt "PreferencesPage"
 msgid "Generic calibration"
 msgstr ""
 
-#: ui/preferences/resin.slint:192
+#: ui/preferences/resin.slint:195
 msgctxt "PreferencesPage"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/preferences/resin.slint:249
+#: ui/preferences/resin.slint:252
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr ""
@@ -224,12 +224,72 @@ msgctxt "AppearancePreferences"
 msgid "Language"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:30
+#: ui/profile-view-dialog.slint:60
 msgctxt "ProfileViewDialog"
 msgid "Resin profile"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:127
+#: ui/profile-view-dialog.slint:190
+msgctxt "ProfileViewDialog"
+msgid "Defaults"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:195
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation x (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:199
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation y (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:203
+msgctxt "ProfileViewDialog"
+msgid "Scale compensation z (%)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:207 ui/profile-view-dialog.slint:247
+msgctxt "ProfileViewDialog"
+msgid "Bottom layer count"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:225
+msgctxt "ProfileViewDialog"
+msgid "Edit calibration values"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:239
+msgctxt "ProfileViewDialog"
+msgid "Normal exposure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:243
+msgctxt "ProfileViewDialog"
+msgid "Bottom exposure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:251
+msgctxt "ProfileViewDialog"
+msgid "Lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:255
+msgctxt "ProfileViewDialog"
+msgid "Lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:259
+msgctxt "ProfileViewDialog"
+msgid "Retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:280
+msgctxt "ProfileViewDialog"
+msgid "Save"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:287
 msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr ""

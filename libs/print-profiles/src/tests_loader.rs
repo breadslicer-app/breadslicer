@@ -471,6 +471,22 @@ fn load_by_id_error_types_implement_error_trait() {
     assert_error::<LoadMaterialExtensionError>();
 }
 
+#[test]
+fn library_path_accessors_mirror_the_loader_layout() {
+    use super::loader::{material_extension_path_in_library, material_profile_path_in_library};
+
+    let base = Path::new("/lib");
+    let id = MaterialId::new("brand-resin").unwrap();
+    assert_eq!(
+        material_profile_path_in_library(base, &id),
+        Path::new("/lib/materials/brand-resin.toml"),
+    );
+    assert_eq!(
+        material_extension_path_in_library(base, &id),
+        Path::new("/lib/materials/extensions/brand-resin.toml"),
+    );
+}
+
 fn write_extension_file(library_dir: &Path, id: &str, contents: &str) {
     let extensions_dir = library_dir.join("materials").join("extensions");
     fs::create_dir_all(&extensions_dir).unwrap();

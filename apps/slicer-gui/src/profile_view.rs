@@ -90,7 +90,10 @@ fn section(
     }
 }
 
-fn identity_section(profile: &MaterialProfile, source: ProfileSource) -> ProfileViewSection {
+pub(crate) fn identity_section(
+    profile: &MaterialProfile,
+    source: ProfileSource,
+) -> ProfileViewSection {
     let identity = &profile.identity;
     let origin = match source {
         ProfileSource::Bundled => ctr!("ProfileViewDialog", "Bundled"),
@@ -121,7 +124,7 @@ fn identity_section(profile: &MaterialProfile, source: ProfileSource) -> Profile
     )
 }
 
-fn intent_section(profile: &MaterialProfile) -> ProfileViewSection {
+pub(crate) fn intent_section(profile: &MaterialProfile) -> ProfileViewSection {
     let intent = &profile.intent;
     section(
         ctr!("ProfileViewDialog", "Intent"),
@@ -166,6 +169,50 @@ fn defaults_section(profile: &MaterialProfile) -> ProfileViewSection {
             ),
         ],
     )
+}
+
+/// The profile's own calibration blocks as `(printer id, label)`
+/// picker entries for the editor, ordered like the viewer sections:
+/// the default printer's block first, generic next, the rest by
+/// display name. Labels are the printer names ("Generic" for the
+/// generic block).
+pub(crate) fn ordered_calibration_targets(
+    profile: &MaterialProfile,
+    printers: &[PrinterCatalogEntry],
+    default_printer: Option<&PrinterId>,
+) -> Vec<(PrinterId, SharedString)> {
+    let display_label = |id: &PrinterId| -> String {
+        printers
+            .iter()
+            .find(|printer| &printer.id == id)
+            .map(|printer| printer.name.clone())
+            .unwrap_or_else(|| id.as_str().to_owned())
+    };
+    let mut ids: Vec<&PrinterId> = profile.per_printer.keys().collect();
+    ids.sort_by(|a, b| {
+        let rank = |id: &PrinterId| -> u8 {
+            if default_printer == Some(id) {
+                0
+            } else if id.as_str() == GENERIC_PRINTER_ID {
+                1
+            } else {
+                2
+            }
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| display_label(a).cmp(&display_label(b)))
+    });
+    ids.into_iter()
+        .map(|id| {
+            let label = if id.as_str() == GENERIC_PRINTER_ID {
+                ctr!("ProfileViewDialog", "Generic")
+            } else {
+                SharedString::from(display_label(id))
+            };
+            (id.clone(), label)
+        })
+        .collect()
 }
 
 /// One `(printer id, block)` pair per calibration block, from the base

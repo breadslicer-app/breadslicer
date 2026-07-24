@@ -45,6 +45,22 @@ pub(crate) fn material_extensions_dir(library_dir: &Path) -> PathBuf {
         .join(MATERIAL_EXTENSIONS_SUBDIR)
 }
 
+/// Path of a material profile inside a library directory:
+/// `<library_dir>/materials/<id>.toml`. Purely a path computation; the
+/// file may or may not exist.
+pub fn material_profile_path_in_library(library_dir: &Path, id: &MaterialId) -> PathBuf {
+    library_dir
+        .join(MATERIALS_SUBDIR)
+        .join(format!("{}.toml", id.as_str()))
+}
+
+/// Path of a material extension inside a library directory:
+/// `<library_dir>/materials/extensions/<id>.toml`. Purely a path
+/// computation; the file may or may not exist.
+pub fn material_extension_path_in_library(library_dir: &Path, id: &MaterialId) -> PathBuf {
+    material_extensions_dir(library_dir).join(format!("{}.toml", id.as_str()))
+}
+
 /// Returned by [`load_printer_profile_from_path`] when the read or
 /// the parse fails. The path field names the file that was being
 /// loaded; the kind field carries the underlying cause.
@@ -190,10 +206,7 @@ pub fn load_material_profile_from_library(
     library_dir: &Path,
     id: &MaterialId,
 ) -> Result<MaterialProfile, LoadMaterialProfileError> {
-    let path = library_dir
-        .join(MATERIALS_SUBDIR)
-        .join(format!("{}.toml", id.as_str()));
-    load_material_profile_from_path(&path)
+    load_material_profile_from_path(&material_profile_path_in_library(library_dir, id))
 }
 
 /// Returned by [`load_material_extension_from_library`] when the file
@@ -239,7 +252,7 @@ pub fn load_material_extension_from_library(
     library_dir: &Path,
     id: &MaterialId,
 ) -> Result<MaterialProfile, LoadMaterialExtensionError> {
-    let path = material_extensions_dir(library_dir).join(format!("{}.toml", id.as_str()));
+    let path = material_extension_path_in_library(library_dir, id);
     let profile =
         load_material_profile_from_path(&path).map_err(LoadMaterialExtensionError::Profile)?;
     if !profile.extension {

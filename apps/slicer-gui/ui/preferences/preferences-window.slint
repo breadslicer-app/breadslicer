@@ -51,8 +51,8 @@ export component PreferencesWindow inherits Window {
     callback view-requested(int);
     callback fork-requested(int);
     callback extend-requested(int);
-    callback edit-requested(int);
-    callback delete-requested(int);
+    callback edit-requested(int, bool);
+    callback delete-requested(int, bool);
     callback import-requested();
     callback export-printers-requested();
     callback export-materials-requested();
@@ -135,11 +135,11 @@ export component PreferencesWindow inherits Window {
                 extend-requested(i) => {
                     root.extend-requested(i);
                 }
-                edit-requested(i) => {
-                    root.edit-requested(i);
+                edit-requested(i, is-extension) => {
+                    root.edit-requested(i, is-extension);
                 }
-                delete-requested(i) => {
-                    root.delete-requested(i);
+                delete-requested(i, is-extension) => {
+                    root.delete-requested(i, is-extension);
                 }
                 import-requested => {
                     root.import-requested();

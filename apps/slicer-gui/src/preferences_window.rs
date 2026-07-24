@@ -15,14 +15,19 @@ use slint::{
     TimerMode, VecModel,
 };
 
-use sc_print_primitives::PrinterId;
+use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
     MaterialProfile, load_material_extension_from_library, load_material_profile_by_id,
-    user_library_dir,
+    load_material_profile_from_library, material_extension_path_in_library,
+    material_profile_path_in_library, user_library_dir,
 };
 
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
+use crate::material_form::{
+    CalibrationFormInput, DefaultsFormInput, EditedProfileKind, calibration_form_from_block,
+    defaults_form_from, parse_calibration_form, parse_defaults_form, save_edited_profile,
+};
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
@@ -34,7 +39,10 @@ use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
     run_import,
 };
-use crate::profile_view::{build_profile_view_model, profile_display_name};
+use crate::profile_view::{
+    build_profile_view_model, identity_section, intent_section, ordered_calibration_targets,
+    profile_display_name,
+};
 use crate::window_prefs::WindowPreferences;
 use crate::{PillKind, PreferencesWindow, PrinterCard, ProfileViewDialog, ResinPill, ResinRow};
 
@@ -261,22 +269,53 @@ pub(crate) fn build_preferences_window(
     prefs.on_export_printers_requested(move || spawn_export(ExportScope::Printers));
     prefs.on_export_materials_requested(move || spawn_export(ExportScope::Materials));
 
-    // Holds the profile viewer while it is open so it is not dropped
-    // (and closed) the moment its opener returns. Opening another
-    // profile replaces (and closes) the previous viewer.
-    let view_dialog: Rc<RefCell<Option<ProfileViewDialog>>> = Rc::new(RefCell::new(None));
+    // Holds the profile viewer or editor while one is open so it is
+    // not dropped (and closed) the moment its opener returns. Opening
+    // another profile replaces (and closes) the previous dialog.
+    let profile_dialog: Rc<RefCell<Option<ProfileViewDialog>>> = Rc::new(RefCell::new(None));
     prefs.on_view_requested({
         let bus = bus.clone();
         let catalog_handle = catalog_handle.clone();
-        let view_dialog = view_dialog.clone();
+        let profile_dialog = profile_dialog.clone();
         move |index| {
-            open_profile_view_dialog(&bus, &catalog_handle, &view_dialog, index);
+            open_profile_view_dialog(&bus, &catalog_handle, &profile_dialog, index);
         }
     });
 
-    // The row-level Fork / Extend / Edit / Delete callbacks exist in
-    // the UI already but are not wired yet; the editor, fork, and
-    // extend flows land in the follow-up stages.
+    prefs.on_edit_requested({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let refresh_view = refresh_view.clone();
+        let profile_dialog = profile_dialog.clone();
+        move |index, is_extension| {
+            open_profile_editor(
+                &bus,
+                &catalog_handle,
+                &refresh_view,
+                &profile_dialog,
+                index,
+                is_extension,
+            );
+        }
+    });
+
+    prefs.on_delete_requested({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let refresh_view = refresh_view.clone();
+        move |index, is_extension| {
+            spawn_delete_flow(
+                bus.clone(),
+                catalog_handle.clone(),
+                refresh_view.clone(),
+                index,
+                is_extension,
+            );
+        }
+    });
+
+    // The Fork and Extend callbacks exist in the UI already but are
+    // not wired yet; those flows land in the follow-up stages.
 
     let subscription = bus.subscribe({
         let prefs_weak = prefs_weak.clone();
@@ -486,6 +525,303 @@ fn open_profile_view_dialog(
         return;
     }
     *dialog_slot.borrow_mut() = Some(dialog);
+}
+
+/// Open the in-place editor for a custom row. The extension row edits
+/// the extension file; a custom profile row edits the full profile,
+/// falling back to the extension file for an orphaned extension
+/// entry. The defaults are editable for full profiles only (an
+/// extension inherits them from its parent), and one calibration pair
+/// per session can be picked from the profile's own blocks and
+/// edited.
+fn open_profile_editor(
+    bus: &Rc<PreferencesBus>,
+    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh_view: &Rc<dyn Fn()>,
+    dialog_slot: &Rc<RefCell<Option<ProfileViewDialog>>>,
+    index: i32,
+    is_extension: bool,
+) {
+    let catalog = catalog_handle.borrow().clone();
+    let Some(entry) = catalog.materials().get(index as usize) else {
+        return;
+    };
+    let user_lib = match user_library_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("cannot resolve the user profile library directory: {err}");
+            return;
+        }
+    };
+
+    let (profile, kind) = if is_extension {
+        match load_material_extension_from_library(&user_lib, &entry.id) {
+            Ok(profile) => (profile, EditedProfileKind::Extension),
+            Err(err) => {
+                eprintln!("{err}");
+                return;
+            }
+        }
+    } else {
+        match load_material_profile_from_library(&user_lib, &entry.id) {
+            Ok(profile) => (profile, EditedProfileKind::Full),
+            Err(full_err) => match load_material_extension_from_library(&user_lib, &entry.id) {
+                Ok(orphan_extension) => (orphan_extension, EditedProfileKind::Extension),
+                Err(_) => {
+                    eprintln!("{full_err}");
+                    return;
+                }
+            },
+        }
+    };
+
+    let snapshot = bus.snapshot();
+    let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
+
+    // Read-only context above the edit cards: identity, plus intent
+    // for full profiles (an extension's intent is inherited).
+    let mut sections = vec![identity_section(&profile, ProfileSource::User)];
+    if kind == EditedProfileKind::Full {
+        sections.push(intent_section(&profile));
+    }
+
+    let targets =
+        ordered_calibration_targets(&profile, catalog.printers(), default_printer.as_ref());
+
+    let dialog = match ProfileViewDialog::new() {
+        Ok(dialog) => dialog,
+        Err(err) => {
+            eprintln!("failed to create the profile editor: {err}");
+            return;
+        }
+    };
+    dialog.set_theme(snapshot.theme);
+    let display_name = match kind {
+        EditedProfileKind::Full => SharedString::from(profile_display_name(&profile)),
+        EditedProfileKind::Extension => ctr!(
+            "PreferencesPage",
+            "{} (extended)",
+            profile_display_name(&profile)
+        ),
+    };
+    dialog.set_profile_name(display_name);
+    dialog.set_sections(ModelRc::new(VecModel::from(sections)));
+    dialog.set_editable(true);
+    dialog.set_defaults_editable(kind == EditedProfileKind::Full);
+    if kind == EditedProfileKind::Full {
+        let seeded = defaults_form_from(&profile.defaults);
+        dialog.set_scale_x_text(seeded.scale_x_pct.into());
+        dialog.set_scale_y_text(seeded.scale_y_pct.into());
+        dialog.set_scale_z_text(seeded.scale_z_pct.into());
+        dialog.set_defaults_bottom_count_text(seeded.bottom_layer_count.into());
+    }
+    dialog.set_edit_target_labels(ModelRc::new(VecModel::from(
+        targets
+            .iter()
+            .map(|(_, label)| label.clone())
+            .collect::<Vec<_>>(),
+    )));
+    dialog.set_edit_target_index(-1);
+
+    let profile = Rc::new(RefCell::new(profile));
+    let targets = Rc::new(targets);
+    let dialog_weak = dialog.as_weak();
+
+    dialog.on_edit_target_changed({
+        let dialog_weak = dialog_weak.clone();
+        let profile = profile.clone();
+        let targets = targets.clone();
+        move |picked| {
+            let Some(d) = dialog_weak.upgrade() else {
+                return;
+            };
+            let Some((id, _)) = targets.get(picked as usize) else {
+                return;
+            };
+            let profile = profile.borrow();
+            let Some(block) = profile.per_printer.get(id) else {
+                return;
+            };
+            let seeded = calibration_form_from_block(block);
+            d.set_normal_exposure_text(seeded.normal_exposure_sec.into());
+            d.set_bottom_exposure_text(seeded.bottom_exposure_sec.into());
+            d.set_block_bottom_count_text(seeded.bottom_layer_count.into());
+            d.set_lift_distance_text(seeded.lift_distance_mm.into());
+            d.set_lift_speed_text(seeded.lift_speed_mm_min.into());
+            d.set_retract_speed_text(seeded.retract_speed_mm_min.into());
+        }
+    });
+
+    dialog.on_save_requested({
+        let dialog_weak = dialog_weak.clone();
+        let dialog_slot = dialog_slot.clone();
+        let catalog_handle = catalog_handle.clone();
+        let refresh_view = refresh_view.clone();
+        let profile = profile.clone();
+        let targets = targets.clone();
+        move || {
+            let Some(d) = dialog_weak.upgrade() else {
+                return;
+            };
+            let mut profile = profile.borrow_mut();
+            if kind == EditedProfileKind::Full {
+                let input = DefaultsFormInput {
+                    scale_x_pct: d.get_scale_x_text().to_string(),
+                    scale_y_pct: d.get_scale_y_text().to_string(),
+                    scale_z_pct: d.get_scale_z_text().to_string(),
+                    bottom_layer_count: d.get_defaults_bottom_count_text().to_string(),
+                };
+                match parse_defaults_form(&input) {
+                    Ok(defaults) => profile.defaults = defaults,
+                    Err(err) => {
+                        d.set_error_message(err.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let picked = d.get_edit_target_index();
+            if picked >= 0 {
+                let Some((id, _)) = targets.get(picked as usize) else {
+                    return;
+                };
+                let input = CalibrationFormInput {
+                    normal_exposure_sec: d.get_normal_exposure_text().to_string(),
+                    bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
+                    bottom_layer_count: d.get_block_bottom_count_text().to_string(),
+                    lift_distance_mm: d.get_lift_distance_text().to_string(),
+                    lift_speed_mm_min: d.get_lift_speed_text().to_string(),
+                    retract_speed_mm_min: d.get_retract_speed_text().to_string(),
+                };
+                match parse_calibration_form(&input) {
+                    Ok(block) => {
+                        profile.per_printer.insert(id.clone(), block);
+                    }
+                    Err(err) => {
+                        d.set_error_message(err.to_string().into());
+                        return;
+                    }
+                }
+            }
+            let user_lib = match user_library_dir() {
+                Ok(dir) => dir,
+                Err(err) => {
+                    d.set_error_message(err.to_string().into());
+                    return;
+                }
+            };
+            if let Err(message) = save_edited_profile(&user_lib, &profile, kind) {
+                d.set_error_message(message.into());
+                return;
+            }
+            drop(profile);
+            refresh_catalog(&catalog_handle);
+            refresh_view();
+            let _ = d.hide();
+            *dialog_slot.borrow_mut() = None;
+        }
+    });
+
+    dialog.on_close_requested({
+        let dialog_slot = dialog_slot.clone();
+        move || {
+            if let Some(d) = dialog_weak.upgrade() {
+                let _ = d.hide();
+            }
+            *dialog_slot.borrow_mut() = None;
+        }
+    });
+
+    if let Err(err) = dialog.show() {
+        eprintln!("failed to show the profile editor: {err}");
+        return;
+    }
+    *dialog_slot.borrow_mut() = Some(dialog);
+}
+
+/// Whether the just-deleted id was the default resin and no longer
+/// resolves to any profile. Deleting a user override of a bundled id
+/// keeps the default: the bundled copy still resolves it.
+fn default_resin_orphaned(
+    catalog: &ProfileCatalog,
+    default_resin: Option<&MaterialId>,
+    deleted: &MaterialId,
+) -> bool {
+    default_resin == Some(deleted) && catalog.material_index(deleted).is_none()
+}
+
+/// Run the delete flow for a custom row: confirm, remove the file
+/// (the full profile's, or the extension file with every pair it
+/// adds), then refresh. When the deleted id was the default resin and
+/// nothing else resolves it any more, the default is unset.
+fn spawn_delete_flow(
+    bus: Rc<PreferencesBus>,
+    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh_view: Rc<dyn Fn()>,
+    index: i32,
+    is_extension: bool,
+) {
+    let catalog = catalog_handle.borrow().clone();
+    let Some(entry) = catalog.materials().get(index as usize) else {
+        return;
+    };
+    let id = entry.id.clone();
+    let display_name = format!("{} {}", entry.brand, entry.name);
+
+    if let Err(err) = slint::spawn_local(async move {
+        let Ok(user_lib) = user_library_dir() else {
+            eprintln!("cannot resolve the user profile library directory");
+            return;
+        };
+        let (path, description) = if is_extension {
+            (
+                material_extension_path_in_library(&user_lib, &id),
+                ctr!(
+                    "PreferencesPage",
+                    "Deleting the extension of {} removes every calibration pair it adds.",
+                    display_name,
+                )
+                .to_string(),
+            )
+        } else {
+            (
+                material_profile_path_in_library(&user_lib, &id),
+                ctr!(
+                    "PreferencesPage",
+                    "Deleting {} removes the custom profile file.",
+                    display_name,
+                )
+                .to_string(),
+            )
+        };
+        let delete_label = ctr!("PreferencesPage", "Delete").to_string();
+        let result = rfd::AsyncMessageDialog::new()
+            .set_title(ctr!("PreferencesPage", "Delete profile?").to_string())
+            .set_description(description)
+            .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                delete_label.clone(),
+                ctr!("PreferencesPage", "Cancel").to_string(),
+            ))
+            .show()
+            .await;
+        if !overwrite_confirmed(&result, &delete_label) {
+            return;
+        }
+        if let Err(err) = std::fs::remove_file(&path) {
+            eprintln!("failed to delete {}: {err}", path.display());
+            return;
+        }
+        refresh_catalog(&catalog_handle);
+        let catalog = catalog_handle.borrow().clone();
+        if default_resin_orphaned(&catalog, bus.snapshot().default_resin.as_ref(), &id) {
+            bus.update(|snap| {
+                snap.default_resin = None;
+                PreferencesChange::DefaultResin
+            });
+        }
+        refresh_view();
+    }) {
+        eprintln!("failed to spawn delete task: {err}");
+    }
 }
 
 /// Push the current selection (printer / resin indices, the derived
@@ -1389,5 +1725,65 @@ mod derive_resin_view_tests {
     #[test]
     fn no_pills_yield_no_lines() {
         assert!(chunk_pills(Vec::new(), PILL_LINE_CHAR_BUDGET).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod delete_flow_tests {
+    use std::fs;
+
+    use super::*;
+
+    const MATERIAL_TOML: &str = "\
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"other\"
+name = \"Resin\"
+profile_version = \"1.0.0\"
+
+[intent]
+
+[defaults]
+";
+
+    fn material_id(id: &str) -> MaterialId {
+        MaterialId::new(id).unwrap()
+    }
+
+    fn write_material(root: &std::path::Path, id: &str) {
+        let materials = root.join("materials");
+        fs::create_dir_all(&materials).unwrap();
+        let toml = MATERIAL_TOML.replace("brand-resin", id);
+        fs::write(materials.join(format!("{id}.toml")), toml).unwrap();
+    }
+
+    #[test]
+    fn the_default_is_orphaned_when_nothing_resolves_the_deleted_id() {
+        let bundled = tempfile::tempdir().unwrap();
+        let catalog = ProfileCatalog::load(None, bundled.path());
+        let deleted = material_id("gone-resin");
+        assert!(default_resin_orphaned(&catalog, Some(&deleted), &deleted));
+    }
+
+    #[test]
+    fn the_default_survives_when_a_bundled_copy_still_resolves_the_id() {
+        // Deleting the user override of a bundled id: the bundled copy
+        // still resolves it after the catalog refresh.
+        let bundled = tempfile::tempdir().unwrap();
+        write_material(bundled.path(), "shared-resin");
+        let catalog = ProfileCatalog::load(None, bundled.path());
+        let deleted = material_id("shared-resin");
+        assert!(!default_resin_orphaned(&catalog, Some(&deleted), &deleted));
+    }
+
+    #[test]
+    fn an_unrelated_or_absent_default_is_never_unset() {
+        let bundled = tempfile::tempdir().unwrap();
+        let catalog = ProfileCatalog::load(None, bundled.path());
+        let deleted = material_id("gone-resin");
+        let other = material_id("other-resin");
+        assert!(!default_resin_orphaned(&catalog, Some(&other), &deleted));
+        assert!(!default_resin_orphaned(&catalog, None, &deleted));
     }
 }
