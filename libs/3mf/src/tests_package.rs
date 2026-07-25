@@ -453,3 +453,62 @@ mod read_limits_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod zip64_tests {
+    use super::*;
+
+    const MINIMAL_CONTENT_TYPES: &str =
+        include_str!("../tests/fixtures/opc/minimal_content_types.xml");
+    const MINIMAL_RELS: &str = include_str!("../tests/fixtures/opc/minimal_rels.xml");
+
+    /// Byte offset right after a local file header's name, where the
+    /// entry's extra field begins.
+    fn local_extra_field_offset(bytes: &[u8], name: &[u8]) -> usize {
+        let name_pos = (30..=bytes.len() - name.len())
+            .find(|&p| &bytes[p - 30..p - 26] == b"PK\x03\x04" && &bytes[p..p + name.len()] == name)
+            .expect("local file header for the entry");
+        name_pos + name.len()
+    }
+
+    #[test]
+    fn zip64_entries_are_read_intact() {
+        // The writer's large_file option forces ZIP64 structures
+        // onto the entry even though its real size is small, which
+        // pins ZIP64 reading without a multi-gigabyte fixture.
+        let mut cursor = Cursor::new(Vec::new());
+        let mut archive = zip::write::ZipWriter::new(&mut cursor);
+        let plain = zip::write::SimpleFileOptions::default();
+        archive.start_file("[Content_Types].xml", plain).unwrap();
+        archive.write_all(MINIMAL_CONTENT_TYPES.as_bytes()).unwrap();
+        archive.start_file("_rels/.rels", plain).unwrap();
+        archive.write_all(MINIMAL_RELS.as_bytes()).unwrap();
+        let zip64 = zip::write::SimpleFileOptions::default().large_file(true);
+        archive.start_file("3D/3dmodel.model", zip64).unwrap();
+        archive.write_all(b"<model/>").unwrap();
+        archive.finish().unwrap();
+        let bytes = cursor.into_inner();
+
+        // The model entry's local header must carry the ZIP64
+        // extended-information extra field (id 0x0001); without it
+        // this test would no longer pin ZIP64 reading.
+        let extra = local_extra_field_offset(&bytes, b"3D/3dmodel.model");
+        assert_eq!(
+            &bytes[extra..extra + 2],
+            [0x01u8, 0x00],
+            "zip64 extra field id"
+        );
+
+        let package = Package::read_from(Cursor::new(bytes)).expect("zip64 package reads");
+        assert_eq!(
+            package.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            Some(b"<model/>".as_slice()),
+        );
+        assert_eq!(
+            package.part_content_type(&part(DEFAULT_MODEL_PART_NAME)),
+            Some(MODEL_PART_CONTENT_TYPE),
+        );
+        let start = package.start_part().expect("start part resolves");
+        assert_eq!(start.as_str(), DEFAULT_MODEL_PART_NAME);
+    }
+}
