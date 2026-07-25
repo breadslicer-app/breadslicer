@@ -70,9 +70,26 @@ pub(crate) enum SceneEvent {
     /// only care about scene contents can ignore this; the controller
     /// uses it to mirror `can-undo` / `can-redo` to the UI.
     UndoStackChanged,
+    /// The value of [`SceneDocument::is_dirty`] flipped. Fired only
+    /// on actual transitions (a push onto an already-dirty document
+    /// stays silent), after the operation's other events. The
+    /// controller uses it to mirror the unsaved-changes marker to
+    /// the UI.
+    DirtyChanged,
 }
 
 type Listener = Rc<dyn Fn(SceneEvent)>;
+
+/// One committed entry on the undo/redo stacks: the edit plus the
+/// identity the dirty tracking compares against the save point. An
+/// entry keeps its id when undo/redo moves it between the stacks,
+/// so "the same edit is on top again" is detectable after an
+/// undo + redo round trip. Ids are never reused within a document.
+#[derive(Clone, Debug)]
+struct HistoryEntry {
+    id: u64,
+    edit: SceneEdit,
+}
 
 pub(crate) struct SceneDocument {
     spatial: RefCell<Option<SceneSpatial>>,
@@ -90,11 +107,29 @@ pub(crate) struct SceneDocument {
     next_listener_id: Cell<u64>,
     /// Reversible edits the user can roll back via Edit → Undo. Most
     /// recent edit at the back; capped at `UNDO_STACK_CAP`.
-    undo_stack: RefCell<VecDeque<SceneEdit>>,
+    undo_stack: RefCell<VecDeque<HistoryEntry>>,
     /// Edits that were rolled back by `undo` and can be replayed by
     /// `redo`. Cleared whenever a fresh edit lands via `push_edit`:
     /// new history invalidates the redo trail.
-    redo_stack: RefCell<VecDeque<SceneEdit>>,
+    redo_stack: RefCell<VecDeque<HistoryEntry>>,
+    /// Id source for [`HistoryEntry`]; the first committed edit gets 1.
+    next_edit_id: Cell<u64>,
+    /// Dirty-tracking save point: the id of the undo stack's top
+    /// entry when the document was last saved, `None` when it was
+    /// saved (or freshly installed) with an empty stack. The top
+    /// matching the save point proves the content matches the saved
+    /// state: eviction at the cap only forgets undo ability, it
+    /// never mutates the scene, and ids are unique.
+    save_point: Cell<Option<u64>>,
+    /// Set when an `undo` pops the last entry off the stack. Entries
+    /// below may have been evicted at the cap, so reaching the
+    /// bottom no longer proves the content matches the state the
+    /// empty stack once described; the document reads dirty until
+    /// the next save or install clears the flag. The cost is a
+    /// false positive when nothing was evicted and the bottom IS the
+    /// save point; the accepted trade for never reading clean on
+    /// silently unrecoverable changes.
+    undone_to_bottom: Cell<bool>,
 }
 
 impl SceneDocument {
@@ -107,6 +142,9 @@ impl SceneDocument {
             next_listener_id: Cell::new(0),
             undo_stack: RefCell::new(VecDeque::new()),
             redo_stack: RefCell::new(VecDeque::new()),
+            next_edit_id: Cell::new(1),
+            save_point: Cell::new(None),
+            undone_to_bottom: Cell::new(false),
         })
     }
 
@@ -123,6 +161,7 @@ impl SceneDocument {
     /// worker thread). Resets selection and clears history just like
     /// [`Self::install_graph`].
     pub fn install_spatial(&self, spatial: SceneSpatial, source_path: PathBuf) {
+        let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
         self.selection.set(Selection::None);
@@ -130,20 +169,71 @@ impl SceneDocument {
         // outgoing one's, so any pending edits would target the wrong
         // objects on replay.
         let stacks_changed = self.clear_history();
+        // A freshly installed scene matches its source by definition.
+        self.save_point.set(None);
+        self.undone_to_bottom.set(false);
         self.notify(SceneEvent::Installed);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
         }
+        self.notify_dirty_change(was_dirty);
     }
 
     pub fn clear_scene(&self) {
+        let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
+        self.save_point.set(None);
+        self.undone_to_bottom.set(false);
         self.notify(SceneEvent::Cleared);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
+        }
+        self.notify_dirty_change(was_dirty);
+    }
+
+    /// Whether the scene differs from the state it was loaded or
+    /// last saved in, judged by committed edits only (a mid-gesture
+    /// mutation that has not been pushed yet does not count). `false`
+    /// whenever no scene is loaded.
+    ///
+    /// Clean means the undo stack's top entry is the one recorded by
+    /// [`Self::mark_saved`] (or both are absent), and no undo has
+    /// drained the stack since then. The comparison can over-report
+    /// dirty (the save point may sit deeper in the stack or be
+    /// evicted), never under-report it.
+    pub fn is_dirty(&self) -> bool {
+        if !self.is_loaded() {
+            return false;
+        }
+        self.undone_to_bottom.get() || self.top_edit_id() != self.save_point.get()
+    }
+
+    /// Records the current history position as the saved state, so
+    /// [`Self::is_dirty`] reads `false` until the next committed
+    /// change. Called by the save flow after a successful write.
+    // The production caller lands with the Save flow; tests exercise
+    // the dirty tracking through it in the meantime.
+    #[allow(dead_code)]
+    pub fn mark_saved(&self) {
+        let was_dirty = self.is_dirty();
+        self.save_point.set(self.top_edit_id());
+        self.undone_to_bottom.set(false);
+        self.notify_dirty_change(was_dirty);
+    }
+
+    fn top_edit_id(&self) -> Option<u64> {
+        self.undo_stack.borrow().back().map(|entry| entry.id)
+    }
+
+    /// Fires [`SceneEvent::DirtyChanged`] when the dirty value no
+    /// longer matches the `was_dirty` snapshot the caller took
+    /// before mutating.
+    fn notify_dirty_change(&self, was_dirty: bool) {
+        if self.is_dirty() != was_dirty {
+            self.notify(SceneEvent::DirtyChanged);
         }
     }
 
@@ -236,15 +326,19 @@ impl SceneDocument {
         if edit.is_noop() {
             return;
         }
+        let was_dirty = self.is_dirty();
+        let id = self.next_edit_id.get();
+        self.next_edit_id.set(id + 1);
         {
             let mut undo = self.undo_stack.borrow_mut();
             if undo.len() == UNDO_STACK_CAP {
                 undo.pop_front();
             }
-            undo.push_back(edit);
+            undo.push_back(HistoryEntry { id, edit });
         }
         self.redo_stack.borrow_mut().clear();
         self.notify(SceneEvent::UndoStackChanged);
+        self.notify_dirty_change(was_dirty);
     }
 
     /// Allocate a fresh [`NodeId`] and install a mesh-resource-backed
@@ -443,24 +537,31 @@ impl SceneDocument {
 
     /// Pops the most recent edit, applies its inverse, and moves the
     /// entry onto the redo stack. Returns `true` if an edit was
-    /// applied.
+    /// applied. An undo that drains the stack marks the document
+    /// dirty until the next save or install (see
+    /// [`Self::undone_to_bottom`]).
     pub fn undo(&self) -> bool {
-        let Some(edit) = self.undo_stack.borrow_mut().pop_back() else {
+        let was_dirty = self.is_dirty();
+        let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
             return false;
         };
-        if !self.apply_edit(edit.inverse()) {
+        if !self.apply_edit(entry.edit.inverse()) {
             // No scene loaded: restore the popped entry so the
             // stack stays consistent with the user's history.
-            self.undo_stack.borrow_mut().push_back(edit);
+            self.undo_stack.borrow_mut().push_back(entry);
             return false;
+        }
+        if self.undo_stack.borrow().is_empty() {
+            self.undone_to_bottom.set(true);
         }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
             redo.pop_front();
         }
-        redo.push_back(edit);
+        redo.push_back(entry);
         drop(redo);
         self.notify(SceneEvent::UndoStackChanged);
+        self.notify_dirty_change(was_dirty);
         true
     }
 
@@ -468,20 +569,22 @@ impl SceneDocument {
     /// and moves the entry back onto the undo stack. Returns `true`
     /// if an edit was applied.
     pub fn redo(&self) -> bool {
-        let Some(edit) = self.redo_stack.borrow_mut().pop_back() else {
+        let was_dirty = self.is_dirty();
+        let Some(entry) = self.redo_stack.borrow_mut().pop_back() else {
             return false;
         };
-        if !self.apply_edit(edit.clone()) {
-            self.redo_stack.borrow_mut().push_back(edit);
+        if !self.apply_edit(entry.edit.clone()) {
+            self.redo_stack.borrow_mut().push_back(entry);
             return false;
         }
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP {
             undo.pop_front();
         }
-        undo.push_back(edit);
+        undo.push_back(entry);
         drop(undo);
         self.notify(SceneEvent::UndoStackChanged);
+        self.notify_dirty_change(was_dirty);
         true
     }
 
@@ -1074,7 +1177,12 @@ mod scene_document_tests {
         assert_eq!(doc.undo_stack.borrow().len(), UNDO_STACK_CAP);
         // Front of the deque is the oldest surviving entry; with
         // five entries dropped it should start at i = 5 (after = 6.0).
-        let front = doc.undo_stack.borrow().front().cloned().unwrap();
+        let front = doc
+            .undo_stack
+            .borrow()
+            .front()
+            .map(|entry| entry.edit.clone())
+            .unwrap();
         let SceneEdit::SetLocalTransform { after, .. } = front else {
             panic!("front entry was not a SetLocalTransform: {front:?}");
         };
@@ -1125,7 +1233,11 @@ mod scene_document_tests {
             before: Transform3D::Identity,
             after: translation(1.0),
         });
-        assert_eq!(*log.borrow(), vec![SceneEvent::UndoStackChanged]);
+        // The first committed edit also flips the document dirty.
+        assert_eq!(
+            *log.borrow(),
+            vec![SceneEvent::UndoStackChanged, SceneEvent::DirtyChanged]
+        );
     }
 
     #[test]
@@ -1174,9 +1286,15 @@ mod scene_document_tests {
         });
         log.borrow_mut().clear();
         doc.install_graph(graph_with_one_object(), fixture_path());
+        // The replaced document was dirty; the fresh one is clean,
+        // so the install also reports the dirty flip.
         assert_eq!(
             *log.borrow(),
-            vec![SceneEvent::Installed, SceneEvent::UndoStackChanged]
+            vec![
+                SceneEvent::Installed,
+                SceneEvent::UndoStackChanged,
+                SceneEvent::DirtyChanged,
+            ]
         );
     }
 

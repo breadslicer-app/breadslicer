@@ -16,10 +16,10 @@ export component ReplaceSceneDialog inherits Window {
     default-font-family: "Noto Sans";
 
     in property <string> source-name;
-    // True when the loaded scene has unsaved changes (i.e. at least
-    // one applied command is still on the undo stack). Hides the
-    // Export button when false: there's nothing to export that the
-    // user couldn't reproduce by reloading the source file.
+    // True when the loaded scene has unsaved changes (per the
+    // document's dirty tracking). Hides the Export button when
+    // false: there's nothing to export that the user couldn't
+    // reproduce by reloading the source file.
     in property <bool> can-export: true;
 
     callback discard-requested();

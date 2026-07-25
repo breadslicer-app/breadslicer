@@ -43,6 +43,8 @@ mod selection;
 #[cfg(test)]
 mod tests_mesh_loader;
 #[cfg(test)]
+mod tests_scene_dirty;
+#[cfg(test)]
 mod tests_scene_loader;
 mod text_metrics;
 mod viewport;

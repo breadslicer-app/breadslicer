@@ -48,9 +48,8 @@ mod replace_scene_policy {
         DispatchImmediately,
         /// A scene is already loaded; caller should show the replace-
         /// scene confirmation dialog. `can_export` controls whether
-        /// the Export button is visible (true iff the user has
-        /// applied at least one undoable command, our proxy for
-        /// "this scene has unsaved changes worth exporting").
+        /// the Export button is visible (true iff the document has
+        /// unsaved changes, per the dirty tracking).
         PromptReplace { can_export: bool },
     }
 
@@ -66,7 +65,7 @@ mod replace_scene_policy {
     pub(crate) fn decide_open_path_action(
         supported_extension: bool,
         document_loaded: bool,
-        document_can_undo: bool,
+        document_is_dirty: bool,
     ) -> OpenPathAction {
         if !supported_extension {
             return OpenPathAction::RejectUnsupported;
@@ -75,7 +74,7 @@ mod replace_scene_policy {
             return OpenPathAction::DispatchImmediately;
         }
         OpenPathAction::PromptReplace {
-            can_export: document_can_undo,
+            can_export: document_is_dirty,
         }
     }
 
@@ -136,10 +135,10 @@ use context_menu_policy::context_menu_flags;
 /// unregistering the window's preference-apply listener. Held by value
 /// in `AppState::main_windows` so closing a window via
 /// `on_close_requested` cleans up all three halves in one step. The
-/// `window` field is load-bearing: holding the Slint handle by value
-/// keeps the component alive, even though the only accesses to the
-/// live window happen through the `Weak<MainWindow>` captured in the
-/// subscription's listener. The `controller` is held so external entry
+/// `window` field must be held even though it is never read: keeping
+/// the Slint handle by value keeps the component alive, while the
+/// only accesses to the live window happen through the
+/// `Weak<MainWindow>` captured in the subscription's listener. The `controller` is held so external entry
 /// points (path-driven loads from argv / drag-and-drop) can resolve
 /// the window's `SceneLoader` from the window id.
 struct WiredMainWindow {
@@ -514,7 +513,7 @@ impl AppState {
         let action = decide_open_path_action(
             is_supported_mesh_extension(&path),
             controller.document().is_loaded(),
-            controller.document().can_undo(),
+            controller.document().is_dirty(),
         );
         match action {
             OpenPathAction::RejectUnsupported => {
@@ -845,7 +844,7 @@ mod replace_scene_policy_tests {
             decide_open_path_action(true, false, false),
             OpenPathAction::DispatchImmediately
         );
-        // `document_can_undo` is irrelevant when nothing is loaded.
+        // `document_is_dirty` is irrelevant when nothing is loaded.
         assert_eq!(
             decide_open_path_action(true, false, true),
             OpenPathAction::DispatchImmediately
@@ -853,7 +852,7 @@ mod replace_scene_policy_tests {
     }
 
     #[test]
-    fn supported_extension_with_loaded_document_prompts_with_export_iff_can_undo() {
+    fn supported_extension_with_loaded_document_prompts_with_export_iff_dirty() {
         assert_eq!(
             decide_open_path_action(true, true, false),
             OpenPathAction::PromptReplace { can_export: false }

@@ -67,7 +67,7 @@ component ObjectListSplitter inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    title: @tr("SoulCrafted Slicer");
+    title: (root.scene-dirty ? "* " : "") + @tr("SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
     default-font-family: "Noto Sans";
 
@@ -81,6 +81,9 @@ export component MainWindow inherits Window {
     in property <bool> has-scene: false;
     in property <bool> can-undo: false;
     in property <bool> can-redo: false;
+    // True while the loaded scene has unsaved changes (mirrored from
+    // the document's dirty tracking); prefixes the title with `*`.
+    in property <bool> scene-dirty: false;
     // True while the user is dragging a file over the window (between
     // winit's `HoveredFile` and the matching `DroppedFile` /
     // `HoveredFileCancelled`). Toggled from Rust; drives the

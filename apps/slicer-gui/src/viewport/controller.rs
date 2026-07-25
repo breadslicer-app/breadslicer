@@ -235,6 +235,7 @@ impl ViewportController {
                 self.mark_dirty();
             }
             SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),
+            SceneEvent::DirtyChanged => self.mirror_dirty_state_to_ui(),
         }
     }
 
@@ -242,6 +243,14 @@ impl ViewportController {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_can_undo(self.session.document().can_undo());
             ui.set_can_redo(self.session.document().can_redo());
+        }
+    }
+
+    /// Pushes the unsaved-changes state to the UI, which prefixes
+    /// the window title with `*` while it holds.
+    fn mirror_dirty_state_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_scene_dirty(self.session.document().is_dirty());
         }
     }
 
@@ -258,6 +267,7 @@ impl ViewportController {
             ui.set_gizmo_keyboard_focus_active(false);
         }
         self.mirror_undo_state_to_ui();
+        self.mirror_dirty_state_to_ui();
         self.mark_dirty();
     }
 
@@ -295,6 +305,7 @@ impl ViewportController {
             ui.set_gizmo_keyboard_focus_active(false);
         }
         self.mirror_undo_state_to_ui();
+        self.mirror_dirty_state_to_ui();
     }
 
     fn request_redraw(&self) {
@@ -2556,8 +2567,8 @@ mod keyboard_focus_tests {
         // (rotation about a non-origin pivot leaves the box centroid
         // in place but writes a non-zero translation into the affine
         // form). The test asserts the linear part diverges from
-        // identity, which is the load-bearing claim that "rotation
-        // happened, the clamp didn't squash it".
+        // identity, which is the claim that matters here: rotation
+        // happened and the clamp didn't squash it.
         let ctrl = ViewportController::new_for_test();
         install_for_integration(&ctrl);
         ctrl.on_select_by_index(0);
