@@ -131,7 +131,10 @@ pub(crate) fn start_load_with_ticket(
         return;
     };
     let sink = loader.progress_sink();
-    sink.reset();
+    // Rearms the progress cell, shows the panel, and starts the UI
+    // poll; placed after the bailouts above so error deposits never
+    // flash the panel.
+    loader.begin_progress_ui();
     spawn_load(ticket, path, device, device_token, build_volume, sink);
 }
 

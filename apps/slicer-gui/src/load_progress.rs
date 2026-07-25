@@ -45,11 +45,6 @@ fn pack(phase: LoadPhase, permille: u32) -> u32 {
 /// Decodes a cell value back into `(phase, permille)`. Values only
 /// ever come from [`pack`]; an out-of-range phase half (impossible
 /// through the sink) saturates to the last phase.
-///
-/// The UI-side poll is the production reader; until it lands, only
-/// tests consume this, and the `expect` below forces this attribute's
-/// removal the moment a production caller appears.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn decode(value: u32) -> (LoadPhase, u32) {
     let permille = value & 0xFFFF;
     let phase = match value >> 16 {

@@ -41,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use sc_mesh_formats::messages::{
     LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
@@ -53,8 +54,23 @@ use slint::wgpu_29::wgpu;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
-use crate::load_progress::LoadProgressSink;
+use crate::load_progress::{
+    LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
+};
 use crate::mesh_render::GpuScene;
+
+/// Cadence of the UI-side progress poll while a load is in flight.
+const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Maps the worker-side phase onto the UI enum generated from the
+/// `LoadPhase` declaration in `main-window.slint`.
+fn ui_load_phase(phase: WorkerLoadPhase) -> crate::LoadPhase {
+    match phase {
+        WorkerLoadPhase::Parse => crate::LoadPhase::ReadingFile,
+        WorkerLoadPhase::Priming => crate::LoadPhase::PreparingGeometry,
+        WorkerLoadPhase::GpuUpload => crate::LoadPhase::UploadingToGpu,
+    }
+}
 
 /// Worker-built bundle handed to the UI thread. The `GpuScene`
 /// carries the `device_token` identifying the device pairing it was
@@ -91,7 +107,7 @@ type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<PreparedS
 ///
 /// Holds no strong reference to the slot it lives in. That separation
 /// is what prevents the slot from forming a self-referential `Arc`
-/// cycle once a ticket is deposited: nothing inside the `Mutex<Option…>>`
+/// cycle once a ticket is deposited: nothing inside the `Mutex<Option<..>>`
 /// points back at the `Arc` that owns it, so dropping the loader without
 /// a drain frees the slot and everything in it.
 struct TicketGuard {
@@ -117,9 +133,11 @@ impl Drop for TicketGuard {
         // posting the flip through the event loop.
         if let Some(ui) = self.ui.upgrade() {
             ui.set_loading(false);
+            ui.set_load_in_progress(false);
         } else {
             let _ = self.ui.upgrade_in_event_loop(|ui| {
                 ui.set_loading(false);
+                ui.set_load_in_progress(false);
             });
         }
     }
@@ -170,7 +188,7 @@ impl LoadTicket {
         });
         // `slot` (the local strong Arc clone) drops here, releasing the
         // ticket's strong ref to the slot. Only the guard remains
-        // inside the `Mutex<Option…>>`, and the guard holds no slot
+        // inside the `Mutex<Option<..>>`, and the guard holds no slot
         // reference.
     }
 }
@@ -189,7 +207,7 @@ pub struct SceneLoader {
     // Consecutive upload failures for the currently-loaded scene. The
     // renderer drives the count via `note_upload_success` /
     // `note_upload_failure`; the counter gates dialog-spam so the error
-    // only fires on the transition from 0 → 1 failures. Reset on
+    // only fires on the transition from 0 -> 1 failures. Reset on
     // successful upload, scene load/close, and on `RenderingSetup`
     // (via `reset_upload_failures`).
     upload_failures: Cell<u32>,
@@ -202,6 +220,12 @@ pub struct SceneLoader {
     // `load_progress`. The worker writes through a `LoadProgressSink`
     // clone; the UI polls it while a load is in flight.
     progress: Arc<AtomicU32>,
+    // Poll timer driving the progress panel. Started by
+    // `begin_progress_ui` at dispatch; its callback stops it once the
+    // window's `load-in-progress` flips false (the guard's drop).
+    // Behind an `Rc` so the callback can reach it through a `Weak`
+    // without forming a cycle.
+    progress_timer: Rc<slint::Timer>,
 }
 
 impl SceneLoader {
@@ -215,6 +239,7 @@ impl SceneLoader {
             upload_failures: Cell::new(0),
             gpu: Mutex::new(None),
             progress: Arc::new(AtomicU32::new(0)),
+            progress_timer: Rc::new(slint::Timer::default()),
         }
     }
 
@@ -222,7 +247,7 @@ impl SceneLoader {
     /// dangling, so the ticket's UI pushes are silently skipped and the
     /// FSM can be exercised without a Slint backend. Tests must avoid
     /// paths that surface a dialog (`take_finished_load` Err branch,
-    /// `note_upload_failure` on the 0 → 1 transition), since
+    /// `note_upload_failure` on the 0 -> 1 transition), since
     /// `DialogManager` there calls into Slint component construction
     /// and requires an event loop.
     #[cfg(test)]
@@ -236,6 +261,7 @@ impl SceneLoader {
             upload_failures: Cell::new(0),
             gpu: Mutex::new(None),
             progress: Arc::new(AtomicU32::new(0)),
+            progress_timer: Rc::new(slint::Timer::default()),
         }
     }
 
@@ -243,6 +269,58 @@ impl SceneLoader {
     /// at dispatch time.
     pub fn progress_sink(&self) -> LoadProgressSink {
         LoadProgressSink::new(self.progress.clone())
+    }
+
+    /// Dispatch-time hook: rearm the progress cell, show the progress
+    /// panel, and start the poll timer. `start_load_with_ticket`
+    /// calls this right before the worker spawns, so the panel never
+    /// shows while the file dialog is open nor for pre-spawn
+    /// bailouts. Headless callers (unit tests) have no window: the
+    /// cell still rearms and the UI side is skipped.
+    ///
+    /// The poll stops itself: the ticket guard's drop flips the
+    /// window's `load-in-progress` to false on every load-exit path,
+    /// and the next tick observes that and calls `Timer::stop`
+    /// through the `Weak` (no timer/closure `Rc` cycle).
+    pub fn begin_progress_ui(&self) {
+        self.progress_sink().reset();
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        ui.set_load_phase(ui_load_phase(WorkerLoadPhase::Parse));
+        ui.set_load_progress(0.0);
+        ui.set_load_in_progress(true);
+        let cell = self.progress.clone();
+        let ui_weak = self.ui.clone();
+        let timer_weak = Rc::downgrade(&self.progress_timer);
+        self.progress_timer.start(
+            slint::TimerMode::Repeated,
+            PROGRESS_POLL_INTERVAL,
+            move || {
+                let Some(ui) = ui_weak.upgrade() else {
+                    if let Some(timer) = timer_weak.upgrade() {
+                        timer.stop();
+                    }
+                    return;
+                };
+                if !ui.get_load_in_progress() {
+                    if let Some(timer) = timer_weak.upgrade() {
+                        timer.stop();
+                    }
+                    return;
+                }
+                let (phase, permille) = decode(cell.load(Ordering::Relaxed));
+                ui.set_load_phase(ui_load_phase(phase));
+                ui.set_load_progress(permille as f32 / PROGRESS_PERMILLE_MAX as f32);
+            },
+        );
+    }
+
+    /// Test-only raw view of the progress cell, used to assert the
+    /// dispatch-time rearm without a window.
+    #[cfg(test)]
+    pub(crate) fn progress_value_for_test(&self) -> u32 {
+        self.progress.load(Ordering::Relaxed)
     }
 
     /// Starts a new load. Returns `None` if one is already in flight.
@@ -256,7 +334,7 @@ impl SceneLoader {
     /// the file dialog from opening at all in unit-test or
     /// pre-first-paint scenarios.
     pub fn begin_load(&self) -> Option<LoadTicket> {
-        // compare_exchange 0 → 1: atomically checks that no ticket is
+        // compare_exchange 0 -> 1: atomically checks that no ticket is
         // alive. `AcqRel` on success synchronises with the prior
         // ticket's `fetch_sub` release, so a fresh begin sees all
         // writes the previous load made.
@@ -348,14 +426,14 @@ impl SceneLoader {
         self.upload_failures.get()
     }
 
-    /// A scene upload just succeeded. Rearms the 0 → 1 dialog gate so
+    /// A scene upload just succeeded. Rearms the 0 -> 1 dialog gate so
     /// the next failure can surface an error.
     pub fn note_upload_success(&self) {
         self.upload_failures.set(0);
     }
 
     /// A scene upload just failed. Increments the counter and, on the
-    /// 0 → 1 transition, surfaces the error dialog. Subsequent
+    /// 0 -> 1 transition, surfaces the error dialog. Subsequent
     /// failures for the same scene are swallowed until a reset; this
     /// prevents dialog spam if the renderer retries every frame.
     pub fn note_upload_failure(&self, err: &anyhow::Error) {
@@ -793,6 +871,23 @@ mod scene_loader_tests {
             slot_weak.upgrade().is_none(),
             "the slot Arc must have been freed once the loader (its \
              only remaining strong owner) drops"
+        );
+    }
+
+    #[test]
+    fn begin_progress_ui_rearms_the_progress_cell_headless() {
+        let loader = loader();
+        loader.progress_sink().set(WorkerLoadPhase::GpuUpload, 1, 1);
+        assert_ne!(
+            loader.progress_value_for_test(),
+            0,
+            "a finished load leaves a non-zero packed value behind"
+        );
+        loader.begin_progress_ui();
+        assert_eq!(
+            loader.progress_value_for_test(),
+            0,
+            "dispatch must rearm the cell to (Parse, 0)"
         );
     }
 
