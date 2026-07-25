@@ -833,6 +833,18 @@ impl AppState {
                 }
             });
         }
+        {
+            // Persist and broadcast a menu-layout switch through the bus,
+            // like the preferences window does for the theme. Every
+            // window re-applies it and the settings saver writes it out.
+            let bus = self.prefs.clone();
+            ui.on_menu_layout_change_requested(move |layout| {
+                bus.update(move |snap| {
+                    snap.menu_layout = layout;
+                    PreferencesChange::MenuLayout
+                });
+            });
+        }
     }
 
     /// Shows the app-wide About window, creating it on first use and

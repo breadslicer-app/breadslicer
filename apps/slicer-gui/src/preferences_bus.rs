@@ -53,6 +53,7 @@ pub(crate) struct PreferencesSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PreferencesChange {
     Theme,
+    MenuLayout,
     Language,
     DefaultPrinter,
     DefaultResin,
@@ -250,6 +251,31 @@ mod preferences_bus_tests {
             .expect("listener must have fired and captured the payload");
         assert!(matches!(got_theme, ThemePreference::Dark));
         assert_eq!(got_change, PreferencesChange::Theme);
+    }
+
+    #[test]
+    fn menu_layout_change_propagates() {
+        let bus = PreferencesBus::new(initial());
+        let captured: Rc<RefCell<Option<(MenuLayout, PreferencesChange)>>> =
+            Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, change| {
+                *captured.borrow_mut() = Some((snap.menu_layout, *change));
+            })
+        };
+
+        bus.update(|snap| {
+            snap.menu_layout = MenuLayout::Compact;
+            PreferencesChange::MenuLayout
+        });
+
+        let (got_layout, got_change) = captured
+            .borrow()
+            .expect("listener must have fired and captured the payload");
+        assert_eq!(got_layout, MenuLayout::Compact);
+        assert_eq!(got_change, PreferencesChange::MenuLayout);
+        assert_eq!(bus.snapshot().menu_layout, MenuLayout::Compact);
     }
 
     #[test]

@@ -141,6 +141,10 @@ export component MainWindow inherits Window {
     callback show-about-requested();
     callback show-preferences-requested();
     callback new-window-requested();
+    // Requests the persisted menu layout be switched to the given value.
+    // Rust routes it through the preferences bus so every window and the
+    // settings file stay in sync.
+    callback menu-layout-change-requested(MenuLayout);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -197,6 +201,12 @@ export component MainWindow inherits Window {
     callback viewport-right-pointer-up(length, length);
 
     MenuBar {
+        // In Compact layout the bar is hidden; it stays mounted so its
+        // shortcuts keep firing (a hidden MenuBar reclaims its space but
+        // still registers accelerators). macOS always resolves to Bar in
+        // Rust, so the bar is never hidden there.
+        visible: root.menu-layout == MenuLayout.Bar;
+
         Menu {
             title: @tr("MenuBar" => "File");
 
@@ -312,6 +322,22 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene;
                 activated => {
                     root.show-object-list = !root.show-object-list;
+                }
+            }
+
+            // Switches between the top menu bar and the compact corner
+            // menu button. Title flips like the object-list toggle above.
+            // Disabled on macOS, which keeps its global menu bar.
+            MenuItem {
+                title: root.menu-layout == MenuLayout.Compact
+                    ? @tr("MenuBar" => "Show Menu Bar")
+                    : @tr("MenuBar" => "Hide Menu Bar");
+                enabled: !root.is-macos;
+                activated => {
+                    root.menu-layout-change-requested(
+                        root.menu-layout == MenuLayout.Compact
+                            ? MenuLayout.Bar
+                            : MenuLayout.Compact);
                 }
             }
 
@@ -475,6 +501,216 @@ export component MainWindow inherits Window {
             selected-index <=> root.selected-object-index;
             selection-changed(idx) => {
                 root.object-list-selection-changed(idx);
+            }
+        }
+    }
+
+    // Compact-layout menu button: a floating chip at the top-left that
+    // opens the same menus as the hidden bar. Its items carry no
+    // shortcut because Slint only registers accelerators on MenuBar
+    // items; the hidden MenuBar keeps the shortcuts working. Behaviour
+    // is single-sourced: every item calls the same root callbacks as the
+    // bar. Present only in Compact layout, which Rust never selects on
+    // macOS.
+    if root.menu-layout == MenuLayout.Compact: hamburger := ContextMenuArea {
+        x: 8px;
+        y: 8px;
+        width: 32px;
+        height: 28px;
+
+        Menu {
+            Menu {
+                title: @tr("MenuBar" => "File");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "New Window");
+                    activated => {
+                        root.new-window-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Open…");
+                    enabled: !root.loading;
+                    activated => {
+                        root.open-file-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Close");
+                    enabled: root.loading || root.has-scene;
+                    activated => {
+                        root.close-current-scene();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Save");
+                    enabled: root.has-scene && !root.loading;
+                    activated => {
+                        root.save-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Save As…");
+                    enabled: root.has-scene && !root.loading;
+                    activated => {
+                        root.save-as-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Export As…");
+                    enabled: root.has-scene && !root.loading;
+                    activated => {
+                        root.export-as-requested();
+                    }
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "Edit");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Undo");
+                    enabled: root.has-scene && !root.loading && root.can-undo;
+                    activated => {
+                        root.undo-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Redo");
+                    enabled: root.has-scene && !root.loading && root.can-redo;
+                    activated => {
+                        root.redo-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Delete");
+                    enabled: root.has-scene && !root.loading && root.selected-object-index != -1;
+                    activated => {
+                        root.delete-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Preferences");
+                    activated => {
+                        root.show-preferences-requested();
+                    }
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "View");
+
+                MenuItem {
+                    title: root.show-object-list
+                        ? @tr("MenuBar" => "Hide Object List")
+                        : @tr("MenuBar" => "Show Object List");
+                    enabled: root.has-scene;
+                    activated => {
+                        root.show-object-list = !root.show-object-list;
+                    }
+                }
+
+                MenuItem {
+                    title: root.menu-layout == MenuLayout.Compact
+                        ? @tr("MenuBar" => "Show Menu Bar")
+                        : @tr("MenuBar" => "Hide Menu Bar");
+                    enabled: !root.is-macos;
+                    activated => {
+                        root.menu-layout-change-requested(
+                            root.menu-layout == MenuLayout.Compact
+                                ? MenuLayout.Bar
+                                : MenuLayout.Compact);
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Fullscreen");
+                    checkable: true;
+                    checked <=> root.full-screen;
+                }
+            }
+
+            Menu {
+                title: @tr("MenuBar" => "Help");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Documentation");
+                    enabled: false;
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Show Release Notes");
+                    enabled: false;
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Report Issue");
+                    enabled: false;
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Check for Updates…");
+                    enabled: false;
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "About");
+                    activated => {
+                        root.show-about-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "View License");
+                    enabled: false;
+                }
+            }
+        }
+
+        Rectangle {
+            border-radius: 6px;
+            background: #00000055;
+
+            VerticalLayout {
+                alignment: center;
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 3px;
+                Rectangle { height: 2px; background: white; border-radius: 1px; }
+                Rectangle { height: 2px; background: white; border-radius: 1px; }
+                Rectangle { height: 2px; background: white; border-radius: 1px; }
+            }
+
+            TouchArea {
+                clicked => {
+                    hamburger.show({ x: 0, y: parent.height });
+                }
             }
         }
     }
