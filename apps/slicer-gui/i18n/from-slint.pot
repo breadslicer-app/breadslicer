@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-25 15:27+0000\n"
+"POT-Creation-Date: 2026-07-25 19:36+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -363,137 +363,142 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:187
+#: ui/main-window.slint:191
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:190
+#: ui/main-window.slint:194
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:200
+#: ui/main-window.slint:204
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:209
+#: ui/main-window.slint:213
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:220
+#: ui/main-window.slint:224
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:229
+#: ui/main-window.slint:233
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:240
+#: ui/main-window.slint:244
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:250
+#: ui/main-window.slint:254
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:252
+#: ui/main-window.slint:256
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:261
+#: ui/main-window.slint:265
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:272
+#: ui/main-window.slint:276
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:282
+#: ui/main-window.slint:286
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:291
+#: ui/main-window.slint:295
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:295
+#: ui/main-window.slint:299
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:296
+#: ui/main-window.slint:300
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:306
+#: ui/main-window.slint:316
+msgctxt "MenuBar"
+msgid "Fullscreen"
+msgstr ""
+
+#: ui/main-window.slint:326
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:308
+#: ui/main-window.slint:328
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:313
+#: ui/main-window.slint:333
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:320
+#: ui/main-window.slint:340
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:327
+#: ui/main-window.slint:347
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:334
+#: ui/main-window.slint:354
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:341
+#: ui/main-window.slint:361
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:353
+#: ui/main-window.slint:373
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:464
+#: ui/main-window.slint:484
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr ""
 
-#: ui/main-window.slint:493
+#: ui/main-window.slint:513
 msgctxt "MainWindow"
 msgid "Reading file…"
 msgstr ""
 
-#: ui/main-window.slint:495
+#: ui/main-window.slint:515
 msgctxt "MainWindow"
 msgid "Preparing geometry…"
 msgstr ""
 
-#: ui/main-window.slint:496
+#: ui/main-window.slint:516
 msgctxt "MainWindow"
 msgid "Uploading to GPU…"
 msgstr ""

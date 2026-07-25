@@ -337,6 +337,11 @@ impl AppState {
     /// close-request handler are wired here.
     pub fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
+        // Static platform flag consumed by the View menu to show the
+        // correct fullscreen accelerator (Cmd+Ctrl+F on macOS, F11
+        // elsewhere). Slint has no compile-time platform branch, so the
+        // choice is made here and pushed into the UI.
+        ui.set_is_macos(cfg!(target_os = "macos"));
         let snapshot = self.prefs.snapshot();
         ui.apply_preferences(&snapshot);
         let document = SceneDocument::new();

@@ -110,6 +110,10 @@ export component MainWindow inherits Window {
     in-out property <int> selected-object-index: -1;
     in-out property <bool> show-object-list: true;
     in-out property <length> object-list-width: 220px;
+    // Set from Rust at window creation (cfg!(target_os = "macos")).
+    // Selects the platform's fullscreen accelerator shown in the View
+    // menu: Cmd+Ctrl+F on macOS, F11 elsewhere.
+    in property <bool> is-macos: false;
 
     changed theme => {
         Palette.color-scheme =
@@ -299,6 +303,22 @@ export component MainWindow inherits Window {
                 activated => {
                     root.show-object-list = !root.show-object-list;
                 }
+            }
+
+            MenuSeparator { }
+
+            // Two-way bound to the window's full-screen state: the
+            // checkable item's built-in toggle flips full-screen, and
+            // OS-driven changes (for example the macOS green button)
+            // flow back into the checkmark. The MenuBar is an isolation
+            // boundary, so this reads root from inside the item.
+            MenuItem {
+                title: @tr("MenuBar" => "Fullscreen");
+                checkable: true;
+                checked <=> root.full-screen;
+                shortcut: root.is-macos
+                    ? @keys(Control + Meta + F)
+                    : @keys(F11);
             }
         }
 
