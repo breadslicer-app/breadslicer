@@ -143,6 +143,25 @@ impl Default for PackageReadLimits {
     }
 }
 
+/// Cumulative decompressed-byte counts reported while a package is
+/// read.
+///
+/// `total_bytes` is the sum of the decompressed sizes announced in
+/// the ZIP central directory and stays fixed for the whole read.
+/// Announced sizes are claims: a forged entry can announce sizes that
+/// differ from what inflation actually yields, and extraction stops
+/// early on refused archives, so `decompressed_bytes` can end short
+/// of `total_bytes`, or step past it right before a refusal. On
+/// honest archives the final tick has the two equal. Consumers that
+/// derive a fraction should clamp it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecompressionProgress {
+    /// Bytes inflated so far, summed across all file entries.
+    pub decompressed_bytes: u64,
+    /// Sum of the announced decompressed sizes of all file entries.
+    pub total_bytes: u64,
+}
+
 /// An in-memory OPC package: ordered parts plus relationships.
 #[derive(Debug, Default)]
 pub struct Package {
@@ -276,16 +295,51 @@ impl Package {
     /// [`PackageReadError::OversizedPart`] or
     /// [`PackageReadError::OversizedPackage`].
     pub fn read_from<R: Read + Seek>(reader: R) -> Result<Self, PackageReadError> {
-        Self::read_from_with_limits(reader, PackageReadLimits::default())
+        Self::read_from_impl(reader, PackageReadLimits::default(), |_| {})
+    }
+
+    /// [`Package::read_from`], reporting decompression progress.
+    ///
+    /// `progress` is invoked from inside the extraction loop as entry
+    /// bytes are inflated, carrying cumulative counts across the whole
+    /// archive; see [`DecompressionProgress`] for what the counts can
+    /// and cannot promise.
+    pub fn read_from_with_progress<R: Read + Seek>(
+        reader: R,
+        progress: impl FnMut(DecompressionProgress),
+    ) -> Result<Self, PackageReadError> {
+        Self::read_from_impl(reader, PackageReadLimits::default(), progress)
     }
 
     /// [`Package::read_from`] with caller-chosen size ceilings; the
-    /// public entry point always applies the defaults.
+    /// public entry points always apply the defaults. Only the cap
+    /// tests need to pick their own ceilings.
+    #[cfg(test)]
     pub(crate) fn read_from_with_limits<R: Read + Seek>(
         reader: R,
         limits: PackageReadLimits,
     ) -> Result<Self, PackageReadError> {
+        Self::read_from_impl(reader, limits, |_| {})
+    }
+
+    fn read_from_impl<R: Read + Seek>(
+        reader: R,
+        limits: PackageReadLimits,
+        mut progress: impl FnMut(DecompressionProgress),
+    ) -> Result<Self, PackageReadError> {
         let mut archive = ZipArchive::new(reader)?;
+        // Central-directory pre-pass: sum the announced decompressed
+        // sizes so every progress tick can carry the total. Announced
+        // sizes are claims; the extraction below still enforces the
+        // real ceilings.
+        let mut announced_total: u64 = 0;
+        for index in 0..archive.len() {
+            let file = archive.by_index_raw(index)?;
+            if file.is_dir() {
+                continue;
+            }
+            announced_total = announced_total.saturating_add(file.size());
+        }
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
         let mut total_bytes: u64 = 0;
         for index in 0..archive.len() {
@@ -300,7 +354,14 @@ impl Package {
                 format!("/{raw_name}")
             };
             let claimed_size = file.size();
-            let data = read_part_bytes(&mut file, claimed_size, &name, limits, total_bytes)?;
+            let ticking = TickingReader {
+                inner: &mut file,
+                base: total_bytes,
+                read: 0,
+                announced_total,
+                progress: &mut progress,
+            };
+            let data = read_part_bytes(ticking, claimed_size, &name, limits, total_bytes)?;
             total_bytes += data.len() as u64;
             entries.push((name, data));
         }
@@ -409,6 +470,32 @@ impl Package {
 /// (bounding pre-allocation when the header lies high), and the bytes
 /// actually inflated are counted through a `take` bound (bounding
 /// buffering when the header lies low).
+/// `Read` wrapper that reports cumulative decompressed byte counts
+/// through a progress callback as an archive entry is inflated.
+/// `base` carries the bytes of the entries already extracted, so one
+/// wrapper per entry still yields archive-wide cumulative ticks.
+struct TickingReader<'a, R, F> {
+    inner: R,
+    base: u64,
+    read: u64,
+    announced_total: u64,
+    progress: &'a mut F,
+}
+
+impl<R: Read, F: FnMut(DecompressionProgress)> Read for TickingReader<'_, R, F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            self.read += n as u64;
+            (self.progress)(DecompressionProgress {
+                decompressed_bytes: self.base + self.read,
+                total_bytes: self.announced_total,
+            });
+        }
+        Ok(n)
+    }
+}
+
 fn read_part_bytes<R: Read>(
     reader: R,
     claimed_size: u64,

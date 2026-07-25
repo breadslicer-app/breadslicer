@@ -11,7 +11,7 @@ use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE, THUMBNAIL_REL_TYPE,
 };
-use crate::package::{Package, PackageReadLimits, PartName, Relationship};
+use crate::package::{DecompressionProgress, Package, PackageReadLimits, PartName, Relationship};
 
 fn part(name: &str) -> PartName {
     PartName::new(name).expect("valid part name")
@@ -67,6 +67,61 @@ fn write_to_bytes(package: &Package) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     package.write_to(&mut cursor).expect("package writes");
     cursor.into_inner()
+}
+
+const MINIMAL_CONTENT_TYPES: &str = include_str!("../tests/fixtures/opc/minimal_content_types.xml");
+const MINIMAL_RELS: &str = include_str!("../tests/fixtures/opc/minimal_rels.xml");
+
+/// A hand-built archive holding the minimal fixture entries (content
+/// types, root rels, `<model/>`), so tests know the exact decompressed
+/// size of every entry. `model_options` styles the model entry (e.g.
+/// forcing ZIP64 structures via `large_file`).
+fn minimal_package_bytes(model_options: zip::write::SimpleFileOptions) -> Vec<u8> {
+    let mut cursor = Cursor::new(Vec::new());
+    let mut archive = zip::write::ZipWriter::new(&mut cursor);
+    let plain = zip::write::SimpleFileOptions::default();
+    archive.start_file("[Content_Types].xml", plain).unwrap();
+    archive.write_all(MINIMAL_CONTENT_TYPES.as_bytes()).unwrap();
+    archive.start_file("_rels/.rels", plain).unwrap();
+    archive.write_all(MINIMAL_RELS.as_bytes()).unwrap();
+    archive
+        .start_file("3D/3dmodel.model", model_options)
+        .unwrap();
+    archive.write_all(b"<model/>").unwrap();
+    archive.finish().unwrap();
+    cursor.into_inner()
+}
+
+/// Decompressed size of every entry `minimal_package_bytes` writes.
+fn minimal_package_decompressed_len() -> u64 {
+    (MINIMAL_CONTENT_TYPES.len() + MINIMAL_RELS.len() + b"<model/>".len()) as u64
+}
+
+/// A ZIP archive holding one deflated entry named `big.bin`.
+fn single_entry_archive(payload: Vec<u8>) -> Vec<u8> {
+    let mut cursor = Cursor::new(Vec::new());
+    let mut archive = zip::write::ZipWriter::new(&mut cursor);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    archive.start_file("big.bin", options).unwrap();
+    archive.write_all(&payload).unwrap();
+    archive.finish().unwrap();
+    cursor.into_inner()
+}
+
+/// Forge the entry's 4-byte uncompressed-size field, in both the
+/// local file header and the central directory, to claim `claimed`
+/// bytes. Single-entry archives only.
+fn forge_claimed_size(bytes: &mut [u8], claimed: u32) {
+    assert_eq!(&bytes[0..4], b"PK\x03\x04", "local header at start");
+    bytes[22..26].copy_from_slice(&claimed.to_le_bytes());
+    // The last central-directory signature is the real one: the
+    // entry's payload can only appear before the directory.
+    let central = bytes
+        .windows(4)
+        .rposition(|w| w == b"PK\x01\x02")
+        .expect("central directory header");
+    bytes[central + 24..central + 28].copy_from_slice(&claimed.to_le_bytes());
 }
 
 #[cfg(test)]
@@ -294,33 +349,6 @@ mod read_limits_tests {
         write_to_bytes(&package)
     }
 
-    /// A ZIP archive holding one deflated entry named `big.bin`.
-    fn single_entry_archive(payload: Vec<u8>) -> Vec<u8> {
-        let mut cursor = Cursor::new(Vec::new());
-        let mut archive = zip::write::ZipWriter::new(&mut cursor);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
-        archive.start_file("big.bin", options).unwrap();
-        archive.write_all(&payload).unwrap();
-        archive.finish().unwrap();
-        cursor.into_inner()
-    }
-
-    /// Forge the entry's 4-byte uncompressed-size field, in both the
-    /// local file header and the central directory, to claim
-    /// `claimed` bytes. Single-entry archives only.
-    fn forge_claimed_size(bytes: &mut [u8], claimed: u32) {
-        assert_eq!(&bytes[0..4], b"PK\x03\x04", "local header at start");
-        bytes[22..26].copy_from_slice(&claimed.to_le_bytes());
-        // The last central-directory signature is the real one: the
-        // entry's payload can only appear before the directory.
-        let central = bytes
-            .windows(4)
-            .rposition(|w| w == b"PK\x01\x02")
-            .expect("central directory header");
-        bytes[central + 24..central + 28].copy_from_slice(&claimed.to_le_bytes());
-    }
-
     #[test]
     fn default_limits_are_2_gib_per_part_and_4_gib_total() {
         let limits = PackageReadLimits::default();
@@ -458,10 +486,6 @@ mod read_limits_tests {
 mod zip64_tests {
     use super::*;
 
-    const MINIMAL_CONTENT_TYPES: &str =
-        include_str!("../tests/fixtures/opc/minimal_content_types.xml");
-    const MINIMAL_RELS: &str = include_str!("../tests/fixtures/opc/minimal_rels.xml");
-
     /// Byte offset right after a local file header's name, where the
     /// entry's extra field begins.
     fn local_extra_field_offset(bytes: &[u8], name: &[u8]) -> usize {
@@ -476,18 +500,8 @@ mod zip64_tests {
         // The writer's large_file option forces ZIP64 structures
         // onto the entry even though its real size is small, which
         // pins ZIP64 reading without a multi-gigabyte fixture.
-        let mut cursor = Cursor::new(Vec::new());
-        let mut archive = zip::write::ZipWriter::new(&mut cursor);
-        let plain = zip::write::SimpleFileOptions::default();
-        archive.start_file("[Content_Types].xml", plain).unwrap();
-        archive.write_all(MINIMAL_CONTENT_TYPES.as_bytes()).unwrap();
-        archive.start_file("_rels/.rels", plain).unwrap();
-        archive.write_all(MINIMAL_RELS.as_bytes()).unwrap();
         let zip64 = zip::write::SimpleFileOptions::default().large_file(true);
-        archive.start_file("3D/3dmodel.model", zip64).unwrap();
-        archive.write_all(b"<model/>").unwrap();
-        archive.finish().unwrap();
-        let bytes = cursor.into_inner();
+        let bytes = minimal_package_bytes(zip64);
 
         // The model entry's local header must carry the ZIP64
         // extended-information extra field (id 0x0001); without it
@@ -510,5 +524,112 @@ mod zip64_tests {
         );
         let start = package.start_part().expect("start part resolves");
         assert_eq!(start.as_str(), DEFAULT_MODEL_PART_NAME);
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    fn read_collecting_ticks(
+        bytes: Vec<u8>,
+    ) -> (
+        Result<Package, PackageReadError>,
+        Vec<DecompressionProgress>,
+    ) {
+        let mut ticks = Vec::new();
+        let result = Package::read_from_with_progress(Cursor::new(bytes), |p| ticks.push(p));
+        (result, ticks)
+    }
+
+    /// Shared assertions for honest archives: at least one tick, a
+    /// fixed total on every tick, strictly growing counts (ticks only
+    /// fire when bytes were inflated), and a final count equal to the
+    /// total.
+    fn assert_monotone_ending_at_total(ticks: &[DecompressionProgress]) -> u64 {
+        assert!(!ticks.is_empty(), "reading a package must tick");
+        let total = ticks[0].total_bytes;
+        for pair in ticks.windows(2) {
+            assert_eq!(pair[1].total_bytes, total, "total must stay fixed");
+            assert!(
+                pair[1].decompressed_bytes > pair[0].decompressed_bytes,
+                "ticks must carry strictly growing counts"
+            );
+        }
+        let last = ticks.last().expect("non-empty").decompressed_bytes;
+        assert_eq!(last, total, "an honest archive ends at its total");
+        total
+    }
+
+    #[test]
+    fn known_entry_sizes_produce_an_exact_total() {
+        let bytes = minimal_package_bytes(zip::write::SimpleFileOptions::default());
+        let (result, ticks) = read_collecting_ticks(bytes);
+        result.expect("package reads");
+        let total = assert_monotone_ending_at_total(&ticks);
+        assert_eq!(total, minimal_package_decompressed_len());
+    }
+
+    #[test]
+    fn zip64_archive_ticks_end_at_its_exact_total() {
+        let zip64 = zip::write::SimpleFileOptions::default().large_file(true);
+        let bytes = minimal_package_bytes(zip64);
+        let (result, ticks) = read_collecting_ticks(bytes);
+        result.expect("zip64 package reads");
+        let total = assert_monotone_ending_at_total(&ticks);
+        assert_eq!(total, minimal_package_decompressed_len());
+    }
+
+    #[test]
+    fn round_tripped_package_ticks_cover_parts_and_generated_entries() {
+        let bytes = write_to_bytes(&sample_package());
+        let (result, ticks) = read_collecting_ticks(bytes);
+        result.expect("package reads");
+        let total = assert_monotone_ending_at_total(&ticks);
+        // The 3 payloads of `sample_package` plus the generated
+        // content-types and relationship entries: the exact XML sizes
+        // are the writer's business, but the total must cover at
+        // least the payload bytes.
+        let payload_bytes = (b"<model/>".len() + b"<model2/>".len() + 3) as u64;
+        assert!(total > payload_bytes, "total covers the non-part entries");
+    }
+
+    #[test]
+    fn oversized_claim_is_refused_before_any_tick() {
+        // 3 GiB claimed against the default 2 GiB per-part ceiling:
+        // the claimed-size check refuses the entry before a single
+        // byte is inflated, so no tick may fire.
+        let mut bytes = single_entry_archive(b"0123456789".to_vec());
+        forge_claimed_size(&mut bytes, 3 << 30);
+        let (result, ticks) = read_collecting_ticks(bytes);
+        assert!(matches!(
+            result.unwrap_err(),
+            PackageReadError::OversizedPart { part, .. } if part == "/big.bin"
+        ));
+        assert!(ticks.is_empty(), "a refused claim must not tick");
+    }
+
+    #[test]
+    fn lying_low_claim_ticks_past_the_announced_total() {
+        // The header claims 10 bytes but inflation yields 100 KiB;
+        // under the default ceilings the entry itself is accepted, so
+        // the counts step past the claimed total exactly as the
+        // `DecompressionProgress` docs warn. The read still fails
+        // later (no content-types entry), which must not retract the
+        // ticks already delivered.
+        let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
+        forge_claimed_size(&mut bytes, 10);
+        let (result, ticks) = read_collecting_ticks(bytes);
+        assert!(matches!(
+            result.unwrap_err(),
+            PackageReadError::MissingContentTypes
+        ));
+        let last = ticks.last().expect("extraction must have ticked");
+        assert_eq!(last.total_bytes, 10, "the forged claim is the total");
+        assert_eq!(
+            last.decompressed_bytes,
+            100 * 1024,
+            "counts report real inflated bytes, not the claim"
+        );
     }
 }
