@@ -28,9 +28,9 @@ use std::rc::{Rc, Weak};
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
-use crate::ThemePreference;
 use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
+use crate::{MenuLayout, ThemePreference};
 
 /// Full read-out of every preference. Listeners receive a reference;
 /// clone the fields they care about.
@@ -42,6 +42,7 @@ use crate::language::LanguagePreference;
 #[derive(Clone, Debug)]
 pub(crate) struct PreferencesSnapshot {
     pub theme: ThemePreference,
+    pub menu_layout: MenuLayout,
     pub language: LanguagePreference,
     pub default_printer: Option<PrinterId>,
     pub default_resin: Option<MaterialId>,
@@ -194,12 +195,13 @@ mod preferences_bus_tests {
 
     use std::cell::{Cell, RefCell};
 
-    use crate::ThemePreference;
     use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
+    use crate::{MenuLayout, ThemePreference};
 
     fn initial() -> PreferencesSnapshot {
         PreferencesSnapshot {
             theme: ThemePreference::System,
+            menu_layout: MenuLayout::Bar,
             language: LanguagePreference::System,
             default_printer: None,
             default_resin: None,

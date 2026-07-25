@@ -28,6 +28,12 @@ export { AboutWindow, AxisView, ErrorDialog, ExtendDialog, ForkDialog, PointerMo
 // two.
 export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
 
+// Menu presentation for the main window. `Bar` shows the top menu bar;
+// `Compact` hides it to reclaim vertical space. Linux and Windows only:
+// macOS always resolves to `Bar` in Rust because it renders a global
+// top-of-screen menu bar. Persisted app-wide.
+export enum MenuLayout { Bar, Compact }
+
 // Resize handle between the viewport and the object-list panel. Tracks
 // the cursor in absolute window coordinates so the splitter remains
 // stable even as the layout reflows under the drag (the handle's local
@@ -114,6 +120,10 @@ export component MainWindow inherits Window {
     // Selects the platform's fullscreen accelerator shown in the View
     // menu: Cmd+Ctrl+F on macOS, F11 elsewhere.
     in property <bool> is-macos: false;
+    // Menu presentation, pushed from the persisted preference. macOS
+    // always resolves to Bar in Rust because it renders a global menu
+    // bar.
+    in property <MenuLayout> menu-layout: MenuLayout.Bar;
 
     changed theme => {
         Palette.color-scheme =

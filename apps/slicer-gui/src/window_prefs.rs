@@ -15,7 +15,7 @@
 
 use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
-use crate::{AboutWindow, MainWindow, PreferencesWindow};
+use crate::{AboutWindow, MainWindow, MenuLayout, PreferencesWindow};
 
 pub(crate) trait WindowPreferences {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot);
@@ -24,6 +24,15 @@ pub(crate) trait WindowPreferences {
 impl WindowPreferences for MainWindow {
     fn apply_preferences(&self, prefs: &PreferencesSnapshot) {
         self.set_theme(prefs.theme);
+        // Menu layout is a Linux/Windows affordance: macOS renders a
+        // global top-of-screen menu bar, so force Bar there and ignore
+        // the stored value.
+        let menu_layout = if cfg!(target_os = "macos") {
+            MenuLayout::Bar
+        } else {
+            prefs.menu_layout
+        };
+        self.set_menu_layout(menu_layout);
         // Language: `@tr` bindings throughout the Slint tree
         // re-evaluate automatically after `select_bundled_translation`
         // flips the active locale; nothing to push per-window.

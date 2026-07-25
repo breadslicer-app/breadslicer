@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sc_print_primitives::{MaterialId, PrinterId};
 use serde::{Deserialize, Serialize};
 
-use crate::ThemePreference;
 use crate::language::LanguagePreference;
+use crate::{MenuLayout, ThemePreference};
 
 const SETTINGS_FILENAME: &str = "settings.toml";
 
@@ -55,6 +55,43 @@ impl From<ThemeSetting> for ThemePreference {
     }
 }
 
+/// On-disk representation of `MenuLayout`. Separate type because the
+/// Slint-generated `MenuLayout` isn't serde-aware; lowercase variants
+/// give a friendlier TOML surface.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum MenuLayoutSetting {
+    #[default]
+    Bar,
+    Compact,
+}
+
+impl MenuLayoutSetting {
+    /// `Bar` is the default; skipped when serializing so a fresh config
+    /// stays minimal.
+    fn is_bar(&self) -> bool {
+        matches!(self, MenuLayoutSetting::Bar)
+    }
+}
+
+impl From<MenuLayout> for MenuLayoutSetting {
+    fn from(value: MenuLayout) -> Self {
+        match value {
+            MenuLayout::Bar => MenuLayoutSetting::Bar,
+            MenuLayout::Compact => MenuLayoutSetting::Compact,
+        }
+    }
+}
+
+impl From<MenuLayoutSetting> for MenuLayout {
+    fn from(value: MenuLayoutSetting) -> Self {
+        match value {
+            MenuLayoutSetting::Bar => MenuLayout::Bar,
+            MenuLayoutSetting::Compact => MenuLayout::Compact,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Appearance {
     #[serde(default)]
@@ -63,6 +100,9 @@ pub(crate) struct Appearance {
     /// fresh config stays minimal.
     #[serde(default, skip_serializing_if = "LanguagePreference::is_system")]
     language: LanguagePreference,
+    /// Omitted in TOML when the user is on `Bar` (the default).
+    #[serde(default, skip_serializing_if = "MenuLayoutSetting::is_bar")]
+    menu_layout: MenuLayoutSetting,
 }
 
 /// Current schema version of the on-disk settings file. Bump this when
@@ -192,6 +232,14 @@ impl AppSettings {
         self.appearance.language = language;
     }
 
+    pub fn menu_layout(&self) -> MenuLayout {
+        self.appearance.menu_layout.into()
+    }
+
+    pub fn set_menu_layout(&mut self, menu_layout: MenuLayout) {
+        self.appearance.menu_layout = menu_layout.into();
+    }
+
     pub fn default_printer(&self) -> Option<PrinterId> {
         self.default_printer.clone()
     }
@@ -269,8 +317,8 @@ fn write_atomically(target: &Path, contents: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod app_settings_tests {
     use super::*;
-    use crate::ThemePreference;
     use crate::language::LanguagePreference;
+    use crate::{MenuLayout, ThemePreference};
     use tempfile::TempDir;
 
     #[test]
@@ -371,6 +419,45 @@ mod app_settings_tests {
         s.save_to_path(&path).unwrap();
         let loaded = AppSettings::load_from_path(&path);
         assert!(matches!(loaded.theme(), ThemePreference::Light));
+    }
+
+    #[test]
+    fn default_menu_layout_is_bar() {
+        assert_eq!(AppSettings::default().menu_layout(), MenuLayout::Bar);
+    }
+
+    #[test]
+    fn compact_menu_layout_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_menu_layout(MenuLayout::Compact);
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.menu_layout(), MenuLayout::Compact);
+
+        // Written as a plain lowercase string so an external tool or a
+        // hand-edit can find it.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("menu_layout = \"compact\""),
+            "got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn saved_toml_omits_default_menu_layout() {
+        // Bar (the default) is `skip_serializing_if`; a fresh config
+        // shouldn't carry a redundant `menu_layout = "bar"` line.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("menu_layout"),
+            "default settings should not serialise the menu layout key, got:\n{written}"
+        );
     }
 
     #[test]

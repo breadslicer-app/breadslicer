@@ -249,6 +249,7 @@ fn spawn_settings_saver(
             let mut settings = initial_settings;
             run_settings_saver_loop(rx, |snap| {
                 settings.set_theme(snap.theme);
+                settings.set_menu_layout(snap.menu_layout);
                 settings.set_language(snap.language);
                 settings.set_default_printer(snap.default_printer.clone());
                 settings.set_default_resin(snap.default_resin.clone());
@@ -279,6 +280,7 @@ impl AppState {
         };
         let snapshot = PreferencesSnapshot {
             theme: settings.theme(),
+            menu_layout: settings.menu_layout(),
             language: settings.language(),
             default_printer,
             default_resin,
@@ -1026,13 +1028,14 @@ mod context_menu_policy_tests {
 #[cfg(test)]
 mod settings_saver_tests {
     use super::*;
-    use crate::ThemePreference;
     use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
     use crate::language::LanguagePreference;
+    use crate::{MenuLayout, ThemePreference};
 
     fn snapshot_with(theme: ThemePreference) -> PreferencesSnapshot {
         PreferencesSnapshot {
             theme,
+            menu_layout: MenuLayout::Bar,
             language: LanguagePreference::System,
             default_printer: None,
             default_resin: None,
@@ -1089,6 +1092,7 @@ mod settings_saver_tests {
             last_bv = bv;
             tx.send(PreferencesSnapshot {
                 theme: ThemePreference::System,
+                menu_layout: MenuLayout::Bar,
                 language: LanguagePreference::System,
                 default_printer: None,
                 default_resin: None,
