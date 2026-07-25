@@ -6,7 +6,8 @@
 //! Scene-level spatial layer. Owns a [`Scene`] and the per-mesh
 //! caches it needs.
 //!
-//! Co-ownership is the load-bearing design choice. A [`SceneSpatial`]
+//! Co-ownership is the design choice everything else here rests on.
+//! A [`SceneSpatial`]
 //! holds the [`Scene`] by value; readers obtain an
 //! [`ObjectQuery<'_>`] handle via [`SceneSpatial::leaf`] (by stable
 //! [`NodeId`]). The query bundles the leaf node, the resolved mesh
@@ -21,6 +22,23 @@ use sc_mesh_core::{
 
 use crate::clusters::TriangleClusters;
 use crate::mesh_spatial::MeshSpatial;
+
+/// Triangle counts reported while eager cache priming runs.
+///
+/// One tick fires per primed leaf, after its cache is built.
+/// `total_triangles` is fixed for the whole run, computed by the same
+/// traversal that primes: a mesh resource referenced by N leaves
+/// contributes its triangles N times to BOTH counts, matching the
+/// idempotent re-prime the traversal performs, so the counts stay
+/// consistent and the final tick reaches the total. A zero-triangle
+/// leaf still ticks, with the count unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrimingProgress {
+    /// Triangles whose leaf caches have been primed so far.
+    pub primed_triangles: u64,
+    /// Triangles reachable from the scene roots, per leaf visit.
+    pub total_triangles: u64,
+}
 
 /// Scene plus per-mesh spatial caches. The cache crate's main
 /// public type. Callers in the GUI swap their `Scene` storage
@@ -62,8 +80,17 @@ impl SceneSpatial {
     /// `MeshSpatial::prime` is idempotent, so the extra work is
     /// duplicated cache lookups, not duplicated computation.
     pub fn primed_graph(graph: Scene) -> Self {
+        Self::primed_graph_with_progress(graph, |_| {})
+    }
+
+    /// [`SceneSpatial::primed_graph`], reporting per-leaf priming
+    /// progress; see [`PrimingProgress`] for the tick contract.
+    pub fn primed_graph_with_progress(
+        graph: Scene,
+        mut progress: impl FnMut(PrimingProgress),
+    ) -> Self {
         let s = Self::from_graph(graph);
-        s.prime_reachable_caches();
+        s.prime_reachable_caches(&mut progress);
         s
     }
 
@@ -315,11 +342,18 @@ impl SceneSpatial {
         });
     }
 
-    fn prime_reachable_caches(&self) {
+    fn prime_reachable_caches(&self, progress: &mut impl FnMut(PrimingProgress)) {
+        let total_triangles = self.reachable_triangle_total();
+        let mut primed_triangles: u64 = 0;
         for_each_reachable_node(&self.graph, |id, node| match &node.kind {
             NodeKind::Leaf(LeafPayload::Mesh(mesh)) => {
                 if let Some(Some(cache)) = self.leaves.get(id.index()) {
                     cache.prime(mesh);
+                    primed_triangles += mesh.faces.len() as u64;
+                    progress(PrimingProgress {
+                        primed_triangles,
+                        total_triangles,
+                    });
                 }
             }
             NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
@@ -328,10 +362,39 @@ impl SceneSpatial {
                     self.mesh_resources.get(rid.index()),
                 ) {
                     cache.prime(mesh);
+                    primed_triangles += mesh.faces.len() as u64;
+                    progress(PrimingProgress {
+                        primed_triangles,
+                        total_triangles,
+                    });
                 }
             }
             _ => {}
         });
+    }
+
+    /// Reachable triangle count, per leaf visit, mirroring exactly
+    /// what `prime_reachable_caches` primes so the two agree on the
+    /// denominator.
+    fn reachable_triangle_total(&self) -> u64 {
+        let mut total: u64 = 0;
+        for_each_reachable_node(&self.graph, |id, node| match &node.kind {
+            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => {
+                if let Some(Some(_)) = self.leaves.get(id.index()) {
+                    total += mesh.faces.len() as u64;
+                }
+            }
+            NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
+                if let (Some(mesh), Some(_)) = (
+                    self.graph.mesh_resource(*rid),
+                    self.mesh_resources.get(rid.index()),
+                ) {
+                    total += mesh.faces.len() as u64;
+                }
+            }
+            _ => {}
+        });
+        total
     }
 }
 

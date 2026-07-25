@@ -18,7 +18,7 @@ mod mesh_spatial;
 mod scene_spatial;
 
 pub use clusters::TriangleClusters;
-pub use scene_spatial::{ObjectQuery, SceneSpatial};
+pub use scene_spatial::{ObjectQuery, PrimingProgress, SceneSpatial};
 
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{Aabb, NodeId, NodeKind};

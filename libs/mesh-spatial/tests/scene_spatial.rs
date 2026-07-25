@@ -6,8 +6,8 @@
 //! End-to-end tests for the `mesh-spatial` public surface:
 //!
 //! - `MeshSpatial` cache lifecycle (priming, lazy build, eager build).
-//! - `ObjectQuery` binding tests that prove the structural mesh ↔
-//!   cache pairing of §2 in the extraction plan.
+//! - `ObjectQuery` binding tests that prove the structural mesh /
+//!   cache pairing.
 //! - `scene_aabb` consistency between cached and uncached forms.
 //! - Per-variant invalidation discipline for `SceneEdit` (basic enum
 //!   behaviour, `is_noop` and `inverse`, is tested in `mesh-core`).
@@ -19,7 +19,7 @@ use sc_mesh_core::scene::edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
-use sc_mesh_spatial::{SceneSpatial, scene_aabb};
+use sc_mesh_spatial::{PrimingProgress, SceneSpatial, scene_aabb};
 
 /// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
 /// The integration tests below operate on single- or two-leaf
@@ -167,7 +167,7 @@ mod object_query_binding {
         let aabb_a = a.local_aabb().unwrap();
         let aabb_b = b.local_aabb().unwrap();
         assert_eq!(aabb_a, aabb_b);
-        // Same resource → same cluster cache reference.
+        // Same resource: same cluster cache reference.
         let clusters_a = a.clusters().unwrap() as *const _;
         let clusters_b = b.clusters().unwrap() as *const _;
         assert_eq!(
@@ -267,6 +267,100 @@ mod cache_priming {
     }
 }
 
+mod priming_progress {
+    use super::*;
+
+    /// Two CCW triangles forming a unit quad in the XY plane.
+    fn quad_mesh() -> IndexedMesh {
+        IndexedMesh::new(
+            None,
+            vec![
+                vertex(0.0, 0.0, 0.0),
+                vertex(1.0, 0.0, 0.0),
+                vertex(1.0, 1.0, 0.0),
+                vertex(0.0, 1.0, 0.0),
+            ],
+            vec![
+                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]),
+                IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 2, 3]),
+            ],
+        )
+    }
+
+    fn prime_collecting_ticks(graph: Scene) -> Vec<PrimingProgress> {
+        let mut ticks = Vec::new();
+        let _ = SceneSpatial::primed_graph_with_progress(graph, |p| ticks.push(p));
+        ticks
+    }
+
+    #[test]
+    fn ticks_are_triangle_weighted_per_leaf_in_pre_order() {
+        // 1-face inline leaf, 2-face inline leaf, 1-face resource
+        // leaf: the counts must advance by each leaf's face count
+        // (not by 1 per leaf), against a fixed total of 4.
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
+        add_inline_leaf(&mut g, root, quad_mesh(), Transform3D::Identity);
+        let rid = g.add_mesh_resource(triangle_mesh(2.0));
+        add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
+
+        let ticks = prime_collecting_ticks(g);
+        let expected: Vec<PrimingProgress> = [(1, 4), (3, 4), (4, 4)]
+            .into_iter()
+            .map(|(primed_triangles, total_triangles)| PrimingProgress {
+                primed_triangles,
+                total_triangles,
+            })
+            .collect();
+        assert_eq!(ticks, expected);
+    }
+
+    #[test]
+    fn shared_resource_counts_once_per_referencing_leaf() {
+        // One 1-face resource behind 2 leaves: both counts include it
+        // twice, so the final tick still reaches the total.
+        let (mut g, root) = graph_with_group_root();
+        let rid = g.add_mesh_resource(triangle_mesh(1.0));
+        add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
+        add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
+
+        let ticks = prime_collecting_ticks(g);
+        let expected: Vec<PrimingProgress> = [(1, 2), (2, 2)]
+            .into_iter()
+            .map(|(primed_triangles, total_triangles)| PrimingProgress {
+                primed_triangles,
+                total_triangles,
+            })
+            .collect();
+        assert_eq!(ticks, expected);
+    }
+
+    #[test]
+    fn faceless_leaf_ticks_without_advancing_the_count() {
+        let (mut g, root) = graph_with_group_root();
+        let faceless = IndexedMesh::new(None, vec![vertex(0.0, 0.0, 0.0)], vec![]);
+        add_inline_leaf(&mut g, root, faceless, Transform3D::Identity);
+        add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
+
+        let ticks = prime_collecting_ticks(g);
+        let expected: Vec<PrimingProgress> = [(0, 1), (1, 1)]
+            .into_iter()
+            .map(|(primed_triangles, total_triangles)| PrimingProgress {
+                primed_triangles,
+                total_triangles,
+            })
+            .collect();
+        assert_eq!(ticks, expected);
+    }
+
+    #[test]
+    fn empty_scene_primes_without_ticking() {
+        assert!(prime_collecting_ticks(Scene::new()).is_empty());
+        let (leafless, _root) = graph_with_group_root();
+        assert!(prime_collecting_ticks(leafless).is_empty());
+    }
+}
+
 mod scene_aabb_consistency {
     use super::*;
 
@@ -304,7 +398,7 @@ mod scene_aabb_consistency {
 
     /// `Scene::aabb` (in `mesh-core`) and `scene_aabb` (in
     /// `mesh-spatial`) implement the same Arvo loop at different
-    /// caching layers; review §3.4 flagged the duplication. These
+    /// caching layers, a known duplication. These
     /// cases pin the cross-layer equivalence on every transform
     /// shape the renderer is likely to produce, so a drift between
     /// the two surfaces fails CI rather than picker / framing.
