@@ -1098,6 +1098,32 @@ mod gpu_integration_tests {
         assert_eq!(gpu.model_stride() % alignment, 0);
     }
 
+    /// `build_with_progress` ticks once per object per pass with
+    /// triangle counts: the single-triangle graph yields one flatten
+    /// tick and one buffer tick, ending at the doubled total.
+    #[test]
+    fn gpu_scene_build_reports_two_pass_triangle_progress() {
+        let Some((device, _queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
+        let mut ticks: Vec<scene_upload::UploadProgress> = Vec::new();
+        GpuScene::build_with_progress(&device, DeviceToken::next(), &graph, |p| ticks.push(p))
+            .expect("GpuScene::build_with_progress should succeed");
+        let expected: Vec<scene_upload::UploadProgress> = [(1, 2), (2, 2)]
+            .into_iter()
+            .map(
+                |(processed_triangles, total_triangles)| scene_upload::UploadProgress {
+                    processed_triangles,
+                    total_triangles,
+                },
+            )
+            .collect();
+        assert_eq!(ticks, expected);
+    }
+
     /// Full end-to-end render: build the renderer, install a scene
     /// with a non-identity transform, drive a render at a tiny size.
     /// The original storage-buffer-in-vertex bug surfaced as a runtime

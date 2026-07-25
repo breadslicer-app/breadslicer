@@ -26,17 +26,20 @@ use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::LoadedMesh;
-use sc_mesh_formats::loader::scene_shared_vertices_warning;
+use sc_mesh_formats::error::LoadMeshError;
+use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
+use sc_mesh_formats::loader::{load_mesh_from_reader, scene_shared_vertices_warning};
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
 use sc_project_formats::{
     LoadedProject, ProfileRefWarning, ProjectPayload, ReadProjectWarning,
-    infer_project_file_type_from_extension, read_project,
+    infer_project_file_type_from_extension, read_project_with_progress,
 };
 use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::i18n::ctr;
+use crate::load_progress::{LoadPhase, LoadProgressSink, ProgressReader};
 use crate::mesh_render::GpuScene;
 use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
@@ -127,7 +130,9 @@ pub(crate) fn start_load_with_ticket(
         );
         return;
     };
-    spawn_load(ticket, path, device, device_token, build_volume);
+    let sink = loader.progress_sink();
+    sink.reset();
+    spawn_load(ticket, path, device, device_token, build_volume, sink);
 }
 
 /// Translates every scene root in `graph` by a single shared delta so
@@ -166,29 +171,23 @@ pub(crate) fn place_on_plate(graph: &mut Scene, build_volume: BuildVolume) -> an
 /// Parser output for one source file: the scene, the mesh-level
 /// warnings, and whatever project data the format carries (project
 /// fields stay empty for plain mesh files).
-struct ParsedSource {
-    graph: Scene,
-    warnings: Vec<LoadMeshWarning>,
-    project_payload: Option<ProjectPayload>,
-    project_warnings: Vec<ReadProjectWarning>,
-    profile_warnings: Vec<ProfileRefWarning>,
+pub(crate) struct ParsedSource {
+    pub(crate) graph: Scene,
+    pub(crate) warnings: Vec<LoadMeshWarning>,
+    pub(crate) project_payload: Option<ProjectPayload>,
+    pub(crate) project_warnings: Vec<ReadProjectWarning>,
+    pub(crate) profile_warnings: Vec<ProfileRefWarning>,
 }
 
-/// Parses the file at `path`. Project-capable formats (3MF) go
-/// through the project reader so the project payload is extracted
-/// from the same container parse; everything else goes through the
-/// plain mesh loader.
-fn parse_source(path: &Path) -> anyhow::Result<ParsedSource> {
+/// Parses the file at `path`, reporting parse-phase progress through
+/// `sink`. Project-capable formats (3MF) go through the project
+/// reader so the project payload is extracted from the same container
+/// parse, with decompressed bytes driving the phase; everything else
+/// goes through the plain mesh loader with stream position driving
+/// it.
+pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Result<ParsedSource> {
     let Ok(file_type) = infer_project_file_type_from_extension(path) else {
-        let LoadedMesh { graph, warnings } =
-            sc_mesh_formats::load_mesh_from_path(path, None, Some(MAX_MESH_FILE_SIZE_BYTES))?;
-        return Ok(ParsedSource {
-            graph,
-            warnings,
-            project_payload: None,
-            project_warnings: Vec::new(),
-            profile_warnings: Vec::new(),
-        });
+        return parse_mesh_source(path, sink);
     };
 
     let file = File::open(path)?;
@@ -197,7 +196,9 @@ fn parse_source(path: &Path) -> anyhow::Result<ParsedSource> {
         scene,
         warnings: project_warnings,
         payload,
-    } = read_project(&mut reader, file_type)?;
+    } = read_project_with_progress(&mut reader, file_type, |p| {
+        sink.set(LoadPhase::Parse, p.decompressed_bytes, p.total_bytes)
+    })?;
 
     // The plain loader's post-read check; the project reader stays
     // below that dispatch level, so it runs here instead.
@@ -228,6 +229,40 @@ fn parse_source(path: &Path) -> anyhow::Result<ParsedSource> {
     })
 }
 
+/// Plain-mesh branch of `parse_source`: STL / OBJ through the linear
+/// reader entry, with the stream position mirrored into the parse
+/// phase by a [`ProgressReader`] under the `BufReader`.
+fn parse_mesh_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Result<ParsedSource> {
+    let kind = infer_mesh_file_format_from_extension(path).map_err(LoadMeshError::from)?;
+    let file = File::open(path)?;
+    let progress_reader = ProgressReader::new(file, sink.clone())?;
+    // `load_mesh_from_path` enforced the byte ceiling itself; going
+    // through the reader entry moves that duty here. The measured
+    // total also covers the precheck's metadata-failure fallthrough.
+    ensure_measured_size_within(progress_reader.total_bytes(), MAX_MESH_FILE_SIZE_BYTES)?;
+    let mut reader = BufReader::new(progress_reader);
+    let LoadedMesh { graph, warnings } = load_mesh_from_reader(kind, &mut reader)?;
+    Ok(ParsedSource {
+        graph,
+        warnings,
+        project_payload: None,
+        project_warnings: Vec::new(),
+        profile_warnings: Vec::new(),
+    })
+}
+
+/// The reader-entry counterpart of the cap `load_mesh_from_path`
+/// applies to the on-disk size.
+pub(crate) fn ensure_measured_size_within(total_bytes: u64, cap: u64) -> Result<(), LoadMeshError> {
+    if total_bytes > cap {
+        return Err(LoadMeshError::FileTooLarge {
+            actual_bytes: total_bytes,
+            limit_bytes: cap,
+        });
+    }
+    Ok(())
+}
+
 /// Spawns a worker thread that parses the file at `path`, uploads its
 /// vertex+index buffers to `device`, and deposits the outcome via
 /// `ticket`. Doing both on the worker keeps the UI thread free of the
@@ -252,10 +287,16 @@ pub(crate) fn spawn_load(
     device: wgpu::Device,
     device_token: crate::mesh_render::DeviceToken,
     build_volume: BuildVolume,
+    sink: LoadProgressSink,
 ) {
     std::thread::spawn(move || {
+        // `sink` is also fine under `AssertUnwindSafe`: it is a
+        // monotonic atomic counter, so a panic mid-parse leaves at
+        // worst a stale value that the next dispatch's reset clears.
         let parsed: anyhow::Result<ParsedSource> =
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_source(&path))) {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                parse_source(&path, &sink)
+            })) {
                 Ok(r) => r,
                 Err(payload) => {
                     let msg = panic_message(&payload);
@@ -282,8 +323,17 @@ pub(crate) fn spawn_load(
             // worker thread, so the UI thread receives a fully-primed
             // `SceneSpatial` and the first picker click / gizmo
             // attachment doesn't pay the build cost synchronously.
-            let spatial = SceneSpatial::primed_graph(graph);
-            let gpu_scene = GpuScene::build(&device, device_token, spatial.graph())?;
+            let spatial = SceneSpatial::primed_graph_with_progress(graph, |p| {
+                sink.set(LoadPhase::Priming, p.primed_triangles, p.total_triangles)
+            });
+            let gpu_scene =
+                GpuScene::build_with_progress(&device, device_token, spatial.graph(), |p| {
+                    sink.set(
+                        LoadPhase::GpuUpload,
+                        p.processed_triangles,
+                        p.total_triangles,
+                    )
+                })?;
             Ok(PreparedScene {
                 spatial,
                 gpu_scene,

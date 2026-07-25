@@ -53,6 +53,7 @@ use slint::wgpu_29::wgpu;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
+use crate::load_progress::LoadProgressSink;
 use crate::mesh_render::GpuScene;
 
 /// Worker-built bundle handed to the UI thread. The `GpuScene`
@@ -197,6 +198,10 @@ pub struct SceneLoader {
     // `spawn_load` time so parse + GPU upload both run off the UI
     // thread; the UI thread only installs the finished `MeshGpu`.
     gpu: Mutex<Option<(wgpu::Device, crate::mesh_render::DeviceToken, wgpu::Queue)>>,
+    // Shared load-progress cell: packed (phase, permille) values, see
+    // `load_progress`. The worker writes through a `LoadProgressSink`
+    // clone; the UI polls it while a load is in flight.
+    progress: Arc<AtomicU32>,
 }
 
 impl SceneLoader {
@@ -209,6 +214,7 @@ impl SceneLoader {
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
             gpu: Mutex::new(None),
+            progress: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -229,7 +235,14 @@ impl SceneLoader {
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
             gpu: Mutex::new(None),
+            progress: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    /// Sink handle for the shared progress cell, handed to the worker
+    /// at dispatch time.
+    pub fn progress_sink(&self) -> LoadProgressSink {
+        LoadProgressSink::new(self.progress.clone())
     }
 
     /// Starts a new load. Returns `None` if one is already in flight.

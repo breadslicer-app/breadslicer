@@ -10,19 +10,29 @@
 
 use std::any::Any;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::LeafPayload;
-use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_core::{IndexedMesh, MeshMetadata};
+use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_mesh_formats::error::LoadMeshError;
+use sc_mesh_formats::filetypes::WriteFormat;
+use sc_mesh_formats::scene_writer::write_scene;
+use sc_project_formats::{
+    EmbedProfiles, ProjectPayload, infer_project_file_type_from_extension, write_project,
+};
 
 use crate::build_volume::BuildVolume;
 use crate::error_dialog::DialogManager;
+use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
-    MAX_MESH_FILE_SIZE_BYTES, check_file_size, panic_message, place_on_plate,
-    start_load_with_ticket,
+    MAX_MESH_FILE_SIZE_BYTES, check_file_size, ensure_measured_size_within, panic_message,
+    parse_source, place_on_plate, start_load_with_ticket,
 };
 use crate::scene_loader::SceneLoader;
 
@@ -219,4 +229,134 @@ fn panic_message_decodes_a_boxed_error_send_payload() {
     let payload: Box<dyn Any + Send> = Box::new(inner);
     let s = panic_message(&payload);
     assert!(s.contains("send-only error payload"));
+}
+
+// --- parse_source progress -------------------------------------------
+
+fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
+    mesh.set_meta(Some(MeshMetadata {
+        name: Some(name.to_string()),
+        header_comment: None,
+    }));
+    mesh
+}
+
+/// Loader-shape scene carrying the cube and both tunnel prisms as
+/// named leaves with distinct translations.
+fn prism_trio_scene() -> Scene {
+    let mut scene = Scene::new();
+    let root = scene.add_group(None, Transform3D::Identity);
+    scene.add_root(root).expect("group root");
+    let sources = [
+        ("Cube", unit_cube_mesh(), [0.0, 0.0, 0.0]),
+        ("ZTunnel", cuboid_with_z_tunnel(), [5.0, 0.0, 0.0]),
+        ("YTunnel", cuboid_with_y_tunnel(), [-5.0, 0.0, 0.0]),
+    ];
+    for (name, mesh, translation) in sources {
+        let transform = if translation == [0.0, 0.0, 0.0] {
+            Transform3D::Identity
+        } else {
+            Transform3D::Affine(AffineTransform3D::from_translation(translation))
+        };
+        let leaf = scene
+            .add_leaf(
+                None,
+                transform,
+                LeafPayload::Mesh(std::sync::Arc::new(named(mesh, name))),
+            )
+            .expect("add leaf");
+        scene.add_child(root, leaf).expect("attach leaf");
+    }
+    scene
+}
+
+fn sink_and_cell() -> (LoadProgressSink, Arc<AtomicU32>) {
+    let cell = Arc::new(AtomicU32::new(0));
+    (LoadProgressSink::new(cell.clone()), cell)
+}
+
+fn published(cell: &AtomicU32) -> (LoadPhase, u32) {
+    decode(cell.load(Ordering::Relaxed))
+}
+
+fn root_child_count(scene: &Scene) -> usize {
+    let root = scene.node(scene.roots()[0]).expect("root resolves");
+    match &root.kind {
+        NodeKind::Group { children } => children.len(),
+        other => panic!("the root should be a group, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_source_obj_ends_the_parse_phase_complete() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trio.obj");
+    write_scene(&prism_trio_scene(), &path, WriteFormat::Obj).expect("obj writes");
+    let (sink, cell) = sink_and_cell();
+    let parsed = parse_source(&path, &sink).expect("obj parses");
+    assert_eq!(root_child_count(&parsed.graph), 3);
+    assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
+}
+
+#[test]
+fn parse_source_binary_stl_ends_the_parse_phase_complete() {
+    // `.stl` goes through the format sniffer, which probes the header
+    // and rewinds: the seek path of the progress reader is on this
+    // route.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trio.stl");
+    write_scene(&prism_trio_scene(), &path, WriteFormat::StlBin).expect("stl writes");
+    let (sink, cell) = sink_and_cell();
+    let parsed = parse_source(&path, &sink).expect("stl parses");
+    assert!(
+        parsed.graph.aabb().expect("aabb resolves").is_some(),
+        "the flattened scene carries geometry"
+    );
+    assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
+}
+
+#[test]
+fn parse_source_3mf_project_ends_the_parse_phase_complete() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trio.3mf");
+    let file_type = infer_project_file_type_from_extension(Path::new("trio.3mf"))
+        .expect("3mf is a project format");
+    let payload = ProjectPayload {
+        printer: None,
+        resin: None,
+        embedded: Vec::new(),
+    };
+    let mut bytes = Vec::new();
+    write_project(
+        &prism_trio_scene(),
+        &payload,
+        EmbedProfiles::No,
+        file_type,
+        &mut bytes,
+    )
+    .expect("project writes");
+    std::fs::write(&path, bytes).expect("file writes");
+    let (sink, cell) = sink_and_cell();
+    let parsed = parse_source(&path, &sink).expect("3mf parses");
+    assert_eq!(root_child_count(&parsed.graph), 3);
+    assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
+}
+
+// --- ensure_measured_size_within --------------------------------------
+
+#[test]
+fn measured_size_at_the_cap_is_accepted() {
+    assert!(ensure_measured_size_within(1024, 1024).is_ok());
+}
+
+#[test]
+fn measured_size_over_the_cap_is_refused() {
+    let err = ensure_measured_size_within(1025, 1024).expect_err("over-cap must fail");
+    assert!(matches!(
+        err,
+        LoadMeshError::FileTooLarge {
+            actual_bytes: 1025,
+            limit_bytes: 1024,
+        }
+    ));
 }

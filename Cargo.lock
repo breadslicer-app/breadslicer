@@ -4829,6 +4829,7 @@ dependencies = [
  "rustybuzz",
  "sc-app-paths",
  "sc-mesh-core",
+ "sc-mesh-fixtures",
  "sc-mesh-formats",
  "sc-mesh-spatial",
  "sc-print-primitives",

@@ -106,13 +106,55 @@ pub struct GpuScene {
     aabb_max: Vec3,
 }
 
+/// Triangle counts reported while a scene's GPU data is built. Each
+/// object's triangles count twice, once when its vertex/index vectors
+/// are flattened and once when its device buffers are created, so
+/// `total_triangles` is twice the scene's reachable triangle count
+/// and the final tick reaches it. Objects without geometry still tick
+/// with the count unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UploadProgress {
+    /// Triangles processed so far, summed across both passes.
+    pub processed_triangles: u64,
+    /// Twice the reachable triangle count.
+    pub total_triangles: u64,
+}
+
 impl GpuScene {
     pub fn build(
         device: &wgpu::Device,
         device_token: super::DeviceToken,
         graph: &Scene,
     ) -> Result<Self> {
-        let data = build_gpu_scene_data(graph)?;
+        Self::build_with_progress(device, device_token, graph, |_| {})
+    }
+
+    /// [`GpuScene::build`], reporting per-object triangle progress;
+    /// see [`UploadProgress`] for the tick contract.
+    pub fn build_with_progress(
+        device: &wgpu::Device,
+        device_token: super::DeviceToken,
+        graph: &Scene,
+        mut progress: impl FnMut(UploadProgress),
+    ) -> Result<Self> {
+        let mut scene_triangles: u64 = 0;
+        for_each_leaf(graph, |_node_id, _world_transform, mesh| {
+            scene_triangles += mesh.faces().len() as u64;
+            Ok(())
+        })?;
+        let total_triangles = scene_triangles.saturating_mul(2);
+        let mut processed_triangles: u64 = 0;
+        let mut tick = |processed: &mut u64, triangles: u64| {
+            *processed += triangles;
+            progress(UploadProgress {
+                processed_triangles: *processed,
+                total_triangles,
+            });
+        };
+
+        let data = build_gpu_scene_data(graph, |triangles| {
+            tick(&mut processed_triangles, triangles);
+        })?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -131,6 +173,7 @@ impl GpuScene {
                 index_buffer,
                 index_count: obj.indices.len() as u32,
             });
+            tick(&mut processed_triangles, (obj.indices.len() / 3) as u64);
         }
 
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
@@ -370,9 +413,17 @@ struct SceneData {
     aabb_max: Vec3,
 }
 
-fn build_gpu_scene_data(graph: &Scene) -> Result<SceneData> {
+/// `on_object_flattened` receives each flattened object's triangle
+/// count (0 for geometry-less leaves), in traversal order; the
+/// progress plumbing in [`GpuScene::build_with_progress`] is its only
+/// non-test consumer.
+fn build_gpu_scene_data(
+    graph: &Scene,
+    mut on_object_flattened: impl FnMut(u64),
+) -> Result<SceneData> {
     let mut objects: Vec<ObjectData> = Vec::new();
     for_each_leaf(graph, |node_id, _world_transform, mesh| {
+        on_object_flattened(mesh.faces().len() as u64);
         if mesh.faces().is_empty() {
             // A leaf with no geometry contributes nothing to the
             // draw set, but we keep its slot in the model buffer so
@@ -494,7 +545,7 @@ mod build_gpu_scene_data_tests {
         // Loader-faithful empty graph: a Group root with no children,
         // the same shape an empty-file load produces.
         let (graph, _root) = graph_with_group_root();
-        assert!(build_gpu_scene_data(&graph).is_err());
+        assert!(build_gpu_scene_data(&graph, |_| {}).is_err());
     }
 
     #[test]
@@ -506,7 +557,7 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         let rid = g.add_mesh_resource(mesh);
         add_resource_leaf(&mut g, root, rid, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         assert_eq!(data.objects.len(), 1);
         assert_eq!(data.objects[0].vertices.len(), 3);
         assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
@@ -520,7 +571,7 @@ mod build_gpu_scene_data_tests {
         );
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         assert_eq!(data.objects.len(), 1);
         assert_eq!(data.objects[0].vertices[0].position, [1.0, -2.0, 3.0]);
         assert_eq!(data.objects[0].vertices[1].position, [4.0, 5.0, -6.0]);
@@ -544,7 +595,7 @@ mod build_gpu_scene_data_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([100.0, -50.0, 25.0])),
         );
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         assert_eq!(data.objects[0].vertices[0].position, [1.0, 0.0, 0.0]);
         assert_eq!(data.objects[0].vertices[1].position, [0.0, 1.0, 0.0]);
         assert_eq!(data.objects[0].vertices[2].position, [0.0, 0.0, 1.0]);
@@ -566,7 +617,7 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, a, Transform3D::Identity);
         add_inline_leaf(&mut g, root, b, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         assert_eq!(data.objects.len(), 2);
         assert_eq!(data.objects[0].indices, vec![0, 1, 2]);
         assert_eq!(data.objects[1].indices, vec![0, 1, 2]);
@@ -585,7 +636,7 @@ mod build_gpu_scene_data_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 30.0])),
         );
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         // World AABB = local AABB ([0,0,0]..[1,1,0]) translated by (10,20,30).
         assert_approx_eq!(f32, data.aabb_min.x, 10.0, epsilon = 1e-5);
         assert_approx_eq!(f32, data.aabb_min.y, 20.0, epsilon = 1e-5);
@@ -608,7 +659,7 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, a, Transform3D::Identity);
         add_inline_leaf(&mut g, root, b, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         assert_eq!(data.aabb_min, Vec3::new(-7.0, -2.0, -6.0));
         assert_eq!(data.aabb_max, Vec3::new(4.0, 8.0, 9.0));
     }
@@ -631,7 +682,7 @@ mod build_gpu_scene_data_tests {
         let (mut g, root) = graph_with_group_root();
         add_inline_leaf(&mut g, root, empty, Transform3D::Identity);
         add_inline_leaf(&mut g, root, nonempty, Transform3D::Identity);
-        let data = build_gpu_scene_data(&g).unwrap();
+        let data = build_gpu_scene_data(&g, |_| {}).unwrap();
         assert_eq!(data.objects.len(), 2);
         assert!(data.objects[0].indices.is_empty());
         assert_eq!(data.objects[1].indices.len(), 3);
@@ -659,7 +710,7 @@ mod build_gpu_scene_data_tests {
         // fine with a singular model matrix (it just collapses the
         // mesh to a plane). Mirror this in the assertion so the test
         // fails loudly if the behaviour changes.
-        assert!(build_gpu_scene_data(&g).is_ok());
+        assert!(build_gpu_scene_data(&g, |_| {}).is_ok());
     }
 }
 
