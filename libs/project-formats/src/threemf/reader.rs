@@ -14,7 +14,7 @@
 
 use std::io::{Read, Seek};
 
-use sc_3mf::package::{Package, PartName};
+use sc_3mf::package::{DecompressionProgress, Package, PartName};
 use sc_mesh_formats::threemf::read_threemf_from_package;
 use sc_print_primitives::{MaterialId, PrinterId};
 
@@ -35,7 +35,20 @@ pub fn read_threemf_project<R>(reader: &mut R) -> Result<LoadedProject, ReadThre
 where
     R: Read + Seek,
 {
-    let package = Package::read_from(reader)?;
+    read_threemf_project_with_progress(reader, |_| {})
+}
+
+/// [`read_threemf_project`], reporting container decompression
+/// progress. The ticks cover the package extraction only; the model
+/// and payload parsing that follow run on the already-inflated bytes.
+pub fn read_threemf_project_with_progress<R>(
+    reader: &mut R,
+    progress: impl FnMut(DecompressionProgress),
+) -> Result<LoadedProject, ReadThreeMfProjectError>
+where
+    R: Read + Seek,
+{
+    let package = Package::read_from_with_progress(reader, progress)?;
     let (scene, mesh_warnings) = read_threemf_from_package(&package)?;
     let mut warnings: Vec<ReadProjectWarning> = mesh_warnings
         .into_iter()

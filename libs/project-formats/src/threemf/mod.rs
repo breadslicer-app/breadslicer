@@ -38,7 +38,7 @@ mod tests_reader;
 #[cfg(test)]
 mod tests_writer;
 
-pub use reader::read_threemf_project;
+pub use reader::{read_threemf_project, read_threemf_project_with_progress};
 pub use writer::write_threemf_project;
 
 /// Name of the project part inside the package.

@@ -39,11 +39,13 @@ mod tests_filetypes;
 #[cfg(test)]
 mod tests_payload;
 
+pub use sc_3mf::package::DecompressionProgress;
+
 pub use error::{ReadProjectError, WriteProjectError};
 pub use filetypes::{
     InferProjectFileTypeError, ProjectFileType, infer_project_file_type_from_extension,
 };
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
-pub use read::{LoadedProject, read_project};
+pub use read::{LoadedProject, read_project, read_project_with_progress};
 pub use write::write_project;

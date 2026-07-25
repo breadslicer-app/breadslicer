@@ -22,8 +22,9 @@ use sc_mesh_formats::messages::{LoadMeshWarning, SceneLoadWarning};
 use sc_mesh_formats::threemf::write_threemf;
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_project_formats::{
-    EmbedProfiles, EmbeddedProfile, LoadedProject, ProfileRefWarning, ProjectFileType,
-    ProjectPayload, infer_project_file_type_from_extension, read_project, write_project,
+    DecompressionProgress, EmbedProfiles, EmbeddedProfile, LoadedProject, ProfileRefWarning,
+    ProjectFileType, ProjectPayload, infer_project_file_type_from_extension, read_project,
+    read_project_with_progress, write_project,
 };
 
 const TEST_PRINTER_TOML: &[u8] = include_bytes!("fixtures/test-printer.toml");
@@ -292,5 +293,39 @@ mod content_type_tests {
         assert!(xml.contains("/Metadata/soulcrafted-project.toml"));
         assert!(xml.contains("application/vnd.soulcrafted.project+toml"));
         assert!(xml.contains("application/toml"));
+    }
+}
+
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn container_decompression_ticks_forward_through_the_project_reader() {
+        let bytes = write_bytes(&prism_trio_scene(), &full_payload(), EmbedProfiles::Yes);
+        let mut ticks: Vec<DecompressionProgress> = Vec::new();
+        let loaded =
+            read_project_with_progress(&mut Cursor::new(bytes.clone()), project_file_type(), |p| {
+                ticks.push(p)
+            })
+            .expect("the project reads back");
+
+        // Forwarding must not change what is read: same scene leaves
+        // and payload as the plain entry point.
+        let plain = read_back(bytes);
+        assert_eq!(leaf_names(&loaded.scene), leaf_names(&plain.scene));
+        assert_eq!(loaded.payload, plain.payload);
+
+        // The container ticks keep the package layer's contract:
+        // fixed total, strictly growing counts, ending at the total.
+        assert!(!ticks.is_empty(), "reading a package must tick");
+        let total = ticks[0].total_bytes;
+        for pair in ticks.windows(2) {
+            assert_eq!(pair[1].total_bytes, total, "total must stay fixed");
+            assert!(
+                pair[1].decompressed_bytes > pair[0].decompressed_bytes,
+                "ticks must carry strictly growing counts"
+            );
+        }
+        assert_eq!(ticks.last().expect("non-empty").decompressed_bytes, total);
     }
 }
