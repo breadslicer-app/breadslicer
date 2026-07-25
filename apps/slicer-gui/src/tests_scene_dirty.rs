@@ -4,7 +4,7 @@
  */
 
 //! Dirty-tracking behavior of [`SceneDocument`]: the save-point
-//! comparison, the drained-stack rule, and the exactness of the
+//! comparison, the eviction rule, and the exactness of the
 //! `DirtyChanged` event.
 
 use std::cell::RefCell;
@@ -193,25 +193,34 @@ mod save_point_tests {
     }
 }
 
-mod drained_stack_tests {
+mod eviction_tests {
     use super::*;
 
     #[test]
-    fn an_undo_that_drains_the_stack_sticks_dirty_even_at_the_save_point() {
+    fn undoing_every_edit_without_eviction_reads_clean() {
+        // open -> change -> undo everything: nothing was ever
+        // evicted, so the drained stack proves the content is back
+        // at the freshly-installed state.
+        let (doc, node_id) = loaded_document();
+        commit_step(&doc, node_id, 1.0);
+        commit_step(&doc, node_id, 2.0);
+        assert!(doc.undo());
+        assert!(doc.is_dirty());
+        assert!(doc.undo());
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn redo_back_to_a_saved_top_after_draining_reads_clean() {
+        // Draining the stack past a saved top entry leaves no
+        // lasting mark: the entry's identity proves the content
+        // once redo puts it back on top.
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
         doc.mark_saved();
         assert!(doc.undo());
         assert!(doc.is_dirty());
-
-        // Redo puts the saved entry back on top; without the
-        // drained-stack rule this would read clean, but the drain
-        // already proved nothing below the bottom is recoverable.
         assert!(doc.redo());
-        assert!(doc.is_dirty());
-
-        // A save clears the rule.
-        doc.mark_saved();
         assert!(!doc.is_dirty());
     }
 
@@ -222,8 +231,7 @@ mod drained_stack_tests {
         // the cap evicts the oldest edit; undoing everything then
         // drains the stack without reaching the installed content.
         // Top (None) equals the save point (None) here, so only the
-        // drained-stack rule stands between this state and a false
-        // clean.
+        // eviction rule stands between this state and a false clean.
         let (doc, node_id) = loaded_document();
         for i in 0..(UNDO_STACK_CAP + 1) {
             commit_step(&doc, node_id, (i + 1) as f64);
@@ -233,6 +241,33 @@ mod drained_stack_tests {
         }
         assert!(!doc.can_undo());
         assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn a_save_resets_the_eviction_rule() {
+        // After an eviction the empty-vs-empty comparison is
+        // untrusted, but only until the next save records a new
+        // reference state.
+        let (doc, node_id) = loaded_document();
+        for i in 0..(UNDO_STACK_CAP + 1) {
+            commit_step(&doc, node_id, (i + 1) as f64);
+        }
+        for _ in 0..UNDO_STACK_CAP {
+            assert!(doc.undo());
+        }
+        assert!(doc.is_dirty());
+
+        doc.mark_saved();
+        assert!(!doc.is_dirty());
+
+        // A fresh change-then-undo cycle on top of the new save
+        // point reads clean again. The undo of edit 1 was evicted,
+        // so the content sits at translation(1.0); the next step in
+        // the chain is 2.0.
+        commit_step(&doc, node_id, 2.0);
+        assert!(doc.is_dirty());
+        assert!(doc.undo());
+        assert!(!doc.is_dirty());
     }
 }
 
@@ -257,12 +292,22 @@ mod reset_tests {
     }
 
     #[test]
-    fn a_drained_stack_flag_does_not_survive_an_install() {
+    fn the_eviction_rule_does_not_survive_an_install() {
         let (doc, node_id) = loaded_document();
-        commit_step(&doc, node_id, 1.0);
-        doc.undo();
-        assert!(doc.is_dirty());
+        for i in 0..(UNDO_STACK_CAP + 1) {
+            commit_step(&doc, node_id, (i + 1) as f64);
+        }
+
         doc.install_graph(graph_with_one_object(), fixture_path());
+        let node_id = doc
+            .with_scene(|s| s.leaf_id_at_index(0))
+            .flatten()
+            .expect("fixture has one leaf");
+
+        // Were the eviction flag still set, this change-then-undo
+        // cycle would read dirty at the end.
+        commit_step(&doc, node_id, 1.0);
+        assert!(doc.undo());
         assert!(!doc.is_dirty());
     }
 }

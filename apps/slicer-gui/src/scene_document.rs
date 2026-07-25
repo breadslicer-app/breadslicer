@@ -121,15 +121,14 @@ pub(crate) struct SceneDocument {
     /// state: eviction at the cap only forgets undo ability, it
     /// never mutates the scene, and ids are unique.
     save_point: Cell<Option<u64>>,
-    /// Set when an `undo` pops the last entry off the stack. Entries
-    /// below may have been evicted at the cap, so reaching the
-    /// bottom no longer proves the content matches the state the
-    /// empty stack once described; the document reads dirty until
-    /// the next save or install clears the flag. The cost is a
-    /// false positive when nothing was evicted and the bottom IS the
-    /// save point; the accepted trade for never reading clean on
-    /// silently unrecoverable changes.
-    undone_to_bottom: Cell<bool>,
+    /// Set when the cap evicts an entry from the undo stack; reset
+    /// whenever a save point is recorded (save, install, clear).
+    /// An empty stack matching an empty-stack save point only
+    /// proves the content is back at the saved state when nothing
+    /// was evicted in between: evicted edits stay applied to the
+    /// scene with no way to undo them, so after an eviction the
+    /// empty-vs-empty comparison must read dirty.
+    evicted_since_save: Cell<bool>,
 }
 
 impl SceneDocument {
@@ -144,7 +143,7 @@ impl SceneDocument {
             redo_stack: RefCell::new(VecDeque::new()),
             next_edit_id: Cell::new(1),
             save_point: Cell::new(None),
-            undone_to_bottom: Cell::new(false),
+            evicted_since_save: Cell::new(false),
         })
     }
 
@@ -171,7 +170,7 @@ impl SceneDocument {
         let stacks_changed = self.clear_history();
         // A freshly installed scene matches its source by definition.
         self.save_point.set(None);
-        self.undone_to_bottom.set(false);
+        self.evicted_since_save.set(false);
         self.notify(SceneEvent::Installed);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
@@ -186,7 +185,7 @@ impl SceneDocument {
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
-        self.undone_to_bottom.set(false);
+        self.evicted_since_save.set(false);
         self.notify(SceneEvent::Cleared);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
@@ -200,15 +199,24 @@ impl SceneDocument {
     /// whenever no scene is loaded.
     ///
     /// Clean means the undo stack's top entry is the one recorded by
-    /// [`Self::mark_saved`] (or both are absent), and no undo has
-    /// drained the stack since then. The comparison can over-report
+    /// [`Self::mark_saved`]. A top entry matching the save point
+    /// proves the content matches the saved state regardless of
+    /// eviction: entry ids are unique, and eviction only forgets
+    /// undo ability without mutating the scene. The empty-vs-empty
+    /// match is the one exception; it is only trusted while no
+    /// eviction has happened since the save point (see
+    /// [`Self::evicted_since_save`]). The comparison can over-report
     /// dirty (the save point may sit deeper in the stack or be
     /// evicted), never under-report it.
     pub fn is_dirty(&self) -> bool {
         if !self.is_loaded() {
             return false;
         }
-        self.undone_to_bottom.get() || self.top_edit_id() != self.save_point.get()
+        let top = self.top_edit_id();
+        if top != self.save_point.get() {
+            return true;
+        }
+        top.is_none() && self.evicted_since_save.get()
     }
 
     /// Records the current history position as the saved state, so
@@ -220,7 +228,7 @@ impl SceneDocument {
     pub fn mark_saved(&self) {
         let was_dirty = self.is_dirty();
         self.save_point.set(self.top_edit_id());
-        self.undone_to_bottom.set(false);
+        self.evicted_since_save.set(false);
         self.notify_dirty_change(was_dirty);
     }
 
@@ -333,6 +341,7 @@ impl SceneDocument {
             let mut undo = self.undo_stack.borrow_mut();
             if undo.len() == UNDO_STACK_CAP {
                 undo.pop_front();
+                self.evicted_since_save.set(true);
             }
             undo.push_back(HistoryEntry { id, edit });
         }
@@ -537,9 +546,7 @@ impl SceneDocument {
 
     /// Pops the most recent edit, applies its inverse, and moves the
     /// entry onto the redo stack. Returns `true` if an edit was
-    /// applied. An undo that drains the stack marks the document
-    /// dirty until the next save or install (see
-    /// [`Self::undone_to_bottom`]).
+    /// applied.
     pub fn undo(&self) -> bool {
         let was_dirty = self.is_dirty();
         let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
@@ -550,9 +557,6 @@ impl SceneDocument {
             // stack stays consistent with the user's history.
             self.undo_stack.borrow_mut().push_back(entry);
             return false;
-        }
-        if self.undo_stack.borrow().is_empty() {
-            self.undone_to_bottom.set(true);
         }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
@@ -580,6 +584,7 @@ impl SceneDocument {
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP {
             undo.pop_front();
+            self.evicted_since_save.set(true);
         }
         undo.push_back(entry);
         drop(undo);
@@ -1260,9 +1265,16 @@ mod scene_document_tests {
         let _sub = doc.subscribe(listener);
 
         doc.undo();
+        // The undo also drains the never-saved single-entry stack,
+        // returning the document to its freshly-installed content,
+        // so the dirty flag flips back to clean.
         assert_eq!(
             *log.borrow(),
-            vec![SceneEvent::Mutated, SceneEvent::UndoStackChanged]
+            vec![
+                SceneEvent::Mutated,
+                SceneEvent::UndoStackChanged,
+                SceneEvent::DirtyChanged,
+            ]
         );
     }
 
@@ -1429,6 +1441,9 @@ mod scene_document_tests {
                 SceneEvent::Restructured,
                 SceneEvent::SelectionChanged,
                 SceneEvent::UndoStackChanged,
+                // Undoing the only committed edit returns the
+                // document to clean.
+                SceneEvent::DirtyChanged,
             ]
         );
     }
