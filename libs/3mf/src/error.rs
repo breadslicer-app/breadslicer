@@ -71,6 +71,12 @@ pub enum PackageReadError {
         name: String,
         source: MalformedPartNameError,
     },
+    /// A part's decompressed bytes exceed the per-part ceiling, so
+    /// the package was refused.
+    OversizedPart { part: String, cap_bytes: u64 },
+    /// The decompressed bytes of all entries together exceed the
+    /// package ceiling, so the package was refused.
+    OversizedPackage { cap_bytes: u64 },
 }
 
 impl fmt::Display for PackageReadError {
@@ -114,6 +120,14 @@ impl fmt::Display for PackageReadError {
             Self::MalformedPartName { name, source } => {
                 write!(f, "entry \"{name}\" is not a valid part name: {source}")
             }
+            Self::OversizedPart { part, cap_bytes } => write!(
+                f,
+                "part \"{part}\" decompresses past the {cap_bytes}-byte per-part cap; the package was refused",
+            ),
+            Self::OversizedPackage { cap_bytes } => write!(
+                f,
+                "the package decompresses past the {cap_bytes}-byte total cap and was refused",
+            ),
         }
     }
 }
@@ -131,7 +145,9 @@ impl std::error::Error for PackageReadError {
             | Self::RelationshipMissingAttribute { .. }
             | Self::PartWithoutContentType { .. }
             | Self::MissingStartPartRelationship
-            | Self::StartPartNotFound { .. } => None,
+            | Self::StartPartNotFound { .. }
+            | Self::OversizedPart { .. }
+            | Self::OversizedPackage { .. } => None,
         }
     }
 }
@@ -528,6 +544,24 @@ mod display_tests {
             },
         );
         assert!(msg.contains("/3D/3dmodel.model"), "msg: {msg}");
+    }
+
+    #[test]
+    fn oversized_errors_name_the_subject_and_the_cap() {
+        let msg = format!(
+            "{}",
+            PackageReadError::OversizedPart {
+                part: "/3D/3dmodel.model".to_string(),
+                cap_bytes: 1024,
+            },
+        );
+        assert!(
+            msg.contains("/3D/3dmodel.model") && msg.contains("1024"),
+            "msg: {msg}"
+        );
+
+        let msg = format!("{}", PackageReadError::OversizedPackage { cap_bytes: 4096 });
+        assert!(msg.contains("4096"), "msg: {msg}");
     }
 
     #[test]

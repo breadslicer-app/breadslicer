@@ -11,7 +11,7 @@ use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE, THUMBNAIL_REL_TYPE,
 };
-use crate::package::{Package, PartName, Relationship};
+use crate::package::{Package, PackageReadLimits, PartName, Relationship};
 
 fn part(name: &str) -> PartName {
     PartName::new(name).expect("valid part name")
@@ -275,5 +275,181 @@ mod error_tests {
         assert!(
             matches!(err, PackageReadError::PartWithoutContentType { part } if part == "/3D/3dmodel.model"),
         );
+    }
+}
+
+#[cfg(test)]
+mod read_limits_tests {
+    use super::*;
+
+    /// A serialized package whose only user part is the model part,
+    /// carrying `data`. The content-types and rels entries it also
+    /// contains stay well under a kilobyte each.
+    fn package_bytes_with_model_part(data: Vec<u8>) -> Vec<u8> {
+        let mut package = Package::new();
+        package
+            .add_part(part(DEFAULT_MODEL_PART_NAME), MODEL_PART_CONTENT_TYPE, data)
+            .expect("unique name");
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+        write_to_bytes(&package)
+    }
+
+    /// A ZIP archive holding one deflated entry named `big.bin`.
+    fn single_entry_archive(payload: Vec<u8>) -> Vec<u8> {
+        let mut cursor = Cursor::new(Vec::new());
+        let mut archive = zip::write::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        archive.start_file("big.bin", options).unwrap();
+        archive.write_all(&payload).unwrap();
+        archive.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    /// Forge the entry's 4-byte uncompressed-size field, in both the
+    /// local file header and the central directory, to claim
+    /// `claimed` bytes. Single-entry archives only.
+    fn forge_claimed_size(bytes: &mut [u8], claimed: u32) {
+        assert_eq!(&bytes[0..4], b"PK\x03\x04", "local header at start");
+        bytes[22..26].copy_from_slice(&claimed.to_le_bytes());
+        // The last central-directory signature is the real one: the
+        // entry's payload can only appear before the directory.
+        let central = bytes
+            .windows(4)
+            .rposition(|w| w == b"PK\x01\x02")
+            .expect("central directory header");
+        bytes[central + 24..central + 28].copy_from_slice(&claimed.to_le_bytes());
+    }
+
+    #[test]
+    fn default_limits_are_2_gib_per_part_and_4_gib_total() {
+        let limits = PackageReadLimits::default();
+        assert_eq!(limits.max_part_bytes, 2 * (1u64 << 30));
+        assert_eq!(limits.max_total_bytes, 4 * (1u64 << 30));
+    }
+
+    #[test]
+    fn part_exactly_at_the_part_cap_is_read_intact() {
+        let bytes = package_bytes_with_model_part(vec![b'a'; 1024]);
+        let limits = PackageReadLimits {
+            max_part_bytes: 1024,
+            max_total_bytes: 1 << 20,
+        };
+        let package = Package::read_from_with_limits(Cursor::new(bytes), limits)
+            .expect("a part at the cap must pass");
+        let data = package
+            .part_data(&part(DEFAULT_MODEL_PART_NAME))
+            .expect("part present");
+        assert_eq!(data.len(), 1024);
+        assert!(data.iter().all(|&b| b == b'a'));
+    }
+
+    #[test]
+    fn part_one_byte_over_the_part_cap_is_refused() {
+        let bytes = package_bytes_with_model_part(vec![b'a'; 1025]);
+        let limits = PackageReadLimits {
+            max_part_bytes: 1024,
+            max_total_bytes: 1 << 20,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(matches!(
+            err,
+            PackageReadError::OversizedPart { part, cap_bytes: 1024 }
+                if part == DEFAULT_MODEL_PART_NAME
+        ));
+    }
+
+    #[test]
+    fn highly_compressible_oversized_part_is_refused() {
+        // 1 MiB of zeros deflates to about a kilobyte: the archive
+        // stays tiny on disk while its decompressed size dwarfs the
+        // cap, so an on-disk size gate alone would not catch it.
+        let bytes = package_bytes_with_model_part(vec![0u8; 1 << 20]);
+        assert!(bytes.len() < 64 * 1024, "archive must stay small on disk");
+        let limits = PackageReadLimits {
+            max_part_bytes: 64 * 1024,
+            max_total_bytes: 1 << 30,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(matches!(
+            err,
+            PackageReadError::OversizedPart { part, .. } if part == DEFAULT_MODEL_PART_NAME
+        ));
+    }
+
+    #[test]
+    fn parts_summing_past_the_total_cap_are_refused() {
+        let mut package = Package::new();
+        for name in ["/a.bin", "/b.bin", "/c.bin"] {
+            package
+                .add_part(part(name), "application/octet-stream", vec![b'x'; 4096])
+                .expect("unique name");
+        }
+        package.add_root_relationship(start_part_relationship("/a.bin"));
+        let bytes = write_to_bytes(&package);
+        // Each part fits the per-part cap; their sum (plus the small
+        // content-types and rels entries) crosses the total cap.
+        let limits = PackageReadLimits {
+            max_part_bytes: 8192,
+            max_total_bytes: 10_000,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(matches!(
+            err,
+            PackageReadError::OversizedPackage { cap_bytes: 10_000 }
+        ));
+    }
+
+    #[test]
+    fn forged_header_claiming_huge_size_is_refused() {
+        // A tiny entry whose forged header claims 1 GiB: the
+        // claimed-size check must refuse it before allocating.
+        let mut bytes = single_entry_archive(b"0123456789".to_vec());
+        forge_claimed_size(&mut bytes, 1 << 30);
+        let limits = PackageReadLimits {
+            max_part_bytes: 1024,
+            max_total_bytes: 1 << 20,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(matches!(
+            err,
+            PackageReadError::OversizedPart { part, cap_bytes: 1024 } if part == "/big.bin"
+        ));
+    }
+
+    #[test]
+    fn forged_header_claiming_fewer_bytes_than_real_is_still_capped() {
+        // The header claims 10 bytes, so the claimed-size check
+        // passes; the bytes actually inflated must still be counted
+        // and refused through the take bound.
+        let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
+        forge_claimed_size(&mut bytes, 10);
+        let limits = PackageReadLimits {
+            max_part_bytes: 1024,
+            max_total_bytes: 1 << 20,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(matches!(
+            err,
+            PackageReadError::OversizedPart { part, cap_bytes: 1024 } if part == "/big.bin"
+        ));
+    }
+
+    #[test]
+    fn forged_header_cannot_sneak_past_the_total_cap_either() {
+        // Same lying-low header, but here the total ceiling is the
+        // tighter one, so the overrun must surface as a package-level
+        // refusal.
+        let mut bytes = single_entry_archive(vec![0u8; 100 * 1024]);
+        forge_claimed_size(&mut bytes, 10);
+        let limits = PackageReadLimits {
+            max_part_bytes: 2048,
+            max_total_bytes: 1024,
+        };
+        let err = Package::read_from_with_limits(Cursor::new(bytes), limits).unwrap_err();
+        assert!(matches!(
+            err,
+            PackageReadError::OversizedPackage { cap_bytes: 1024 }
+        ));
     }
 }

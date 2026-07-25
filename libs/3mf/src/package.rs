@@ -13,6 +13,10 @@
 //! targets are resolved against the source part's directory when
 //! relative. Interleaved packages and ZIP64 writing are out of scope
 //! (ZIP64 reading comes with the `zip` crate).
+//!
+//! Reading refuses archives whose decompressed size exceeds fixed
+//! ceilings (2 GiB per part, 4 GiB per package) instead of exhausting
+//! memory on a crafted or corrupt file; see `PackageReadLimits`.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, Write};
@@ -114,6 +118,29 @@ struct Part {
     name: PartName,
     content_type: String,
     data: Vec<u8>,
+}
+
+/// Ceilings on the decompressed size of a package being read. Every
+/// entry counts (parts, relationship parts, `[Content_Types].xml`);
+/// directories contribute nothing. Since a `Package` holds all parts
+/// in memory, the total ceiling is this layer's peak-memory bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PackageReadLimits {
+    /// A single entry whose decompressed bytes exceed this is refused.
+    pub(crate) max_part_bytes: u64,
+    /// The package is refused once the decompressed bytes of all its
+    /// entries together exceed this.
+    pub(crate) max_total_bytes: u64,
+}
+
+impl Default for PackageReadLimits {
+    fn default() -> Self {
+        const GIB: u64 = 1 << 30;
+        Self {
+            max_part_bytes: 2 * GIB,
+            max_total_bytes: 4 * GIB,
+        }
+    }
 }
 
 /// An in-memory OPC package: ordered parts plus relationships.
@@ -242,9 +269,25 @@ impl Package {
     }
 
     /// Read a package from a ZIP stream.
+    ///
+    /// The decompressed size of the archive is capped: 2 GiB for any
+    /// single part and 4 GiB for the package as a whole. An archive
+    /// exceeding a ceiling is refused with
+    /// [`PackageReadError::OversizedPart`] or
+    /// [`PackageReadError::OversizedPackage`].
     pub fn read_from<R: Read + Seek>(reader: R) -> Result<Self, PackageReadError> {
+        Self::read_from_with_limits(reader, PackageReadLimits::default())
+    }
+
+    /// [`Package::read_from`] with caller-chosen size ceilings; the
+    /// public entry point always applies the defaults.
+    pub(crate) fn read_from_with_limits<R: Read + Seek>(
+        reader: R,
+        limits: PackageReadLimits,
+    ) -> Result<Self, PackageReadError> {
         let mut archive = ZipArchive::new(reader)?;
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut total_bytes: u64 = 0;
         for index in 0..archive.len() {
             let mut file = archive.by_index(index)?;
             if file.is_dir() {
@@ -256,12 +299,9 @@ impl Package {
             } else {
                 format!("/{raw_name}")
             };
-            let mut data = Vec::with_capacity(file.size() as usize);
-            file.read_to_end(&mut data)
-                .map_err(|source| PackageReadError::PartRead {
-                    part: name.clone(),
-                    source,
-                })?;
+            let claimed_size = file.size();
+            let data = read_part_bytes(&mut file, claimed_size, &name, limits, total_bytes)?;
+            total_bytes += data.len() as u64;
             entries.push((name, data));
         }
 
@@ -361,6 +401,54 @@ impl Package {
         writer.write_event(Event::End(BytesStart::new("Types").to_end()))?;
         Ok(buffer)
     }
+}
+
+/// Read one entry's decompressed bytes, refusing the package when the
+/// entry would push memory use past a ceiling. The check has 2
+/// layers: the header's claimed size is tested before allocating
+/// (bounding pre-allocation when the header lies high), and the bytes
+/// actually inflated are counted through a `take` bound (bounding
+/// buffering when the header lies low).
+fn read_part_bytes<R: Read>(
+    reader: R,
+    claimed_size: u64,
+    part: &str,
+    limits: PackageReadLimits,
+    total_so_far: u64,
+) -> Result<Vec<u8>, PackageReadError> {
+    if claimed_size > limits.max_part_bytes {
+        return Err(PackageReadError::OversizedPart {
+            part: part.to_string(),
+            cap_bytes: limits.max_part_bytes,
+        });
+    }
+    let remaining_total = limits.max_total_bytes - total_so_far;
+    if claimed_size > remaining_total {
+        return Err(PackageReadError::OversizedPackage {
+            cap_bytes: limits.max_total_bytes,
+        });
+    }
+    let budget = limits.max_part_bytes.min(remaining_total);
+    let mut data = Vec::with_capacity(claimed_size as usize);
+    reader
+        .take(budget.saturating_add(1))
+        .read_to_end(&mut data)
+        .map_err(|source| PackageReadError::PartRead {
+            part: part.to_string(),
+            source,
+        })?;
+    if data.len() as u64 > budget {
+        if data.len() as u64 > limits.max_part_bytes {
+            return Err(PackageReadError::OversizedPart {
+                part: part.to_string(),
+                cap_bytes: limits.max_part_bytes,
+            });
+        }
+        return Err(PackageReadError::OversizedPackage {
+            cap_bytes: limits.max_total_bytes,
+        });
+    }
+    Ok(data)
 }
 
 /// The parsed content-type map of a package.
