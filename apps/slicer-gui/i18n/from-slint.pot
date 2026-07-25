@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-24 09:27+0000\n"
+"POT-Creation-Date: 2026-07-25 09:23+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -42,44 +42,61 @@ msgctxt "About"
 msgid "Close"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:14
+#: ui/replace-scene-dialog.slint:15
 msgctxt "ReplaceSceneDialog"
 msgid "Open new model"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:62
+#: ui/replace-scene-dialog.slint:68
 msgctxt "ReplaceSceneDialog"
 msgid "Replace the current scene?"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:68
+#: ui/replace-scene-dialog.slint:74
 msgctxt "ReplaceSceneDialog"
 msgid "Opening: {}"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:81
-msgctxt "ReplaceSceneDialog"
-msgid ""
-"The current scene will be closed. Export it first to keep any changes you've "
-"made."
-msgstr ""
-
-#: ui/replace-scene-dialog.slint:85
+#: ui/replace-scene-dialog.slint:87
 msgctxt "ReplaceSceneDialog"
 msgid "The current scene will be closed."
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:99
+#: ui/replace-scene-dialog.slint:92
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Save it as a project or export a copy "
+"first to keep the changes you've made."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:96
+msgctxt "ReplaceSceneDialog"
+msgid ""
+"The current scene will be closed. Save it or export a copy first to keep the "
+"changes you've made."
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:110
 msgctxt "ReplaceSceneDialog"
 msgid "Discard & Open"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:106
+#: ui/replace-scene-dialog.slint:118
+msgctxt "ReplaceSceneDialog"
+msgid "Save As & Open…"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:119
+msgctxt "ReplaceSceneDialog"
+msgid "Save & Open"
+msgstr ""
+
+#: ui/replace-scene-dialog.slint:126
 msgctxt "ReplaceSceneDialog"
 msgid "Export & Open…"
 msgstr ""
 
-#: ui/replace-scene-dialog.slint:113
+#: ui/replace-scene-dialog.slint:133
 msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""
@@ -104,12 +121,12 @@ msgctxt "PreferencesPage"
 msgid "No image"
 msgstr ""
 
-#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:188
+#: ui/preferences/printer.slint:172 ui/preferences/resin.slint:204
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr ""
 
-#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:256
+#: ui/preferences/printer.slint:186 ui/preferences/resin.slint:272
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr ""
@@ -124,47 +141,47 @@ msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/resin.slint:106 ui/preferences/resin.slint:233
+#: ui/preferences/resin.slint:122 ui/preferences/resin.slint:249
 msgctxt "PreferencesPage"
 msgid "View"
 msgstr ""
 
-#: ui/preferences/resin.slint:112
+#: ui/preferences/resin.slint:128
 msgctxt "PreferencesPage"
 msgid "Fork..."
 msgstr ""
 
-#: ui/preferences/resin.slint:118
+#: ui/preferences/resin.slint:134
 msgctxt "PreferencesPage"
 msgid "Extend..."
 msgstr ""
 
-#: ui/preferences/resin.slint:124 ui/preferences/resin.slint:239
+#: ui/preferences/resin.slint:140 ui/preferences/resin.slint:255
 msgctxt "PreferencesPage"
 msgid "Edit"
 msgstr ""
 
-#: ui/preferences/resin.slint:130
+#: ui/preferences/resin.slint:146
 msgctxt "PreferencesPage"
 msgid "Delete..."
 msgstr ""
 
-#: ui/preferences/resin.slint:202
+#: ui/preferences/resin.slint:218
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: ui/preferences/resin.slint:204
+#: ui/preferences/resin.slint:220
 msgctxt "PreferencesPage"
 msgid "Generic calibration"
 msgstr ""
 
-#: ui/preferences/resin.slint:205
+#: ui/preferences/resin.slint:221
 msgctxt "PreferencesPage"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/preferences/resin.slint:262
+#: ui/preferences/resin.slint:278
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr ""
@@ -174,22 +191,22 @@ msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:78
+#: ui/preferences/preferences-window.slint:82
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:80
+#: ui/preferences/preferences-window.slint:84
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:81
+#: ui/preferences/preferences-window.slint:85
 msgctxt "PreferencesMenu"
 msgid "Printer"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:82
+#: ui/preferences/preferences-window.slint:86
 msgctxt "PreferencesMenu"
 msgid "Resin"
 msgstr ""
@@ -346,122 +363,122 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:167
+#: ui/main-window.slint:172
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:170
+#: ui/main-window.slint:175
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:180
+#: ui/main-window.slint:185
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:189
+#: ui/main-window.slint:194
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:200
+#: ui/main-window.slint:205
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:206
+#: ui/main-window.slint:214
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:214
+#: ui/main-window.slint:225
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:224
+#: ui/main-window.slint:235
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:226
+#: ui/main-window.slint:237
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:235
+#: ui/main-window.slint:246
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:246
+#: ui/main-window.slint:257
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:256
+#: ui/main-window.slint:267
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:265
+#: ui/main-window.slint:276
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:269
+#: ui/main-window.slint:280
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:270
+#: ui/main-window.slint:281
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:280
+#: ui/main-window.slint:291
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:282
+#: ui/main-window.slint:293
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:287
+#: ui/main-window.slint:298
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:294
+#: ui/main-window.slint:305
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:301
+#: ui/main-window.slint:312
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:308
+#: ui/main-window.slint:319
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:315
+#: ui/main-window.slint:326
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:327
+#: ui/main-window.slint:338
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:438
+#: ui/main-window.slint:449
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr ""

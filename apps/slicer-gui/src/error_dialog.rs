@@ -11,15 +11,47 @@ use slint::ComponentHandle;
 
 use crate::{ErrorDialog, ReplaceSceneDialog};
 
-/// User's exit from the "replace current scene?" dialog. Three
+/// User's exit from the "replace current scene?" dialog. Four
 /// outcomes; the caller decides what each means in context (typically
-/// "close current and load new" / "export current first, then load
-/// new on success" / "do nothing").
+/// "close current and load new" / "save current first, then load new
+/// on success" / "export current first, then load new on success" /
+/// "do nothing").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReplaceSceneChoice {
     Discard,
+    Save,
     Export,
     Cancel,
+}
+
+/// Which "keep your work" buttons the "replace current scene?" dialog
+/// offers, decided from the document's dirty state and from whether it
+/// is backed by a project file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeepChangesOffer {
+    /// The scene has no unsaved changes: closing it loses nothing, so
+    /// neither Save nor Export is offered.
+    NothingToKeep,
+    /// Unsaved changes on a scene backed by a project file: offer
+    /// "Save & Open" (overwrite that file) alongside Export.
+    SaveExisting,
+    /// Unsaved changes on a scene with no project file yet: offer
+    /// "Save As & Open" (pick a new file) alongside Export.
+    SaveAsNew,
+}
+
+impl KeepChangesOffer {
+    /// Value for the dialog's `has-unsaved-changes` property: shows
+    /// the Save and Export buttons and the matching body text.
+    fn has_unsaved_changes(self) -> bool {
+        !matches!(self, Self::NothingToKeep)
+    }
+
+    /// Value for the dialog's `save-as-mode` property: switches the
+    /// Save button and body text to "Save As" wording.
+    fn save_as_mode(self) -> bool {
+        matches!(self, Self::SaveAsNew)
+    }
 }
 
 /// One-shot callback that delivers the user's `ReplaceSceneChoice`.
@@ -117,16 +149,15 @@ impl DialogManager {
     /// Shows the "replace current scene?" confirmation. Calls `on_choice`
     /// once with the user's choice, then hides the dialog and drops it
     /// from the manager. `source_name` (e.g. a file basename) is shown
-    /// as context; pass an empty string to omit it. `can_export`
-    /// controls whether the Export button is offered: pass `true` only
-    /// when the scene has unsaved changes worth exporting (otherwise
-    /// the user would be exporting a copy of the loaded source file).
-    /// Must run on the Slint UI thread. Logs and bails silently if the
-    /// dialog can't be constructed or shown.
+    /// as context; pass an empty string to omit it. `offer` controls
+    /// which "keep your work" buttons (Save / Export) are shown and
+    /// whether the Save button uses "Save As" wording. Must run on the
+    /// Slint UI thread. Logs and bails silently if the dialog can't be
+    /// constructed or shown.
     pub fn show_replace_scene_confirm(
         self: &Rc<Self>,
         source_name: String,
-        can_export: bool,
+        offer: KeepChangesOffer,
         on_choice: impl FnOnce(ReplaceSceneChoice) + 'static,
     ) {
         let dialog = match ReplaceSceneDialog::new() {
@@ -141,7 +172,8 @@ impl DialogManager {
             }
         };
         dialog.set_source_name(source_name.into());
-        dialog.set_can_export(can_export);
+        dialog.set_has_unsaved_changes(offer.has_unsaved_changes());
+        dialog.set_save_as_mode(offer.save_as_mode());
 
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -154,6 +186,14 @@ impl DialogManager {
             let mgr_w = Rc::downgrade(self);
             dialog.on_discard_requested(move || {
                 fire_replace_choice(&sink, ReplaceSceneChoice::Discard, &dialog_w, &mgr_w, id);
+            });
+        }
+        {
+            let sink = sink.clone();
+            let dialog_w = dialog.as_weak();
+            let mgr_w = Rc::downgrade(self);
+            dialog.on_save_requested(move || {
+                fire_replace_choice(&sink, ReplaceSceneChoice::Save, &dialog_w, &mgr_w, id);
             });
         }
         {
@@ -228,6 +268,32 @@ pub(crate) fn format_anyhow_chain(err: &anyhow::Error) -> String {
         out.push_str(&format!("\n  caused by: {cause}"));
     }
     out
+}
+
+#[cfg(test)]
+mod keep_changes_offer_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_to_keep_hides_the_save_and_export_buttons() {
+        let offer = KeepChangesOffer::NothingToKeep;
+        assert!(!offer.has_unsaved_changes());
+        assert!(!offer.save_as_mode());
+    }
+
+    #[test]
+    fn save_existing_offers_plain_save_wording() {
+        let offer = KeepChangesOffer::SaveExisting;
+        assert!(offer.has_unsaved_changes());
+        assert!(!offer.save_as_mode());
+    }
+
+    #[test]
+    fn save_as_new_offers_save_as_wording() {
+        let offer = KeepChangesOffer::SaveAsNew;
+        assert!(offer.has_unsaved_changes());
+        assert!(offer.save_as_mode());
+    }
 }
 
 #[cfg(test)]

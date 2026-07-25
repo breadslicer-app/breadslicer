@@ -34,7 +34,7 @@ use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
 mod replace_scene_policy {
-    use crate::error_dialog::ReplaceSceneChoice;
+    use crate::error_dialog::{KeepChangesOffer, ReplaceSceneChoice};
 
     /// Pre-prompt branch chosen by `open_path_in_window` from the
     /// state of the target window and the dropped/opened path.
@@ -47,10 +47,9 @@ mod replace_scene_policy {
         /// path to the loader directly.
         DispatchImmediately,
         /// A scene is already loaded; caller should show the replace-
-        /// scene confirmation dialog. `can_export` controls whether
-        /// the Export button is visible (true iff the document has
-        /// unsaved changes, per the dirty tracking).
-        PromptReplace { can_export: bool },
+        /// scene confirmation dialog. `offer` controls which "keep
+        /// your work" buttons (Save / Export) the dialog shows.
+        PromptReplace { offer: KeepChangesOffer },
     }
 
     /// Post-prompt branch chosen from the user's reply to the
@@ -58,6 +57,7 @@ mod replace_scene_policy {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum PostPromptAction {
         DiscardThenOpen,
+        SaveThenOpen,
         ExportThenOpen,
         NoOp,
     }
@@ -66,6 +66,7 @@ mod replace_scene_policy {
         supported_extension: bool,
         document_loaded: bool,
         document_is_dirty: bool,
+        document_is_project: bool,
     ) -> OpenPathAction {
         if !supported_extension {
             return OpenPathAction::RejectUnsupported;
@@ -73,14 +74,20 @@ mod replace_scene_policy {
         if !document_loaded {
             return OpenPathAction::DispatchImmediately;
         }
-        OpenPathAction::PromptReplace {
-            can_export: document_is_dirty,
-        }
+        let offer = if !document_is_dirty {
+            KeepChangesOffer::NothingToKeep
+        } else if document_is_project {
+            KeepChangesOffer::SaveExisting
+        } else {
+            KeepChangesOffer::SaveAsNew
+        };
+        OpenPathAction::PromptReplace { offer }
     }
 
     pub(crate) fn map_replace_choice(choice: ReplaceSceneChoice) -> PostPromptAction {
         match choice {
             ReplaceSceneChoice::Discard => PostPromptAction::DiscardThenOpen,
+            ReplaceSceneChoice::Save => PostPromptAction::SaveThenOpen,
             ReplaceSceneChoice::Export => PostPromptAction::ExportThenOpen,
             ReplaceSceneChoice::Cancel => PostPromptAction::NoOp,
         }
@@ -494,9 +501,11 @@ impl AppState {
     ///    (decision #3) and return.
     /// 3. Window already has a loaded scene: surface the
     ///    [`ReplaceSceneDialog`] (decision #4). On Discard, close and
-    ///    load the new path; on Export, run the existing "Export As…"
-    ///    flow and only on a successful save close + load; on Cancel,
-    ///    do nothing.
+    ///    load the new path; on Save, run the Save flow (overwrite
+    ///    the project file, or Save As when there is none) and only
+    ///    once the document is on disk close + load; on Export, run
+    ///    the existing "Export As…" flow and only on a successful
+    ///    save close + load; on Cancel, do nothing.
     /// 4. Otherwise dispatch through [`Self::dispatch_path_to_loader`],
     ///    which queues the path on the window's `PendingLoad` slot if
     ///    the GPU device isn't ready yet, or starts the load
@@ -514,6 +523,7 @@ impl AppState {
             is_supported_mesh_extension(&path),
             controller.document().is_loaded(),
             controller.document().is_dirty(),
+            controller.document().is_project(),
         );
         match action {
             OpenPathAction::RejectUnsupported => {
@@ -532,7 +542,7 @@ impl AppState {
             OpenPathAction::DispatchImmediately => {
                 self.dispatch_path_to_loader(window_id, path);
             }
-            OpenPathAction::PromptReplace { can_export } => {
+            OpenPathAction::PromptReplace { offer } => {
                 // Replace-confirm flow. The choice callback fires on
                 // the UI thread once the user picks a button.
                 // `Weak<AppState>` keeps the closure non-cyclic; if
@@ -546,7 +556,7 @@ impl AppState {
                     .to_string();
                 controller.dialogs().show_replace_scene_confirm(
                     source_name,
-                    can_export,
+                    offer,
                     move |choice| {
                         let Some(app) = app_weak.upgrade() else {
                             return;
@@ -554,6 +564,9 @@ impl AppState {
                         match map_replace_choice(choice) {
                             PostPromptAction::DiscardThenOpen => {
                                 app.discard_then_open(window_id, path);
+                            }
+                            PostPromptAction::SaveThenOpen => {
+                                app.save_then_open(window_id, path);
                             }
                             PostPromptAction::ExportThenOpen => {
                                 app.export_then_open(window_id, path);
@@ -713,6 +726,44 @@ impl AppState {
         self.dispatch_path_to_loader(window_id, path);
     }
 
+    /// Replace-confirm Save branch: run the Save flow (overwrite the
+    /// document's project file, or fall back to the Save As flow when
+    /// there is none) and, only once the document is safely on disk,
+    /// close the current scene and dispatch the new path. Cancellation
+    /// of the Save As dialog or a write failure leaves the current
+    /// scene intact (the failure dialog is surfaced by `run_save_flow`
+    /// itself).
+    fn save_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
+        let controller = {
+            let main_windows = self.main_windows.borrow();
+            let Some(wired) = main_windows.get(&window_id) else {
+                return;
+            };
+            wired.controller.clone()
+        };
+        let doc = controller.document();
+        let dialogs = controller.dialogs();
+        let snapshot = self.prefs.snapshot();
+        let app_weak = Rc::downgrade(self);
+        if let Err(err) = slint::spawn_local(async move {
+            let saved = crate::wiring::run_save_flow(
+                doc,
+                dialogs,
+                snapshot.default_printer,
+                snapshot.default_resin,
+            )
+            .await;
+            if !saved {
+                return;
+            }
+            if let Some(app) = app_weak.upgrade() {
+                app.discard_then_open(window_id, path);
+            }
+        }) {
+            eprintln!("Failed to spawn Save & Open task: {err}");
+        }
+    }
+
     /// Replace-confirm Export branch: run the existing "Export As…"
     /// flow and, only on a successful save, close the current scene
     /// and dispatch the new path. Cancellation of the export dialog
@@ -824,16 +875,16 @@ impl AppState {
 #[cfg(test)]
 mod replace_scene_policy_tests {
     use super::replace_scene_policy::*;
-    use crate::error_dialog::ReplaceSceneChoice;
+    use crate::error_dialog::{KeepChangesOffer, ReplaceSceneChoice};
 
     #[test]
     fn unsupported_extension_rejects_regardless_of_load_state() {
         assert_eq!(
-            decide_open_path_action(false, false, false),
+            decide_open_path_action(false, false, false, false),
             OpenPathAction::RejectUnsupported
         );
         assert_eq!(
-            decide_open_path_action(false, true, true),
+            decide_open_path_action(false, true, true, true),
             OpenPathAction::RejectUnsupported
         );
     }
@@ -841,25 +892,52 @@ mod replace_scene_policy_tests {
     #[test]
     fn supported_extension_with_no_loaded_document_dispatches_immediately() {
         assert_eq!(
-            decide_open_path_action(true, false, false),
+            decide_open_path_action(true, false, false, false),
             OpenPathAction::DispatchImmediately
         );
-        // `document_is_dirty` is irrelevant when nothing is loaded.
+        // `document_is_dirty` / `document_is_project` are irrelevant
+        // when nothing is loaded.
         assert_eq!(
-            decide_open_path_action(true, false, true),
+            decide_open_path_action(true, false, true, true),
             OpenPathAction::DispatchImmediately
         );
     }
 
     #[test]
-    fn supported_extension_with_loaded_document_prompts_with_export_iff_dirty() {
+    fn clean_document_prompts_with_nothing_to_keep() {
+        // Whether a project file exists doesn't matter when there
+        // are no unsaved changes: nothing would be lost.
         assert_eq!(
-            decide_open_path_action(true, true, false),
-            OpenPathAction::PromptReplace { can_export: false }
+            decide_open_path_action(true, true, false, false),
+            OpenPathAction::PromptReplace {
+                offer: KeepChangesOffer::NothingToKeep
+            }
         );
         assert_eq!(
-            decide_open_path_action(true, true, true),
-            OpenPathAction::PromptReplace { can_export: true }
+            decide_open_path_action(true, true, false, true),
+            OpenPathAction::PromptReplace {
+                offer: KeepChangesOffer::NothingToKeep
+            }
+        );
+    }
+
+    #[test]
+    fn dirty_project_prompts_with_save_existing() {
+        assert_eq!(
+            decide_open_path_action(true, true, true, true),
+            OpenPathAction::PromptReplace {
+                offer: KeepChangesOffer::SaveExisting
+            }
+        );
+    }
+
+    #[test]
+    fn dirty_non_project_prompts_with_save_as_new() {
+        assert_eq!(
+            decide_open_path_action(true, true, true, false),
+            OpenPathAction::PromptReplace {
+                offer: KeepChangesOffer::SaveAsNew
+            }
         );
     }
 
@@ -868,6 +946,10 @@ mod replace_scene_policy_tests {
         assert_eq!(
             map_replace_choice(ReplaceSceneChoice::Discard),
             PostPromptAction::DiscardThenOpen
+        );
+        assert_eq!(
+            map_replace_choice(ReplaceSceneChoice::Save),
+            PostPromptAction::SaveThenOpen
         );
         assert_eq!(
             map_replace_choice(ReplaceSceneChoice::Export),

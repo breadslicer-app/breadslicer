@@ -283,28 +283,51 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
         let doc = ctrl.document();
         let dialogs = ctrl.dialogs();
         let snapshot = prefs.snapshot();
-        match scene_save::decide_save_dispatch(&doc) {
-            SaveDispatch::NoScene | SaveDispatch::AlreadySaved => {}
-            SaveDispatch::OverwriteProject(target) => {
-                if let Err(err) = scene_save::save_project_to(
-                    &doc,
-                    &target,
-                    snapshot.default_printer,
-                    snapshot.default_resin,
-                ) {
-                    show_save_error(&dialogs, &target, &err);
-                }
-            }
-            SaveDispatch::NeedsSaveAs => {
-                spawn_save_as_flow(
-                    doc,
-                    dialogs,
-                    snapshot.default_printer,
-                    snapshot.default_resin,
-                );
-            }
+        if let Err(err) = slint::spawn_local(async move {
+            let _ = run_save_flow(
+                doc,
+                dialogs,
+                snapshot.default_printer,
+                snapshot.default_resin,
+            )
+            .await;
+        }) {
+            eprintln!("Failed to spawn save task: {err}");
         }
     });
+}
+
+/// Orchestrates one "Save" command: overwrite the document's project
+/// file, fall back to the Save As flow when there is none, and treat
+/// a clean project as already saved without touching the disk.
+/// Returns `true` only when the document's current state is on disk
+/// by the time the flow ends (so a chained "Save & Open" caller knows
+/// it's safe to discard the current scene); cancellation of the Save
+/// As dialog and write failures return `false` and surface their own
+/// dialogs.
+pub(crate) async fn run_save_flow(
+    doc: Rc<SceneDocument>,
+    dialogs: Rc<DialogManager>,
+    default_printer: Option<PrinterId>,
+    default_resin: Option<MaterialId>,
+) -> bool {
+    match scene_save::decide_save_dispatch(&doc) {
+        SaveDispatch::NoScene => false,
+        SaveDispatch::AlreadySaved => true,
+        SaveDispatch::OverwriteProject(target) => {
+            match scene_save::save_project_to(&doc, &target, default_printer, default_resin) {
+                Ok(()) => true,
+                Err(err) => {
+                    show_save_error(&dialogs, &target, &err);
+                    false
+                }
+            }
+        }
+        SaveDispatch::NeedsSaveAs => {
+            let default_stem = scene_export::default_export_stem(&doc);
+            run_save_as_flow(doc, dialogs, default_stem, default_printer, default_resin).await
+        }
+    }
 }
 
 fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
