@@ -36,9 +36,11 @@ mod profile_extending;
 mod profile_forking;
 mod profile_transfer;
 mod profile_view;
+mod project_profiles;
 mod scene_document;
 mod scene_export;
 mod scene_loader;
+mod scene_save;
 mod selection;
 #[cfg(test)]
 mod tests_mesh_loader;

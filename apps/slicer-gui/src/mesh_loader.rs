@@ -16,6 +16,8 @@
 //! reaching `deposit`.
 
 use std::any::Any;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_core::scene::Scene;
@@ -24,12 +26,19 @@ use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::LoadedMesh;
+use sc_mesh_formats::loader::scene_shared_vertices_warning;
+use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
+use sc_project_formats::{
+    LoadedProject, ProfileRefWarning, ProjectPayload, ReadProjectWarning,
+    infer_project_file_type_from_extension, read_project,
+};
 use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::i18n::ctr;
 use crate::mesh_render::GpuScene;
+use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
 // Reject mesh files larger than the loader's default cap before
@@ -154,24 +163,89 @@ pub(crate) fn place_on_plate(graph: &mut Scene, build_volume: BuildVolume) -> an
     Ok(())
 }
 
-/// Spawns a worker thread that parses the mesh at `path`, uploads its
+/// Parser output for one source file: the scene, the mesh-level
+/// warnings, and whatever project data the format carries (project
+/// fields stay empty for plain mesh files).
+struct ParsedSource {
+    graph: Scene,
+    warnings: Vec<LoadMeshWarning>,
+    project_payload: Option<ProjectPayload>,
+    project_warnings: Vec<ReadProjectWarning>,
+    profile_warnings: Vec<ProfileRefWarning>,
+}
+
+/// Parses the file at `path`. Project-capable formats (3MF) go
+/// through the project reader so the project payload is extracted
+/// from the same container parse; everything else goes through the
+/// plain mesh loader.
+fn parse_source(path: &Path) -> anyhow::Result<ParsedSource> {
+    let Ok(file_type) = infer_project_file_type_from_extension(path) else {
+        let LoadedMesh { graph, warnings } =
+            sc_mesh_formats::load_mesh_from_path(path, None, Some(MAX_MESH_FILE_SIZE_BYTES))?;
+        return Ok(ParsedSource {
+            graph,
+            warnings,
+            project_payload: None,
+            project_warnings: Vec::new(),
+            profile_warnings: Vec::new(),
+        });
+    };
+
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let LoadedProject {
+        scene,
+        warnings: project_warnings,
+        payload,
+    } = read_project(&mut reader, file_type)?;
+
+    // The plain loader's post-read check; the project reader stays
+    // below that dispatch level, so it runs here instead.
+    let mut warnings = Vec::new();
+    if let Some(warning) = scene_shared_vertices_warning(&scene) {
+        warnings.push(LoadMeshWarning::Scene(warning));
+    }
+
+    // Classify the profile references against the installed
+    // libraries here on the worker: the checks probe the filesystem.
+    let profile_warnings = payload
+        .as_ref()
+        .map(|payload| {
+            let roots = profile_library_roots();
+            payload.profile_ref_warnings(
+                |id| printer_installed(&roots, id),
+                |id| material_installed(&roots, id),
+            )
+        })
+        .unwrap_or_default();
+
+    Ok(ParsedSource {
+        graph: scene,
+        warnings,
+        project_payload: payload,
+        project_warnings,
+        profile_warnings,
+    })
+}
+
+/// Spawns a worker thread that parses the file at `path`, uploads its
 /// vertex+index buffers to `device`, and deposits the outcome via
 /// `ticket`. Doing both on the worker keeps the UI thread free of the
 /// flatten + `create_buffer_init` hitch that a large mesh otherwise
 /// costs when handled inside `handle_before_rendering`.
 ///
 /// `AssertUnwindSafe` around the parser call is sound because
-/// `load_mesh_from_path` returns an owned `Result<LoadedMesh,
-/// LoadMeshError>` (lifted into `anyhow::Error` here at the worker
-/// boundary), so a mid-parse panic drops any partial state on the
-/// stack. A panic elsewhere in the worker (post-parse, pre-deposit)
-/// unwinds out of the thread; `ticket` drops on the worker, its
-/// `Drop` decrements inflight and schedules `loading = false` through
-/// the event loop, so the UI recovers.
+/// `parse_source` returns an owned `Result` (lifted into
+/// `anyhow::Error` here at the worker boundary), so a mid-parse panic
+/// drops any partial state on the stack. A panic elsewhere in the
+/// worker (post-parse, pre-deposit) unwinds out of the thread;
+/// `ticket` drops on the worker, its `Drop` decrements inflight and
+/// schedules `loading = false` through the event loop, so the UI
+/// recovers.
 ///
-/// If `load_mesh_from_path` is ever changed to return a type
-/// borrowing from a memory-mapped region, revisit the
-/// `AssertUnwindSafe` claim: it would then hide potential UB.
+/// If the parsers are ever changed to return a type borrowing from a
+/// memory-mapped region, revisit the `AssertUnwindSafe` claim: it
+/// would then hide potential UB.
 pub(crate) fn spawn_load(
     ticket: LoadTicket,
     path: PathBuf,
@@ -180,39 +254,46 @@ pub(crate) fn spawn_load(
     build_volume: BuildVolume,
 ) {
     std::thread::spawn(move || {
-        let parsed: anyhow::Result<LoadedMesh> =
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                sc_mesh_formats::load_mesh_from_path(&path, None, Some(MAX_MESH_FILE_SIZE_BYTES))
-            })) {
-                Ok(r) => r.map_err(anyhow::Error::from),
+        let parsed: anyhow::Result<ParsedSource> =
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_source(&path))) {
+                Ok(r) => r,
                 Err(payload) => {
                     let msg = panic_message(&payload);
                     Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
                 }
             };
-        let result = parsed.and_then(
-            |LoadedMesh {
-                 mut graph,
-                 warnings,
-             }| {
-                // Drop the parsed graph onto the build plate before the GPU
-                // upload and cache priming run on it, so both observe the
-                // placed world coordinates.
+        let result = parsed.and_then(|source| {
+            let ParsedSource {
+                mut graph,
+                warnings,
+                project_payload,
+                project_warnings,
+                profile_warnings,
+            } = source;
+            // Drop the parsed graph onto the build plate before the GPU
+            // upload and cache priming run on it, so both observe the
+            // placed world coordinates. A project's placement is part
+            // of its saved content, so project files skip this and
+            // reopen exactly as saved.
+            if project_payload.is_none() {
                 place_on_plate(&mut graph, build_volume)?;
-                // Eager priming: build the per-mesh spatial caches on this
-                // worker thread, so the UI thread receives a fully-primed
-                // `SceneSpatial` and the first picker click / gizmo
-                // attachment doesn't pay the build cost synchronously.
-                let spatial = SceneSpatial::primed_graph(graph);
-                let gpu_scene = GpuScene::build(&device, device_token, spatial.graph())?;
-                Ok(PreparedScene {
-                    spatial,
-                    gpu_scene,
-                    warnings,
-                    source_path: path.clone(),
-                })
-            },
-        );
+            }
+            // Eager priming: build the per-mesh spatial caches on this
+            // worker thread, so the UI thread receives a fully-primed
+            // `SceneSpatial` and the first picker click / gizmo
+            // attachment doesn't pay the build cost synchronously.
+            let spatial = SceneSpatial::primed_graph(graph);
+            let gpu_scene = GpuScene::build(&device, device_token, spatial.graph())?;
+            Ok(PreparedScene {
+                spatial,
+                gpu_scene,
+                warnings,
+                project_payload,
+                project_warnings,
+                profile_warnings,
+                source_path: path.clone(),
+            })
+        });
         ticket.deposit(path, result);
     });
 }

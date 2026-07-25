@@ -45,6 +45,15 @@ pub(crate) fn material_extensions_dir(library_dir: &Path) -> PathBuf {
         .join(MATERIAL_EXTENSIONS_SUBDIR)
 }
 
+/// Path of a printer profile inside a library directory:
+/// `<library_dir>/printers/<id>.toml`. Purely a path computation; the
+/// file may or may not exist.
+pub fn printer_profile_path_in_library(library_dir: &Path, id: &PrinterId) -> PathBuf {
+    library_dir
+        .join(PRINTERS_SUBDIR)
+        .join(format!("{}.toml", id.as_str()))
+}
+
 /// Path of a material profile inside a library directory:
 /// `<library_dir>/materials/<id>.toml`. Purely a path computation; the
 /// file may or may not exist.

@@ -105,6 +105,8 @@ export component MainWindow inherits Window {
 
     callback open-file-requested();
     callback close-current-scene();
+    callback save-requested();
+    callback save-as-requested();
     callback export-as-requested();
     callback scene-load-finished();
     callback show-about-requested();
@@ -202,13 +204,19 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Save");
                 shortcut: @keys(Control + S);
-                enabled: false;
+                enabled: root.has-scene && !root.loading;
+                activated => {
+                    root.save-requested();
+                }
             }
 
             MenuItem {
                 title: @tr("MenuBar" => "Save As…");
                 shortcut: @keys(Control + Shift + S);
-                enabled: false;
+                enabled: root.has-scene && !root.loading;
+                activated => {
+                    root.save-as-requested();
+                }
             }
 
             MenuSeparator { }

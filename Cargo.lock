@@ -4833,6 +4833,7 @@ dependencies = [
  "sc-mesh-spatial",
  "sc-print-primitives",
  "sc-print-profiles",
+ "sc-project-formats",
  "serde",
  "slint",
  "slint-build",

@@ -110,6 +110,19 @@ where
     }
 }
 
+/// Atomically replaces `target_path` with `bytes`: temp file in the
+/// same directory, fsync, then rename, with the same guarantees as
+/// the scene writers (an existing target survives any failure).
+/// Public so callers that serialize their own file contents
+/// (project-file writers) can reuse the machinery instead of
+/// re-implementing it.
+pub fn write_bytes_atomically(target_path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomically(target_path, |writer| {
+        writer.write_all(bytes)?;
+        Ok(())
+    })
+}
+
 /// A warning produced by `flatten_graph_to_mesh` that the caller may
 /// want to surface to the user (or ignore). Distinct from errors:
 /// warnings do not prevent the flattened mesh from being usable.

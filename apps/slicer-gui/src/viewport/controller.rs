@@ -400,8 +400,9 @@ impl ViewportController {
         let PreparedScene {
             spatial,
             gpu_scene,
-            warnings: _,
+            project_payload,
             source_path,
+            ..
         } = prepared;
 
         // Try to install the worker-built buffers directly. Falls
@@ -425,7 +426,7 @@ impl ViewportController {
         // mirror.
         self.session
             .document()
-            .install_spatial(spatial, source_path);
+            .install_spatial(spatial, source_path, project_payload);
 
         if scene_installed {
             self.session.loader().note_upload_success();

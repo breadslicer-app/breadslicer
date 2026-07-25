@@ -105,8 +105,10 @@ where
 /// Resolves a `Scene::detect_shared_vertices` result into a
 /// scene-level warning payload, pairing each offending leaf's
 /// `NodeId` with its mesh-metadata name when present. Returns
-/// `None` when no leaves share vertices.
-fn scene_shared_vertices_warning(graph: &Scene) -> Option<SceneLoadWarning> {
+/// `None` when no leaves share vertices. Public so callers that
+/// read scenes outside this dispatcher (project-file readers) can
+/// reproduce the loader's post-read check.
+pub fn scene_shared_vertices_warning(graph: &Scene) -> Option<SceneLoadWarning> {
     let ids = graph.detect_shared_vertices();
     if ids.is_empty() {
         return None;

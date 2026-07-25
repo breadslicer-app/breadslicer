@@ -11,15 +11,18 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use sc_print_primitives::{MaterialId, PrinterId};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_loader;
+use crate::preferences_bus::PreferencesBus;
 use crate::scene_document::SceneDocument;
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
+use crate::scene_save::{self, SaveDispatch, SaveTargetDispatch};
 use crate::viewport::{RESIZE_SETTLE, ScreenDelta, ScreenPoint, ViewportController};
 
 mod export_flow_dispatch {
@@ -67,15 +70,19 @@ mod export_flow_dispatch {
 use export_flow_dispatch::{ExportDispatch, decide_export_dispatch};
 
 /// Installs every per-window Slint callback (rendering notifier, input
-/// handlers, file open/close, resize debounce). Called once per
-/// `MainWindow` from `AppState::spawn_main_window`.
+/// handlers, file open/close/save, resize debounce). Called once per
+/// `MainWindow` from `AppState::spawn_main_window`. `prefs` feeds the
+/// save flow the app-wide default profiles at save time.
 pub(crate) fn wire_main_window(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
+    prefs: Rc<PreferencesBus>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
     install_rendering_notifier(ui, ctrl.clone())?;
     wire_close_scene(ui, ctrl.clone());
     wire_open_file(ui, ctrl.clone());
+    wire_save(ui, ctrl.clone(), prefs.clone());
+    wire_save_as(ui, ctrl.clone(), prefs);
     wire_export_as(ui, ctrl.clone());
     wire_edit_menu(ui, ctrl.clone());
     wire_viewport_resized(ui, ctrl.clone());
@@ -269,6 +276,111 @@ async fn pick_mesh_file() -> Option<PathBuf> {
         )
         .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
     dialog.pick_file().await.map(|h| h.path().to_path_buf())
+}
+
+fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
+    ui.on_save_requested(move || {
+        let doc = ctrl.document();
+        let dialogs = ctrl.dialogs();
+        let snapshot = prefs.snapshot();
+        match scene_save::decide_save_dispatch(&doc) {
+            SaveDispatch::NoScene | SaveDispatch::AlreadySaved => {}
+            SaveDispatch::OverwriteProject(target) => {
+                if let Err(err) = scene_save::save_project_to(
+                    &doc,
+                    &target,
+                    snapshot.default_printer,
+                    snapshot.default_resin,
+                ) {
+                    show_save_error(&dialogs, &target, &err);
+                }
+            }
+            SaveDispatch::NeedsSaveAs => {
+                spawn_save_as_flow(
+                    doc,
+                    dialogs,
+                    snapshot.default_printer,
+                    snapshot.default_resin,
+                );
+            }
+        }
+    });
+}
+
+fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
+    ui.on_save_as_requested(move || {
+        let snapshot = prefs.snapshot();
+        spawn_save_as_flow(
+            ctrl.document(),
+            ctrl.dialogs(),
+            snapshot.default_printer,
+            snapshot.default_resin,
+        );
+    });
+}
+
+fn spawn_save_as_flow(
+    doc: Rc<SceneDocument>,
+    dialogs: Rc<DialogManager>,
+    default_printer: Option<PrinterId>,
+    default_resin: Option<MaterialId>,
+) {
+    let default_stem = scene_export::default_export_stem(&doc);
+    if let Err(err) = slint::spawn_local(async move {
+        let _ = run_save_as_flow(doc, dialogs, default_stem, default_printer, default_resin).await;
+    }) {
+        eprintln!("Failed to spawn save dialog task: {err}");
+    }
+}
+
+/// Orchestrates one "Save As" command: show the file-save dialog
+/// (seeded with the source stem and the `.3mf` extension), validate
+/// the picked name, and write the project. Returns `true` only when
+/// a file was actually written; cancellation, wrong extensions, and
+/// write failures all return `false` and surface their own dialogs.
+async fn run_save_as_flow(
+    doc: Rc<SceneDocument>,
+    dialogs: Rc<DialogManager>,
+    default_stem: Option<String>,
+    default_printer: Option<PrinterId>,
+    default_resin: Option<MaterialId>,
+) -> bool {
+    let dispatch = scene_save::decide_save_target(pick_save_target(default_stem).await);
+    match dispatch {
+        SaveTargetDispatch::Cancelled => false,
+        SaveTargetDispatch::WrongExtension(target) => {
+            let err = anyhow::anyhow!("Project files are saved as .3mf packages.");
+            show_save_error(&dialogs, &target, &err);
+            false
+        }
+        SaveTargetDispatch::Ready(target) => {
+            match scene_save::save_project_to(&doc, &target, default_printer, default_resin) {
+                Ok(()) => true,
+                Err(err) => {
+                    show_save_error(&dialogs, &target, &err);
+                    false
+                }
+            }
+        }
+    }
+}
+
+async fn pick_save_target(default_stem: Option<String>) -> Option<PathBuf> {
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .add_filter(ctr!("FileDialog", "3MF files").to_string(), &["3mf"]);
+    if let Some(stem) = default_stem {
+        dialog = dialog.set_file_name(format!("{stem}.3mf"));
+    }
+    dialog.save_file().await.map(|h| h.path().to_path_buf())
+}
+
+fn show_save_error(dialogs: &Rc<DialogManager>, target: &std::path::Path, err: &anyhow::Error) {
+    dialogs.show_error(
+        ctr!("ErrorDialog", "Failed to save").as_str(),
+        Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
+        err.to_string(),
+        format_anyhow_chain(err),
+    );
 }
 
 fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {

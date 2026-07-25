@@ -473,7 +473,10 @@ fn load_by_id_error_types_implement_error_trait() {
 
 #[test]
 fn library_path_accessors_mirror_the_loader_layout() {
-    use super::loader::{material_extension_path_in_library, material_profile_path_in_library};
+    use super::loader::{
+        material_extension_path_in_library, material_profile_path_in_library,
+        printer_profile_path_in_library,
+    };
 
     let base = Path::new("/lib");
     let id = MaterialId::new("brand-resin").unwrap();
@@ -484,6 +487,11 @@ fn library_path_accessors_mirror_the_loader_layout() {
     assert_eq!(
         material_extension_path_in_library(base, &id),
         Path::new("/lib/materials/extensions/brand-resin.toml"),
+    );
+    let printer = PrinterId::new("vendor-printer").unwrap();
+    assert_eq!(
+        printer_profile_path_in_library(base, &printer),
+        Path::new("/lib/printers/vendor-printer.toml"),
     );
 }
 

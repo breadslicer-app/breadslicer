@@ -341,7 +341,7 @@ impl AppState {
         // Future runtime edits flow in through the subscription below.
         ctrl.set_build_volume(snapshot.build_volume);
 
-        crate::wiring::wire_main_window(&ui, ctrl.clone())?;
+        crate::wiring::wire_main_window(&ui, ctrl.clone(), self.prefs.clone())?;
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();

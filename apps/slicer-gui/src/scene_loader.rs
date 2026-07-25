@@ -46,6 +46,7 @@ use sc_mesh_formats::messages::{
     LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
 };
 use sc_mesh_spatial::SceneSpatial;
+use sc_project_formats::{ForeignDialect, ProfileRefWarning, ProjectPayload, ReadProjectWarning};
 use slint::ComponentHandle;
 use slint::wgpu_29::wgpu;
 
@@ -64,6 +65,17 @@ pub(crate) struct PreparedScene {
     pub spatial: SceneSpatial,
     pub gpu_scene: GpuScene,
     pub warnings: Vec<LoadMeshWarning>,
+    /// Project data the file carried (profile references + embedded
+    /// documents). `None` for plain mesh files and for 3MF packages
+    /// without a project part. Threaded into the document at install
+    /// time; the save flow writes it back out.
+    pub project_payload: Option<ProjectPayload>,
+    /// Project-level load warnings (foreign project data, unknown
+    /// payload versions, unrecognized profile parts).
+    pub project_warnings: Vec<ReadProjectWarning>,
+    /// Classification of the payload's profile references against
+    /// the locally installed profiles, computed on the worker.
+    pub profile_warnings: Vec<ProfileRefWarning>,
     /// The filesystem path the scene was loaded from. Threaded into
     /// the document at install time so callers can derive default
     /// export filenames, surface the source in window titles, etc.
@@ -366,7 +378,7 @@ impl SceneLoader {
         let (path, result) = self.drain_matching_deposit()?;
         match result {
             Ok(prepared) => {
-                log_load_warnings(&path, &prepared.warnings);
+                log_load_warnings(&path, &prepared);
                 self.upload_failures.set(0);
                 Some(prepared)
             }
@@ -422,9 +434,11 @@ impl SceneLoader {
 }
 
 // Load-time warnings are surfaced to stderr until the UI grows a
-// place to show them.
-fn log_load_warnings(path: &Path, warnings: &[LoadMeshWarning]) {
-    for warning in warnings {
+// place to show them. Profile-reference lines come in two tiers: a
+// reference with an embedded copy in the file is a note (the data is
+// at hand, just not installed), one without is a warning.
+fn log_load_warnings(path: &Path, prepared: &PreparedScene) {
+    for warning in &prepared.warnings {
         let line = match warning {
             LoadMeshWarning::Obj(w) => describe_obj_warning(w),
             LoadMeshWarning::Stl(stl) => match *stl {},
@@ -432,6 +446,25 @@ fn log_load_warnings(path: &Path, warnings: &[LoadMeshWarning]) {
             LoadMeshWarning::Scene(w) => describe_scene_warning(w),
         };
         eprintln!("WARNING [{}]: {}", path.display(), line);
+    }
+    for warning in &prepared.project_warnings {
+        eprintln!(
+            "WARNING [{}]: {}",
+            path.display(),
+            describe_project_warning(warning),
+        );
+    }
+    for warning in &prepared.profile_warnings {
+        let tier = if profile_ref_warning_is_informational(warning) {
+            "NOTE"
+        } else {
+            "WARNING"
+        };
+        eprintln!(
+            "{tier} [{}]: {}",
+            path.display(),
+            describe_profile_ref_warning(warning),
+        );
     }
 }
 
@@ -506,6 +539,58 @@ pub(crate) fn describe_scene_warning(warning: &SceneLoadWarning) -> String {
                 labels.join(", "),
             )
         }
+    }
+}
+
+pub(crate) fn describe_project_warning(warning: &ReadProjectWarning) -> String {
+    match warning {
+        ReadProjectWarning::ThreeMf(w) => describe_threemf_warning(w),
+        ReadProjectWarning::ProjectVersionUnsupported { version } => format!(
+            "the file carries project data with version {version}, which this build does not understand; the project settings were ignored"
+        ),
+        ReadProjectWarning::UnrecognizedProfilePart { part_name } => {
+            format!("ignored an unrecognized part in the embedded-profiles area: {part_name}")
+        }
+        ReadProjectWarning::ForeignProjectData { dialect } => format!(
+            "the file carries project data written by {}; only the model data was loaded",
+            dialect_name(*dialect),
+        ),
+    }
+}
+
+fn dialect_name(dialect: ForeignDialect) -> &'static str {
+    match dialect {
+        ForeignDialect::PrusaSlicer => "PrusaSlicer",
+        ForeignDialect::BambuStudioOrca => "Bambu Studio / OrcaSlicer",
+        ForeignDialect::Cura => "Cura",
+    }
+}
+
+/// Whether a profile-reference line is the softer, informational
+/// tier: the profile is not installed, but the file carries an
+/// embedded copy of the document.
+pub(crate) fn profile_ref_warning_is_informational(warning: &ProfileRefWarning) -> bool {
+    match warning {
+        ProfileRefWarning::PrinterEmbeddedOnly { .. }
+        | ProfileRefWarning::ResinEmbeddedOnly { .. } => true,
+        ProfileRefWarning::PrinterMissing { .. } | ProfileRefWarning::ResinMissing { .. } => false,
+    }
+}
+
+pub(crate) fn describe_profile_ref_warning(warning: &ProfileRefWarning) -> String {
+    match warning {
+        ProfileRefWarning::PrinterMissing { id } => format!(
+            "the project references printer profile \"{id}\", which is not installed and has no embedded copy in the file"
+        ),
+        ProfileRefWarning::PrinterEmbeddedOnly { id } => format!(
+            "the project references printer profile \"{id}\", which is not installed; the file carries an embedded copy"
+        ),
+        ProfileRefWarning::ResinMissing { id } => format!(
+            "the project references resin profile \"{id}\", which is not installed and has no embedded copy in the file"
+        ),
+        ProfileRefWarning::ResinEmbeddedOnly { id } => format!(
+            "the project references resin profile \"{id}\", which is not installed; the file carries an embedded copy"
+        ),
     }
 }
 

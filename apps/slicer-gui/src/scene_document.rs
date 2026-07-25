@@ -31,6 +31,7 @@ use sc_mesh_core::scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
+use sc_project_formats::ProjectPayload;
 
 pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
 
@@ -93,10 +94,19 @@ struct HistoryEntry {
 
 pub(crate) struct SceneDocument {
     spatial: RefCell<Option<SceneSpatial>>,
-    /// Filesystem path the loaded scene came from. Used today to
-    /// derive default export filenames; tomorrow for "Save" /
-    /// "Reload". Cleared in lockstep with `spatial`.
+    /// Filesystem path the loaded scene came from, updated by a
+    /// successful "Save As". Used to derive default export/save
+    /// filenames and as the "Save" overwrite target. Cleared in
+    /// lockstep with `spatial`.
     source_path: RefCell<Option<PathBuf>>,
+    /// Project data carried by the source file (profile references
+    /// plus embedded profile documents), or the payload written by
+    /// the latest save. `None` for scenes from plain mesh files;
+    /// `Some` marks the document as a project, which is what lets
+    /// "Save" overwrite `source_path` in place. Held opaquely: the
+    /// GUI applies nothing from it, it only travels back out on the
+    /// next save.
+    project_payload: RefCell<Option<ProjectPayload>>,
     /// Currently-selected object. Reset to `Selection::None` whenever
     /// the scene is installed or cleared: a new scene has its own
     /// object indices, so a prior selection is no longer meaningful.
@@ -136,6 +146,7 @@ impl SceneDocument {
         Rc::new(Self {
             spatial: RefCell::new(None),
             source_path: RefCell::new(None),
+            project_payload: RefCell::new(None),
             selection: SelectionState::new(),
             listeners: RefCell::new(Vec::new()),
             next_listener_id: Cell::new(0),
@@ -153,16 +164,23 @@ impl SceneDocument {
     /// built off the UI thread by the mesh-loader pipeline.
     #[cfg(test)]
     pub fn install_graph(&self, graph: Scene, source_path: PathBuf) {
-        self.install_spatial(SceneSpatial::from_graph(graph), source_path);
+        self.install_spatial(SceneSpatial::from_graph(graph), source_path, None);
     }
 
     /// Install a [`SceneSpatial`] (typically pre-primed by the load
     /// worker thread). Resets selection and clears history just like
-    /// [`Self::install_graph`].
-    pub fn install_spatial(&self, spatial: SceneSpatial, source_path: PathBuf) {
+    /// [`Self::install_graph`]. `project_payload` is the project data
+    /// the source file carried, `None` for plain mesh files.
+    pub fn install_spatial(
+        &self,
+        spatial: SceneSpatial,
+        source_path: PathBuf,
+        project_payload: Option<ProjectPayload>,
+    ) {
         let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
+        *self.project_payload.borrow_mut() = project_payload;
         self.selection.set(Selection::None);
         // Object indices in the new scene have no relationship to the
         // outgoing one's, so any pending edits would target the wrong
@@ -182,6 +200,7 @@ impl SceneDocument {
         let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
+        *self.project_payload.borrow_mut() = None;
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
@@ -222,14 +241,39 @@ impl SceneDocument {
     /// Records the current history position as the saved state, so
     /// [`Self::is_dirty`] reads `false` until the next committed
     /// change. Called by the save flow after a successful write.
-    // The production caller lands with the Save flow; tests exercise
-    // the dirty tracking through it in the meantime.
-    #[allow(dead_code)]
     pub fn mark_saved(&self) {
         let was_dirty = self.is_dirty();
         self.save_point.set(self.top_edit_id());
         self.evicted_since_save.set(false);
         self.notify_dirty_change(was_dirty);
+    }
+
+    /// The project data held for this document, cloned out. `None`
+    /// for scenes loaded from plain mesh files that have not been
+    /// saved as a project yet.
+    pub fn project_payload(&self) -> Option<ProjectPayload> {
+        self.project_payload.borrow().clone()
+    }
+
+    /// Whether this document is a project: it was opened from a
+    /// project file or has been saved as one. Gates the in-place
+    /// "Save" overwrite; everything else falls back to "Save As".
+    pub fn is_project(&self) -> bool {
+        self.project_payload.borrow().is_some()
+    }
+
+    /// Replaces the held project data. Called by the save flow with
+    /// the payload that was actually written, so the next save
+    /// carries the same values.
+    pub fn set_project_payload(&self, payload: ProjectPayload) {
+        *self.project_payload.borrow_mut() = Some(payload);
+    }
+
+    /// Points the document at a new on-disk location. Called by
+    /// "Save As" after a successful write; from then on "Save"
+    /// overwrites the new path and default filenames derive from it.
+    pub fn set_source_path(&self, path: PathBuf) {
+        *self.source_path.borrow_mut() = Some(path);
     }
 
     fn top_edit_id(&self) -> Option<u64> {
@@ -864,7 +908,11 @@ mod scene_document_tests {
     #[test]
     fn install_spatial_uses_the_provided_spatial() {
         let doc = SceneDocument::new();
-        doc.install_spatial(SceneSpatial::primed_graph(empty_graph()), fixture_path());
+        doc.install_spatial(
+            SceneSpatial::primed_graph(empty_graph()),
+            fixture_path(),
+            None,
+        );
         assert!(doc.is_loaded());
         assert_eq!(doc.source_path(), Some(fixture_path()));
     }
