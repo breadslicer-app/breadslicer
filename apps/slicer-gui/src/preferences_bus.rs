@@ -28,7 +28,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
 
 use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
@@ -53,6 +53,10 @@ pub(crate) struct PreferencesSnapshot {
     /// selected profiles. Toggled from the Preferences window.
     pub favourite_printers: BTreeSet<PrinterId>,
     pub favourite_resins: BTreeSet<MaterialId>,
+    /// App-wide anti-aliasing level applied when rasterizing slices.
+    /// Set from the Slicing Preferences section; the slicing flow reads
+    /// it when a slice is produced.
+    pub aa_level: AaLevel,
     pub build_volume: BuildVolume,
     /// Whether the floating object-list panel is shown. Persisted so a
     /// window restores the last state on the next launch. Per-window
@@ -100,6 +104,7 @@ pub(crate) enum PreferencesChange {
     DefaultPrinter,
     DefaultResin,
     Favourites,
+    AaLevel,
     ObjectListPanel,
     SliceControlPanel,
     LastOpenDir,
@@ -254,6 +259,7 @@ mod preferences_bus_tests {
             default_resin: None,
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
+            aa_level: AaLevel::Off,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
             object_list_anchor_right: true,

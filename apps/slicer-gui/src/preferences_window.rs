@@ -22,6 +22,7 @@ use sc_print_profiles::{
     material_profile_path_in_library, user_library_dir,
 };
 
+use crate::aa_level::aa_level_from_combo_index;
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::material_form::{
@@ -199,6 +200,17 @@ pub(crate) fn build_preferences_window(
             bus.update(move |snap| {
                 snap.language = new_language;
                 PreferencesChange::Language
+            });
+        }
+    });
+
+    prefs.on_aa_level_changed({
+        let bus = bus.clone();
+        move |index| {
+            let new_level = aa_level_from_combo_index(index);
+            bus.update(move |snap| {
+                snap.aa_level = new_level;
+                PreferencesChange::AaLevel
             });
         }
     });

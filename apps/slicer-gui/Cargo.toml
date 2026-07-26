@@ -16,7 +16,7 @@ sc-app-paths = { workspace = true }
 sc-mesh-core = { workspace = true }
 sc-mesh-formats = { workspace = true }
 sc-mesh-spatial = { workspace = true }
-sc-print-primitives = { workspace = true }
+sc-print-primitives = { workspace = true, features = ["serde"] }
 sc-print-profiles = { workspace = true }
 sc-project-formats = { workspace = true }
 

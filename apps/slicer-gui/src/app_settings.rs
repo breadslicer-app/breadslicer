@@ -16,7 +16,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
 use serde::{Deserialize, Serialize};
 
 use crate::language::LanguagePreference;
@@ -206,6 +206,20 @@ fn default_schema_version() -> u32 {
     APP_SETTINGS_SCHEMA_VERSION
 }
 
+/// The anti-aliasing default (`Off`) as a free function, so the
+/// `aa_level` field can use `#[serde(default = ...)]` without the
+/// primitive `AaLevel` needing a `Default` impl.
+fn default_aa_level() -> AaLevel {
+    AaLevel::Off
+}
+
+/// True when the anti-aliasing level is the default (`Off`); the field
+/// is then omitted from the serialized TOML so a fresh config stays
+/// minimal.
+fn is_default_aa_level(level: &AaLevel) -> bool {
+    *level == AaLevel::Off
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with
@@ -231,6 +245,13 @@ pub(crate) struct AppSettings {
     /// The user's favourite resins, by id. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     favourite_resins: BTreeSet<MaterialId>,
+    /// The app-wide anti-aliasing level applied when rasterizing slices.
+    /// Omitted in TOML while it holds the default (`Off`).
+    #[serde(
+        default = "default_aa_level",
+        skip_serializing_if = "is_default_aa_level"
+    )]
+    aa_level: AaLevel,
     /// Floating object-list panel state. Omitted in TOML while every
     /// field holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
@@ -255,6 +276,7 @@ impl Default for AppSettings {
             default_resin: None,
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
+            aa_level: default_aa_level(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
             last_open_dir: None,
@@ -386,6 +408,14 @@ impl AppSettings {
 
     pub fn set_favourite_resins(&mut self, ids: BTreeSet<MaterialId>) {
         self.favourite_resins = ids;
+    }
+
+    pub fn aa_level(&self) -> AaLevel {
+        self.aa_level
+    }
+
+    pub fn set_aa_level(&mut self, level: AaLevel) {
+        self.aa_level = level;
     }
 
     pub fn object_list_visible(&self) -> bool {
@@ -709,6 +739,42 @@ mod app_settings_tests {
         assert!(
             !written.contains("menu_layout"),
             "default settings should not serialise the menu layout key, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn default_aa_level_is_off() {
+        assert_eq!(AppSettings::default().aa_level(), AaLevel::Off);
+    }
+
+    #[test]
+    fn explicit_aa_level_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_aa_level(AaLevel::X4);
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.aa_level(), AaLevel::X4);
+
+        // Written as a plain lowercase string so an external tool or a
+        // hand-edit can find it.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("aa_level = \"x4\""), "got:\n{written}");
+    }
+
+    #[test]
+    fn saved_toml_omits_default_aa_level() {
+        // Off (the default) is `skip_serializing_if`; a fresh config
+        // shouldn't carry a redundant `aa_level = "off"` line.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("aa_level"),
+            "default settings should not serialise the AA level key, got:\n{written}"
         );
     }
 

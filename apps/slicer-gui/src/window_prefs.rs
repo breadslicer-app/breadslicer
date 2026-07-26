@@ -13,6 +13,7 @@
 //! module just defines *what* each window does when a snapshot
 //! arrives, not *when*.
 
+use crate::aa_level::aa_combo_index;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::PreferencesSnapshot;
 use crate::{AboutWindow, MainWindow, MenuLayout, PreferencesWindow};
@@ -47,6 +48,7 @@ impl WindowPreferences for PreferencesWindow {
         // the combo at the current preference.
         self.set_language_options(LanguagePreference::display_options());
         self.set_current_language_index(prefs.language.combo_index());
+        self.set_current_aa_index(aa_combo_index(prefs.aa_level));
         // Printer / resin selection is pushed separately (see
         // `preferences_window::apply_printing`); the catalog-backed
         // models are not part of the plain snapshot.

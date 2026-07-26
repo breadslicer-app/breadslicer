@@ -252,6 +252,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_default_resin(snap.default_resin.clone());
     settings.set_favourite_printers(snap.favourite_printers.clone());
     settings.set_favourite_resins(snap.favourite_resins.clone());
+    settings.set_aa_level(snap.aa_level);
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
     settings.set_object_list_anchor_bottom(snap.object_list_anchor_bottom);
@@ -314,6 +315,7 @@ impl AppState {
             default_resin,
             favourite_printers: settings.favourite_printers(),
             favourite_resins: settings.favourite_resins(),
+            aa_level: settings.aa_level(),
             build_volume,
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
@@ -1239,6 +1241,7 @@ mod settings_saver_tests {
     use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
     use crate::language::LanguagePreference;
     use crate::{MenuLayout, ThemePreference};
+    use sc_print_primitives::AaLevel;
 
     fn snapshot_with(theme: ThemePreference) -> PreferencesSnapshot {
         PreferencesSnapshot {
@@ -1249,6 +1252,7 @@ mod settings_saver_tests {
             default_resin: None,
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
+            aa_level: AaLevel::Off,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
             object_list_anchor_right: true,
@@ -1281,6 +1285,17 @@ mod settings_saver_tests {
 
         assert!(settings.favourite_printers().contains(&printer));
         assert!(settings.favourite_resins().contains(&resin));
+    }
+
+    #[test]
+    fn apply_snapshot_copies_aa_level_into_settings() {
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.aa_level = AaLevel::X8;
+
+        let mut settings = AppSettings::default();
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert_eq!(settings.aa_level(), AaLevel::X8);
     }
 
     #[test]
@@ -1359,6 +1374,7 @@ mod settings_saver_tests {
                 default_resin: None,
                 favourite_printers: BTreeSet::new(),
                 favourite_resins: BTreeSet::new(),
+                aa_level: AaLevel::Off,
                 build_volume: bv,
                 object_list_visible: true,
                 object_list_anchor_right: true,

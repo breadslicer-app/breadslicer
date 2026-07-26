@@ -8,6 +8,7 @@ import { SideBar } from "../sidebar.slint";
 import { AppearancePreferences, ThemePreference } from "./appearance.slint";
 import { PrinterPreferences, PrinterCard } from "./printer.slint";
 import { ResinPreferences, ResinRow } from "./resin.slint";
+import { SlicingPreferences } from "./slicing.slint";
 
 export component PreferencesWindow inherits Window {
     title: @tr("Preferences");
@@ -26,6 +27,7 @@ export component PreferencesWindow inherits Window {
     in-out property <ThemePreference> theme: ThemePreference.System;
     in property <[string]> language-options;
     in-out property <int> current-language-index: 0;
+    in-out property <int> current-aa-index: 0;
 
     in property <[PrinterCard]> printer-cards;
     in property <[string]> manufacturer-tabs;
@@ -47,6 +49,7 @@ export component PreferencesWindow inherits Window {
     callback close-requested();
     callback theme-changed(ThemePreference);
     callback language-changed(int);
+    callback aa-level-changed(int);
     callback manufacturer-tab-changed(int);
     callback printer-search-changed(string);
     callback printer-selected(int);
@@ -86,6 +89,7 @@ export component PreferencesWindow inherits Window {
                     @tr("PreferencesMenu" => "UI & Theme"),
                     @tr("PreferencesMenu" => "Printer"),
                     @tr("PreferencesMenu" => "Resin"),
+                    @tr("PreferencesMenu" => "Slicing"),
                 ];
             }
 
@@ -161,6 +165,12 @@ export component PreferencesWindow inherits Window {
                 }
                 export-materials-requested => {
                     root.export-materials-requested();
+                }
+            }
+            if(side-bar.current-item == 3) : SlicingPreferences {
+                current-aa-index <=> root.current-aa-index;
+                aa-level-changed(i) => {
+                    root.aa-level-changed(i);
                 }
             }
         }
