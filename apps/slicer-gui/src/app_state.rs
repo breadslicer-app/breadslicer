@@ -260,6 +260,12 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_object_list_width(snap.object_list_width);
     settings.set_object_list_height(snap.object_list_height);
     settings.set_object_list_minimized(snap.object_list_minimized);
+    settings.set_slice_panel_anchor_right(snap.slice_panel_anchor_right);
+    settings.set_slice_panel_anchor_bottom(snap.slice_panel_anchor_bottom);
+    settings.set_slice_panel_offset_x(snap.slice_panel_offset_x);
+    settings.set_slice_panel_offset_y(snap.slice_panel_offset_y);
+    settings.set_slice_panel_width(snap.slice_panel_width);
+    settings.set_slice_panel_height(snap.slice_panel_height);
     settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
@@ -317,6 +323,12 @@ impl AppState {
             object_list_width: settings.object_list_width(),
             object_list_height: settings.object_list_height(),
             object_list_minimized: settings.object_list_minimized(),
+            slice_panel_anchor_right: settings.slice_panel_anchor_right(),
+            slice_panel_anchor_bottom: settings.slice_panel_anchor_bottom(),
+            slice_panel_offset_x: settings.slice_panel_offset_x(),
+            slice_panel_offset_y: settings.slice_panel_offset_y(),
+            slice_panel_width: settings.slice_panel_width(),
+            slice_panel_height: settings.slice_panel_height(),
             last_open_dir: settings.last_open_dir(),
         };
         // Apply the persisted language *once* up front so the very
@@ -402,6 +414,25 @@ impl AppState {
         }
         if let Some(height) = snapshot.object_list_height {
             ui.set_object_list_height(height);
+        }
+        // Slice control panel geometry: same per-window live semantics as
+        // the object-list panel. An offset or size field is pushed only
+        // when a previous session saved it; leaving a field untouched
+        // keeps the Slint default (top-left anchor, 12px offsets, 240px
+        // width, auto height).
+        ui.set_slice_panel_anchor_right(snapshot.slice_panel_anchor_right);
+        ui.set_slice_panel_anchor_bottom(snapshot.slice_panel_anchor_bottom);
+        if let Some(offset_x) = snapshot.slice_panel_offset_x {
+            ui.set_slice_panel_offset_x(offset_x);
+        }
+        if let Some(offset_y) = snapshot.slice_panel_offset_y {
+            ui.set_slice_panel_offset_y(offset_y);
+        }
+        if let Some(width) = snapshot.slice_panel_width {
+            ui.set_slice_panel_width(width);
+        }
+        if let Some(height) = snapshot.slice_panel_height {
+            ui.set_slice_panel_height(height);
         }
         let document = SceneDocument::new();
         let pending_load = Rc::new(PendingLoad::new());
@@ -972,6 +1003,40 @@ impl AppState {
                 },
             );
         }
+        {
+            // Persist the Slice control panel geometry after a drag or
+            // resize. Per-window live state, like the object-list panel.
+            let bus = self.prefs.clone();
+            ui.on_slice_panel_geometry_changed(
+                move |anchor_right, anchor_bottom, offset_x, offset_y, width, height| {
+                    // A 0px height means the panel is auto-sizing; store
+                    // it as "unset" so it keeps auto-sizing after a
+                    // restart.
+                    let height = if height > 0.0 { Some(height) } else { None };
+                    let current = bus.snapshot();
+                    if current.slice_panel_anchor_right == anchor_right
+                        && current.slice_panel_anchor_bottom == anchor_bottom
+                        && current.slice_panel_offset_x == Some(offset_x)
+                        && current.slice_panel_offset_y == Some(offset_y)
+                        && current.slice_panel_width == Some(width)
+                        && current.slice_panel_height == height
+                    {
+                        // A gesture that ended without changing anything
+                        // must not trigger a redundant settings write.
+                        return;
+                    }
+                    bus.update(move |snap| {
+                        snap.slice_panel_anchor_right = anchor_right;
+                        snap.slice_panel_anchor_bottom = anchor_bottom;
+                        snap.slice_panel_offset_x = Some(offset_x);
+                        snap.slice_panel_offset_y = Some(offset_y);
+                        snap.slice_panel_width = Some(width);
+                        snap.slice_panel_height = height;
+                        PreferencesChange::SliceControlPanel
+                    });
+                },
+            );
+        }
     }
 
     /// Shows the app-wide About window, creating it on first use and
@@ -1193,6 +1258,12 @@ mod settings_saver_tests {
             object_list_width: None,
             object_list_height: None,
             object_list_minimized: false,
+            slice_panel_anchor_right: false,
+            slice_panel_anchor_bottom: false,
+            slice_panel_offset_x: None,
+            slice_panel_offset_y: None,
+            slice_panel_width: None,
+            slice_panel_height: None,
             last_open_dir: None,
         }
     }
@@ -1210,6 +1281,27 @@ mod settings_saver_tests {
 
         assert!(settings.favourite_printers().contains(&printer));
         assert!(settings.favourite_resins().contains(&resin));
+    }
+
+    #[test]
+    fn apply_snapshot_copies_slice_panel_geometry_into_settings() {
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.slice_panel_anchor_right = true;
+        snap.slice_panel_anchor_bottom = true;
+        snap.slice_panel_offset_x = Some(24.0);
+        snap.slice_panel_offset_y = Some(36.0);
+        snap.slice_panel_width = Some(300.0);
+        snap.slice_panel_height = Some(220.0);
+
+        let mut settings = AppSettings::default();
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert!(settings.slice_panel_anchor_right());
+        assert!(settings.slice_panel_anchor_bottom());
+        assert_eq!(settings.slice_panel_offset_x(), Some(24.0));
+        assert_eq!(settings.slice_panel_offset_y(), Some(36.0));
+        assert_eq!(settings.slice_panel_width(), Some(300.0));
+        assert_eq!(settings.slice_panel_height(), Some(220.0));
     }
 
     #[test]
@@ -1276,6 +1368,12 @@ mod settings_saver_tests {
                 object_list_width: None,
                 object_list_height: None,
                 object_list_minimized: false,
+                slice_panel_anchor_right: false,
+                slice_panel_anchor_bottom: false,
+                slice_panel_offset_x: None,
+                slice_panel_offset_y: None,
+                slice_panel_width: None,
+                slice_panel_height: None,
                 last_open_dir: None,
             })
             .unwrap();

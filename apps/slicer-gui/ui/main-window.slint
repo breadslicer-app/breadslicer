@@ -209,6 +209,10 @@ export component MainWindow inherits Window {
     // picked option's index into the matching options model.
     callback slice-printer-picked(int);
     callback slice-resin-picked(int);
+    // Reports the Slice control panel's geometry (anchor-right,
+    // anchor-bottom, offset-x, offset-y, width, height) after a drag or
+    // resize so Rust can persist it. Per-window live state.
+    callback slice-panel-geometry-changed(bool, bool, length, length, length, length);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -624,6 +628,15 @@ export component MainWindow inherits Window {
         }
         resin-picked(i) => {
             root.slice-resin-picked(i);
+        }
+        geometry-committed => {
+            root.slice-panel-geometry-changed(
+                root.slice-panel-anchor-right,
+                root.slice-panel-anchor-bottom,
+                root.slice-panel-offset-x,
+                root.slice-panel-offset-y,
+                root.slice-panel-width,
+                root.slice-panel-height);
         }
     }
 

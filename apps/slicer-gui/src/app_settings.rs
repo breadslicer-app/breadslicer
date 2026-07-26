@@ -159,6 +159,42 @@ impl ObjectListSettings {
     }
 }
 
+/// On-disk position and size of the floating Slice control panel. Serde
+/// fills any missing field from `Default`, and the whole section is
+/// omitted while it holds its default (see the `slice_panel` field on
+/// `AppSettings`). The panel has no visibility or minimized state: it is
+/// section-gated, not toggle-hidden, so only geometry is stored.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub(crate) struct SliceControlPanelSettings {
+    /// Which window edges the panel hugs; the default is the top-left
+    /// corner (both false).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    anchor_right: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    anchor_bottom: bool,
+    /// Distance from the anchored edges to the matching panel edges, in
+    /// logical pixels. Absent until the user drags the panel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_x: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_y: Option<f32>,
+    /// Panel size in logical pixels. Absent until the user resizes the
+    /// panel; `height` absent means auto-sizing to the content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<f32>,
+}
+
+impl SliceControlPanelSettings {
+    /// True when every field holds its default, so the whole section can
+    /// be omitted from the serialized TOML.
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Current schema version of the on-disk settings file. Bump this when
 /// the structure of `AppSettings` (or one of its nested settings types)
 /// changes in a way that an older or newer build cannot read. On load,
@@ -199,6 +235,10 @@ pub(crate) struct AppSettings {
     /// field holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
     object_list: ObjectListSettings,
+    /// Floating Slice control panel position and size. Omitted in TOML
+    /// while every field holds its default.
+    #[serde(default, skip_serializing_if = "SliceControlPanelSettings::is_default")]
+    slice_panel: SliceControlPanelSettings,
     /// Directory the file-open dialog starts in: the folder the last
     /// opened file lived in. Omitted in TOML until the user opens a
     /// file; the dialog then falls back to the home directory.
@@ -216,6 +256,7 @@ impl Default for AppSettings {
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
+            slice_panel: SliceControlPanelSettings::default(),
             last_open_dir: None,
         }
     }
@@ -409,6 +450,54 @@ impl AppSettings {
 
     pub fn set_object_list_minimized(&mut self, minimized: bool) {
         self.object_list.minimized = minimized;
+    }
+
+    pub fn slice_panel_anchor_right(&self) -> bool {
+        self.slice_panel.anchor_right
+    }
+
+    pub fn set_slice_panel_anchor_right(&mut self, anchor_right: bool) {
+        self.slice_panel.anchor_right = anchor_right;
+    }
+
+    pub fn slice_panel_anchor_bottom(&self) -> bool {
+        self.slice_panel.anchor_bottom
+    }
+
+    pub fn set_slice_panel_anchor_bottom(&mut self, anchor_bottom: bool) {
+        self.slice_panel.anchor_bottom = anchor_bottom;
+    }
+
+    pub fn slice_panel_offset_x(&self) -> Option<f32> {
+        self.slice_panel.offset_x
+    }
+
+    pub fn set_slice_panel_offset_x(&mut self, offset_x: Option<f32>) {
+        self.slice_panel.offset_x = offset_x;
+    }
+
+    pub fn slice_panel_offset_y(&self) -> Option<f32> {
+        self.slice_panel.offset_y
+    }
+
+    pub fn set_slice_panel_offset_y(&mut self, offset_y: Option<f32>) {
+        self.slice_panel.offset_y = offset_y;
+    }
+
+    pub fn slice_panel_width(&self) -> Option<f32> {
+        self.slice_panel.width
+    }
+
+    pub fn set_slice_panel_width(&mut self, width: Option<f32>) {
+        self.slice_panel.width = width;
+    }
+
+    pub fn slice_panel_height(&self) -> Option<f32> {
+        self.slice_panel.height
+    }
+
+    pub fn set_slice_panel_height(&mut self, height: Option<f32>) {
+        self.slice_panel.height = height;
     }
 
     pub fn last_open_dir(&self) -> Option<PathBuf> {
@@ -849,6 +938,54 @@ mod app_settings_tests {
         assert!(!written.contains("offset_y"), "got:\n{written}");
         assert!(!written.contains("width ="), "got:\n{written}");
         assert!(!written.contains("height ="), "got:\n{written}");
+    }
+
+    #[test]
+    fn default_slice_panel_geometry_is_unset() {
+        let s = AppSettings::default();
+        assert!(!s.slice_panel_anchor_right());
+        assert!(!s.slice_panel_anchor_bottom());
+        assert_eq!(s.slice_panel_offset_x(), None);
+        assert_eq!(s.slice_panel_offset_y(), None);
+        assert_eq!(s.slice_panel_width(), None);
+        assert_eq!(s.slice_panel_height(), None);
+    }
+
+    #[test]
+    fn slice_panel_geometry_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_slice_panel_anchor_right(true);
+        s.set_slice_panel_anchor_bottom(true);
+        s.set_slice_panel_offset_x(Some(24.0));
+        s.set_slice_panel_offset_y(Some(36.0));
+        s.set_slice_panel_width(Some(300.0));
+        s.set_slice_panel_height(Some(220.0));
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(loaded.slice_panel_anchor_right());
+        assert!(loaded.slice_panel_anchor_bottom());
+        assert_eq!(loaded.slice_panel_offset_x(), Some(24.0));
+        assert_eq!(loaded.slice_panel_offset_y(), Some(36.0));
+        assert_eq!(loaded.slice_panel_width(), Some(300.0));
+        assert_eq!(loaded.slice_panel_height(), Some(220.0));
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[slice_panel]"), "got:\n{written}");
+        assert!(written.contains("anchor_right = true"), "got:\n{written}");
+    }
+
+    #[test]
+    fn saved_toml_omits_default_slice_panel() {
+        // A panel left at its default position and size writes no
+        // section at all.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("[slice_panel]"), "got:\n{written}");
     }
 
     #[test]

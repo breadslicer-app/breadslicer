@@ -74,6 +74,17 @@ pub(crate) struct PreferencesSnapshot {
     pub object_list_height: Option<f32>,
     /// Whether the panel is collapsed to its title bar.
     pub object_list_minimized: bool,
+    /// Floating Slice control panel position, stored relative to the
+    /// window edges (same anchor/offset model as the object-list panel).
+    /// `None` offsets and size mean "use the default" (top-left corner,
+    /// 12px offsets, 240px width, auto-sized height). Per-window live
+    /// state persisted across sessions, like the object-list geometry.
+    pub slice_panel_anchor_right: bool,
+    pub slice_panel_anchor_bottom: bool,
+    pub slice_panel_offset_x: Option<f32>,
+    pub slice_panel_offset_y: Option<f32>,
+    pub slice_panel_width: Option<f32>,
+    pub slice_panel_height: Option<f32>,
     /// Directory the file-open dialog should start in: the folder the
     /// last opened file lived in. `None` until the first open; the
     /// dialog then falls back to the home directory. App-wide state.
@@ -90,6 +101,7 @@ pub(crate) enum PreferencesChange {
     DefaultResin,
     Favourites,
     ObjectListPanel,
+    SliceControlPanel,
     LastOpenDir,
 }
 
@@ -251,6 +263,12 @@ mod preferences_bus_tests {
             object_list_width: None,
             object_list_height: None,
             object_list_minimized: false,
+            slice_panel_anchor_right: false,
+            slice_panel_anchor_bottom: false,
+            slice_panel_offset_x: None,
+            slice_panel_offset_y: None,
+            slice_panel_width: None,
+            slice_panel_height: None,
             last_open_dir: None,
         }
     }

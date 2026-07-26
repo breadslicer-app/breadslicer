@@ -30,6 +30,10 @@ export component SliceControlPanel inherits Rectangle {
     // index into the matching options model.
     callback printer-picked(int);
     callback resin-picked(int);
+    // Fired when a drag or resize gesture ends, so the window can
+    // persist the panel's geometry. Deliberately not fired per pointer
+    // move, to keep persistence to gesture boundaries.
+    callback geometry-committed();
 
     // Layout metrics.
     property <length> title-bar-height: 30px;
@@ -133,6 +137,9 @@ export component SliceControlPanel inherits Rectangle {
                         self.press-cursor-y = self.absolute-position.y + self.mouse-y;
                         self.press-x = root.x;
                         self.press-y = root.y;
+                    }
+                    if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
+                        root.geometry-committed();
                     }
                 }
 
@@ -243,6 +250,9 @@ export component SliceControlPanel inherits Rectangle {
                 self.press-top = root.y;
                 self.press-width = root.width;
                 self.press-height = root.height;
+            }
+            if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
+                root.geometry-committed();
             }
         }
 
