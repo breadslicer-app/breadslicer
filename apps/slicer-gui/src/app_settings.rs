@@ -10,6 +10,7 @@
 //! (pre-alpha policy: bump [`APP_SETTINGS_SCHEMA_VERSION`] when the schema
 //! changes, no migration code).
 
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -186,6 +187,14 @@ pub(crate) struct AppSettings {
     /// user picks one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default_resin: Option<MaterialId>,
+    /// The user's favourite printers, by id. A subset of the installed
+    /// printers surfaced in the Slice-section picker. Omitted in TOML
+    /// while empty.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    favourite_printers: BTreeSet<PrinterId>,
+    /// The user's favourite resins, by id. Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    favourite_resins: BTreeSet<MaterialId>,
     /// Floating object-list panel state. Omitted in TOML while every
     /// field holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
@@ -204,6 +213,8 @@ impl Default for AppSettings {
             appearance: Appearance::default(),
             default_printer: None,
             default_resin: None,
+            favourite_printers: BTreeSet::new(),
+            favourite_resins: BTreeSet::new(),
             object_list: ObjectListSettings::default(),
             last_open_dir: None,
         }
@@ -318,6 +329,22 @@ impl AppSettings {
 
     pub fn set_default_resin(&mut self, id: Option<MaterialId>) {
         self.default_resin = id;
+    }
+
+    pub fn favourite_printers(&self) -> BTreeSet<PrinterId> {
+        self.favourite_printers.clone()
+    }
+
+    pub fn set_favourite_printers(&mut self, ids: BTreeSet<PrinterId>) {
+        self.favourite_printers = ids;
+    }
+
+    pub fn favourite_resins(&self) -> BTreeSet<MaterialId> {
+        self.favourite_resins.clone()
+    }
+
+    pub fn set_favourite_resins(&mut self, ids: BTreeSet<MaterialId>) {
+        self.favourite_resins = ids;
     }
 
     pub fn object_list_visible(&self) -> bool {
@@ -645,6 +672,76 @@ mod app_settings_tests {
         assert!(
             !written.contains("default_resin"),
             "unset default resin should not serialise, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn favourites_are_empty_by_default() {
+        let s = AppSettings::default();
+        assert!(s.favourite_printers().is_empty());
+        assert!(s.favourite_resins().is_empty());
+    }
+
+    #[test]
+    fn favourite_printers_and_resins_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        let p1 = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let p2 = PrinterId::new("elegoo-mars-4-ultra").unwrap();
+        let r1 = MaterialId::new("abs-like-405").unwrap();
+        let printers: BTreeSet<PrinterId> = [p1, p2].into_iter().collect();
+        let resins: BTreeSet<MaterialId> = [r1].into_iter().collect();
+        s.set_favourite_printers(printers.clone());
+        s.set_favourite_resins(resins.clone());
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.favourite_printers(), printers);
+        assert_eq!(loaded.favourite_resins(), resins);
+
+        // Written as plain string arrays for external tooling / hand-edits.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("favourite_printers = ["),
+            "got:\n{written}"
+        );
+        assert!(written.contains("elegoo-mars-4-ultra"), "got:\n{written}");
+        assert!(written.contains("abs-like-405"), "got:\n{written}");
+    }
+
+    #[test]
+    fn saved_toml_omits_empty_favourites() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("favourite_printers"),
+            "empty favourites should not serialise, got:\n{written}"
+        );
+        assert!(
+            !written.contains("favourite_resins"),
+            "empty favourites should not serialise, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn settings_without_favourites_keys_load_empty() {
+        // A pre-favourites config (no favourite keys, no version) must
+        // load with empty favourites and stay on the current schema
+        // version rather than reset to defaults.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(&path, "default_printer = \"anycubic-photon-m3-pm3\"\n").unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(loaded.favourite_printers().is_empty());
+        assert!(loaded.favourite_resins().is_empty());
+        assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            loaded.default_printer(),
+            Some(PrinterId::new("anycubic-photon-m3-pm3").unwrap())
         );
     }
 

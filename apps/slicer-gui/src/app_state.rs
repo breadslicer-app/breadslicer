@@ -246,6 +246,8 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_language(snap.language);
     settings.set_default_printer(snap.default_printer.clone());
     settings.set_default_resin(snap.default_resin.clone());
+    settings.set_favourite_printers(snap.favourite_printers.clone());
+    settings.set_favourite_resins(snap.favourite_resins.clone());
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
     settings.set_object_list_anchor_bottom(snap.object_list_anchor_bottom);
@@ -300,6 +302,8 @@ impl AppState {
             language: settings.language(),
             default_printer,
             default_resin,
+            favourite_printers: settings.favourite_printers(),
+            favourite_resins: settings.favourite_resins(),
             build_volume,
             object_list_visible: settings.object_list_visible(),
             object_list_anchor_right: settings.object_list_anchor_right(),
@@ -1151,6 +1155,10 @@ mod context_menu_policy_tests {
 
 #[cfg(test)]
 mod settings_saver_tests {
+    use std::collections::BTreeSet;
+
+    use sc_print_primitives::{MaterialId, PrinterId};
+
     use super::*;
     use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
     use crate::language::LanguagePreference;
@@ -1163,6 +1171,8 @@ mod settings_saver_tests {
             language: LanguagePreference::System,
             default_printer: None,
             default_resin: None,
+            favourite_printers: BTreeSet::new(),
+            favourite_resins: BTreeSet::new(),
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
             object_list_anchor_right: true,
@@ -1174,6 +1184,21 @@ mod settings_saver_tests {
             object_list_minimized: false,
             last_open_dir: None,
         }
+    }
+
+    #[test]
+    fn apply_snapshot_copies_favourites_into_settings() {
+        let mut snap = snapshot_with(ThemePreference::System);
+        let printer = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let resin = MaterialId::new("abs-like-405").unwrap();
+        snap.favourite_printers.insert(printer.clone());
+        snap.favourite_resins.insert(resin.clone());
+
+        let mut settings = AppSettings::default();
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert!(settings.favourite_printers().contains(&printer));
+        assert!(settings.favourite_resins().contains(&resin));
     }
 
     #[test]
@@ -1229,6 +1254,8 @@ mod settings_saver_tests {
                 language: LanguagePreference::System,
                 default_printer: None,
                 default_resin: None,
+                favourite_printers: BTreeSet::new(),
+                favourite_resins: BTreeSet::new(),
                 build_volume: bv,
                 object_list_visible: true,
                 object_list_anchor_right: true,

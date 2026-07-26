@@ -24,6 +24,7 @@
 //! automatically removed when the window is closed.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
@@ -47,6 +48,11 @@ pub(crate) struct PreferencesSnapshot {
     pub language: LanguagePreference,
     pub default_printer: Option<PrinterId>,
     pub default_resin: Option<MaterialId>,
+    /// The user's favourite printers / resins, by id. Global (not
+    /// per-scene); the Slice-section picker shows these plus the
+    /// selected profiles. Toggled from the Preferences window.
+    pub favourite_printers: BTreeSet<PrinterId>,
+    pub favourite_resins: BTreeSet<MaterialId>,
     pub build_volume: BuildVolume,
     /// Whether the floating object-list panel is shown. Persisted so a
     /// window restores the last state on the next launch. Per-window
@@ -233,6 +239,8 @@ mod preferences_bus_tests {
             language: LanguagePreference::System,
             default_printer: None,
             default_resin: None,
+            favourite_printers: BTreeSet::new(),
+            favourite_resins: BTreeSet::new(),
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
             object_list_anchor_right: true,
