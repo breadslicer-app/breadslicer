@@ -82,7 +82,10 @@ pub(crate) fn build_preferences_window(
     // The gallery tiles and the manufacturer tab bar are derived from
     // the catalog, held behind interior mutability so an import (or a
     // later authoring step) can rebuild them in place via `refresh_view`.
-    let all_cards = Rc::new(RefCell::new(build_card_data(&catalog)));
+    let all_cards = Rc::new(RefCell::new(build_card_data(
+        catalog.printers(),
+        &bus.snapshot().favourite_printers,
+    )));
     let tabs = Rc::new(RefCell::new(build_manufacturer_tabs(&catalog)));
     // View-local filter state: which manufacturer tab and search text
     // narrow the visible tiles. Never reaches the bus.
@@ -147,7 +150,8 @@ pub(crate) fn build_preferences_window(
                 return;
             };
             let catalog = catalog_handle.borrow().clone();
-            *all_cards.borrow_mut() = build_card_data(&catalog);
+            *all_cards.borrow_mut() =
+                build_card_data(catalog.printers(), &bus.snapshot().favourite_printers);
             *tabs.borrow_mut() = build_manufacturer_tabs(&catalog);
             // Selection first: catalog indices may have shifted, and
             // the visible-cards pass reads the selected printer index
@@ -268,6 +272,71 @@ pub(crate) fn build_preferences_window(
                 snap.default_resin = Some(id);
                 PreferencesChange::DefaultResin
             });
+        }
+    });
+
+    prefs.on_printer_favourite_toggled({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        let all_cards = all_cards.clone();
+        let prefs_weak = prefs_weak.clone();
+        move |index| {
+            let catalog = catalog_handle.borrow().clone();
+            let Some(entry) = catalog.printers().get(index as usize) else {
+                return;
+            };
+            let id = entry.id.clone();
+            let make_favourite = !bus.snapshot().favourite_printers.contains(&id);
+            bus.update(move |snap| {
+                if make_favourite {
+                    snap.favourite_printers.insert(id);
+                } else {
+                    snap.favourite_printers.remove(&id);
+                }
+                PreferencesChange::Favourites
+            });
+            // Flip the star in place: the bus subscription re-applies the
+            // resin view but not the gallery, and rebuilding the cards
+            // would drop the async-loaded thumbnails, so update the one
+            // card directly (keeps its thumbnail and the scroll position).
+            if let Some(data) = all_cards.borrow_mut().get_mut(index as usize) {
+                data.card.is_favourite = make_favourite;
+            }
+            if let Some(w) = prefs_weak.upgrade() {
+                let cards = w.get_printer_cards();
+                for row in 0..cards.row_count() {
+                    if let Some(mut card) = cards.row_data(row)
+                        && card.id_index == index
+                    {
+                        card.is_favourite = make_favourite;
+                        cards.set_row_data(row, card);
+                    }
+                }
+            }
+        }
+    });
+
+    prefs.on_resin_favourite_toggled({
+        let bus = bus.clone();
+        let catalog_handle = catalog_handle.clone();
+        move |index| {
+            let catalog = catalog_handle.borrow().clone();
+            let Some(entry) = catalog.materials().get(index as usize) else {
+                return;
+            };
+            let id = entry.id.clone();
+            let make_favourite = !bus.snapshot().favourite_resins.contains(&id);
+            bus.update(move |snap| {
+                if make_favourite {
+                    snap.favourite_resins.insert(id);
+                } else {
+                    snap.favourite_resins.remove(&id);
+                }
+                PreferencesChange::Favourites
+            });
+            // The bus subscription re-runs `apply_printing`, which
+            // rebuilds the resin rows against the updated favourites, so
+            // the row's star refreshes without extra work here.
         }
     });
 
@@ -1196,14 +1265,17 @@ fn apply_printing(
         catalog.extensions(),
         catalog.printers(),
         effective_printer.as_ref(),
+        &snap.favourite_resins,
         layout,
     );
     window.set_resin_rows(ModelRc::new(VecModel::from(rows)));
 }
 
-fn build_card_data(catalog: &ProfileCatalog) -> Vec<PrinterCardData> {
-    catalog
-        .printers()
+fn build_card_data(
+    printers: &[PrinterCatalogEntry],
+    favourite_printers: &BTreeSet<PrinterId>,
+) -> Vec<PrinterCardData> {
+    printers
         .iter()
         .enumerate()
         .map(|(i, entry)| PrinterCardData {
@@ -1217,6 +1289,7 @@ fn build_card_data(catalog: &ProfileCatalog) -> Vec<PrinterCardData> {
                 thumbnail: Image::default(),
                 has_thumbnail: false,
                 is_custom: entry.source == ProfileSource::User,
+                is_favourite: favourite_printers.contains(&entry.id),
                 id_index: i as i32,
             },
         })
@@ -1484,6 +1557,7 @@ fn derive_resin_view(
     extensions: &[MaterialExtensionEntry],
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
+    favourite_resins: &BTreeSet<MaterialId>,
     layout: &PillLayout,
 ) -> Vec<ResinRow> {
     let mut matched_rows = Vec::new();
@@ -1505,6 +1579,9 @@ fn derive_resin_view(
         };
 
         let can_extend = has_uncovered_target(entry, extension, printers);
+        // Favourites are keyed by material id, so the base row and its
+        // extension row share the same star.
+        let is_favourite = favourite_resins.contains(&entry.id);
         target.push(ResinRow {
             name: SharedString::from(entry.name.as_str()),
             brand: SharedString::from(entry.brand.as_str()),
@@ -1515,6 +1592,7 @@ fn derive_resin_view(
                 &measure,
             )),
             is_custom: entry.source == ProfileSource::User,
+            is_favourite,
             is_extension: false,
             can_extend,
             id_index: i as i32,
@@ -1531,6 +1609,7 @@ fn derive_resin_view(
                     &measure,
                 )),
                 is_custom: true,
+                is_favourite,
                 is_extension: true,
                 can_extend,
                 id_index: i as i32,
@@ -1996,6 +2075,7 @@ mod derive_resin_view_tests {
             &[],
             &[],
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         // Matched (b: specific, d: generic fallback) first in base
@@ -2021,6 +2101,7 @@ mod derive_resin_view_tests {
             &[],
             &[],
             Some(&printer("mars-5")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
@@ -2041,6 +2122,7 @@ mod derive_resin_view_tests {
             &extensions,
             &[],
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
@@ -2062,6 +2144,7 @@ mod derive_resin_view_tests {
             &extensions,
             &[],
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         // z-resin's extension covers our printer: parent + extension
@@ -2087,6 +2170,7 @@ mod derive_resin_view_tests {
             &extensions,
             &printers,
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         assert_eq!(rows.len(), 2);
@@ -2121,6 +2205,7 @@ mod derive_resin_view_tests {
             &[],
             &printers,
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         // Default printer first (green), generic next (yellow), the
@@ -2145,6 +2230,7 @@ mod derive_resin_view_tests {
             &[],
             &printers,
             Some(&printer("generic-machine")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         assert_eq!(
@@ -2161,6 +2247,7 @@ mod derive_resin_view_tests {
             &[],
             &[],
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         assert_eq!(
@@ -2177,6 +2264,7 @@ mod derive_resin_view_tests {
             &[],
             &[],
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         let pills = row_pills(&rows[0]);
@@ -2193,6 +2281,7 @@ mod derive_resin_view_tests {
             &extensions,
             &[],
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         // The resin has data (in the extension row); the parent row
@@ -2207,7 +2296,7 @@ mod derive_resin_view_tests {
             material("a-resin", "Alpha", "A", &["printer-a", "generic-machine"]),
             material("b-resin", "Beta", "B", &[]),
         ];
-        let rows = derive_resin_view(&materials, &[], &[], None, &test_layout());
+        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new(), &test_layout());
         for (_, kind) in rows.iter().flat_map(row_pills) {
             assert_eq!(kind, PillKind::Other);
         }
@@ -2217,7 +2306,7 @@ mod derive_resin_view_tests {
     fn custom_flag_reflects_the_source() {
         let mut entry = material("a-resin", "Alpha", "A", &[]);
         entry.source = ProfileSource::User;
-        let rows = derive_resin_view(&[entry], &[], &[], None, &test_layout());
+        let rows = derive_resin_view(&[entry], &[], &[], None, &BTreeSet::new(), &test_layout());
         assert!(rows[0].is_custom);
         assert!(!rows[0].is_extension);
     }
@@ -2235,6 +2324,7 @@ mod derive_resin_view_tests {
             &extensions,
             &all_covered,
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         // Base plus extension cover every catalog printer: nothing
@@ -2252,6 +2342,7 @@ mod derive_resin_view_tests {
             &extensions,
             &with_uncovered,
             Some(&printer("printer-a")),
+            &BTreeSet::new(),
             &test_layout(),
         );
         assert!(rows[0].can_extend);
@@ -2295,8 +2386,8 @@ mod derive_resin_view_tests {
         narrow.widths.borrow_mut().insert((0, false), 40.0);
         let wide = test_layout();
         wide.widths.borrow_mut().insert((0, false), 10000.0);
-        let narrow_rows = derive_resin_view(&materials, &[], &[], None, &narrow);
-        let wide_rows = derive_resin_view(&materials, &[], &[], None, &wide);
+        let narrow_rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new(), &narrow);
+        let wide_rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new(), &wide);
         assert_eq!(narrow_rows[0].pill_lines.row_count(), 3);
         assert_eq!(wide_rows[0].pill_lines.row_count(), 1);
     }
@@ -2323,6 +2414,82 @@ mod derive_resin_view_tests {
     #[test]
     fn no_pills_yield_no_lines() {
         assert!(chunk_pills(Vec::new(), DEFAULT_PILL_AREA_PX, &|_| 10.0).is_empty());
+    }
+
+    #[test]
+    fn favourite_material_marks_both_its_base_and_extension_rows() {
+        let materials = vec![
+            material("fav-resin", "Alpha", "Fav", &[]),
+            material("plain-resin", "Beta", "Plain", &[]),
+        ];
+        let extensions = vec![extension("fav-resin", &["printer-a"])];
+        let printers = vec![printer_entry("printer-a", "A")];
+        let favourites: BTreeSet<MaterialId> = [MaterialId::new("fav-resin").unwrap()]
+            .into_iter()
+            .collect();
+
+        let rows = derive_resin_view(
+            &materials,
+            &extensions,
+            &printers,
+            None,
+            &favourites,
+            &test_layout(),
+        );
+
+        // fav-resin is material index 0 and produces a base + an
+        // extension row, both favourite; plain-resin (index 1) is not.
+        assert_eq!(rows.iter().filter(|r| r.is_favourite).count(), 2);
+        assert!(
+            rows.iter()
+                .filter(|r| r.id_index == 0)
+                .all(|r| r.is_favourite)
+        );
+        assert!(
+            rows.iter()
+                .filter(|r| r.id_index == 1)
+                .all(|r| !r.is_favourite)
+        );
+    }
+}
+
+#[cfg(test)]
+mod build_card_data_tests {
+    use std::collections::BTreeSet;
+
+    use sc_print_primitives::{BuildVolume, PrinterId};
+
+    use super::*;
+
+    fn printer_entry(id: &str) -> PrinterCatalogEntry {
+        PrinterCatalogEntry {
+            id: PrinterId::new(id).unwrap(),
+            manufacturer: "Maker".to_owned(),
+            name: id.to_owned(),
+            build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
+            image_path: None,
+            source: ProfileSource::Bundled,
+        }
+    }
+
+    #[test]
+    fn is_favourite_is_set_from_the_favourite_set() {
+        let printers = vec![printer_entry("printer-a"), printer_entry("printer-b")];
+        let favourites: BTreeSet<PrinterId> =
+            [PrinterId::new("printer-b").unwrap()].into_iter().collect();
+
+        let cards = build_card_data(&printers, &favourites);
+
+        assert_eq!(cards.len(), 2);
+        assert!(!cards[0].card.is_favourite, "printer-a is not a favourite");
+        assert!(cards[1].card.is_favourite, "printer-b is a favourite");
+    }
+
+    #[test]
+    fn no_favourites_leaves_every_card_unmarked() {
+        let printers = vec![printer_entry("printer-a")];
+        let cards = build_card_data(&printers, &BTreeSet::new());
+        assert!(!cards[0].card.is_favourite);
     }
 }
 

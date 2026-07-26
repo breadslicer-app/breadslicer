@@ -1,0 +1,40 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { Palette } from "std-widgets.slint";
+
+// A small star toggle for the Preferences printer / resin cards. Filled
+// with the accent colour when the profile is a favourite, a faint tone
+// otherwise. Clicking reports a toggle request; the parent flips the
+// global favourites set. Carries its own TouchArea so, placed on top of
+// a card's select area, a star click toggles the favourite without also
+// selecting the profile.
+export component FavouriteStar inherits Rectangle {
+    in property <bool> favourite;
+    callback toggled();
+
+    width: 24px;
+    height: 24px;
+
+    Path {
+        width: 18px;
+        height: 18px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        commands: "M 50 3 L 61 35 L 95 35 L 67 56 L 78 88 L 50 68 L 22 88 L 33 56 L 5 35 L 39 35 Z";
+        fill: root.favourite
+            ? Palette.accent-background
+            : Palette.foreground.transparentize(0.75);
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggled();
+        }
+    }
+}

@@ -50,7 +50,9 @@ export component PreferencesWindow inherits Window {
     callback manufacturer-tab-changed(int);
     callback printer-search-changed(string);
     callback printer-selected(int);
+    callback printer-favourite-toggled(int);
     callback resin-selected(int);
+    callback resin-favourite-toggled(int);
     callback pill-width-changed(int, bool, length);
     callback view-requested(int);
     callback fork-requested(int);
@@ -117,6 +119,9 @@ export component PreferencesWindow inherits Window {
                 printer-selected(i) => {
                     root.printer-selected(i);
                 }
+                favourite-toggled(i) => {
+                    root.printer-favourite-toggled(i);
+                }
                 import-requested => {
                     root.import-requested();
                 }
@@ -129,6 +134,9 @@ export component PreferencesWindow inherits Window {
                 selected-resin-index <=> root.selected-resin-index;
                 resin-selected(i) => {
                     root.resin-selected(i);
+                }
+                favourite-toggled(i) => {
+                    root.resin-favourite-toggled(i);
                 }
                 pill-width-changed(i, ext, w) => {
                     root.pill-width-changed(i, ext, w);

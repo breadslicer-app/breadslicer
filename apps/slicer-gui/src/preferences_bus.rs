@@ -88,6 +88,7 @@ pub(crate) enum PreferencesChange {
     Language,
     DefaultPrinter,
     DefaultResin,
+    Favourites,
     ObjectListPanel,
     LastOpenDir,
 }

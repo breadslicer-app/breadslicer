@@ -5,6 +5,7 @@
 
 import { Button, ListView, Palette } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
+import { FavouriteStar } from "./favourite-star.slint";
 
 // Kind of a calibration tag; decides its colors.
 export enum PillKind {
@@ -38,6 +39,7 @@ export struct ResinRow {
     family: string,
     pill-lines: [[ResinPill]],
     is-custom: bool,
+    is-favourite: bool,
     is-extension: bool,
     can-extend: bool,
     id-index: int,
@@ -52,10 +54,14 @@ export component ResinPreferences inherits PreferencesPage {
     in-out property <int> selected-resin-index: -1;
 
     callback resin-selected(int);
+    // Toggle the resin's global favourite status. Carries the catalog
+    // index; base and extension rows share it, so the favourite is
+    // per-material.
+    callback favourite-toggled(int);
     // Reports a row's exact pill area width (row minus paddings,
-    // indent, and its action buttons) so the Rust side can lay the
-    // pills out in lines against real pixels. Fires on creation and
-    // on every resize. Args: id-index, is-extension, width.
+    // indent, leading star, and its action buttons) so the Rust side
+    // can lay the pills out in lines against real pixels. Fires on
+    // creation and on every resize. Args: id-index, is-extension, width.
     callback pill-width-changed(int, bool, length);
     callback view-requested(int);
     callback fork-requested(int);
@@ -106,11 +112,11 @@ export component ResinPreferences inherits PreferencesPage {
                 : transparent;
 
             // The width left for the pills: the row minus its
-            // horizontal paddings, the 2 layout gaps, and the action
-            // buttons. Never reads the pill container itself, so no
-            // binding loop.
+            // horizontal paddings, the 3 layout gaps, the leading
+            // favourite star, and the action buttons. Never reads the
+            // pill container itself, so no binding loop.
             property <length> pill-avail: self.width
-                - (row.is-extension ? 32px : 8px) - 8px - 16px - actions.width;
+                - (row.is-extension ? 32px : 8px) - 8px - 24px - 24px - actions.width;
 
             changed pill-avail => {
                 root.pill-width-changed(row.id-index, row.is-extension, self.pill-avail);
@@ -175,6 +181,19 @@ export component ResinPreferences inherits PreferencesPage {
                     // Extension rows indent under their parent.
                     padding-left: row.is-extension ? 32px : 8px;
                     spacing: 8px;
+
+                    // Leading favourite toggle. Its own TouchArea sits
+                    // on top of the row's select area, so a star click
+                    // toggles the favourite without selecting the resin.
+                    VerticalLayout {
+                        alignment: center;
+                        FavouriteStar {
+                            favourite: row.is-favourite;
+                            toggled => {
+                                root.favourite-toggled(row.id-index);
+                            }
+                        }
+                    }
 
                     VerticalLayout {
                         alignment: center;

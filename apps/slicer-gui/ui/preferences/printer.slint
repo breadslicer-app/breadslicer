@@ -5,6 +5,7 @@
 
 import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
+import { FavouriteStar } from "./favourite-star.slint";
 
 // One printer tile. `id-index` is the printer's index in the Rust
 // catalog and the stable handle carried through selection callbacks;
@@ -15,6 +16,7 @@ export struct PrinterCard {
     thumbnail: image,
     has-thumbnail: bool,
     is-custom: bool,
+    is-favourite: bool,
     id-index: int,
 }
 
@@ -39,6 +41,9 @@ export component PrinterPreferences inherits PreferencesPage {
     callback manufacturer-tab-changed(int);
     callback search-changed(string);
     callback printer-selected(int);
+    // Toggle the printer's global favourite status. Carries the catalog
+    // index (the stable handle), same as `printer-selected`.
+    callback favourite-toggled(int);
     callback import-requested();
     callback export-printers-requested();
 
@@ -173,6 +178,19 @@ export component PrinterPreferences inherits PreferencesPage {
                     color: Palette.foreground.transparentize(0.4);
                     font-size: 0.7rem;
                     horizontal-alignment: center;
+                }
+            }
+
+            // Favourite toggle, overlaid at the top-right corner and
+            // declared after the select TouchArea so its own TouchArea
+            // is on top: a star click toggles the favourite without
+            // also selecting the printer.
+            FavouriteStar {
+                x: parent.width - self.width - 4px;
+                y: 4px;
+                favourite: card.is-favourite;
+                toggled => {
+                    root.favourite-toggled(card.id-index);
                 }
             }
         }
