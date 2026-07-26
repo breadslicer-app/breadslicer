@@ -16,7 +16,7 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
-use sc_print_glue::project_to_slice_profile;
+use sc_print_glue::{project_to_slice_profile, total_layers_for_height};
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     MaterialProfile, PrinterProfile, SceneOverrides, load_material_profile_by_id,
@@ -244,19 +244,6 @@ fn scene_world_z_max(scene: &Scene) -> Result<f64> {
     Ok(f64::from(aabb.max().coords()[2]))
 }
 
-/// Pick the smallest `total_layers` whose slab layout covers the
-/// model up to `z_max`. Slab 0 spans `[0, h0]`; slab `k >= 1` spans
-/// `[h0 + (k-1)*h, h0 + k*h]`. We need `n` such that
-/// `h0 + (n-1) * h >= z_max`.
-fn total_layers_for_height(z_max: f64, layer_height: f64, first_layer_height: f64) -> u32 {
-    if z_max <= first_layer_height {
-        return 1;
-    }
-    let beyond_first = z_max - first_layer_height;
-    let extra = (beyond_first / layer_height).ceil() as u32;
-    1 + extra
-}
-
 /// `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels the
 /// engine's own error Display uses.
 fn leaf_label(failure: &LeafValidationFailure) -> String {
@@ -318,30 +305,6 @@ where
         for member in &group.members {
             let _ = writeln!(out, "  - {member}");
         }
-    }
-}
-
-#[cfg(test)]
-mod total_layers_tests {
-    use super::total_layers_for_height;
-
-    #[test]
-    fn returns_one_when_model_fits_in_the_first_slab() {
-        assert_eq!(total_layers_for_height(0.04, 0.1, 0.05), 1);
-        assert_eq!(total_layers_for_height(0.05, 0.1, 0.05), 1);
-    }
-
-    #[test]
-    fn adds_extra_layers_to_cover_above_first_slab() {
-        // first slab covers [0, 0.05]; each extra slab is 0.1 thick.
-        // z_max = 0.5: needs (0.5 - 0.05) / 0.1 = 4.5, ceil = 5 extra slabs.
-        assert_eq!(total_layers_for_height(0.5, 0.1, 0.05), 6);
-    }
-
-    #[test]
-    fn uniform_schedule_matches_classical_count() {
-        // h0 = h = 0.2, z_max = 2.0. classical: ceil(2.0 / 0.2) = 10.
-        assert_eq!(total_layers_for_height(2.0, 0.2, 0.2), 10);
     }
 }
 
