@@ -49,6 +49,10 @@ export component ObjectListPanel inherits Rectangle {
 
     callback selection-changed(int);
     callback close-requested();
+    // Fired when a drag, resize, or minimize gesture ends, so the
+    // window can persist the panel's geometry. Deliberately not fired
+    // per pointer move, to keep persistence to gesture boundaries.
+    callback geometry-committed();
 
     // Layout metrics.
     property <length> title-bar-height: 30px;
@@ -65,17 +69,24 @@ export component ObjectListPanel inherits Rectangle {
     in-out property <length> panel-x: root.available-width - root.panel-width - root.edge-margin;
     in-out property <length> panel-y: root.edge-margin;
     in-out property <length> panel-width: 220px;
-    in-out property <length> panel-height: root.title-bar-height
-        + Math.min(Math.max(root.model.length, 4), 8) * root.row-height + 8px;
+    // 0px means "auto-size to the row count"; a positive value is the
+    // height the user pinned by dragging the resize handle.
+    in-out property <length> panel-height: 0px;
     in-out property <bool> minimized: false;
+
+    // Height the panel takes when auto-sizing: room for the clamped row
+    // count. Used until the user pins an explicit height.
+    property <length> auto-body-height: root.title-bar-height
+        + Math.min(Math.max(root.model.length, 4), 8) * root.row-height + 8px;
+    property <length> effective-height: root.panel-height > 0px
+        ? Math.min(Math.max(root.panel-height, root.panel-min-height), root.panel-max-height)
+        : Math.min(Math.max(root.auto-body-height, root.panel-min-height), root.panel-max-height);
 
     // Rendered geometry, clamped to the limits and to the window. Height
     // collapses to the title bar while minimized; the expanded height is
-    // preserved in panel-height so restoring returns to the same size.
+    // preserved so restoring returns to the same size.
     width: Math.min(Math.max(root.panel-width, root.panel-min-width), root.panel-max-width);
-    height: root.minimized
-        ? root.title-bar-height
-        : Math.min(Math.max(root.panel-height, root.panel-min-height), root.panel-max-height);
+    height: root.minimized ? root.title-bar-height : root.effective-height;
     x: Math.min(Math.max(root.panel-x, 0px), Math.max(0px, root.available-width - root.width));
     y: Math.min(Math.max(root.panel-y, 0px), Math.max(0px, root.available-height - root.height));
 
@@ -117,6 +128,9 @@ export component ObjectListPanel inherits Rectangle {
                         self.press-cursor-y = self.absolute-position.y + self.mouse-y;
                         self.press-x = root.panel-x;
                         self.press-y = root.panel-y;
+                    }
+                    if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
+                        root.geometry-committed();
                     }
                 }
 
@@ -163,6 +177,7 @@ export component ObjectListPanel inherits Rectangle {
                 PanelButton {
                     clicked => {
                         root.minimized = !root.minimized;
+                        root.geometry-committed();
                     }
 
                     if !root.minimized: Rectangle {
@@ -242,6 +257,9 @@ export component ObjectListPanel inherits Rectangle {
                 self.press-top = root.panel-y;
                 self.press-width = root.width;
                 self.press-height = root.height;
+            }
+            if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
+                root.geometry-committed();
             }
         }
 

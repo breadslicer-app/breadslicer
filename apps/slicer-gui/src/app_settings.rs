@@ -113,6 +113,10 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// On-disk state of the floating object-list panel. Every field is
 /// optional and omitted when it holds its default, so a fresh config
 /// carries no `[object_list]` section at all.
@@ -122,11 +126,32 @@ pub(crate) struct ObjectListSettings {
     /// while it holds that default.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     visible: bool,
+    /// Panel position and size in logical pixels. Absent until the user
+    /// drags or resizes the panel; `height` absent means auto-sizing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    height: Option<f32>,
+    /// Whether the panel is collapsed to its title bar. Omitted while
+    /// expanded (the default).
+    #[serde(default, skip_serializing_if = "is_false")]
+    minimized: bool,
 }
 
 impl Default for ObjectListSettings {
     fn default() -> Self {
-        Self { visible: true }
+        Self {
+            visible: true,
+            x: None,
+            y: None,
+            width: None,
+            height: None,
+            minimized: false,
+        }
     }
 }
 
@@ -300,6 +325,46 @@ impl AppSettings {
 
     pub fn set_object_list_visible(&mut self, visible: bool) {
         self.object_list.visible = visible;
+    }
+
+    pub fn object_list_x(&self) -> Option<f32> {
+        self.object_list.x
+    }
+
+    pub fn set_object_list_x(&mut self, x: Option<f32>) {
+        self.object_list.x = x;
+    }
+
+    pub fn object_list_y(&self) -> Option<f32> {
+        self.object_list.y
+    }
+
+    pub fn set_object_list_y(&mut self, y: Option<f32>) {
+        self.object_list.y = y;
+    }
+
+    pub fn object_list_width(&self) -> Option<f32> {
+        self.object_list.width
+    }
+
+    pub fn set_object_list_width(&mut self, width: Option<f32>) {
+        self.object_list.width = width;
+    }
+
+    pub fn object_list_height(&self) -> Option<f32> {
+        self.object_list.height
+    }
+
+    pub fn set_object_list_height(&mut self, height: Option<f32>) {
+        self.object_list.height = height;
+    }
+
+    pub fn object_list_minimized(&self) -> bool {
+        self.object_list.minimized
+    }
+
+    pub fn set_object_list_minimized(&mut self, minimized: bool) {
+        self.object_list.minimized = minimized;
     }
 }
 
@@ -604,6 +669,55 @@ mod app_settings_tests {
         fs::write(&path, "[appearance]\ntheme = \"dark\"\n").unwrap();
         let loaded = AppSettings::load_from_path(&path);
         assert!(loaded.object_list_visible());
+    }
+
+    #[test]
+    fn default_object_list_geometry_is_unset() {
+        let s = AppSettings::default();
+        assert_eq!(s.object_list_x(), None);
+        assert_eq!(s.object_list_y(), None);
+        assert_eq!(s.object_list_width(), None);
+        assert_eq!(s.object_list_height(), None);
+        assert!(!s.object_list_minimized());
+    }
+
+    #[test]
+    fn object_list_geometry_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_object_list_x(Some(320.0));
+        s.set_object_list_y(Some(48.0));
+        s.set_object_list_width(Some(280.0));
+        s.set_object_list_height(Some(200.0));
+        s.set_object_list_minimized(true);
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(loaded.object_list_x(), Some(320.0));
+        assert_eq!(loaded.object_list_y(), Some(48.0));
+        assert_eq!(loaded.object_list_width(), Some(280.0));
+        assert_eq!(loaded.object_list_height(), Some(200.0));
+        assert!(loaded.object_list_minimized());
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[object_list]"), "got:\n{written}");
+        assert!(written.contains("minimized = true"), "got:\n{written}");
+    }
+
+    #[test]
+    fn saved_toml_omits_unset_object_list_geometry() {
+        // Auto-sized height stays absent: an unset height is omitted so
+        // the panel keeps auto-sizing on the next launch.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_object_list_minimized(true);
+        s.save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("height ="), "got:\n{written}");
+        assert!(!written.contains("width ="), "got:\n{written}");
+        assert!(!written.contains("\nx ="), "got:\n{written}");
     }
 
     #[test]

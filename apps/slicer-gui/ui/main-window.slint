@@ -72,6 +72,16 @@ export component MainWindow inherits Window {
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
     in-out property <bool> show-object-list: true;
+    // Floating object-list panel geometry, persisted per window. x, y,
+    // and width are lengths; height uses 0px to mean "auto-size to the
+    // row count". Defaults place the panel at the top right; Rust
+    // overwrites them at window creation when a previous session saved a
+    // position.
+    in-out property <length> object-list-x: root.width - root.object-list-width - 12px;
+    in-out property <length> object-list-y: 12px;
+    in-out property <length> object-list-width: 220px;
+    in-out property <length> object-list-height: 0px;
+    in-out property <bool> object-list-minimized: false;
     // Set from Rust at window creation (cfg!(target_os = "macos")).
     // Selects the platform's fullscreen accelerator shown in the View
     // menu: Cmd+Ctrl+F on macOS, F11 elsewhere.
@@ -105,6 +115,10 @@ export component MainWindow inherits Window {
     // it. Per-window live state: the settings file records the last
     // value but other open windows keep their own panel visibility.
     callback object-list-visibility-changed(bool);
+    // Reports the panel's geometry (x, y, width, height, minimized)
+    // after a drag, resize, or minimize so Rust can persist it. Also
+    // per-window live state.
+    callback object-list-geometry-changed(length, length, length, length, bool);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -457,14 +471,35 @@ export component MainWindow inherits Window {
     if (root.has-scene && root.show-object-list && root.object-list.length > 0): ObjectListPanel {
         available-width: root.width;
         available-height: root.height;
+        panel-x <=> root.object-list-x;
+        panel-y <=> root.object-list-y;
+        panel-width <=> root.object-list-width;
+        panel-height <=> root.object-list-height;
+        minimized <=> root.object-list-minimized;
         model: root.object-list;
         selected-index <=> root.selected-object-index;
         selection-changed(idx) => {
             root.object-list-selection-changed(idx);
         }
+        geometry-committed => {
+            root.object-list-geometry-changed(
+                root.object-list-x,
+                root.object-list-y,
+                root.object-list-width,
+                root.object-list-height,
+                root.object-list-minimized);
+        }
         close-requested => {
             root.show-object-list = false;
             root.object-list-visibility-changed(false);
+            // Reset geometry to defaults so reopening within the same
+            // session starts fresh. This does not persist; only drag,
+            // resize, and minimize gestures do.
+            root.object-list-width = 220px;
+            root.object-list-height = 0px;
+            root.object-list-minimized = false;
+            root.object-list-y = 12px;
+            root.object-list-x = root.width - root.object-list-width - 12px;
         }
     }
 
