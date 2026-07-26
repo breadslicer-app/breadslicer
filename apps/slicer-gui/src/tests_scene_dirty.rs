@@ -379,7 +379,7 @@ mod dirty_changed_event_tests {
 /// save must clear it.
 mod unsaved_project_state_tests {
     use super::*;
-    use sc_print_primitives::{MaterialId, PrinterId};
+    use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 
     fn printer(id: &str) -> PrinterId {
         PrinterId::new(id).expect("valid printer id")
@@ -387,6 +387,10 @@ mod unsaved_project_state_tests {
 
     fn resin(id: &str) -> MaterialId {
         MaterialId::new(id).expect("valid material id")
+    }
+
+    fn mm(value: f64) -> PositiveFiniteMm {
+        PositiveFiniteMm::new(value).expect("valid length")
     }
 
     #[test]
@@ -403,6 +407,35 @@ mod unsaved_project_state_tests {
         assert!(doc.set_selected_resin(Some(resin("generic-grey"))));
         assert!(doc.is_dirty());
         assert_eq!(doc.selected_resin(), Some(resin("generic-grey")));
+    }
+
+    #[test]
+    fn setting_a_first_layer_height_marks_the_document_dirty() {
+        let (doc, _) = loaded_document();
+        assert!(doc.set_selected_first_layer_height(Some(mm(0.05))));
+        assert!(doc.is_dirty());
+        assert_eq!(doc.selected_first_layer_height(), Some(mm(0.05)));
+    }
+
+    #[test]
+    fn re_setting_the_same_first_layer_height_is_a_no_op() {
+        let (doc, _) = loaded_document();
+        doc.set_selected_first_layer_height(Some(mm(0.05)));
+        doc.mark_saved();
+        assert!(!doc.is_dirty());
+
+        let (log, _sub) = capture_events(&doc);
+        assert!(!doc.set_selected_first_layer_height(Some(mm(0.05))));
+        assert!(!doc.is_dirty());
+        assert!(!log.borrow().contains(&SceneEvent::DirtyChanged));
+    }
+
+    #[test]
+    fn clearing_a_first_layer_height_that_was_never_set_is_a_no_op() {
+        let (doc, _) = loaded_document();
+        assert!(!doc.set_selected_first_layer_height(None));
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.selected_first_layer_height(), None);
     }
 
     #[test]

@@ -22,7 +22,10 @@ use crate::MainWindow;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::profile_catalog::ProfileCatalog;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
-use crate::slice_selection::{PickerModel, picker_model, printer_candidates, resin_candidates};
+use crate::slice_selection::{
+    FirstLayerHeightInput, PickerModel, format_first_layer_height, parse_first_layer_height,
+    picker_model, printer_candidates, resin_candidates,
+};
 
 pub(crate) struct SlicePanelBridge {
     catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
@@ -68,6 +71,12 @@ impl SlicePanelBridge {
         {
             let bridge = bridge.clone();
             ui.on_slice_resin_picked(move |index| bridge.on_resin_picked(index));
+        }
+        {
+            let bridge = bridge.clone();
+            ui.on_slice_first_layer_height_edited(move |text| {
+                bridge.on_first_layer_height_edited(&text)
+            });
         }
 
         // Rebuild when a scene is installed (its own choice, if any,
@@ -133,6 +142,9 @@ impl SlicePanelBridge {
         ui.set_slice_printer_current_index(printer.selected);
         ui.set_slice_resin_options(labels_model(&resin));
         ui.set_slice_resin_current_index(resin.selected);
+        ui.set_slice_first_layer_height_text(
+            format_first_layer_height(self.document.selected_first_layer_height()).into(),
+        );
 
         *self.printer_ids.borrow_mut() = printer.options.into_iter().map(|o| o.id).collect();
         *self.resin_ids.borrow_mut() = resin.options.into_iter().map(|o| o.id).collect();
@@ -153,6 +165,23 @@ impl SlicePanelBridge {
         };
         if self.document.set_selected_resin(Some(id)) {
             self.refresh();
+        }
+    }
+
+    /// Applies a first-layer-height edit to the document. An empty field
+    /// clears the per-print override; a valid millimetre value sets it;
+    /// invalid input is ignored so a partly-typed number is not lost.
+    /// Does not refresh: the field already holds the user's text, and
+    /// re-pushing a reformatted value mid-edit would disrupt typing.
+    fn on_first_layer_height_edited(&self, text: &str) {
+        match parse_first_layer_height(text) {
+            FirstLayerHeightInput::Clear => {
+                self.document.set_selected_first_layer_height(None);
+            }
+            FirstLayerHeightInput::Set(height) => {
+                self.document.set_selected_first_layer_height(Some(height));
+            }
+            FirstLayerHeightInput::Invalid => {}
         }
     }
 }

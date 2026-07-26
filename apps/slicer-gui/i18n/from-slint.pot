@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-26 19:50+0000\n"
+"POT-Creation-Date: 2026-07-26 20:00+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -12,24 +12,39 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: ui/slice-control-panel.slint:115
+#: ui/slice-control-panel.slint:130
 msgctxt "SlicePanel"
 msgid "Slice setup"
 msgstr ""
 
-#: ui/slice-control-panel.slint:178
+#: ui/slice-control-panel.slint:193
 msgctxt "SlicePanel"
 msgid "Print Setup"
 msgstr ""
 
-#: ui/slice-control-panel.slint:192
+#: ui/slice-control-panel.slint:207
 msgctxt "SlicePanel"
 msgid "Printer"
 msgstr ""
 
-#: ui/slice-control-panel.slint:209
+#: ui/slice-control-panel.slint:224
 msgctxt "SlicePanel"
 msgid "Resin"
+msgstr ""
+
+#: ui/slice-control-panel.slint:241
+msgctxt "SlicePanel"
+msgid "First layer height (mm)"
+msgstr ""
+
+#: ui/slice-control-panel.slint:247
+msgctxt "SlicePanel"
+msgid "from resin profile"
+msgstr ""
+
+#: ui/slice-control-panel.slint:248
+msgctxt "SlicePanel"
+msgid "First layer height in millimetres"
 msgstr ""
 
 #: ui/about-window.slint:10
@@ -413,167 +428,167 @@ msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:279 ui/main-window.slint:716
+#: ui/main-window.slint:281 ui/main-window.slint:722
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:282 ui/main-window.slint:719
+#: ui/main-window.slint:284 ui/main-window.slint:725
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:292 ui/main-window.slint:728
+#: ui/main-window.slint:294 ui/main-window.slint:734
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:301 ui/main-window.slint:736
+#: ui/main-window.slint:303 ui/main-window.slint:742
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:312 ui/main-window.slint:746
+#: ui/main-window.slint:314 ui/main-window.slint:752
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:321 ui/main-window.slint:754
+#: ui/main-window.slint:323 ui/main-window.slint:760
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:332 ui/main-window.slint:764
+#: ui/main-window.slint:334 ui/main-window.slint:770
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:342 ui/main-window.slint:773
+#: ui/main-window.slint:344 ui/main-window.slint:779
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:344 ui/main-window.slint:776
+#: ui/main-window.slint:346 ui/main-window.slint:782
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:354 ui/main-window.slint:785
+#: ui/main-window.slint:356 ui/main-window.slint:791
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:366 ui/main-window.slint:796
+#: ui/main-window.slint:368 ui/main-window.slint:802
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:377 ui/main-window.slint:807
+#: ui/main-window.slint:379 ui/main-window.slint:813
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:386 ui/main-window.slint:815
+#: ui/main-window.slint:388 ui/main-window.slint:821
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:390 ui/main-window.slint:819
+#: ui/main-window.slint:392 ui/main-window.slint:825
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:391 ui/main-window.slint:820
+#: ui/main-window.slint:393 ui/main-window.slint:826
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:405 ui/main-window.slint:830
+#: ui/main-window.slint:407 ui/main-window.slint:836
 msgctxt "MenuBar"
 msgid "Show Menu Bar"
 msgstr ""
 
-#: ui/main-window.slint:406 ui/main-window.slint:831
+#: ui/main-window.slint:408 ui/main-window.slint:837
 msgctxt "MenuBar"
 msgid "Hide Menu Bar"
 msgstr ""
 
-#: ui/main-window.slint:424 ui/main-window.slint:844
+#: ui/main-window.slint:426 ui/main-window.slint:850
 msgctxt "MenuBar"
 msgid "Fullscreen"
 msgstr ""
 
-#: ui/main-window.slint:434 ui/main-window.slint:851
+#: ui/main-window.slint:436 ui/main-window.slint:857
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:436 ui/main-window.slint:854
+#: ui/main-window.slint:438 ui/main-window.slint:860
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:441 ui/main-window.slint:859
+#: ui/main-window.slint:443 ui/main-window.slint:865
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:448 ui/main-window.slint:866
+#: ui/main-window.slint:450 ui/main-window.slint:872
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:455 ui/main-window.slint:873
+#: ui/main-window.slint:457 ui/main-window.slint:879
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:462 ui/main-window.slint:880
+#: ui/main-window.slint:464 ui/main-window.slint:886
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:469 ui/main-window.slint:887
+#: ui/main-window.slint:471 ui/main-window.slint:893
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:481
+#: ui/main-window.slint:483
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:666
+#: ui/main-window.slint:672
 msgctxt "Workspace"
 msgid "Prepare"
 msgstr ""
 
-#: ui/main-window.slint:679
+#: ui/main-window.slint:685
 msgctxt "Workspace"
 msgid "Transform"
 msgstr ""
 
-#: ui/main-window.slint:692
+#: ui/main-window.slint:698
 msgctxt "Workspace"
 msgid "Slice"
 msgstr ""
 
-#: ui/main-window.slint:927
+#: ui/main-window.slint:933
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr ""
 
-#: ui/main-window.slint:956
+#: ui/main-window.slint:962
 msgctxt "MainWindow"
 msgid "Reading file…"
 msgstr ""
 
-#: ui/main-window.slint:958
+#: ui/main-window.slint:964
 msgctxt "MainWindow"
 msgid "Preparing geometry…"
 msgstr ""
 
-#: ui/main-window.slint:959
+#: ui/main-window.slint:965
 msgctxt "MainWindow"
 msgid "Uploading to GPU…"
 msgstr ""

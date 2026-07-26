@@ -31,7 +31,7 @@ use sc_mesh_core::scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::ProjectPayload;
 
 pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
@@ -315,6 +315,16 @@ impl SceneDocument {
             .and_then(|payload| payload.resin.clone())
     }
 
+    /// The scene's chosen first-layer height, read from the project
+    /// payload. `None` when none has been set or no payload exists yet;
+    /// the slicing flow falls back to the material profile's value.
+    pub fn selected_first_layer_height(&self) -> Option<PositiveFiniteMm> {
+        self.project_payload
+            .borrow()
+            .as_ref()
+            .and_then(|payload| payload.first_layer_height)
+    }
+
     /// Sets the scene's chosen printer on the project payload,
     /// creating a payload when none exists yet. Marks the document
     /// save-dirty (via [`Self::mark_project_state_unsaved`]) only when
@@ -361,6 +371,35 @@ impl SceneDocument {
                 None => {
                     *slot = Some(ProjectPayload {
                         resin,
+                        ..ProjectPayload::default()
+                    });
+                    true
+                }
+            }
+        };
+        if changed {
+            self.mark_project_state_unsaved();
+        }
+        changed
+    }
+
+    /// Sets the scene's chosen first-layer height on the project
+    /// payload, creating a payload when none exists yet. Marks the
+    /// document save-dirty only when the value actually changes.
+    /// Returns whether it changed.
+    pub fn set_selected_first_layer_height(&self, height: Option<PositiveFiniteMm>) -> bool {
+        let changed = {
+            let mut slot = self.project_payload.borrow_mut();
+            match slot.as_mut() {
+                Some(payload) if payload.first_layer_height == height => false,
+                Some(payload) => {
+                    payload.first_layer_height = height;
+                    true
+                }
+                None if height.is_none() => false,
+                None => {
+                    *slot = Some(ProjectPayload {
+                        first_layer_height: height,
                         ..ProjectPayload::default()
                     });
                     true

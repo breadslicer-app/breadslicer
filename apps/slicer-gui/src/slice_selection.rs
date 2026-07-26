@@ -15,7 +15,7 @@
 
 use std::collections::BTreeSet;
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 
 use crate::profile_catalog::{MaterialCatalogEntry, PrinterCatalogEntry};
 
@@ -129,6 +129,44 @@ pub(crate) fn resin_candidates(entries: &[MaterialCatalogEntry]) -> Vec<(Materia
         .iter()
         .map(|entry| (entry.id.clone(), resin_label(&entry.brand, &entry.name)))
         .collect()
+}
+
+/// The outcome of parsing the Slice panel's first-layer-height field.
+/// Distinguishes an empty field (clear the per-print override) from a
+/// non-empty but unparseable one (leave the current value untouched).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum FirstLayerHeightInput {
+    /// The field is empty: drop any per-print first-layer height.
+    Clear,
+    /// A valid positive, finite millimetre value.
+    Set(PositiveFiniteMm),
+    /// Non-empty but not a positive finite number: ignore the edit.
+    Invalid,
+}
+
+/// Parses the first-layer-height field text. Surrounding whitespace is
+/// ignored; an empty field clears the override, a positive finite
+/// number sets it, and anything else is
+/// [`FirstLayerHeightInput::Invalid`].
+pub(crate) fn parse_first_layer_height(text: &str) -> FirstLayerHeightInput {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return FirstLayerHeightInput::Clear;
+    }
+    match trimmed.parse::<f64>() {
+        Ok(value) => match PositiveFiniteMm::new(value) {
+            Ok(mm) => FirstLayerHeightInput::Set(mm),
+            Err(_) => FirstLayerHeightInput::Invalid,
+        },
+        Err(_) => FirstLayerHeightInput::Invalid,
+    }
+}
+
+/// Formats a first-layer height for the panel field: the bare
+/// millimetre number, or an empty string when no per-print height is
+/// set.
+pub(crate) fn format_first_layer_height(height: Option<PositiveFiniteMm>) -> String {
+    height.map_or(String::new(), |mm| mm.value().to_string())
 }
 
 #[cfg(test)]
@@ -250,5 +288,70 @@ mod label_tests {
     #[test]
     fn resin_label_falls_back_to_name_without_a_brand() {
         assert_eq!(resin_label("", "Standard"), "Standard");
+    }
+}
+
+#[cfg(test)]
+mod first_layer_height_tests {
+    use super::*;
+
+    fn mm(value: f64) -> PositiveFiniteMm {
+        PositiveFiniteMm::new(value).expect("valid length")
+    }
+
+    #[test]
+    fn an_empty_field_clears_the_override() {
+        assert_eq!(parse_first_layer_height(""), FirstLayerHeightInput::Clear);
+        assert_eq!(
+            parse_first_layer_height("   "),
+            FirstLayerHeightInput::Clear,
+        );
+    }
+
+    #[test]
+    fn a_positive_number_is_parsed_ignoring_surrounding_whitespace() {
+        assert_eq!(
+            parse_first_layer_height("  0.05 "),
+            FirstLayerHeightInput::Set(mm(0.05)),
+        );
+    }
+
+    #[test]
+    fn zero_and_negative_values_are_invalid() {
+        assert_eq!(
+            parse_first_layer_height("0"),
+            FirstLayerHeightInput::Invalid
+        );
+        assert_eq!(
+            parse_first_layer_height("-0.1"),
+            FirstLayerHeightInput::Invalid,
+        );
+    }
+
+    #[test]
+    fn non_numeric_text_is_invalid() {
+        assert_eq!(
+            parse_first_layer_height("abc"),
+            FirstLayerHeightInput::Invalid,
+        );
+        assert_eq!(
+            parse_first_layer_height("0.0."),
+            FirstLayerHeightInput::Invalid,
+        );
+    }
+
+    #[test]
+    fn an_absent_height_formats_as_empty() {
+        assert_eq!(format_first_layer_height(None), "");
+    }
+
+    #[test]
+    fn a_height_round_trips_through_format_and_parse() {
+        let text = format_first_layer_height(Some(mm(0.05)));
+        assert_eq!(text, "0.05");
+        assert_eq!(
+            parse_first_layer_height(&text),
+            FirstLayerHeightInput::Set(mm(0.05)),
+        );
     }
 }

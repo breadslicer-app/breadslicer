@@ -161,6 +161,7 @@ export component MainWindow inherits Window {
     in-out property <int> slice-printer-current-index: -1;
     in property <[string]> slice-resin-options: [];
     in-out property <int> slice-resin-current-index: -1;
+    in-out property <string> slice-first-layer-height-text;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -209,6 +210,7 @@ export component MainWindow inherits Window {
     // picked option's index into the matching options model.
     callback slice-printer-picked(int);
     callback slice-resin-picked(int);
+    callback slice-first-layer-height-edited(string);
     // Reports the Slice control panel's geometry (anchor-right,
     // anchor-bottom, offset-x, offset-y, width, height) after a drag or
     // resize so Rust can persist it. Per-window live state.
@@ -623,11 +625,15 @@ export component MainWindow inherits Window {
         printer-current-index <=> root.slice-printer-current-index;
         resin-options: root.slice-resin-options;
         resin-current-index <=> root.slice-resin-current-index;
+        first-layer-height-text <=> root.slice-first-layer-height-text;
         printer-picked(i) => {
             root.slice-printer-picked(i);
         }
         resin-picked(i) => {
             root.slice-resin-picked(i);
+        }
+        first-layer-height-edited(t) => {
+            root.slice-first-layer-height-edited(t);
         }
         geometry-committed => {
             root.slice-panel-geometry-changed(
