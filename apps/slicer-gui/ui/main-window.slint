@@ -101,6 +101,10 @@ export component MainWindow inherits Window {
     // Rust routes it through the preferences bus so every window and the
     // settings file stay in sync.
     callback menu-layout-change-requested(MenuLayout);
+    // Reports the object-list panel's new visibility so Rust can persist
+    // it. Per-window live state: the settings file records the last
+    // value but other open windows keep their own panel visibility.
+    callback object-list-visibility-changed(bool);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -278,6 +282,7 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene;
                 activated => {
                     root.show-object-list = !root.show-object-list;
+                    root.object-list-visibility-changed(root.show-object-list);
                 }
             }
 
@@ -459,6 +464,7 @@ export component MainWindow inherits Window {
         }
         close-requested => {
             root.show-object-list = false;
+            root.object-list-visibility-changed(false);
         }
     }
 
@@ -582,6 +588,7 @@ export component MainWindow inherits Window {
                     enabled: root.has-scene;
                     activated => {
                         root.show-object-list = !root.show-object-list;
+                        root.object-list-visibility-changed(root.show-object-list);
                     }
                 }
 

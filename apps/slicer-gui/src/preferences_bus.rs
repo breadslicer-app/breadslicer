@@ -47,6 +47,11 @@ pub(crate) struct PreferencesSnapshot {
     pub default_printer: Option<PrinterId>,
     pub default_resin: Option<MaterialId>,
     pub build_volume: BuildVolume,
+    /// Whether the floating object-list panel is shown. Persisted so a
+    /// window restores the last state on the next launch. Per-window
+    /// live state: a change in one window is written to disk but not
+    /// re-applied to other open windows (see `window_prefs`).
+    pub object_list_visible: bool,
 }
 
 /// Describes which field was mutated in the last `update` call.
@@ -57,6 +62,7 @@ pub(crate) enum PreferencesChange {
     Language,
     DefaultPrinter,
     DefaultResin,
+    ObjectListPanel,
 }
 
 type Listener = Rc<dyn Fn(&PreferencesSnapshot, &PreferencesChange)>;
@@ -207,6 +213,7 @@ mod preferences_bus_tests {
             default_printer: None,
             default_resin: None,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
+            object_list_visible: true,
         }
     }
 
@@ -276,6 +283,30 @@ mod preferences_bus_tests {
         assert_eq!(got_layout, MenuLayout::Compact);
         assert_eq!(got_change, PreferencesChange::MenuLayout);
         assert_eq!(bus.snapshot().menu_layout, MenuLayout::Compact);
+    }
+
+    #[test]
+    fn object_list_panel_change_propagates() {
+        let bus = PreferencesBus::new(initial());
+        let captured: Rc<RefCell<Option<(bool, PreferencesChange)>>> = Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, change| {
+                *captured.borrow_mut() = Some((snap.object_list_visible, *change));
+            })
+        };
+
+        bus.update(|snap| {
+            snap.object_list_visible = false;
+            PreferencesChange::ObjectListPanel
+        });
+
+        let (got_visible, got_change) = captured
+            .borrow()
+            .expect("listener must have fired and captured the payload");
+        assert!(!got_visible);
+        assert_eq!(got_change, PreferencesChange::ObjectListPanel);
+        assert!(!bus.snapshot().object_list_visible);
     }
 
     #[test]

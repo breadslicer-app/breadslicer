@@ -237,6 +237,18 @@ where
     }
 }
 
+/// Copies every persisted preference out of a live snapshot into the
+/// on-disk settings model. The single place the two representations are
+/// mapped, so the saver thread and its tests stay in agreement.
+fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnapshot) {
+    settings.set_theme(snap.theme);
+    settings.set_menu_layout(snap.menu_layout);
+    settings.set_language(snap.language);
+    settings.set_default_printer(snap.default_printer.clone());
+    settings.set_default_resin(snap.default_resin.clone());
+    settings.set_object_list_visible(snap.object_list_visible);
+}
+
 /// Spawns the settings-saver worker thread, with the loop body wired
 /// to persist each coalesced snapshot through `AppSettings::save`.
 fn spawn_settings_saver(
@@ -248,11 +260,7 @@ fn spawn_settings_saver(
         .spawn(move || {
             let mut settings = initial_settings;
             run_settings_saver_loop(rx, |snap| {
-                settings.set_theme(snap.theme);
-                settings.set_menu_layout(snap.menu_layout);
-                settings.set_language(snap.language);
-                settings.set_default_printer(snap.default_printer.clone());
-                settings.set_default_resin(snap.default_resin.clone());
+                apply_snapshot_to_settings(&mut settings, snap);
                 if let Err(err) = settings.save() {
                     eprintln!("Failed to save settings: {err}");
                 }
@@ -285,6 +293,7 @@ impl AppState {
             default_printer,
             default_resin,
             build_volume,
+            object_list_visible: settings.object_list_visible(),
         };
         // Apply the persisted language *once* up front so the very
         // first `@tr` evaluation during window construction uses the
@@ -346,6 +355,11 @@ impl AppState {
         ui.set_is_macos(cfg!(target_os = "macos"));
         let snapshot = self.prefs.snapshot();
         ui.apply_preferences(&snapshot);
+        // Object-list panel visibility is per-window live state: it is
+        // restored once here at creation and deliberately left out of
+        // `apply_preferences`, so a later change in one window is saved
+        // to disk without hiding or showing the panel in other windows.
+        ui.set_show_object_list(snapshot.object_list_visible);
         let document = SceneDocument::new();
         let pending_load = Rc::new(PendingLoad::new());
         let ctrl = Rc::new(ViewportController::new(&ui, document, pending_load.clone()));
@@ -845,6 +859,19 @@ impl AppState {
                 });
             });
         }
+        {
+            // Persist the object-list panel's visibility. Unlike the
+            // menu layout this is per-window live state, so the bus write
+            // reaches the settings saver but no window re-applies it (see
+            // the restore in `spawn_main_window` and `window_prefs`).
+            let bus = self.prefs.clone();
+            ui.on_object_list_visibility_changed(move |visible| {
+                bus.update(move |snap| {
+                    snap.object_list_visible = visible;
+                    PreferencesChange::ObjectListPanel
+                });
+            });
+        }
     }
 
     /// Shows the app-wide About window, creating it on first use and
@@ -1052,6 +1079,7 @@ mod settings_saver_tests {
             default_printer: None,
             default_resin: None,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
+            object_list_visible: true,
         }
     }
 
@@ -1109,6 +1137,7 @@ mod settings_saver_tests {
                 default_printer: None,
                 default_resin: None,
                 build_volume: bv,
+                object_list_visible: true,
             })
             .unwrap();
         }
@@ -1119,6 +1148,20 @@ mod settings_saver_tests {
 
         assert_eq!(calls.len(), 1, "burst must coalesce to one call");
         assert_eq!(calls[0], last_bv);
+    }
+
+    #[test]
+    fn saver_mapping_carries_object_list_visibility() {
+        // The snapshot-to-settings mapping must copy the panel
+        // visibility so a hide survives a save.
+        let mut settings = AppSettings::default();
+        assert!(settings.object_list_visible());
+
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.object_list_visible = false;
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert!(!settings.object_list_visible());
     }
 
     #[test]

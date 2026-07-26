@@ -105,6 +105,39 @@ pub(crate) struct Appearance {
     menu_layout: MenuLayoutSetting,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+/// On-disk state of the floating object-list panel. Every field is
+/// optional and omitted when it holds its default, so a fresh config
+/// carries no `[object_list]` section at all.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub(crate) struct ObjectListSettings {
+    /// Whether the panel is shown. Defaults to visible; omitted in TOML
+    /// while it holds that default.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    visible: bool,
+}
+
+impl Default for ObjectListSettings {
+    fn default() -> Self {
+        Self { visible: true }
+    }
+}
+
+impl ObjectListSettings {
+    /// True when every field holds its default, so the whole section can
+    /// be omitted from the serialized TOML.
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Current schema version of the on-disk settings file. Bump this when
 /// the structure of `AppSettings` (or one of its nested settings types)
 /// changes in a way that an older or newer build cannot read. On load,
@@ -133,6 +166,10 @@ pub(crate) struct AppSettings {
     /// user picks one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default_resin: Option<MaterialId>,
+    /// Floating object-list panel state. Omitted in TOML while every
+    /// field holds its default.
+    #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
+    object_list: ObjectListSettings,
 }
 
 impl Default for AppSettings {
@@ -142,6 +179,7 @@ impl Default for AppSettings {
             appearance: Appearance::default(),
             default_printer: None,
             default_resin: None,
+            object_list: ObjectListSettings::default(),
         }
     }
 }
@@ -254,6 +292,14 @@ impl AppSettings {
 
     pub fn set_default_resin(&mut self, id: Option<MaterialId>) {
         self.default_resin = id;
+    }
+
+    pub fn object_list_visible(&self) -> bool {
+        self.object_list.visible
+    }
+
+    pub fn set_object_list_visible(&mut self, visible: bool) {
+        self.object_list.visible = visible;
     }
 }
 
@@ -510,6 +556,54 @@ mod app_settings_tests {
             !written.contains("default_resin"),
             "unset default resin should not serialise, got:\n{written}"
         );
+    }
+
+    #[test]
+    fn default_object_list_is_visible() {
+        assert!(AppSettings::default().object_list_visible());
+    }
+
+    #[test]
+    fn hidden_object_list_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_object_list_visible(false);
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(!loaded.object_list_visible());
+
+        // Written under a dedicated section so an external tool or a
+        // hand-edit can find it.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[object_list]"), "got:\n{written}");
+        assert!(written.contains("visible = false"), "got:\n{written}");
+    }
+
+    #[test]
+    fn saved_toml_omits_default_object_list() {
+        // Visible (the default) is skipped, and with no other field set
+        // the whole section is omitted so a fresh config stays minimal.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("object_list"),
+            "default settings should not serialise the object-list section, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn missing_object_list_section_loads_visible() {
+        // A settings file predating the object-list section loads with
+        // the panel visible (its default).
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(&path, "[appearance]\ntheme = \"dark\"\n").unwrap();
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(loaded.object_list_visible());
     }
 
     #[test]
