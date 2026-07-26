@@ -9,7 +9,7 @@
 use std::fmt;
 
 use sc_print_primitives::PositiveFiniteMm;
-use sc_print_profiles::ResolvedPrintConfig;
+use sc_print_profiles::{PrinterHardware, ResolvedPrintConfig};
 use sc_sl1cer::profile::{AaLevel, InvalidLayerSchedule, LayerSchedule, PackingMode, SliceProfile};
 
 /// Why [`project_to_slice_profile`] could not build a
@@ -63,9 +63,33 @@ pub fn project_to_slice_profile(
     first_layer_height_mm: PositiveFiniteMm,
     total_layers: u32,
 ) -> Result<SliceProfile, ProjectionError> {
-    let hardware = &config.printer.hardware;
-    let layer_height_mm = config.material_resolved.layer_height_mm;
+    project_hardware_to_slice_profile(
+        &config.printer.hardware,
+        config.material_resolved.layer_height_mm,
+        aa_level,
+        packing_mode,
+        first_layer_height_mm,
+        total_layers,
+    )
+}
 
+/// Build a [`SliceProfile`] from the printer hardware and a layer height
+/// directly, without a fully-resolved print configuration.
+///
+/// Geometry slicing needs only the hardware (build volume, pixel
+/// resolution, mirror) plus the layer height; the print parameters
+/// (exposure, lift, speeds) belong to the SLA output step, not to
+/// producing contours. This lets a scene be sliced with any
+/// printer + material pairing, even one whose exposure calibration does
+/// not resolve.
+pub fn project_hardware_to_slice_profile(
+    hardware: &PrinterHardware,
+    layer_height_mm: PositiveFiniteMm,
+    aa_level: AaLevel,
+    packing_mode: PackingMode,
+    first_layer_height_mm: PositiveFiniteMm,
+    total_layers: u32,
+) -> Result<SliceProfile, ProjectionError> {
     let layer_schedule = LayerSchedule::uniform(
         layer_height_mm.value(),
         first_layer_height_mm.value(),

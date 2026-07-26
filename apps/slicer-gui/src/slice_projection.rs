@@ -8,9 +8,10 @@
 //!
 //! Two pieces: [`load_selected_profiles`] resolves the printer and
 //! resin ids to full profiles on disk (the only I/O here), and
-//! [`build_slice_profile`] is the pure projection: resolve the print
-//! configuration, read the model's height, derive the layer count, and
-//! project onto a [`SliceProfile`]. The GUI slices the live scene as
+//! [`build_slice_profile`] is the pure projection: resolve the layer
+//! height, read the model's height, derive the layer count, and project
+//! the printer hardware onto a [`SliceProfile`]. The GUI slices the live
+//! scene as
 //! arranged; the only placement rule is that a scene with no geometry,
 //! or one whose top is at or below the build plate (z = 0), cannot be
 //! sliced.
@@ -19,12 +20,12 @@ use std::fmt;
 
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
-use sc_print_glue::{ProjectionError, project_to_slice_profile, total_layers_for_height};
+use sc_print_glue::{ProjectionError, project_hardware_to_slice_profile, total_layers_for_height};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
     LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, MaterialProfile, PrinterProfile,
-    ResolveError, SceneOverrides, UserLibraryDirError, load_material_profile_by_id,
-    load_printer_profile_by_id, resolve, user_library_dir,
+    ResolveError, UserLibraryDirError, load_material_profile_by_id, load_printer_profile_by_id,
+    resolve_layer_height, user_library_dir,
 };
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{PackingMode, SliceProfile};
@@ -129,10 +130,12 @@ fn scene_top_z(scene: &Scene) -> Result<f64, SliceFailure> {
     Ok(z_max)
 }
 
-/// Build a [`SliceProfile`] for the current scene. Resolves the print
-/// configuration, falls back to the material's layer height when no
-/// per-print first-layer height is set, derives the layer count from
-/// the model's height, and projects onto the engine's input port.
+/// Build a [`SliceProfile`] for the current scene. Resolves the layer
+/// height (the only material parameter geometry slicing needs; the
+/// exposure and motion parameters belong to the SLA output step), falls
+/// back to it when no per-print first-layer height is set, derives the
+/// layer count from the model's height, and projects the printer
+/// hardware onto the engine's input port.
 pub(crate) fn build_slice_profile(
     printer: &PrinterProfile,
     resin: &MaterialProfile,
@@ -140,15 +143,14 @@ pub(crate) fn build_slice_profile(
     aa_level: AaLevel,
     scene: &Scene,
 ) -> Result<SliceProfile, SliceFailure> {
-    let resolved =
-        resolve(printer, resin, &SceneOverrides::default()).map_err(SliceFailure::Resolve)?;
-    let layer_height = resolved.material_resolved.layer_height_mm;
+    let layer_height = resolve_layer_height(printer, resin).map_err(SliceFailure::Resolve)?;
     let first_layer_height = first_layer_height.unwrap_or(layer_height);
     let z_max = scene_top_z(scene)?;
     let total_layers =
         total_layers_for_height(z_max, layer_height.value(), first_layer_height.value());
-    project_to_slice_profile(
-        &resolved,
+    project_hardware_to_slice_profile(
+        &printer.hardware,
+        layer_height,
         aa_level,
         PackingMode::None,
         first_layer_height,
@@ -272,27 +274,29 @@ z_step_mm = 0.01
 light_intensity_mw_per_cm2 = 5.0
 "#;
 
+    // A generic material with no per-printer exposure calibration: full
+    // `resolve` would reject it, but geometry slicing needs only its
+    // layer height, so `build_slice_profile` must still succeed.
     const MATERIAL_TOML: &str = r#"
 [identity]
-id = "sirayatech-blu"
-brand = "Siraya Tech"
+id = "standard-405"
+brand = "Default"
 family = "standard"
-name = "Blu"
+name = "Standard 405nm"
 profile_version = "1.0.0"
 
 [intent]
 target_layer_height_mm = 0.05
 
 [defaults]
-scale_compensation_pct = { x = 0.5, y = 0.5, z = 0.0 }
+bottom_layer_count = 5
 
-[per_printer."elegoo-saturn-4-ultra"]
-normal_exposure_sec = 2.5
-bottom_exposure_sec = 30.0
-bottom_layer_count = 8
-lift_distance_mm = 5.0
-lift_speed_mm_min = 120.0
-retract_speed_mm_min = 150.0
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer]
 "#;
 
     fn fixtures() -> (PrinterProfile, MaterialProfile) {
@@ -394,5 +398,32 @@ retract_speed_mm_min = 150.0
         let err = build_slice_profile(&printer, &resin, None, AaLevel::Off, &Scene::new())
             .expect_err("an empty scene cannot be sliced");
         assert!(matches!(err, SliceFailure::EmptySceneGeometry));
+    }
+
+    #[test]
+    fn a_material_without_exposure_calibration_can_still_be_sliced() {
+        // Regression: geometry slicing must not require the exposure and
+        // motion calibration that a full print-config resolution demands.
+        // The fixture pairs a printer with a generic material that has no
+        // per-printer block for it, so `resolve` rejects the pair, yet
+        // `build_slice_profile` produces a profile from the hardware plus
+        // the layer height alone.
+        use sc_print_profiles::{SceneOverrides, resolve};
+
+        let (printer, resin) = fixtures();
+        assert!(
+            resolve(&printer, &resin, &SceneOverrides::default()).is_err(),
+            "the fixture pairing must be one a full resolve rejects",
+        );
+
+        let profile =
+            build_slice_profile(&printer, &resin, None, AaLevel::Off, &cube_scene_top(0.97))
+                .expect("a material without exposure calibration must still slice");
+        assert_eq!(profile.build_volume().x_mm(), 153.36);
+        match profile.layer_schedule() {
+            LayerSchedule::Uniform {
+                layer_height_mm, ..
+            } => assert_eq!(*layer_height_mm, 0.05),
+        }
     }
 }

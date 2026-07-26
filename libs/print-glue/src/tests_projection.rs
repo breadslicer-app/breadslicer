@@ -7,7 +7,9 @@ use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode};
 
-use super::projection::{ProjectionError, project_to_slice_profile};
+use super::projection::{
+    ProjectionError, project_hardware_to_slice_profile, project_to_slice_profile,
+};
 
 const PRINTER_TOML: &str = r#"
 [identity]
@@ -125,6 +127,37 @@ fn projection_carries_printer_machine_z_not_a_mesh_height() {
     )
     .unwrap();
     assert_eq!(profile.build_volume().z_mm(), 165.0);
+}
+
+#[test]
+fn hardware_projection_builds_from_hardware_and_layer_height_alone() {
+    // The geometry-only path: no ResolvedPrintConfig, just the hardware
+    // and an explicit layer height.
+    let config = resolved_config();
+    let profile = project_hardware_to_slice_profile(
+        &config.printer.hardware,
+        PositiveFiniteMm::new(0.05).unwrap(),
+        AaLevel::Off,
+        PackingMode::None,
+        PositiveFiniteMm::new(0.1).unwrap(),
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(profile.build_volume().x_mm(), 153.36);
+    assert_eq!(profile.pixel_resolution().x(), 8520);
+    assert!(profile.mirror().x);
+    match profile.layer_schedule() {
+        LayerSchedule::Uniform {
+            layer_height_mm,
+            first_layer_height_mm,
+            total_layers,
+        } => {
+            assert_eq!(*layer_height_mm, 0.05);
+            assert_eq!(*first_layer_height_mm, 0.1);
+            assert_eq!(*total_layers, 10);
+        }
+    }
 }
 
 #[test]

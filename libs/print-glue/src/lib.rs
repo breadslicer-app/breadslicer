@@ -24,7 +24,10 @@
 
 pub mod projection;
 
-pub use projection::{ProjectionError, project_to_slice_profile, total_layers_for_height};
+pub use projection::{
+    ProjectionError, project_hardware_to_slice_profile, project_to_slice_profile,
+    total_layers_for_height,
+};
 
 #[cfg(test)]
 mod tests_projection;

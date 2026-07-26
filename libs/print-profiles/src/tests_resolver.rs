@@ -16,6 +16,7 @@ use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
 use super::resolver::{
     PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material, resolve,
+    resolve_layer_height,
 };
 use super::scene_overrides::SceneOverrides;
 use super::value_source::ValueSource;
@@ -79,6 +80,70 @@ fn printer_without_light_intensity() -> PrinterProfile {
 
 fn material(toml: &str) -> MaterialProfile {
     toml_edit::de::from_str(toml).unwrap()
+}
+
+const GENERIC_MATERIAL: &str = r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer]
+"#;
+
+#[test]
+fn resolve_layer_height_succeeds_without_exposure_calibration() {
+    // A generic material with only an intent layer height and no
+    // per-printer exposure. Full `resolve` rejects it (exposure cannot
+    // resolve), but the layer height alone resolves, so a scene can still
+    // be sliced into geometry.
+    let printer = printer_without_light_intensity();
+    let mat = material(GENERIC_MATERIAL);
+
+    assert!(matches!(
+        resolve(&printer, &mat, &SceneOverrides::default()),
+        Err(ResolveError::MissingRequiredField {
+            field: ResolvedField::NormalExposureSec,
+        }),
+    ));
+    assert_eq!(resolve_layer_height(&printer, &mat).unwrap().value(), 0.05);
+}
+
+#[test]
+fn resolve_layer_height_errors_when_no_layer_height_is_available() {
+    let toml = r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer]
+"#;
+    assert!(matches!(
+        resolve_layer_height(&printer_without_light_intensity(), &material(toml)),
+        Err(ResolveError::MissingRequiredField {
+            field: ResolvedField::LayerHeightMm,
+        }),
+    ));
 }
 
 #[test]

@@ -532,3 +532,27 @@ pub fn resolve(
     )?;
     assemble(printer.clone(), material, picked, records, warnings)
 }
+
+/// Resolve only the layer height, the sole material parameter geometry
+/// slicing needs. Runs the same intent derivation and constraint
+/// snapping as [`resolve`], but does not require the print parameters
+/// (exposure, lift, speeds) to resolve. This lets a scene be sliced
+/// into geometry with any printer + material pairing, leaving the full
+/// print configuration for the SLA output step.
+///
+/// Errors with [`ResolveError::RejectedBelowMinimum`] when the layer
+/// height violates a printer constraint, or with
+/// [`ResolveError::MissingRequiredField`] when neither the material's
+/// intent nor a default supplies a layer height.
+pub fn resolve_layer_height(
+    printer: &PrinterProfile,
+    material: &MaterialProfile,
+) -> Result<PositiveFiniteMm, ResolveError> {
+    let (mut picked, mut warnings, _records) = pick_and_derive_material(printer, material);
+    apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;
+    picked
+        .layer_height_mm
+        .ok_or(ResolveError::MissingRequiredField {
+            field: ResolvedField::LayerHeightMm,
+        })
+}
