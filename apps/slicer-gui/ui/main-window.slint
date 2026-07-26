@@ -34,49 +34,6 @@ export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
 // top-of-screen menu bar. Persisted app-wide.
 export enum MenuLayout { Bar, Compact }
 
-// Resize handle between the viewport and the object-list panel. Tracks
-// the cursor in absolute window coordinates so the splitter remains
-// stable even as the layout reflows under the drag (the handle's local
-// frame moves with the panel; using `absolute-position + mouse-x`
-// converts both back to a fixed reference frame).
-component ObjectListSplitter inherits Rectangle {
-    in-out property <length> panel-width;
-    in property <length> panel-min-width: 120px;
-    in property <length> panel-max-width: 600px;
-
-    width: 4px;
-    background: Palette.border;
-
-    property <length> press-cursor-x;
-    property <length> press-panel-width;
-
-    TouchArea {
-        mouse-cursor: ew-resize;
-
-        pointer-event(event) => {
-            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
-                root.press-cursor-x = self.absolute-position.x + self.mouse-x;
-                root.press-panel-width = root.panel-width;
-            }
-        }
-
-        moved => {
-            if (self.pressed) {
-                // Panel sits to the right of the splitter, so dragging
-                // right (positive delta) shrinks the panel.
-                root.panel-width = Math.min(
-                    Math.max(
-                        root.press-panel-width
-                            - ((self.absolute-position.x + self.mouse-x) - root.press-cursor-x),
-                        root.panel-min-width
-                    ),
-                    root.panel-max-width
-                );
-            }
-        }
-    }
-}
-
 export component MainWindow inherits Window {
     title: (root.scene-dirty ? "* " : "") + @tr("SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
@@ -115,7 +72,6 @@ export component MainWindow inherits Window {
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
     in-out property <bool> show-object-list: true;
-    in-out property <length> object-list-width: 220px;
     // Set from Rust at window creation (cfg!(target_os = "macos")).
     // Selects the platform's fullscreen accelerator shown in the View
     // menu: Cmd+Ctrl+F on macOS, F11 elsewhere.
@@ -487,21 +443,22 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Object-list panel sits to the right of the viewport. Fixed
-        // side for now; the data model below (selected-object-index,
-        // object-list, show-object-list, object-list-width) is
-        // side-agnostic so a future preference can flip the order
-        // without touching the controller.
-        if (root.has-scene && root.show-object-list): ObjectListSplitter {
-            panel-width <=> root.object-list-width;
+    }
+
+    // Floating object-list panel. Overlaps the viewport at the top
+    // right by default and can be dragged, resized, minimized, or
+    // closed. Only present once a scene with at least one object is
+    // loaded and the View menu keeps it enabled.
+    if (root.has-scene && root.show-object-list && root.object-list.length > 0): ObjectListPanel {
+        available-width: root.width;
+        available-height: root.height;
+        model: root.object-list;
+        selected-index <=> root.selected-object-index;
+        selection-changed(idx) => {
+            root.object-list-selection-changed(idx);
         }
-        if (root.has-scene && root.show-object-list): ObjectListPanel {
-            width: root.object-list-width;
-            model: root.object-list;
-            selected-index <=> root.selected-object-index;
-            selection-changed(idx) => {
-                root.object-list-selection-changed(idx);
-            }
+        close-requested => {
+            root.show-object-list = false;
         }
     }
 
