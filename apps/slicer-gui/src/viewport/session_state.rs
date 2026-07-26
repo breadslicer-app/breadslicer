@@ -99,10 +99,13 @@ impl SessionState {
         true
     }
 
+    pub(super) fn section(&self) -> WorkspaceSection {
+        self.section.get()
+    }
+
     /// Replaces the active workspace section. Returns `true` if the
-    /// value actually changed (caller mirrors it to the UI and, once
-    /// gating lands, refreshes the transform tooling for the new
-    /// section).
+    /// value actually changed (caller mirrors it to the UI and
+    /// refreshes the transform tooling for the new section).
     pub(super) fn set_section(&self, section: WorkspaceSection) -> bool {
         if self.section.get() == section {
             return false;

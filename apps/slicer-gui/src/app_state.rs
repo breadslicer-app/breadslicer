@@ -650,6 +650,11 @@ impl AppState {
             };
             wired.controller.clone()
         };
+        // Copy is a Transform-section tool (it seeds a paste, which
+        // mutates the scene); it stays inert in Prepare and Slice.
+        if !controller.allows_transforms() {
+            return;
+        }
         let doc = controller.document();
         let Some(fragment) = fragment_from_document_selection(&doc) else {
             return;
@@ -696,6 +701,14 @@ impl AppState {
         let Some(wired) = main_windows.get(&window_id) else {
             return;
         };
+        // The context menu only offers Copy / Paste / Delete, all
+        // Transform-section tools; outside Transform there is nothing to
+        // show, so a right-click there opens no menu (camera orbit on
+        // the right button still works, it runs through a separate
+        // gesture path).
+        if !wired.controller.allows_transforms() {
+            return;
+        }
         let hit = wired.controller.pick_node_at(x, y);
         if let Some(node_id) = hit {
             wired

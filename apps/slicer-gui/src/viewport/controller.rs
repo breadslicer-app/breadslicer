@@ -88,13 +88,21 @@ impl ViewportController {
         let dialogs = DialogManager::new();
         let loader = Rc::new(SceneLoader::new_for_test(dialogs.clone()));
         let pending_load = Rc::new(PendingLoad::new());
-        Self {
+        let controller = Self {
             ui: slint::Weak::default(),
             session: SessionState::new(SceneDocument::new(), loader, pending_load, dialogs),
             camera: CameraController::new(),
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
-        }
+        };
+        // Most viewport tests exercise the Transform-section tooling
+        // (gizmo drag, keyboard drive, delete, paste); default the
+        // fixture to Transform so the section gate does not silence
+        // them. Production starts in Prepare (SessionState::new) and the
+        // load pipeline picks the initial section from mesh health.
+        // Section-gating tests set the section they need explicitly.
+        controller.session.set_section(WorkspaceSection::Transform);
+        controller
     }
 
     /// Install a pre-built `Box<dyn MeshRenderer>` into the
@@ -162,6 +170,19 @@ impl ViewportController {
     #[cfg(test)]
     pub(crate) fn viewport_for_test(&self) -> Option<(f32, f32)> {
         self.render.viewport().map(|vp| (vp.width(), vp.height()))
+    }
+
+    #[cfg(test)]
+    pub(super) fn keyboard_focus_for_test(&self) -> KbdFocus {
+        self.input.kbd_drive().current_focus()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reachable_leaf_count_for_test(&self) -> usize {
+        self.session
+            .document()
+            .with_scene(|s| s.graph().reachable_leaf_count())
+            .unwrap_or(0)
     }
 
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
@@ -363,15 +384,39 @@ impl ViewportController {
     /// Switches the active workspace section, mirrors it into the UI
     /// pill, and schedules a redraw. No-op when unchanged. Driven both
     /// by the pill switcher and by the load pipeline, which picks the
-    /// initial section from mesh health.
+    /// initial section from mesh health. Leaving Transform cancels any
+    /// in-flight gizmo gesture so a half-finished transform cannot
+    /// linger in a section that forbids editing.
     pub fn set_section(&self, section: WorkspaceSection) {
         if !self.session.set_section(section) {
             return;
+        }
+        if !self.allows_transforms() {
+            self.cancel_transform_gestures();
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_workspace_section(section);
         }
         self.mark_dirty();
+    }
+
+    /// Whether the active section permits scene-mutating tools. The
+    /// gating across the input paths reads this; selection and camera
+    /// navigation ignore it.
+    pub fn allows_transforms(&self) -> bool {
+        crate::workspace_section::allows_transforms(self.session.section())
+    }
+
+    /// Reverts an in-progress gizmo drag and drops keyboard gizmo
+    /// focus, leaving the selection intact. Called when the section
+    /// changes to one that forbids transforms.
+    fn cancel_transform_gestures(&self) {
+        if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
+            self.input.abort_gizmo_drag(self.session.document());
+        }
+        if self.input.kbd_drive().current_focus() != KbdFocus::None {
+            self.apply_keyboard_focus(KbdFocus::None);
+        }
     }
 
     fn mark_dirty(&self) {
@@ -586,11 +631,17 @@ impl ViewportController {
     /// shortcut can race a freshly-emptied stack, the document's
     /// own check is the source of truth).
     pub fn on_undo_requested(&self) {
+        if !self.allows_transforms() {
+            return;
+        }
         self.session.document().undo();
     }
 
     /// Edit → Redo handler.
     pub fn on_redo_requested(&self) {
+        if !self.allows_transforms() {
+            return;
+        }
         self.session.document().redo();
     }
 
@@ -599,6 +650,9 @@ impl ViewportController {
     /// No-op when no scene is loaded, nothing is selected, or the
     /// selection is not a leaf.
     pub fn on_delete_requested(&self) {
+        if !self.allows_transforms() {
+            return;
+        }
         self.session.document().delete_selected_leaf();
     }
 
@@ -646,6 +700,12 @@ impl ViewportController {
     /// concern part of the cascade: InputDispatch owns the focus
     /// cell, the coordinator owns the UI handle.
     fn apply_keyboard_focus(&self, focus: KbdFocus) {
+        // Arming a focus (Translate / Rotate / Scale) is a transform
+        // tool and is gated to the Transform section; dropping focus
+        // (`None`) must always work so leaving Transform can clear it.
+        if focus != KbdFocus::None && !self.allows_transforms() {
+            return;
+        }
         let Some(new_focus) = self
             .input
             .set_keyboard_focus(self.session.document(), focus)
@@ -683,10 +743,17 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
+            self.allows_transforms(),
         );
     }
 
     pub fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
+        // Track the cursor in every section so a later paste anchors on
+        // it; the gizmo drag / hover only runs in the Transform section.
+        self.input.note_hover_cursor(cursor);
+        if !self.allows_transforms() {
+            return;
+        }
         if self.input.on_pointer_move(
             self.session.document(),
             self.camera.camera_cell(),
@@ -819,6 +886,9 @@ impl ViewportController {
         anchor: ScreenPoint,
         viewport: super::types::ViewportSize,
     ) -> bool {
+        if !self.allows_transforms() {
+            return false;
+        }
         let camera_slot = self.camera.camera_cell().borrow();
         let Some(camera) = camera_slot.as_ref() else {
             return false;
@@ -1056,11 +1126,21 @@ impl ViewportController {
             .document()
             .with_scene(|spatial_for_render| {
                 let selection_node_id = self.session.document().selection_primary_node_id();
+                // The selection highlight stays visible in every section
+                // (selection is live everywhere). The gizmo is a
+                // transform tool, so its handles only compose in the
+                // Transform section: gate the selection handed to the
+                // composer, not the one that drives the object tint.
+                let gizmo_selection = if self.allows_transforms() {
+                    selection_node_id
+                } else {
+                    None
+                };
                 let gizmo_frame = GizmoFrameComposer::compose(
                     &self.input,
                     spatial_for_render,
                     camera,
-                    selection_node_id,
+                    gizmo_selection,
                     h_logical,
                 );
 
@@ -1615,6 +1695,44 @@ mod viewport_click_tests {
         install_single_object_at_origin(&ctrl);
         ctrl.on_pointer_down(ScreenPoint::new(0.0, 0.0), no_mods());
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
+    }
+
+    #[test]
+    fn pointer_down_on_handle_does_not_drag_outside_transform() {
+        // The same press that grabs the X handle in Transform must not
+        // start a drag while parked in a non-Transform section.
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.set_section(WorkspaceSection::Prepare);
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        assert!(
+            matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle),
+            "the gizmo must not be grabbable outside the Transform section"
+        );
+    }
+
+    #[test]
+    fn leaving_transform_aborts_an_active_drag_and_reverts_it() {
+        // Start a real drag in Transform, move it, then switch section:
+        // the drag must abort and the transform revert to the captured
+        // original (translation back to zero).
+        let ctrl = ViewportController::new_for_test();
+        install_single_object_at_origin(&ctrl);
+        ctrl.on_pointer_down(ScreenPoint::new(X_CONE_PRESS.0, X_CONE_PRESS.1), no_mods());
+        assert!(matches!(
+            ctrl.input.gizmo_fsm().current(),
+            GizmoState::Drag { .. }
+        ));
+        ctrl.on_pointer_move(
+            ScreenPoint::new(X_CONE_PRESS.0 + 5.0, X_CONE_PRESS.1),
+            no_mods(),
+        );
+        ctrl.set_section(WorkspaceSection::Slice);
+        assert!(
+            matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle),
+            "leaving Transform must abort the in-progress drag"
+        );
+        assert_approx_eq!(f32, read_translation(&ctrl).x, 0.0, epsilon = 1e-4);
     }
 
     #[test]

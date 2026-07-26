@@ -54,6 +54,7 @@ mod viewport;
 mod window_icon;
 mod window_prefs;
 mod wiring;
+mod workspace_section;
 
 use std::error::Error;
 use std::path::PathBuf;

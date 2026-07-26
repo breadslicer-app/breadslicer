@@ -315,7 +315,8 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Undo");
                 shortcut: @keys(Control + Z);
-                enabled: root.has-scene && !root.loading && root.can-undo;
+                enabled: root.has-scene && !root.loading && root.can-undo
+                    && root.workspace-section == WorkspaceSection.Transform;
                 activated => {
                     root.undo-requested();
                 }
@@ -324,7 +325,8 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Redo");
                 shortcut: @keys(Control + Shift + Z);
-                enabled: root.has-scene && !root.loading && root.can-redo;
+                enabled: root.has-scene && !root.loading && root.can-redo
+                    && root.workspace-section == WorkspaceSection.Transform;
                 activated => {
                     root.redo-requested();
                 }
@@ -334,7 +336,8 @@ export component MainWindow inherits Window {
 
             MenuItem {
                 title: @tr("MenuBar" => "Delete");
-                enabled: root.has-scene && !root.loading && root.selected-object-index != -1;
+                enabled: root.has-scene && !root.loading && root.selected-object-index != -1
+                    && root.workspace-section == WorkspaceSection.Transform;
                 activated => {
                     root.delete-requested();
                 }
@@ -709,7 +712,8 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Undo");
-                    enabled: root.has-scene && !root.loading && root.can-undo;
+                    enabled: root.has-scene && !root.loading && root.can-undo
+                    && root.workspace-section == WorkspaceSection.Transform;
                     activated => {
                         root.undo-requested();
                     }
@@ -717,7 +721,8 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Redo");
-                    enabled: root.has-scene && !root.loading && root.can-redo;
+                    enabled: root.has-scene && !root.loading && root.can-redo
+                    && root.workspace-section == WorkspaceSection.Transform;
                     activated => {
                         root.redo-requested();
                     }
@@ -727,7 +732,8 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Delete");
-                    enabled: root.has-scene && !root.loading && root.selected-object-index != -1;
+                    enabled: root.has-scene && !root.loading && root.selected-object-index != -1
+                    && root.workspace-section == WorkspaceSection.Transform;
                     activated => {
                         root.delete-requested();
                     }

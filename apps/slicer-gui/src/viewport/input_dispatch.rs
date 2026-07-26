@@ -178,8 +178,15 @@ impl InputDispatch {
         viewport: Option<ViewportSize>,
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
+        allow_transforms: bool,
     ) {
         self.input_state.set_pressed(cursor);
+        // The gizmo can only be grabbed in the Transform section. The
+        // press is still recorded above so a click without a drag
+        // still selects / picks on release in any section.
+        if !allow_transforms {
+            return;
+        }
         let ctx = GizmoStartCtx {
             document,
             camera,
@@ -198,6 +205,15 @@ impl InputDispatch {
     /// `true` if the cached hover changed (caller should mark dirty),
     /// drag-driven scene mutations fire `Mutated` separately and the
     /// listener marks dirty on its own.
+    /// Records the latest hover cursor. Always called on pointer-move,
+    /// in every section, so the paste anchor has a fresh position; the
+    /// gizmo drag / hover work in [`Self::on_pointer_move`] is separate
+    /// and only runs in the Transform section.
+    pub(super) fn note_hover_cursor(&self, cursor: ScreenPoint) {
+        self.last_cursor.set(Some(cursor));
+        self.hovering.set(true);
+    }
+
     pub(super) fn on_pointer_move(
         &self,
         document: &Rc<SceneDocument>,
@@ -207,8 +223,6 @@ impl InputDispatch {
         cursor: ScreenPoint,
         modifiers: PointerModifiers,
     ) -> bool {
-        self.last_cursor.set(Some(cursor));
-        self.hovering.set(true);
         let move_ctx = GizmoMoveCtx {
             document,
             camera,
@@ -413,36 +427,17 @@ mod input_dispatch_tests {
     }
 
     #[test]
-    fn pointer_move_records_cursor_and_marks_hovering() {
+    fn note_hover_cursor_records_cursor_and_marks_hovering() {
         let id = InputDispatch::new();
-        let doc = SceneDocument::new();
-        let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
         let cursor = ScreenPoint { x: 12.0, y: 34.0 };
-        let _ = id.on_pointer_move(
-            &doc,
-            &camera,
-            None,
-            crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME,
-            cursor,
-            PointerModifiers::default(),
-        );
+        id.note_hover_cursor(cursor);
         assert_eq!(id.last_hover_cursor(), Some(cursor));
     }
 
     #[test]
     fn pointer_leave_hides_cached_cursor_from_paste_path() {
         let id = InputDispatch::new();
-        let doc = SceneDocument::new();
-        let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
-        let cursor = ScreenPoint { x: 7.0, y: 9.0 };
-        let _ = id.on_pointer_move(
-            &doc,
-            &camera,
-            None,
-            crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME,
-            cursor,
-            PointerModifiers::default(),
-        );
+        id.note_hover_cursor(ScreenPoint { x: 7.0, y: 9.0 });
         id.on_pointer_leave();
         assert!(id.last_hover_cursor().is_none());
     }
@@ -450,16 +445,7 @@ mod input_dispatch_tests {
     #[test]
     fn reset_drops_cached_hover_cursor() {
         let id = InputDispatch::new();
-        let doc = SceneDocument::new();
-        let camera: RefCell<Option<OrbitCamera>> = RefCell::new(None);
-        let _ = id.on_pointer_move(
-            &doc,
-            &camera,
-            None,
-            crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME,
-            ScreenPoint { x: 1.0, y: 2.0 },
-            PointerModifiers::default(),
-        );
+        id.note_hover_cursor(ScreenPoint { x: 1.0, y: 2.0 });
         id.reset();
         assert!(id.last_hover_cursor().is_none());
     }
