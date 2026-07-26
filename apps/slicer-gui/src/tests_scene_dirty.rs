@@ -372,3 +372,134 @@ mod dirty_changed_event_tests {
         assert!(log.borrow().contains(&SceneEvent::DirtyChanged));
     }
 }
+
+/// The printer/resin choice is project-level state that lives on the
+/// payload, not on the undo stack. Changing it must mark the document
+/// save-dirty (unsaved changes) without touching undo history, and a
+/// save must clear it.
+mod unsaved_project_state_tests {
+    use super::*;
+    use sc_print_primitives::{MaterialId, PrinterId};
+
+    fn printer(id: &str) -> PrinterId {
+        PrinterId::new(id).expect("valid printer id")
+    }
+
+    fn resin(id: &str) -> MaterialId {
+        MaterialId::new(id).expect("valid material id")
+    }
+
+    #[test]
+    fn choosing_a_printer_marks_the_document_dirty() {
+        let (doc, _) = loaded_document();
+        assert!(doc.set_selected_printer(Some(printer("anycubic-photon"))));
+        assert!(doc.is_dirty());
+        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
+    }
+
+    #[test]
+    fn choosing_a_resin_marks_the_document_dirty() {
+        let (doc, _) = loaded_document();
+        assert!(doc.set_selected_resin(Some(resin("generic-grey"))));
+        assert!(doc.is_dirty());
+        assert_eq!(doc.selected_resin(), Some(resin("generic-grey")));
+    }
+
+    #[test]
+    fn re_choosing_the_same_printer_is_a_no_op() {
+        let (doc, _) = loaded_document();
+        doc.set_selected_printer(Some(printer("anycubic-photon")));
+        doc.mark_saved();
+        assert!(!doc.is_dirty());
+
+        // Same value: no change, no dirty, and no reported flip.
+        let (log, _sub) = capture_events(&doc);
+        assert!(!doc.set_selected_printer(Some(printer("anycubic-photon"))));
+        assert!(!doc.is_dirty());
+        assert!(!log.borrow().contains(&SceneEvent::DirtyChanged));
+    }
+
+    #[test]
+    fn clearing_a_selection_that_was_never_set_is_a_no_op() {
+        let (doc, _) = loaded_document();
+        assert!(!doc.set_selected_printer(None));
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.selected_printer(), None);
+    }
+
+    #[test]
+    fn a_save_clears_the_unsaved_selection() {
+        let (doc, _) = loaded_document();
+        doc.set_selected_printer(Some(printer("anycubic-photon")));
+        assert!(doc.is_dirty());
+        doc.mark_saved();
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn installing_a_new_scene_clears_the_unsaved_selection() {
+        let (doc, _) = loaded_document();
+        doc.set_selected_printer(Some(printer("anycubic-photon")));
+        assert!(doc.is_dirty());
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn an_unsaved_selection_keeps_the_document_dirty_after_undoing_edits() {
+        // The save-dirty signal is the OR of undo-history changes and
+        // unsaved project state: undoing every geometry edit back to
+        // the save point does not clear a pending selection change.
+        let (doc, node_id) = loaded_document();
+        commit_step(&doc, node_id, 1.0);
+        doc.mark_saved();
+        doc.set_selected_printer(Some(printer("anycubic-photon")));
+        commit_step(&doc, node_id, 2.0);
+        assert!(doc.is_dirty());
+
+        assert!(doc.undo()); // back to the geometry save point
+        assert!(doc.is_dirty()); // still dirty: the selection is unsaved
+    }
+
+    #[test]
+    fn choosing_a_selection_creates_a_payload_and_makes_it_a_project() {
+        let (doc, _) = loaded_document();
+        assert!(!doc.is_project());
+        doc.set_selected_printer(Some(printer("anycubic-photon")));
+
+        assert!(doc.is_project());
+        let payload = doc.project_payload().expect("payload created");
+        assert_eq!(payload.printer, Some(printer("anycubic-photon")));
+        assert_eq!(payload.resin, None);
+        assert!(payload.embedded.is_empty());
+    }
+
+    #[test]
+    fn printer_and_resin_choices_coexist_on_one_payload() {
+        let (doc, _) = loaded_document();
+        doc.set_selected_printer(Some(printer("anycubic-photon")));
+        doc.set_selected_resin(Some(resin("generic-grey")));
+
+        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
+        assert_eq!(doc.selected_resin(), Some(resin("generic-grey")));
+    }
+
+    #[test]
+    fn the_dirty_event_fires_once_across_a_run_of_selection_changes() {
+        let (doc, _) = loaded_document();
+        let (log, _sub) = capture_events(&doc);
+        let flips = |log: &Rc<RefCell<Vec<SceneEvent>>>| {
+            log.borrow()
+                .iter()
+                .filter(|e| **e == SceneEvent::DirtyChanged)
+                .count()
+        };
+
+        doc.set_selected_printer(Some(printer("anycubic-photon"))); // clean -> dirty
+        assert_eq!(flips(&log), 1);
+        doc.set_selected_resin(Some(resin("generic-grey"))); // dirty -> dirty
+        assert_eq!(flips(&log), 1);
+        doc.mark_saved(); // dirty -> clean
+        assert_eq!(flips(&log), 2);
+    }
+}

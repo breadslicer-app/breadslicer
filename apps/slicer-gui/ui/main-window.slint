@@ -8,6 +8,7 @@ import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { ObjectListPanel } from "./object-list-panel.slint";
+import { SliceControlPanel } from "./slice-control-panel.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
@@ -151,6 +152,25 @@ export component MainWindow inherits Window {
     // Rust stays the single source of truth (it also sets the initial
     // section from mesh health at load time).
     in property <WorkspaceSection> workspace-section: WorkspaceSection.Prepare;
+    // Slice control panel picker models and selection, driven by Rust.
+    // Each list is the union of the global favourites, the global
+    // default, and the scene's current choice; `*-current-index` is the
+    // selected entry in the matching options model, or -1 when none is
+    // selected.
+    in property <[string]> slice-printer-options: [];
+    in-out property <int> slice-printer-current-index: -1;
+    in property <[string]> slice-resin-options: [];
+    in-out property <int> slice-resin-current-index: -1;
+    // Slice control panel geometry (per-window live state). Same
+    // anchor/offset model as the object-list panel; the defaults hug the
+    // top-left corner, clear of the top-right object-list panel. Height
+    // 0px auto-sizes to the content.
+    in-out property <bool> slice-panel-anchor-right: false;
+    in-out property <bool> slice-panel-anchor-bottom: false;
+    in-out property <length> slice-panel-offset-x: 12px;
+    in-out property <length> slice-panel-offset-y: 12px;
+    in-out property <length> slice-panel-width: 240px;
+    in-out property <length> slice-panel-height: 0px;
 
     changed theme => {
         Palette.color-scheme =
@@ -185,6 +205,10 @@ export component MainWindow inherits Window {
     // resize, or minimize so Rust can persist it. Also per-window live
     // state.
     callback object-list-geometry-changed(bool, bool, length, length, length, length, bool);
+    // A printer/resin pick from the Slice control panel; carries the
+    // picked option's index into the matching options model.
+    callback slice-printer-picked(int);
+    callback slice-resin-picked(int);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -575,6 +599,31 @@ export component MainWindow inherits Window {
             root.object-list-width = 220px;
             root.object-list-height = 0px;
             root.object-list-minimized = false;
+        }
+    }
+
+    // Floating Slice control panel: the scene's printer and resin
+    // pickers. Present only while the Slice section is active; not
+    // closable (it is the primary slicing control). Overlaps the
+    // viewport at the top left by default.
+    if (root.has-scene && root.workspace-section == WorkspaceSection.Slice): SliceControlPanel {
+        available-width: root.width;
+        available-height: root.height;
+        anchor-right <=> root.slice-panel-anchor-right;
+        anchor-bottom <=> root.slice-panel-anchor-bottom;
+        offset-x <=> root.slice-panel-offset-x;
+        offset-y <=> root.slice-panel-offset-y;
+        panel-width <=> root.slice-panel-width;
+        panel-height <=> root.slice-panel-height;
+        printer-options: root.slice-printer-options;
+        printer-current-index <=> root.slice-printer-current-index;
+        resin-options: root.slice-resin-options;
+        resin-current-index <=> root.slice-resin-current-index;
+        printer-picked(i) => {
+            root.slice-printer-picked(i);
+        }
+        resin-picked(i) => {
+            root.slice-resin-picked(i);
         }
     }
 

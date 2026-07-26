@@ -30,6 +30,7 @@ use crate::profile_catalog::ProfileCatalog;
 use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
+use crate::slice_panel::SlicePanelBridge;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
@@ -156,6 +157,9 @@ struct WiredMainWindow {
     // controller drains it from `handle_rendering_setup`.
     pending_load: Rc<PendingLoad>,
     _subscription: Subscription,
+    /// The Slice control panel's picker bridge. Held so its document
+    /// and preferences-bus subscriptions live as long as the window.
+    _slice_panel: Rc<SlicePanelBridge>,
 }
 
 /// Owns every piece of state that is app-wide (not tied to a single
@@ -409,6 +413,12 @@ impl AppState {
         ctrl.set_build_volume(snapshot.build_volume);
 
         crate::wiring::wire_main_window(&ui, ctrl.clone(), self.prefs.clone())?;
+        let slice_panel = SlicePanelBridge::install(
+            &ui,
+            self.catalog.clone(),
+            self.prefs.clone(),
+            ctrl.document(),
+        );
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
@@ -546,6 +556,7 @@ impl AppState {
                 controller: ctrl,
                 pending_load,
                 _subscription: subscription,
+                _slice_panel: slice_panel,
             },
         );
         Ok(id)

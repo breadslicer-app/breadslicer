@@ -31,6 +31,7 @@ use sc_mesh_core::scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
+use sc_print_primitives::{MaterialId, PrinterId};
 use sc_project_formats::ProjectPayload;
 
 pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
@@ -139,6 +140,16 @@ pub(crate) struct SceneDocument {
     /// scene with no way to undo them, so after an eviction the
     /// empty-vs-empty comparison must read dirty.
     evicted_since_save: Cell<bool>,
+    /// Save-dirty contribution from project-level state that does not
+    /// live on the undo stack: the scene's printer/resin choice today,
+    /// and later the per-print settings and the produced slice result.
+    /// Set by [`Self::mark_project_state_unsaved`], OR'd into
+    /// [`Self::is_dirty`], and cleared by [`Self::mark_saved`] and on
+    /// install/clear. This tracks UNSAVED changes only (the signal that
+    /// drives Save and the close-prompt); it says nothing about whether
+    /// a computed slice still matches the geometry and settings it was
+    /// produced from, which is a separate concern.
+    unsaved_project_state: Cell<bool>,
 }
 
 impl SceneDocument {
@@ -155,6 +166,7 @@ impl SceneDocument {
             next_edit_id: Cell::new(1),
             save_point: Cell::new(None),
             evicted_since_save: Cell::new(false),
+            unsaved_project_state: Cell::new(false),
         })
     }
 
@@ -189,6 +201,7 @@ impl SceneDocument {
         // A freshly installed scene matches its source by definition.
         self.save_point.set(None);
         self.evicted_since_save.set(false);
+        self.unsaved_project_state.set(false);
         self.notify(SceneEvent::Installed);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
@@ -205,6 +218,7 @@ impl SceneDocument {
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
         self.evicted_since_save.set(false);
+        self.unsaved_project_state.set(false);
         self.notify(SceneEvent::Cleared);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
@@ -212,10 +226,13 @@ impl SceneDocument {
         self.notify_dirty_change(was_dirty);
     }
 
-    /// Whether the scene differs from the state it was loaded or
-    /// last saved in, judged by committed edits only (a mid-gesture
-    /// mutation that has not been pushed yet does not count). `false`
-    /// whenever no scene is loaded.
+    /// Whether the scene or its project-level state differs from the
+    /// state it was loaded or last saved in (the save-dirty /
+    /// unsaved-changes signal). Scene contents are judged by committed
+    /// edits only (a mid-gesture mutation that has not been pushed yet
+    /// does not count); project-level state such as the printer/resin
+    /// choice contributes through [`Self::mark_project_state_unsaved`].
+    /// `false` whenever no scene is loaded.
     ///
     /// Clean means the undo stack's top entry is the one recorded by
     /// [`Self::mark_saved`]. A top entry matching the save point
@@ -231,6 +248,9 @@ impl SceneDocument {
         if !self.is_loaded() {
             return false;
         }
+        if self.unsaved_project_state.get() {
+            return true;
+        }
         let top = self.top_edit_id();
         if top != self.save_point.get() {
             return true;
@@ -245,6 +265,7 @@ impl SceneDocument {
         let was_dirty = self.is_dirty();
         self.save_point.set(self.top_edit_id());
         self.evicted_since_save.set(false);
+        self.unsaved_project_state.set(false);
         self.notify_dirty_change(was_dirty);
     }
 
@@ -276,6 +297,82 @@ impl SceneDocument {
         *self.source_path.borrow_mut() = Some(path);
     }
 
+    /// The scene's chosen printer, read from the project payload.
+    /// `None` when no printer has been chosen or no payload exists yet.
+    pub fn selected_printer(&self) -> Option<PrinterId> {
+        self.project_payload
+            .borrow()
+            .as_ref()
+            .and_then(|payload| payload.printer.clone())
+    }
+
+    /// The scene's chosen resin, read from the project payload. `None`
+    /// when no resin has been chosen or no payload exists yet.
+    pub fn selected_resin(&self) -> Option<MaterialId> {
+        self.project_payload
+            .borrow()
+            .as_ref()
+            .and_then(|payload| payload.resin.clone())
+    }
+
+    /// Sets the scene's chosen printer on the project payload,
+    /// creating a payload when none exists yet. Marks the document
+    /// save-dirty (via [`Self::mark_project_state_unsaved`]) only when
+    /// the value actually changes. Returns whether it changed.
+    pub fn set_selected_printer(&self, printer: Option<PrinterId>) -> bool {
+        let changed = {
+            let mut slot = self.project_payload.borrow_mut();
+            match slot.as_mut() {
+                Some(payload) if payload.printer == printer => false,
+                Some(payload) => {
+                    payload.printer = printer;
+                    true
+                }
+                None if printer.is_none() => false,
+                None => {
+                    *slot = Some(ProjectPayload {
+                        printer,
+                        ..ProjectPayload::default()
+                    });
+                    true
+                }
+            }
+        };
+        if changed {
+            self.mark_project_state_unsaved();
+        }
+        changed
+    }
+
+    /// Sets the scene's chosen resin on the project payload, creating
+    /// a payload when none exists yet. Marks the document save-dirty
+    /// only when the value actually changes. Returns whether it
+    /// changed.
+    pub fn set_selected_resin(&self, resin: Option<MaterialId>) -> bool {
+        let changed = {
+            let mut slot = self.project_payload.borrow_mut();
+            match slot.as_mut() {
+                Some(payload) if payload.resin == resin => false,
+                Some(payload) => {
+                    payload.resin = resin;
+                    true
+                }
+                None if resin.is_none() => false,
+                None => {
+                    *slot = Some(ProjectPayload {
+                        resin,
+                        ..ProjectPayload::default()
+                    });
+                    true
+                }
+            }
+        };
+        if changed {
+            self.mark_project_state_unsaved();
+        }
+        changed
+    }
+
     fn top_edit_id(&self) -> Option<u64> {
         self.undo_stack.borrow().back().map(|entry| entry.id)
     }
@@ -287,6 +384,20 @@ impl SceneDocument {
         if self.is_dirty() != was_dirty {
             self.notify(SceneEvent::DirtyChanged);
         }
+    }
+
+    /// Records an unsaved change to project-level state that does not
+    /// live on the undo stack (the printer/resin choice today; later
+    /// the per-print settings and the produced slice result). Feeds
+    /// [`Self::is_dirty`] (the save-dirty / unsaved-changes signal that
+    /// drives Save and the close-prompt) and is cleared by
+    /// [`Self::mark_saved`]. Deliberately NOT slice staleness: whether
+    /// a computed slice still matches its inputs is tracked separately.
+    /// Fires [`SceneEvent::DirtyChanged`] on an actual clean->dirty flip.
+    fn mark_project_state_unsaved(&self) {
+        let was_dirty = self.is_dirty();
+        self.unsaved_project_state.set(true);
+        self.notify_dirty_change(was_dirty);
     }
 
     /// Drops any pending undo/redo entries. Returns whether either
