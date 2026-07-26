@@ -126,12 +126,21 @@ pub(crate) struct ObjectListSettings {
     /// while it holds that default.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     visible: bool,
-    /// Panel position and size in logical pixels. Absent until the user
-    /// drags or resizes the panel; `height` absent means auto-sizing.
+    /// Which window edges the panel hugs. The default hugs the top-right
+    /// corner, so a right anchor and a top (non-bottom) anchor are
+    /// omitted from TOML.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    anchor_right: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    anchor_bottom: bool,
+    /// Distance from the anchored edges to the matching panel edges, in
+    /// logical pixels. Absent until the user drags the panel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    x: Option<f32>,
+    offset_x: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    y: Option<f32>,
+    offset_y: Option<f32>,
+    /// Panel size in logical pixels. Absent until the user resizes the
+    /// panel; `height` absent means auto-sizing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     width: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,8 +155,10 @@ impl Default for ObjectListSettings {
     fn default() -> Self {
         Self {
             visible: true,
-            x: None,
-            y: None,
+            anchor_right: true,
+            anchor_bottom: false,
+            offset_x: None,
+            offset_y: None,
             width: None,
             height: None,
             minimized: false,
@@ -327,20 +338,36 @@ impl AppSettings {
         self.object_list.visible = visible;
     }
 
-    pub fn object_list_x(&self) -> Option<f32> {
-        self.object_list.x
+    pub fn object_list_anchor_right(&self) -> bool {
+        self.object_list.anchor_right
     }
 
-    pub fn set_object_list_x(&mut self, x: Option<f32>) {
-        self.object_list.x = x;
+    pub fn set_object_list_anchor_right(&mut self, anchor_right: bool) {
+        self.object_list.anchor_right = anchor_right;
     }
 
-    pub fn object_list_y(&self) -> Option<f32> {
-        self.object_list.y
+    pub fn object_list_anchor_bottom(&self) -> bool {
+        self.object_list.anchor_bottom
     }
 
-    pub fn set_object_list_y(&mut self, y: Option<f32>) {
-        self.object_list.y = y;
+    pub fn set_object_list_anchor_bottom(&mut self, anchor_bottom: bool) {
+        self.object_list.anchor_bottom = anchor_bottom;
+    }
+
+    pub fn object_list_offset_x(&self) -> Option<f32> {
+        self.object_list.offset_x
+    }
+
+    pub fn set_object_list_offset_x(&mut self, offset_x: Option<f32>) {
+        self.object_list.offset_x = offset_x;
+    }
+
+    pub fn object_list_offset_y(&self) -> Option<f32> {
+        self.object_list.offset_y
+    }
+
+    pub fn set_object_list_offset_y(&mut self, offset_y: Option<f32>) {
+        self.object_list.offset_y = offset_y;
     }
 
     pub fn object_list_width(&self) -> Option<f32> {
@@ -674,8 +701,10 @@ mod app_settings_tests {
     #[test]
     fn default_object_list_geometry_is_unset() {
         let s = AppSettings::default();
-        assert_eq!(s.object_list_x(), None);
-        assert_eq!(s.object_list_y(), None);
+        assert!(s.object_list_anchor_right());
+        assert!(!s.object_list_anchor_bottom());
+        assert_eq!(s.object_list_offset_x(), None);
+        assert_eq!(s.object_list_offset_y(), None);
         assert_eq!(s.object_list_width(), None);
         assert_eq!(s.object_list_height(), None);
         assert!(!s.object_list_minimized());
@@ -686,38 +715,46 @@ mod app_settings_tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let mut s = AppSettings::default();
-        s.set_object_list_x(Some(320.0));
-        s.set_object_list_y(Some(48.0));
+        s.set_object_list_anchor_right(false);
+        s.set_object_list_anchor_bottom(true);
+        s.set_object_list_offset_x(Some(48.0));
+        s.set_object_list_offset_y(Some(64.0));
         s.set_object_list_width(Some(280.0));
         s.set_object_list_height(Some(200.0));
         s.set_object_list_minimized(true);
         s.save_to_path(&path).unwrap();
 
         let loaded = AppSettings::load_from_path(&path);
-        assert_eq!(loaded.object_list_x(), Some(320.0));
-        assert_eq!(loaded.object_list_y(), Some(48.0));
+        assert!(!loaded.object_list_anchor_right());
+        assert!(loaded.object_list_anchor_bottom());
+        assert_eq!(loaded.object_list_offset_x(), Some(48.0));
+        assert_eq!(loaded.object_list_offset_y(), Some(64.0));
         assert_eq!(loaded.object_list_width(), Some(280.0));
         assert_eq!(loaded.object_list_height(), Some(200.0));
         assert!(loaded.object_list_minimized());
 
         let written = fs::read_to_string(&path).unwrap();
         assert!(written.contains("[object_list]"), "got:\n{written}");
+        assert!(written.contains("anchor_right = false"), "got:\n{written}");
+        assert!(written.contains("anchor_bottom = true"), "got:\n{written}");
         assert!(written.contains("minimized = true"), "got:\n{written}");
     }
 
     #[test]
     fn saved_toml_omits_unset_object_list_geometry() {
-        // Auto-sized height stays absent: an unset height is omitted so
-        // the panel keeps auto-sizing on the next launch.
+        // Default anchors and auto-sizing stay absent: only the explicit
+        // minimized flag lands in the file.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let mut s = AppSettings::default();
         s.set_object_list_minimized(true);
         s.save_to_path(&path).unwrap();
         let written = fs::read_to_string(&path).unwrap();
-        assert!(!written.contains("height ="), "got:\n{written}");
+        assert!(!written.contains("anchor_right"), "got:\n{written}");
+        assert!(!written.contains("anchor_bottom"), "got:\n{written}");
+        assert!(!written.contains("offset_x"), "got:\n{written}");
         assert!(!written.contains("width ="), "got:\n{written}");
-        assert!(!written.contains("\nx ="), "got:\n{written}");
+        assert!(!written.contains("height ="), "got:\n{written}");
     }
 
     #[test]

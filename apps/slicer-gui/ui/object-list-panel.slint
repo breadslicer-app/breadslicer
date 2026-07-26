@@ -63,11 +63,16 @@ export component ObjectListPanel inherits Rectangle {
     property <length> panel-min-height: root.title-bar-height + 2 * root.row-height + 8px;
     property <length> panel-max-height: Math.max(root.panel-min-height, root.available-height - 2 * root.edge-margin);
 
-    // Live geometry. Defaults anchor the panel to the top right of the
-    // client area at a size that shows around four rows; each stays
-    // reactive until the user drags or resizes, then holds its value.
-    in-out property <length> panel-x: root.available-width - root.panel-width - root.edge-margin;
-    in-out property <length> panel-y: root.edge-margin;
+    // Live geometry, stored relative to the window edges so a resize
+    // keeps the panel pinned to its corner instead of drifting across
+    // the viewport. `anchor-right` / `anchor-bottom` pick which pair of
+    // edges the panel hugs (the corner of the quadrant its centre sits
+    // in); `offset-x` / `offset-y` are the distances from those edges to
+    // the matching panel edges. The default hugs the top-right corner.
+    in-out property <bool> anchor-right: true;
+    in-out property <bool> anchor-bottom: false;
+    in-out property <length> offset-x: root.edge-margin;
+    in-out property <length> offset-y: root.edge-margin;
     in-out property <length> panel-width: 220px;
     // 0px means "auto-size to the row count"; a positive value is the
     // height the user pinned by dragging the resize handle.
@@ -82,13 +87,43 @@ export component ObjectListPanel inherits Rectangle {
         ? Math.min(Math.max(root.panel-height, root.panel-min-height), root.panel-max-height)
         : Math.min(Math.max(root.auto-body-height, root.panel-min-height), root.panel-max-height);
 
+    // Position derived from the anchored edges and offsets, so it tracks
+    // the window size automatically on resize.
+    property <length> raw-x: root.anchor-right
+        ? root.available-width - root.offset-x - root.width
+        : root.offset-x;
+    property <length> raw-y: root.anchor-bottom
+        ? root.available-height - root.offset-y - root.height
+        : root.offset-y;
+
     // Rendered geometry, clamped to the limits and to the window. Height
     // collapses to the title bar while minimized; the expanded height is
     // preserved so restoring returns to the same size.
     width: Math.min(Math.max(root.panel-width, root.panel-min-width), root.panel-max-width);
     height: root.minimized ? root.title-bar-height : root.effective-height;
-    x: Math.min(Math.max(root.panel-x, 0px), Math.max(0px, root.available-width - root.width));
-    y: Math.min(Math.max(root.panel-y, 0px), Math.max(0px, root.available-height - root.height));
+    x: Math.min(Math.max(root.raw-x, 0px), Math.max(0px, root.available-width - root.width));
+    y: Math.min(Math.max(root.raw-y, 0px), Math.max(0px, root.available-height - root.height));
+
+    // Re-derive the anchored edges and offsets from an absolute top-left
+    // position, hugging the edges of the quadrant the panel's centre
+    // falls in. Both drag and resize funnel through here so the two
+    // representations stay in sync.
+    function reanchor(abs-left: length, abs-top: length) {
+        if (abs-left + root.width / 2 > root.available-width / 2) {
+            root.anchor-right = true;
+            root.offset-x = Math.max(0px, root.available-width - (abs-left + root.width));
+        } else {
+            root.anchor-right = false;
+            root.offset-x = Math.max(0px, abs-left);
+        }
+        if (abs-top + root.height / 2 > root.available-height / 2) {
+            root.anchor-bottom = true;
+            root.offset-y = Math.max(0px, root.available-height - (abs-top + root.height));
+        } else {
+            root.anchor-bottom = false;
+            root.offset-y = Math.max(0px, abs-top);
+        }
+    }
 
     background: Palette.background.darker(0.15);
     border-color: Palette.border;
@@ -126,8 +161,8 @@ export component ObjectListPanel inherits Rectangle {
                     if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
                         self.press-cursor-x = self.absolute-position.x + self.mouse-x;
                         self.press-cursor-y = self.absolute-position.y + self.mouse-y;
-                        self.press-x = root.panel-x;
-                        self.press-y = root.panel-y;
+                        self.press-x = root.x;
+                        self.press-y = root.y;
                     }
                     if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) {
                         root.geometry-committed();
@@ -136,21 +171,23 @@ export component ObjectListPanel inherits Rectangle {
 
                 moved => {
                     if (self.pressed) {
-                        root.panel-x = Math.min(
-                            Math.max(
-                                self.press-x
-                                    + ((self.absolute-position.x + self.mouse-x) - self.press-cursor-x),
-                                0px
+                        root.reanchor(
+                            Math.min(
+                                Math.max(
+                                    self.press-x
+                                        + ((self.absolute-position.x + self.mouse-x) - self.press-cursor-x),
+                                    0px
+                                ),
+                                Math.max(0px, root.available-width - root.width)
                             ),
-                            Math.max(0px, root.available-width - root.width)
-                        );
-                        root.panel-y = Math.min(
-                            Math.max(
-                                self.press-y
-                                    + ((self.absolute-position.y + self.mouse-y) - self.press-cursor-y),
-                                0px
-                            ),
-                            Math.max(0px, root.available-height - root.height)
+                            Math.min(
+                                Math.max(
+                                    self.press-y
+                                        + ((self.absolute-position.y + self.mouse-y) - self.press-cursor-y),
+                                    0px
+                                ),
+                                Math.max(0px, root.available-height - root.height)
+                            )
                         );
                     }
                 }
@@ -253,8 +290,8 @@ export component ObjectListPanel inherits Rectangle {
             if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
                 self.press-cursor-x = self.absolute-position.x + self.mouse-x;
                 self.press-cursor-y = self.absolute-position.y + self.mouse-y;
-                self.press-right = root.panel-x + root.width;
-                self.press-top = root.panel-y;
+                self.press-right = root.x + root.width;
+                self.press-top = root.y;
                 self.press-width = root.width;
                 self.press-height = root.height;
             }
@@ -281,9 +318,9 @@ export component ObjectListPanel inherits Rectangle {
                     ),
                     Math.max(root.panel-min-height, root.available-height - self.press-top - root.edge-margin)
                 );
-                // Keep the right edge fixed by re-deriving x from the
-                // clamped width.
-                root.panel-x = Math.max(self.press-right - root.width, 0px);
+                // The top and right edges stay put: re-derive the anchor
+                // from the fixed top-right corner and the new size.
+                root.reanchor(self.press-right - root.width, self.press-top);
             }
         }
 

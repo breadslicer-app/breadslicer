@@ -247,8 +247,10 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_default_printer(snap.default_printer.clone());
     settings.set_default_resin(snap.default_resin.clone());
     settings.set_object_list_visible(snap.object_list_visible);
-    settings.set_object_list_x(snap.object_list_x);
-    settings.set_object_list_y(snap.object_list_y);
+    settings.set_object_list_anchor_right(snap.object_list_anchor_right);
+    settings.set_object_list_anchor_bottom(snap.object_list_anchor_bottom);
+    settings.set_object_list_offset_x(snap.object_list_offset_x);
+    settings.set_object_list_offset_y(snap.object_list_offset_y);
     settings.set_object_list_width(snap.object_list_width);
     settings.set_object_list_height(snap.object_list_height);
     settings.set_object_list_minimized(snap.object_list_minimized);
@@ -299,8 +301,10 @@ impl AppState {
             default_resin,
             build_volume,
             object_list_visible: settings.object_list_visible(),
-            object_list_x: settings.object_list_x(),
-            object_list_y: settings.object_list_y(),
+            object_list_anchor_right: settings.object_list_anchor_right(),
+            object_list_anchor_bottom: settings.object_list_anchor_bottom(),
+            object_list_offset_x: settings.object_list_offset_x(),
+            object_list_offset_y: settings.object_list_offset_y(),
             object_list_width: settings.object_list_width(),
             object_list_height: settings.object_list_height(),
             object_list_minimized: settings.object_list_minimized(),
@@ -369,16 +373,19 @@ impl AppState {
         // state: restored once here at creation and deliberately left
         // out of `apply_preferences`, so a later change in one window is
         // saved to disk without moving or hiding the panel in other
-        // windows. A geometry field is pushed only when a previous
+        // windows. An offset or size field is pushed only when a previous
         // session saved it; leaving a field untouched keeps the Slint
-        // default (top-right anchor, 220px width, auto height).
+        // default (top-right anchor, 12px offsets, 220px width, auto
+        // height).
         ui.set_show_object_list(snapshot.object_list_visible);
         ui.set_object_list_minimized(snapshot.object_list_minimized);
-        if let Some(x) = snapshot.object_list_x {
-            ui.set_object_list_x(x);
+        ui.set_object_list_anchor_right(snapshot.object_list_anchor_right);
+        ui.set_object_list_anchor_bottom(snapshot.object_list_anchor_bottom);
+        if let Some(offset_x) = snapshot.object_list_offset_x {
+            ui.set_object_list_offset_x(offset_x);
         }
-        if let Some(y) = snapshot.object_list_y {
-            ui.set_object_list_y(y);
+        if let Some(offset_y) = snapshot.object_list_offset_y {
+            ui.set_object_list_offset_y(offset_y);
         }
         if let Some(width) = snapshot.object_list_width {
             ui.set_object_list_width(width);
@@ -902,31 +909,38 @@ impl AppState {
             // Persist the panel geometry after a drag, resize, or
             // minimize. Same per-window live handling as the visibility.
             let bus = self.prefs.clone();
-            ui.on_object_list_geometry_changed(move |x, y, width, height, minimized| {
-                // A 0px height means the panel is auto-sizing; store it
-                // as "unset" so it keeps auto-sizing after a restart.
-                let height = if height > 0.0 { Some(height) } else { None };
-                let current = bus.snapshot();
-                if current.object_list_x == Some(x)
-                    && current.object_list_y == Some(y)
-                    && current.object_list_width == Some(width)
-                    && current.object_list_height == height
-                    && current.object_list_minimized == minimized
-                {
-                    // A gesture that ended without changing anything (for
-                    // example a plain click on the title bar) must not
-                    // trigger a redundant settings write.
-                    return;
-                }
-                bus.update(move |snap| {
-                    snap.object_list_x = Some(x);
-                    snap.object_list_y = Some(y);
-                    snap.object_list_width = Some(width);
-                    snap.object_list_height = height;
-                    snap.object_list_minimized = minimized;
-                    PreferencesChange::ObjectListPanel
-                });
-            });
+            ui.on_object_list_geometry_changed(
+                move |anchor_right, anchor_bottom, offset_x, offset_y, width, height, minimized| {
+                    // A 0px height means the panel is auto-sizing; store
+                    // it as "unset" so it keeps auto-sizing after a
+                    // restart.
+                    let height = if height > 0.0 { Some(height) } else { None };
+                    let current = bus.snapshot();
+                    if current.object_list_anchor_right == anchor_right
+                        && current.object_list_anchor_bottom == anchor_bottom
+                        && current.object_list_offset_x == Some(offset_x)
+                        && current.object_list_offset_y == Some(offset_y)
+                        && current.object_list_width == Some(width)
+                        && current.object_list_height == height
+                        && current.object_list_minimized == minimized
+                    {
+                        // A gesture that ended without changing anything
+                        // (for example a plain click on the title bar)
+                        // must not trigger a redundant settings write.
+                        return;
+                    }
+                    bus.update(move |snap| {
+                        snap.object_list_anchor_right = anchor_right;
+                        snap.object_list_anchor_bottom = anchor_bottom;
+                        snap.object_list_offset_x = Some(offset_x);
+                        snap.object_list_offset_y = Some(offset_y);
+                        snap.object_list_width = Some(width);
+                        snap.object_list_height = height;
+                        snap.object_list_minimized = minimized;
+                        PreferencesChange::ObjectListPanel
+                    });
+                },
+            );
         }
     }
 
@@ -1136,8 +1150,10 @@ mod settings_saver_tests {
             default_resin: None,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
-            object_list_x: None,
-            object_list_y: None,
+            object_list_anchor_right: true,
+            object_list_anchor_bottom: false,
+            object_list_offset_x: None,
+            object_list_offset_y: None,
             object_list_width: None,
             object_list_height: None,
             object_list_minimized: false,
@@ -1199,8 +1215,10 @@ mod settings_saver_tests {
                 default_resin: None,
                 build_volume: bv,
                 object_list_visible: true,
-                object_list_x: None,
-                object_list_y: None,
+                object_list_anchor_right: true,
+                object_list_anchor_bottom: false,
+                object_list_offset_x: None,
+                object_list_offset_y: None,
                 object_list_width: None,
                 object_list_height: None,
                 object_list_minimized: false,
@@ -1232,20 +1250,24 @@ mod settings_saver_tests {
 
     #[test]
     fn saver_mapping_carries_object_list_geometry() {
-        // The mapping must copy the panel position, size, and minimized
-        // state so a drag or resize survives a save.
+        // The mapping must copy the panel anchor, offsets, size, and
+        // minimized state so a drag or resize survives a save.
         let mut settings = AppSettings::default();
 
         let mut snap = snapshot_with(ThemePreference::System);
-        snap.object_list_x = Some(300.0);
-        snap.object_list_y = Some(40.0);
+        snap.object_list_anchor_right = false;
+        snap.object_list_anchor_bottom = true;
+        snap.object_list_offset_x = Some(40.0);
+        snap.object_list_offset_y = Some(52.0);
         snap.object_list_width = Some(260.0);
         snap.object_list_height = Some(180.0);
         snap.object_list_minimized = true;
         apply_snapshot_to_settings(&mut settings, &snap);
 
-        assert_eq!(settings.object_list_x(), Some(300.0));
-        assert_eq!(settings.object_list_y(), Some(40.0));
+        assert!(!settings.object_list_anchor_right());
+        assert!(settings.object_list_anchor_bottom());
+        assert_eq!(settings.object_list_offset_x(), Some(40.0));
+        assert_eq!(settings.object_list_offset_y(), Some(52.0));
         assert_eq!(settings.object_list_width(), Some(260.0));
         assert_eq!(settings.object_list_height(), Some(180.0));
         assert!(settings.object_list_minimized());

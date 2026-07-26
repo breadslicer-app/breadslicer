@@ -81,13 +81,18 @@ export component MainWindow inherits Window {
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
     in-out property <bool> show-object-list: true;
-    // Floating object-list panel geometry, persisted per window. x, y,
-    // and width are lengths; height uses 0px to mean "auto-size to the
-    // row count". Defaults place the panel at the top right; Rust
-    // overwrites them at window creation when a previous session saved a
-    // position.
-    in-out property <length> object-list-x: root.width - root.object-list-width - 12px;
-    in-out property <length> object-list-y: 12px;
+    // Floating object-list panel geometry, persisted per window. The
+    // position is stored relative to the window edges: `anchor-right` /
+    // `anchor-bottom` pick the corner the panel hugs and `offset-x` /
+    // `offset-y` are the distances to those edges, so a resize keeps the
+    // panel pinned to its corner. Width is a length; height uses 0px to
+    // mean "auto-size to the row count". Defaults place the panel at the
+    // top right; Rust overwrites them at window creation when a previous
+    // session saved a position.
+    in-out property <bool> object-list-anchor-right: true;
+    in-out property <bool> object-list-anchor-bottom: false;
+    in-out property <length> object-list-offset-x: 12px;
+    in-out property <length> object-list-offset-y: 12px;
     in-out property <length> object-list-width: 220px;
     in-out property <length> object-list-height: 0px;
     in-out property <bool> object-list-minimized: false;
@@ -124,10 +129,11 @@ export component MainWindow inherits Window {
     // it. Per-window live state: the settings file records the last
     // value but other open windows keep their own panel visibility.
     callback object-list-visibility-changed(bool);
-    // Reports the panel's geometry (x, y, width, height, minimized)
-    // after a drag, resize, or minimize so Rust can persist it. Also
-    // per-window live state.
-    callback object-list-geometry-changed(length, length, length, length, bool);
+    // Reports the panel's geometry (anchor-right, anchor-bottom,
+    // offset-x, offset-y, width, height, minimized) after a drag,
+    // resize, or minimize so Rust can persist it. Also per-window live
+    // state.
+    callback object-list-geometry-changed(bool, bool, length, length, length, length, bool);
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -480,8 +486,10 @@ export component MainWindow inherits Window {
     if (root.has-scene && root.show-object-list && root.object-list.length > 0): ObjectListPanel {
         available-width: root.width;
         available-height: root.height;
-        panel-x <=> root.object-list-x;
-        panel-y <=> root.object-list-y;
+        anchor-right <=> root.object-list-anchor-right;
+        anchor-bottom <=> root.object-list-anchor-bottom;
+        offset-x <=> root.object-list-offset-x;
+        offset-y <=> root.object-list-offset-y;
         panel-width <=> root.object-list-width;
         panel-height <=> root.object-list-height;
         minimized <=> root.object-list-minimized;
@@ -492,8 +500,10 @@ export component MainWindow inherits Window {
         }
         geometry-committed => {
             root.object-list-geometry-changed(
-                root.object-list-x,
-                root.object-list-y,
+                root.object-list-anchor-right,
+                root.object-list-anchor-bottom,
+                root.object-list-offset-x,
+                root.object-list-offset-y,
                 root.object-list-width,
                 root.object-list-height,
                 root.object-list-minimized);
@@ -504,11 +514,13 @@ export component MainWindow inherits Window {
             // Reset geometry to defaults so reopening within the same
             // session starts fresh. This does not persist; only drag,
             // resize, and minimize gestures do.
+            root.object-list-anchor-right = true;
+            root.object-list-anchor-bottom = false;
+            root.object-list-offset-x = 12px;
+            root.object-list-offset-y = 12px;
             root.object-list-width = 220px;
             root.object-list-height = 0px;
             root.object-list-minimized = false;
-            root.object-list-y = 12px;
-            root.object-list-x = root.width - root.object-list-width - 12px;
         }
     }
 

@@ -52,12 +52,17 @@ pub(crate) struct PreferencesSnapshot {
     /// live state: a change in one window is written to disk but not
     /// re-applied to other open windows (see `window_prefs`).
     pub object_list_visible: bool,
-    /// Panel position and size, in logical pixels. `None` means "use the
-    /// default" (top-right anchor for the position, 220px for the width);
-    /// `object_list_height` additionally treats `None` as auto-sizing to
-    /// the row count. Same per-window live semantics as the visibility.
-    pub object_list_x: Option<f32>,
-    pub object_list_y: Option<f32>,
+    /// Panel position, stored relative to the window edges so it tracks
+    /// resizes. `anchor_right` / `anchor_bottom` pick the corner the
+    /// panel hugs; `offset_x` / `offset_y` are the distances to those
+    /// edges in logical pixels. `None` offsets mean "use the default"
+    /// (12px). Same per-window live semantics as the visibility.
+    pub object_list_anchor_right: bool,
+    pub object_list_anchor_bottom: bool,
+    pub object_list_offset_x: Option<f32>,
+    pub object_list_offset_y: Option<f32>,
+    /// Panel size in logical pixels. `None` means "use the default"
+    /// (220px width; auto-sized height for `object_list_height`).
     pub object_list_width: Option<f32>,
     pub object_list_height: Option<f32>,
     /// Whether the panel is collapsed to its title bar.
@@ -224,8 +229,10 @@ mod preferences_bus_tests {
             default_resin: None,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
-            object_list_x: None,
-            object_list_y: None,
+            object_list_anchor_right: true,
+            object_list_anchor_bottom: false,
+            object_list_offset_x: None,
+            object_list_offset_y: None,
             object_list_width: None,
             object_list_height: None,
             object_list_minimized: false,
@@ -327,31 +334,31 @@ mod preferences_bus_tests {
     #[test]
     fn object_list_geometry_change_propagates() {
         let bus = PreferencesBus::new(initial());
-        type Captured = Option<(Option<f32>, Option<f32>, bool)>;
+        type Captured = Option<(bool, Option<f32>, bool)>;
         let captured: Rc<RefCell<Captured>> = Rc::new(RefCell::new(None));
         let _sub = {
             let captured = captured.clone();
             bus.subscribe(move |snap, _| {
                 *captured.borrow_mut() = Some((
-                    snap.object_list_x,
-                    snap.object_list_height,
+                    snap.object_list_anchor_bottom,
+                    snap.object_list_offset_x,
                     snap.object_list_minimized,
                 ));
             })
         };
 
         bus.update(|snap| {
-            snap.object_list_x = Some(300.0);
-            snap.object_list_height = Some(180.0);
+            snap.object_list_anchor_bottom = true;
+            snap.object_list_offset_x = Some(300.0);
             snap.object_list_minimized = true;
             PreferencesChange::ObjectListPanel
         });
 
-        let (got_x, got_height, got_minimized) = captured
+        let (got_anchor_bottom, got_offset_x, got_minimized) = captured
             .borrow()
             .expect("listener must have fired and captured the payload");
-        assert_eq!(got_x, Some(300.0));
-        assert_eq!(got_height, Some(180.0));
+        assert!(got_anchor_bottom);
+        assert_eq!(got_offset_x, Some(300.0));
         assert!(got_minimized);
     }
 
