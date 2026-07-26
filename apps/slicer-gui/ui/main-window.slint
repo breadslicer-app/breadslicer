@@ -34,6 +34,47 @@ export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
 // top-of-screen menu bar. Persisted app-wide.
 export enum MenuLayout { Bar, Compact }
 
+// Workspace section shown by the floating pill switcher. `Prepare` is
+// a placeholder for future mesh repair/validation tooling; `Transform`
+// hosts the scene-editing tools (move/rotate/scale, delete, paste);
+// `Slice` hosts the slicing flow. Per-window live state, not persisted;
+// Rust picks the initial value from the loaded mesh's health.
+export enum WorkspaceSection { Prepare, Transform, Slice }
+
+// One segment of the section pill. Highlights when it is the active
+// section and reports clicks; the parent maps the click to a section
+// change request routed through Rust.
+component SectionTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+
+    border-radius: 12px;
+    background: self.active ? Palette.accent-background : transparent;
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+
+        Text {
+            text: root.label;
+            color: root.active ? Palette.accent-foreground : Palette.foreground;
+            font-weight: root.active ? 700 : 400;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     // Window title. Once a file is open it shows the file's name (with a
     // `*` prefix while there are unsaved changes); with no file open it
@@ -104,6 +145,12 @@ export component MainWindow inherits Window {
     // always resolves to Bar in Rust because it renders a global menu
     // bar.
     in property <MenuLayout> menu-layout: MenuLayout.Bar;
+    // Active workspace section, driven by Rust: the pill switcher
+    // reflects it and clicking a segment requests a change through
+    // `section-change-requested` rather than writing it directly, so
+    // Rust stays the single source of truth (it also sets the initial
+    // section from mesh health at load time).
+    in property <WorkspaceSection> workspace-section: WorkspaceSection.Prepare;
 
     changed theme => {
         Palette.color-scheme =
@@ -125,6 +172,10 @@ export component MainWindow inherits Window {
     // Rust routes it through the preferences bus so every window and the
     // settings file stay in sync.
     callback menu-layout-change-requested(MenuLayout);
+    // Requests a workspace-section switch from the pill switcher. Rust
+    // updates the per-window section state and pushes it back into
+    // `workspace-section`.
+    callback section-change-requested(WorkspaceSection);
     // Reports the object-list panel's new visibility so Rust can persist
     // it. Per-window live state: the settings file records the last
     // value but other open windows keep their own panel visibility.
@@ -521,6 +572,64 @@ export component MainWindow inherits Window {
             root.object-list-width = 220px;
             root.object-list-height = 0px;
             root.object-list-minimized = false;
+        }
+    }
+
+    // Floating workspace-section switcher (Prepare | Transform | Slice).
+    // Fixed top-center, not draggable, not persisted. The content-area
+    // origin already sits below the menu bar when the bar is shown and
+    // near the window top in Compact layout, so a small top offset keeps
+    // the pill clear of the menu in either layout. Present only once a
+    // scene is loaded: the sections act on a model.
+    if root.has-scene: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 8px;
+        width: pill-layout.preferred-width;
+        height: pill-layout.preferred-height;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: self.height / 2;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000040;
+
+        pill-layout := HorizontalLayout {
+            padding: 4px;
+            spacing: 2px;
+
+            SectionTab {
+                label: @tr("Workspace" => "Prepare");
+                active: root.workspace-section == WorkspaceSection.Prepare;
+                clicked => {
+                    root.section-change-requested(WorkspaceSection.Prepare);
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Palette.border;
+            }
+
+            SectionTab {
+                label: @tr("Workspace" => "Transform");
+                active: root.workspace-section == WorkspaceSection.Transform;
+                clicked => {
+                    root.section-change-requested(WorkspaceSection.Transform);
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Palette.border;
+            }
+
+            SectionTab {
+                label: @tr("Workspace" => "Slice");
+                active: root.workspace-section == WorkspaceSection.Slice;
+                clicked => {
+                    root.section-change-requested(WorkspaceSection.Slice);
+                }
+            }
         }
     }
 

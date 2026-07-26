@@ -85,9 +85,14 @@ pub(crate) fn wire_main_window(
     wire_save_as(ui, ctrl.clone(), prefs);
     wire_export_as(ui, ctrl.clone());
     wire_edit_menu(ui, ctrl.clone());
+    wire_workspace_section(ui, ctrl.clone());
     wire_viewport_resized(ui, ctrl.clone());
     wire_viewport_input(ui, ctrl);
     Ok(())
+}
+
+fn wire_workspace_section(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+    ui.on_section_change_requested(move |section| ctrl.set_section(section));
 }
 
 fn wire_edit_menu(ui: &MainWindow, ctrl: Rc<ViewportController>) {

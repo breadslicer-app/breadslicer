@@ -35,6 +35,7 @@ use super::session_state::SessionState;
 use super::types::{FrameState, ScreenDelta, ScreenPoint};
 use crate::MainWindow;
 use crate::PointerModifiers;
+use crate::WorkspaceSection;
 use crate::build_volume::BuildVolume;
 use crate::camera::AxisView;
 use crate::clipboard;
@@ -357,6 +358,20 @@ impl ViewportController {
         if self.session.set_build_volume(bv) {
             self.mark_dirty();
         }
+    }
+
+    /// Switches the active workspace section, mirrors it into the UI
+    /// pill, and schedules a redraw. No-op when unchanged. Driven both
+    /// by the pill switcher and by the load pipeline, which picks the
+    /// initial section from mesh health.
+    pub fn set_section(&self, section: WorkspaceSection) {
+        if !self.session.set_section(section) {
+            return;
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_workspace_section(section);
+        }
+        self.mark_dirty();
     }
 
     fn mark_dirty(&self) {

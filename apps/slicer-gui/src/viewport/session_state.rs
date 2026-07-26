@@ -21,6 +21,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::WorkspaceSection;
 use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::error_dialog::DialogManager;
 use crate::pending_load::PendingLoad;
@@ -41,6 +42,11 @@ pub(super) struct SessionState {
     /// preferences pipeline (and by tests, which inject a smaller
     /// envelope to make the wall reachable in a few drag pixels).
     build_volume: Cell<BuildVolume>,
+    /// Active workspace section (Prepare / Transform / Slice). Per-window
+    /// live state, not persisted. `Cell` because it is a plain `Copy`
+    /// value flipped by the pill switcher and by the load pipeline
+    /// (initial section from mesh health).
+    section: Cell<WorkspaceSection>,
 }
 
 impl SessionState {
@@ -57,6 +63,7 @@ impl SessionState {
             dialogs,
             document_subscription: RefCell::new(None),
             build_volume: Cell::new(HARDCODED_DEFAULT_BUILD_VOLUME),
+            section: Cell::new(WorkspaceSection::Prepare),
         }
     }
 
@@ -89,6 +96,18 @@ impl SessionState {
             return false;
         }
         self.build_volume.set(bv);
+        true
+    }
+
+    /// Replaces the active workspace section. Returns `true` if the
+    /// value actually changed (caller mirrors it to the UI and, once
+    /// gating lands, refreshes the transform tooling for the new
+    /// section).
+    pub(super) fn set_section(&self, section: WorkspaceSection) -> bool {
+        if self.section.get() == section {
+            return false;
+        }
+        self.section.set(section);
         true
     }
 
@@ -136,5 +155,27 @@ mod session_state_tests {
         let s = new_session();
         let same = s.build_volume();
         assert!(!s.set_build_volume(same));
+    }
+
+    #[test]
+    fn section_starts_in_prepare() {
+        // A no-op set to Prepare reporting no change pins the initial
+        // value without exposing a getter before the gating work needs
+        // one.
+        let s = new_session();
+        assert!(!s.set_section(WorkspaceSection::Prepare));
+    }
+
+    #[test]
+    fn set_section_returns_true_on_change() {
+        let s = new_session();
+        assert!(s.set_section(WorkspaceSection::Transform));
+    }
+
+    #[test]
+    fn set_section_returns_false_on_no_change() {
+        let s = new_session();
+        assert!(s.set_section(WorkspaceSection::Transform));
+        assert!(!s.set_section(WorkspaceSection::Transform));
     }
 }
