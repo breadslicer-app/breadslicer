@@ -8,7 +8,7 @@
 //! controller itself so neither gets polluted with `rfd` / file-dialog /
 //! worker-thread plumbing.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use sc_print_primitives::{MaterialId, PrinterId};
@@ -18,7 +18,7 @@ use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_loader;
-use crate::preferences_bus::PreferencesBus;
+use crate::preferences_bus::{PreferencesBus, PreferencesChange};
 use crate::scene_document::SceneDocument;
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
@@ -80,7 +80,7 @@ pub(crate) fn wire_main_window(
 ) -> Result<(), slint::SetRenderingNotifierError> {
     install_rendering_notifier(ui, ctrl.clone())?;
     wire_close_scene(ui, ctrl.clone());
-    wire_open_file(ui, ctrl.clone());
+    wire_open_file(ui, ctrl.clone(), prefs.clone());
     wire_save(ui, ctrl.clone(), prefs.clone());
     wire_save_as(ui, ctrl.clone(), prefs);
     wire_export_as(ui, ctrl.clone());
@@ -221,7 +221,7 @@ fn wire_viewport_input(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_selection_cleared(move || ctrl.on_clear_selection());
 }
 
-fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
+fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     {
         let ctrl = ctrl.clone();
         ui.on_scene_load_finished(move || ctrl.on_scene_load_finished());
@@ -236,7 +236,9 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
         let Some(ticket) = ctrl.loader().begin_load() else {
             return;
         };
-        if let Err(err) = slint::spawn_local(run_open_file_flow(ticket, ctrl.clone())) {
+        if let Err(err) =
+            slint::spawn_local(run_open_file_flow(ticket, ctrl.clone(), prefs.clone()))
+        {
             eprintln!("Failed to spawn file dialog task: {err}");
             // `ticket` was moved into the future; when `spawn_local`
             // returns `Err`, the future is dropped and the ticket with
@@ -251,19 +253,59 @@ fn wire_open_file(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 /// than after the await; if the user cancels, the ticket drops here
 /// and the gate releases.
 ///
-/// The build envelope is read *after* the dialog so the placement
-/// reflects whatever the user has set by the time they finished
-/// picking; a mid-dialog settings edit lands on the next file.
-async fn run_open_file_flow(ticket: LoadTicket, ctrl: Rc<ViewportController>) {
-    let Some(path) = pick_mesh_file().await else {
+/// The dialog starts in the directory of the last opened file (falling
+/// back to the home directory), and that directory is remembered after
+/// a successful pick. The build envelope is read *after* the dialog so
+/// the placement reflects whatever the user has set by the time they
+/// finished picking; a mid-dialog settings edit lands on the next file.
+async fn run_open_file_flow(
+    ticket: LoadTicket,
+    ctrl: Rc<ViewportController>,
+    prefs: Rc<PreferencesBus>,
+) {
+    let start_dir =
+        resolve_open_dialog_dir(prefs.snapshot().last_open_dir, sc_app_paths::home_dir());
+    let Some(path) = pick_mesh_file(start_dir).await else {
         // User cancelled the dialog.
         return;
     };
+    remember_open_directory(&prefs, &path);
     mesh_loader::start_load_with_ticket(ticket, path, &ctrl.loader(), ctrl.build_volume());
 }
 
-async fn pick_mesh_file() -> Option<PathBuf> {
-    let dialog = rfd::AsyncFileDialog::new()
+/// Picks the directory the open dialog should start in: the last opened
+/// file's directory when it still exists, otherwise the home directory,
+/// otherwise the platform default (no explicit directory).
+fn resolve_open_dialog_dir(
+    last_open_dir: Option<PathBuf>,
+    home_dir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(dir) = last_open_dir
+        && dir.is_dir()
+    {
+        return Some(dir);
+    }
+    home_dir.filter(|home| home.is_dir())
+}
+
+/// Records the directory an opened file lived in so the next open dialog
+/// starts there. No-op when the path has no parent or the directory is
+/// already the remembered one (avoids a redundant settings write).
+fn remember_open_directory(prefs: &Rc<PreferencesBus>, opened_file: &Path) {
+    let Some(dir) = opened_file.parent().map(Path::to_path_buf) else {
+        return;
+    };
+    if prefs.snapshot().last_open_dir.as_deref() == Some(dir.as_path()) {
+        return;
+    }
+    prefs.update(move |snap| {
+        snap.last_open_dir = Some(dir);
+        PreferencesChange::LastOpenDir
+    });
+}
+
+async fn pick_mesh_file(start_dir: Option<PathBuf>) -> Option<PathBuf> {
+    let mut dialog = rfd::AsyncFileDialog::new()
         .add_filter(
             ctr!("FileDialog", "All supported files").to_string(),
             mesh_loader::SUPPORTED_MESH_EXTENSIONS,
@@ -275,6 +317,9 @@ async fn pick_mesh_file() -> Option<PathBuf> {
             &["stl", "stla", "stlb"],
         )
         .add_filter(ctr!("FileDialog", "All files").to_string(), &["*"]);
+    if let Some(dir) = start_dir {
+        dialog = dialog.set_directory(dir);
+    }
     dialog.pick_file().await.map(|h| h.path().to_path_buf())
 }
 
@@ -604,5 +649,57 @@ mod export_flow_dispatch_tests {
                 "{name} should be Ready({expected_format:?})"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod open_dialog_dir_tests {
+    use tempfile::tempdir;
+
+    use super::resolve_open_dialog_dir;
+
+    #[test]
+    fn prefers_an_existing_last_open_dir() {
+        let last = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let resolved = resolve_open_dialog_dir(
+            Some(last.path().to_path_buf()),
+            Some(home.path().to_path_buf()),
+        );
+        assert_eq!(resolved.as_deref(), Some(last.path()));
+    }
+
+    #[test]
+    fn falls_back_to_home_when_the_last_dir_is_gone() {
+        // A remembered directory that no longer exists is skipped in
+        // favour of the home directory.
+        let missing = tempdir().unwrap();
+        let missing_path = missing.path().to_path_buf();
+        drop(missing);
+        let home = tempdir().unwrap();
+        let resolved = resolve_open_dialog_dir(Some(missing_path), Some(home.path().to_path_buf()));
+        assert_eq!(resolved.as_deref(), Some(home.path()));
+    }
+
+    #[test]
+    fn falls_back_to_home_when_no_last_dir_is_set() {
+        let home = tempdir().unwrap();
+        let resolved = resolve_open_dialog_dir(None, Some(home.path().to_path_buf()));
+        assert_eq!(resolved.as_deref(), Some(home.path()));
+    }
+
+    #[test]
+    fn yields_nothing_when_neither_dir_is_usable() {
+        // No remembered directory and no resolvable home leaves the
+        // dialog at the platform default.
+        assert_eq!(resolve_open_dialog_dir(None, None), None);
+    }
+
+    #[test]
+    fn skips_a_home_dir_that_does_not_exist() {
+        let missing = tempdir().unwrap();
+        let missing_path = missing.path().to_path_buf();
+        drop(missing);
+        assert_eq!(resolve_open_dialog_dir(None, Some(missing_path)), None);
     }
 }

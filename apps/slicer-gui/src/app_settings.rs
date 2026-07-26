@@ -206,6 +206,11 @@ pub(crate) struct AppSettings {
     /// field holds its default.
     #[serde(default, skip_serializing_if = "ObjectListSettings::is_default")]
     object_list: ObjectListSettings,
+    /// Directory the file-open dialog starts in: the folder the last
+    /// opened file lived in. Omitted in TOML until the user opens a
+    /// file; the dialog then falls back to the home directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_open_dir: Option<PathBuf>,
 }
 
 impl Default for AppSettings {
@@ -216,6 +221,7 @@ impl Default for AppSettings {
             default_printer: None,
             default_resin: None,
             object_list: ObjectListSettings::default(),
+            last_open_dir: None,
         }
     }
 }
@@ -392,6 +398,14 @@ impl AppSettings {
 
     pub fn set_object_list_minimized(&mut self, minimized: bool) {
         self.object_list.minimized = minimized;
+    }
+
+    pub fn last_open_dir(&self) -> Option<PathBuf> {
+        self.last_open_dir.clone()
+    }
+
+    pub fn set_last_open_dir(&mut self, dir: Option<PathBuf>) {
+        self.last_open_dir = dir;
     }
 }
 
@@ -755,6 +769,41 @@ mod app_settings_tests {
         assert!(!written.contains("offset_x"), "got:\n{written}");
         assert!(!written.contains("width ="), "got:\n{written}");
         assert!(!written.contains("height ="), "got:\n{written}");
+    }
+
+    #[test]
+    fn default_last_open_dir_is_none() {
+        assert_eq!(AppSettings::default().last_open_dir(), None);
+    }
+
+    #[test]
+    fn last_open_dir_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_last_open_dir(Some(PathBuf::from("/home/user/models")));
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert_eq!(
+            loaded.last_open_dir(),
+            Some(PathBuf::from("/home/user/models"))
+        );
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("last_open_dir = \"/home/user/models\""),
+            "got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn saved_toml_omits_unset_last_open_dir() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("last_open_dir"), "got:\n{written}");
     }
 
     #[test]

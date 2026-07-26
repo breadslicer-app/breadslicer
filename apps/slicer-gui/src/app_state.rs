@@ -254,6 +254,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_object_list_width(snap.object_list_width);
     settings.set_object_list_height(snap.object_list_height);
     settings.set_object_list_minimized(snap.object_list_minimized);
+    settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
 /// Spawns the settings-saver worker thread, with the loop body wired
@@ -308,6 +309,7 @@ impl AppState {
             object_list_width: settings.object_list_width(),
             object_list_height: settings.object_list_height(),
             object_list_minimized: settings.object_list_minimized(),
+            last_open_dir: settings.last_open_dir(),
         };
         // Apply the persisted language *once* up front so the very
         // first `@tr` evaluation during window construction uses the
@@ -1157,6 +1159,7 @@ mod settings_saver_tests {
             object_list_width: None,
             object_list_height: None,
             object_list_minimized: false,
+            last_open_dir: None,
         }
     }
 
@@ -1222,6 +1225,7 @@ mod settings_saver_tests {
                 object_list_width: None,
                 object_list_height: None,
                 object_list_minimized: false,
+                last_open_dir: None,
             })
             .unwrap();
         }
@@ -1271,6 +1275,20 @@ mod settings_saver_tests {
         assert_eq!(settings.object_list_width(), Some(260.0));
         assert_eq!(settings.object_list_height(), Some(180.0));
         assert!(settings.object_list_minimized());
+    }
+
+    #[test]
+    fn saver_mapping_carries_last_open_dir() {
+        // The mapping must copy the remembered open directory so it
+        // survives a save.
+        let mut settings = AppSettings::default();
+        assert_eq!(settings.last_open_dir(), None);
+
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.last_open_dir = Some(PathBuf::from("/models"));
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert_eq!(settings.last_open_dir(), Some(PathBuf::from("/models")));
     }
 
     #[test]

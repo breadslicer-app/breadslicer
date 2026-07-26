@@ -7,7 +7,7 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use super::{all_app_dirs, bundled_data_dir, bundled_data_dirs, project_dirs};
+use super::{all_app_dirs, bundled_data_dir, bundled_data_dirs, home_dir, project_dirs};
 
 #[test]
 fn all_app_dirs_returns_every_existing_base_in_order() {
@@ -62,6 +62,15 @@ fn bundled_data_dir_is_absolute() {
 #[test]
 fn bundled_data_dirs_are_all_absolute() {
     assert!(bundled_data_dirs().iter().all(|p| p.is_absolute()));
+}
+
+#[test]
+fn home_dir_is_absolute_when_resolved() {
+    // Environments without a home directory resolve to `None`; when one
+    // is available it must be an absolute path.
+    if let Some(home) = home_dir() {
+        assert!(home.is_absolute(), "home dir should be absolute: {home:?}");
+    }
 }
 
 #[test]

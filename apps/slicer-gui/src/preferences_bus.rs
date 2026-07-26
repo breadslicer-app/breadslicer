@@ -24,6 +24,7 @@
 //! automatically removed when the window is closed.
 
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use sc_print_primitives::{MaterialId, PrinterId};
@@ -67,6 +68,10 @@ pub(crate) struct PreferencesSnapshot {
     pub object_list_height: Option<f32>,
     /// Whether the panel is collapsed to its title bar.
     pub object_list_minimized: bool,
+    /// Directory the file-open dialog should start in: the folder the
+    /// last opened file lived in. `None` until the first open; the
+    /// dialog then falls back to the home directory. App-wide state.
+    pub last_open_dir: Option<PathBuf>,
 }
 
 /// Describes which field was mutated in the last `update` call.
@@ -78,6 +83,7 @@ pub(crate) enum PreferencesChange {
     DefaultPrinter,
     DefaultResin,
     ObjectListPanel,
+    LastOpenDir,
 }
 
 type Listener = Rc<dyn Fn(&PreferencesSnapshot, &PreferencesChange)>;
@@ -236,6 +242,7 @@ mod preferences_bus_tests {
             object_list_width: None,
             object_list_height: None,
             object_list_minimized: false,
+            last_open_dir: None,
         }
     }
 
@@ -360,6 +367,32 @@ mod preferences_bus_tests {
         assert!(got_anchor_bottom);
         assert_eq!(got_offset_x, Some(300.0));
         assert!(got_minimized);
+    }
+
+    #[test]
+    fn last_open_dir_change_propagates() {
+        type Captured = Option<(Option<PathBuf>, PreferencesChange)>;
+
+        let bus = PreferencesBus::new(initial());
+        let captured: Rc<RefCell<Captured>> = Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, change| {
+                *captured.borrow_mut() = Some((snap.last_open_dir.clone(), *change));
+            })
+        };
+
+        bus.update(|snap| {
+            snap.last_open_dir = Some(PathBuf::from("/models"));
+            PreferencesChange::LastOpenDir
+        });
+
+        let (got_dir, got_change) = captured
+            .borrow()
+            .clone()
+            .expect("listener must have fired and captured the payload");
+        assert_eq!(got_dir, Some(PathBuf::from("/models")));
+        assert_eq!(got_change, PreferencesChange::LastOpenDir);
     }
 
     #[test]

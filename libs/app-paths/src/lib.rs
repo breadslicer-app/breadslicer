@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use directories::ProjectDirs;
+use directories::{ProjectDirs, UserDirs};
 
 const QUALIFIER: &str = "it";
 const ORGANIZATION: &str = "soulcrafted";
@@ -31,6 +31,12 @@ const APPLICATION: &str = "slicer";
 /// when no home directory can be resolved.
 pub fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+}
+
+/// The current user's home directory, or `None` when it cannot be
+/// resolved. Used as the fallback starting location for file dialogs.
+pub fn home_dir() -> Option<PathBuf> {
+    UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
 }
 
 /// The single installed, read-only data root a packaged build ships:
