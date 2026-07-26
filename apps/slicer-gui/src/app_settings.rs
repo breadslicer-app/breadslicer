@@ -105,33 +105,18 @@ pub(crate) struct Appearance {
     menu_layout: MenuLayoutSetting,
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn is_true(value: &bool) -> bool {
-    *value
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
-/// On-disk state of the floating object-list panel. Every field is
-/// optional and omitted when it holds its default, so a fresh config
-/// carries no `[object_list]` section at all.
+/// On-disk state of the floating object-list panel. Serde fills any
+/// missing field from `Default`, and the whole section is omitted while
+/// it holds its default (see the `object_list` field on `AppSettings`).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
 pub(crate) struct ObjectListSettings {
-    /// Whether the panel is shown. Defaults to visible; omitted in TOML
-    /// while it holds that default.
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    /// Whether the panel is shown.
     visible: bool,
-    /// Which window edges the panel hugs. The default hugs the top-right
-    /// corner, so a right anchor and a top (non-bottom) anchor are
-    /// omitted from TOML.
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    /// Which window edges the panel hugs; the default is the top-right
+    /// corner.
     anchor_right: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     anchor_bottom: bool,
     /// Distance from the anchored edges to the matching panel edges, in
     /// logical pixels. Absent until the user drags the panel.
@@ -145,9 +130,8 @@ pub(crate) struct ObjectListSettings {
     width: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     height: Option<f32>,
-    /// Whether the panel is collapsed to its title bar. Omitted while
-    /// expanded (the default).
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// Whether the panel is collapsed to its title bar.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     minimized: bool,
 }
 
@@ -756,17 +740,16 @@ mod app_settings_tests {
 
     #[test]
     fn saved_toml_omits_unset_object_list_geometry() {
-        // Default anchors and auto-sizing stay absent: only the explicit
-        // minimized flag lands in the file.
+        // Unset offsets and size stay absent from the section; an unset
+        // height keeps the panel auto-sizing on the next launch.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let mut s = AppSettings::default();
         s.set_object_list_minimized(true);
         s.save_to_path(&path).unwrap();
         let written = fs::read_to_string(&path).unwrap();
-        assert!(!written.contains("anchor_right"), "got:\n{written}");
-        assert!(!written.contains("anchor_bottom"), "got:\n{written}");
         assert!(!written.contains("offset_x"), "got:\n{written}");
+        assert!(!written.contains("offset_y"), "got:\n{written}");
         assert!(!written.contains("width ="), "got:\n{written}");
         assert!(!written.contains("height ="), "got:\n{written}");
     }

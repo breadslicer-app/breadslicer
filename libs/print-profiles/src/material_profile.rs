@@ -38,16 +38,12 @@ pub struct MaterialProfile {
     /// with additional per-printer calibration blocks instead of
     /// replacing it. Declared first so it serialises above the
     /// section tables; omitted from the TOML when false.
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub extension: bool,
     pub identity: MaterialIdentity,
     pub intent: MaterialIntent,
     pub defaults: MaterialDefaults,
     pub per_printer: BTreeMap<PrinterId, MaterialPerPrinter>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[derive(Debug, Deserialize)]
