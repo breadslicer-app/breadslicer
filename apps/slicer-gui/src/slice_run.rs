@@ -110,10 +110,21 @@ impl SliceRun {
         if ui.get_slicing_in_progress() {
             return;
         }
-        let (Some(printer), Some(resin)) = (
-            self.document.selected_printer(),
-            self.document.selected_resin(),
-        ) else {
+        // The Slice panel prefills its pickers with the scene's own
+        // choice, else the app-wide default (see `slice_selection`).
+        // Slicing resolves the printer and resin the same way, so the
+        // selection shown in the panel is the one that runs rather than
+        // requiring an explicit re-pick of a default already on display.
+        let snapshot = self.bus.snapshot();
+        let printer = self
+            .document
+            .selected_printer()
+            .or_else(|| snapshot.default_printer.clone());
+        let resin = self
+            .document
+            .selected_resin()
+            .or_else(|| snapshot.default_resin.clone());
+        let (Some(printer), Some(resin)) = (printer, resin) else {
             self.dialogs.show_error(
                 "Cannot slice",
                 None,
@@ -126,7 +137,7 @@ impl SliceRun {
             return;
         };
         let first_layer_height = self.document.selected_first_layer_height();
-        let aa_level = self.bus.snapshot().aa_level;
+        let aa_level = snapshot.aa_level;
 
         self.progress.completed.store(0, Ordering::Relaxed);
         self.progress.total.store(0, Ordering::Relaxed);
