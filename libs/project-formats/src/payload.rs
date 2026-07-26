@@ -11,18 +11,23 @@
 //! crate never parses profile content, it only transports it (the
 //! same way profile packages carry raw on-disk TOML bytes).
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 
 use crate::messages::ProfileRefWarning;
 
 /// Project-level data stored next to the scene in a project file.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+// Not `Eq`: `first_layer_height` wraps an `f64`. The invariant on
+// `PositiveFiniteMm` rules out `NaN`, but the type is only `PartialEq`.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProjectPayload {
     /// The printer profile the project was saved with, if any.
     pub printer: Option<PrinterId>,
     /// The resin (material) profile the project was saved with, if
     /// any.
     pub resin: Option<MaterialId>,
+    /// The per-print first-layer height chosen for the project, if
+    /// set. `None` means "use the resolved material's layer height".
+    pub first_layer_height: Option<PositiveFiniteMm>,
     /// Embedded profile documents carried by the file, in file
     /// order. Held opaquely: re-saving a project writes these bytes
     /// back unchanged.

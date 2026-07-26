@@ -81,9 +81,14 @@ fn extract_payload(
             warnings.push(ReadProjectWarning::ProjectVersionUnsupported { version });
             Ok(None)
         }
-        PayloadParseOutcome::V1 { printer, resin } => Ok(Some(ProjectPayload {
+        PayloadParseOutcome::V1 {
             printer,
             resin,
+            first_layer_height,
+        } => Ok(Some(ProjectPayload {
+            printer,
+            resin,
+            first_layer_height,
             embedded: collect_embedded(package, warnings),
         })),
     }

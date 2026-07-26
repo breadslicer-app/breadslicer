@@ -156,6 +156,7 @@ mod project_profiles_tests {
         let mut payload = ProjectPayload {
             printer: Some(printer_id("shared")),
             resin: None,
+            first_layer_height: None,
             embedded: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &roots);
@@ -175,6 +176,7 @@ mod project_profiles_tests {
         let mut payload = ProjectPayload {
             printer: Some(printer_id("nowhere")),
             resin: Some(material_id("nowhere")),
+            first_layer_height: None,
             embedded: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &roots);
@@ -197,6 +199,7 @@ mod project_profiles_tests {
         let mut payload = ProjectPayload {
             printer: None,
             resin: Some(material_id("resin")),
+            first_layer_height: None,
             embedded: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &roots);
@@ -233,6 +236,7 @@ mod project_profiles_tests {
         let mut payload = ProjectPayload {
             printer: Some(printer_id("printer")),
             resin: Some(material_id("resin")),
+            first_layer_height: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer_id("printer"),
                 bytes: b"kind = \"held-printer\"".to_vec(),

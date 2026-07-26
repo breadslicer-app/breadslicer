@@ -20,6 +20,7 @@ fn payload_with_refs() -> ProjectPayload {
     ProjectPayload {
         printer: Some(printer_id("test-printer")),
         resin: Some(material_id("test-resin")),
+        first_layer_height: None,
         embedded: Vec::new(),
     }
 }

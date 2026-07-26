@@ -324,6 +324,7 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
     let payload = ProjectPayload {
         printer: None,
         resin: None,
+        first_layer_height: None,
         embedded: Vec::new(),
     };
     let mut bytes = Vec::new();

@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 
 use crate::payload::ProjectPayload;
 use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload, serialize_payload};
+
+fn mm(value: f64) -> PositiveFiniteMm {
+    PositiveFiniteMm::new(value).expect("test length is positive and finite")
+}
 
 const PAYLOAD_V1_FULL: &str = include_str!("fixtures/payload-v1-full.toml");
 const PAYLOAD_V1_UNKNOWN_KEYS: &str = include_str!("fixtures/payload-v1-unknown-keys.toml");
@@ -28,6 +32,7 @@ mod serialize_tests {
         let payload = ProjectPayload {
             printer: Some(printer_id("test-printer")),
             resin: Some(material_id("test-resin")),
+            first_layer_height: None,
             embedded: Vec::new(),
         };
         let text = serialize_payload(&payload).expect("references serialize");
@@ -36,8 +41,33 @@ mod serialize_tests {
             PayloadParseOutcome::V1 {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
+                first_layer_height: None,
             },
         );
+    }
+
+    #[test]
+    fn first_layer_height_round_trips_through_the_print_section() {
+        let payload = ProjectPayload {
+            first_layer_height: Some(mm(0.05)),
+            ..ProjectPayload::default()
+        };
+        let text = serialize_payload(&payload).expect("first-layer height serializes");
+        assert!(text.contains("first_layer_height_mm"), "got:\n{text}");
+        assert_eq!(
+            parse_payload(&text).expect("serialized payload parses"),
+            PayloadParseOutcome::V1 {
+                printer: None,
+                resin: None,
+                first_layer_height: Some(mm(0.05)),
+            },
+        );
+    }
+
+    #[test]
+    fn absent_first_layer_height_is_omitted_from_the_document() {
+        let text = serialize_payload(&ProjectPayload::default()).expect("empty payload serializes");
+        assert!(!text.contains("first_layer_height"), "got:\n{text}");
     }
 
     #[test]
@@ -51,6 +81,7 @@ mod serialize_tests {
             PayloadParseOutcome::V1 {
                 printer: None,
                 resin: None,
+                first_layer_height: None,
             },
         );
     }
@@ -60,6 +91,7 @@ mod serialize_tests {
         let payload = ProjectPayload {
             printer: Some(printer_id("test-printer")),
             resin: None,
+            first_layer_height: None,
             embedded: vec![crate::payload::EmbeddedProfile::Printer {
                 id: printer_id("test-printer"),
                 bytes: b"marker-not-expected-in-part = true".to_vec(),
@@ -80,6 +112,7 @@ mod parse_tests {
             PayloadParseOutcome::V1 {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
+                first_layer_height: None,
             },
         );
     }
@@ -91,6 +124,7 @@ mod parse_tests {
             PayloadParseOutcome::V1 {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
+                first_layer_height: None,
             },
         );
     }
@@ -110,6 +144,7 @@ mod parse_tests {
             PayloadParseOutcome::V1 {
                 printer: None,
                 resin: None,
+                first_layer_height: None,
             },
         );
     }

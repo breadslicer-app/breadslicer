@@ -80,6 +80,7 @@ fn full_payload() -> ProjectPayload {
     ProjectPayload {
         printer: Some(printer_id("test-printer")),
         resin: Some(material_id("test-resin")),
+        first_layer_height: None,
         embedded: vec![
             EmbeddedProfile::Printer {
                 id: printer_id("test-printer"),

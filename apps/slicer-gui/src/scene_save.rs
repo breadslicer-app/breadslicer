@@ -98,6 +98,7 @@ pub(crate) fn payload_for_save(
     let mut payload = doc.project_payload().unwrap_or(ProjectPayload {
         printer: default_printer,
         resin: default_resin,
+        first_layer_height: None,
         embedded: Vec::new(),
     });
     complete_embedded_documents(&mut payload, roots);
@@ -202,6 +203,7 @@ mod scene_save_tests {
         ProjectPayload {
             printer: Some(printer_id("held-printer")),
             resin: Some(material_id("held-resin")),
+            first_layer_height: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer_id("held-printer"),
                 bytes: b"kind = \"printer\"".to_vec(),

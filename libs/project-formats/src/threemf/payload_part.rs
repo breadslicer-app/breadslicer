@@ -12,7 +12,7 @@
 //! Unknown keys inside a known version are ignored, so additive
 //! changes do not need a version bump.
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use serde::{Deserialize, Serialize};
 
 use crate::payload::ProjectPayload;
@@ -27,6 +27,10 @@ struct PayloadDoc {
     version: i64,
     #[serde(default)]
     profiles: ProfilesSection,
+    /// Omitted from the document while empty; an additive section, so
+    /// older readers ignore it without a version bump.
+    #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
+    print: PrintSection,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -37,6 +41,19 @@ struct ProfilesSection {
     resin: Option<MaterialId>,
 }
 
+/// Per-print slicing settings that live with the project.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct PrintSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    first_layer_height_mm: Option<PositiveFiniteMm>,
+}
+
+impl PrintSection {
+    fn is_empty(&self) -> bool {
+        self.first_layer_height_mm.is_none()
+    }
+}
+
 /// The version field alone, parsed first so an unknown version is
 /// reported instead of failing on an unknown document shape.
 #[derive(Debug, Deserialize)]
@@ -45,12 +62,16 @@ struct VersionProbe {
 }
 
 /// What parsing the project part yielded.
-#[derive(Debug, PartialEq, Eq)]
+// Not `Eq`: `first_layer_height` carries a `PositiveFiniteMm` (an
+// `f64` newtype that is only `PartialEq`).
+#[derive(Debug, PartialEq)]
 pub(crate) enum PayloadParseOutcome {
-    /// A version-1 document with its profile references.
+    /// A version-1 document with its profile references and per-print
+    /// settings.
     V1 {
         printer: Option<PrinterId>,
         resin: Option<MaterialId>,
+        first_layer_height: Option<PositiveFiniteMm>,
     },
     /// The document declares a version this build does not
     /// understand; nothing else was parsed.
@@ -67,6 +88,9 @@ pub(crate) fn serialize_payload(payload: &ProjectPayload) -> Result<String, toml
             printer: payload.printer.clone(),
             resin: payload.resin.clone(),
         },
+        print: PrintSection {
+            first_layer_height_mm: payload.first_layer_height,
+        },
     })
 }
 
@@ -82,5 +106,6 @@ pub(crate) fn parse_payload(text: &str) -> Result<PayloadParseOutcome, toml_edit
     Ok(PayloadParseOutcome::V1 {
         printer: doc.profiles.printer,
         resin: doc.profiles.resin,
+        first_layer_height: doc.print.first_layer_height_mm,
     })
 }
