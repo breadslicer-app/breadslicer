@@ -40,6 +40,7 @@ use slint::wgpu_29::wgpu;
 use crate::build_volume::BuildVolume;
 use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink, ProgressReader};
+use crate::mesh_health::scene_mesh_health;
 use crate::mesh_render::GpuScene;
 use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
@@ -322,6 +323,12 @@ pub(crate) fn spawn_load(
             if project_payload.is_none() {
                 place_on_plate(&mut graph, build_volume)?;
             }
+            // Validate every mesh (faces + manifold) on the worker so the
+            // UI thread receives a ready health verdict; the initial
+            // workspace section is derived from it. Placement changes
+            // transforms, not mesh topology, so the verdict is the same
+            // whether or not the graph was placed above.
+            let mesh_health = scene_mesh_health(&graph);
             // Eager priming: build the per-mesh spatial caches on this
             // worker thread, so the UI thread receives a fully-primed
             // `SceneSpatial` and the first picker click / gizmo
@@ -345,6 +352,7 @@ pub(crate) fn spawn_load(
                 project_warnings,
                 profile_warnings,
                 source_path: path.clone(),
+                mesh_health,
             })
         });
         ticket.deposit(path, result);

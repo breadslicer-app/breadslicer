@@ -44,6 +44,7 @@ use crate::error_dialog::DialogManager;
 #[cfg(test)]
 use crate::gizmo;
 use crate::i18n::ctr;
+use crate::mesh_health::initial_section;
 use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::SceneRender;
 use crate::pending_load::PendingLoad;
@@ -488,6 +489,7 @@ impl ViewportController {
             gpu_scene,
             project_payload,
             source_path,
+            mesh_health,
             ..
         } = prepared;
 
@@ -513,6 +515,12 @@ impl ViewportController {
         self.session
             .document()
             .install_spatial(spatial, source_path, project_payload);
+
+        // A freshly loaded scene opens in Transform when its meshes are
+        // all clean manifolds, otherwise in Prepare (the home of the
+        // future repair tooling). Set after install so the pill, which
+        // is gated on a scene being present, is already showing.
+        self.set_section(initial_section(mesh_health));
 
         if scene_installed {
             self.session.loader().note_upload_success();

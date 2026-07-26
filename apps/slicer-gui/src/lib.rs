@@ -26,6 +26,7 @@ mod i18n;
 mod language;
 mod load_progress;
 mod material_form;
+mod mesh_health;
 mod mesh_loader;
 pub mod mesh_render;
 mod pending_load;

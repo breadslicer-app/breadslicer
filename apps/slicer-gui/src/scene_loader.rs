@@ -57,6 +57,7 @@ use crate::i18n::ctr;
 use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
+use crate::mesh_health::MeshHealth;
 use crate::mesh_render::GpuScene;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
@@ -97,6 +98,11 @@ pub(crate) struct PreparedScene {
     /// the document at install time so callers can derive default
     /// export filenames, surface the source in window titles, etc.
     pub source_path: PathBuf,
+    /// Mesh-health verdict computed on the worker (faces + manifold
+    /// per leaf). Consumed by the load-finished handler to pick the
+    /// initial workspace section: Transform when problem-free, else
+    /// Prepare.
+    pub mesh_health: MeshHealth,
 }
 
 type LoadSlot = Arc<Mutex<Option<(TicketGuard, PathBuf, anyhow::Result<PreparedScene>)>>>;

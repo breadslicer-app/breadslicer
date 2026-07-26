@@ -12,6 +12,7 @@ pub mod bake;
 pub mod edit;
 pub mod error;
 pub mod fragment;
+pub mod mesh_health;
 pub mod node;
 pub mod shared_vertices;
 pub mod validate;
