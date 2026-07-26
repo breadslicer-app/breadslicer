@@ -287,14 +287,36 @@ export component ObjectListPanel inherits Rectangle {
             }
         }
 
-        // Subtle diagonal grip.
-        Rectangle {
-            x: 3px;
-            y: parent.height - self.height - 3px;
-            width: 10px;
-            height: 2px;
-            background: Palette.foreground.transparentize(0.6);
-            transform-rotation: -45deg;
+        // Resize grip: two short parallel lines, each running from the
+        // left edge to the bottom edge that meet at this corner. The
+        // viewbox maps path units 1:1 onto the handle's 16px box, so the
+        // endpoints sit just clear of the panel's rounded corner.
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 16;
+            viewbox-height: 16;
+            stroke: Palette.foreground.transparentize(0.5);
+            stroke-width: 1.5px;
+
+            MoveTo {
+                x: 0;
+                y: 7;
+            }
+            LineTo {
+                x: 9;
+                y: 16;
+            }
+            MoveTo {
+                x: 0;
+                y: 2;
+            }
+            LineTo {
+                x: 14;
+                y: 16;
+            }
         }
     }
 }
