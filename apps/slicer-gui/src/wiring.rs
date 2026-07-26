@@ -280,17 +280,22 @@ async fn pick_mesh_file() -> Option<PathBuf> {
 
 fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<PreferencesBus>) {
     ui.on_save_requested(move || {
-        let doc = ctrl.document();
-        let dialogs = ctrl.dialogs();
+        let ctrl = ctrl.clone();
         let snapshot = prefs.snapshot();
         if let Err(err) = slint::spawn_local(async move {
-            let _ = run_save_flow(
-                doc,
-                dialogs,
+            let saved = run_save_flow(
+                ctrl.document(),
+                ctrl.dialogs(),
                 snapshot.default_printer,
                 snapshot.default_resin,
             )
             .await;
+            if saved {
+                // A first "Save" falls back to "Save As", which
+                // relocates the document; refresh the title to the new
+                // file name.
+                ctrl.refresh_document_title();
+            }
         }) {
             eprintln!("Failed to spawn save task: {err}");
         }
@@ -334,8 +339,7 @@ fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefere
     ui.on_save_as_requested(move || {
         let snapshot = prefs.snapshot();
         spawn_save_as_flow(
-            ctrl.document(),
-            ctrl.dialogs(),
+            ctrl.clone(),
             snapshot.default_printer,
             snapshot.default_resin,
         );
@@ -343,14 +347,25 @@ fn wire_save_as(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Prefere
 }
 
 fn spawn_save_as_flow(
-    doc: Rc<SceneDocument>,
-    dialogs: Rc<DialogManager>,
+    ctrl: Rc<ViewportController>,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
 ) {
-    let default_stem = scene_export::default_export_stem(&doc);
+    let default_stem = scene_export::default_export_stem(&ctrl.document());
     if let Err(err) = slint::spawn_local(async move {
-        let _ = run_save_as_flow(doc, dialogs, default_stem, default_printer, default_resin).await;
+        let saved = run_save_as_flow(
+            ctrl.document(),
+            ctrl.dialogs(),
+            default_stem,
+            default_printer,
+            default_resin,
+        )
+        .await;
+        if saved {
+            // "Save As" relocates the document; refresh the title to
+            // the new file name.
+            ctrl.refresh_document_title();
+        }
     }) {
         eprintln!("Failed to spawn save dialog task: {err}");
     }

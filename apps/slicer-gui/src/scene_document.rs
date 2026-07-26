@@ -683,6 +683,18 @@ impl SceneDocument {
         self.source_path.borrow().as_deref().map(f)
     }
 
+    /// The source file's name with extension (for example
+    /// `widget.stl`), used as the window title. `None` when no scene
+    /// is loaded or the path has no final component.
+    pub fn source_file_name(&self) -> Option<String> {
+        self.with_source_path(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_owned())
+        })
+        .flatten()
+    }
+
     /// Runs `f` against the loaded [`SceneSpatial`], if any. Returns
     /// `None` when no scene is installed. Callers must keep the
     /// closure short: the internal borrow is held for its
@@ -924,6 +936,25 @@ mod scene_document_tests {
         doc.install_graph(empty_graph(), fixture_path());
         let stem = doc.with_source_path(|p| p.file_stem().unwrap().to_owned());
         assert_eq!(stem.as_deref(), Some("scene_document_fixture".as_ref()));
+    }
+
+    #[test]
+    fn source_file_name_is_the_basename_with_extension() {
+        let doc = SceneDocument::new();
+        assert_eq!(doc.source_file_name(), None);
+        doc.install_graph(empty_graph(), fixture_path());
+        assert_eq!(
+            doc.source_file_name().as_deref(),
+            Some("scene_document_fixture.obj")
+        );
+    }
+
+    #[test]
+    fn source_file_name_follows_a_save_as_relocation() {
+        let doc = SceneDocument::new();
+        doc.install_graph(empty_graph(), fixture_path());
+        doc.set_source_path(PathBuf::from("/tmp/project.3mf"));
+        assert_eq!(doc.source_file_name().as_deref(), Some("project.3mf"));
     }
 
     #[test]

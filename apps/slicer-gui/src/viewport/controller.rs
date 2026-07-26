@@ -254,6 +254,30 @@ impl ViewportController {
         }
     }
 
+    /// Pushes the open file's name to the UI, which shows it as the
+    /// window title. Empty while no scene is loaded. Runs on scene
+    /// install and clear; the save flow calls
+    /// [`Self::refresh_document_title`] after a "Save As" moves the
+    /// document to a new path.
+    fn mirror_title_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let name = self
+                .session
+                .document()
+                .source_file_name()
+                .unwrap_or_default();
+            ui.set_document_name(name.into());
+        }
+    }
+
+    /// Re-reads the document's source path and updates the window
+    /// title. Called from the save wiring after a successful "Save As"
+    /// (or a first "Save" that fell back to it), which relocates the
+    /// document without emitting a scene event.
+    pub(crate) fn refresh_document_title(&self) {
+        self.mirror_title_to_ui();
+    }
+
     /// Reset that follows a fresh scene install. Camera reset to
     /// `None` so the renderer-bounds framing branch in
     /// `on_scene_load_finished` can populate it; UI mirrors the new
@@ -268,6 +292,7 @@ impl ViewportController {
         }
         self.mirror_undo_state_to_ui();
         self.mirror_dirty_state_to_ui();
+        self.mirror_title_to_ui();
         self.mark_dirty();
     }
 
@@ -306,6 +331,7 @@ impl ViewportController {
         }
         self.mirror_undo_state_to_ui();
         self.mirror_dirty_state_to_ui();
+        self.mirror_title_to_ui();
     }
 
     fn request_redraw(&self) {

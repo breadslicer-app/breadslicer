@@ -35,7 +35,12 @@ export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
 export enum MenuLayout { Bar, Compact }
 
 export component MainWindow inherits Window {
-    title: (root.scene-dirty ? "* " : "") + @tr("SoulCrafted Slicer");
+    // Window title. Once a file is open it shows the file's name (with a
+    // `*` prefix while there are unsaved changes); with no file open it
+    // falls back to the application name.
+    title: root.document-name != ""
+        ? (root.scene-dirty ? "* " : "") + root.document-name
+        : @tr("SoulCrafted Slicer");
     icon: @image-url("../assets/images/soulcrafted.svg");
     default-font-family: "Noto Sans";
 
@@ -52,6 +57,10 @@ export component MainWindow inherits Window {
     // True while the loaded scene has unsaved changes (mirrored from
     // the document's dirty tracking); prefixes the title with `*`.
     in property <bool> scene-dirty: false;
+    // Name of the currently open file (with extension), mirrored from
+    // the document's source path. Empty when no file is open, which
+    // makes the title fall back to the application name.
+    in property <string> document-name: "";
     // True while the user is dragging a file over the window (between
     // winit's `HoveredFile` and the matching `DroppedFile` /
     // `HoveredFileCancelled`). Toggled from Rust; drives the
