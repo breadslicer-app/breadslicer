@@ -31,6 +31,7 @@ use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
 use crate::slice_panel::SlicePanelBridge;
+use crate::slice_run::SliceRun;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 
@@ -160,6 +161,9 @@ struct WiredMainWindow {
     /// The Slice control panel's picker bridge. Held so its document
     /// and preferences-bus subscriptions live as long as the window.
     _slice_panel: Rc<SlicePanelBridge>,
+    /// The Slice action driver. Held so its Slint callbacks and progress
+    /// timer live as long as the window.
+    _slice_run: Rc<SliceRun>,
 }
 
 /// Owns every piece of state that is app-wide (not tied to a single
@@ -452,6 +456,7 @@ impl AppState {
             self.prefs.clone(),
             ctrl.document(),
         );
+        let slice_run = SliceRun::install(&ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
@@ -590,6 +595,7 @@ impl AppState {
                 pending_load,
                 _subscription: subscription,
                 _slice_panel: slice_panel,
+                _slice_run: slice_run,
             },
         );
         Ok(id)

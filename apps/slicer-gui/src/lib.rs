@@ -46,6 +46,8 @@ mod scene_loader;
 mod scene_save;
 mod selection;
 mod slice_panel;
+mod slice_projection;
+mod slice_run;
 mod slice_selection;
 #[cfg(test)]
 mod tests_mesh_loader;

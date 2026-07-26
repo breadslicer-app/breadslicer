@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Palette, ProgressIndicator } from "std-widgets.slint";
+import { Button, Palette, ProgressIndicator } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
@@ -162,6 +162,13 @@ export component MainWindow inherits Window {
     in property <[string]> slice-resin-options: [];
     in-out property <int> slice-resin-current-index: -1;
     in-out property <string> slice-first-layer-height-text;
+    // Slice run state, driving the Slice button's disabled state and the
+    // input-capturing progress modal. `slicing-in-progress` is set by the
+    // Rust driver when a slice starts and cleared on every exit path.
+    in-out property <bool> slicing-in-progress: false;
+    in property <int> slice-completed: 0;
+    in property <int> slice-total: 0;
+    in property <float> slice-progress: 0.0;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -211,6 +218,13 @@ export component MainWindow inherits Window {
     callback slice-printer-picked(int);
     callback slice-resin-picked(int);
     callback slice-first-layer-height-edited(string);
+    // Slice lifecycle: `slice-requested` from the panel button starts a
+    // run; `slice-cancel-requested` from the modal trips the cancel
+    // token; `slice-finished` is invoked from the Rust worker to drain
+    // the result on the UI thread.
+    callback slice-requested();
+    callback slice-cancel-requested();
+    callback slice-finished();
     // Reports the Slice control panel's geometry (anchor-right,
     // anchor-bottom, offset-x, offset-y, width, height) after a drag or
     // resize so Rust can persist it. Per-window live state.
@@ -626,6 +640,7 @@ export component MainWindow inherits Window {
         resin-options: root.slice-resin-options;
         resin-current-index <=> root.slice-resin-current-index;
         first-layer-height-text <=> root.slice-first-layer-height-text;
+        slicing-in-progress: root.slicing-in-progress;
         printer-picked(i) => {
             root.slice-printer-picked(i);
         }
@@ -634,6 +649,9 @@ export component MainWindow inherits Window {
         }
         first-layer-height-edited(t) => {
             root.slice-first-layer-height-edited(t);
+        }
+        slice-requested => {
+            root.slice-requested();
         }
         geometry-committed => {
             root.slice-panel-geometry-changed(
@@ -968,6 +986,74 @@ export component MainWindow inherits Window {
 
             ProgressIndicator {
                 progress: root.load-progress;
+            }
+        }
+    }
+
+    // Input-capturing slice modal: a full-window dim that swallows
+    // pointer and keyboard events so the scene can't be edited mid-slice,
+    // with a centered progress card and a Cancel button. Last child, so
+    // it renders on top of everything. Shown only while a slice runs.
+    if root.slicing-in-progress: Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #000000cc;
+
+        // Swallow pointer events targeted at the scene underneath.
+        TouchArea { }
+
+        // Grab the keyboard: Escape cancels, other keys are swallowed.
+        modal-focus := FocusScope {
+            init => {
+                self.focus();
+            }
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.slice-cancel-requested();
+                }
+                return accept;
+            }
+        }
+
+        Rectangle {
+            width: Math.min(parent.width * 60%, 360px);
+            height: slice-card.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.background;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 8px;
+
+            slice-card := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: @tr("SlicePanel" => "Slicing...");
+                    font-weight: 600;
+                    color: Palette.foreground;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.slice-total > 0
+                        ? @tr("SlicePanel" => "{} / {} layers", root.slice-completed, root.slice-total)
+                        : @tr("SlicePanel" => "Preparing...");
+                    color: Palette.foreground.transparentize(0.3);
+                    horizontal-alignment: center;
+                }
+                ProgressIndicator {
+                    progress: root.slice-progress;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Button {
+                        text: @tr("SlicePanel" => "Cancel");
+                        clicked => {
+                            root.slice-cancel-requested();
+                        }
+                    }
+                }
             }
         }
     }
