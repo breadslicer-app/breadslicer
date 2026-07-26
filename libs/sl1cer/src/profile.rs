@@ -110,6 +110,14 @@ impl LayerSchedule {
         })
     }
 
+    /// The number of layers (sampling planes) the schedule yields, the
+    /// length of [`iter_z`](Self::iter_z).
+    pub fn total_layers(&self) -> u32 {
+        match *self {
+            Self::Uniform { total_layers, .. } => total_layers,
+        }
+    }
+
     /// Iterator of absolute Z values (millimetres above the build
     /// plate) where each layer slab should be sampled. Always strictly
     /// monotonically increasing under the constructor's invariants.

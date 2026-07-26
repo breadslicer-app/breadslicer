@@ -31,7 +31,10 @@ pub mod profile;
 pub mod raster;
 pub mod stitch;
 
-pub use api::{LeafSlices, slice_leaf, slice_scene};
+pub use api::{
+    CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_leaf, slice_scene,
+    slice_scene_with_progress,
+};
 
 /// This crate's package version. Surfaced so downstream tooling can
 /// stamp the slicer's identity into its output (e.g. SLA file

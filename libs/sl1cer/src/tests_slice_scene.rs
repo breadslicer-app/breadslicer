@@ -19,7 +19,9 @@ use crate::error::{InvalidLeafGeometry, SliceSceneError};
 use crate::profile::{
     AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
 };
-use crate::{slice_leaf, slice_scene};
+use crate::{
+    CancelToken, SliceOutcome, SliceProgress, slice_leaf, slice_scene, slice_scene_with_progress,
+};
 
 /// Four uniform 0.25 mm slabs: planes at 0.125, 0.375, 0.625, 0.875.
 /// All four fall inside a unit cube lifted to `z in [0, 1]`.
@@ -323,5 +325,129 @@ mod equivalence_tests {
         let a = slice_scene(&scene, &profile).unwrap();
         let b = slice_scene(&scene, &profile).unwrap();
         assert_eq!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod progress_and_cancel_tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// Two cubes under a four-layer schedule: eight layer-slices total.
+    fn two_cube_scene() -> Scene {
+        let mut scene = Scene::new();
+        add_root_cube(&mut scene, "alpha", -3.0);
+        add_root_cube(&mut scene, "beta", 3.0);
+        scene
+    }
+
+    #[test]
+    fn progress_reports_each_layer_up_to_the_total() {
+        let scene = two_cube_scene();
+        let reports = Cell::new(Vec::new());
+        let outcome = slice_scene_with_progress(
+            &scene,
+            &four_layer_profile(),
+            &CancelToken::new(),
+            |progress| {
+                let mut acc = reports.take();
+                acc.push(progress);
+                reports.set(acc);
+            },
+        )
+        .expect("both cubes slice");
+
+        assert!(matches!(outcome, SliceOutcome::Completed(_)));
+        let reports = reports.into_inner();
+        // 2 leaves * 4 layers.
+        assert_eq!(reports.len(), 8);
+        assert!(reports.iter().all(|p| p.total == 8));
+        let counts: Vec<usize> = reports.iter().map(|p| p.completed).collect();
+        assert_eq!(counts, (1..=8).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_completed_run_matches_slice_scene() {
+        let scene = two_cube_scene();
+        let profile = four_layer_profile();
+        let expected = slice_scene(&scene, &profile).expect("cubes slice");
+
+        let outcome =
+            slice_scene_with_progress(&scene, &profile, &CancelToken::new(), |_| {}).unwrap();
+        assert_eq!(outcome, SliceOutcome::Completed(expected));
+    }
+
+    #[test]
+    fn cancelling_after_the_first_layer_stops_early() {
+        let scene = two_cube_scene();
+        let cancel = CancelToken::new();
+        let calls = Cell::new(0usize);
+
+        let outcome = slice_scene_with_progress(&scene, &four_layer_profile(), &cancel, |_| {
+            calls.set(calls.get() + 1);
+            cancel.cancel();
+        })
+        .expect("cancellation is a clean stop, not an error");
+
+        assert_eq!(outcome, SliceOutcome::Cancelled);
+        // The first layer reports, the closure cancels, and the poll at
+        // the top of the next layer stops the run: exactly one report.
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn a_pre_cancelled_token_slices_nothing() {
+        let scene = two_cube_scene();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let calls = Cell::new(0usize);
+
+        let outcome = slice_scene_with_progress(&scene, &four_layer_profile(), &cancel, |_| {
+            calls.set(calls.get() + 1);
+        })
+        .unwrap();
+
+        assert_eq!(outcome, SliceOutcome::Cancelled);
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn a_validation_failure_still_surfaces_through_the_progress_api() {
+        let mut scene = Scene::new();
+        add_root_cube(&mut scene, "good", -3.0);
+        add_root_mesh(&mut scene, "bad", open_triangle_mesh());
+
+        let err =
+            slice_scene_with_progress(&scene, &four_layer_profile(), &CancelToken::new(), |_| {})
+                .unwrap_err();
+        assert!(
+            matches!(err, SliceSceneError::LeavesValidationFailed(_)),
+            "err: {err:?}",
+        );
+    }
+
+    #[test]
+    fn fraction_is_zero_when_there_is_no_work() {
+        assert_eq!(
+            SliceProgress {
+                completed: 0,
+                total: 0,
+            }
+            .fraction(),
+            0.0,
+        );
+    }
+
+    #[test]
+    fn fraction_reports_the_completed_ratio() {
+        assert_eq!(
+            SliceProgress {
+                completed: 2,
+                total: 8,
+            }
+            .fraction(),
+            0.25,
+        );
     }
 }
