@@ -10,9 +10,12 @@ keywords = ["3d", "printing", "resin", "sla", "slicing"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
+sc-mesh-core = { workspace = true }
 sc-print-primitives = { workspace = true }
 sc-print-profiles = { workspace = true }
 sc-sl1cer = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
+sc-mesh-fixtures = { workspace = true }
 toml_edit = { workspace = true }
