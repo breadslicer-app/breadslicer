@@ -37,6 +37,24 @@ use sc_project_formats::ProjectPayload;
 pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
 
 use crate::selection::{Selection, SelectionState};
+use crate::slice_result::{SliceParams, SliceResult};
+
+/// An opaque marker of the scene graph's committed-edit state, taken by
+/// [`SceneDocument::scene_revision`] and compared by
+/// [`SceneDocument::slice_geometry_changed`] to tell whether the
+/// geometry changed between two moments (producing a slice and a later
+/// Slice press). It wraps the same top-of-undo-stack edit id the
+/// save-point tracking uses; two equal markers prove the committed
+/// geometry matches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SceneRevision(Option<u64>);
+
+impl SceneRevision {
+    #[cfg(test)]
+    pub(crate) fn from_top_edit_id(top: Option<u64>) -> Self {
+        Self(top)
+    }
+}
 
 /// Maximum number of entries kept on each of the undo and redo
 /// stacks. On overflow the oldest entry (front of the deque) is
@@ -150,6 +168,17 @@ pub(crate) struct SceneDocument {
     /// a computed slice still matches the geometry and settings it was
     /// produced from, which is a separate concern.
     unsaved_project_state: Cell<bool>,
+    /// The slice produced for the current scene, held for the session
+    /// and consulted by the re-slice decision. Cleared when a scene is
+    /// installed or cleared: fresh geometry means the old slices no
+    /// longer describe it.
+    slice_result: RefCell<Option<SliceResult>>,
+    /// Set when the undo-stack cap evicts an applied edit since the held
+    /// slice result was recorded. Mirrors [`Self::evicted_since_save`]
+    /// for the slice point, so the empty-stack comparison in
+    /// [`Self::slice_geometry_changed`] cannot under-report a change:
+    /// an evicted edit stays applied with no way to undo it.
+    evicted_since_slice: Cell<bool>,
 }
 
 impl SceneDocument {
@@ -167,6 +196,8 @@ impl SceneDocument {
             save_point: Cell::new(None),
             evicted_since_save: Cell::new(false),
             unsaved_project_state: Cell::new(false),
+            slice_result: RefCell::new(None),
+            evicted_since_slice: Cell::new(false),
         })
     }
 
@@ -202,6 +233,9 @@ impl SceneDocument {
         self.save_point.set(None);
         self.evicted_since_save.set(false);
         self.unsaved_project_state.set(false);
+        // A new scene invalidates any slice produced for the old one.
+        *self.slice_result.borrow_mut() = None;
+        self.evicted_since_slice.set(false);
         self.notify(SceneEvent::Installed);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
@@ -219,6 +253,8 @@ impl SceneDocument {
         self.save_point.set(None);
         self.evicted_since_save.set(false);
         self.unsaved_project_state.set(false);
+        *self.slice_result.borrow_mut() = None;
+        self.evicted_since_slice.set(false);
         self.notify(SceneEvent::Cleared);
         if stacks_changed {
             self.notify(SceneEvent::UndoStackChanged);
@@ -412,6 +448,47 @@ impl SceneDocument {
         changed
     }
 
+    /// A marker of the scene's current committed-edit state, captured
+    /// at slice time and compared later by [`Self::slice_geometry_changed`]
+    /// to tell whether the geometry has changed since. This is the same
+    /// identity the save-point tracking snapshots.
+    pub fn scene_revision(&self) -> SceneRevision {
+        SceneRevision(self.top_edit_id())
+    }
+
+    /// Whether the committed geometry changed since `since` was taken.
+    /// Mirrors [`Self::is_dirty`]'s comparison: a differing top edit id
+    /// means changed; a matching empty stack (`None`) is trusted only
+    /// while no applied edit has been evicted since the slice was
+    /// recorded. Can over-report a change, never under-report it.
+    pub fn slice_geometry_changed(&self, since: SceneRevision) -> bool {
+        let top = self.top_edit_id();
+        if top != since.0 {
+            return true;
+        }
+        top.is_none() && self.evicted_since_slice.get()
+    }
+
+    /// Stores the slice produced for the current scene, marking the
+    /// present geometry as its baseline (a fresh eviction window).
+    /// Slice staleness is tracked separately from the save-dirty signal,
+    /// so this does not touch [`Self::is_dirty`].
+    pub fn set_slice_result(&self, result: SliceResult) {
+        *self.slice_result.borrow_mut() = Some(result);
+        self.evicted_since_slice.set(false);
+    }
+
+    /// The parameters of the held slice result, cloned out (the contour
+    /// data is left in place). `None` when no slice has been produced
+    /// for the current scene. Used by the re-slice decision to compare
+    /// against the current inputs.
+    pub fn slice_params(&self) -> Option<SliceParams> {
+        self.slice_result
+            .borrow()
+            .as_ref()
+            .map(|result| result.params.clone())
+    }
+
     fn top_edit_id(&self) -> Option<u64> {
         self.undo_stack.borrow().back().map(|entry| entry.id)
     }
@@ -536,6 +613,7 @@ impl SceneDocument {
             if undo.len() == UNDO_STACK_CAP {
                 undo.pop_front();
                 self.evicted_since_save.set(true);
+                self.evicted_since_slice.set(true);
             }
             undo.push_back(HistoryEntry { id, edit });
         }
@@ -779,6 +857,7 @@ impl SceneDocument {
         if undo.len() == UNDO_STACK_CAP {
             undo.pop_front();
             self.evicted_since_save.set(true);
+            self.evicted_since_slice.set(true);
         }
         undo.push_back(entry);
         drop(undo);

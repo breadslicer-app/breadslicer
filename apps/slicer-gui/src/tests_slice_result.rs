@@ -1,0 +1,193 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+//! [`SceneDocument`] side of the slice result: holding the produced
+//! slice, capturing a scene revision, and the geometry-change
+//! comparison the re-slice decision relies on (including the
+//! empty-stack eviction guard, mirrored from the save-point tracking).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
+use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+
+use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision, UNDO_STACK_CAP};
+use crate::slice_result::{SliceParams, SliceResult};
+
+fn fixture_path() -> PathBuf {
+    PathBuf::from("/tmp/slice_result_fixture.obj")
+}
+
+fn translation(dx: f64) -> Transform3D {
+    Transform3D::Affine(AffineTransform3D::from_translation([dx, 0.0, 0.0]))
+}
+
+/// One inline-mesh leaf under an identity-Group root, matching what the
+/// loader produces.
+fn graph_with_one_object() -> Scene {
+    let mut g = Scene::new();
+    let root = g.add_group(None, Transform3D::Identity);
+    g.add_root(root).expect("group root");
+    let leaf = g
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
+        )
+        .expect("add leaf");
+    g.add_child(root, leaf).expect("attach leaf");
+    g
+}
+
+fn loaded_document() -> (std::rc::Rc<SceneDocument>, NodeId) {
+    let doc = SceneDocument::new();
+    doc.install_graph(graph_with_one_object(), fixture_path());
+    let node_id = doc
+        .with_scene(|s| s.leaf_id_at_index(0))
+        .flatten()
+        .expect("fixture has one leaf");
+    (doc, node_id)
+}
+
+/// Applies and commits the `dx - 1.0 -> dx` translation step, the
+/// well-formed chain shape undo expects.
+fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
+    let edit = SceneEdit::SetLocalTransform {
+        node_id,
+        before: if dx == 1.0 {
+            Transform3D::Identity
+        } else {
+            translation(dx - 1.0)
+        },
+        after: translation(dx),
+    };
+    assert!(doc.apply_edit(edit.clone()));
+    doc.push_edit(edit);
+}
+
+fn sample_result(geometry: SceneRevision) -> SliceResult {
+    SliceResult {
+        contours: Vec::new(),
+        params: SliceParams {
+            printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
+            resin: MaterialId::new("standard-405").expect("valid id"),
+            first_layer_height: None,
+            aa_level: AaLevel::Off,
+            geometry,
+        },
+    }
+}
+
+#[test]
+fn a_fresh_document_holds_no_slice_result() {
+    let (doc, _) = loaded_document();
+    assert!(doc.slice_params().is_none());
+}
+
+#[test]
+fn set_slice_result_stores_the_params() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    let held = doc.slice_params().expect("a result was stored");
+    assert_eq!(held.geometry, rev);
+    assert_eq!(held.aa_level, AaLevel::Off);
+}
+
+#[test]
+fn a_committed_edit_moves_the_scene_revision() {
+    let (doc, node_id) = loaded_document();
+    let before = doc.scene_revision();
+    commit_step(&doc, node_id, 1.0);
+    assert_ne!(doc.scene_revision(), before);
+}
+
+#[test]
+fn an_unchanged_scene_reads_unchanged_against_the_slice_point() {
+    let (doc, node_id) = loaded_document();
+    commit_step(&doc, node_id, 1.0);
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    assert!(!doc.slice_geometry_changed(rev));
+}
+
+#[test]
+fn a_committed_edit_reads_changed_against_the_slice_point() {
+    let (doc, node_id) = loaded_document();
+    commit_step(&doc, node_id, 1.0);
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    commit_step(&doc, node_id, 2.0);
+    assert!(doc.slice_geometry_changed(rev));
+}
+
+#[test]
+fn undo_back_to_the_slice_point_reads_unchanged_again() {
+    // A change followed by an undo back to the sliced state restores
+    // the exact top edit id, so the comparison is precise here (no
+    // over-report), matching the save-point tracking.
+    let (doc, node_id) = loaded_document();
+    commit_step(&doc, node_id, 1.0);
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    commit_step(&doc, node_id, 2.0);
+    assert!(doc.slice_geometry_changed(rev));
+    assert!(doc.undo());
+    assert!(!doc.slice_geometry_changed(rev));
+    assert!(doc.redo());
+    assert!(doc.slice_geometry_changed(rev));
+}
+
+#[test]
+fn an_empty_stack_slice_point_without_eviction_reads_unchanged_after_full_undo() {
+    // Sliced with an empty undo stack, then a change-and-undo cycle
+    // that evicts nothing: the drained stack proves the geometry is
+    // back at the sliced state.
+    let (doc, node_id) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    commit_step(&doc, node_id, 1.0);
+    assert!(doc.slice_geometry_changed(rev));
+    assert!(doc.undo());
+    assert!(!doc.slice_geometry_changed(rev));
+}
+
+#[test]
+fn eviction_after_an_empty_stack_slice_point_reads_changed() {
+    // Sliced with an empty undo stack (revision None). Committing one
+    // entry past the cap evicts the oldest applied edit; undoing
+    // everything then drains the stack back to empty without restoring
+    // the sliced geometry. Top (None) equals the slice point (None), so
+    // only the eviction guard prevents a false "unchanged".
+    let (doc, node_id) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    for i in 0..(UNDO_STACK_CAP + 1) {
+        commit_step(&doc, node_id, (i + 1) as f64);
+    }
+    for _ in 0..UNDO_STACK_CAP {
+        assert!(doc.undo());
+    }
+    assert!(!doc.can_undo());
+    assert!(doc.slice_geometry_changed(rev));
+}
+
+#[test]
+fn installing_a_new_scene_drops_the_held_slice_result() {
+    let (doc, _) = loaded_document();
+    doc.set_slice_result(sample_result(doc.scene_revision()));
+    doc.install_graph(graph_with_one_object(), fixture_path());
+    assert!(doc.slice_params().is_none());
+}
+
+#[test]
+fn clearing_the_scene_drops_the_held_slice_result() {
+    let (doc, _) = loaded_document();
+    doc.set_slice_result(sample_result(doc.scene_revision()));
+    doc.clear_scene();
+    assert!(doc.slice_params().is_none());
+}

@@ -47,6 +47,7 @@ mod scene_save;
 mod selection;
 mod slice_panel;
 mod slice_projection;
+mod slice_result;
 mod slice_run;
 mod slice_selection;
 #[cfg(test)]
@@ -55,6 +56,8 @@ mod tests_mesh_loader;
 mod tests_scene_dirty;
 #[cfg(test)]
 mod tests_scene_loader;
+#[cfg(test)]
+mod tests_slice_result;
 mod text_metrics;
 mod viewport;
 mod window_icon;

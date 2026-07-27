@@ -15,6 +15,7 @@ import { ExtendDialog } from "extend-dialog.slint";
 import { ForkDialog } from "fork-dialog.slint";
 import { ProfileViewDialog } from "profile-view-dialog.slint";
 import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
+import { SliceOverwriteDialog } from "slice-overwrite-dialog.slint";
 
 // Embeds Noto Sans into the executable and registers it process wide.
 // Text layout then resolves to this in-memory font instead of scanning
@@ -22,7 +23,7 @@ import { ReplaceSceneDialog } from "replace-scene-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
-export { AboutWindow, AxisView, ErrorDialog, ExtendDialog, ForkDialog, PointerModifiers, PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, ThemePreference }
+export { AboutWindow, AxisView, ErrorDialog, ExtendDialog, ForkDialog, PointerModifiers, PreferencesWindow, ProfileViewDialog, ReplaceSceneDialog, SliceOverwriteDialog, ThemePreference }
 
 // Load-pipeline phase shown by the floating progress panel. Values
 // mirror the Rust-side worker phases; the Rust poll maps between the

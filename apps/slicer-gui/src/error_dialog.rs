@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
-use crate::{ErrorDialog, ReplaceSceneDialog};
+use crate::{ErrorDialog, ReplaceSceneDialog, SliceOverwriteDialog};
 
 /// User's exit from the "replace current scene?" dialog. Four
 /// outcomes; the caller decides what each means in context (typically
@@ -61,6 +61,13 @@ impl KeepChangesOffer {
 /// no-op. Type alias to satisfy `clippy::type_complexity`.
 type ReplaceChoiceSink = Rc<Cell<Option<Box<dyn FnOnce(ReplaceSceneChoice)>>>>;
 
+/// One-shot callback fired when the user confirms the slice-overwrite
+/// dialog. Wrapped like [`ReplaceChoiceSink`] so whichever of the
+/// dialog's buttons fires first is honoured and the rest no-op; a
+/// cancel drops it uncalled. Type alias to satisfy
+/// `clippy::type_complexity`.
+type ConfirmSink = Rc<Cell<Option<Box<dyn FnOnce()>>>>;
+
 /// Owns every currently-visible `ErrorDialog` and `ReplaceSceneDialog`
 /// window so they stay alive for as long as the user hasn't dismissed
 /// them. Held as `Rc<DialogManager>` by the controller; close callbacks
@@ -70,6 +77,7 @@ type ReplaceChoiceSink = Rc<Cell<Option<Box<dyn FnOnce(ReplaceSceneChoice)>>>>;
 pub(crate) struct DialogManager {
     dialogs: RefCell<HashMap<u64, ErrorDialog>>,
     replace_dialogs: RefCell<HashMap<u64, ReplaceSceneDialog>>,
+    slice_overwrite_dialogs: RefCell<HashMap<u64, SliceOverwriteDialog>>,
     next_id: Cell<u64>,
 }
 
@@ -78,6 +86,7 @@ impl DialogManager {
         Rc::new(Self {
             dialogs: RefCell::new(HashMap::new()),
             replace_dialogs: RefCell::new(HashMap::new()),
+            slice_overwrite_dialogs: RefCell::new(HashMap::new()),
             next_id: Cell::new(0),
         })
     }
@@ -223,6 +232,69 @@ impl DialogManager {
             return;
         }
         self.replace_dialogs.borrow_mut().insert(id, dialog);
+    }
+
+    /// Shows the "re-slice?" confirmation for a scene that already holds
+    /// a slice result. Runs `on_confirm` once if the user confirms the
+    /// overwrite, and does nothing on cancel (the safe default: never
+    /// discard the held slice without an explicit yes). Must run on the
+    /// Slint UI thread. Logs and bails silently if the dialog cannot be
+    /// constructed or shown; a failure to show is treated as cancel.
+    pub fn show_slice_overwrite_confirm(self: &Rc<Self>, on_confirm: impl FnOnce() + 'static) {
+        let dialog = match SliceOverwriteDialog::new() {
+            Ok(d) => d,
+            Err(err) => {
+                eprintln!("Failed to create slice-overwrite dialog: {err}");
+                return;
+            }
+        };
+
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+
+        let sink: ConfirmSink = Rc::new(Cell::new(Some(Box::new(on_confirm))));
+
+        {
+            let sink = sink.clone();
+            let dialog_w = dialog.as_weak();
+            let mgr_w = Rc::downgrade(self);
+            dialog.on_confirm_requested(move || {
+                if let Some(cb) = sink.take() {
+                    cb();
+                }
+                close_slice_overwrite(&dialog_w, &mgr_w, id);
+            });
+        }
+        {
+            let sink = sink.clone();
+            let dialog_w = dialog.as_weak();
+            let mgr_w = Rc::downgrade(self);
+            dialog.on_cancel_requested(move || {
+                sink.take();
+                close_slice_overwrite(&dialog_w, &mgr_w, id);
+            });
+        }
+
+        if let Err(err) = dialog.show() {
+            eprintln!("Failed to show slice-overwrite dialog: {err}");
+            return;
+        }
+        self.slice_overwrite_dialogs.borrow_mut().insert(id, dialog);
+    }
+}
+
+/// Hides the slice-overwrite dialog and drops its entry from the
+/// manager. Free function so the confirm and cancel closures stay small.
+fn close_slice_overwrite(
+    dialog_weak: &slint::Weak<SliceOverwriteDialog>,
+    mgr_weak: &std::rc::Weak<DialogManager>,
+    id: u64,
+) {
+    if let Some(d) = dialog_weak.upgrade() {
+        let _ = d.hide();
+    }
+    if let Some(mgr) = mgr_weak.upgrade() {
+        mgr.slice_overwrite_dialogs.borrow_mut().remove(&id);
     }
 }
 

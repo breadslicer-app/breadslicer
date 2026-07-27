@@ -36,6 +36,7 @@ use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::{SliceFailure, build_slice_profile, load_selected_profiles};
+use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
 
 /// Cadence of the UI-side progress poll while a slice is in flight.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -61,6 +62,10 @@ pub(crate) struct SliceRun {
     // The current run's cancel token, so the modal's Cancel can trip it.
     // `None` when no slice is in flight.
     cancel: RefCell<Option<CancelToken>>,
+    // Inputs of the in-flight run, captured at launch so the finished
+    // handler can record them alongside the produced contours. `None`
+    // when no slice is in flight.
+    pending_params: RefCell<Option<SliceParams>>,
     // Poll timer driving the modal's progress readout. Behind an `Rc` so
     // its own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
@@ -83,6 +88,7 @@ impl SliceRun {
             progress: Arc::new(SliceProgressCell::default()),
             slot: Arc::new(Mutex::new(None)),
             cancel: RefCell::new(None),
+            pending_params: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
         });
         {
@@ -100,10 +106,13 @@ impl SliceRun {
         run
     }
 
-    /// Snapshots the inputs and dispatches a slice run. A no-op when a
-    /// slice is already in flight, or when no printer/resin is chosen
-    /// (the button gates both, but the checks keep the path safe).
-    fn start(&self) {
+    /// Handles a Slice press. Resolves the effective inputs, then decides
+    /// against the held result: a first slice or a changed input launches
+    /// the run (a change first confirms the overwrite); an unchanged press
+    /// does nothing. A no-op while a slice is already in flight, or when
+    /// no printer/resin is chosen (the button gates both, but the checks
+    /// keep the path safe).
+    fn start(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
@@ -133,11 +142,46 @@ impl SliceRun {
             );
             return;
         };
+        let current = SliceParams {
+            printer,
+            resin,
+            first_layer_height: self.document.selected_first_layer_height(),
+            aa_level: snapshot.aa_level,
+            geometry: self.document.scene_revision(),
+        };
+
+        let held = self.document.slice_params();
+        let geometry_changed = held
+            .as_ref()
+            .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
+        match decide_re_slice(held.as_ref(), &current, geometry_changed) {
+            ReSliceDecision::FirstSlice => self.launch(current),
+            ReSliceDecision::Unchanged => {
+                // The held slice already matches the inputs; nothing to
+                // recompute. A transient "already current" hint lands here.
+            }
+            ReSliceDecision::Changed => {
+                let this = self.clone();
+                self.dialogs.show_slice_overwrite_confirm(move || {
+                    this.launch(current);
+                });
+            }
+        }
+    }
+
+    /// Clones the scene, resets the modal readout, captures the run's
+    /// inputs, and spawns the worker. Reached for a first slice, or once
+    /// a re-slice over stale data is confirmed. The scene clone and the
+    /// geometry marker are taken together here so the marker recorded
+    /// with the result matches the geometry actually sliced.
+    fn launch(self: &Rc<Self>, mut current: SliceParams) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             return;
         };
-        let first_layer_height = self.document.selected_first_layer_height();
-        let aa_level = snapshot.aa_level;
+        current.geometry = self.document.scene_revision();
 
         self.progress.completed.store(0, Ordering::Relaxed);
         self.progress.total.store(0, Ordering::Relaxed);
@@ -148,9 +192,17 @@ impl SliceRun {
 
         let cancel = CancelToken::new();
         *self.cancel.borrow_mut() = Some(cancel.clone());
+        *self.pending_params.borrow_mut() = Some(current.clone());
 
         self.start_poll();
-        self.spawn(scene, printer, resin, first_layer_height, aa_level, cancel);
+        self.spawn(
+            scene,
+            current.printer,
+            current.resin,
+            current.first_layer_height,
+            current.aa_level,
+            cancel,
+        );
     }
 
     /// Spawns the worker: run the projection + slicing, then deposit the
@@ -240,6 +292,7 @@ impl SliceRun {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         *self.cancel.borrow_mut() = None;
+        let pending = self.pending_params.borrow_mut().take();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_slicing_in_progress(false);
         }
@@ -248,11 +301,15 @@ impl SliceRun {
         };
         match result {
             Ok(SliceOutcome::Completed(slices)) => {
-                let layers = slices.first().map_or(0, |leaf| leaf.stack().layers().len());
-                eprintln!("Sliced {} model(s): {layers} layers", slices.len());
+                if let Some(params) = pending {
+                    self.document.set_slice_result(SliceResult {
+                        contours: slices,
+                        params,
+                    });
+                }
             }
             Ok(SliceOutcome::Cancelled) => {
-                // A cancelled run carries no data; nothing to keep.
+                // A cancelled run carries no data; any prior result stays.
             }
             Err(err) => {
                 self.dialogs
