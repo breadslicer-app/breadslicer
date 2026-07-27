@@ -27,6 +27,7 @@
 mod foreign;
 mod payload_part;
 mod reader;
+mod slice_mapping;
 mod writer;
 
 #[cfg(test)]
@@ -35,6 +36,8 @@ mod tests_foreign;
 mod tests_payload_part;
 #[cfg(test)]
 mod tests_reader;
+#[cfg(test)]
+mod tests_slice_mapping;
 #[cfg(test)]
 mod tests_writer;
 

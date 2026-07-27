@@ -4761,6 +4761,7 @@ dependencies = [
  "sc-mesh-fixtures",
  "sc-mesh-formats",
  "sc-print-primitives",
+ "sc-sl1cer",
  "serde",
  "toml_edit",
  "zip",
