@@ -41,6 +41,10 @@ use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_s
 /// Cadence of the UI-side progress poll while a slice is in flight.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How long the "already up to date" hint stays up after an unchanged
+/// Slice press before it fades back out.
+const UP_TO_DATE_HINT_DURATION: Duration = Duration::from_secs(10);
+
 /// Shared completed/total layer-slice counters: the worker writes them,
 /// the UI polls them into the modal. `completed` climbs monotonically
 /// (`fetch_max`); `total` is the run's fixed denominator.
@@ -69,6 +73,10 @@ pub(crate) struct SliceRun {
     // Poll timer driving the modal's progress readout. Behind an `Rc` so
     // its own callback can stop it through a `Weak` without a cycle.
     poll_timer: Rc<slint::Timer>,
+    // Single-shot timer that lowers the "already up to date" hint after
+    // a delay. Restarted on each unchanged press so repeated presses keep
+    // it visible; stopped when a real slice starts.
+    tooltip_timer: Rc<slint::Timer>,
 }
 
 impl SliceRun {
@@ -90,6 +98,7 @@ impl SliceRun {
             cancel: RefCell::new(None),
             pending_params: RefCell::new(None),
             poll_timer: Rc::new(slint::Timer::default()),
+            tooltip_timer: Rc::new(slint::Timer::default()),
         });
         {
             let run = run.clone();
@@ -158,7 +167,8 @@ impl SliceRun {
             ReSliceDecision::FirstSlice => self.launch(current),
             ReSliceDecision::Unchanged => {
                 // The held slice already matches the inputs; nothing to
-                // recompute. A transient "already current" hint lands here.
+                // recompute. Surface the transient "up to date" hint.
+                self.show_up_to_date_hint();
             }
             ReSliceDecision::Changed => {
                 let this = self.clone();
@@ -181,6 +191,8 @@ impl SliceRun {
         let Some(scene) = self.document.with_scene(|spatial| spatial.graph().clone()) else {
             return;
         };
+        // A real slice supersedes the "up to date" hint.
+        self.hide_up_to_date_hint();
         current.geometry = self.document.scene_revision();
 
         self.progress.completed.store(0, Ordering::Relaxed);
@@ -279,6 +291,35 @@ impl SliceRun {
     fn cancel(&self) {
         if let Some(token) = self.cancel.borrow().as_ref() {
             token.cancel();
+        }
+    }
+
+    /// Raises the "already up to date" hint and schedules its dismissal.
+    /// Restarting the single-shot timer keeps the hint up for the full
+    /// delay when the user presses Slice again while it is still showing.
+    fn show_up_to_date_hint(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        ui.set_slice_up_to_date(true);
+        let ui_weak = self.ui.clone();
+        self.tooltip_timer.start(
+            slint::TimerMode::SingleShot,
+            UP_TO_DATE_HINT_DURATION,
+            move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_slice_up_to_date(false);
+                }
+            },
+        );
+    }
+
+    /// Lowers the "already up to date" hint at once and cancels its
+    /// pending dismissal.
+    fn hide_up_to_date_hint(&self) {
+        self.tooltip_timer.stop();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_up_to_date(false);
         }
     }
 

@@ -170,6 +170,10 @@ export component MainWindow inherits Window {
     in property <int> slice-completed: 0;
     in property <int> slice-total: 0;
     in property <float> slice-progress: 0.0;
+    // Raised by the Rust driver after a Slice press whose inputs already
+    // match the held slice, then lowered again after a short delay; shows
+    // the transient "already up to date" hint in the Slice panel.
+    in property <bool> slice-up-to-date: false;
     // Slice control panel geometry (per-window live state). Same
     // anchor/offset model as the object-list panel; the defaults hug the
     // top-left corner, clear of the top-right object-list panel. Height
@@ -642,6 +646,7 @@ export component MainWindow inherits Window {
         resin-current-index <=> root.slice-resin-current-index;
         first-layer-height-text <=> root.slice-first-layer-height-text;
         slicing-in-progress: root.slicing-in-progress;
+        slice-up-to-date: root.slice-up-to-date;
         printer-picked(i) => {
             root.slice-printer-picked(i);
         }

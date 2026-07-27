@@ -34,6 +34,12 @@ export component SliceControlPanel inherits Rectangle {
     // modal covers the window separately).
     in property <bool> slicing-in-progress;
 
+    // True to show the transient "already up to date" hint above the
+    // Slice button, shown after a press whose inputs match the held
+    // slice. The Rust side raises it and lowers it again after a delay;
+    // the opacity animation fades it in and out.
+    in property <bool> slice-up-to-date;
+
     // A picker choice made by the user; carries the picked option's
     // index into the matching options model.
     callback printer-picked(int);
@@ -260,6 +266,19 @@ export component SliceControlPanel inherits Rectangle {
 
             Rectangle {
                 vertical-stretch: 1;
+            }
+
+            Text {
+                text: @tr("SlicePanel" => "Slice is up to date.");
+                font-size: 0.8rem;
+                color: Palette.foreground.transparentize(0.3);
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                opacity: root.slice-up-to-date ? 1.0 : 0.0;
+                animate opacity {
+                    duration: 400ms;
+                }
+                accessible-role: none;
             }
 
             Button {
