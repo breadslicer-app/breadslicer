@@ -21,6 +21,7 @@ use crate::profile::{
 };
 use crate::{
     CancelToken, SliceOutcome, SliceProgress, slice_leaf, slice_scene, slice_scene_with_progress,
+    sliceable_leaves,
 };
 
 /// Four uniform 0.25 mm slabs: planes at 0.125, 0.375, 0.625, 0.875.
@@ -449,5 +450,103 @@ mod progress_and_cancel_tests {
             .fraction(),
             0.25,
         );
+    }
+}
+
+#[cfg(test)]
+mod sliceable_leaves_tests {
+    use super::*;
+
+    #[test]
+    fn returns_root_leaves_in_root_order() {
+        let mut scene = Scene::new();
+        let a = add_root_cube(&mut scene, "alpha", -3.0);
+        let b = add_root_cube(&mut scene, "beta", 3.0);
+        assert_eq!(sliceable_leaves(&scene).expect("two leaves"), vec![a, b]);
+    }
+
+    #[test]
+    fn enters_groups_to_reach_nested_leaves() {
+        let mut scene = Scene::new();
+        let group = scene.add_group(None, lift(5.0, 0.0));
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_child(group, leaf).expect("attach leaf to group");
+        scene.add_root(group).expect("group becomes the root");
+        assert_eq!(
+            sliceable_leaves(&scene).expect("one nested leaf"),
+            vec![leaf]
+        );
+    }
+
+    #[test]
+    fn order_matches_slice_scene_discovery() {
+        let mut scene = Scene::new();
+        add_root_cube(&mut scene, "alpha", -3.0);
+        add_root_cube(&mut scene, "beta", 3.0);
+        let sliced: Vec<NodeId> = slice_scene(&scene, &four_layer_profile())
+            .expect("both cubes slice")
+            .iter()
+            .map(|record| record.leaf())
+            .collect();
+        assert_eq!(sliceable_leaves(&scene).expect("two leaves"), sliced);
+    }
+
+    #[test]
+    fn empty_scene_is_rejected() {
+        let scene = Scene::new();
+        assert!(matches!(
+            sliceable_leaves(&scene).unwrap_err(),
+            SliceSceneError::EmptyScene,
+        ));
+    }
+
+    #[test]
+    fn csg_node_aborts_the_walk() {
+        let mut scene = Scene::new();
+        add_root_cube(&mut scene, "plain", -3.0);
+        let operand = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        let csg = scene
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![operand])
+            .expect("csg over one operand");
+        scene.add_root(csg).expect("csg becomes a root");
+        assert!(matches!(
+            sliceable_leaves(&scene).unwrap_err(),
+            SliceSceneError::CsgNotYetSupported { node_id } if node_id == csg,
+        ));
+    }
+
+    #[test]
+    fn instance_node_aborts_the_walk() {
+        let mut scene = Scene::new();
+        let template = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        let resource = scene
+            .register_subtree_resource(template)
+            .expect("parentless non-root leaf registers");
+        let instance = scene
+            .add_instance(None, Transform3D::Identity, resource)
+            .expect("instance of a live resource");
+        scene.add_root(instance).expect("instance becomes a root");
+        assert!(matches!(
+            sliceable_leaves(&scene).unwrap_err(),
+            SliceSceneError::InstanceNotYetSupported { node_id } if node_id == instance,
+        ));
     }
 }

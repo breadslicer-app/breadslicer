@@ -33,7 +33,7 @@ pub mod stitch;
 
 pub use api::{
     CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_leaf, slice_scene,
-    slice_scene_with_progress,
+    slice_scene_with_progress, sliceable_leaves,
 };
 
 /// This crate's package version. Surfaced so downstream tooling can

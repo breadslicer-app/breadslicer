@@ -322,32 +322,25 @@ where
     }
 }
 
-/// Collect every mesh leaf reachable from the scene roots, in
-/// pre-order, together with its display name: the node's metadata
-/// name when present, else the name on the leaf's mesh (where format
-/// readers such as OBJ attach object names). Dangling child ids are
-/// skipped, matching the scene's own traversal helpers. `Csg` and
-/// `Instance` nodes abort the walk: their leaves are operands, not
-/// independent solids, and slicing them as such would silently apply
-/// union semantics regardless of the operator.
-fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, SliceSceneError> {
+/// The mesh leaves reachable from the scene roots, in the pre-order the
+/// slicer visits them. [`slice_scene`] and any caller that must reason
+/// about the same leaf set without slicing share this one walk, so they
+/// cannot disagree on which leaves a scene slices. `Group` containers
+/// are entered at any depth; dangling child ids are skipped, matching
+/// the scene's own traversal helpers. `Csg` and `Instance` nodes abort
+/// the walk, since their leaves are operands, not independent solids,
+/// and slicing them as such would silently apply union semantics
+/// regardless of the operator. An empty result is reported as
+/// [`SliceSceneError::EmptyScene`].
+pub fn sliceable_leaves(scene: &Scene) -> Result<Vec<NodeId>, SliceSceneError> {
     let mut stack: Vec<NodeId> = scene.roots().iter().rev().copied().collect();
-    let mut leaves: Vec<(NodeId, Option<String>)> = Vec::new();
+    let mut leaves: Vec<NodeId> = Vec::new();
     while let Some(id) = stack.pop() {
         let Some(node) = scene.node(id) else {
             continue;
         };
         match &node.kind {
-            NodeKind::Leaf(_) => {
-                let name = node.meta.as_ref().and_then(|m| m.name.clone()).or_else(|| {
-                    scene
-                        .mesh_at_leaf(id)
-                        .ok()
-                        .and_then(|mesh| mesh.meta.as_ref())
-                        .and_then(|meta| meta.name.clone())
-                });
-                leaves.push((id, name));
-            }
+            NodeKind::Leaf(_) => leaves.push(id),
             NodeKind::Group { children } => {
                 for child in children.iter().rev() {
                     stack.push(*child);
@@ -365,6 +358,33 @@ fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, S
         return Err(SliceSceneError::EmptyScene);
     }
     Ok(leaves)
+}
+
+/// The sliceable leaves paired with each one's display name, in the
+/// same order as [`sliceable_leaves`].
+fn collect_mesh_leaves(scene: &Scene) -> Result<Vec<(NodeId, Option<String>)>, SliceSceneError> {
+    let leaves = sliceable_leaves(scene)?;
+    Ok(leaves
+        .into_iter()
+        .map(|id| (id, leaf_display_name(scene, id)))
+        .collect())
+}
+
+/// A leaf's display name: the node's metadata name when present, else
+/// the name on the leaf's mesh (where format readers such as OBJ attach
+/// object names).
+fn leaf_display_name(scene: &Scene, id: NodeId) -> Option<String> {
+    scene
+        .node(id)
+        .and_then(|node| node.meta.as_ref())
+        .and_then(|m| m.name.clone())
+        .or_else(|| {
+            scene
+                .mesh_at_leaf(id)
+                .ok()
+                .and_then(|mesh| mesh.meta.as_ref())
+                .and_then(|meta| meta.name.clone())
+        })
 }
 
 /// Run both geometry validation stages on a baked mesh.
