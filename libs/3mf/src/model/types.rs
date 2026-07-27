@@ -67,6 +67,10 @@ impl Unit {
 pub struct ResourceId(NonZeroU32);
 
 impl ResourceId {
+    /// The smallest valid resource id (1). Useful as the sole id in a
+    /// single-resource document, built without a fallible conversion.
+    pub const MIN: ResourceId = ResourceId(NonZeroU32::MIN);
+
     pub fn new(value: u32) -> Option<Self> {
         if value > i32::MAX as u32 {
             return None;
@@ -337,6 +341,12 @@ mod unit_tests {
         assert!(ResourceId::new(1).is_some());
         assert!(ResourceId::new(i32::MAX as u32).is_some());
         assert!(ResourceId::new(i32::MAX as u32 + 1).is_none());
+    }
+
+    #[test]
+    fn resource_id_min_is_one() {
+        assert_eq!(ResourceId::MIN.get(), 1);
+        assert_eq!(Some(ResourceId::MIN), ResourceId::new(1));
     }
 
     #[test]

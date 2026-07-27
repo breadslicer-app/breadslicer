@@ -42,10 +42,20 @@ mod tests_slice_mapping;
 mod tests_writer;
 
 pub use reader::{read_threemf_project, read_threemf_project_with_progress};
+pub use slice_mapping::SliceMappingError;
 pub use writer::write_threemf_project;
 
 /// Name of the project part inside the package.
 pub const PROJECT_PART_NAME: &str = "/Metadata/soulcrafted-project.toml";
+
+/// Name of the slice model part inside the package. A second 3D-model
+/// part carrying only the slice stack, standalone from the scene.
+pub const SLICE_PART_NAME: &str = "/3D/slices.model";
+
+/// Relationship type linking the package root to the slice part.
+/// An opaque OPC identifier following the schemas.<domain> shape of
+/// the core 3MF relationship types; it is not meant to resolve.
+pub const SLICE_REL_TYPE: &str = "http://schemas.soulcrafted.it/slicer/2026/07/slices";
 
 /// Content type of the project part.
 pub const PROJECT_PART_CONTENT_TYPE: &str = "application/vnd.soulcrafted.project+toml";

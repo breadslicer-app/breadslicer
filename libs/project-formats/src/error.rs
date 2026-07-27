@@ -15,6 +15,8 @@ use std::fmt;
 use sc_3mf::error::{ModelWriteError, PackageReadError, PackageWriteError};
 use sc_mesh_formats::error::{LoadThreeMfError, WriteThreeMfError};
 
+use crate::threemf::SliceMappingError;
+
 /// Returned by [`crate::write_project`].
 #[derive(Debug)]
 pub enum WriteProjectError {
@@ -67,6 +69,8 @@ pub enum WriteThreeMfProjectError {
     Scene(WriteThreeMfError),
     /// The model XML could not be serialized.
     Model(ModelWriteError),
+    /// The merged slices could not be mapped to a 3MF slice stack.
+    SliceMapping(SliceMappingError),
     /// The project payload could not be serialized to TOML.
     Payload(toml_edit::ser::Error),
     /// A part could not be added or the container could not be
@@ -81,6 +85,7 @@ impl fmt::Display for WriteThreeMfProjectError {
         match self {
             Self::Scene(e) => write!(f, "3MF project writer: {e}"),
             Self::Model(e) => write!(f, "3MF project writer: {e}"),
+            Self::SliceMapping(e) => write!(f, "3MF project writer: {e}"),
             Self::Payload(e) => write!(
                 f,
                 "3MF project writer: failed to serialize the project part: {e}",
@@ -96,6 +101,7 @@ impl std::error::Error for WriteThreeMfProjectError {
         match self {
             Self::Scene(e) => Some(e),
             Self::Model(e) => Some(e),
+            Self::SliceMapping(e) => Some(e),
             Self::Payload(e) => Some(e),
             Self::Package(e) => Some(e),
             Self::Io(e) => Some(e),
@@ -112,6 +118,12 @@ impl From<WriteThreeMfError> for WriteThreeMfProjectError {
 impl From<ModelWriteError> for WriteThreeMfProjectError {
     fn from(e: ModelWriteError) -> Self {
         Self::Model(e)
+    }
+}
+
+impl From<SliceMappingError> for WriteThreeMfProjectError {
+    fn from(e: SliceMappingError) -> Self {
+        Self::SliceMapping(e)
     }
 }
 

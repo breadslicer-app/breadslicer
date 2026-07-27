@@ -29,6 +29,7 @@ pub mod filetypes;
 pub mod messages;
 pub mod payload;
 pub mod read;
+pub mod slices;
 pub mod threemf;
 pub mod write;
 
@@ -48,4 +49,5 @@ pub use filetypes::{
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 pub use read::{LoadedProject, read_project, read_project_with_progress};
+pub use slices::PlateSlices;
 pub use write::write_project;

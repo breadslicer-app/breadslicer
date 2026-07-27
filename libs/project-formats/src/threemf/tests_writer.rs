@@ -7,6 +7,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use sc_3mf::error::PackageWriteError;
+use sc_3mf::model::{ResourceId, parse_model};
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName};
 use sc_mesh_core::Scene;
@@ -14,13 +15,18 @@ use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
+use sc_sl1cer::geom2d::Point2D;
 
 use crate::error::WriteThreeMfProjectError;
 use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
+use crate::slices::PlateSlices;
 use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload};
+use crate::threemf::slice_mapping::slice_stack_from_contours;
 use crate::threemf::writer::write_threemf_project;
 use crate::threemf::{
     PROFILE_PART_CONTENT_TYPE, PROJECT_PART_CONTENT_TYPE, PROJECT_PART_NAME, PROJECT_REL_TYPE,
+    SLICE_PART_NAME, SLICE_REL_TYPE,
 };
 
 fn printer_id(raw: &str) -> PrinterId {
@@ -70,7 +76,7 @@ fn full_payload() -> ProjectPayload {
 
 fn write_and_reopen(payload: &ProjectPayload, embed: EmbedProfiles) -> Package {
     let mut bytes = Vec::new();
-    write_threemf_project(&cube_scene(), payload, embed, &mut bytes)
+    write_threemf_project(&cube_scene(), payload, embed, None, &mut bytes)
         .expect("the project writes cleanly");
     Package::read_from(Cursor::new(bytes)).expect("the written package reopens")
 }
@@ -258,11 +264,112 @@ mod failure_tests {
             bytes: b"duplicate = true".to_vec(),
         });
         let mut bytes = Vec::new();
-        let err = write_threemf_project(&cube_scene(), &payload, EmbedProfiles::Yes, &mut bytes)
-            .expect_err("duplicate part names are refused");
+        let err = write_threemf_project(
+            &cube_scene(),
+            &payload,
+            EmbedProfiles::Yes,
+            None,
+            &mut bytes,
+        )
+        .expect_err("duplicate part names are refused");
         assert!(matches!(
             err,
             WriteThreeMfProjectError::Package(PackageWriteError::DuplicatePartName { .. }),
         ));
+    }
+}
+
+mod slice_part_tests {
+    use super::*;
+
+    /// The id the writer assigns to the single stack in the slice part.
+    fn slice_stack_id() -> ResourceId {
+        ResourceId::MIN
+    }
+
+    /// A CCW triangle as one solid layer plus an empty layer, paired
+    /// with the top Z of each layer.
+    fn plate_slices() -> PlateSlices {
+        let outer = ClosedRing::new(
+            [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+                .into_iter()
+                .map(|(x, y)| Point2D::new(x, y))
+                .collect(),
+        );
+        let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
+        let solid = ContourLayer::new(0.025, vec![triangle]);
+        let void = ContourLayer::new(0.075, vec![]);
+        let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
+        PlateSlices {
+            contours,
+            slab_tops: vec![0.05, 0.10],
+        }
+    }
+
+    fn write_with_slices(plate: Option<&PlateSlices>) -> Package {
+        let mut bytes = Vec::new();
+        write_threemf_project(
+            &cube_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            plate,
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+        Package::read_from(Cursor::new(bytes)).expect("the written package reopens")
+    }
+
+    #[test]
+    fn the_slice_part_carries_the_mapped_slice_stack() {
+        let plate = plate_slices();
+        let package = write_with_slices(Some(&plate));
+
+        assert_eq!(
+            package.part_content_type(&part(SLICE_PART_NAME)),
+            Some(MODEL_PART_CONTENT_TYPE),
+        );
+        let bytes = package
+            .part_data(&part(SLICE_PART_NAME))
+            .expect("the slice part exists");
+        let parsed = parse_model(bytes).expect("the slice part parses back");
+        let expected =
+            slice_stack_from_contours(&plate.contours, &plate.slab_tops, slice_stack_id())
+                .expect("the fixture maps cleanly");
+        assert_eq!(parsed.slice_stacks, vec![expected]);
+    }
+
+    #[test]
+    fn the_root_links_and_preserves_the_slice_part() {
+        let package = write_with_slices(Some(&plate_slices()));
+        let rels = package.root_relationships();
+        assert!(
+            rels.iter()
+                .any(|r| r.rel_type == SLICE_REL_TYPE && r.target == SLICE_PART_NAME),
+        );
+        assert!(
+            rels.iter()
+                .any(|r| r.rel_type == MUST_PRESERVE_REL_TYPE && r.target == SLICE_PART_NAME),
+        );
+    }
+
+    #[test]
+    fn omitting_slices_leaves_the_model_part_untouched() {
+        let with = write_with_slices(Some(&plate_slices()));
+        let without = write_with_slices(None);
+
+        // The scene model part is byte-identical whether or not slices
+        // are written alongside it.
+        assert_eq!(
+            with.part_data(&part("/3D/3dmodel.model")),
+            without.part_data(&part("/3D/3dmodel.model")),
+        );
+        // Without slices there is no slice part and no slice link.
+        assert!(without.part_data(&part(SLICE_PART_NAME)).is_none());
+        assert!(
+            !without
+                .root_relationships()
+                .iter()
+                .any(|r| r.rel_type == SLICE_REL_TYPE),
+        );
     }
 }

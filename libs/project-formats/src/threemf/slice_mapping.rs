@@ -15,8 +15,6 @@
 //! grouping is a modelling concern with no meaning in the flat slice
 //! output.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use sc_3mf::model::{
@@ -28,7 +26,7 @@ use sc_sl1cer::geom2d::Point2D;
 
 /// Why building a [`SliceStack`] from a contour stack failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SliceMappingError {
+pub enum SliceMappingError {
     /// One slab top must be supplied per layer; the counts differ.
     LayerCountMismatch { layers: usize, tops: usize },
 }
