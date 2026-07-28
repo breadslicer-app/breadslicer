@@ -59,6 +59,7 @@ use crate::load_progress::{
 };
 use crate::mesh_health::MeshHealth;
 use crate::mesh_render::GpuScene;
+use crate::reloaded_slices::ReloadedSlices;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -94,6 +95,11 @@ pub(crate) struct PreparedScene {
     /// Classification of the payload's profile references against
     /// the locally installed profiles, computed on the worker.
     pub profile_warnings: Vec<ProfileRefWarning>,
+    /// The project's persisted slices, revalidated against the reopened
+    /// scene on the worker. `None` unless a reopened project carried
+    /// in-sync slices; installed as the held slice result so the viewer
+    /// opens on them without a re-slice.
+    pub reloaded_slices: Option<ReloadedSlices>,
     /// The filesystem path the scene was loaded from. Threaded into
     /// the document at install time so callers can derive default
     /// export filenames, surface the source in window titles, etc.

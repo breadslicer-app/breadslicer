@@ -43,6 +43,7 @@ use crate::load_progress::{LoadPhase, LoadProgressSink, ProgressReader};
 use crate::mesh_health::scene_mesh_health;
 use crate::mesh_render::GpuScene;
 use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
+use crate::reloaded_slices::{ReloadedSlices, revalidate_persisted_slices};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
 // Reject mesh files larger than the loader's default cap before
@@ -181,6 +182,10 @@ pub(crate) struct ParsedSource {
     pub(crate) project_payload: Option<ProjectPayload>,
     pub(crate) project_warnings: Vec<ReadProjectWarning>,
     pub(crate) profile_warnings: Vec<ProfileRefWarning>,
+    /// The file's persisted slices, revalidated against the reopened
+    /// scene on the worker; `None` unless a project carried in-sync
+    /// slices. Turned into the held slice result at install time.
+    pub(crate) reloaded_slices: Option<ReloadedSlices>,
 }
 
 /// Parses the file at `path`, reporting parse-phase progress through
@@ -200,8 +205,8 @@ pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Resu
         scene,
         warnings: project_warnings,
         payload,
-        slices: _,
-        slice_fingerprint: _,
+        slices,
+        slice_fingerprint,
     } = read_project_with_progress(&mut reader, file_type, |p| {
         sink.set(LoadPhase::Parse, p.decompressed_bytes, p.total_bytes)
     })?;
@@ -226,12 +231,20 @@ pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Resu
         })
         .unwrap_or_default();
 
+    // Revalidate any persisted slices against the reopened scene on the
+    // worker: resolving the profiles and recomputing the geometry
+    // fingerprint both stay off the event loop. Stale or unresolvable
+    // slices drop here, and the scene opens slice-less.
+    let reloaded_slices =
+        revalidate_persisted_slices(payload.as_ref(), &scene, slices, slice_fingerprint);
+
     Ok(ParsedSource {
         graph: scene,
         warnings,
         project_payload: payload,
         project_warnings,
         profile_warnings,
+        reloaded_slices,
     })
 }
 
@@ -254,6 +267,7 @@ fn parse_mesh_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Result<Par
         project_payload: None,
         project_warnings: Vec::new(),
         profile_warnings: Vec::new(),
+        reloaded_slices: None,
     })
 }
 
@@ -316,6 +330,7 @@ pub(crate) fn spawn_load(
                 project_payload,
                 project_warnings,
                 profile_warnings,
+                reloaded_slices,
             } = source;
             // Drop the parsed graph onto the build plate before the GPU
             // upload and cache priming run on it, so both observe the
@@ -353,6 +368,7 @@ pub(crate) fn spawn_load(
                 project_payload,
                 project_warnings,
                 profile_warnings,
+                reloaded_slices,
                 source_path: path.clone(),
                 mesh_health,
             })

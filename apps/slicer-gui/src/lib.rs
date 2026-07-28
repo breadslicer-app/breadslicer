@@ -40,6 +40,7 @@ mod profile_forking;
 mod profile_transfer;
 mod profile_view;
 mod project_profiles;
+mod reloaded_slices;
 mod scene_document;
 mod scene_export;
 mod scene_loader;
