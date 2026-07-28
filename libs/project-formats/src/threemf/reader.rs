@@ -57,40 +57,46 @@ where
     for dialect in detect_foreign_dialects(&package) {
         warnings.push(ReadProjectWarning::ForeignProjectData { dialect });
     }
-    let payload = extract_payload(&package, &mut warnings)?;
+    let (payload, slice_fingerprint) = extract_payload(&package, &mut warnings)?;
     Ok(LoadedProject {
         scene,
         warnings,
         payload,
+        slice_fingerprint,
     })
 }
 
-/// Extracts the project payload from the package, if present and of
-/// a version this build understands.
+/// Extracts the project payload and the opaque persisted-slices token
+/// from the package, if present and of a version this build
+/// understands.
 fn extract_payload(
     package: &Package,
     warnings: &mut Vec<ReadProjectWarning>,
-) -> Result<Option<ProjectPayload>, ReadThreeMfProjectError> {
+) -> Result<(Option<ProjectPayload>, Option<String>), ReadThreeMfProjectError> {
     let part = PartName::new(PROJECT_PART_NAME).expect("constant part name is valid");
     let Some(bytes) = package.part_data(&part) else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let text = str::from_utf8(bytes).map_err(ReadThreeMfProjectError::PayloadNotUtf8)?;
     match parse_payload(text).map_err(ReadThreeMfProjectError::PayloadParse)? {
         PayloadParseOutcome::UnsupportedVersion { version } => {
             warnings.push(ReadProjectWarning::ProjectVersionUnsupported { version });
-            Ok(None)
+            Ok((None, None))
         }
         PayloadParseOutcome::V1 {
             printer,
             resin,
             first_layer_height,
-        } => Ok(Some(ProjectPayload {
-            printer,
-            resin,
-            first_layer_height,
-            embedded: collect_embedded(package, warnings),
-        })),
+            slice_fingerprint,
+        } => Ok((
+            Some(ProjectPayload {
+                printer,
+                resin,
+                first_layer_height,
+                embedded: collect_embedded(package, warnings),
+            }),
+            slice_fingerprint,
+        )),
     }
 }
 

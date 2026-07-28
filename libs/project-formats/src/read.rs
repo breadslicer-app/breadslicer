@@ -17,14 +17,19 @@ use crate::payload::ProjectPayload;
 use crate::threemf::read_threemf_project_with_progress;
 
 /// Everything a project read produces: the scene, the non-fatal
-/// warnings, and the project payload when the file carries one. A
+/// warnings, the project payload when the file carries one, and the
+/// opaque validity token for its persisted slices when present. A
 /// file of a project-capable format without project data (a plain
-/// 3MF model, for instance) loads with `payload` set to `None`.
+/// 3MF model, for instance) loads with `payload` and
+/// `slice_fingerprint` set to `None`.
 #[derive(Debug)]
 pub struct LoadedProject {
     pub scene: Scene,
     pub warnings: Vec<ReadProjectWarning>,
     pub payload: Option<ProjectPayload>,
+    /// Opaque validity token for the file's persisted slices, returned
+    /// verbatim. `None` when the file carried no such token.
+    pub slice_fingerprint: Option<String>,
 }
 
 /// Reads a project file of the given format.

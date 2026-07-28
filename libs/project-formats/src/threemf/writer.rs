@@ -30,14 +30,17 @@ use crate::threemf::{
 /// part a plain 3MF export would carry, plus the project part and,
 /// with [`EmbedProfiles::Yes`], one part per embedded profile
 /// document. When `slices` is `Some`, the merged slice result is
-/// written to its own model part, standalone from the scene. The zip
-/// layer needs a seekable sink, so the package is serialized into
-/// memory first and then copied to `writer`.
+/// written to its own model part, standalone from the scene, and
+/// `slice_fingerprint`, when present, is recorded in the project part
+/// as that slice data's opaque validity token. The zip layer needs a
+/// seekable sink, so the package is serialized into memory first and
+/// then copied to `writer`.
 pub fn write_threemf_project<W>(
     scene: &Scene,
     payload: &ProjectPayload,
     embed: EmbedProfiles,
     slices: Option<&PlateSlices>,
+    slice_fingerprint: Option<&str>,
     writer: &mut W,
 ) -> Result<(), WriteThreeMfProjectError>
 where
@@ -52,7 +55,7 @@ where
     package.add_part(model_part, MODEL_PART_CONTENT_TYPE, model_xml)?;
 
     let project_part = known_part_name(PROJECT_PART_NAME);
-    let payload_toml = serialize_payload(payload)?;
+    let payload_toml = serialize_payload(payload, slice_fingerprint)?;
     package.add_part(
         project_part,
         PROJECT_PART_CONTENT_TYPE,

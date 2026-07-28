@@ -76,7 +76,7 @@ fn full_payload() -> ProjectPayload {
 
 fn write_and_reopen(payload: &ProjectPayload, embed: EmbedProfiles) -> Package {
     let mut bytes = Vec::new();
-    write_threemf_project(&cube_scene(), payload, embed, None, &mut bytes)
+    write_threemf_project(&cube_scene(), payload, embed, None, None, &mut bytes)
         .expect("the project writes cleanly");
     Package::read_from(Cursor::new(bytes)).expect("the written package reopens")
 }
@@ -144,6 +144,7 @@ mod package_shape_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
@@ -161,8 +162,37 @@ mod package_shape_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
+    }
+
+    #[test]
+    fn a_supplied_slice_fingerprint_is_written_into_the_project_part() {
+        let mut bytes = Vec::new();
+        write_threemf_project(
+            &cube_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            None,
+            Some("cafef00d"),
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+        let package = Package::read_from(Cursor::new(bytes)).expect("the written package reopens");
+        let text = str::from_utf8(
+            package
+                .part_data(&part(PROJECT_PART_NAME))
+                .expect("the project part exists"),
+        )
+        .expect("the project part is UTF-8");
+        assert!(matches!(
+            parse_payload(text).expect("the project part parses"),
+            PayloadParseOutcome::V1 {
+                slice_fingerprint: Some(token),
+                ..
+            } if token == "cafef00d",
+        ));
     }
 }
 
@@ -248,6 +278,7 @@ mod embed_flag_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
@@ -268,6 +299,7 @@ mod failure_tests {
             &cube_scene(),
             &payload,
             EmbedProfiles::Yes,
+            None,
             None,
             &mut bytes,
         )
@@ -313,6 +345,7 @@ mod slice_part_tests {
             &full_payload(),
             EmbedProfiles::Yes,
             plate,
+            None,
             &mut bytes,
         )
         .expect("the project writes cleanly");

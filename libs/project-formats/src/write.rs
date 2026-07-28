@@ -29,7 +29,9 @@ where
     W: Write,
 {
     match file_type {
-        ProjectFileType::ThreeMf => write_threemf_project(scene, payload, embed, None, writer)
-            .map_err(WriteProjectError::ThreeMf),
+        ProjectFileType::ThreeMf => {
+            write_threemf_project(scene, payload, embed, None, None, writer)
+                .map_err(WriteProjectError::ThreeMf)
+        }
     }
 }

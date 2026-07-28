@@ -31,6 +31,10 @@ struct PayloadDoc {
     /// older readers ignore it without a version bump.
     #[serde(default, skip_serializing_if = "PrintSection::is_empty")]
     print: PrintSection,
+    /// Validity metadata for the persisted slices; additive and
+    /// omitted while empty.
+    #[serde(default, skip_serializing_if = "SlicesSection::is_empty")]
+    slices: SlicesSection,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -54,6 +58,20 @@ impl PrintSection {
     }
 }
 
+/// Validity metadata for the project's persisted slices. The
+/// fingerprint is an opaque token, kept and written back verbatim.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SlicesSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fingerprint: Option<String>,
+}
+
+impl SlicesSection {
+    fn is_empty(&self) -> bool {
+        self.fingerprint.is_none()
+    }
+}
+
 /// The version field alone, parsed first so an unknown version is
 /// reported instead of failing on an unknown document shape.
 #[derive(Debug, Deserialize)]
@@ -72,6 +90,7 @@ pub(crate) enum PayloadParseOutcome {
         printer: Option<PrinterId>,
         resin: Option<MaterialId>,
         first_layer_height: Option<PositiveFiniteMm>,
+        slice_fingerprint: Option<String>,
     },
     /// The document declares a version this build does not
     /// understand; nothing else was parsed.
@@ -79,9 +98,13 @@ pub(crate) enum PayloadParseOutcome {
 }
 
 /// Serializes the payload's references as the project part's TOML
-/// text. Embedded documents are not part of this document; they are
-/// separate parts.
-pub(crate) fn serialize_payload(payload: &ProjectPayload) -> Result<String, toml_edit::ser::Error> {
+/// text, together with the opaque `slice_fingerprint` token when one
+/// is supplied. Embedded documents are not part of this document; they
+/// are separate parts.
+pub(crate) fn serialize_payload(
+    payload: &ProjectPayload,
+    slice_fingerprint: Option<&str>,
+) -> Result<String, toml_edit::ser::Error> {
     toml_edit::ser::to_string(&PayloadDoc {
         version: PROJECT_PART_VERSION,
         profiles: ProfilesSection {
@@ -90,6 +113,9 @@ pub(crate) fn serialize_payload(payload: &ProjectPayload) -> Result<String, toml
         },
         print: PrintSection {
             first_layer_height_mm: payload.first_layer_height,
+        },
+        slices: SlicesSection {
+            fingerprint: slice_fingerprint.map(str::to_string),
         },
     })
 }
@@ -107,5 +133,6 @@ pub(crate) fn parse_payload(text: &str) -> Result<PayloadParseOutcome, toml_edit
         printer: doc.profiles.printer,
         resin: doc.profiles.resin,
         first_layer_height: doc.print.first_layer_height_mm,
+        slice_fingerprint: doc.slices.fingerprint,
     })
 }

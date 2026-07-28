@@ -173,6 +173,31 @@ mod payload_tests {
             ReadThreeMfProjectError::PayloadNotUtf8(_),
         ));
     }
+
+    #[test]
+    fn the_slice_fingerprint_is_returned_when_the_document_carries_it() {
+        let mut package = model_only_package();
+        add_project_part(
+            &mut package,
+            b"version = 1\n[slices]\nfingerprint = \"cafef00d\"\n",
+        );
+        let loaded = read(&package).expect("the project loads");
+        assert_eq!(loaded.slice_fingerprint, Some("cafef00d".to_string()));
+    }
+
+    #[test]
+    fn a_document_without_a_fingerprint_yields_none() {
+        let mut package = model_only_package();
+        add_project_part(&mut package, PAYLOAD_V1_FULL.as_bytes());
+        let loaded = read(&package).expect("the project loads");
+        assert_eq!(loaded.slice_fingerprint, None);
+    }
+
+    #[test]
+    fn a_plain_model_has_no_slice_fingerprint() {
+        let loaded = read(&model_only_package()).expect("the plain model loads");
+        assert_eq!(loaded.slice_fingerprint, None);
+    }
 }
 
 mod profile_part_classification_tests {

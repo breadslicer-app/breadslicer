@@ -35,13 +35,14 @@ mod serialize_tests {
             first_layer_height: None,
             embedded: Vec::new(),
         };
-        let text = serialize_payload(&payload).expect("references serialize");
+        let text = serialize_payload(&payload, None).expect("references serialize");
         assert_eq!(
             parse_payload(&text).expect("serialized payload parses"),
             PayloadParseOutcome::V1 {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
@@ -52,7 +53,7 @@ mod serialize_tests {
             first_layer_height: Some(mm(0.05)),
             ..ProjectPayload::default()
         };
-        let text = serialize_payload(&payload).expect("first-layer height serializes");
+        let text = serialize_payload(&payload, None).expect("first-layer height serializes");
         assert!(text.contains("first_layer_height_mm"), "got:\n{text}");
         assert_eq!(
             parse_payload(&text).expect("serialized payload parses"),
@@ -60,19 +61,22 @@ mod serialize_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: Some(mm(0.05)),
+                slice_fingerprint: None,
             },
         );
     }
 
     #[test]
     fn absent_first_layer_height_is_omitted_from_the_document() {
-        let text = serialize_payload(&ProjectPayload::default()).expect("empty payload serializes");
+        let text =
+            serialize_payload(&ProjectPayload::default(), None).expect("empty payload serializes");
         assert!(!text.contains("first_layer_height"), "got:\n{text}");
     }
 
     #[test]
     fn absent_references_are_omitted_from_the_document() {
-        let text = serialize_payload(&ProjectPayload::default()).expect("empty payload serializes");
+        let text =
+            serialize_payload(&ProjectPayload::default(), None).expect("empty payload serializes");
         assert!(text.contains("version = 1"));
         assert!(!text.contains("printer"));
         assert!(!text.contains("resin"));
@@ -82,6 +86,7 @@ mod serialize_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
@@ -97,8 +102,32 @@ mod serialize_tests {
                 bytes: b"marker-not-expected-in-part = true".to_vec(),
             }],
         };
-        let text = serialize_payload(&payload).expect("references serialize");
+        let text = serialize_payload(&payload, None).expect("references serialize");
         assert!(!text.contains("marker-not-expected-in-part"));
+    }
+
+    #[test]
+    fn a_slice_fingerprint_round_trips_through_serialization() {
+        let text = serialize_payload(&ProjectPayload::default(), Some("cafef00d"))
+            .expect("the token serializes");
+        assert!(text.contains("cafef00d"), "got:\n{text}");
+        assert_eq!(
+            parse_payload(&text).expect("serialized payload parses"),
+            PayloadParseOutcome::V1 {
+                printer: None,
+                resin: None,
+                first_layer_height: None,
+                slice_fingerprint: Some("cafef00d".to_string()),
+            },
+        );
+    }
+
+    #[test]
+    fn an_absent_slice_fingerprint_is_omitted_from_the_document() {
+        let text =
+            serialize_payload(&ProjectPayload::default(), None).expect("empty payload serializes");
+        assert!(!text.contains("slices"), "got:\n{text}");
+        assert!(!text.contains("fingerprint"), "got:\n{text}");
     }
 }
 
@@ -113,6 +142,7 @@ mod parse_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
@@ -125,6 +155,7 @@ mod parse_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
@@ -145,6 +176,7 @@ mod parse_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: None,
+                slice_fingerprint: None,
             },
         );
     }
