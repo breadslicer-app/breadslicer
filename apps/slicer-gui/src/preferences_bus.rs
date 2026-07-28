@@ -89,6 +89,25 @@ pub(crate) struct PreferencesSnapshot {
     pub slice_panel_offset_y: Option<f32>,
     pub slice_panel_width: Option<f32>,
     pub slice_panel_height: Option<f32>,
+    /// Whether the floating slice-view panel is shown. Toggled from the
+    /// View menu on top of the section/slice gate. Persisted so a window
+    /// restores the last state on the next launch; per-window live state,
+    /// like the object-list panel.
+    pub slice_view_visible: bool,
+    /// Slice-view panel position and size, same anchor/offset model as
+    /// the object-list panel. `anchor_right` / `anchor_bottom` pick the
+    /// corner the panel hugs; `offset_x` / `offset_y` are the distances
+    /// to those edges in logical pixels. `None` offsets and size mean
+    /// "use the default" (bottom-left corner, 12px offsets, 240px width,
+    /// auto-sized height).
+    pub slice_view_anchor_right: bool,
+    pub slice_view_anchor_bottom: bool,
+    pub slice_view_offset_x: Option<f32>,
+    pub slice_view_offset_y: Option<f32>,
+    pub slice_view_width: Option<f32>,
+    pub slice_view_height: Option<f32>,
+    /// Whether the slice-view panel is collapsed to its title bar.
+    pub slice_view_minimized: bool,
     /// Directory the file-open dialog should start in: the folder the
     /// last opened file lived in. `None` until the first open; the
     /// dialog then falls back to the home directory. App-wide state.
@@ -107,6 +126,7 @@ pub(crate) enum PreferencesChange {
     AaLevel,
     ObjectListPanel,
     SliceControlPanel,
+    SliceViewPanel,
     LastOpenDir,
 }
 
@@ -275,6 +295,14 @@ mod preferences_bus_tests {
             slice_panel_offset_y: None,
             slice_panel_width: None,
             slice_panel_height: None,
+            slice_view_visible: true,
+            slice_view_anchor_right: false,
+            slice_view_anchor_bottom: true,
+            slice_view_offset_x: None,
+            slice_view_offset_y: None,
+            slice_view_width: None,
+            slice_view_height: None,
+            slice_view_minimized: false,
             last_open_dir: None,
         }
     }
@@ -399,6 +427,61 @@ mod preferences_bus_tests {
             .expect("listener must have fired and captured the payload");
         assert!(got_anchor_bottom);
         assert_eq!(got_offset_x, Some(300.0));
+        assert!(got_minimized);
+    }
+
+    #[test]
+    fn slice_view_panel_change_propagates() {
+        let bus = PreferencesBus::new(initial());
+        let captured: Rc<RefCell<Option<(bool, PreferencesChange)>>> = Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, change| {
+                *captured.borrow_mut() = Some((snap.slice_view_visible, *change));
+            })
+        };
+
+        bus.update(|snap| {
+            snap.slice_view_visible = false;
+            PreferencesChange::SliceViewPanel
+        });
+
+        let (got_visible, got_change) = captured
+            .borrow()
+            .expect("listener must have fired and captured the payload");
+        assert!(!got_visible);
+        assert_eq!(got_change, PreferencesChange::SliceViewPanel);
+        assert!(!bus.snapshot().slice_view_visible);
+    }
+
+    #[test]
+    fn slice_view_geometry_change_propagates() {
+        let bus = PreferencesBus::new(initial());
+        type Captured = Option<(bool, Option<f32>, bool)>;
+        let captured: Rc<RefCell<Captured>> = Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, _| {
+                *captured.borrow_mut() = Some((
+                    snap.slice_view_anchor_right,
+                    snap.slice_view_offset_y,
+                    snap.slice_view_minimized,
+                ));
+            })
+        };
+
+        bus.update(|snap| {
+            snap.slice_view_anchor_right = true;
+            snap.slice_view_offset_y = Some(180.0);
+            snap.slice_view_minimized = true;
+            PreferencesChange::SliceViewPanel
+        });
+
+        let (got_anchor_right, got_offset_y, got_minimized) = captured
+            .borrow()
+            .expect("listener must have fired and captured the payload");
+        assert!(got_anchor_right);
+        assert_eq!(got_offset_y, Some(180.0));
         assert!(got_minimized);
     }
 

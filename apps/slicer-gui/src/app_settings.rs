@@ -195,6 +195,62 @@ impl SliceControlPanelSettings {
     }
 }
 
+/// On-disk state of the floating slice-view panel. Serde fills any
+/// missing field from `Default`, and the whole section is omitted while
+/// it holds its default (see the `slice_view` field on `AppSettings`).
+/// Unlike the Slice control panel this panel is toggle-hidden as well as
+/// section-gated, so it carries a visibility and minimized state.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub(crate) struct SliceViewSettings {
+    /// Whether the panel is shown.
+    visible: bool,
+    /// Which window edges the panel hugs; the default is the bottom-left
+    /// corner (`anchor_right` false, `anchor_bottom` true). Both are
+    /// always serialized when the section is present so a non-default
+    /// bottom anchor round-trips regardless of value.
+    anchor_right: bool,
+    anchor_bottom: bool,
+    /// Distance from the anchored edges to the matching panel edges, in
+    /// logical pixels. Absent until the user drags the panel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_x: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_y: Option<f32>,
+    /// Panel size in logical pixels. Absent until the user resizes the
+    /// panel; `height` absent means auto-sizing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<f32>,
+    /// Whether the panel is collapsed to its title bar.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    minimized: bool,
+}
+
+impl Default for SliceViewSettings {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            anchor_right: false,
+            anchor_bottom: true,
+            offset_x: None,
+            offset_y: None,
+            width: None,
+            height: None,
+            minimized: false,
+        }
+    }
+}
+
+impl SliceViewSettings {
+    /// True when every field holds its default, so the whole section can
+    /// be omitted from the serialized TOML.
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Current schema version of the on-disk settings file. Bump this when
 /// the structure of `AppSettings` (or one of its nested settings types)
 /// changes in a way that an older or newer build cannot read. On load,
@@ -260,6 +316,10 @@ pub(crate) struct AppSettings {
     /// while every field holds its default.
     #[serde(default, skip_serializing_if = "SliceControlPanelSettings::is_default")]
     slice_panel: SliceControlPanelSettings,
+    /// Floating slice-view panel state. Omitted in TOML while every
+    /// field holds its default.
+    #[serde(default, skip_serializing_if = "SliceViewSettings::is_default")]
+    slice_view: SliceViewSettings,
     /// Directory the file-open dialog starts in: the folder the last
     /// opened file lived in. Omitted in TOML until the user opens a
     /// file; the dialog then falls back to the home directory.
@@ -279,6 +339,7 @@ impl Default for AppSettings {
             aa_level: default_aa_level(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
+            slice_view: SliceViewSettings::default(),
             last_open_dir: None,
         }
     }
@@ -528,6 +589,70 @@ impl AppSettings {
 
     pub fn set_slice_panel_height(&mut self, height: Option<f32>) {
         self.slice_panel.height = height;
+    }
+
+    pub fn slice_view_visible(&self) -> bool {
+        self.slice_view.visible
+    }
+
+    pub fn set_slice_view_visible(&mut self, visible: bool) {
+        self.slice_view.visible = visible;
+    }
+
+    pub fn slice_view_anchor_right(&self) -> bool {
+        self.slice_view.anchor_right
+    }
+
+    pub fn set_slice_view_anchor_right(&mut self, anchor_right: bool) {
+        self.slice_view.anchor_right = anchor_right;
+    }
+
+    pub fn slice_view_anchor_bottom(&self) -> bool {
+        self.slice_view.anchor_bottom
+    }
+
+    pub fn set_slice_view_anchor_bottom(&mut self, anchor_bottom: bool) {
+        self.slice_view.anchor_bottom = anchor_bottom;
+    }
+
+    pub fn slice_view_offset_x(&self) -> Option<f32> {
+        self.slice_view.offset_x
+    }
+
+    pub fn set_slice_view_offset_x(&mut self, offset_x: Option<f32>) {
+        self.slice_view.offset_x = offset_x;
+    }
+
+    pub fn slice_view_offset_y(&self) -> Option<f32> {
+        self.slice_view.offset_y
+    }
+
+    pub fn set_slice_view_offset_y(&mut self, offset_y: Option<f32>) {
+        self.slice_view.offset_y = offset_y;
+    }
+
+    pub fn slice_view_width(&self) -> Option<f32> {
+        self.slice_view.width
+    }
+
+    pub fn set_slice_view_width(&mut self, width: Option<f32>) {
+        self.slice_view.width = width;
+    }
+
+    pub fn slice_view_height(&self) -> Option<f32> {
+        self.slice_view.height
+    }
+
+    pub fn set_slice_view_height(&mut self, height: Option<f32>) {
+        self.slice_view.height = height;
+    }
+
+    pub fn slice_view_minimized(&self) -> bool {
+        self.slice_view.minimized
+    }
+
+    pub fn set_slice_view_minimized(&mut self, minimized: bool) {
+        self.slice_view.minimized = minimized;
     }
 
     pub fn last_open_dir(&self) -> Option<PathBuf> {
@@ -1052,6 +1177,99 @@ mod app_settings_tests {
         AppSettings::default().save_to_path(&path).unwrap();
         let written = fs::read_to_string(&path).unwrap();
         assert!(!written.contains("[slice_panel]"), "got:\n{written}");
+    }
+
+    #[test]
+    fn default_slice_view_is_visible() {
+        assert!(AppSettings::default().slice_view_visible());
+    }
+
+    #[test]
+    fn hidden_slice_view_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_slice_view_visible(false);
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(!loaded.slice_view_visible());
+
+        // Written under a dedicated section so an external tool or a
+        // hand-edit can find it.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[slice_view]"), "got:\n{written}");
+        assert!(written.contains("visible = false"), "got:\n{written}");
+    }
+
+    #[test]
+    fn saved_toml_omits_default_slice_view() {
+        // Visible (the default) with default geometry writes no section
+        // so a fresh config stays minimal.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("slice_view"),
+            "default settings should not serialise the slice-view section, got:\n{written}"
+        );
+    }
+
+    #[test]
+    fn missing_slice_view_section_loads_visible() {
+        // A settings file predating the slice-view section loads with
+        // the panel visible (its default).
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        fs::write(&path, "[appearance]\ntheme = \"dark\"\n").unwrap();
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(loaded.slice_view_visible());
+    }
+
+    #[test]
+    fn default_slice_view_geometry_is_bottom_left() {
+        let s = AppSettings::default();
+        assert!(!s.slice_view_anchor_right());
+        assert!(s.slice_view_anchor_bottom());
+        assert_eq!(s.slice_view_offset_x(), None);
+        assert_eq!(s.slice_view_offset_y(), None);
+        assert_eq!(s.slice_view_width(), None);
+        assert_eq!(s.slice_view_height(), None);
+        assert!(!s.slice_view_minimized());
+    }
+
+    #[test]
+    fn slice_view_geometry_round_trips() {
+        // Move the panel to the top-right corner (both anchors flipped
+        // from their defaults) so the round trip exercises an
+        // `anchor_bottom = false` that differs from the default `true`.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let mut s = AppSettings::default();
+        s.set_slice_view_anchor_right(true);
+        s.set_slice_view_anchor_bottom(false);
+        s.set_slice_view_offset_x(Some(48.0));
+        s.set_slice_view_offset_y(Some(64.0));
+        s.set_slice_view_width(Some(300.0));
+        s.set_slice_view_height(Some(240.0));
+        s.set_slice_view_minimized(true);
+        s.save_to_path(&path).unwrap();
+
+        let loaded = AppSettings::load_from_path(&path);
+        assert!(loaded.slice_view_anchor_right());
+        assert!(!loaded.slice_view_anchor_bottom());
+        assert_eq!(loaded.slice_view_offset_x(), Some(48.0));
+        assert_eq!(loaded.slice_view_offset_y(), Some(64.0));
+        assert_eq!(loaded.slice_view_width(), Some(300.0));
+        assert_eq!(loaded.slice_view_height(), Some(240.0));
+        assert!(loaded.slice_view_minimized());
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[slice_view]"), "got:\n{written}");
+        assert!(written.contains("anchor_right = true"), "got:\n{written}");
+        assert!(written.contains("anchor_bottom = false"), "got:\n{written}");
+        assert!(written.contains("minimized = true"), "got:\n{written}");
     }
 
     #[test]

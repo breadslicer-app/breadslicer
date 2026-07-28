@@ -271,6 +271,14 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_slice_panel_offset_y(snap.slice_panel_offset_y);
     settings.set_slice_panel_width(snap.slice_panel_width);
     settings.set_slice_panel_height(snap.slice_panel_height);
+    settings.set_slice_view_visible(snap.slice_view_visible);
+    settings.set_slice_view_anchor_right(snap.slice_view_anchor_right);
+    settings.set_slice_view_anchor_bottom(snap.slice_view_anchor_bottom);
+    settings.set_slice_view_offset_x(snap.slice_view_offset_x);
+    settings.set_slice_view_offset_y(snap.slice_view_offset_y);
+    settings.set_slice_view_width(snap.slice_view_width);
+    settings.set_slice_view_height(snap.slice_view_height);
+    settings.set_slice_view_minimized(snap.slice_view_minimized);
     settings.set_last_open_dir(snap.last_open_dir.clone());
 }
 
@@ -335,6 +343,14 @@ impl AppState {
             slice_panel_offset_y: settings.slice_panel_offset_y(),
             slice_panel_width: settings.slice_panel_width(),
             slice_panel_height: settings.slice_panel_height(),
+            slice_view_visible: settings.slice_view_visible(),
+            slice_view_anchor_right: settings.slice_view_anchor_right(),
+            slice_view_anchor_bottom: settings.slice_view_anchor_bottom(),
+            slice_view_offset_x: settings.slice_view_offset_x(),
+            slice_view_offset_y: settings.slice_view_offset_y(),
+            slice_view_width: settings.slice_view_width(),
+            slice_view_height: settings.slice_view_height(),
+            slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
         };
         // Apply the persisted language *once* up front so the very
@@ -439,6 +455,27 @@ impl AppState {
         }
         if let Some(height) = snapshot.slice_panel_height {
             ui.set_slice_panel_height(height);
+        }
+        // Slice-view panel visibility and geometry: same per-window live
+        // semantics as the object-list panel. An offset or size field is
+        // pushed only when a previous session saved it; leaving a field
+        // untouched keeps the Slint default (bottom-left anchor, 12px
+        // offsets, 240px width, auto height).
+        ui.set_show_slice_view(snapshot.slice_view_visible);
+        ui.set_slice_view_minimized(snapshot.slice_view_minimized);
+        ui.set_slice_view_anchor_right(snapshot.slice_view_anchor_right);
+        ui.set_slice_view_anchor_bottom(snapshot.slice_view_anchor_bottom);
+        if let Some(offset_x) = snapshot.slice_view_offset_x {
+            ui.set_slice_view_offset_x(offset_x);
+        }
+        if let Some(offset_y) = snapshot.slice_view_offset_y {
+            ui.set_slice_view_offset_y(offset_y);
+        }
+        if let Some(width) = snapshot.slice_view_width {
+            ui.set_slice_view_width(width);
+        }
+        if let Some(height) = snapshot.slice_view_height {
+            ui.set_slice_view_height(height);
         }
         let document = SceneDocument::new();
         let pending_load = Rc::new(PendingLoad::new());
@@ -1045,6 +1082,55 @@ impl AppState {
                 },
             );
         }
+        {
+            // Persist the slice-view panel's visibility. Per-window live
+            // state, like the object-list panel: the bus write reaches
+            // the settings saver but no window re-applies it.
+            let bus = self.prefs.clone();
+            ui.on_slice_view_visibility_changed(move |visible| {
+                bus.update(move |snap| {
+                    snap.slice_view_visible = visible;
+                    PreferencesChange::SliceViewPanel
+                });
+            });
+        }
+        {
+            // Persist the slice-view panel geometry after a drag, resize,
+            // or minimize. Same per-window live handling as the object
+            // list.
+            let bus = self.prefs.clone();
+            ui.on_slice_view_geometry_changed(
+                move |anchor_right, anchor_bottom, offset_x, offset_y, width, height, minimized| {
+                    // A 0px height means the panel is auto-sizing; store
+                    // it as "unset" so it keeps auto-sizing after a
+                    // restart.
+                    let height = if height > 0.0 { Some(height) } else { None };
+                    let current = bus.snapshot();
+                    if current.slice_view_anchor_right == anchor_right
+                        && current.slice_view_anchor_bottom == anchor_bottom
+                        && current.slice_view_offset_x == Some(offset_x)
+                        && current.slice_view_offset_y == Some(offset_y)
+                        && current.slice_view_width == Some(width)
+                        && current.slice_view_height == height
+                        && current.slice_view_minimized == minimized
+                    {
+                        // A gesture that ended without changing anything
+                        // must not trigger a redundant settings write.
+                        return;
+                    }
+                    bus.update(move |snap| {
+                        snap.slice_view_anchor_right = anchor_right;
+                        snap.slice_view_anchor_bottom = anchor_bottom;
+                        snap.slice_view_offset_x = Some(offset_x);
+                        snap.slice_view_offset_y = Some(offset_y);
+                        snap.slice_view_width = Some(width);
+                        snap.slice_view_height = height;
+                        snap.slice_view_minimized = minimized;
+                        PreferencesChange::SliceViewPanel
+                    });
+                },
+            );
+        }
     }
 
     /// Shows the app-wide About window, creating it on first use and
@@ -1274,6 +1360,14 @@ mod settings_saver_tests {
             slice_panel_offset_y: None,
             slice_panel_width: None,
             slice_panel_height: None,
+            slice_view_visible: true,
+            slice_view_anchor_right: false,
+            slice_view_anchor_bottom: true,
+            slice_view_offset_x: None,
+            slice_view_offset_y: None,
+            slice_view_width: None,
+            slice_view_height: None,
+            slice_view_minimized: false,
             last_open_dir: None,
         }
     }
@@ -1396,6 +1490,14 @@ mod settings_saver_tests {
                 slice_panel_offset_y: None,
                 slice_panel_width: None,
                 slice_panel_height: None,
+                slice_view_visible: true,
+                slice_view_anchor_right: false,
+                slice_view_anchor_bottom: true,
+                slice_view_offset_x: None,
+                slice_view_offset_y: None,
+                slice_view_width: None,
+                slice_view_height: None,
+                slice_view_minimized: false,
                 last_open_dir: None,
             })
             .unwrap();
@@ -1446,6 +1548,45 @@ mod settings_saver_tests {
         assert_eq!(settings.object_list_width(), Some(260.0));
         assert_eq!(settings.object_list_height(), Some(180.0));
         assert!(settings.object_list_minimized());
+    }
+
+    #[test]
+    fn saver_mapping_carries_slice_view_visibility() {
+        // The snapshot-to-settings mapping must copy the slice-view
+        // panel visibility so a hide survives a save.
+        let mut settings = AppSettings::default();
+        assert!(settings.slice_view_visible());
+
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.slice_view_visible = false;
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert!(!settings.slice_view_visible());
+    }
+
+    #[test]
+    fn saver_mapping_carries_slice_view_geometry() {
+        // The mapping must copy the slice-view panel anchor, offsets,
+        // size, and minimized state so a drag or resize survives a save.
+        let mut settings = AppSettings::default();
+
+        let mut snap = snapshot_with(ThemePreference::System);
+        snap.slice_view_anchor_right = true;
+        snap.slice_view_anchor_bottom = false;
+        snap.slice_view_offset_x = Some(40.0);
+        snap.slice_view_offset_y = Some(52.0);
+        snap.slice_view_width = Some(260.0);
+        snap.slice_view_height = Some(200.0);
+        snap.slice_view_minimized = true;
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert!(settings.slice_view_anchor_right());
+        assert!(!settings.slice_view_anchor_bottom());
+        assert_eq!(settings.slice_view_offset_x(), Some(40.0));
+        assert_eq!(settings.slice_view_offset_y(), Some(52.0));
+        assert_eq!(settings.slice_view_width(), Some(260.0));
+        assert_eq!(settings.slice_view_height(), Some(200.0));
+        assert!(settings.slice_view_minimized());
     }
 
     #[test]

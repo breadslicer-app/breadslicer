@@ -9,6 +9,7 @@ import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
 import { ObjectListPanel } from "./object-list-panel.slint";
 import { SliceControlPanel } from "./slice-control-panel.slint";
+import { SliceViewPanel } from "./slice-view-panel.slint";
 import { ThemePreference } from "./preferences/appearance.slint";
 import { PreferencesWindow } from "./preferences/preferences-window.slint";
 import { ExtendDialog } from "extend-dialog.slint";
@@ -192,6 +193,21 @@ export component MainWindow inherits Window {
     // rounds when it reads them).
     in property <int> slice-layer-count: 0;
     in-out property <float> selected-layer-index: 0;
+    // Floating slice-view panel: shows the selected layer's 2D cross-
+    // section. Toggled from the View menu (`show-slice-view`) on top of
+    // the section/slice gate. Geometry is persisted per window with the
+    // same anchor/offset model as the object-list panel; the defaults
+    // hug the bottom-left corner, clear of the other panels. Height 0px
+    // auto-sizes. `slice-view-image` is the cross-section pushed by Rust.
+    in-out property <bool> show-slice-view: true;
+    in-out property <bool> slice-view-anchor-right: false;
+    in-out property <bool> slice-view-anchor-bottom: true;
+    in-out property <length> slice-view-offset-x: 12px;
+    in-out property <length> slice-view-offset-y: 12px;
+    in-out property <length> slice-view-width: 240px;
+    in-out property <length> slice-view-height: 0px;
+    in-out property <bool> slice-view-minimized: false;
+    in property <image> slice-view-image;
 
     changed theme => {
         Palette.color-scheme =
@@ -242,6 +258,13 @@ export component MainWindow inherits Window {
     // anchor-bottom, offset-x, offset-y, width, height) after a drag or
     // resize so Rust can persist it. Per-window live state.
     callback slice-panel-geometry-changed(bool, bool, length, length, length, length);
+    // Reports the slice-view panel's new visibility so Rust can persist
+    // it. Per-window live state, like the object-list panel.
+    callback slice-view-visibility-changed(bool);
+    // Reports the slice-view panel's geometry (anchor-right,
+    // anchor-bottom, offset-x, offset-y, width, height, minimized) after
+    // a drag, resize, or minimize so Rust can persist it.
+    callback slice-view-geometry-changed(bool, bool, length, length, length, length, bool);
     // The slice height slider moved: Rust repaints so the mesh clip
     // follows the selected layer.
     callback selected-layer-changed();
@@ -426,6 +449,17 @@ export component MainWindow inherits Window {
                 activated => {
                     root.show-object-list = !root.show-object-list;
                     root.object-list-visibility-changed(root.show-object-list);
+                }
+            }
+
+            MenuItem {
+                title: root.show-slice-view
+                    ? @tr("MenuBar" => "Hide Slice View")
+                    : @tr("MenuBar" => "Show Slice View");
+                enabled: root.has-scene;
+                activated => {
+                    root.show-slice-view = !root.show-slice-view;
+                    root.slice-view-visibility-changed(root.show-slice-view);
                 }
             }
 
@@ -681,6 +715,48 @@ export component MainWindow inherits Window {
         }
     }
 
+    // Floating slice-view panel: the selected layer's 2D cross-section.
+    // Present only in the Slice section, with the View toggle on and a
+    // held slice; draggable, resizable, minimizable, and closable.
+    if (root.has-scene && root.show-slice-view
+        && root.workspace-section == WorkspaceSection.Slice
+        && root.slice-layer-count > 0): SliceViewPanel {
+        available-width: root.width;
+        available-height: root.height;
+        anchor-right <=> root.slice-view-anchor-right;
+        anchor-bottom <=> root.slice-view-anchor-bottom;
+        offset-x <=> root.slice-view-offset-x;
+        offset-y <=> root.slice-view-offset-y;
+        panel-width <=> root.slice-view-width;
+        panel-height <=> root.slice-view-height;
+        minimized <=> root.slice-view-minimized;
+        content: root.slice-view-image;
+        geometry-committed => {
+            root.slice-view-geometry-changed(
+                root.slice-view-anchor-right,
+                root.slice-view-anchor-bottom,
+                root.slice-view-offset-x,
+                root.slice-view-offset-y,
+                root.slice-view-width,
+                root.slice-view-height,
+                root.slice-view-minimized);
+        }
+        close-requested => {
+            root.show-slice-view = false;
+            root.slice-view-visibility-changed(false);
+            // Reset geometry to defaults so reopening within the same
+            // session starts fresh. This does not persist; only drag,
+            // resize, and minimize gestures do.
+            root.slice-view-anchor-right = false;
+            root.slice-view-anchor-bottom = true;
+            root.slice-view-offset-x = 12px;
+            root.slice-view-offset-y = 12px;
+            root.slice-view-width = 240px;
+            root.slice-view-height = 0px;
+            root.slice-view-minimized = false;
+        }
+    }
+
     // Floating workspace-section switcher (Prepare | Transform | Slice).
     // Fixed top-center, not draggable, not persisted. The content-area
     // origin already sits below the menu bar when the bar is shown and
@@ -889,6 +965,17 @@ export component MainWindow inherits Window {
                     activated => {
                         root.show-object-list = !root.show-object-list;
                         root.object-list-visibility-changed(root.show-object-list);
+                    }
+                }
+
+                MenuItem {
+                    title: root.show-slice-view
+                        ? @tr("MenuBar" => "Hide Slice View")
+                        : @tr("MenuBar" => "Show Slice View");
+                    enabled: root.has-scene;
+                    activated => {
+                        root.show-slice-view = !root.show-slice-view;
+                        root.slice-view-visibility-changed(root.show-slice-view);
                     }
                 }
 
