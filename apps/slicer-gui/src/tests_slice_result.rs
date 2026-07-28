@@ -14,6 +14,8 @@ use std::sync::Arc;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
 use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+use sc_sl1cer::contour::{ContourLayer, ContourStack};
+use sc_sl1cer::profile::LayerSchedule;
 
 use crate::scene_document::{SceneDocument, SceneEdit, SceneRevision, UNDO_STACK_CAP};
 use crate::slice_result::{SliceParams, SliceResult};
@@ -71,7 +73,10 @@ fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
 
 fn sample_result(geometry: SceneRevision) -> SliceResult {
     SliceResult {
-        contours: Vec::new(),
+        merged: ContourStack::new(vec![ContourLayer::new(0.05, vec![])])
+            .expect("a one-layer stack is valid"),
+        schedule: LayerSchedule::uniform(0.05, 0.05, 1).expect("a positive, non-empty schedule"),
+        token: String::new(),
         params: SliceParams {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),

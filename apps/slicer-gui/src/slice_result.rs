@@ -13,7 +13,8 @@
 //! do), stale (confirm before overwriting), or absent (a first slice).
 
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
-use sc_sl1cer::LeafSlices;
+use sc_sl1cer::contour::ContourStack;
+use sc_sl1cer::profile::LayerSchedule;
 
 use crate::scene_document::SceneRevision;
 
@@ -30,14 +31,23 @@ pub(crate) struct SliceParams {
     pub geometry: SceneRevision,
 }
 
-/// A completed slice held for the session: the produced contours plus
-/// the parameters that produced them.
+/// A completed slice held for the session: the merged plate contours,
+/// the schedule and validity token captured off the event loop for
+/// persistence, plus the parameters the run used.
 #[derive(Clone, Debug)]
 pub(crate) struct SliceResult {
-    /// The per-leaf contours the slice produced. Held for slice
-    /// persistence and the layer view, which read them back.
+    /// The whole plate's merged, world-coordinate contours. Held for
+    /// slice persistence and the layer view, which read them back.
     #[allow(dead_code)]
-    pub contours: Vec<LeafSlices>,
+    pub merged: ContourStack,
+    /// The layer schedule the slice ran under: its z-grid, and the
+    /// by-value key the write guard compares against on save.
+    #[allow(dead_code)]
+    pub schedule: LayerSchedule,
+    /// The slice-input fingerprint token, captured off the event loop
+    /// and persisted so a later load can revalidate the slices.
+    #[allow(dead_code)]
+    pub token: String,
     pub params: SliceParams,
 }
 

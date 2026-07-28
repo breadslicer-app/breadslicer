@@ -26,8 +26,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use sc_mesh_core::scene::Scene;
+use sc_print_glue::slice_input_fingerprint;
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
-use sc_sl1cer::{CancelToken, SliceOutcome, SliceProgress, slice_scene_with_progress};
+use sc_sl1cer::contour::{ContourStack, merge_stacks};
+use sc_sl1cer::profile::LayerSchedule;
+use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
@@ -54,7 +57,22 @@ struct SliceProgressCell {
     total: AtomicU32,
 }
 
-type SliceSlot = Arc<Mutex<Option<Result<SliceOutcome, SliceFailure>>>>;
+/// A completed slice, already merged and fingerprinted on the worker
+/// thread so the event loop never does that work.
+struct CompletedSlice {
+    merged: ContourStack,
+    schedule: LayerSchedule,
+    token: String,
+}
+
+/// The worker's finished payload, past the engine's raw per-leaf output:
+/// a completed, merged, fingerprinted slice, or a cancellation.
+enum SliceRunOutcome {
+    Completed(CompletedSlice),
+    Cancelled,
+}
+
+type SliceSlot = Arc<Mutex<Option<Result<SliceRunOutcome, SliceFailure>>>>;
 
 pub(crate) struct SliceRun {
     ui: slint::Weak<MainWindow>,
@@ -341,15 +359,17 @@ impl SliceRun {
             return;
         };
         match result {
-            Ok(SliceOutcome::Completed(slices)) => {
+            Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {
                     self.document.set_slice_result(SliceResult {
-                        contours: slices,
+                        merged: completed.merged,
+                        schedule: completed.schedule,
+                        token: completed.token,
                         params,
                     });
                 }
             }
-            Ok(SliceOutcome::Cancelled) => {
+            Ok(SliceRunOutcome::Cancelled) => {
                 // A cancelled run carries no data; any prior result stays.
             }
             Err(err) => {
@@ -370,7 +390,7 @@ fn run_slice(
     aa_level: AaLevel,
     cancel: &CancelToken,
     progress: &SliceProgressCell,
-) -> Result<SliceOutcome, SliceFailure> {
+) -> Result<SliceRunOutcome, SliceFailure> {
     let (printer_profile, resin_profile) = load_selected_profiles(printer, resin)?;
     let profile = build_slice_profile(
         &printer_profile,
@@ -379,11 +399,115 @@ fn run_slice(
         aa_level,
         scene,
     )?;
-    slice_scene_with_progress(scene, &profile, cancel, |p: SliceProgress| {
+    let outcome = slice_scene_with_progress(scene, &profile, cancel, |p: SliceProgress| {
         progress
             .completed
             .fetch_max(p.completed as u32, Ordering::Relaxed);
         progress.total.store(p.total as u32, Ordering::Relaxed);
     })
-    .map_err(SliceFailure::Slice)
+    .map_err(SliceFailure::Slice)?;
+    match outcome {
+        SliceOutcome::Cancelled => Ok(SliceRunOutcome::Cancelled),
+        SliceOutcome::Completed(leaves) => {
+            let stacks = leaves.into_iter().map(LeafSlices::into_stack).collect();
+            capture(scene, *profile.layer_schedule(), stacks).map(SliceRunOutcome::Completed)
+        }
+    }
+}
+
+/// Merge the per-leaf stacks into the plate stack and fingerprint the
+/// slice inputs, all off the event loop. The token keys on the scene
+/// geometry and the schedule by value, the same inputs the load guard
+/// recomputes.
+fn capture(
+    scene: &Scene,
+    schedule: LayerSchedule,
+    stacks: Vec<ContourStack>,
+) -> Result<CompletedSlice, SliceFailure> {
+    let merged = merge_stacks(stacks).map_err(|_| SliceFailure::SliceMerge)?;
+    let token = slice_input_fingerprint(scene, &schedule)
+        .map_err(SliceFailure::Fingerprint)?
+        .to_token();
+    Ok(CompletedSlice {
+        merged,
+        schedule,
+        token,
+    })
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+
+    use std::sync::Arc;
+
+    use sc_mesh_core::scene::node::LeafPayload;
+    use sc_mesh_core::transform::Transform3D;
+    use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_sl1cer::contour::{ClosedRing, ContourLayer, Polygon};
+    use sc_sl1cer::geom2d::Point2D;
+
+    fn cube_scene() -> Scene {
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_root(leaf).expect("fresh leaf becomes a root");
+        scene
+    }
+
+    fn schedule() -> LayerSchedule {
+        LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
+    }
+
+    /// A CCW triangle as one solid layer plus an empty layer. Two of
+    /// them share their z grid, so they merge into one two-layer stack.
+    fn triangle_stack() -> ContourStack {
+        let outer = ClosedRing::new(
+            [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+                .into_iter()
+                .map(|(x, y)| Point2D::new(x, y))
+                .collect(),
+        );
+        let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
+        let solid = ContourLayer::new(0.025, vec![triangle]);
+        let void = ContourLayer::new(0.075, vec![]);
+        ContourStack::new(vec![solid, void]).expect("z is strictly increasing")
+    }
+
+    #[test]
+    fn capture_merges_the_stacks_and_fingerprints_the_scene() {
+        let scene = cube_scene();
+        let sched = schedule();
+        let completed =
+            capture(&scene, sched, vec![triangle_stack(), triangle_stack()]).expect("capture");
+        assert_eq!(completed.merged.layers().len(), 2);
+        assert_eq!(completed.schedule, sched);
+        assert_eq!(
+            completed.token,
+            slice_input_fingerprint(&scene, &sched)
+                .expect("the cube fingerprints")
+                .to_token(),
+        );
+    }
+
+    #[test]
+    fn capture_is_deterministic() {
+        let scene = cube_scene();
+        let first = capture(&scene, schedule(), vec![triangle_stack()]).expect("first capture");
+        let second = capture(&scene, schedule(), vec![triangle_stack()]).expect("second capture");
+        assert_eq!(first.token, second.token);
+    }
+
+    #[test]
+    fn capture_fails_when_the_scene_has_no_geometry() {
+        // An empty scene has no sliceable leaf, so the fingerprint, and
+        // thus the capture, cannot be computed.
+        let result = capture(&Scene::new(), schedule(), vec![triangle_stack()]);
+        assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
+    }
 }

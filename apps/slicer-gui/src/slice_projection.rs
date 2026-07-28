@@ -20,7 +20,10 @@ use std::fmt;
 
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
-use sc_print_glue::{ProjectionError, project_hardware_to_slice_profile, total_layers_for_height};
+use sc_print_glue::{
+    ProjectionError, SliceInputFingerprintError, project_hardware_to_slice_profile,
+    total_layers_for_height,
+};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
     LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, MaterialProfile, PrinterProfile,
@@ -53,6 +56,12 @@ pub(crate) enum SliceFailure {
     Projection(ProjectionError),
     /// The slicing engine rejected the scene.
     Slice(SliceSceneError),
+    /// The per-leaf slice stacks disagreed on their layer grid and could
+    /// not be merged into one plate stack. Unreachable for leaves sliced
+    /// under one shared schedule, but handled rather than panicked.
+    SliceMerge,
+    /// The slice-input fingerprint could not be computed.
+    Fingerprint(SliceInputFingerprintError),
     /// The slicing worker panicked. Carries the panic message.
     Panicked(String),
 }
@@ -80,6 +89,13 @@ impl fmt::Display for SliceFailure {
             }
             Self::Projection(err) => write!(f, "Could not build the slice profile: {err}"),
             Self::Slice(err) => write!(f, "Slicing failed: {err}"),
+            Self::SliceMerge => write!(
+                f,
+                "The slice layers could not be merged (internal layer-grid mismatch).",
+            ),
+            Self::Fingerprint(err) => {
+                write!(f, "Could not fingerprint the slice inputs: {err}")
+            }
             Self::Panicked(msg) => write!(f, "The slicer panicked: {msg}"),
         }
     }
@@ -95,7 +111,11 @@ impl std::error::Error for SliceFailure {
             Self::Resolve(err) => Some(err),
             Self::Projection(err) => Some(err),
             Self::Slice(err) => Some(err),
-            Self::EmptySceneGeometry | Self::SceneBelowPlate { .. } | Self::Panicked(_) => None,
+            Self::Fingerprint(err) => Some(err),
+            Self::EmptySceneGeometry
+            | Self::SceneBelowPlate { .. }
+            | Self::SliceMerge
+            | Self::Panicked(_) => None,
         }
     }
 }
