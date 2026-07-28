@@ -12,7 +12,9 @@
 //! layer schedule. It bakes nothing and reads no rasterisation
 //! parameters, since those never reach the vector slice. The digest is
 //! an opaque token; callers store it and compare it, they do not
-//! interpret it.
+//! interpret it. [`validate_persisted_slices`] is that comparison at
+//! load time: it recomputes the token from the loaded inputs and reports
+//! whether persisted slices still describe them.
 
 use std::fmt;
 
@@ -38,6 +40,20 @@ impl SliceInputFingerprint {
     #[inline]
     pub fn as_bytes(&self) -> &[u8; 48] {
         &self.0
+    }
+
+    /// The digest as an opaque, comparable token: the 48 bytes as a
+    /// lowercase hexadecimal string. This is the form persisted beside a
+    /// project's slices and compared on load. Two equal fingerprints
+    /// yield the same token, two different ones do not.
+    pub fn to_token(&self) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut token = String::with_capacity(self.0.len() * 2);
+        for byte in self.0 {
+            token.push(HEX[(byte >> 4) as usize] as char);
+            token.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        token
     }
 }
 
@@ -118,6 +134,33 @@ pub fn slice_input_fingerprint(
     let mut bytes = [0u8; 48];
     bytes.copy_from_slice(&hasher.finalize());
     Ok(SliceInputFingerprint(bytes))
+}
+
+/// Whether persisted slices still describe the inputs a project loaded
+/// with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersistedSliceValidity {
+    /// The recomputed fingerprint matches the stored token: the slices
+    /// still describe these inputs and may be kept.
+    InSync,
+    /// The stored token does not match, or the fingerprint could not be
+    /// recomputed: the slices are stale and must be discarded.
+    Stale,
+}
+
+/// The load-time slice guard: recompute the fingerprint from the inputs
+/// a project loaded with and compare it to the token stored beside its
+/// slices. A recomputation that fails counts as stale, since slices that
+/// cannot be verified must not be trusted.
+pub fn validate_persisted_slices(
+    stored_token: &str,
+    scene: &Scene,
+    schedule: &LayerSchedule,
+) -> PersistedSliceValidity {
+    match slice_input_fingerprint(scene, schedule) {
+        Ok(fingerprint) if fingerprint.to_token() == stored_token => PersistedSliceValidity::InSync,
+        _ => PersistedSliceValidity::Stale,
+    }
 }
 
 /// The local transforms from `leaf` up to its root, leaf first. Their

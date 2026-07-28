@@ -25,7 +25,10 @@
 pub mod fingerprint;
 pub mod projection;
 
-pub use fingerprint::{SliceInputFingerprint, SliceInputFingerprintError, slice_input_fingerprint};
+pub use fingerprint::{
+    PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
+    slice_input_fingerprint, validate_persisted_slices,
+};
 pub use projection::{
     ProjectionError, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,
