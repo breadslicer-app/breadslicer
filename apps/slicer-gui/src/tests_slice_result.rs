@@ -202,6 +202,32 @@ fn clearing_the_scene_drops_the_held_slice_result() {
 }
 
 #[test]
+fn slice_layer_count_is_none_without_a_held_result() {
+    let (doc, _) = loaded_document();
+    assert!(doc.slice_layer_count().is_none());
+}
+
+#[test]
+fn slice_layer_count_reports_the_held_schedule_layer_count() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    let result = SliceResult {
+        schedule: LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule"),
+        ..sample_result(rev)
+    };
+    doc.set_slice_result(result);
+    assert_eq!(doc.slice_layer_count(), Some(3));
+}
+
+#[test]
+fn slice_layer_count_drops_to_none_after_clearing_the_scene() {
+    let (doc, _) = loaded_document();
+    doc.set_slice_result(sample_result(doc.scene_revision()));
+    doc.clear_scene();
+    assert!(doc.slice_layer_count().is_none());
+}
+
+#[test]
 fn slices_for_persist_offers_the_slices_when_in_sync() {
     let (doc, _) = loaded_document();
     let rev = doc.scene_revision();

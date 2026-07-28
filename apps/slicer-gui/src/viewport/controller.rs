@@ -277,6 +277,20 @@ impl ViewportController {
         }
     }
 
+    /// Pushes the held slice's layer count to the UI, sizing and
+    /// enabling the height slider, and parks the selected layer at the
+    /// top. No held slice reports a zero count, which
+    /// disables the slider. Runs on scene install and clear, where the
+    /// document has just dropped any slice; the slice driver pushes the
+    /// same values itself when a run completes.
+    fn mirror_slice_layer_count_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let count = self.session.document().slice_layer_count().unwrap_or(0);
+            ui.set_slice_layer_count(count as i32);
+            ui.set_selected_layer_index(count.saturating_sub(1) as f32);
+        }
+    }
+
     /// Pushes the open file's name to the UI, which shows it as the
     /// window title. Empty while no scene is loaded. Runs on scene
     /// install and clear; the save flow calls
@@ -316,6 +330,7 @@ impl ViewportController {
         self.mirror_undo_state_to_ui();
         self.mirror_dirty_state_to_ui();
         self.mirror_title_to_ui();
+        self.mirror_slice_layer_count_to_ui();
         self.mark_dirty();
     }
 
@@ -355,6 +370,7 @@ impl ViewportController {
         self.mirror_undo_state_to_ui();
         self.mirror_dirty_state_to_ui();
         self.mirror_title_to_ui();
+        self.mirror_slice_layer_count_to_ui();
     }
 
     fn request_redraw(&self) {

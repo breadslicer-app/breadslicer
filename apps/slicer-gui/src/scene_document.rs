@@ -490,6 +490,16 @@ impl SceneDocument {
             .map(|result| result.params.clone())
     }
 
+    /// The number of layers in the held slice, or `None` when no slice
+    /// is held. Drives the height slider's range and enabled state: a
+    /// `None` (or, upstream, a zero) disables it.
+    pub fn slice_layer_count(&self) -> Option<u32> {
+        self.slice_result
+            .borrow()
+            .as_ref()
+            .map(|result| result.schedule.total_layers())
+    }
+
     /// The held slices packaged for persistence, or `None` when there is
     /// nothing safe to write. This is the write guard: it returns `Some`
     /// only when a result is held, the scene geometry is unchanged since

@@ -361,12 +361,19 @@ impl SliceRun {
         match result {
             Ok(SliceRunOutcome::Completed(completed)) => {
                 if let Some(params) = pending {
+                    let layer_count = completed.schedule.total_layers();
                     self.document.set_slice_result(SliceResult {
                         merged: completed.merged,
                         schedule: completed.schedule,
                         token: completed.token,
                         params,
                     });
+                    // Size and enable the height slider, parking the
+                    // selected layer at the top.
+                    if let Some(ui) = self.ui.upgrade() {
+                        ui.set_slice_layer_count(layer_count as i32);
+                        ui.set_selected_layer_index(layer_count.saturating_sub(1) as f32);
+                    }
                 }
             }
             Ok(SliceRunOutcome::Cancelled) => {

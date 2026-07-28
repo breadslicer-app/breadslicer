@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, Palette, ProgressIndicator } from "std-widgets.slint";
+import { Button, Palette, ProgressIndicator, Slider } from "std-widgets.slint";
 import { AboutWindow } from "about-window.slint";
 import { ErrorDialog } from "error-dialog.slint";
 import { AxisView, MeshViewer, PointerModifiers } from "./mesh-viewer.slint";
@@ -184,6 +184,14 @@ export component MainWindow inherits Window {
     in-out property <length> slice-panel-offset-y: 12px;
     in-out property <length> slice-panel-width: 240px;
     in-out property <length> slice-panel-height: 0px;
+    // Slice viewing (per-layer height slider). `slice-layer-count` is the
+    // held slice's layer count, driven by Rust: 0 disables the slider, a
+    // positive n sizes it to indices 0..n-1. `selected-layer-index` is the
+    // slider's current layer (a `float` so it can two-way bind to the
+    // Slider's value; it only ever holds whole layer numbers, which Rust
+    // rounds when it reads them).
+    in property <int> slice-layer-count: 0;
+    in-out property <float> selected-layer-index: 0;
 
     changed theme => {
         Palette.color-scheme =
@@ -725,6 +733,29 @@ export component MainWindow inherits Window {
                     root.section-change-requested(WorkspaceSection.Slice);
                 }
             }
+        }
+    }
+
+    // Per-layer height slider on the viewport's right edge. Present
+    // whenever the Slice section is active, so the strip it occupies is
+    // visible before slicing too; disabled until a slice exists
+    // (`slice-layer-count > 0`). Its value is the selected layer index,
+    // with the top layer (the maximum) at the top of the track.
+    if root.has-scene && root.workspace-section == WorkspaceSection.Slice: Rectangle {
+        x: parent.width - self.width - 12px;
+        y: 64px;
+        width: 32px;
+        height: parent.height - 128px;
+
+        Slider {
+            width: parent.width;
+            height: parent.height;
+            orientation: Orientation.vertical;
+            enabled: root.slice-layer-count > 0;
+            minimum: 0;
+            maximum: Math.max(0, root.slice-layer-count - 1);
+            step: 1;
+            value <=> root.selected-layer-index;
         }
     }
 
