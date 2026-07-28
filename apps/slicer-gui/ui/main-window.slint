@@ -242,6 +242,9 @@ export component MainWindow inherits Window {
     // anchor-bottom, offset-x, offset-y, width, height) after a drag or
     // resize so Rust can persist it. Per-window live state.
     callback slice-panel-geometry-changed(bool, bool, length, length, length, length);
+    // The slice height slider moved: Rust repaints so the mesh clip
+    // follows the selected layer.
+    callback selected-layer-changed();
     callback viewport-resized(length, length);
     callback rotate-drag(length, length);
     callback pan-drag(length, length);
@@ -756,6 +759,9 @@ export component MainWindow inherits Window {
             maximum: Math.max(0, root.slice-layer-count - 1);
             step: 1;
             value <=> root.selected-layer-index;
+            changed(v) => {
+                root.selected-layer-changed();
+            }
         }
     }
 

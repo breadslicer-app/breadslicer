@@ -440,6 +440,13 @@ impl ViewportController {
         self.render.mark_dirty();
     }
 
+    /// The slice height slider moved: repaint so the mesh clip follows
+    /// the new layer. The clip height is recomputed from the current UI
+    /// value at paint time.
+    pub fn on_selected_layer_changed(&self) {
+        self.mark_dirty();
+    }
+
     pub fn on_viewport_resized(&self, w: f32, h: f32) {
         self.render.on_viewport_resized(w, h);
     }
@@ -1140,6 +1147,16 @@ impl ViewportController {
 
         let build_volume = self.session.build_volume();
 
+        // Slice-view clip height. The slider's layer top clips the mesh,
+        // but only in the Slice section with a held slice. The slider
+        // value is read here on the paint thread; it holds whole layer
+        // numbers as a float, so round it to the layer index.
+        let selected_layer = ui.get_selected_layer_index().round().max(0.0) as u32;
+        let clip_z = crate::workspace_section::clip_z_from(
+            self.session.section(),
+            self.session.document().slice_layer_top_z(selected_layer),
+        );
+
         // Render path. With a scene installed, the closure inside
         // `with_scene` composes the gizmo frame against the live scene
         // and renders the union (plate + objects). With no scene,
@@ -1173,6 +1190,7 @@ impl ViewportController {
                         graph: spatial_for_render.graph(),
                         selection: selection_node_id,
                         gizmo: gizmo_frame,
+                        clip_z,
                     }),
                     build_volume,
                     camera,

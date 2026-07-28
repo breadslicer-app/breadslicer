@@ -72,6 +72,11 @@ const WARNING_WASH_STRENGTH: f32 = 0.55;
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // Slice clip: drop fragments above the selected layer's top Z. The
+    // clip height rides in light_dir.w; f32::MAX (no clip) discards none.
+    if (in.world_pos.z > u.light_dir.w) {
+        discard;
+    }
     // Face normal from screen-space derivatives: no per-vertex normals needed.
     let n = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
     let l = normalize(u.light_dir.xyz);

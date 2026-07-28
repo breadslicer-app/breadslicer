@@ -500,6 +500,16 @@ impl SceneDocument {
             .map(|result| result.schedule.total_layers())
     }
 
+    /// The top Z (mm above the plate) of the held slice's layer at
+    /// `index`, or `None` when no slice is held or the index is past the
+    /// last layer. The slice-view clip uses this as its cut height.
+    pub fn slice_layer_top_z(&self, index: u32) -> Option<f64> {
+        self.slice_result
+            .borrow()
+            .as_ref()
+            .and_then(|result| result.schedule.iter_slab_tops().nth(index as usize))
+    }
+
     /// The held slices packaged for persistence, or `None` when there is
     /// nothing safe to write. This is the write guard: it returns `Some`
     /// only when a result is held, the scene geometry is unchanged since

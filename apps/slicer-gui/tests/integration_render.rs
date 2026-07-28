@@ -136,6 +136,7 @@ fn render_texture_converts_to_slint_image() {
                 graph: &graph,
                 selection: Some(first_leaf(&graph)),
                 gizmo: None,
+                clip_z: None,
             }),
             HARDCODED_DEFAULT_BUILD_VOLUME,
             &camera,
@@ -148,6 +149,44 @@ fn render_texture_converts_to_slint_image() {
         slint::Image::try_from(texture).expect("slint::Image::try_from must accept the texture");
     assert_eq!(image.size().width, 64);
     assert_eq!(image.size().height, 64);
+}
+
+/// The slice clip path renders without crashing: a `SceneRender` with a
+/// clip height set still produces a texture, so the mesh shader's clip
+/// discard compiles and runs.
+#[test]
+fn render_with_a_slice_clip_produces_a_texture() {
+    let Some((device, queue)) = shared_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+    let graph = triangle_graph([5.0, 0.0, 0.0]);
+    renderer
+        .upload_scene(&graph)
+        .expect("upload_scene under default limits");
+
+    let bounds = renderer.scene_bounds().expect("scene bounds populated");
+    let center = (bounds.0 + bounds.1) * 0.5;
+    let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+    let camera = OrbitCamera::with_detail_radius(center, radius, radius);
+
+    let texture = renderer
+        .render(
+            Some(SceneRender {
+                graph: &graph,
+                selection: None,
+                gizmo: None,
+                clip_z: Some(0.5),
+            }),
+            HARDCODED_DEFAULT_BUILD_VOLUME,
+            &camera,
+            64,
+            64,
+        )
+        .expect("render must produce a texture with a clip set");
+    assert_eq!(texture.size().width, 64);
+    assert_eq!(texture.size().height, 64);
 }
 
 /// T23: a `GpuScene` built against device A must not install on a

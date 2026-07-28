@@ -59,6 +59,10 @@ pub struct SceneRender<'a> {
     /// Gizmo overlay parameters; the gizmo pass runs only when
     /// this is `Some`.
     pub gizmo: Option<GizmoFrame>,
+    /// World-space Z (mm) above which mesh fragments are discarded, so
+    /// the slice slider can reveal the model layer by layer. `None`
+    /// renders the whole mesh.
+    pub clip_z: Option<f32>,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -330,9 +334,9 @@ impl Renderer {
             return None;
         }
 
-        let (graph, selection, gizmo) = match scene_render {
-            Some(sr) => (Some(sr.graph), sr.selection, sr.gizmo),
-            None => (None, None, None),
+        let (graph, selection, gizmo, clip_z) = match scene_render {
+            Some(sr) => (Some(sr.graph), sr.selection, sr.gizmo, sr.clip_z),
+            None => (None, None, None, None),
         };
 
         self.ensure_msaa(width, height);
@@ -424,7 +428,7 @@ impl Renderer {
             .unwrap_or(0);
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
-            light_dir: frame::LIGHT_DIR,
+            light_dir: frame::pack_light_dir(clip_z),
             env_min: [env_min.x, env_min.y, env_min.z, 0.0],
             env_max: [env_max.x, env_max.y, env_max.z, 0.0],
             face_breach_mask: [face_breach_mask, 0, 0, 0],
@@ -1152,6 +1156,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: None,
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1227,6 +1232,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: None,
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1264,6 +1270,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1306,6 +1313,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1319,6 +1327,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1365,6 +1374,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1378,6 +1388,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1421,6 +1432,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1464,6 +1476,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: Some(frame),
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1506,6 +1519,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: Some(first_leaf(&graph)),
                     gizmo: Some(scale_axis),
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1563,6 +1577,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: None,
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1772,6 +1787,7 @@ mod gpu_integration_tests {
                     graph: &safe_graph,
                     selection: None,
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1792,6 +1808,7 @@ mod gpu_integration_tests {
                     graph: &breach_graph,
                     selection: None,
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,
@@ -1890,6 +1907,7 @@ mod gpu_integration_tests {
                     graph: &graph,
                     selection: None,
                     gizmo: None,
+                    clip_z: None,
                 }),
                 TEST_BV,
                 &camera,

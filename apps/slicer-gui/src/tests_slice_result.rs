@@ -228,6 +228,38 @@ fn slice_layer_count_drops_to_none_after_clearing_the_scene() {
 }
 
 #[test]
+fn slice_layer_top_z_is_none_without_a_held_result() {
+    let (doc, _) = loaded_document();
+    assert!(doc.slice_layer_top_z(0).is_none());
+}
+
+#[test]
+fn slice_layer_top_z_returns_the_layer_top() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    let schedule = LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule");
+    let expected: Vec<f64> = schedule.iter_slab_tops().collect();
+    doc.set_slice_result(SliceResult {
+        schedule,
+        ..sample_result(rev)
+    });
+    assert_eq!(doc.slice_layer_top_z(0), Some(expected[0]));
+    assert_eq!(doc.slice_layer_top_z(2), Some(expected[2]));
+}
+
+#[test]
+fn slice_layer_top_z_is_none_past_the_last_layer() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    let schedule = LayerSchedule::uniform(0.05, 0.05, 3).expect("a positive, non-empty schedule");
+    doc.set_slice_result(SliceResult {
+        schedule,
+        ..sample_result(rev)
+    });
+    assert!(doc.slice_layer_top_z(3).is_none());
+}
+
+#[test]
 fn slices_for_persist_offers_the_slices_when_in_sync() {
     let (doc, _) = loaded_document();
     let rev = doc.scene_revision();

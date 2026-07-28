@@ -34,9 +34,23 @@ pub(super) struct Uniforms {
     pub(super) face_breach_mask: [u32; 4],
 }
 
-/// World-space directional light. The fourth component is layout
-/// padding; the mesh shader reads only `.xyz`.
+/// World-space directional light. The fourth component carries the
+/// slice clip height (see [`pack_light_dir`]); the mesh shader reads
+/// `.xyz` for lighting and `.w` for the clip test.
 pub(super) const LIGHT_DIR: [f32; 4] = [0.5, 0.7, 1.0, 0.0];
+
+/// Build the mesh uniform's `light_dir` vector, packing the optional
+/// slice clip height into the free `.w` lane. `None` uses `f32::MAX`, a
+/// height no world fragment exceeds, so the shader's `world_pos.z > .w`
+/// test discards nothing.
+pub(super) fn pack_light_dir(clip_z: Option<f32>) -> [f32; 4] {
+    [
+        LIGHT_DIR[0],
+        LIGHT_DIR[1],
+        LIGHT_DIR[2],
+        clip_z.unwrap_or(f32::MAX),
+    ]
+}
 
 /// Clear colour for the main mesh pass. A near-black neutral so the
 /// rendered model and gizmo handles read clearly without competing
@@ -75,4 +89,29 @@ pub(super) fn compute_view_proj(
     let view_mat = camera.view_matrix();
     let proj = Mat4::perspective_rh(fov_y, aspect, NEAR_MULT * diagonal, FAR_MULT * diagonal);
     proj * view_mat
+}
+
+#[cfg(test)]
+mod pack_light_dir_tests {
+    use super::*;
+
+    #[test]
+    fn none_uses_a_clip_height_no_fragment_exceeds() {
+        let ld = pack_light_dir(None);
+        assert_eq!(
+            [ld[0], ld[1], ld[2]],
+            [LIGHT_DIR[0], LIGHT_DIR[1], LIGHT_DIR[2]]
+        );
+        assert_eq!(ld[3], f32::MAX);
+    }
+
+    #[test]
+    fn some_packs_the_clip_height_into_the_w_lane() {
+        let ld = pack_light_dir(Some(3.5));
+        assert_eq!(
+            [ld[0], ld[1], ld[2]],
+            [LIGHT_DIR[0], LIGHT_DIR[1], LIGHT_DIR[2]]
+        );
+        assert_eq!(ld[3], 3.5);
+    }
 }
