@@ -200,6 +200,7 @@ pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Resu
         scene,
         warnings: project_warnings,
         payload,
+        slices: _,
         slice_fingerprint: _,
     } = read_project_with_progress(&mut reader, file_type, |p| {
         sink.set(LoadPhase::Parse, p.decompressed_bytes, p.total_bytes)

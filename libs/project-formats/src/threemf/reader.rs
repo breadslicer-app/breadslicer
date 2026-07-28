@@ -14,9 +14,11 @@
 
 use std::io::{Read, Seek};
 
+use sc_3mf::model::parse_model;
 use sc_3mf::package::{DecompressionProgress, Package, PartName};
 use sc_mesh_formats::threemf::read_threemf_from_package;
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_sl1cer::contour::ContourStack;
 
 use crate::error::ReadThreeMfProjectError;
 use crate::messages::ReadProjectWarning;
@@ -24,9 +26,10 @@ use crate::payload::{EmbeddedProfile, ProjectPayload};
 use crate::read::LoadedProject;
 use crate::threemf::foreign::detect_foreign_dialects;
 use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload};
+use crate::threemf::slice_mapping::contours_from_slice_stack;
 use crate::threemf::{
     MATERIAL_EXTENSION_PART_PREFIX, MATERIAL_PROFILE_PART_PREFIX, PRINTER_PROFILE_PART_PREFIX,
-    PROFILES_PART_PREFIX, PROJECT_PART_NAME,
+    PROFILES_PART_PREFIX, PROJECT_PART_NAME, SLICE_PART_NAME,
 };
 
 /// Reads a 3MF package as a project: the scene plus the project
@@ -58,12 +61,29 @@ where
         warnings.push(ReadProjectWarning::ForeignProjectData { dialect });
     }
     let (payload, slice_fingerprint) = extract_payload(&package, &mut warnings)?;
+    let slices = extract_slices(&package);
     Ok(LoadedProject {
         scene,
         warnings,
         payload,
+        slices,
         slice_fingerprint,
     })
+}
+
+/// Reads the standalone slice model part and maps it back to a contour
+/// stack, or `None` when the package carries no slice part. A slice part
+/// that does not parse or does not map back (a corrupt or foreign-shaped
+/// part) is also treated as absent, silently: the scene loads slice-less,
+/// which is exactly what the caller does when the slices fail their
+/// fingerprint check, so a bad part only ever drops slices that would not
+/// have survived revalidation anyway.
+fn extract_slices(package: &Package) -> Option<ContourStack> {
+    let part = PartName::new(SLICE_PART_NAME).expect("constant part name is valid");
+    let bytes = package.part_data(&part)?;
+    let document = parse_model(bytes).ok()?;
+    let stack = document.slice_stacks.first()?;
+    contours_from_slice_stack(stack).ok()
 }
 
 /// Extracts the project payload and the opaque persisted-slices token

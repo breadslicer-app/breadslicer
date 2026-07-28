@@ -372,6 +372,48 @@ mod slice_part_tests {
     }
 
     #[test]
+    fn the_slice_part_reads_back_to_a_contour_stack() {
+        let plate = plate_slices();
+        let mut bytes = Vec::new();
+        write_threemf_project(
+            &cube_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            Some(&plate),
+            None,
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+
+        let loaded = crate::threemf::reader::read_threemf_project(&mut Cursor::new(bytes))
+            .expect("the project reads back");
+        let slices = loaded.slices.expect("the slice geometry is read back");
+        assert_eq!(slices.layers().len(), 2);
+        // The solid triangle layer returns as one polygon; the void layer
+        // returns with none.
+        assert_eq!(slices.layers()[0].polygons().len(), 1);
+        assert!(slices.layers()[1].polygons().is_empty());
+    }
+
+    #[test]
+    fn a_project_without_slices_reads_back_no_slice_geometry() {
+        let mut bytes = Vec::new();
+        write_threemf_project(
+            &cube_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            None,
+            None,
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+
+        let loaded = crate::threemf::reader::read_threemf_project(&mut Cursor::new(bytes))
+            .expect("the project reads back");
+        assert!(loaded.slices.is_none());
+    }
+
+    #[test]
     fn the_root_links_and_preserves_the_slice_part() {
         let package = write_with_slices(Some(&plate_slices()));
         let rels = package.root_relationships();

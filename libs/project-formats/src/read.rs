@@ -9,6 +9,7 @@ use std::io::{Read, Seek};
 
 use sc_3mf::package::DecompressionProgress;
 use sc_mesh_core::Scene;
+use sc_sl1cer::contour::ContourStack;
 
 use crate::error::ReadProjectError;
 use crate::filetypes::ProjectFileType;
@@ -17,16 +18,22 @@ use crate::payload::ProjectPayload;
 use crate::threemf::read_threemf_project_with_progress;
 
 /// Everything a project read produces: the scene, the non-fatal
-/// warnings, the project payload when the file carries one, and the
-/// opaque validity token for its persisted slices when present. A
-/// file of a project-capable format without project data (a plain
-/// 3MF model, for instance) loads with `payload` and
-/// `slice_fingerprint` set to `None`.
+/// warnings, the project payload when the file carries one, the
+/// persisted slice geometry and the opaque validity token for it when
+/// present. A file of a project-capable format without project data (a
+/// plain 3MF model, for instance) loads with `payload`,
+/// `slice_fingerprint`, and `slices` set to `None`.
 #[derive(Debug)]
 pub struct LoadedProject {
     pub scene: Scene,
     pub warnings: Vec<ReadProjectWarning>,
     pub payload: Option<ProjectPayload>,
+    /// The file's persisted slice geometry, mapped back to a contour
+    /// stack for the viewer. `None` when the file carried no slices or
+    /// its slice part could not be read (a warning is recorded then).
+    /// The caller must still revalidate it against `slice_fingerprint`
+    /// before trusting it.
+    pub slices: Option<ContourStack>,
     /// Opaque validity token for the file's persisted slices, returned
     /// verbatim. `None` when the file carried no such token.
     pub slice_fingerprint: Option<String>,
