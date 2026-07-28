@@ -6,14 +6,14 @@
 //! Forward mapping from the slicer's merged contour stack to the
 //! `sc-3mf` slice-extension vocabulary.
 //!
-//! Slicing is forward-only: contours become a `SliceStack` bound for
-//! the printer, and nothing maps a `SliceStack` back to a
-//! `ContourStack`. Within one layer every ring shares a single vertex
-//! list; identical points are stored once and consecutive duplicates
-//! are dropped so no zero-length segment is emitted. Each ring, outer
-//! or hole alike, becomes one closed `SlicePolygon`: the outer/hole
-//! grouping is a modelling concern with no meaning in the flat slice
-//! output.
+//! This module only emits: a merged `ContourStack` becomes a
+//! `SliceStack`. It does not parse a `SliceStack` back into a
+//! `ContourStack`; that reverse reader, when needed, lives elsewhere.
+//! Within one layer every ring shares a single vertex list; identical
+//! points are stored once and consecutive duplicates are dropped so no
+//! zero-length segment is emitted. Each ring, outer or hole alike,
+//! becomes one closed `SlicePolygon`: the outer/hole grouping is a
+//! modelling concern with no meaning in the flat slice output.
 
 use std::collections::HashMap;
 
