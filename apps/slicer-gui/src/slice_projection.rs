@@ -31,7 +31,7 @@ use sc_print_profiles::{
     resolve_layer_height, user_library_dir,
 };
 use sc_sl1cer::error::SliceSceneError;
-use sc_sl1cer::profile::{PackingMode, SliceProfile};
+use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
 /// Why a slice run could not be prepared or completed. Carries the
 /// specific failure so the UI can surface a meaningful message.
@@ -177,6 +177,28 @@ pub(crate) fn build_slice_profile(
         total_layers,
     )
     .map_err(SliceFailure::Projection)
+}
+
+/// Resolve the layer schedule for the current scene and selection the
+/// same way [`build_slice_profile`] does, so a save-time comparison
+/// against a held slice's schedule is apples to apples. The
+/// anti-aliasing level is a raster parameter with no effect on the
+/// schedule, so it is fixed here rather than threaded in.
+pub(crate) fn resolve_current_schedule(
+    printer: &PrinterId,
+    resin: &MaterialId,
+    first_layer_height: Option<PositiveFiniteMm>,
+    scene: &Scene,
+) -> Result<LayerSchedule, SliceFailure> {
+    let (printer_profile, resin_profile) = load_selected_profiles(printer, resin)?;
+    let profile = build_slice_profile(
+        &printer_profile,
+        &resin_profile,
+        first_layer_height,
+        AaLevel::Off,
+        scene,
+    )?;
+    Ok(*profile.layer_schedule())
 }
 
 #[cfg(test)]

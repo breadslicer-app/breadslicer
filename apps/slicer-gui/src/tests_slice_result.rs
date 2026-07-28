@@ -71,12 +71,16 @@ fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
     doc.push_edit(edit);
 }
 
+fn sample_schedule() -> LayerSchedule {
+    LayerSchedule::uniform(0.05, 0.05, 1).expect("a positive, non-empty schedule")
+}
+
 fn sample_result(geometry: SceneRevision) -> SliceResult {
     SliceResult {
         merged: ContourStack::new(vec![ContourLayer::new(0.05, vec![])])
             .expect("a one-layer stack is valid"),
-        schedule: LayerSchedule::uniform(0.05, 0.05, 1).expect("a positive, non-empty schedule"),
-        token: String::new(),
+        schedule: sample_schedule(),
+        token: "sample-token".to_string(),
         params: SliceParams {
             printer: PrinterId::new("elegoo-saturn-4-ultra").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
@@ -195,4 +199,45 @@ fn clearing_the_scene_drops_the_held_slice_result() {
     doc.set_slice_result(sample_result(doc.scene_revision()));
     doc.clear_scene();
     assert!(doc.slice_params().is_none());
+}
+
+#[test]
+fn slices_for_persist_offers_the_slices_when_in_sync() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    let (plate, token) = doc
+        .slices_for_persist(&sample_schedule())
+        .expect("in-sync slices are offered for persistence");
+    assert_eq!(token, "sample-token");
+    assert_eq!(
+        plate.slab_tops,
+        sample_schedule().iter_slab_tops().collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn slices_for_persist_is_none_without_a_held_result() {
+    let (doc, _) = loaded_document();
+    assert!(doc.slices_for_persist(&sample_schedule()).is_none());
+}
+
+#[test]
+fn slices_for_persist_is_none_after_a_scene_edit() {
+    let (doc, node_id) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    commit_step(&doc, node_id, 1.0);
+    assert!(doc.slices_for_persist(&sample_schedule()).is_none());
+}
+
+#[test]
+fn slices_for_persist_is_none_when_the_schedule_differs_by_value() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.set_slice_result(sample_result(rev));
+    // Same shape, a different layer height: a by-value schedule change,
+    // under whatever profile identity, must withhold the slices.
+    let thicker = LayerSchedule::uniform(0.10, 0.05, 1).expect("a positive, non-empty schedule");
+    assert!(doc.slices_for_persist(&thicker).is_none());
 }

@@ -32,7 +32,8 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
-use sc_project_formats::ProjectPayload;
+use sc_project_formats::{PlateSlices, ProjectPayload};
+use sc_sl1cer::profile::LayerSchedule;
 
 pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
 
@@ -487,6 +488,33 @@ impl SceneDocument {
             .borrow()
             .as_ref()
             .map(|result| result.params.clone())
+    }
+
+    /// The held slices packaged for persistence, or `None` when there is
+    /// nothing safe to write. This is the write guard: it returns `Some`
+    /// only when a result is held, the scene geometry is unchanged since
+    /// the slice (`slice_geometry_changed`), and the schedule the slice
+    /// ran under still matches `current_schedule` by value. Profile
+    /// identities and the anti-aliasing level are deliberately not
+    /// consulted; they are not the vector slices' inputs. Out-of-sync
+    /// slices never reach the file.
+    pub fn slices_for_persist(
+        &self,
+        current_schedule: &LayerSchedule,
+    ) -> Option<(PlateSlices, String)> {
+        let held = self.slice_result.borrow();
+        let held = held.as_ref()?;
+        if self.slice_geometry_changed(held.params.geometry) {
+            return None;
+        }
+        if held.schedule != *current_schedule {
+            return None;
+        }
+        let plate = PlateSlices {
+            contours: held.merged.clone(),
+            slab_tops: held.schedule.iter_slab_tops().collect(),
+        };
+        Some((plate, held.token.clone()))
     }
 
     fn top_edit_id(&self) -> Option<u64> {

@@ -18,12 +18,16 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use sc_mesh_core::Scene;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
 use sc_print_primitives::{MaterialId, PrinterId};
-use sc_project_formats::{EmbedProfiles, ProjectFileType, ProjectPayload, write_project};
+use sc_project_formats::{
+    EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, write_project,
+};
 
 use crate::project_profiles::{complete_embedded_documents, profile_library_roots};
 use crate::scene_document::SceneDocument;
+use crate::slice_projection::resolve_current_schedule;
 
 /// Classification of a "Save" command against the document state.
 #[derive(Debug, PartialEq, Eq)]
@@ -111,13 +115,19 @@ pub(crate) fn payload_for_save(
 fn write_project_file(doc: &SceneDocument, payload: &ProjectPayload, target: &Path) -> Result<()> {
     let bytes = doc
         .with_scene(|spatial| -> Result<Vec<u8>> {
+            let scene = spatial.graph();
+            let persist = persist_slices(doc, scene);
+            let (slices, slice_fingerprint) = match &persist {
+                Some((plate, token)) => (Some(plate), Some(token.as_str())),
+                None => (None, None),
+            };
             let mut bytes = Vec::new();
             write_project(
-                spatial.graph(),
+                scene,
                 payload,
                 EmbedProfiles::Yes,
-                None,
-                None,
+                slices,
+                slice_fingerprint,
                 ProjectFileType::ThreeMf,
                 &mut bytes,
             )?;
@@ -126,6 +136,20 @@ fn write_project_file(doc: &SceneDocument, payload: &ProjectPayload, target: &Pa
         .ok_or_else(|| anyhow!("No scene loaded"))??;
     write_bytes_atomically(target, &bytes)?;
     Ok(())
+}
+
+/// The held slices to persist with the project, or `None` when the scene
+/// has no in-sync slice result to write. Resolves the current layer
+/// schedule and defers the in-sync decision to the document's write
+/// guard; a resolution failure (for example an uninstalled profile)
+/// conservatively persists nothing.
+fn persist_slices(doc: &SceneDocument, scene: &Scene) -> Option<(PlateSlices, String)> {
+    let printer = doc.selected_printer()?;
+    let resin = doc.selected_resin()?;
+    let schedule =
+        resolve_current_schedule(&printer, &resin, doc.selected_first_layer_height(), scene)
+            .ok()?;
+    doc.slices_for_persist(&schedule)
 }
 
 /// Runs a full project save against `target`: builds the payload,
