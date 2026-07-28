@@ -17,6 +17,7 @@
 //! coordinator exists for, so the wgpu import below is not an
 //! abstraction leak.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use slint::ComponentHandle;
@@ -59,6 +60,12 @@ pub struct ViewportController {
     camera: CameraController,
     render: RenderHost,
     input: InputDispatch,
+    /// Last cap key pushed to the slice-view panel image, so the paint
+    /// path only rebuilds and re-uploads the cross-section when the
+    /// selected layer or the slice generation actually changes. `None`
+    /// means the panel currently shows an empty image. Shares the cap
+    /// key space with the 3D cut so the two stay in lockstep.
+    slice_view_key: Cell<Option<u64>>,
 }
 
 impl ViewportController {
@@ -75,6 +82,7 @@ impl ViewportController {
             camera: CameraController::new(),
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
+            slice_view_key: Cell::new(None),
         }
     }
 
@@ -95,6 +103,7 @@ impl ViewportController {
             camera: CameraController::new(),
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
+            slice_view_key: Cell::new(None),
         };
         // Most viewport tests exercise the Transform-section tooling
         // (gizmo drag, keyboard drive, delete, paste); default the
@@ -1114,6 +1123,42 @@ impl ViewportController {
     /// early when no paint is owed, when any of the required pieces
     /// are missing (renderer, UI handle, viewport, or camera), or
     /// when the effective render-target size collapses to zero.
+    /// Reconcile the slice-view panel image with the current cap key.
+    /// `cap_key` is `Some` exactly when the 3D cut is active (Slice
+    /// section, held slice, a layer with a top edge). When it differs
+    /// from the last pushed key, rebuild the cross-section image, or push
+    /// an empty one when the key is `None`; an unchanged key skips the
+    /// rebuild so repeated frames do not re-upload the image. The image
+    /// is kept current whenever a slice is held, so the View-menu toggle
+    /// shows it instantly without a refresh of its own.
+    fn reconcile_slice_view_image(
+        &self,
+        ui: &MainWindow,
+        cap_key: Option<u64>,
+        layer: u32,
+        build_volume: &BuildVolume,
+    ) {
+        if self.slice_view_key.get() == cap_key {
+            return;
+        }
+        let image = match cap_key {
+            Some(_) => self
+                .session
+                .document()
+                .with_slice_layer(layer, |l| {
+                    crate::slice_cap::build_cap_raster(l, build_volume)
+                })
+                .flatten()
+                .map(|raster| {
+                    slint::Image::from_rgba8(crate::slice_cap::cap_raster_to_rgba(&raster))
+                })
+                .unwrap_or_default(),
+            None => slint::Image::default(),
+        };
+        ui.set_slice_view_image(image);
+        self.slice_view_key.set(cap_key);
+    }
+
     fn on_paint(&self) {
         if !self.render.frame().redraw_owed() {
             return;
@@ -1173,6 +1218,14 @@ impl ViewportController {
                 .flatten()
         };
         renderer.update_cap(cap_key, &mut build_cap);
+
+        // Slice-view panel: mirror the same cut into the 2D panel image,
+        // keyed on the same cap key so it rebuilds only when the layer or
+        // the slice generation changes, not on every frame. Riding this
+        // paint pass means every trigger that repaints (slider, section,
+        // scene, slice completion) refreshes the panel with no extra
+        // wiring.
+        self.reconcile_slice_view_image(&ui, cap_key, selected_layer, &build_volume);
 
         // Render path. With a scene installed, the closure inside
         // `with_scene` composes the gizmo frame against the live scene

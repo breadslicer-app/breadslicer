@@ -18,6 +18,7 @@ use sc_print_primitives::{BuildVolume as RasterBuildVolume, Mirror, PixelResolut
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer_binary;
+use slint::{Rgba8Pixel, SharedPixelBuffer};
 
 use crate::build_volume::BuildVolume;
 
@@ -78,6 +79,38 @@ pub(crate) fn build_cap_raster(
     })
 }
 
+/// RGB fill for covered texels in the slice-view panel: the mesh base
+/// tint, matching the 3D cap so the panel and the viewport cut read the
+/// same colour. Uncovered texels reuse this RGB with a zero alpha so the
+/// panel's bilinear scaling does not fringe covered edges toward a
+/// different hue.
+const SLICE_VIEW_FILL_RGB: [u8; 3] = [191, 199, 217];
+
+/// Expand a [`CapRaster`] into a straight-alpha RGBA buffer for the
+/// slice-view panel. The cap stores coverage bottom-to-top (row 0 is the
+/// minimum-Y edge) to match the GPU texture upload; the panel shows the
+/// plate from above, so the rows are flipped to top-down here. Covered
+/// texels become an opaque fill; uncovered texels become fully
+/// transparent so the panel surface shows through.
+pub(crate) fn cap_raster_to_rgba(raster: &CapRaster) -> SharedPixelBuffer<Rgba8Pixel> {
+    let width = raster.width as usize;
+    let height = raster.height as usize;
+    let [r, g, b] = SLICE_VIEW_FILL_RGB;
+
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(raster.width, raster.height);
+    let pixels = buffer.make_mut_slice();
+    for out_row in 0..height {
+        // Flip vertically: output row 0 (top) reads the cap's last row.
+        let src_row = height - 1 - out_row;
+        for col in 0..width {
+            let covered = raster.coverage[src_row * width + col] != 0;
+            let a = if covered { 255 } else { 0 };
+            pixels[out_row * width + col] = Rgba8Pixel { r, g, b, a };
+        }
+    }
+    buffer
+}
+
 #[cfg(test)]
 mod slice_cap_tests {
     use super::*;
@@ -117,5 +150,39 @@ mod slice_cap_tests {
         let bv = BuildVolume::new(80.0, 80.0, 80.0);
         let raster = build_cap_raster(&ContourLayer::new(0.05, vec![]), &bv).expect("a cap raster");
         assert!(raster.coverage.iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn cap_raster_to_rgba_flips_rows_and_fills_coverage() {
+        // Bottom-to-top coverage: row 0 (the minimum-Y edge) is solid,
+        // row 1 is empty. The panel views the plate from above, so the
+        // expansion flips the rows: output row 0 (the top) comes from the
+        // cap's last row and stays transparent; output row 1 (the bottom)
+        // is the opaque fill.
+        let raster = CapRaster {
+            coverage: vec![255, 255, 0, 0],
+            width: 2,
+            height: 2,
+        };
+        let rgba = cap_raster_to_rgba(&raster);
+        let pixels = rgba.as_slice();
+
+        assert_eq!(pixels[0].a, 0);
+        assert_eq!(pixels[1].a, 0);
+        assert_eq!(pixels[2].a, 255);
+        assert_eq!(pixels[3].a, 255);
+        assert_eq!((pixels[2].r, pixels[2].g, pixels[2].b), (191, 199, 217));
+    }
+
+    #[test]
+    fn cap_raster_to_rgba_preserves_dimensions() {
+        let raster = CapRaster {
+            coverage: vec![0; 12],
+            width: 4,
+            height: 3,
+        };
+        let rgba = cap_raster_to_rgba(&raster);
+        assert_eq!(rgba.width(), 4);
+        assert_eq!(rgba.height(), 3);
     }
 }
