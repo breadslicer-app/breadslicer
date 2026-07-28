@@ -116,6 +116,8 @@ fn write_project_file(doc: &SceneDocument, payload: &ProjectPayload, target: &Pa
                 spatial.graph(),
                 payload,
                 EmbedProfiles::Yes,
+                None,
+                None,
                 ProjectFileType::ThreeMf,
                 &mut bytes,
             )?;

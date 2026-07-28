@@ -332,6 +332,8 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
         &prism_trio_scene(),
         &payload,
         EmbedProfiles::No,
+        None,
+        None,
         file_type,
         &mut bytes,
     )

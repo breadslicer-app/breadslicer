@@ -105,8 +105,16 @@ fn project_file_type() -> ProjectFileType {
 
 fn write_bytes(scene: &Scene, payload: &ProjectPayload, embed: EmbedProfiles) -> Vec<u8> {
     let mut bytes = Vec::new();
-    write_project(scene, payload, embed, project_file_type(), &mut bytes)
-        .expect("the project writes cleanly");
+    write_project(
+        scene,
+        payload,
+        embed,
+        None,
+        None,
+        project_file_type(),
+        &mut bytes,
+    )
+    .expect("the project writes cleanly");
     bytes
 }
 
@@ -328,5 +336,81 @@ mod progress_tests {
             );
         }
         assert_eq!(ticks.last().expect("non-empty").decompressed_bytes, total);
+    }
+}
+
+mod slice_persistence_tests {
+    use super::*;
+
+    use sc_project_formats::PlateSlices;
+    use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
+    use sc_sl1cer::geom2d::Point2D;
+
+    /// A CCW triangle as one solid layer plus an empty layer, paired
+    /// with the top Z of each layer.
+    fn plate_slices() -> PlateSlices {
+        let outer = ClosedRing::new(
+            [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+                .into_iter()
+                .map(|(x, y)| Point2D::new(x, y))
+                .collect(),
+        );
+        let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
+        let solid = ContourLayer::new(0.025, vec![triangle]);
+        let void = ContourLayer::new(0.075, vec![]);
+        let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
+        PlateSlices {
+            contours,
+            slab_tops: vec![0.05, 0.10],
+        }
+    }
+
+    fn write_bytes_with_slices(
+        slices: Option<&PlateSlices>,
+        slice_fingerprint: Option<&str>,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        write_project(
+            &prism_trio_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            slices,
+            slice_fingerprint,
+            project_file_type(),
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+        bytes
+    }
+
+    #[test]
+    fn a_written_slice_token_is_handed_back_on_read() {
+        let plate = plate_slices();
+        let loaded = read_back(write_bytes_with_slices(Some(&plate), Some("cafef00d")));
+        assert_eq!(loaded.slice_fingerprint, Some("cafef00d".to_string()));
+    }
+
+    #[test]
+    fn a_written_slice_part_reaches_the_package() {
+        let plate = plate_slices();
+        let bytes = write_bytes_with_slices(Some(&plate), Some("cafef00d"));
+        let mut archive =
+            zip::ZipArchive::new(Cursor::new(bytes)).expect("the package is a zip archive");
+        let carries_slices = (0..archive.len()).any(|i| {
+            archive
+                .by_index(i)
+                .map(|entry| entry.name().contains("slices"))
+                .unwrap_or(false)
+        });
+        assert!(
+            carries_slices,
+            "write_project must forward the slices into the package"
+        );
+    }
+
+    #[test]
+    fn writing_without_slices_leaves_no_token() {
+        let loaded = read_back(write_bytes_with_slices(None, None));
+        assert_eq!(loaded.slice_fingerprint, None);
     }
 }
