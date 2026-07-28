@@ -28,6 +28,7 @@ use super::scene_upload::GpuScene;
 use super::{MeshRenderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
+use crate::slice_cap::CapRaster;
 
 /// Recorded arguments of a single [`MockRenderer::render`] call.
 /// Captures only the fields the audit's behavioural tests assert on;
@@ -122,6 +123,11 @@ impl MeshRenderer for MockRenderer {
 
     fn invalidate_sizing(&mut self) {
         self.state.borrow_mut().invalidate_sizing_calls += 1;
+    }
+
+    fn update_cap(&mut self, _key: Option<u64>, _build: &mut dyn FnMut() -> Option<CapRaster>) {
+        // The slice-view cap is a GPU-only concern; the mock holds no
+        // texture state, so this is a no-op.
     }
 
     fn render(

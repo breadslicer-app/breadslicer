@@ -18,6 +18,7 @@ use super::scene_upload::GpuScene;
 use super::{Renderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
+use crate::slice_cap::CapRaster;
 
 pub(crate) trait MeshRenderer {
     /// UI-thread upload path; rebuilds GPU buffers from the CPU-side
@@ -40,6 +41,11 @@ pub(crate) trait MeshRenderer {
     /// Drop the viewport-sized allocations so the next render
     /// reallocates them at the current exact pixel size.
     fn invalidate_sizing(&mut self);
+
+    /// Refresh the slice-view cap texture for the layer identified by
+    /// `key` (`None` clears it). `build` is called to produce the
+    /// coverage raster only when `key` differs from the current cap.
+    fn update_cap(&mut self, key: Option<u64>, build: &mut dyn FnMut() -> Option<CapRaster>);
 
     /// Run the per-frame render pass. Returns the produced texture,
     /// or `None` when the viewport is zero-sized.
@@ -72,6 +78,10 @@ impl MeshRenderer for Renderer {
 
     fn invalidate_sizing(&mut self) {
         Renderer::invalidate_sizing(self);
+    }
+
+    fn update_cap(&mut self, key: Option<u64>, build: &mut dyn FnMut() -> Option<CapRaster>) {
+        Renderer::update_cap(self, key, build);
     }
 
     fn render(

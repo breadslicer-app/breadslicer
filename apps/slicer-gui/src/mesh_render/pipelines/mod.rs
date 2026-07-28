@@ -9,6 +9,7 @@
 //! per-pipeline `BindGroup` index enum that pins the WGSL `@group(N)`
 //! ordering.
 
+pub(super) mod cap;
 pub(super) mod gizmo;
 pub(super) mod mesh;
 pub(super) mod outline;

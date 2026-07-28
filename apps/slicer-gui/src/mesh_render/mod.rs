@@ -15,6 +15,7 @@ use slint::wgpu_29::wgpu;
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::gizmo::axis::ALL_AXES;
+use crate::slice_cap::CapRaster;
 
 mod frame;
 mod gizmo_buffers;
@@ -33,6 +34,7 @@ use gizmo_entries::{
     build_translate_entries,
 };
 pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
+use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
@@ -135,10 +137,24 @@ struct Pipelines {
     gizmo: GizmoPipeline,
     gizmo_buffers: GizmoBuffers,
     plate: PlatePipeline,
+    /// The slice-view cap pipeline, immutable after construction.
+    cap: CapPipeline,
+    /// The current cap's coverage texture, or `None` when no cap is
+    /// shown. Refreshed by [`Renderer::update_cap`] when the selected
+    /// layer changes; an unchanged key skips the re-upload.
+    cap_texture: Option<CapTexture>,
     /// Cached plate geometry for the current `BuildVolume`. `None`
     /// until the first render call; rebuilt when the per-frame
     /// `BuildVolume` differs from the cached one.
     plate_buffers: Option<PlateBuffers>,
+}
+
+/// The uploaded coverage texture for the current cap layer, tagged with
+/// the cache key that built it so an unchanged layer skips re-upload.
+/// The bind group keeps the texture and its view alive.
+struct CapTexture {
+    key: u64,
+    bind_group: wgpu::BindGroup,
 }
 
 /// Viewport-sized GPU allocations that are dropped and recreated when
@@ -175,6 +191,7 @@ impl Renderer {
         let gizmo_buffers = GizmoBuffers::create(&device);
         let gizmo = GizmoPipeline::create(&device, &gizmo_buffers);
         let plate = PlatePipeline::create(&device, &mesh);
+        let cap = CapPipeline::create(&device, &mesh);
 
         Self {
             core: RendererCore {
@@ -188,6 +205,8 @@ impl Renderer {
                 gizmo,
                 gizmo_buffers,
                 plate,
+                cap,
+                cap_texture: None,
                 plate_buffers: None,
             },
             scene: None,
@@ -320,6 +339,100 @@ impl Renderer {
             return;
         }
         self.pipelines.plate_buffers = Some(PlateBuffers::create(&self.core.device, build_volume));
+    }
+
+    /// Refresh the slice-view cap texture. `key` identifies the layer
+    /// being capped; `None` clears the cap. When `key` matches the
+    /// current cap nothing happens, so a camera orbit (same layer) skips
+    /// the rasterise. Otherwise `build` produces the coverage raster,
+    /// which is uploaded as an R8 texture; a `build` yielding `None`
+    /// clears the cap.
+    pub(crate) fn update_cap(
+        &mut self,
+        key: Option<u64>,
+        build: &mut dyn FnMut() -> Option<CapRaster>,
+    ) {
+        match key {
+            None => self.pipelines.cap_texture = None,
+            Some(key) => {
+                if self.pipelines.cap_texture.as_ref().map(|c| c.key) == Some(key) {
+                    return;
+                }
+                self.pipelines.cap_texture = build().map(|raster| {
+                    let bind_group = self.upload_cap_texture(&raster);
+                    CapTexture { key, bind_group }
+                });
+            }
+        }
+    }
+
+    /// Upload a coverage raster as an R8 texture and build the cap's
+    /// group-1 bind group. Each row is padded to wgpu's copy alignment,
+    /// as `write_texture` requires.
+    fn upload_cap_texture(&self, raster: &CapRaster) -> wgpu::BindGroup {
+        let width = raster.width;
+        let height = raster.height;
+        let texture = self.core.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mesh-viewer cap texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        let padded_bpr =
+            width.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let mut padded = vec![0u8; (padded_bpr * height) as usize];
+        for row in 0..height as usize {
+            let src = row * width as usize;
+            let dst = row * padded_bpr as usize;
+            padded[dst..dst + width as usize]
+                .copy_from_slice(&raster.coverage[src..src + width as usize]);
+        }
+        self.core.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &padded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bpr),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.core
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mesh-viewer cap texture bg"),
+                layout: &self.pipelines.cap.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.pipelines.cap.sampler),
+                    },
+                ],
+            })
     }
 
     pub fn render(
@@ -489,6 +602,8 @@ impl Renderer {
                 self.record_mesh_objects(&mut pass, inst, selection);
             }
 
+            self.record_cap(&mut pass);
+
             self.record_envelope_walls(&mut pass, plate_buffers);
             self.record_plate_bottom(&mut pass, plate_buffers);
         }
@@ -521,6 +636,22 @@ impl Renderer {
         );
         pass.set_stencil_reference(0);
         pass.draw_indexed(0..plate_buffers.solid_index_count, 0, 0..1);
+    }
+
+    /// Slice-view cap: a flat quad at the clip height textured with the
+    /// current layer's coverage, filling the mesh cut so it reads solid.
+    /// Drawn only when a cap texture is set (Slice section with a held
+    /// slice). The clip height and build corners come from the shared
+    /// uniform buffer, so no per-cap vertex data is bound.
+    fn record_cap(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let Some(cap_texture) = self.pipelines.cap_texture.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(&self.pipelines.cap.pipeline);
+        pass.set_bind_group(0, &self.pipelines.cap.uniforms_bind_group, &[]);
+        pass.set_bind_group(1, &cap_texture.bind_group, &[]);
+        pass.set_stencil_reference(0);
+        pass.draw(0..6, 0..1);
     }
 
     /// Plate top: inner grid + outer rounded border at Z = 0.
@@ -1164,6 +1295,53 @@ mod gpu_integration_tests {
                 64,
             )
             .expect("render should produce a texture");
+        assert_eq!(texture.size().width, 64);
+        assert_eq!(texture.size().height, 64);
+    }
+
+    /// The slice-view cap renders without crashing: once `update_cap`
+    /// installs a coverage texture, a render with a clip height set still
+    /// produces a texture, so the cap pipeline and its draw are exercised.
+    #[test]
+    fn render_with_a_cap_produces_a_texture() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&graph)
+            .expect("upload_scene under default limits");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+
+        let mut build = || {
+            Some(CapRaster {
+                coverage: vec![255u8; 4 * 4],
+                width: 4,
+                height: 4,
+            })
+        };
+        renderer.update_cap(Some(1), &mut build);
+
+        let texture = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: None,
+                    gizmo: None,
+                    clip_z: Some(1.0),
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
+            .expect("render should produce a texture with a cap");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
     }

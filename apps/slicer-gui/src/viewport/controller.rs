@@ -1157,6 +1157,23 @@ impl ViewportController {
             self.session.document().slice_layer_top_z(selected_layer),
         );
 
+        // Slice-view cap: fill the cut with the selected layer's
+        // coverage so it reads solid. Keyed on the slice generation plus
+        // the layer, so a camera orbit reuses the texture and a re-slice
+        // rebuilds it; `None` (nothing clipped) clears the cap.
+        let cap_key = clip_z.map(|_| {
+            (self.session.document().slice_generation() << 20) ^ u64::from(selected_layer)
+        });
+        let mut build_cap = || {
+            self.session
+                .document()
+                .with_slice_layer(selected_layer, |layer| {
+                    crate::slice_cap::build_cap_raster(layer, &build_volume)
+                })
+                .flatten()
+        };
+        renderer.update_cap(cap_key, &mut build_cap);
+
         // Render path. With a scene installed, the closure inside
         // `with_scene` composes the gizmo frame against the live scene
         // and renders the union (plate + objects). With no scene,

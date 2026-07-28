@@ -33,6 +33,7 @@ use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{PlateSlices, ProjectPayload};
+use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::profile::LayerSchedule;
 
 pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
@@ -180,6 +181,10 @@ pub(crate) struct SceneDocument {
     /// [`Self::slice_geometry_changed`] cannot under-report a change:
     /// an evicted edit stays applied with no way to undo it.
     evicted_since_slice: Cell<bool>,
+    /// Bumped every time a new slice result is stored. The slice-view
+    /// cap keys its cached texture on this plus the layer index, so a
+    /// re-slice invalidates the cap.
+    slice_generation: Cell<u64>,
 }
 
 impl SceneDocument {
@@ -199,6 +204,7 @@ impl SceneDocument {
             unsaved_project_state: Cell::new(false),
             slice_result: RefCell::new(None),
             evicted_since_slice: Cell::new(false),
+            slice_generation: Cell::new(0),
         })
     }
 
@@ -477,6 +483,8 @@ impl SceneDocument {
     pub fn set_slice_result(&self, result: SliceResult) {
         *self.slice_result.borrow_mut() = Some(result);
         self.evicted_since_slice.set(false);
+        self.slice_generation
+            .set(self.slice_generation.get().wrapping_add(1));
     }
 
     /// The parameters of the held slice result, cloned out (the contour
@@ -508,6 +516,24 @@ impl SceneDocument {
             .borrow()
             .as_ref()
             .and_then(|result| result.schedule.iter_slab_tops().nth(index as usize))
+    }
+
+    /// A counter bumped each time a slice result is stored. Combined
+    /// with the layer index it keys the slice-view cap's cached texture,
+    /// so a re-slice invalidates it.
+    pub fn slice_generation(&self) -> u64 {
+        self.slice_generation.get()
+    }
+
+    /// Run `f` against the held slice's layer at `index`, or return
+    /// `None` when no slice is held or the index is past the last layer.
+    /// The layer is borrowed in place, so the cap raster is built
+    /// without cloning the contour.
+    pub fn with_slice_layer<R>(&self, index: u32, f: impl FnOnce(&ContourLayer) -> R) -> Option<R> {
+        self.slice_result
+            .borrow()
+            .as_ref()
+            .and_then(|result| result.merged.layers().get(index as usize).map(f))
     }
 
     /// The held slices packaged for persistence, or `None` when there is

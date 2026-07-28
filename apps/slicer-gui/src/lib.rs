@@ -45,6 +45,7 @@ mod scene_export;
 mod scene_loader;
 mod scene_save;
 mod selection;
+mod slice_cap;
 mod slice_panel;
 mod slice_projection;
 mod slice_result;
