@@ -19,6 +19,7 @@
 //! plain `f64` in the unit declared by the model element; unit
 //! conversion is the adapter's job.
 
+mod deflate;
 pub mod error;
 pub mod model;
 pub mod names;

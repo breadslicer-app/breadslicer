@@ -705,4 +705,117 @@ mod write_progress_tests {
         // No content parts: nothing to tick against.
         assert!(ticks.is_empty(), "a package with no parts does not tick");
     }
+
+    #[test]
+    fn a_part_compressed_across_threads_still_ticks_to_total() {
+        // 5 MiB is past the threshold that routes a part to the
+        // parallel deflater, so this exercises the progress reporting
+        // of that path rather than the single-threaded one.
+        let part_bytes = 5 * 1024 * 1024;
+        let (_, ticks) = write_collecting_ticks(&large_part_package(part_bytes));
+
+        assert!(ticks.len() >= 3, "a large part ticks several times");
+        let total = ticks[0].1;
+        assert_eq!(total, part_bytes as u64, "total is the sum of part bytes");
+        for pair in ticks.windows(2) {
+            assert_eq!(pair[1].1, total, "total stays fixed");
+            assert!(pair[1].0 > pair[0].0, "counts grow strictly");
+        }
+        assert_eq!(
+            ticks.last().unwrap().0,
+            total,
+            "the last tick reaches total"
+        );
+    }
+}
+
+mod parallel_compression_tests {
+    use super::*;
+
+    /// Bytes with local structure, so the compressor finds cross-chunk
+    /// back-references (exercising the dictionary priming) instead of
+    /// the degenerate all-same case.
+    fn varied_bytes(len: usize) -> Vec<u8> {
+        let mut data = Vec::with_capacity(len + 64);
+        let mut state = 0x2545_f491u32;
+        while data.len() < len {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            data.extend_from_slice(
+                format!(
+                    "<vertex x=\"{}\" y=\"{}\" z=\"{}\"/>",
+                    state % 1000,
+                    (state >> 7) % 1000,
+                    (state >> 14) % 1000,
+                )
+                .as_bytes(),
+            );
+        }
+        data.truncate(len);
+        data
+    }
+
+    #[test]
+    fn a_large_part_round_trips_through_the_parallel_path() {
+        // 5 MiB is past PARALLEL_PART_THRESHOLD, so the big part is
+        // deflated across threads and spliced in, while the small part
+        // stays on the single-threaded path. Both must read back exact.
+        let big = varied_bytes(5 * 1024 * 1024);
+        let small = b"<model/>".to_vec();
+
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME),
+                MODEL_PART_CONTENT_TYPE,
+                big.clone(),
+            )
+            .expect("unique name");
+        package
+            .add_part(
+                part("/2D/slices1.model"),
+                MODEL_PART_CONTENT_TYPE,
+                small.clone(),
+            )
+            .expect("unique name");
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+
+        let bytes = write_to_bytes(&package);
+        let restored = Package::read_from(Cursor::new(bytes)).expect("package reads");
+
+        assert_eq!(
+            restored.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            Some(big.as_slice()),
+        );
+        assert_eq!(
+            restored.part_data(&part("/2D/slices1.model")),
+            Some(small.as_slice()),
+        );
+        assert_eq!(
+            restored.part_content_type(&part(DEFAULT_MODEL_PART_NAME)),
+            Some(MODEL_PART_CONTENT_TYPE),
+        );
+    }
+
+    #[test]
+    fn a_maximally_compressible_large_part_round_trips() {
+        // A degenerate, all-identical part still round-trips: dictionary
+        // priming across chunk boundaries must not corrupt the stream.
+        let big = vec![b'x'; 5 * 1024 * 1024];
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME),
+                MODEL_PART_CONTENT_TYPE,
+                big.clone(),
+            )
+            .expect("unique name");
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+
+        let bytes = write_to_bytes(&package);
+        let restored = Package::read_from(Cursor::new(bytes)).expect("package reads");
+        assert_eq!(
+            restored.part_data(&part(DEFAULT_MODEL_PART_NAME)),
+            Some(big.as_slice()),
+        );
+    }
 }

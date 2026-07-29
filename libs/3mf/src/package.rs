@@ -19,7 +19,7 @@
 //! memory on a crafted or corrupt file; see `PackageReadLimits`.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
 
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesStart, Event};
@@ -34,6 +34,20 @@ use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
 /// Chunk size for feeding a part's bytes to the deflater, so a large
 /// part reports progress as it compresses rather than in one step.
 const COMPRESS_CHUNK_BYTES: usize = 256 * 1024;
+
+/// Parts at least this large are compressed across threads (see
+/// [`crate::deflate`]) instead of on the writing thread. Smaller parts
+/// (the content-type map, relationship parts, modest models) stay on
+/// the single-threaded path, where the parallel setup would not pay for
+/// itself.
+const PARALLEL_PART_THRESHOLD: usize = 4 * 1024 * 1024;
+
+/// Upper bound on a part compressed across threads. The spliced entry
+/// carries 32-bit ZIP sizes, so a part near the 4 GiB limit stays on
+/// the single-threaded path. Such a part is far larger than any real
+/// 3MF model and could not be read back (the reader caps parts at
+/// 2 GiB), so this only avoids a malformed header at the boundary.
+const MAX_PARALLEL_PART: usize = (u32::MAX as usize) - 64 * 1024 * 1024;
 
 /// Absolute, `/`-rooted name of a part inside the package.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -268,12 +282,16 @@ impl Package {
 
     /// [`Package::write_to`], reporting compression progress.
     ///
-    /// `progress` is invoked as part bytes are fed to the deflater,
-    /// carrying `(bytes_compressed, total_bytes)` where `total_bytes` is
-    /// the sum of the raw byte lengths of the content parts (the small
-    /// content-type and relationship entries are not counted). The count
-    /// climbs monotonically and ends at `total_bytes`. Consumers that
-    /// derive a fraction should clamp it, matching the read side.
+    /// `progress` carries `(bytes_compressed, total_bytes)` where
+    /// `total_bytes` is the sum of the raw byte lengths of the content
+    /// parts (the small content-type and relationship entries are not
+    /// counted). The count climbs monotonically and ends at
+    /// `total_bytes`. Consumers that derive a fraction should clamp it,
+    /// matching the read side.
+    ///
+    /// A part small enough to compress on the writing thread ticks as
+    /// its bytes are fed to the deflater; a part large enough to be
+    /// compressed across threads ticks once its stream is spliced in.
     pub fn write_to_with_progress<W: Write + Seek>(
         &self,
         writer: W,
@@ -301,14 +319,30 @@ impl Package {
         let total: u64 = self.parts.iter().map(|p| p.data.len() as u64).sum();
         let mut compressed: u64 = 0;
         for part in &self.parts {
-            archive.start_file(part.name.zip_entry(), options)?;
-            // Feed each part in chunks so a single large part (the mesh
-            // model) still yields intermediate progress instead of one
-            // jump from empty to done.
-            for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
-                archive.write_all(chunk)?;
-                compressed += chunk.len() as u64;
-                progress(compressed, total);
+            let len = part.data.len();
+            if (PARALLEL_PART_THRESHOLD..=MAX_PARALLEL_PART).contains(&len) {
+                // Compress the part across threads, then splice the
+                // finished stream in verbatim (no recompression).
+                let entry = crate::deflate::parallel_entry(part.name.zip_entry(), &part.data)?;
+                let mut source = ZipArchive::new(Cursor::new(entry))?;
+                archive.raw_copy_file(source.by_index(0)?)?;
+                // Report the part's bytes in the same chunk steps the
+                // single-threaded path uses, so the count climbs the
+                // same way regardless of which path compressed the part.
+                for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
+                    compressed += chunk.len() as u64;
+                    progress(compressed, total);
+                }
+            } else {
+                archive.start_file(part.name.zip_entry(), options)?;
+                // Feed each part in chunks so a large part still yields
+                // intermediate progress instead of one jump from empty
+                // to done.
+                for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
+                    archive.write_all(chunk)?;
+                    compressed += chunk.len() as u64;
+                    progress(compressed, total);
+                }
             }
         }
 

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+crc32fast.workspace = true
+flate2.workspace = true
 itoa.workspace = true
 quick-xml.workspace = true
 rayon.workspace = true
