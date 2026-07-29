@@ -134,6 +134,58 @@ mod sensitivity_tests {
 }
 
 #[cfg(test)]
+mod nesting_tests {
+    use super::*;
+
+    // A placement translation like the one the loader bakes onto a
+    // freshly opened mesh when it drops it on the build plate.
+    fn placement() -> Transform3D {
+        Transform3D::Affine(AffineTransform3D::from_translation([-67.9, -67.9, 0.002]))
+    }
+
+    /// Leaf placed as the scene's direct root, carrying `transform`.
+    /// This is the shape the plain-mesh loader produces: the mesh leaf
+    /// is the root, then plate placement writes the translation onto it.
+    fn leaf_as_root(transform: Transform3D) -> Scene {
+        let mut scene = Scene::new();
+        cube_leaf(&mut scene, None, transform);
+        scene
+    }
+
+    /// The same leaf and `transform`, wrapped under an identity Group
+    /// root. This is the shape a 3MF reader produces on reopen: build
+    /// items become leaves under a fresh anonymous identity group.
+    fn leaf_under_identity_group(transform: Transform3D) -> Scene {
+        let mut scene = Scene::new();
+        let root = scene.add_group(None, Transform3D::Identity);
+        scene.add_root(root).expect("group as root");
+        let leaf = scene
+            .add_leaf(
+                None,
+                transform,
+                LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+            )
+            .expect("inline-mesh leaf");
+        scene.add_child(root, leaf).expect("attach leaf under root");
+        scene
+    }
+
+    #[test]
+    fn ignores_an_identity_group_wrapping_a_leaf() {
+        // The mesh sits at the same world coordinates in both scenes;
+        // only the intermediate grouping differs. A save then reopen
+        // round trip changes exactly this nesting (the plain loader's
+        // leaf-as-root becomes leaf-under-identity-group when read back
+        // from 3MF), so the fingerprint must not depend on it, or the
+        // reopened slices are wrongly rejected as stale.
+        assert_eq!(
+            fingerprint(&leaf_as_root(placement())),
+            fingerprint(&leaf_under_identity_group(placement())),
+        );
+    }
+}
+
+#[cfg(test)]
 mod error_tests {
     use super::*;
 

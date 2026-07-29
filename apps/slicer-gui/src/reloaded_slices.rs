@@ -286,4 +286,112 @@ mod reloaded_slices_tests {
         );
         assert!(revalidate_persisted_slices(None, &scene, Some(stack()), token()).is_none());
     }
+
+    #[test]
+    fn a_reopened_project_revalidates_slices_saved_on_a_placed_scene() {
+        // Reproduces the reopen scenario: a mesh placed by a non-identity
+        // affine transform (a fit scale plus recentre), sliced on the
+        // bundled default profiles, saved with real slice geometry, then
+        // reopened. The full reopen path (read back the standalone slice
+        // part, re-resolve the schedule, recompute the fingerprint) must
+        // accept the slices.
+        //
+        // The slice-time scene is built the way the plain-mesh loader does:
+        // the mesh leaf is the scene's direct root, with the plate placement
+        // written onto it. Reopening from 3MF wraps that leaf under a fresh
+        // identity group, so the saved and reopened scenes place the same
+        // geometry under different nesting. The fingerprint must ignore that
+        // nesting, or the reopened slices are wrongly rejected as stale.
+        use sc_mesh_core::transform::AffineTransform3D;
+        use sc_project_formats::PlateSlices;
+        use sc_sl1cer::contour::{ClosedRing, ContourLayer, Polygon};
+        use sc_sl1cer::geom2d::Point2D;
+
+        let printer = PrinterId::new("elegoo-mars-5-goo").expect("valid id");
+        let resin = MaterialId::new("sirayatech-craft-ultra-clear-saturn4").expect("valid id");
+
+        let placement = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+            [
+                [0.6173767447471619, 0.0, 0.0],
+                [0.0, 0.6173767447471619, 0.0],
+                [0.0, 0.0, 0.6173767447471619],
+            ],
+            [
+                -67.91707062404612,
+                -67.90612409423966,
+                0.0021667425876330526,
+            ],
+        ));
+        let mut scene = Scene::new();
+        let leaf = scene
+            .add_leaf(None, placement, LeafPayload::Mesh(Arc::new(cube_mesh())))
+            .expect("add leaf");
+        scene.add_root(leaf).expect("leaf becomes the scene root");
+
+        let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+            .expect("the bundled default profiles resolve a schedule");
+        let token = slice_input_fingerprint(&scene, &schedule)
+            .expect("the scene has sliceable geometry")
+            .to_token();
+
+        let slab_tops: Vec<f64> = schedule.iter_slab_tops().collect();
+        let square = Polygon::new(
+            ClosedRing::new(vec![
+                Point2D::new(-1.0, -1.0),
+                Point2D::new(1.0, -1.0),
+                Point2D::new(1.0, 1.0),
+                Point2D::new(-1.0, 1.0),
+            ]),
+            vec![],
+        )
+        .expect("a CCW square is a valid polygon");
+        let layers: Vec<ContourLayer> = slab_tops
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let polys = if i == 0 { vec![] } else { vec![square.clone()] };
+                ContourLayer::new(0.05, polys)
+            })
+            .collect();
+        let plate = PlateSlices {
+            contours: ContourStack::new_unchecked(layers),
+            slab_tops,
+        };
+
+        let payload = ProjectPayload {
+            printer: Some(printer.clone()),
+            resin: Some(resin.clone()),
+            first_layer_height: None,
+            embedded: Vec::new(),
+        };
+
+        let mut bytes = Vec::new();
+        write_project(
+            &scene,
+            &payload,
+            EmbedProfiles::No,
+            Some(&plate),
+            Some(&token),
+            three_mf(),
+            &mut bytes,
+        )
+        .expect("the project writes cleanly");
+        let loaded = read_project(&mut Cursor::new(bytes), three_mf()).expect("the project reads");
+
+        assert!(
+            loaded.slices.is_some(),
+            "the persisted slice geometry must read back"
+        );
+        assert_eq!(loaded.slice_fingerprint.as_deref(), Some(token.as_str()));
+        assert!(
+            revalidate_persisted_slices(
+                loaded.payload.as_ref(),
+                &loaded.scene,
+                loaded.slices,
+                loaded.slice_fingerprint,
+            )
+            .is_some(),
+            "a reopened project's slices must revalidate against the reloaded scene"
+        );
+    }
 }

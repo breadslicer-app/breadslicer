@@ -122,11 +122,8 @@ pub fn slice_input_fingerprint(
             }
         }
 
-        let chain = transform_chain(scene, leaf).map_err(SliceInputFingerprintError::Scene)?;
-        hasher.update((chain.len() as u64).to_le_bytes());
-        for transform in &chain {
-            hash_transform(&mut hasher, transform);
-        }
+        let world = leaf_world_transform(scene, leaf).map_err(SliceInputFingerprintError::Scene)?;
+        hash_transform(&mut hasher, &world);
     }
 
     hash_schedule(&mut hasher, schedule);
@@ -163,18 +160,23 @@ pub fn validate_persisted_slices(
     }
 }
 
-/// The local transforms from `leaf` up to its root, leaf first. Their
-/// composition is the leaf's world placement; hashing them raw catches
-/// every placement change without recomputing that composition.
-fn transform_chain(scene: &Scene, leaf: NodeId) -> Result<Vec<Transform3D>, SceneError> {
-    let mut chain = Vec::new();
+/// The leaf's world placement: every local transform from `leaf` up to
+/// its root, composed into one. Two scenes that put the same geometry at
+/// the same world coordinates share this value whatever intermediate
+/// grouping each uses, so the fingerprint ignores non-geometric nesting
+/// (an extra identity group a format reader wraps around a leaf on
+/// reopen, for instance). Walking leaf to root and composing each
+/// ancestor onto the accumulated child builds `root . ... . parent .
+/// leaf`, which is the leaf's world transform.
+fn leaf_world_transform(scene: &Scene, leaf: NodeId) -> Result<Transform3D, SceneError> {
+    let mut world = Transform3D::Identity;
     let mut current = Some(leaf);
     while let Some(id) = current {
         let node = scene.node(id).ok_or(SceneError::DanglingNodeId { id })?;
-        chain.push(node.local_transform);
+        world = node.local_transform.compose(&world);
         current = scene.parent_of(id);
     }
-    Ok(chain)
+    Ok(world)
 }
 
 /// Feed one transform into the hasher: a discriminant byte, then, for an
