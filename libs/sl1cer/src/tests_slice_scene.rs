@@ -331,7 +331,8 @@ mod equivalence_tests {
 
 #[cfg(test)]
 mod progress_and_cancel_tests {
-    use std::cell::Cell;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
@@ -346,25 +347,27 @@ mod progress_and_cancel_tests {
     #[test]
     fn progress_reports_each_layer_up_to_the_total() {
         let scene = two_cube_scene();
-        let reports = Cell::new(Vec::new());
+        let reports = Mutex::new(Vec::new());
         let outcome = slice_scene_with_progress(
             &scene,
             &four_layer_profile(),
             &CancelToken::new(),
             |progress| {
-                let mut acc = reports.take();
-                acc.push(progress);
-                reports.set(acc);
+                reports.lock().unwrap().push(progress);
             },
         )
         .expect("both cubes slice");
 
         assert!(matches!(outcome, SliceOutcome::Completed(_)));
-        let reports = reports.into_inner();
+        let reports = reports.into_inner().unwrap();
         // 2 leaves * 4 layers.
         assert_eq!(reports.len(), 8);
         assert!(reports.iter().all(|p| p.total == 8));
-        let counts: Vec<usize> = reports.iter().map(|p| p.completed).collect();
+        // Layers slice in parallel, so reports can arrive out of
+        // order; the counts over a completed run are a permutation
+        // of 1..=total.
+        let mut counts: Vec<usize> = reports.iter().map(|p| p.completed).collect();
+        counts.sort_unstable();
         assert_eq!(counts, (1..=8).collect::<Vec<_>>());
     }
 
@@ -383,18 +386,22 @@ mod progress_and_cancel_tests {
     fn cancelling_after_the_first_layer_stops_early() {
         let scene = two_cube_scene();
         let cancel = CancelToken::new();
-        let calls = Cell::new(0usize);
+        let calls = AtomicUsize::new(0);
 
         let outcome = slice_scene_with_progress(&scene, &four_layer_profile(), &cancel, |_| {
-            calls.set(calls.get() + 1);
+            calls.fetch_add(1, Ordering::Relaxed);
             cancel.cancel();
         })
         .expect("cancellation is a clean stop, not an error");
 
         assert_eq!(outcome, SliceOutcome::Cancelled);
-        // The first layer reports, the closure cancels, and the poll at
-        // the top of the next layer stops the run: exactly one report.
-        assert_eq!(calls.get(), 1);
+        // The first report cancels the token, but the first leaf's
+        // layer tasks run in parallel: any of its 4 layers may already
+        // be past the cancellation poll and still report. The second
+        // leaf never starts (the poll between leaves sees the trip),
+        // so between 1 and 4 reports arrive.
+        let calls = calls.into_inner();
+        assert!((1..=4).contains(&calls), "reports: {calls}");
     }
 
     #[test]
@@ -402,15 +409,15 @@ mod progress_and_cancel_tests {
         let scene = two_cube_scene();
         let cancel = CancelToken::new();
         cancel.cancel();
-        let calls = Cell::new(0usize);
+        let calls = AtomicUsize::new(0);
 
         let outcome = slice_scene_with_progress(&scene, &four_layer_profile(), &cancel, |_| {
-            calls.set(calls.get() + 1);
+            calls.fetch_add(1, Ordering::Relaxed);
         })
         .unwrap();
 
         assert_eq!(outcome, SliceOutcome::Cancelled);
-        assert_eq!(calls.get(), 0);
+        assert_eq!(calls.into_inner(), 0);
     }
 
     #[test]
@@ -450,6 +457,91 @@ mod progress_and_cancel_tests {
             .fraction(),
             0.25,
         );
+    }
+}
+
+#[cfg(test)]
+mod parallel_equivalence_tests {
+    use sc_mesh_core::indexed_mesh::MeshTopology;
+    use sc_mesh_core::scene::bake::bake_leaf_to_world;
+    use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel};
+
+    use crate::api::slice_layer;
+    use crate::contour::{ContourLayer, ContourStack};
+
+    use super::*;
+
+    /// 64 uniform 0.03125 mm slabs: plane centres from 0.015625 up to
+    /// 1.984375, covering `z in [0, 2]`. Enough tasks to occupy
+    /// several worker threads.
+    fn sixty_four_layer_profile() -> SliceProfile {
+        SliceProfile::new(
+            BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
+            PixelResolution::new(100, 100).unwrap(),
+            LayerSchedule::uniform(0.03125, 0.03125, 64).unwrap(),
+            Mirror::default(),
+            AaLevel::Off,
+            PackingMode::None,
+        )
+    }
+
+    /// The reference result: the leaf sliced by a plain sequential
+    /// loop over [`slice_layer`], one plane after another on this
+    /// thread. The parallel pipeline must reproduce it exactly.
+    fn expected_sequential_stack(
+        scene: &Scene,
+        leaf: NodeId,
+        profile: &SliceProfile,
+    ) -> ContourStack {
+        let baked = bake_leaf_to_world(scene, leaf).expect("leaf bakes");
+        let faces = baked.validated_faces().expect("faces validate");
+        let mesh = faces.validated_manifold().expect("mesh is manifold");
+        let topology = MeshTopology::from_manifold(&mesh);
+        let layers: Vec<ContourLayer> = profile
+            .layer_schedule()
+            .iter_z()
+            .map(|z_mm| slice_layer(&mesh, z_mm, &topology).expect("layer slices"))
+            .collect();
+        ContourStack::new_unchecked(layers)
+    }
+
+    #[test]
+    fn parallel_scene_matches_a_sequential_layer_pass() {
+        let mut scene = Scene::new();
+        let cube = add_root_cube(&mut scene, "cube", -3.0);
+        let z_tunnel = add_root_mesh(&mut scene, "z-tunnel", cuboid_with_z_tunnel());
+        let y_tunnel = add_root_mesh(&mut scene, "y-tunnel", cuboid_with_y_tunnel());
+        let profile = sixty_four_layer_profile();
+
+        let slices = slice_scene(&scene, &profile).expect("all three leaves slice");
+
+        assert_eq!(slices.len(), 3);
+        for (record, leaf) in slices.iter().zip([cube, z_tunnel, y_tunnel]) {
+            assert_eq!(record.leaf(), leaf);
+            let expected = expected_sequential_stack(&scene, leaf, &profile);
+            assert_eq!(record.stack(), &expected);
+        }
+
+        // Guard against a vacuously-empty comparison: the z-tunnel
+        // slices to an annulus (outer ring plus one hole) on every
+        // layer, and the y-tunnel splits into two solid polygons
+        // inside its tunnel band.
+        let z_first = &slices[1].stack().layers()[0];
+        assert_eq!(z_first.polygons().len(), 1);
+        assert_eq!(z_first.polygons()[0].holes().len(), 1);
+        let y_mid = &slices[2].stack().layers()[32];
+        assert_eq!(y_mid.polygons().len(), 2);
+    }
+
+    #[test]
+    fn slice_leaf_matches_a_sequential_layer_pass() {
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "y-tunnel", cuboid_with_y_tunnel());
+        let profile = sixty_four_layer_profile();
+
+        let stack = slice_leaf(&scene, leaf, &profile).expect("leaf slices");
+
+        assert_eq!(stack, expected_sequential_stack(&scene, leaf, &profile));
     }
 }
 

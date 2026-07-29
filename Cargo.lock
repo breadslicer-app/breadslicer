@@ -4853,6 +4853,7 @@ name = "sc-sl1cer"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "rayon",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-print-primitives",

@@ -13,8 +13,9 @@
 //! the crate into one end-to-end pipeline.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use rayon::prelude::*;
 use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedManifoldMesh};
 use sc_mesh_core::scene::bake::bake_leaf_to_world;
 use sc_mesh_core::scene::node::{NodeId, NodeKind};
@@ -213,7 +214,7 @@ pub fn slice_scene(
     scene: &Scene,
     profile: &SliceProfile,
 ) -> Result<Vec<LeafSlices>, SliceSceneError> {
-    match slice_scene_core(scene, profile, &CancelToken::new(), &mut |_| {})? {
+    match slice_scene_core(scene, profile, &CancelToken::new(), &|_| {})? {
         SliceOutcome::Completed(slices) => Ok(slices),
         // The token created above is never cancelled, so a completed run
         // is the only reachable outcome here; the arm exists only to
@@ -225,24 +226,33 @@ pub fn slice_scene(
 /// Like [`slice_scene`], but reports per-layer progress and can be
 /// cancelled cooperatively through `cancel`.
 ///
-/// `on_progress` is called once per completed layer-slice with the
-/// running count and the total (`leaves * schedule layers`).
-/// `cancel` is polled between layers and between leaves: once tripped,
-/// slicing stops and the call returns [`SliceOutcome::Cancelled`] with
-/// no partial contours. Leaf discovery, validation aggregation,
-/// determinism, and the error variants are exactly those of
-/// [`slice_scene`]; a validation failure still returns
-/// [`SliceSceneError::LeavesValidationFailed`] regardless of `cancel`.
+/// Each leaf's layers are sliced in parallel and the results are
+/// assembled in schedule order, so parallelism never affects the
+/// output bytes. `on_progress` is called once per completed
+/// layer-slice with the running count and the total
+/// (`leaves * schedule layers`); it is invoked from worker threads
+/// (hence the `Fn + Sync` bound) and reports can reach the observer
+/// out of order. Over a completed run the reported counts are a
+/// permutation of `1..=total`.
+///
+/// `cancel` is polled when each layer task starts and between leaves:
+/// once tripped, no further layer starts; layers already in flight
+/// finish (and may still report progress) and the call returns
+/// [`SliceOutcome::Cancelled`] with no partial contours. Leaf
+/// discovery, validation aggregation, determinism, and the error
+/// variants are exactly those of [`slice_scene`]; a validation failure
+/// still returns [`SliceSceneError::LeavesValidationFailed`]
+/// regardless of `cancel`.
 pub fn slice_scene_with_progress<F>(
     scene: &Scene,
     profile: &SliceProfile,
     cancel: &CancelToken,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<SliceOutcome, SliceSceneError>
 where
-    F: FnMut(SliceProgress),
+    F: Fn(SliceProgress) + Sync,
 {
-    slice_scene_core(scene, profile, cancel, &mut on_progress)
+    slice_scene_core(scene, profile, cancel, &on_progress)
 }
 
 /// The shared slice-scene body for both public entry points: collect
@@ -253,16 +263,16 @@ fn slice_scene_core<F>(
     scene: &Scene,
     profile: &SliceProfile,
     cancel: &CancelToken,
-    on_progress: &mut F,
+    on_progress: &F,
 ) -> Result<SliceOutcome, SliceSceneError>
 where
-    F: FnMut(SliceProgress),
+    F: Fn(SliceProgress) + Sync,
 {
     let leaves = collect_mesh_leaves(scene)?;
     let total = leaves
         .len()
         .saturating_mul(profile.layer_schedule().total_layers() as usize);
-    let mut completed: usize = 0;
+    let completed = AtomicUsize::new(0);
 
     let mut failures: Vec<LeafValidationFailure> = Vec::new();
     let mut slices: Vec<LeafSlices> = Vec::new();
@@ -296,7 +306,7 @@ where
                 profile,
                 cancel,
                 on_progress,
-                &mut completed,
+                &completed,
                 total,
             )
             .map_err(|error| SliceSceneError::LeafSlicingFailed {
@@ -399,55 +409,91 @@ fn validate_baked(baked: &IndexedMesh) -> Result<ValidatedManifoldMesh<'_>, Inva
 
 /// The shared per-leaf pipeline: intersect every scheduled Z plane
 /// with the validated mesh, stitch the crossing segments into rings,
-/// canonicalise winding, and group outers with their holes.
+/// canonicalise winding, and group outers with their holes. Wraps
+/// [`slice_manifold_mesh_observed`] with a token that is never
+/// cancelled and a no-op progress callback.
 fn slice_manifold_mesh(
     mesh: &ValidatedManifoldMesh<'_>,
     profile: &SliceProfile,
 ) -> Result<ContourStack, SliceError> {
-    let topology = MeshTopology::from_manifold(mesh);
-    let mut layers = Vec::new();
-    for z_mm in profile.layer_schedule().iter_z() {
-        layers.push(slice_layer(mesh, z_mm, &topology)?);
+    let total = profile.layer_schedule().total_layers() as usize;
+    let sliced = slice_manifold_mesh_observed(
+        mesh,
+        profile,
+        &CancelToken::new(),
+        &|_| {},
+        &AtomicUsize::new(0),
+        total,
+    )?;
+    match sliced {
+        Some(stack) => Ok(stack),
+        // The token created above is never cancelled, so a finished
+        // stack is the only reachable outcome here; the arm exists only
+        // to satisfy the type (panic-free per this crate's no-panic
+        // rule).
+        None => Ok(ContourStack::new_unchecked(Vec::new())),
     }
-    Ok(ContourStack::new_unchecked(layers))
 }
 
 /// [`slice_manifold_mesh`] with a cancellation poll and a per-layer
-/// progress callback woven into the Z loop. Returns `Ok(None)` when
-/// `cancel` is tripped before the leaf finishes (its partial contours
-/// are dropped). `completed` accumulates across every leaf of the run
-/// so the reported progress spans the whole scene.
+/// progress callback. Layers are sliced in parallel, one task per
+/// scheduled Z; the finished layers are assembled in schedule order,
+/// so the stack is bitwise identical to a sequential pass. When more
+/// than one layer fails, the error of the lowest failing layer is
+/// returned, matching the first failure a sequential pass would hit.
+///
+/// `cancel` is polled when each layer task starts. Returns `Ok(None)`
+/// when the poll saw a tripped token before every layer was computed
+/// (the finished layers are dropped); tasks already past the poll
+/// still complete and report progress. `completed` accumulates across
+/// every leaf of the run so the reported progress spans the whole
+/// scene.
 fn slice_manifold_mesh_observed<F>(
     mesh: &ValidatedManifoldMesh<'_>,
     profile: &SliceProfile,
     cancel: &CancelToken,
-    on_progress: &mut F,
-    completed: &mut usize,
+    on_progress: &F,
+    completed: &AtomicUsize,
     total: usize,
 ) -> Result<Option<ContourStack>, SliceError>
 where
-    F: FnMut(SliceProgress),
+    F: Fn(SliceProgress) + Sync,
 {
     let topology = MeshTopology::from_manifold(mesh);
-    let mut layers = Vec::new();
-    for z_mm in profile.layer_schedule().iter_z() {
-        if cancel.is_cancelled() {
-            return Ok(None);
+    let zs: Vec<f64> = profile.layer_schedule().iter_z().collect();
+    // `Ok(None)` marks a layer skipped by the cancellation poll. The
+    // collect is positional, so `outcomes` is in schedule order.
+    let outcomes: Vec<Result<Option<ContourLayer>, SliceError>> = zs
+        .into_par_iter()
+        .map(|z_mm| {
+            if cancel.is_cancelled() {
+                return Ok(None);
+            }
+            let layer = slice_layer(mesh, z_mm, &topology)?;
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            on_progress(SliceProgress {
+                completed: done,
+                total,
+            });
+            Ok(Some(layer))
+        })
+        .collect();
+
+    let mut layers = Vec::with_capacity(outcomes.len());
+    for outcome in outcomes {
+        match outcome? {
+            Some(layer) => layers.push(layer),
+            None => return Ok(None),
         }
-        layers.push(slice_layer(mesh, z_mm, &topology)?);
-        *completed += 1;
-        on_progress(SliceProgress {
-            completed: *completed,
-            total,
-        });
     }
     Ok(Some(ContourStack::new_unchecked(layers)))
 }
 
 /// Slice one scheduled Z plane of a validated mesh into a
-/// [`ContourLayer`]. The single per-layer step shared by the plain and
-/// progress-reporting leaf pipelines, so both stay bitwise identical.
-fn slice_layer(
+/// [`ContourLayer`]. Pure function of its arguments: the layer tasks
+/// run in parallel and rely on this producing the same bytes no
+/// matter which thread or order runs them.
+pub(crate) fn slice_layer(
     mesh: &ValidatedManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
