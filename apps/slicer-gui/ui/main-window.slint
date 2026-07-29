@@ -31,6 +31,10 @@ export { AboutWindow, AxisView, ErrorDialog, ExtendDialog, ForkDialog, PointerMo
 // two.
 export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
 
+// Phases of a project save, mirroring the Rust-side worker phases; the
+// Rust poll maps between the two.
+export enum SavePhase { Serializing, Compressing, Writing }
+
 // Menu presentation for the main window. `Bar` shows the top menu bar;
 // `Compact` hides it to reclaim vertical space. Linux and Windows only:
 // macOS always resolves to `Bar` in Rust because it renders a global
@@ -121,6 +125,13 @@ export component MainWindow inherits Window {
     // while `load-in-progress` is true.
     in property <LoadPhase> load-phase: LoadPhase.ReadingFile;
     in property <float> load-progress: 0.0;
+    // True from save dispatch (the write worker was spawned) until the
+    // write ends on any path; drives the floating save-progress panel
+    // and disables the Save commands. Current phase and its 0..1
+    // fraction are polled from Rust while it is true.
+    in property <bool> saving-in-progress: false;
+    in property <SavePhase> save-phase: SavePhase.Serializing;
+    in property <float> save-progress: 0.0;
     in property <ThemePreference> theme: ThemePreference.System;
     in property <[StandardListViewItem]> object-list: [];
     in-out property <int> selected-object-index: -1;
@@ -366,7 +377,7 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Save");
                 shortcut: @keys(Control + S);
-                enabled: root.has-scene && !root.loading;
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.save-requested();
                 }
@@ -375,7 +386,7 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Save As…");
                 shortcut: @keys(Control + Shift + S);
-                enabled: root.has-scene && !root.loading;
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.save-as-requested();
                 }
@@ -887,7 +898,7 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Save");
-                    enabled: root.has-scene && !root.loading;
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.save-requested();
                     }
@@ -895,7 +906,7 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Save As…");
-                    enabled: root.has-scene && !root.loading;
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.save-as-requested();
                     }
@@ -1116,6 +1127,39 @@ export component MainWindow inherits Window {
 
             ProgressIndicator {
                 progress: root.load-progress;
+            }
+        }
+    }
+
+    // Floating save-progress panel: same placement as the load panel
+    // (they never run at once, since saving is disabled while loading
+    // and vice versa). A plain Rectangle without a TouchArea, so pointer
+    // events pass through to the viewport underneath.
+    if root.saving-in-progress: Rectangle {
+        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
+        height: save-progress-panel-layout.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 16px;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 6px;
+
+        save-progress-panel-layout := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: root.save-phase == SavePhase.Serializing
+                    ? @tr("Serializing model…")
+                    : root.save-phase == SavePhase.Compressing
+                    ? @tr("Compressing…")
+                    : @tr("Writing file…");
+                color: Palette.foreground;
+            }
+
+            ProgressIndicator {
+                progress: root.save-progress;
             }
         }
     }

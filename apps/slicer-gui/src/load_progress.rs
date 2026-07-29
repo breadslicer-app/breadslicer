@@ -57,9 +57,10 @@ pub(crate) fn decode(value: u32) -> (LoadPhase, u32) {
 
 /// Within-phase fraction on the permille scale. A zero denominator
 /// counts as complete (a phase with nothing to do is done), and
-/// `done` past `total` clamps to the ceiling (dishonest 3MF size
-/// claims can over-run their announced total).
-fn permille(done: u64, total: u64) -> u32 {
+/// `done` past `total` clamps to the ceiling (a forged 3MF size
+/// claim can over-run its announced total). Shared with the
+/// save-progress accounting.
+pub(crate) fn permille(done: u64, total: u64) -> u32 {
     if total == 0 {
         return PROGRESS_PERMILLE_MAX;
     }

@@ -50,6 +50,7 @@ use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::SceneRender;
 use crate::pending_load::PendingLoad;
 use crate::picking;
+use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
@@ -76,9 +77,10 @@ impl ViewportController {
     ) -> Self {
         let dialogs = DialogManager::new();
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone()));
+        let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         Self {
             ui: ui.as_weak(),
-            session: SessionState::new(document, loader, pending_load, dialogs),
+            session: SessionState::new(document, loader, save_progress, pending_load, dialogs),
             camera: CameraController::new(),
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
@@ -96,10 +98,17 @@ impl ViewportController {
     pub(crate) fn new_for_test() -> Self {
         let dialogs = DialogManager::new();
         let loader = Rc::new(SceneLoader::new_for_test(dialogs.clone()));
+        let save_progress = Rc::new(SaveProgressPanel::new(slint::Weak::default()));
         let pending_load = Rc::new(PendingLoad::new());
         let controller = Self {
             ui: slint::Weak::default(),
-            session: SessionState::new(SceneDocument::new(), loader, pending_load, dialogs),
+            session: SessionState::new(
+                SceneDocument::new(),
+                loader,
+                save_progress,
+                pending_load,
+                dialogs,
+            ),
             camera: CameraController::new(),
             render: RenderHost::new_for_test(),
             input: InputDispatch::new(),
@@ -215,6 +224,11 @@ impl ViewportController {
     /// dialog).
     pub fn dialogs(&self) -> Rc<DialogManager> {
         self.session.dialogs().clone()
+    }
+
+    /// The save-progress panel driver, shared with the async save flow.
+    pub fn save_progress(&self) -> Rc<SaveProgressPanel> {
+        self.session.save_progress().clone()
     }
 
     /// Subscribes the controller to its document. Called from

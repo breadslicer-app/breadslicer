@@ -25,12 +25,14 @@ use crate::WorkspaceSection;
 use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::error_dialog::DialogManager;
 use crate::pending_load::PendingLoad;
+use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneSubscription};
 use crate::scene_loader::SceneLoader;
 
 pub(super) struct SessionState {
     document: Rc<SceneDocument>,
     loader: Rc<SceneLoader>,
+    save_progress: Rc<SaveProgressPanel>,
     pending_load: Rc<PendingLoad>,
     dialogs: Rc<DialogManager>,
     /// Held by the controller so it's dropped alongside the
@@ -53,12 +55,14 @@ impl SessionState {
     pub(super) fn new(
         document: Rc<SceneDocument>,
         loader: Rc<SceneLoader>,
+        save_progress: Rc<SaveProgressPanel>,
         pending_load: Rc<PendingLoad>,
         dialogs: Rc<DialogManager>,
     ) -> Self {
         Self {
             document,
             loader,
+            save_progress,
             pending_load,
             dialogs,
             document_subscription: RefCell::new(None),
@@ -73,6 +77,10 @@ impl SessionState {
 
     pub(super) fn loader(&self) -> &Rc<SceneLoader> {
         &self.loader
+    }
+
+    pub(super) fn save_progress(&self) -> &Rc<SaveProgressPanel> {
+        &self.save_progress
     }
 
     pub(super) fn dialogs(&self) -> &Rc<DialogManager> {
@@ -134,6 +142,7 @@ mod session_state_tests {
         SessionState::new(
             SceneDocument::new(),
             Rc::new(SceneLoader::new_for_test(dialogs.clone())),
+            Rc::new(SaveProgressPanel::new(slint::Weak::default())),
             Rc::new(PendingLoad::new()),
             dialogs,
         )

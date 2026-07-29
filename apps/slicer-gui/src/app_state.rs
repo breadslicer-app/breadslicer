@@ -903,12 +903,14 @@ impl AppState {
         };
         let doc = controller.document();
         let dialogs = controller.dialogs();
+        let save_progress = controller.save_progress();
         let snapshot = self.prefs.snapshot();
         let app_weak = Rc::downgrade(self);
         if let Err(err) = slint::spawn_local(async move {
             let saved = crate::wiring::run_save_flow(
                 doc,
                 dialogs,
+                save_progress,
                 snapshot.default_printer,
                 snapshot.default_resin,
             )

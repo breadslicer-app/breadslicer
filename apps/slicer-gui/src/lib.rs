@@ -41,6 +41,8 @@ mod profile_transfer;
 mod profile_view;
 mod project_profiles;
 mod reloaded_slices;
+mod save_progress;
+mod save_progress_panel;
 mod scene_document;
 mod scene_export;
 mod scene_loader;

@@ -17,15 +17,17 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use sc_mesh_core::Scene;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_project_formats::{
-    EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, write_project,
+    EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, WriteProgress,
+    write_project_with_progress,
 };
 
 use crate::project_profiles::{complete_embedded_documents, profile_library_roots};
+use crate::save_progress::SavePhase;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::resolve_current_schedule;
 
@@ -109,32 +111,70 @@ pub(crate) fn payload_for_save(
     payload
 }
 
-/// Writes the document's scene and `payload` to `target` as a 3MF
-/// project, atomically. Does not touch the document; the caller
-/// records the success.
-fn write_project_file(doc: &SceneDocument, payload: &ProjectPayload, target: &Path) -> Result<()> {
-    let bytes = doc
-        .with_scene(|spatial| -> Result<Vec<u8>> {
-            let scene = spatial.graph();
-            let persist = persist_slices(doc, payload, scene);
-            let (slices, slice_fingerprint) = match &persist {
-                Some((plate, token)) => (Some(plate), Some(token.as_str())),
-                None => (None, None),
-            };
-            let mut bytes = Vec::new();
-            write_project(
-                scene,
-                payload,
-                EmbedProfiles::Yes,
-                slices,
-                slice_fingerprint,
-                ProjectFileType::ThreeMf,
-                &mut bytes,
-            )?;
-            Ok(bytes)
-        })
-        .ok_or_else(|| anyhow!("No scene loaded"))??;
-    write_bytes_atomically(target, &bytes)?;
+/// Everything a project write needs, captured as owned, `Send` data so
+/// the write can run off the UI thread. The scene is a cheap clone of
+/// the document's graph (mesh payloads are shared through `Arc`), and
+/// the slices, payload, and target are owned. Built on the UI thread by
+/// [`prepare_save`]; consumed by [`write_bundle`] on a worker thread.
+pub(crate) struct SaveBundle {
+    scene: Scene,
+    payload: ProjectPayload,
+    slices: Option<PlateSlices>,
+    slice_fingerprint: Option<String>,
+    target: PathBuf,
+}
+
+/// Snapshots the document's scene and the slices to persist into a
+/// `Send` [`SaveBundle`], on the UI thread. Returns `None` when no scene
+/// is loaded. The scene clone and the slice capture are taken together
+/// under one scene borrow so the persisted slices match the geometry
+/// written.
+pub(crate) fn prepare_save(
+    doc: &SceneDocument,
+    payload: ProjectPayload,
+    target: PathBuf,
+) -> Option<SaveBundle> {
+    doc.with_scene(|spatial| {
+        let scene = spatial.graph().clone();
+        let (slices, slice_fingerprint) = match persist_slices(doc, &payload, spatial.graph()) {
+            Some((plate, token)) => (Some(plate), Some(token)),
+            None => (None, None),
+        };
+        SaveBundle {
+            scene,
+            payload,
+            slices,
+            slice_fingerprint,
+            target,
+        }
+    })
+}
+
+/// Writes a prepared bundle to its target as a 3MF project, atomically,
+/// reporting each phase through `progress`. Pure with respect to the
+/// document, so it runs on a worker thread; the caller records success
+/// on the UI thread.
+pub(crate) fn write_bundle(
+    bundle: &SaveBundle,
+    mut progress: impl FnMut(SavePhase, u64, u64),
+) -> Result<()> {
+    let mut bytes = Vec::new();
+    write_project_with_progress(
+        &bundle.scene,
+        &bundle.payload,
+        EmbedProfiles::Yes,
+        bundle.slices.as_ref(),
+        bundle.slice_fingerprint.as_deref(),
+        ProjectFileType::ThreeMf,
+        &mut bytes,
+        |report| match report {
+            WriteProgress::Serialize { done, total } => progress(SavePhase::Serialize, done, total),
+            WriteProgress::Compress { done, total } => progress(SavePhase::Compress, done, total),
+        },
+    )?;
+    progress(SavePhase::Writing, 0, 1);
+    write_bytes_atomically(&bundle.target, &bytes)?;
+    progress(SavePhase::Writing, 1, 1);
     Ok(())
 }
 
@@ -160,27 +200,56 @@ fn persist_slices(
     doc.slices_for_persist(&schedule)
 }
 
-/// Runs a full project save against `target`: builds the payload,
-/// writes atomically, and on success updates the document so the
-/// held payload matches the file, "Save" overwrites `target` from
-/// now on, and the dirty marker clears.
+/// The synchronous form of a full project save against `target`: builds
+/// the payload, snapshots and writes the bundle, and on success updates
+/// the document so the held payload matches the file, "Save" overwrites
+/// `target` from now on, and the dirty marker clears. The GUI drives the
+/// write off the UI thread instead; this direct composition backs the
+/// save round-trip tests.
+#[cfg(test)]
 pub(crate) fn save_project_to(
     doc: &SceneDocument,
     target: &Path,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
 ) -> Result<()> {
+    let (bundle, payload) =
+        prepare_save_for_target(doc, target.to_path_buf(), default_printer, default_resin)
+            .ok_or_else(|| anyhow::anyhow!("No scene loaded"))?;
+    write_bundle(&bundle, |_, _, _| {})?;
+    record_save(doc, payload, target);
+    Ok(())
+}
+
+/// Builds the save payload and snapshots the scene into a `Send`
+/// [`SaveBundle`] for `target`, on the UI thread. Returns the bundle to
+/// hand a worker together with the payload to record once the write
+/// succeeds; `None` when no scene is loaded. The async save flow moves
+/// the bundle off-thread and keeps the payload for [`record_save`].
+pub(crate) fn prepare_save_for_target(
+    doc: &SceneDocument,
+    target: PathBuf,
+    default_printer: Option<PrinterId>,
+    default_resin: Option<MaterialId>,
+) -> Option<(SaveBundle, ProjectPayload)> {
     let payload = payload_for_save(
         doc,
         default_printer,
         default_resin,
         &profile_library_roots(),
     );
-    write_project_file(doc, &payload, target)?;
+    let bundle = prepare_save(doc, payload.clone(), target)?;
+    Some((bundle, payload))
+}
+
+/// Updates the document once a write has landed on disk: the held
+/// payload matches the file, "Save" overwrites `target` from now on, and
+/// the dirty marker clears. Runs on the UI thread, whether the write was
+/// synchronous or on a worker.
+pub(crate) fn record_save(doc: &SceneDocument, payload: ProjectPayload, target: &Path) {
     doc.set_project_payload(payload);
     doc.set_source_path(target.to_path_buf());
     doc.mark_saved();
-    Ok(())
 }
 
 #[cfg(test)]
@@ -608,6 +677,70 @@ mod scene_save_tests {
                 "slices sliced on the default profile must survive the save"
             );
             assert!(loaded.slice_fingerprint.is_some());
+        }
+    }
+
+    mod write_bundle_tests {
+        use super::*;
+
+        #[test]
+        fn a_prepared_bundle_writes_a_readable_project() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let target = dir.path().join("plate.3mf");
+
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), dir.path().join("widget.stl"));
+            let bundle = prepare_save(&doc, held_payload(), target.clone())
+                .expect("a loaded document prepares a bundle");
+
+            write_bundle(&bundle, |_, _, _| {}).expect("the bundle writes");
+
+            let bytes = fs::read(&target).expect("the file exists");
+            let loaded = read_project(
+                &mut Cursor::new(bytes),
+                sc_project_formats::ProjectFileType::ThreeMf,
+            )
+            .expect("the saved project reads back");
+            assert_eq!(loaded.payload, Some(held_payload()));
+        }
+
+        #[test]
+        fn write_bundle_reports_serialize_then_compress_then_writing() {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let target = dir.path().join("plate.3mf");
+
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), dir.path().join("widget.stl"));
+            let bundle = prepare_save(&doc, held_payload(), target)
+                .expect("a loaded document prepares a bundle");
+
+            let mut phases = Vec::new();
+            write_bundle(&bundle, |phase, _, _| phases.push(phase)).expect("the bundle writes");
+
+            let first_compress = phases
+                .iter()
+                .position(|p| *p == SavePhase::Compress)
+                .expect("a compress phase is reported");
+            let first_writing = phases
+                .iter()
+                .position(|p| *p == SavePhase::Writing)
+                .expect("a writing phase is reported");
+            assert!(
+                phases[..first_compress]
+                    .iter()
+                    .all(|p| *p == SavePhase::Serialize),
+                "serialize reports come before the first compress",
+            );
+            assert!(
+                first_compress < first_writing,
+                "compress comes before writing"
+            );
+        }
+
+        #[test]
+        fn preparing_without_a_scene_yields_no_bundle() {
+            let doc = SceneDocument::new();
+            assert!(prepare_save(&doc, held_payload(), PathBuf::from("/tmp/plate.3mf")).is_none(),);
         }
     }
 }

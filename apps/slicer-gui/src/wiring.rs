@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use futures_channel::oneshot;
 use sc_print_primitives::{MaterialId, PrinterId};
 use slint::ComponentHandle;
 
@@ -19,6 +20,7 @@ use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
 use crate::mesh_loader;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
+use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::SceneDocument;
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
@@ -341,6 +343,7 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
             let saved = run_save_flow(
                 ctrl.document(),
                 ctrl.dialogs(),
+                ctrl.save_progress(),
                 snapshot.default_printer,
                 snapshot.default_resin,
             )
@@ -368,6 +371,7 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
 pub(crate) async fn run_save_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
+    save_progress: Rc<SaveProgressPanel>,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
 ) -> bool {
@@ -375,18 +379,87 @@ pub(crate) async fn run_save_flow(
         SaveDispatch::NoScene => false,
         SaveDispatch::AlreadySaved => true,
         SaveDispatch::OverwriteProject(target) => {
-            match scene_save::save_project_to(&doc, &target, default_printer, default_resin) {
-                Ok(()) => true,
-                Err(err) => {
-                    show_save_error(&dialogs, &target, &err);
-                    false
-                }
-            }
+            save_to_target(
+                &doc,
+                &dialogs,
+                &save_progress,
+                &target,
+                default_printer,
+                default_resin,
+            )
+            .await
         }
         SaveDispatch::NeedsSaveAs => {
             let default_stem = scene_export::default_export_stem(&doc);
-            run_save_as_flow(doc, dialogs, default_stem, default_printer, default_resin).await
+            run_save_as_flow(
+                doc,
+                dialogs,
+                save_progress,
+                default_stem,
+                default_printer,
+                default_resin,
+            )
+            .await
         }
+    }
+}
+
+/// Writes a project to `target` off the UI thread, driving the
+/// save-progress panel. Snapshots the scene and payload on the UI
+/// thread, spawns a worker for the serialize + compress + disk write,
+/// and awaits its result over a oneshot delivered back through the event
+/// loop, so the event loop stays responsive throughout. On success the
+/// document is recorded on the UI thread and `true` is returned; a write
+/// failure surfaces the error dialog and returns `false`.
+async fn save_to_target(
+    doc: &Rc<SceneDocument>,
+    dialogs: &Rc<DialogManager>,
+    save_progress: &Rc<SaveProgressPanel>,
+    target: &Path,
+    default_printer: Option<PrinterId>,
+    default_resin: Option<MaterialId>,
+) -> bool {
+    let Some((bundle, payload)) = scene_save::prepare_save_for_target(
+        doc,
+        target.to_path_buf(),
+        default_printer,
+        default_resin,
+    ) else {
+        // The menu gates this, but a stale callback could still race a
+        // close: no scene means nothing to write.
+        return false;
+    };
+
+    save_progress.begin();
+    let sink = save_progress.sink();
+    let (tx, rx) = oneshot::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scene_save::write_bundle(&bundle, |phase, done, total| sink.set(phase, done, total))
+        }))
+        .unwrap_or_else(|payload| Err(anyhow::anyhow!(mesh_loader::panic_message(&payload))));
+        // Deliver on the UI thread so the awaiting task wakes there. If
+        // the event loop is gone (shutdown), the sender drops and the
+        // receiver resolves to a cancellation.
+        let _ = slint::invoke_from_event_loop(move || {
+            let _ = tx.send(result);
+        });
+    });
+
+    let outcome = rx.await;
+    save_progress.end();
+    match outcome {
+        Ok(Ok(())) => {
+            scene_save::record_save(doc, payload, target);
+            true
+        }
+        Ok(Err(err)) => {
+            show_save_error(dialogs, target, &err);
+            false
+        }
+        // The sender dropped without sending (event loop gone at
+        // shutdown): treat as not saved.
+        Err(_canceled) => false,
     }
 }
 
@@ -411,6 +484,7 @@ fn spawn_save_as_flow(
         let saved = run_save_as_flow(
             ctrl.document(),
             ctrl.dialogs(),
+            ctrl.save_progress(),
             default_stem,
             default_printer,
             default_resin,
@@ -434,6 +508,7 @@ fn spawn_save_as_flow(
 async fn run_save_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
+    save_progress: Rc<SaveProgressPanel>,
     default_stem: Option<String>,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
@@ -447,13 +522,15 @@ async fn run_save_as_flow(
             false
         }
         SaveTargetDispatch::Ready(target) => {
-            match scene_save::save_project_to(&doc, &target, default_printer, default_resin) {
-                Ok(()) => true,
-                Err(err) => {
-                    show_save_error(&dialogs, &target, &err);
-                    false
-                }
-            }
+            save_to_target(
+                &doc,
+                &dialogs,
+                &save_progress,
+                &target,
+                default_printer,
+                default_resin,
+            )
+            .await
         }
     }
 }
