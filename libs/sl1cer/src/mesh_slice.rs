@@ -62,7 +62,9 @@ pub(crate) fn segments_at_z_for_faces(
     topology: &MeshTopology,
     candidates: &[u32],
 ) -> Vec<Segment> {
-    let mut segments = Vec::new();
+    // One slot per candidate: a face emits at most one segment, so
+    // the vector never grows past this and never reallocates.
+    let mut segments = Vec::with_capacity(candidates.len());
     let faces = candidates.iter().map(|&idx| idx as usize);
     collect_segments_at_z(mesh, z_mm, topology, faces, &mut segments);
     segments
@@ -81,9 +83,8 @@ fn collect_segments_at_z(
     let vertices = mesh.vertices();
     let faces = mesh.faces();
     for idx in face_indices {
-        let face = &faces[idx];
         let face_idx = FaceIndex::from(idx);
-        let [i0, i1, i2] = face.vertices;
+        let [i0, i1, i2] = faces[idx].vertices;
         let v = [
             vertices[usize::from(i0)],
             vertices[usize::from(i1)],
