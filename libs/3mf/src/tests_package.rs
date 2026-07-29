@@ -633,3 +633,76 @@ mod progress_tests {
         );
     }
 }
+
+mod write_progress_tests {
+    use super::*;
+
+    fn write_collecting_ticks(package: &Package) -> (Vec<u8>, Vec<(u64, u64)>) {
+        let mut cursor = Cursor::new(Vec::new());
+        let mut ticks = Vec::new();
+        package
+            .write_to_with_progress(&mut cursor, |done, total| ticks.push((done, total)))
+            .expect("package writes");
+        (cursor.into_inner(), ticks)
+    }
+
+    /// A package whose single part is larger than the compression
+    /// chunk, so writing it yields several intermediate ticks.
+    fn large_part_package(part_bytes: usize) -> Package {
+        let mut package = Package::new();
+        package
+            .add_part(
+                part(DEFAULT_MODEL_PART_NAME),
+                MODEL_PART_CONTENT_TYPE,
+                vec![b'x'; part_bytes],
+            )
+            .expect("unique name");
+        package.add_root_relationship(start_part_relationship(DEFAULT_MODEL_PART_NAME));
+        package
+    }
+
+    #[test]
+    fn ticks_are_monotone_and_end_at_the_part_total() {
+        let part_bytes = 700 * 1024;
+        let (_, ticks) = write_collecting_ticks(&large_part_package(part_bytes));
+
+        assert!(ticks.len() >= 3, "a multi-chunk part ticks several times");
+        let total = ticks[0].1;
+        assert_eq!(total, part_bytes as u64, "total is the sum of part bytes");
+        for pair in ticks.windows(2) {
+            assert_eq!(pair[1].1, total, "total stays fixed");
+            assert!(pair[1].0 > pair[0].0, "counts grow strictly");
+        }
+        assert_eq!(
+            ticks.last().unwrap().0,
+            total,
+            "the last tick reaches total"
+        );
+    }
+
+    #[test]
+    fn the_total_sums_every_part_and_ignores_generated_entries() {
+        // Three parts of 8, 9, and 3 bytes; the content-type and
+        // relationship entries the writer generates are not counted.
+        let (_, ticks) = write_collecting_ticks(&sample_package());
+        let total = ticks[0].1;
+        assert_eq!(total, (b"<model/>".len() + b"<model2/>".len() + 3) as u64);
+        assert_eq!(ticks.last().unwrap().0, total);
+    }
+
+    #[test]
+    fn progress_does_not_change_the_written_bytes() {
+        let package = sample_package();
+        let plain = write_to_bytes(&package);
+        let (ticked, _) = write_collecting_ticks(&package);
+        assert_eq!(plain, ticked, "reporting progress must not alter output");
+    }
+
+    #[test]
+    fn an_empty_package_reports_a_zero_total() {
+        let package = Package::new();
+        let (_, ticks) = write_collecting_ticks(&package);
+        // No content parts: nothing to tick against.
+        assert!(ticks.is_empty(), "a package with no parts does not tick");
+    }
+}

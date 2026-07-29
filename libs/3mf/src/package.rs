@@ -31,6 +31,10 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 use crate::error::{MalformedPartNameError, PackageReadError, PackageWriteError};
 use crate::names::{RELATIONSHIPS_CONTENT_TYPE, START_PART_REL_TYPE};
 
+/// Chunk size for feeding a part's bytes to the deflater, so a large
+/// part reports progress as it compresses rather than in one step.
+const COMPRESS_CHUNK_BYTES: usize = 256 * 1024;
+
 /// Absolute, `/`-rooted name of a part inside the package.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PartName(String);
@@ -259,6 +263,22 @@ impl Package {
 
     /// Serialize the package as a plain deflate-compressed ZIP.
     pub fn write_to<W: Write + Seek>(&self, writer: W) -> Result<(), PackageWriteError> {
+        self.write_to_with_progress(writer, |_, _| {})
+    }
+
+    /// [`Package::write_to`], reporting compression progress.
+    ///
+    /// `progress` is invoked as part bytes are fed to the deflater,
+    /// carrying `(bytes_compressed, total_bytes)` where `total_bytes` is
+    /// the sum of the raw byte lengths of the content parts (the small
+    /// content-type and relationship entries are not counted). The count
+    /// climbs monotonically and ends at `total_bytes`. Consumers that
+    /// derive a fraction should clamp it, matching the read side.
+    pub fn write_to_with_progress<W: Write + Seek>(
+        &self,
+        writer: W,
+        mut progress: impl FnMut(u64, u64),
+    ) -> Result<(), PackageWriteError> {
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let mut archive = ZipWriter::new(writer);
@@ -278,9 +298,18 @@ impl Package {
             archive.write_all(&relationships_xml(relationships)?)?;
         }
 
+        let total: u64 = self.parts.iter().map(|p| p.data.len() as u64).sum();
+        let mut compressed: u64 = 0;
         for part in &self.parts {
             archive.start_file(part.name.zip_entry(), options)?;
-            archive.write_all(&part.data)?;
+            // Feed each part in chunks so a single large part (the mesh
+            // model) still yields intermediate progress instead of one
+            // jump from empty to done.
+            for chunk in part.data.chunks(COMPRESS_CHUNK_BYTES) {
+                archive.write_all(chunk)?;
+                compressed += chunk.len() as u64;
+                progress(compressed, total);
+            }
         }
 
         archive.finish()?;
