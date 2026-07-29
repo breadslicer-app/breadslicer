@@ -23,11 +23,12 @@ use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 use crate::slices::PlateSlices;
 use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload};
 use crate::threemf::slice_mapping::slice_stack_from_contours;
-use crate::threemf::writer::write_threemf_project;
+use crate::threemf::writer::{write_threemf_project, write_threemf_project_with_progress};
 use crate::threemf::{
     PROFILE_PART_CONTENT_TYPE, PROJECT_PART_CONTENT_TYPE, PROJECT_PART_NAME, PROJECT_REL_TYPE,
     SLICE_PART_NAME, SLICE_REL_TYPE,
 };
+use crate::write::WriteProgress;
 
 fn printer_id(raw: &str) -> PrinterId {
     PrinterId::new(raw).expect("test id is a valid slug")
@@ -446,5 +447,156 @@ mod slice_part_tests {
                 .iter()
                 .any(|r| r.rel_type == SLICE_REL_TYPE),
         );
+    }
+}
+
+mod progress_tests {
+    use super::*;
+
+    /// One solid triangle layer and one empty layer, paired with their
+    /// top Z, enough to exercise the slice serialize path.
+    fn plate_slices() -> PlateSlices {
+        let outer = ClosedRing::new(
+            [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+                .into_iter()
+                .map(|(x, y)| Point2D::new(x, y))
+                .collect(),
+        );
+        let triangle = Polygon::new(outer, vec![]).expect("the outer ring is CCW");
+        let solid = ContourLayer::new(0.025, vec![triangle]);
+        let void = ContourLayer::new(0.075, vec![]);
+        let contours = ContourStack::new(vec![solid, void]).expect("z is strictly increasing");
+        PlateSlices {
+            contours,
+            slab_tops: vec![0.05, 0.10],
+        }
+    }
+
+    fn write_collecting_progress(plate: Option<&PlateSlices>) -> (Vec<u8>, Vec<WriteProgress>) {
+        let mut bytes = Vec::new();
+        let mut events = Vec::new();
+        write_threemf_project_with_progress(
+            &cube_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            plate,
+            None,
+            &mut bytes,
+            |p| events.push(p),
+        )
+        .expect("the project writes cleanly");
+        (bytes, events)
+    }
+
+    #[test]
+    fn the_progress_variant_writes_the_same_bytes_as_the_plain_writer() {
+        let (with_progress, _) = write_collecting_progress(None);
+        let mut plain = Vec::new();
+        write_threemf_project(
+            &cube_scene(),
+            &full_payload(),
+            EmbedProfiles::Yes,
+            None,
+            None,
+            &mut plain,
+        )
+        .expect("the project writes cleanly");
+        assert_eq!(
+            with_progress, plain,
+            "reporting progress must not alter output"
+        );
+    }
+
+    #[test]
+    fn both_phases_fire_and_serialize_precedes_compress() {
+        let (_, events) = write_collecting_progress(None);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WriteProgress::Serialize { .. })),
+            "the serialize phase must report at least once",
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WriteProgress::Compress { .. })),
+            "the compress phase must report at least once",
+        );
+        let first_compress = events
+            .iter()
+            .position(|e| matches!(e, WriteProgress::Compress { .. }))
+            .expect("a compress event exists");
+        assert!(
+            !events[first_compress..]
+                .iter()
+                .any(|e| matches!(e, WriteProgress::Serialize { .. })),
+            "no serialize event may follow the first compress event",
+        );
+    }
+
+    #[test]
+    fn compress_counts_are_monotone_and_end_at_a_nonzero_total() {
+        let (_, events) = write_collecting_progress(Some(&plate_slices()));
+        let compress: Vec<(u64, u64)> = events
+            .iter()
+            .filter_map(|e| match e {
+                WriteProgress::Compress { done, total } => Some((*done, *total)),
+                _ => None,
+            })
+            .collect();
+        assert!(!compress.is_empty(), "compressing must report");
+        let total = compress[0].1;
+        assert!(total > 0, "the compress total covers the part bytes");
+        for pair in compress.windows(2) {
+            assert_eq!(pair[1].1, total, "the compress total stays fixed");
+            assert!(pair[1].0 >= pair[0].0, "compress counts never regress");
+        }
+        assert_eq!(
+            compress.last().unwrap().0,
+            total,
+            "compression ends at total"
+        );
+    }
+
+    #[test]
+    fn serialize_reports_once_per_document() {
+        // No slices: only the mesh model is serialized, so exactly one
+        // serialize report fires at that document's boundary.
+        let (_, mesh_only) = write_collecting_progress(None);
+        let mesh_serialize = mesh_only
+            .iter()
+            .filter(|e| matches!(e, WriteProgress::Serialize { .. }))
+            .count();
+        assert_eq!(mesh_serialize, 1, "one document, one serialize report");
+
+        // With slices, the mesh and the slice model are each serialized,
+        // so the boundary report fires twice.
+        let (_, with_slices) = write_collecting_progress(Some(&plate_slices()));
+        let sliced_serialize = with_slices
+            .iter()
+            .filter(|e| matches!(e, WriteProgress::Serialize { .. }))
+            .count();
+        assert_eq!(sliced_serialize, 2, "two documents, two serialize reports");
+    }
+
+    #[test]
+    fn serialize_counts_carry_a_nonzero_estimate_and_never_regress() {
+        let (_, events) = write_collecting_progress(Some(&plate_slices()));
+        let serialize: Vec<(u64, u64)> = events
+            .iter()
+            .filter_map(|e| match e {
+                WriteProgress::Serialize { done, total } => Some((*done, *total)),
+                _ => None,
+            })
+            .collect();
+        assert!(!serialize.is_empty());
+        for (done, total) in &serialize {
+            assert!(*total > 0, "the serialize estimate is nonzero");
+            assert!(*done > 0, "serialized bytes accumulate");
+        }
+        for pair in serialize.windows(2) {
+            assert_eq!(pair[1].1, serialize[0].1, "the estimate stays fixed");
+            assert!(pair[1].0 >= pair[0].0, "serialize counts never regress");
+        }
     }
 }

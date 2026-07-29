@@ -43,7 +43,7 @@ mod tests_writer;
 
 pub use reader::{read_threemf_project, read_threemf_project_with_progress};
 pub use slice_mapping::SliceMappingError;
-pub use writer::write_threemf_project;
+pub use writer::{write_threemf_project, write_threemf_project_with_progress};
 
 /// Name of the project part inside the package.
 pub const PROJECT_PART_NAME: &str = "/Metadata/soulcrafted-project.toml";

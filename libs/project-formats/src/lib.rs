@@ -50,4 +50,4 @@ pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};
 pub use read::{LoadedProject, read_project, read_project_with_progress};
 pub use slices::PlateSlices;
-pub use write::write_project;
+pub use write::{WriteProgress, write_project, write_project_with_progress};
