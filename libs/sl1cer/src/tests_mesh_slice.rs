@@ -32,9 +32,11 @@ use sc_mesh_fixtures::{
 };
 
 use crate::geom2d::{EndpointTag, Segment};
-use crate::mesh_slice::{segments_at_z, slice_mesh};
+use crate::mesh_slice::{segments_at_z, segments_at_z_for_faces, slice_mesh};
+use crate::plane_intersect::Z_CLASSIFY_EPS_MM;
 use crate::profile::LayerSchedule;
 use crate::stitch::stitch_layer;
+use crate::z_bins::LayerBuckets;
 
 fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
     mesh.validated_faces()
@@ -490,4 +492,67 @@ fn on_edge_skim_above_tetrahedron_at_z_zero_emits_no_on_edge_segment() {
         on_edge_seg_count, 0,
         "expected no on-edge segment for skim-from-above case, got {on_edge_seg_count}",
     );
+}
+
+// =====================================================================
+// Bucketed candidate scan: segments_at_z_for_faces fed by LayerBuckets
+// must reproduce the full scan bit for bit.
+// =====================================================================
+
+/// Probe planes for a mesh: a dense sweep across its Z span (plus a
+/// margin on both ends) and, for every distinct vertex Z, the plane
+/// through it and the planes one classification epsilon to each side.
+/// This hits the Crossing, ThroughVertex, Edge, Coplanar, and Empty
+/// paths and the exact edges of the On band.
+fn probe_planes(mesh: &IndexedMesh) -> Vec<f64> {
+    let mut vertex_zs: Vec<f64> = mesh.vertices.iter().map(|v| f64::from(v[2])).collect();
+    vertex_zs.sort_by(f64::total_cmp);
+    vertex_zs.dedup();
+    let lo = vertex_zs.first().copied().expect("non-empty mesh") - 0.1;
+    let hi = vertex_zs.last().copied().expect("non-empty mesh") + 0.1;
+    let mut planes: Vec<f64> = (0..=100)
+        .map(|k| lo + (hi - lo) * f64::from(k) / 100.0)
+        .collect();
+    for &z in &vertex_zs {
+        planes.extend([z - Z_CLASSIFY_EPS_MM, z, z + Z_CLASSIFY_EPS_MM]);
+    }
+    planes.sort_by(f64::total_cmp);
+    planes.dedup();
+    planes
+}
+
+fn assert_bucketed_scan_matches_full_scan(mesh: &IndexedMesh) {
+    let w = witness(mesh);
+    let topology = MeshTopology::from_manifold(&w);
+    let planes = probe_planes(mesh);
+    let buckets = LayerBuckets::build(&w, &planes);
+    for (k, &z_mm) in planes.iter().enumerate() {
+        let full = segments_at_z(&w, z_mm, &topology);
+        let bucketed = segments_at_z_for_faces(&w, z_mm, &topology, buckets.faces_at(k));
+        assert_eq!(bucketed, full, "scan mismatch at plane {z_mm}");
+    }
+}
+
+#[test]
+fn bucketed_scan_matches_the_full_scan_on_every_fixture() {
+    assert_bucketed_scan_matches_full_scan(&unit_cube_mesh());
+    assert_bucketed_scan_matches_full_scan(&cuboid_with_z_tunnel());
+    assert_bucketed_scan_matches_full_scan(&cuboid_with_y_tunnel());
+    assert_bucketed_scan_matches_full_scan(&aob_saddle_tetrahedron());
+    assert_bucketed_scan_matches_full_scan(&on_edge_crossing_tetrahedron());
+    assert_bucketed_scan_matches_full_scan(&on_edge_skim_above_tetrahedron());
+}
+
+#[test]
+fn bucketed_scan_with_every_face_is_the_full_scan() {
+    let mesh = cuboid_with_z_tunnel();
+    let w = witness(&mesh);
+    let topology = MeshTopology::from_manifold(&w);
+    let all_faces: Vec<u32> = (0..w.faces().len() as u32).collect();
+    for z_mm in [0.0, 0.5, 1.0, 1.999] {
+        assert_eq!(
+            segments_at_z_for_faces(&w, z_mm, &topology, &all_faces),
+            segments_at_z(&w, z_mm, &topology),
+        );
+    }
 }

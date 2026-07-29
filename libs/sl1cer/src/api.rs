@@ -24,9 +24,10 @@ use sc_mesh_core::{IndexedMesh, Scene};
 use crate::contour::{ContourLayer, ContourStack};
 use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
 use crate::grouping::group_into_polygons;
-use crate::mesh_slice::segments_at_z;
+use crate::mesh_slice::segments_at_z_for_faces;
 use crate::profile::SliceProfile;
 use crate::stitch::{normalise_to_ccw, stitch_layer};
+use crate::z_bins::LayerBuckets;
 
 /// Slice the leaf identified by `leaf` in `scene` into a
 /// [`ContourStack`] using the per-layer schedule and other parameters
@@ -461,15 +462,17 @@ where
 {
     let topology = MeshTopology::from_manifold(mesh);
     let zs: Vec<f64> = profile.layer_schedule().iter_z().collect();
+    let buckets = LayerBuckets::build(mesh, &zs);
     // `Ok(None)` marks a layer skipped by the cancellation poll. The
     // collect is positional, so `outcomes` is in schedule order.
     let outcomes: Vec<Result<Option<ContourLayer>, SliceError>> = zs
-        .into_par_iter()
-        .map(|z_mm| {
+        .par_iter()
+        .enumerate()
+        .map(|(layer_idx, &z_mm)| {
             if cancel.is_cancelled() {
                 return Ok(None);
             }
-            let layer = slice_layer(mesh, z_mm, &topology)?;
+            let layer = slice_layer(mesh, z_mm, &topology, buckets.faces_at(layer_idx))?;
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
             on_progress(SliceProgress {
                 completed: done,
@@ -490,15 +493,19 @@ where
 }
 
 /// Slice one scheduled Z plane of a validated mesh into a
-/// [`ContourLayer`]. Pure function of its arguments: the layer tasks
-/// run in parallel and rely on this producing the same bytes no
-/// matter which thread or order runs them.
+/// [`ContourLayer`], testing only the faces listed in `candidates`
+/// (ascending; the production pipeline passes the plane's Z-bucket,
+/// the test reference passes every face). Pure function of its
+/// arguments: the layer tasks run in parallel and rely on this
+/// producing the same bytes no matter which thread or order runs
+/// them.
 pub(crate) fn slice_layer(
     mesh: &ValidatedManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
+    candidates: &[u32],
 ) -> Result<ContourLayer, SliceError> {
-    let segments = segments_at_z(mesh, z_mm, topology);
+    let segments = segments_at_z_for_faces(mesh, z_mm, topology, candidates);
     let mut rings = stitch_layer(&segments, z_mm, topology)?;
     normalise_to_ccw(&mut rings);
     let polygons = group_into_polygons(rings);

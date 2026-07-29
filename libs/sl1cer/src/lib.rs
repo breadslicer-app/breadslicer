@@ -30,6 +30,7 @@ pub mod plane_intersect;
 pub mod profile;
 pub mod raster;
 pub mod stitch;
+mod z_bins;
 
 pub use api::{
     CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_leaf, slice_scene,

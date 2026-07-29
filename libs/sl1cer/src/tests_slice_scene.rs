@@ -487,7 +487,9 @@ mod parallel_equivalence_tests {
 
     /// The reference result: the leaf sliced by a plain sequential
     /// loop over [`slice_layer`], one plane after another on this
-    /// thread. The parallel pipeline must reproduce it exactly.
+    /// thread, with every face as a candidate (a full scan, no
+    /// bucketing). The parallel bucketed pipeline must reproduce it
+    /// exactly.
     fn expected_sequential_stack(
         scene: &Scene,
         leaf: NodeId,
@@ -497,10 +499,11 @@ mod parallel_equivalence_tests {
         let faces = baked.validated_faces().expect("faces validate");
         let mesh = faces.validated_manifold().expect("mesh is manifold");
         let topology = MeshTopology::from_manifold(&mesh);
+        let all_faces: Vec<u32> = (0..mesh.faces().len() as u32).collect();
         let layers: Vec<ContourLayer> = profile
             .layer_schedule()
             .iter_z()
-            .map(|z_mm| slice_layer(&mesh, z_mm, &topology).expect("layer slices"))
+            .map(|z_mm| slice_layer(&mesh, z_mm, &topology, &all_faces).expect("layer slices"))
             .collect();
         ContourStack::new_unchecked(layers)
     }

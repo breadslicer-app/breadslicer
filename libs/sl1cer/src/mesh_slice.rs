@@ -3,12 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Naive per-Z mesh slicer.
+//! Per-Z mesh slicer.
 //!
-//! Walks every face of a validated manifold mesh at a single Z and
-//! collects the crossing segments. O(faces) per layer, no spatial
-//! acceleration: deliberately simple so the contour pipeline can be
-//! debugged on analytical meshes before any indexing work lands.
+//! Intersects faces of a validated manifold mesh with a single Z
+//! plane and collects the crossing segments. [`segments_at_z`] walks
+//! every face (O(faces) per layer, the reference path);
+//! [`segments_at_z_for_faces`] walks only a caller-supplied
+//! candidate list, which the production pipeline feeds from the
+//! per-layer buckets in [`crate::z_bins`]. Both share one scan body,
+//! so for an ascending candidate list that contains every face
+//! touching the plane they emit identical segments in identical
+//! order.
 
 use sc_mesh_core::ValidatedManifoldMesh;
 use sc_mesh_core::indexed_mesh::MeshTopology;
@@ -41,10 +46,42 @@ pub fn segments_at_z(
     z_mm: f64,
     topology: &MeshTopology,
 ) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    collect_segments_at_z(mesh, z_mm, topology, 0..mesh.faces().len(), &mut segments);
+    segments
+}
+
+/// [`segments_at_z`] restricted to the faces listed in `candidates`
+/// (ascending face indices). Feeding it every face touching the
+/// plane, in ascending order, reproduces [`segments_at_z`]'s output
+/// exactly; the production pipeline obtains such a list from the
+/// per-layer buckets in [`crate::z_bins`].
+pub(crate) fn segments_at_z_for_faces(
+    mesh: &ValidatedManifoldMesh<'_>,
+    z_mm: f64,
+    topology: &MeshTopology,
+    candidates: &[u32],
+) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    let faces = candidates.iter().map(|&idx| idx as usize);
+    collect_segments_at_z(mesh, z_mm, topology, faces, &mut segments);
+    segments
+}
+
+/// The one scan body behind both entry points: intersect the listed
+/// faces with the plane and append the crossing segments in visit
+/// order.
+fn collect_segments_at_z(
+    mesh: &ValidatedManifoldMesh<'_>,
+    z_mm: f64,
+    topology: &MeshTopology,
+    face_indices: impl Iterator<Item = usize>,
+    segments: &mut Vec<Segment>,
+) {
     let vertices = mesh.vertices();
     let faces = mesh.faces();
-    let mut segments = Vec::new();
-    for (idx, face) in faces.iter().enumerate() {
+    for idx in face_indices {
+        let face = &faces[idx];
         let face_idx = FaceIndex::from(idx);
         let [i0, i1, i2] = face.vertices;
         let v = [
@@ -76,7 +113,6 @@ pub fn segments_at_z(
             TriangleSlice::Empty | TriangleSlice::Coplanar => {}
         }
     }
-    segments
 }
 
 /// Decide whether the on-edge `edge_id` of the current `face`
