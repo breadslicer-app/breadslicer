@@ -155,9 +155,9 @@ impl Default for PackageReadLimits {
 /// Announced sizes are claims: a forged entry can announce sizes that
 /// differ from what inflation actually yields, and extraction stops
 /// early on refused archives, so `decompressed_bytes` can end short
-/// of `total_bytes`, or step past it right before a refusal. On
-/// honest archives the final tick has the two equal. Consumers that
-/// derive a fraction should clamp it.
+/// of `total_bytes`, or step past it right before a refusal. When the
+/// announced sizes are accurate, the final tick has the two equal.
+/// Consumers that derive a fraction should clamp it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DecompressionProgress {
     /// Bytes inflated so far, summed across all file entries.

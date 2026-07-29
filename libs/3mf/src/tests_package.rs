@@ -542,10 +542,10 @@ mod progress_tests {
         (result, ticks)
     }
 
-    /// Shared assertions for honest archives: at least one tick, a
-    /// fixed total on every tick, strictly growing counts (ticks only
-    /// fire when bytes were inflated), and a final count equal to the
-    /// total.
+    /// Shared assertions for archives whose announced sizes are
+    /// accurate: at least one tick, a fixed total on every tick,
+    /// strictly growing counts (ticks only fire when bytes were
+    /// inflated), and a final count equal to the total.
     fn assert_monotone_ending_at_total(ticks: &[DecompressionProgress]) -> u64 {
         assert!(!ticks.is_empty(), "reading a package must tick");
         let total = ticks[0].total_bytes;
@@ -557,7 +557,7 @@ mod progress_tests {
             );
         }
         let last = ticks.last().expect("non-empty").decompressed_bytes;
-        assert_eq!(last, total, "an honest archive ends at its total");
+        assert_eq!(last, total, "accurate announced sizes end at the total");
         total
     }
 
