@@ -95,7 +95,7 @@ impl EdgeId {
 ///   a contour hub for `2k` such endpoints (`k` contour passes
 ///   through that vertex); the stitcher resolves the pairing using
 ///   the mesh's cyclic 1-ring of incident triangles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EndpointTag {
     Edge(EdgeId),
     Vertex(VertexIndex),

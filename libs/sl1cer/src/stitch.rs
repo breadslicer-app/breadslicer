@@ -27,8 +27,6 @@
 //! [`SliceError::NonManifoldDuringStitching`] as a runtime safety
 //! net for inputs that slipped the upstream manifold check.
 
-use std::collections::HashMap;
-
 use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::{FaceIndex, VertexIndex};
 
@@ -45,16 +43,59 @@ enum Side {
 /// One endpoint slot, identified by its segment index and side.
 type Endpoint = (usize, Side);
 
-/// Endpoint-to-mate index built once per layer, then traversed to
-/// recover closed rings.
-type EndpointPairings = HashMap<Endpoint, Endpoint>;
-
 impl Side {
     fn opposite(self) -> Self {
         match self {
             Self::A => Self::B,
             Self::B => Self::A,
         }
+    }
+}
+
+/// A segment endpoint's position in the flat pairing table: two
+/// consecutive slots per segment, side A then side B.
+fn slot(endpoint: Endpoint) -> usize {
+    let (seg_idx, side) = endpoint;
+    seg_idx * 2
+        + match side {
+            Side::A => 0,
+            Side::B => 1,
+        }
+}
+
+fn endpoint_from_slot(slot: usize) -> Endpoint {
+    let side = if slot.is_multiple_of(2) {
+        Side::A
+    } else {
+        Side::B
+    };
+    (slot / 2, side)
+}
+
+/// Marker for a slot whose mate has not been written yet. Only ever
+/// observed during construction: a layer with any slot left unpaired
+/// is rejected as non-manifold before traversal.
+const UNPAIRED: usize = usize::MAX;
+
+/// Endpoint-to-mate table built once per layer, then traversed to
+/// recover closed rings. A flat vector indexed by [`slot`]; on a
+/// manifold layer every slot is written exactly once.
+struct EndpointPairings(Vec<usize>);
+
+impl EndpointPairings {
+    fn for_segment_count(segments: usize) -> Self {
+        Self(vec![UNPAIRED; segments * 2])
+    }
+
+    /// Record `lhs` and `rhs` as each other's mates.
+    fn pair(&mut self, lhs: Endpoint, rhs: Endpoint) {
+        self.0[slot(lhs)] = slot(rhs);
+        self.0[slot(rhs)] = slot(lhs);
+    }
+
+    /// The mate recorded for `endpoint`.
+    fn mate(&self, endpoint: Endpoint) -> Endpoint {
+        endpoint_from_slot(self.0[slot(endpoint)])
     }
 }
 
@@ -79,13 +120,18 @@ pub fn stitch_layer(
     z_mm: f64,
     topology: &MeshTopology,
 ) -> Result<Vec<ClosedRing>, SliceError> {
-    let mut by_tag: HashMap<EndpointTag, Vec<Endpoint>> = HashMap::new();
+    // One record per segment endpoint, stably sorted by tag: equal
+    // tags form contiguous runs that keep their push order (ascending
+    // segment index, side A before B), the same order the former
+    // hash-map grouping accumulated per tag.
+    let mut endpoints: Vec<(EndpointTag, Endpoint)> = Vec::with_capacity(segments.len() * 2);
     for (i, seg) in segments.iter().enumerate() {
-        by_tag.entry(seg.a_tag).or_default().push((i, Side::A));
-        by_tag.entry(seg.b_tag).or_default().push((i, Side::B));
+        endpoints.push((seg.a_tag, (i, Side::A)));
+        endpoints.push((seg.b_tag, (i, Side::B)));
     }
+    endpoints.sort_by_key(|&(tag, _)| tag);
 
-    let pairings = match build_pairings(segments, &by_tag, topology) {
+    let pairings = match build_pairings(segments, &endpoints, topology) {
         Ok(p) => p,
         Err(dangling_endpoints) => {
             return Err(SliceError::NonManifoldDuringStitching {
@@ -113,7 +159,7 @@ pub fn stitch_layer(
             let seg = &segments[current_idx];
             ring_points.push(point_at(seg, entry_side));
             let exit_side = entry_side.opposite();
-            let (next_idx, next_entry_side) = pairings[&(current_idx, exit_side)];
+            let (next_idx, next_entry_side) = pairings.mate((current_idx, exit_side));
             current_idx = next_idx;
             entry_side = next_entry_side;
         }
@@ -123,42 +169,42 @@ pub fn stitch_layer(
     Ok(rings)
 }
 
-/// Mate each endpoint with exactly one peer, returning a map from
-/// `(seg_idx, side)` to the paired `(seg_idx, side)`.
+/// Mate each endpoint with exactly one peer, returning the flat
+/// endpoint-to-mate table.
 ///
-/// On a malformed layer (any tag whose total endpoint count is not
-/// pairing-compatible), `Err(dangling_endpoints)` is returned with
-/// the total number of unpaired endpoints across all malformed tags.
+/// `endpoints` must be sorted by tag so that equal tags form
+/// contiguous runs (see [`stitch_layer`]). On a malformed layer (any
+/// tag whose total endpoint count is not pairing-compatible),
+/// `Err(dangling_endpoints)` is returned with the total number of
+/// unpaired endpoints across all malformed tags.
 fn build_pairings(
     segments: &[Segment],
-    by_tag: &HashMap<EndpointTag, Vec<Endpoint>>,
+    endpoints: &[(EndpointTag, Endpoint)],
     topology: &MeshTopology,
 ) -> Result<EndpointPairings, usize> {
-    let mut pairings: EndpointPairings = HashMap::new();
+    let mut pairings = EndpointPairings::for_segment_count(segments.len());
     let mut dangling = 0usize;
 
-    for (tag, entries) in by_tag {
-        match tag {
+    for run in endpoints.chunk_by(|lhs, rhs| lhs.0 == rhs.0) {
+        match run[0].0 {
             EndpointTag::Edge(_) => {
-                if entries.len() != 2 {
-                    dangling += entries.len();
+                if run.len() != 2 {
+                    dangling += run.len();
                     continue;
                 }
-                pairings.insert(entries[0], entries[1]);
-                pairings.insert(entries[1], entries[0]);
+                pairings.pair(run[0].1, run[1].1);
             }
             EndpointTag::Vertex(v) => {
-                if entries.len() % 2 != 0 {
-                    dangling += entries.len();
+                if !run.len().is_multiple_of(2) {
+                    dangling += run.len();
                     continue;
                 }
-                let Some(pairs) = pair_vertex_hub(*v, entries, segments, topology) else {
-                    dangling += entries.len();
+                let Some(pairs) = pair_vertex_hub(v, run, segments, topology) else {
+                    dangling += run.len();
                     continue;
                 };
                 for (lhs, rhs) in pairs {
-                    pairings.insert(lhs, rhs);
-                    pairings.insert(rhs, lhs);
+                    pairings.pair(lhs, rhs);
                 }
             }
         }
@@ -176,28 +222,30 @@ fn build_pairings(
 /// consecutive groups of two. Returns `None` if the topology lacks
 /// a 1-ring for the vertex or any entry's source face is not part
 /// of it.
+///
+/// The position lookup is a linear scan of the ring: hubs and rings
+/// are both a handful of entries, so a lookup table would cost more
+/// to build than the scans it saves.
 fn pair_vertex_hub(
     vertex: VertexIndex,
-    entries: &[Endpoint],
+    entries: &[(EndpointTag, Endpoint)],
     segments: &[Segment],
     topology: &MeshTopology,
 ) -> Option<Vec<(Endpoint, Endpoint)>> {
     let ring = topology.vertex_one_ring(vertex)?;
-    let ring_position: HashMap<FaceIndex, usize> =
-        ring.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+    let ring_position = |face: FaceIndex| ring.iter().position(|&f| f == face);
 
-    let mut sorted: Vec<Endpoint> = entries.to_vec();
-    for entry in &sorted {
-        if !ring_position.contains_key(&segments[entry.0].source_face) {
-            return None;
-        }
+    let mut sorted: Vec<(usize, Endpoint)> = Vec::with_capacity(entries.len());
+    for &(_, endpoint) in entries {
+        let position = ring_position(segments[endpoint.0].source_face)?;
+        sorted.push((position, endpoint));
     }
-    sorted.sort_by_key(|(seg_idx, _)| ring_position[&segments[*seg_idx].source_face]);
+    sorted.sort_by_key(|&(position, _)| position);
 
     Some(
         sorted
             .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
+            .map(|chunk| (chunk[0].1, chunk[1].1))
             .collect(),
     )
 }
