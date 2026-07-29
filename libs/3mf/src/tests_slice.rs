@@ -598,3 +598,65 @@ mod planar_transform_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod numeric_round_trip_tests {
+    use super::*;
+
+    /// Slice vertices, segment indices and ztop are emitted straight to
+    /// the sink with ryu/itoa. Values that stress the shortest-decimal
+    /// formatter (round ztop, negative zero, a long fractional) must
+    /// survive write -> parse bit-exact, for the same fingerprint reason
+    /// as the mesh coordinates.
+    #[test]
+    fn slice_coordinates_round_trip_bit_exact() {
+        let vertices = vec![
+            SliceVertex { x: 0.0, y: -0.0 },
+            SliceVertex { x: 1.0, y: 40.0 },
+            SliceVertex {
+                x: -12.345_678_9,
+                y: 123.456_789_012_345,
+            },
+        ];
+        let source = ModelDocument {
+            slice_stacks: vec![SliceStack {
+                id: id(1),
+                z_bottom: 0.0,
+                content: SliceStackContent::Slices(vec![Slice {
+                    z_top: 1.0,
+                    vertices: vertices.clone(),
+                    polygons: vec![SlicePolygon {
+                        start: index(0),
+                        segments: vec![
+                            SliceSegment { end: index(1) },
+                            SliceSegment { end: index(2) },
+                            SliceSegment { end: index(0) },
+                        ],
+                    }],
+                }]),
+            }],
+            ..ModelDocument::default()
+        };
+
+        let mut bytes = Vec::new();
+        write_model(&source, &mut bytes).expect("slice writes");
+        let reparsed = parse_model(&bytes).expect("slice parses");
+        let SliceStackContent::Slices(slices) = &reparsed.slice_stacks[0].content else {
+            panic!("expected inline slices");
+        };
+        let got = &slices[0];
+        assert_eq!(got.z_top.to_bits(), 1.0_f64.to_bits(), "ztop bits differ");
+        assert_eq!(got.vertices.len(), vertices.len());
+        for (g, w) in got.vertices.iter().zip(&vertices) {
+            assert_eq!(g.x.to_bits(), w.x.to_bits(), "x bits differ");
+            assert_eq!(g.y.to_bits(), w.y.to_bits(), "y bits differ");
+        }
+        assert_eq!(got.polygons[0].start.get(), 0);
+        let ends: Vec<u32> = got.polygons[0]
+            .segments
+            .iter()
+            .map(|s| s.end.get())
+            .collect();
+        assert_eq!(ends, vec![1, 2, 0]);
+    }
+}

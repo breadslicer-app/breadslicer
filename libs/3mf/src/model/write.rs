@@ -8,9 +8,11 @@
 //! enforces the slice-extension invariants a conforming file must
 //! satisfy: strictly increasing slice boundaries, closed contours
 //! for model-type objects, resolvable stack references, and planar
-//! transforms on sliced objects. Numbers use Rust's
-//! shortest-round-trip decimal form; text and attribute values are
-//! XML-escaped by quick-xml.
+//! transforms on sliced objects. Numbers use a shortest-round-trip
+//! decimal form; text and attribute values are XML-escaped by
+//! quick-xml. The bulk mesh and slice coordinate elements are written
+//! straight to the underlying sink (their numeric attributes never need
+//! escaping), which skips the per-element event and allocation cost.
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -256,8 +258,9 @@ fn write_slice_stack<W: Write>(
 }
 
 fn write_slice<W: Write>(writer: &mut Writer<W>, slice: &Slice) -> Result<(), ModelWriteError> {
+    let mut zbuf = ryu::Buffer::new();
     let mut e = BytesStart::new("s:slice");
-    e.push_attribute(("ztop", slice.z_top.to_string().as_str()));
+    e.push_attribute(("ztop", zbuf.format(slice.z_top)));
     if slice.vertices.is_empty() && slice.polygons.is_empty() {
         // A void layer.
         writer.write_event(Event::Empty(e))?;
@@ -266,24 +269,35 @@ fn write_slice<W: Write>(writer: &mut Writer<W>, slice: &Slice) -> Result<(), Mo
     writer.write_event(Event::Start(e))?;
 
     writer.write_event(Event::Start(BytesStart::new("s:vertices")))?;
-    for vertex in &slice.vertices {
-        let mut v = BytesStart::new("s:vertex");
-        v.push_attribute(("x", vertex.x.to_string().as_str()));
-        v.push_attribute(("y", vertex.y.to_string().as_str()));
-        writer.write_event(Event::Empty(v))?;
+    {
+        // Contour vertices and segments are the bulk of slice data;
+        // emit them straight to the sink, as for mesh geometry.
+        let sink = writer.get_mut();
+        let mut buf = ryu::Buffer::new();
+        for vertex in &slice.vertices {
+            sink.write_all(b"<s:vertex x=\"")?;
+            sink.write_all(buf.format(vertex.x).as_bytes())?;
+            sink.write_all(b"\" y=\"")?;
+            sink.write_all(buf.format(vertex.y).as_bytes())?;
+            sink.write_all(b"\"/>")?;
+        }
     }
     writer.write_event(Event::End(BytesEnd::new("s:vertices")))?;
 
-    for polygon in &slice.polygons {
-        let mut p = BytesStart::new("s:polygon");
-        p.push_attribute(("startv", polygon.start.get().to_string().as_str()));
-        writer.write_event(Event::Start(p))?;
-        for segment in &polygon.segments {
-            let mut s = BytesStart::new("s:segment");
-            s.push_attribute(("v2", segment.end.get().to_string().as_str()));
-            writer.write_event(Event::Empty(s))?;
+    {
+        let sink = writer.get_mut();
+        let mut buf = itoa::Buffer::new();
+        for polygon in &slice.polygons {
+            sink.write_all(b"<s:polygon startv=\"")?;
+            sink.write_all(buf.format(polygon.start.get()).as_bytes())?;
+            sink.write_all(b"\">")?;
+            for segment in &polygon.segments {
+                sink.write_all(b"<s:segment v2=\"")?;
+                sink.write_all(buf.format(segment.end.get()).as_bytes())?;
+                sink.write_all(b"\"/>")?;
+            }
+            sink.write_all(b"</s:polygon>")?;
         }
-        writer.write_event(Event::End(BytesEnd::new("s:polygon")))?;
     }
 
     writer.write_event(Event::End(BytesEnd::new("s:slice")))?;
@@ -379,22 +393,37 @@ fn write_mesh<W: Write>(writer: &mut Writer<W>, mesh: &MeshData) -> Result<(), M
     writer.write_event(Event::Start(BytesStart::new("mesh")))?;
 
     writer.write_event(Event::Start(BytesStart::new("vertices")))?;
-    for vertex in &mesh.vertices {
-        let mut v = BytesStart::new("vertex");
-        v.push_attribute(("x", vertex.x.to_string().as_str()));
-        v.push_attribute(("y", vertex.y.to_string().as_str()));
-        v.push_attribute(("z", vertex.z.to_string().as_str()));
-        writer.write_event(Event::Empty(v))?;
+    {
+        // The vertex list is the bulk of a mesh; emit each element
+        // straight to the sink with ryu, skipping quick-xml's per-event
+        // machinery and the per-number allocation to_string incurs.
+        let sink = writer.get_mut();
+        let mut buf = ryu::Buffer::new();
+        for vertex in &mesh.vertices {
+            sink.write_all(b"<vertex x=\"")?;
+            sink.write_all(buf.format(vertex.x).as_bytes())?;
+            sink.write_all(b"\" y=\"")?;
+            sink.write_all(buf.format(vertex.y).as_bytes())?;
+            sink.write_all(b"\" z=\"")?;
+            sink.write_all(buf.format(vertex.z).as_bytes())?;
+            sink.write_all(b"\"/>")?;
+        }
     }
     writer.write_event(Event::End(BytesEnd::new("vertices")))?;
 
     writer.write_event(Event::Start(BytesStart::new("triangles")))?;
-    for triangle in &mesh.triangles {
-        let mut t = BytesStart::new("triangle");
-        t.push_attribute(("v1", triangle.v1.get().to_string().as_str()));
-        t.push_attribute(("v2", triangle.v2.get().to_string().as_str()));
-        t.push_attribute(("v3", triangle.v3.get().to_string().as_str()));
-        writer.write_event(Event::Empty(t))?;
+    {
+        let sink = writer.get_mut();
+        let mut buf = itoa::Buffer::new();
+        for triangle in &mesh.triangles {
+            sink.write_all(b"<triangle v1=\"")?;
+            sink.write_all(buf.format(triangle.v1.get()).as_bytes())?;
+            sink.write_all(b"\" v2=\"")?;
+            sink.write_all(buf.format(triangle.v2.get()).as_bytes())?;
+            sink.write_all(b"\" v3=\"")?;
+            sink.write_all(buf.format(triangle.v3.get()).as_bytes())?;
+            sink.write_all(b"\"/>")?;
+        }
     }
     writer.write_event(Event::End(BytesEnd::new("triangles")))?;
 

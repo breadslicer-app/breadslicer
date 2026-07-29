@@ -7,7 +7,8 @@
 
 use crate::error::ModelParseError;
 use crate::model::{
-    Matrix3D, ModelDocument, ObjectPayload, ObjectType, ResourceId, Unit, parse_model, write_model,
+    BuildItem, Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource,
+    ObjectType, ResourceId, ResourceIndex, TriangleRef, Unit, Vertex3, parse_model, write_model,
 };
 use crate::names::{PRODUCTION_NS, SLICE_NS};
 
@@ -358,5 +359,86 @@ mod text_and_unit_tests {
         write_model(&document, &mut bytes).expect("document writes");
         let reparsed = parse_model(&bytes).expect("escaped document parses");
         assert_eq!(reparsed, document);
+    }
+}
+
+#[cfg(test)]
+mod numeric_round_trip_tests {
+    use super::*;
+
+    fn ridx(value: u32) -> ResourceIndex {
+        ResourceIndex::new(value).expect("valid index")
+    }
+
+    /// The mesh writer emits vertex and triangle elements straight to
+    /// the sink with ryu/itoa. Coordinates that stress the
+    /// shortest-decimal formatter (round integers, negative zero, a long
+    /// fractional, f32-origin values) must survive write -> parse with
+    /// their exact f64 bits: the slice-input fingerprint hashes those
+    /// bits, so a formatter that did not round-trip exactly would
+    /// silently stale a project's slices on reopen.
+    #[test]
+    fn mesh_coordinates_round_trip_bit_exact() {
+        let vertices = vec![
+            Vertex3 {
+                x: 0.0,
+                y: -0.0,
+                z: 1.0,
+            },
+            Vertex3 {
+                x: -1.0,
+                y: 100.0,
+                z: 39.998,
+            },
+            Vertex3 {
+                x: 123.456_789_012_345,
+                y: 0.1_f32 as f64,
+                z: -2.5_f32 as f64,
+            },
+        ];
+        let triangles = vec![TriangleRef {
+            v1: ridx(0),
+            v2: ridx(1),
+            v3: ridx(2),
+        }];
+        let document = ModelDocument {
+            objects: vec![ObjectResource {
+                id: id(1),
+                object_type: ObjectType::Model,
+                name: None,
+                partnumber: None,
+                property_ref: None,
+                slice_stack: None,
+                mesh_resolution: MeshResolution::Fullres,
+                payload: ObjectPayload::Mesh(MeshData {
+                    vertices: vertices.clone(),
+                    triangles: triangles.clone(),
+                }),
+            }],
+            build: vec![BuildItem {
+                object_id: id(1),
+                transform: None,
+                partnumber: None,
+            }],
+            ..ModelDocument::default()
+        };
+
+        let mut bytes = Vec::new();
+        write_model(&document, &mut bytes).expect("mesh writes");
+        let reparsed = parse_model(&bytes).expect("mesh parses");
+        let ObjectPayload::Mesh(mesh) = &reparsed.objects[0].payload else {
+            panic!("expected a mesh payload");
+        };
+        assert_eq!(mesh.vertices.len(), vertices.len());
+        for (got, want) in mesh.vertices.iter().zip(&vertices) {
+            assert_eq!(got.x.to_bits(), want.x.to_bits(), "x bits differ");
+            assert_eq!(got.y.to_bits(), want.y.to_bits(), "y bits differ");
+            assert_eq!(got.z.to_bits(), want.z.to_bits(), "z bits differ");
+        }
+        for (got, want) in mesh.triangles.iter().zip(&triangles) {
+            assert_eq!(got.v1.get(), want.v1.get());
+            assert_eq!(got.v2.get(), want.v2.get());
+            assert_eq!(got.v3.get(), want.v3.get());
+        }
     }
 }
