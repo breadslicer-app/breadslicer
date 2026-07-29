@@ -441,4 +441,62 @@ mod numeric_round_trip_tests {
             assert_eq!(got.v3.get(), want.v3.get());
         }
     }
+
+    /// A mesh large enough to cross the writer's parallel threshold, so
+    /// the concurrent chunk path runs. Every vertex bit must still
+    /// survive write -> parse, including the negative zeros and messy
+    /// fractionals sprinkled through it.
+    #[test]
+    fn large_mesh_round_trips_through_the_parallel_path() {
+        let n = 10_000u32;
+        let vertices: Vec<Vertex3> = (0..n)
+            .map(|i| Vertex3 {
+                x: (i as f64) * 0.001 - 5.0,
+                y: -(i as f64) * 0.01,
+                z: if i % 7 == 0 { -0.0 } else { (i as f64).sqrt() },
+            })
+            .collect();
+        let triangles: Vec<TriangleRef> = (0..n)
+            .map(|i| TriangleRef {
+                v1: ridx(i % n),
+                v2: ridx((i + 1) % n),
+                v3: ridx((i + 2) % n),
+            })
+            .collect();
+        let document = ModelDocument {
+            objects: vec![ObjectResource {
+                id: id(1),
+                object_type: ObjectType::Model,
+                name: None,
+                partnumber: None,
+                property_ref: None,
+                slice_stack: None,
+                mesh_resolution: MeshResolution::Fullres,
+                payload: ObjectPayload::Mesh(MeshData {
+                    vertices: vertices.clone(),
+                    triangles: triangles.clone(),
+                }),
+            }],
+            build: vec![BuildItem {
+                object_id: id(1),
+                transform: None,
+                partnumber: None,
+            }],
+            ..ModelDocument::default()
+        };
+
+        let mut bytes = Vec::new();
+        write_model(&document, &mut bytes).expect("mesh writes");
+        let reparsed = parse_model(&bytes).expect("mesh parses");
+        let ObjectPayload::Mesh(mesh) = &reparsed.objects[0].payload else {
+            panic!("expected a mesh payload");
+        };
+        assert_eq!(mesh.vertices.len(), vertices.len());
+        for (got, want) in mesh.vertices.iter().zip(&vertices) {
+            assert_eq!(got.x.to_bits(), want.x.to_bits());
+            assert_eq!(got.y.to_bits(), want.y.to_bits());
+            assert_eq!(got.z.to_bits(), want.z.to_bits());
+        }
+        assert_eq!(mesh.triangles.len(), triangles.len());
+    }
 }

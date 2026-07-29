@@ -4699,6 +4699,7 @@ version = "0.1.0"
 dependencies = [
  "itoa",
  "quick-xml",
+ "rayon",
  "ryu",
  "zip",
 ]

@@ -10,15 +10,18 @@
 //! for model-type objects, resolvable stack references, and planar
 //! transforms on sliced objects. Numbers use a shortest-round-trip
 //! decimal form; text and attribute values are XML-escaped by
-//! quick-xml. The bulk mesh and slice coordinate elements are written
-//! straight to the underlying sink (their numeric attributes never need
-//! escaping), which skips the per-element event and allocation cost.
+//! quick-xml. The bulk mesh and slice coordinate elements are formatted
+//! straight into the underlying sink (their numeric attributes never
+//! need escaping), skipping the per-element event and allocation cost;
+//! for large inputs the independent chunks are formatted in parallel and
+//! written back in order, which is byte-identical to a sequential emit.
 
 use std::collections::BTreeSet;
 use std::io::Write;
 
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::writer::Writer;
+use rayon::prelude::*;
 
 use crate::error::ModelWriteError;
 use crate::names::{CORE_NS, SLICE_NS};
@@ -26,7 +29,7 @@ use crate::names::{CORE_NS, SLICE_NS};
 use super::slice::{MeshResolution, Slice, SliceStack, SliceStackContent};
 use super::types::{
     BaseMaterialsGroup, BuildItem, Matrix3D, MeshData, Metadata, ModelDocument, ObjectPayload,
-    ObjectResource, ObjectType,
+    ObjectResource, ObjectType, TriangleRef, Vertex3,
 };
 
 /// Serialize `document` as the XML payload of a 3D Model part.
@@ -237,9 +240,7 @@ fn write_slice_stack<W: Write>(
     writer.write_event(Event::Start(e))?;
     match &stack.content {
         SliceStackContent::Slices(slices) => {
-            for slice in slices {
-                write_slice(writer, slice)?;
-            }
+            write_slices(writer.get_mut(), slices)?;
         }
         SliceStackContent::Refs(refs) => {
             for slice_ref in refs {
@@ -257,51 +258,118 @@ fn write_slice_stack<W: Write>(
     Ok(())
 }
 
-fn write_slice<W: Write>(writer: &mut Writer<W>, slice: &Slice) -> Result<(), ModelWriteError> {
-    let mut zbuf = ryu::Buffer::new();
-    let mut e = BytesStart::new("s:slice");
-    e.push_attribute(("ztop", zbuf.format(slice.z_top)));
-    if slice.vertices.is_empty() && slice.polygons.is_empty() {
-        // A void layer.
-        writer.write_event(Event::Empty(e))?;
+/// Emit the elements of `items` to `sink`. Above a threshold the
+/// independent chunks are formatted in parallel and written back in
+/// order; the output bytes are identical to a sequential emit, so
+/// readers and the slice-input fingerprint see no difference. Short
+/// lists format inline, avoiding thread-pool overhead on small meshes.
+fn write_parts<T, W>(
+    sink: &mut W,
+    items: &[T],
+    format_chunk: fn(&[T]) -> Vec<u8>,
+) -> std::io::Result<()>
+where
+    T: Sync,
+    W: Write,
+{
+    const PARALLEL_THRESHOLD: usize = 8192;
+    if items.len() < PARALLEL_THRESHOLD {
+        sink.write_all(&format_chunk(items))?;
         return Ok(());
     }
-    writer.write_event(Event::Start(e))?;
-
-    writer.write_event(Event::Start(BytesStart::new("s:vertices")))?;
-    {
-        // Contour vertices and segments are the bulk of slice data;
-        // emit them straight to the sink, as for mesh geometry.
-        let sink = writer.get_mut();
-        let mut buf = ryu::Buffer::new();
-        for vertex in &slice.vertices {
-            sink.write_all(b"<s:vertex x=\"")?;
-            sink.write_all(buf.format(vertex.x).as_bytes())?;
-            sink.write_all(b"\" y=\"")?;
-            sink.write_all(buf.format(vertex.y).as_bytes())?;
-            sink.write_all(b"\"/>")?;
-        }
+    let chunk = (items.len() / (rayon::current_num_threads() * 4)).max(1);
+    let parts: Vec<Vec<u8>> = items.par_chunks(chunk).map(format_chunk).collect();
+    for part in &parts {
+        sink.write_all(part)?;
     }
-    writer.write_event(Event::End(BytesEnd::new("s:vertices")))?;
-
-    {
-        let sink = writer.get_mut();
-        let mut buf = itoa::Buffer::new();
-        for polygon in &slice.polygons {
-            sink.write_all(b"<s:polygon startv=\"")?;
-            sink.write_all(buf.format(polygon.start.get()).as_bytes())?;
-            sink.write_all(b"\">")?;
-            for segment in &polygon.segments {
-                sink.write_all(b"<s:segment v2=\"")?;
-                sink.write_all(buf.format(segment.end.get()).as_bytes())?;
-                sink.write_all(b"\"/>")?;
-            }
-            sink.write_all(b"</s:polygon>")?;
-        }
-    }
-
-    writer.write_event(Event::End(BytesEnd::new("s:slice")))?;
     Ok(())
+}
+
+/// Format a chunk of mesh vertices into its own buffer.
+fn format_vertices(chunk: &[Vertex3]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(chunk.len() * 48);
+    let mut buf = ryu::Buffer::new();
+    for vertex in chunk {
+        out.extend_from_slice(b"<vertex x=\"");
+        out.extend_from_slice(buf.format(vertex.x).as_bytes());
+        out.extend_from_slice(b"\" y=\"");
+        out.extend_from_slice(buf.format(vertex.y).as_bytes());
+        out.extend_from_slice(b"\" z=\"");
+        out.extend_from_slice(buf.format(vertex.z).as_bytes());
+        out.extend_from_slice(b"\"/>");
+    }
+    out
+}
+
+/// Format a chunk of triangles into its own buffer.
+fn format_triangles(chunk: &[TriangleRef]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(chunk.len() * 40);
+    let mut buf = itoa::Buffer::new();
+    for triangle in chunk {
+        out.extend_from_slice(b"<triangle v1=\"");
+        out.extend_from_slice(buf.format(triangle.v1.get()).as_bytes());
+        out.extend_from_slice(b"\" v2=\"");
+        out.extend_from_slice(buf.format(triangle.v2.get()).as_bytes());
+        out.extend_from_slice(b"\" v3=\"");
+        out.extend_from_slice(buf.format(triangle.v3.get()).as_bytes());
+        out.extend_from_slice(b"\"/>");
+    }
+    out
+}
+
+/// Emit `slices` to `sink`. A stack with many layers formats its slice
+/// fragments in parallel and writes them in order; the bytes match a
+/// sequential emit. Few-layer stacks format inline.
+fn write_slices<W: Write>(sink: &mut W, slices: &[Slice]) -> std::io::Result<()> {
+    const PARALLEL_THRESHOLD: usize = 64;
+    if slices.len() < PARALLEL_THRESHOLD {
+        for slice in slices {
+            sink.write_all(&format_slice(slice))?;
+        }
+        return Ok(());
+    }
+    let parts: Vec<Vec<u8>> = slices.par_iter().map(format_slice).collect();
+    for part in &parts {
+        sink.write_all(part)?;
+    }
+    Ok(())
+}
+
+/// Format one slice as its complete `<s:slice>` fragment, byte-for-byte
+/// as the sequential writer would.
+fn format_slice(slice: &Slice) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut fbuf = ryu::Buffer::new();
+    out.extend_from_slice(b"<s:slice ztop=\"");
+    out.extend_from_slice(fbuf.format(slice.z_top).as_bytes());
+    if slice.vertices.is_empty() && slice.polygons.is_empty() {
+        // A void layer.
+        out.extend_from_slice(b"\"/>");
+        return out;
+    }
+    out.extend_from_slice(b"\"><s:vertices>");
+    for vertex in &slice.vertices {
+        out.extend_from_slice(b"<s:vertex x=\"");
+        out.extend_from_slice(fbuf.format(vertex.x).as_bytes());
+        out.extend_from_slice(b"\" y=\"");
+        out.extend_from_slice(fbuf.format(vertex.y).as_bytes());
+        out.extend_from_slice(b"\"/>");
+    }
+    out.extend_from_slice(b"</s:vertices>");
+    let mut ibuf = itoa::Buffer::new();
+    for polygon in &slice.polygons {
+        out.extend_from_slice(b"<s:polygon startv=\"");
+        out.extend_from_slice(ibuf.format(polygon.start.get()).as_bytes());
+        out.extend_from_slice(b"\">");
+        for segment in &polygon.segments {
+            out.extend_from_slice(b"<s:segment v2=\"");
+            out.extend_from_slice(ibuf.format(segment.end.get()).as_bytes());
+            out.extend_from_slice(b"\"/>");
+        }
+        out.extend_from_slice(b"</s:polygon>");
+    }
+    out.extend_from_slice(b"</s:slice>");
+    out
 }
 
 fn write_metadata<W: Write>(
@@ -393,38 +461,11 @@ fn write_mesh<W: Write>(writer: &mut Writer<W>, mesh: &MeshData) -> Result<(), M
     writer.write_event(Event::Start(BytesStart::new("mesh")))?;
 
     writer.write_event(Event::Start(BytesStart::new("vertices")))?;
-    {
-        // The vertex list is the bulk of a mesh; emit each element
-        // straight to the sink with ryu, skipping quick-xml's per-event
-        // machinery and the per-number allocation to_string incurs.
-        let sink = writer.get_mut();
-        let mut buf = ryu::Buffer::new();
-        for vertex in &mesh.vertices {
-            sink.write_all(b"<vertex x=\"")?;
-            sink.write_all(buf.format(vertex.x).as_bytes())?;
-            sink.write_all(b"\" y=\"")?;
-            sink.write_all(buf.format(vertex.y).as_bytes())?;
-            sink.write_all(b"\" z=\"")?;
-            sink.write_all(buf.format(vertex.z).as_bytes())?;
-            sink.write_all(b"\"/>")?;
-        }
-    }
+    write_parts(writer.get_mut(), &mesh.vertices, format_vertices)?;
     writer.write_event(Event::End(BytesEnd::new("vertices")))?;
 
     writer.write_event(Event::Start(BytesStart::new("triangles")))?;
-    {
-        let sink = writer.get_mut();
-        let mut buf = itoa::Buffer::new();
-        for triangle in &mesh.triangles {
-            sink.write_all(b"<triangle v1=\"")?;
-            sink.write_all(buf.format(triangle.v1.get()).as_bytes())?;
-            sink.write_all(b"\" v2=\"")?;
-            sink.write_all(buf.format(triangle.v2.get()).as_bytes())?;
-            sink.write_all(b"\" v3=\"")?;
-            sink.write_all(buf.format(triangle.v3.get()).as_bytes())?;
-            sink.write_all(b"\"/>")?;
-        }
-    }
+    write_parts(writer.get_mut(), &mesh.triangles, format_triangles)?;
     writer.write_event(Event::End(BytesEnd::new("triangles")))?;
 
     writer.write_event(Event::End(BytesEnd::new("mesh")))?;

@@ -659,4 +659,60 @@ mod numeric_round_trip_tests {
             .collect();
         assert_eq!(ends, vec![1, 2, 0]);
     }
+
+    /// A stack with enough layers to cross the writer's parallel
+    /// threshold, so slice fragments are emitted concurrently. Every
+    /// layer must round-trip bit-exact, and the strictly increasing
+    /// ztop chain must be preserved in order.
+    #[test]
+    fn many_slices_round_trip_through_the_parallel_path() {
+        let count = 100u32;
+        let slices: Vec<Slice> = (0..count)
+            .map(|i| Slice {
+                z_top: (i as f64 + 1.0) * 0.05,
+                vertices: vec![
+                    SliceVertex { x: 0.0, y: -0.0 },
+                    SliceVertex {
+                        x: i as f64 * 0.1,
+                        y: 10.0,
+                    },
+                    SliceVertex {
+                        x: -(i as f64),
+                        y: (i as f64).sqrt(),
+                    },
+                ],
+                polygons: vec![SlicePolygon {
+                    start: index(0),
+                    segments: vec![
+                        SliceSegment { end: index(1) },
+                        SliceSegment { end: index(2) },
+                        SliceSegment { end: index(0) },
+                    ],
+                }],
+            })
+            .collect();
+        let source = ModelDocument {
+            slice_stacks: vec![SliceStack {
+                id: id(1),
+                z_bottom: 0.0,
+                content: SliceStackContent::Slices(slices.clone()),
+            }],
+            ..ModelDocument::default()
+        };
+
+        let mut bytes = Vec::new();
+        write_model(&source, &mut bytes).expect("slices write");
+        let reparsed = parse_model(&bytes).expect("slices parse");
+        let SliceStackContent::Slices(got) = &reparsed.slice_stacks[0].content else {
+            panic!("expected inline slices");
+        };
+        assert_eq!(got.len(), slices.len());
+        for (g, w) in got.iter().zip(&slices) {
+            assert_eq!(g.z_top.to_bits(), w.z_top.to_bits());
+            for (gv, wv) in g.vertices.iter().zip(&w.vertices) {
+                assert_eq!(gv.x.to_bits(), wv.x.to_bits());
+                assert_eq!(gv.y.to_bits(), wv.y.to_bits());
+            }
+        }
+    }
 }
