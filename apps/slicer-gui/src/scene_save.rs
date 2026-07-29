@@ -116,7 +116,7 @@ fn write_project_file(doc: &SceneDocument, payload: &ProjectPayload, target: &Pa
     let bytes = doc
         .with_scene(|spatial| -> Result<Vec<u8>> {
             let scene = spatial.graph();
-            let persist = persist_slices(doc, scene);
+            let persist = persist_slices(doc, payload, scene);
             let (slices, slice_fingerprint) = match &persist {
                 Some((plate, token)) => (Some(plate), Some(token.as_str())),
                 None => (None, None),
@@ -139,13 +139,21 @@ fn write_project_file(doc: &SceneDocument, payload: &ProjectPayload, target: &Pa
 }
 
 /// The held slices to persist with the project, or `None` when the scene
-/// has no in-sync slice result to write. Resolves the current layer
-/// schedule and defers the in-sync decision to the document's write
+/// has no in-sync slice result to write. The printer and resin come from
+/// `payload`, which already carries the app-default fallback the panel
+/// shows and slicing runs on; reading `doc.selected_*` here instead would
+/// see `None` for a freshly loaded mesh and drop the slices even though
+/// they were sliced on that default. The current layer schedule is then
+/// re-resolved and the in-sync decision deferred to the document's write
 /// guard; a resolution failure (for example an uninstalled profile)
 /// conservatively persists nothing.
-fn persist_slices(doc: &SceneDocument, scene: &Scene) -> Option<(PlateSlices, String)> {
-    let printer = doc.selected_printer()?;
-    let resin = doc.selected_resin()?;
+fn persist_slices(
+    doc: &SceneDocument,
+    payload: &ProjectPayload,
+    scene: &Scene,
+) -> Option<(PlateSlices, String)> {
+    let printer = payload.printer.clone()?;
+    let resin = payload.resin.clone()?;
     let schedule =
         resolve_current_schedule(&printer, &resin, doc.selected_first_layer_height(), scene)
             .ok()?;
@@ -536,6 +544,70 @@ mod scene_save_tests {
             assert_eq!(payload.resin, Some(material_id("nonexistent-resin")));
             // The ids resolve nowhere, so nothing was embedded.
             assert!(payload.embedded.is_empty());
+        }
+
+        #[test]
+        fn slices_persist_when_sliced_on_the_default_profile() {
+            // Regression: a freshly loaded mesh has no project payload, so
+            // `selected_printer`/`selected_resin` read `None` and slicing runs
+            // on the app-default profiles the panel shows. The save must
+            // persist the held slices against those same defaults rather than
+            // silently dropping them, so a reopened project can show them.
+            use crate::slice_projection::resolve_current_schedule;
+            use crate::slice_result::{SliceParams, SliceResult};
+            use sc_print_glue::slice_input_fingerprint;
+            use sc_print_primitives::AaLevel;
+            use sc_sl1cer::contour::{ContourLayer, ContourStack};
+
+            let dir = tempfile::tempdir().expect("temp dir");
+            let source = dir.path().join("widget.stl");
+            let target = dir.path().join("widget.3mf");
+
+            let printer = printer_id("elegoo-mars-5-goo");
+            let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
+
+            let doc = SceneDocument::new();
+            // No `set_project_payload`: `selected_printer` stays `None`,
+            // exactly the state right after a plain mesh load.
+            doc.install_graph(one_object_graph(), source);
+            let scene = doc
+                .with_scene(|s| s.graph().clone())
+                .expect("the scene is installed");
+
+            let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+                .expect("the bundled default profiles resolve a schedule");
+            let token = slice_input_fingerprint(&scene, &schedule)
+                .expect("the scene has sliceable geometry")
+                .to_token();
+            let layers: Vec<ContourLayer> = (0..schedule.total_layers())
+                .map(|_| ContourLayer::new(0.05, vec![]))
+                .collect();
+            doc.set_slice_result(SliceResult {
+                merged: ContourStack::new_unchecked(layers),
+                schedule,
+                token,
+                params: SliceParams {
+                    printer: printer.clone(),
+                    resin: resin.clone(),
+                    first_layer_height: None,
+                    aa_level: AaLevel::Off,
+                    geometry: doc.scene_revision(),
+                },
+            });
+
+            save_project_to(&doc, &target, Some(printer), Some(resin)).expect("the save succeeds");
+
+            let bytes = fs::read(&target).expect("the file exists");
+            let loaded = read_project(
+                &mut Cursor::new(bytes),
+                sc_project_formats::ProjectFileType::ThreeMf,
+            )
+            .expect("the saved project reads back");
+            assert!(
+                loaded.slices.is_some(),
+                "slices sliced on the default profile must survive the save"
+            );
+            assert!(loaded.slice_fingerprint.is_some());
         }
     }
 }
