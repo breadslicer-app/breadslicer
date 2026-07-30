@@ -10,9 +10,9 @@
 //! coincidence under floating noise is out of scope here; that would
 //! be a spatial-index epsilon match.
 
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::num::NonZeroU32;
+
+use rayon::slice::ParallelSliceMut;
 
 use crate::primitives::Vertex;
 use crate::scene::Scene;
@@ -30,45 +30,73 @@ impl Scene {
     /// [`Scene::validate`](crate::scene::Scene::validate) handles
     /// that variant separately.
     ///
-    /// Complexity: O(total vertex count) time, O(distinct vertex
-    /// coordinate count) space.
+    /// Complexity: O(total vertex count * log) time and O(total
+    /// vertex count) space, from one parallel sort of the coordinate
+    /// records. A scene with fewer than 2 leaves carrying vertices
+    /// answers without building them, since sharing takes 2 leaves.
     pub fn detect_shared_vertices(&self) -> Vec<NodeId> {
-        let mut first_seen: HashMap<[u32; 3], NodeId> = HashMap::new();
-        let mut shared: HashMap<NodeId, ()> = HashMap::new();
+        let leaves = self.leaves_with_vertices();
+        if leaves.len() < 2 {
+            return Vec::new();
+        }
 
+        // One record per vertex. The tuple order sorts by coordinate
+        // first and by leaf second, so every equal-coordinate run is
+        // itself grouped by leaf.
+        let total: usize = leaves.iter().map(|(_, vertices)| vertices.len()).sum();
+        let mut records: Vec<([u32; 3], NodeId)> = Vec::with_capacity(total);
+        for (leaf_id, vertices) in &leaves {
+            records.extend(
+                vertices
+                    .iter()
+                    .map(|vertex| (normalised_bit_pattern(vertex), *leaf_id)),
+            );
+        }
+        records.par_sort_unstable();
+
+        let mut shared: Vec<NodeId> = Vec::new();
+        for run in records.chunk_by(|a, b| a.0 == b.0) {
+            // Sorted by leaf within the run, so one leaf at both ends
+            // means one leaf throughout: a coordinate repeated inside
+            // a single mesh, which is not sharing.
+            if run[0].1 == run[run.len() - 1].1 {
+                continue;
+            }
+            let mut previous = None;
+            for &(_, leaf_id) in run {
+                if previous != Some(leaf_id) {
+                    shared.push(leaf_id);
+                    previous = Some(leaf_id);
+                }
+            }
+        }
+        shared.sort_unstable();
+        shared.dedup();
+        shared
+    }
+
+    /// Every leaf that carries at least one vertex, with its mesh.
+    /// Empty leaves are dropped: they cannot share a coordinate, and
+    /// leaving them out sharpens the 2-leaf test above.
+    fn leaves_with_vertices(&self) -> Vec<(NodeId, &[Vertex])> {
+        let mut leaves = Vec::new();
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
             let Some(node) = slot else { continue };
             let NodeKind::Leaf(payload) = &node.kind else {
                 continue;
             };
-            let mesh_vertices: &[Vertex] = match payload {
+            let vertices: &[Vertex] = match payload {
                 LeafPayload::Mesh(arc) => arc.vertices(),
                 LeafPayload::MeshResource(rid) => match self.mesh_resource(*rid) {
                     Some(mesh) => mesh.vertices(),
                     None => continue,
                 },
             };
-            let leaf_id = leaf_id_at(slot_idx);
-            for v in mesh_vertices {
-                let bp = normalised_bit_pattern(v);
-                match first_seen.entry(bp) {
-                    Entry::Vacant(e) => {
-                        e.insert(leaf_id);
-                    }
-                    Entry::Occupied(e) => {
-                        let other = *e.get();
-                        if other != leaf_id {
-                            shared.insert(other, ());
-                            shared.insert(leaf_id, ());
-                        }
-                    }
-                }
+            if !vertices.is_empty() {
+                leaves.push((leaf_id_at(slot_idx), vertices));
             }
         }
-
-        let mut out: Vec<NodeId> = shared.into_keys().collect();
-        out.sort_by_key(|id| id.get());
-        out
+        leaves
     }
 }
 
@@ -90,6 +118,8 @@ fn leaf_id_at(slot_idx: usize) -> NodeId {
 #[cfg(test)]
 mod shared_vertices_tests {
     use std::sync::Arc;
+
+    use proptest::prelude::*;
 
     use super::*;
     use crate::indexed_mesh::IndexedMesh;
@@ -243,5 +273,147 @@ mod shared_vertices_tests {
         let mut expected = vec![a, b];
         expected.sort_by_key(|id| id.get());
         assert_eq!(graph.detect_shared_vertices(), expected);
+    }
+
+    #[test]
+    fn an_empty_leaf_beside_a_populated_one_reports_nothing() {
+        let mut graph = Scene::new();
+        let root = graph.add_group(None, Transform3D::Identity);
+        graph.add_root(root).unwrap();
+        add_leaf(
+            &mut graph,
+            root,
+            triangle_mesh([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        );
+        let empty = IndexedMesh {
+            meta: None,
+            vertices: Vec::new(),
+            faces: Vec::new(),
+        };
+        add_leaf(&mut graph, root, empty);
+        assert!(graph.detect_shared_vertices().is_empty());
+    }
+
+    #[test]
+    fn a_coordinate_held_by_three_leaves_reports_each_once() {
+        let mut graph = Scene::new();
+        let root = graph.add_group(None, Transform3D::Identity);
+        graph.add_root(root).unwrap();
+        let corner = [4.0, 4.0, 4.0];
+        let ids: Vec<NodeId> = (0..3)
+            .map(|i| {
+                let offset = i as f32;
+                add_leaf(
+                    &mut graph,
+                    root,
+                    triangle_mesh(corner, [offset, 0.0, 0.0], [0.0, offset, 0.0]),
+                )
+            })
+            .collect();
+        let mut expected = ids;
+        expected.sort_by_key(|id| id.get());
+        assert_eq!(graph.detect_shared_vertices(), expected);
+    }
+
+    #[test]
+    fn leaves_sharing_many_coordinates_are_reported_once_each() {
+        let mut graph = Scene::new();
+        let root = graph.add_group(None, Transform3D::Identity);
+        graph.add_root(root).unwrap();
+        let a = add_leaf(
+            &mut graph,
+            root,
+            triangle_mesh([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        );
+        let b = add_leaf(
+            &mut graph,
+            root,
+            triangle_mesh([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        );
+        let mut expected = vec![a, b];
+        expected.sort_by_key(|id| id.get());
+        assert_eq!(graph.detect_shared_vertices(), expected);
+    }
+
+    /// The detection this replaced: a first-seen map keyed on the
+    /// coordinate, kept as the reference the sort must agree with.
+    fn reference_detect(graph: &Scene) -> Vec<NodeId> {
+        use std::collections::HashMap;
+        use std::collections::hash_map::Entry;
+
+        let mut first_seen: HashMap<[u32; 3], NodeId> = HashMap::new();
+        let mut shared: HashMap<NodeId, ()> = HashMap::new();
+        for (slot_idx, slot) in graph.nodes.iter().enumerate() {
+            let Some(node) = slot else { continue };
+            let NodeKind::Leaf(payload) = &node.kind else {
+                continue;
+            };
+            let vertices: &[Vertex] = match payload {
+                LeafPayload::Mesh(arc) => arc.vertices(),
+                LeafPayload::MeshResource(rid) => match graph.mesh_resource(*rid) {
+                    Some(mesh) => mesh.vertices(),
+                    None => continue,
+                },
+            };
+            let leaf_id = leaf_id_at(slot_idx);
+            for v in vertices {
+                match first_seen.entry(normalised_bit_pattern(v)) {
+                    Entry::Vacant(e) => {
+                        e.insert(leaf_id);
+                    }
+                    Entry::Occupied(e) => {
+                        let other = *e.get();
+                        if other != leaf_id {
+                            shared.insert(other, ());
+                            shared.insert(leaf_id, ());
+                        }
+                    }
+                }
+            }
+        }
+        let mut out: Vec<NodeId> = shared.into_keys().collect();
+        out.sort_by_key(|id| id.get());
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(96))]
+
+        /// Coordinates come from a pool small enough that collisions
+        /// across leaves are the common case, not the rare one.
+        #[test]
+        fn matches_the_reference_detection(
+            meshes in prop::collection::vec(
+                prop::collection::vec(
+                    prop::collection::vec(-1_i8..2, 3..4),
+                    3..9,
+                ),
+                1..5,
+            ),
+        ) {
+            let mut graph = Scene::new();
+            let root = graph.add_group(None, Transform3D::Identity);
+            graph.add_root(root).unwrap();
+            for coordinates in &meshes {
+                let vertices: Vec<Vertex> = coordinates
+                    .iter()
+                    .map(|axes| Vertex::new([axes[0] as f32, axes[1] as f32, axes[2] as f32]))
+                    .collect();
+                let faces = vec![IndexedTriangle::from_raw_indices(
+                    Normal::new([0.0, 0.0, 1.0]),
+                    [0, 1, 2],
+                )];
+                add_leaf(
+                    &mut graph,
+                    root,
+                    IndexedMesh {
+                        meta: None,
+                        vertices,
+                        faces,
+                    },
+                );
+            }
+            prop_assert_eq!(graph.detect_shared_vertices(), reference_detect(&graph));
+        }
     }
 }
