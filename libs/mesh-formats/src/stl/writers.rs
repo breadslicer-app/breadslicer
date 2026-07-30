@@ -411,10 +411,11 @@ mod test_write_stlb {
             0
         );
 
-        // Reading back must produce an empty triangle iterator.
-        let mut cursor = std::io::Cursor::new(out);
-        let mut iter = crate::stl::stlb::BinaryStlReader::create_triangles_iterator(&mut cursor)
-            .expect("reader constructs");
-        assert!(iter.next().is_none());
+        // Reading back must produce an empty mesh.
+        let scene = crate::stl::stlb::read_stlb_slice(&out).expect("empty document parses");
+        let leaf = scene.first_leaf_id().expect("one leaf");
+        let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
+        assert!(mesh.faces().is_empty());
+        assert!(mesh.vertices().is_empty());
     }
 }

@@ -5,6 +5,8 @@
 
 mod stla;
 mod stlb;
+#[cfg(test)]
+mod tests_roundtrip;
 mod writers;
 
 // Binary STL spec byte sizes. Shared by the reader and writer to keep
@@ -14,7 +16,7 @@ pub(crate) const STL_TRIANGLE_COUNT_BYTES: usize = 4;
 // 3*4 normal + 3*(3*4) verts + 2 attr
 pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 
-use std::io::{Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
 
 use sc_mesh_core::Scene;
 use sc_mesh_core::TriangleIterator;
@@ -24,7 +26,6 @@ use crate::messages::LoadStlWarning;
 use crate::ports::{MeshReader, MeshWriter, sealed};
 use crate::scene_writer::{FlattenWarning, flatten_graph_to_mesh};
 use stla::AsciiStlReader;
-use stlb::BinaryStlReader;
 
 pub use writers::{write_stla, write_stlb};
 
@@ -106,26 +107,28 @@ impl MeshReader for Stl {
     }
 }
 
+/// Reads the remaining stream into memory. The loader enforces the
+/// file-size cap upstream, so peak memory is bounded by that cap.
+fn slurp<R: Read>(read: &mut R) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    read.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 pub fn read_stl<R>(read: &mut R) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
 {
-    let is_ascii = AsciiStlReader::probe(read)?;
-
-    let metadata = if is_ascii {
-        AsciiStlReader::extract_metadata(read)
+    let bytes = slurp(read)?;
+    let mut cursor = Cursor::new(&bytes[..]);
+    if AsciiStlReader::probe(&mut cursor)? {
+        let metadata = AsciiStlReader::extract_metadata(&mut cursor)?;
+        let mesh = AsciiStlReader::create_triangles_iterator(&mut cursor)?
+            .as_indexed_mesh(Some(metadata))?;
+        Ok(Scene::from(mesh))
     } else {
-        BinaryStlReader::extract_metadata(read)
-    }?;
-
-    let mut stl_reader = if is_ascii {
-        AsciiStlReader::create_triangles_iterator(read)
-    } else {
-        BinaryStlReader::create_triangles_iterator(read)
-    }?;
-
-    let mesh = stl_reader.as_indexed_mesh(Some(metadata))?;
-    Ok(Scene::from(mesh))
+        stlb::read_stlb_slice(&bytes)
+    }
 }
 
 pub fn read_stla<R>(read: &mut R) -> Result<Scene>
@@ -141,9 +144,8 @@ pub fn read_stlb<R>(read: &mut R) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
 {
-    let metadata = BinaryStlReader::extract_metadata(read)?;
-    let mesh = BinaryStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))?;
-    Ok(Scene::from(mesh))
+    let bytes = slurp(read)?;
+    stlb::read_stlb_slice(&bytes)
 }
 
 #[cfg(test)]
