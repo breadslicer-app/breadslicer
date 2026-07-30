@@ -35,7 +35,7 @@ echo "Refreshing a clean source copy (without target/) ..."
 mkdir -p "$SRC_DIR"
 # Leave out target/, every top-level dot directory (.git and the like), and
 # the build caches; none of them belong in the build.
-rsync -a --delete \
+rsync -a --checksum --delete \
     --exclude='/target' \
     --exclude='/.*' \
     --exclude='.cache' \
