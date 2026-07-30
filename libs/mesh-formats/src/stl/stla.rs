@@ -22,6 +22,7 @@ use std::io::{BufRead, BufReader, Read, Seek};
 use std::str::Lines;
 use std::sync::LazyLock;
 
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use regex::Regex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_from_soup};
@@ -102,14 +103,15 @@ fn invalid_utf8_error() -> LoadStlError {
 /// Parses a full ASCII STL document: `solid` header line, facet
 /// blocks, `endsolid`. Lines past `endsolid` are never examined.
 fn parse_document(text: &str) -> Result<Scene> {
-    let mut lines = text.lines();
-    match lines.next() {
+    match text.lines().next() {
         None => return Err(LoadStlError::AsciiEmptyInput),
         Some(header) if !ASTL_HEADER_RE.is_match(header) => {
             return Err(LoadStlError::AsciiHeaderMissing);
         }
         Some(_) => {}
     }
+    let body_start = text.find('\n').map_or(text.len(), |i| i + 1);
+    let body = &text[body_start..];
     // Tokenization dispatch. ASCII documents (every real STL file)
     // take the byte-level scanner; a document holding any non-ASCII
     // byte falls back to char-level `split_whitespace`, whose Unicode
@@ -118,12 +120,124 @@ fn parse_document(text: &str) -> Result<Scene> {
     // text class it is chosen for, so the dispatch is invisible in
     // the output.
     let soup = if text.is_ascii() {
-        parse_facets(&mut lines, |line| AsciiWhitespaceSplit { rest: line })?
+        parse_body(body, |line| AsciiWhitespaceSplit { rest: line })?
     } else {
-        parse_facets(&mut lines, str::split_whitespace)?
+        parse_body(body, str::split_whitespace)?
     };
     let mesh = indexed_mesh_from_soup(Some(metadata_from_text(text)), soup, u32::MAX as usize)?;
     Ok(Scene::from(mesh))
+}
+
+/// Sequential/parallel crossover for the body parse. Measured with
+/// the lab parsers: the chunk split starts winning between 10 KiB and
+/// 14 KiB of body text; below that the fork/join overhead is on par
+/// with the parsing work.
+pub(super) const PARALLEL_PARSE_MIN_BODY_BYTES: usize = 16 * 1024;
+
+/// How a run of facet blocks ended: at an `endsolid` line, or by
+/// running out of lines.
+enum BlocksEnd {
+    EndSolid,
+    Exhausted,
+}
+
+/// Parses the document body (everything after the header line).
+///
+/// Bodies above the parallel threshold split at facet-block
+/// boundaries into thread-count chunks, parsed with rayon and
+/// concatenated in chunk order; chunks behind the first `endsolid`
+/// are dropped, like the sequential pass never reads them. Any
+/// deviation from that clean shape (a chunk error, no `endsolid`
+/// anywhere) discards the chunk output and re-parses sequentially,
+/// so the reported error is the canonical first one in file order
+/// and damage confined behind an `endsolid` stays invisible.
+/// Well-formed documents never pay the second pass.
+fn parse_body<'t, I, F>(body: &'t str, tokenize: F) -> Result<Vec<Triangle>>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I + Copy + Send + Sync,
+{
+    if body.len() < PARALLEL_PARSE_MIN_BODY_BYTES {
+        return parse_body_sequential(body, tokenize);
+    }
+    let outcomes: Vec<Result<(Vec<Triangle>, BlocksEnd)>> = chunk_at_facet_boundaries(body)
+        .into_par_iter()
+        .map(|chunk| parse_facet_blocks(&mut chunk.lines(), tokenize))
+        .collect();
+    let capacity = outcomes
+        .iter()
+        .map(|outcome| outcome.as_ref().map_or(0, |(part, _)| part.len()))
+        .sum();
+    let mut soup: Vec<Triangle> = Vec::with_capacity(capacity);
+    for outcome in outcomes {
+        match outcome {
+            Ok((part, BlocksEnd::EndSolid)) => {
+                soup.extend(part);
+                return Ok(soup);
+            }
+            Ok((part, BlocksEnd::Exhausted)) => soup.extend(part),
+            Err(_) => return parse_body_sequential(body, tokenize),
+        }
+    }
+    // Every chunk ran dry without an `endsolid`: the sequential pass
+    // owns the canonical outcome for such a document.
+    parse_body_sequential(body, tokenize)
+}
+
+/// The authoritative single-pass parse of a document body.
+fn parse_body_sequential<'t, I, F>(body: &'t str, tokenize: F) -> Result<Vec<Triangle>>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I + Copy,
+{
+    match parse_facet_blocks(&mut body.lines(), tokenize)? {
+        (soup, BlocksEnd::EndSolid) => Ok(soup),
+        (_, BlocksEnd::Exhausted) => Err(LoadStlError::AsciiEofWhileExpecting {
+            what: "facet or endsolid",
+        }),
+    }
+}
+
+/// Splits the body into up to thread-count pieces, each cut placed
+/// right after the line holding an `endfacet` occurrence, so chunks
+/// of well-formed documents start at facet-block boundaries. The
+/// search is a byte-level substring match: an uppercase spelling
+/// simply yields fewer cuts and less parallelism, never a wrong
+/// result (a chunk that starts mid-block fails to parse, and the
+/// sequential fallback takes over).
+fn chunk_at_facet_boundaries(body: &str) -> Vec<&str> {
+    const KEYWORD: &[u8] = b"endfacet";
+    let bytes = body.as_bytes();
+    let threads = rayon::current_num_threads().max(1);
+    let target = bytes.len().div_ceil(threads);
+    let mut chunks: Vec<&str> = Vec::with_capacity(threads);
+    let mut start = 0;
+    while chunks.len() + 1 < threads {
+        let probe = start + target;
+        if probe >= bytes.len() {
+            break;
+        }
+        let Some(found) = find_subslice(&bytes[probe..], KEYWORD) else {
+            break;
+        };
+        let after_keyword = probe + found + KEYWORD.len();
+        let end = bytes[after_keyword..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(bytes.len(), |newline| after_keyword + newline + 1);
+        // `end` sits right after an ASCII newline (or at EOF), so the
+        // cut is a char boundary even in non-ASCII text.
+        chunks.push(&body[start..end]);
+        start = end;
+    }
+    chunks.push(&body[start..]);
+    chunks
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// The ASCII subset of `char::is_whitespace`: `u8::is_ascii_whitespace`
@@ -174,17 +288,23 @@ fn metadata_from_text(text: &str) -> MeshMetadata {
     }
 }
 
-/// Parses facet blocks until `endsolid`, collecting the triangle soup.
-fn parse_facets<'t, I, F>(lines: &mut Lines<'t>, tokenize: F) -> Result<Vec<Triangle>>
+/// Parses facet blocks until an `endsolid` line or the end of the
+/// line run, collecting the triangle soup.
+fn parse_facet_blocks<'t, I, F>(
+    lines: &mut Lines<'t>,
+    tokenize: F,
+) -> Result<(Vec<Triangle>, BlocksEnd)>
 where
     I: Iterator<Item = &'t str>,
     F: Fn(&'t str) -> I + Copy,
 {
     let mut soup: Vec<Triangle> = Vec::new();
     loop {
-        let mut content = next_content_line(lines, tokenize, "facet or endsolid")?;
+        let Some(mut content) = next_content_line_opt(lines, tokenize) else {
+            return Ok((soup, BlocksEnd::Exhausted));
+        };
         if content.first.eq_ignore_ascii_case("endsolid") {
-            return Ok(soup);
+            return Ok((soup, BlocksEnd::EndSolid));
         }
         if !content.first.eq_ignore_ascii_case("facet") {
             return Err(LoadStlError::AsciiInvalidFacetHeader {
@@ -303,9 +423,28 @@ struct ContentLine<'t, I> {
     rest: I,
 }
 
-/// The next line holding at least one token, skipping blank lines like
-/// the retired reader's token-level filter did. Running out of lines
-/// yields the EOF error for `expecting`.
+/// The next line holding at least one token, skipping blank lines
+/// like the retired reader's token-level filter did.
+fn next_content_line_opt<'t, I, F>(lines: &mut Lines<'t>, tokenize: F) -> Option<ContentLine<'t, I>>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I,
+{
+    for line in lines {
+        let mut tokens = tokenize(line);
+        if let Some(first) = tokens.next() {
+            return Some(ContentLine {
+                line,
+                first,
+                rest: tokens,
+            });
+        }
+    }
+    None
+}
+
+/// [`next_content_line_opt`], with line-run exhaustion turned into
+/// the EOF error for `expecting`.
 fn next_content_line<'t, I, F>(
     lines: &mut Lines<'t>,
     tokenize: F,
@@ -315,17 +454,8 @@ where
     I: Iterator<Item = &'t str>,
     F: Fn(&'t str) -> I,
 {
-    for line in lines {
-        let mut tokens = tokenize(line);
-        if let Some(first) = tokens.next() {
-            return Ok(ContentLine {
-                line,
-                first,
-                rest: tokens,
-            });
-        }
-    }
-    Err(LoadStlError::AsciiEofWhileExpecting { what: expecting })
+    next_content_line_opt(lines, tokenize)
+        .ok_or(LoadStlError::AsciiEofWhileExpecting { what: expecting })
 }
 
 /// Parses a finite f32 straight from a token sub-slice. Acceptance is

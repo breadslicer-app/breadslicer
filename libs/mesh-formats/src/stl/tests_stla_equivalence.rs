@@ -23,7 +23,7 @@ use sc_mesh_core::{
 };
 
 use crate::error::LoadStlError;
-use crate::stl::stla::read_stla_slice;
+use crate::stl::stla::{PARALLEL_PARSE_MIN_BODY_BYTES, read_stla_slice};
 use crate::stl::write_stla;
 
 type Result<T> = std::result::Result<T, LoadStlError>;
@@ -367,15 +367,16 @@ fn mutation_strategy() -> impl Strategy<Value = Mutation> {
         Just(Mutation::CrlfLineEndings),
         Just(Mutation::BlankLineNoise),
         Just(Mutation::IndentLines),
-        (0_usize..10_000).prop_map(Mutation::TruncateAt),
-        ((0_usize..10_000), any::<u8>()).prop_map(|(at, value)| Mutation::CorruptByte(at, value)),
+        (0_usize..1_000_000).prop_map(Mutation::TruncateAt),
+        ((0_usize..1_000_000), any::<u8>())
+            .prop_map(|(at, value)| Mutation::CorruptByte(at, value)),
         proptest::collection::vec(any::<u8>(), 0..20).prop_map(Mutation::AppendJunk),
         // Whitespace-identity probes: vertical tab is the one ASCII
         // char where `char::is_whitespace` and `u8::is_ascii_whitespace`
         // disagree; a no-break space routes the document down the
         // non-ASCII tokenizer path.
-        (0_usize..10_000).prop_map(Mutation::SpaceToVerticalTab),
-        (0_usize..10_000).prop_map(Mutation::SpaceToNbsp),
+        (0_usize..1_000_000).prop_map(Mutation::SpaceToVerticalTab),
+        (0_usize..1_000_000).prop_map(Mutation::SpaceToNbsp),
     ]
 }
 
@@ -544,6 +545,117 @@ fn matches_the_reference_under_whitespace_substitution() {
     }
 }
 
+// --- parallel-path coverage ------------------------------------------
+
+/// Grows a generated document past the parallel-dispatch threshold by
+/// tiling its facet blocks between the header and `endsolid` lines.
+/// Documents without facet blocks come back unchanged (they stay on
+/// the sequential path, which is a valid case of its own).
+fn tile_document(doc: Vec<u8>) -> Vec<u8> {
+    let text = String::from_utf8(doc).expect("generated documents are ASCII");
+    let body_start = text.find('\n').map_or(text.len(), |i| i + 1);
+    let body_end = text.rfind("endsolid").unwrap_or(text.len());
+    let blocks = &text[body_start..body_end];
+    if blocks.trim().is_empty() {
+        return text.into_bytes();
+    }
+    let mut out = String::with_capacity(2 * PARALLEL_PARSE_MIN_BODY_BYTES);
+    out.push_str(&text[..body_start]);
+    while out.len() <= body_start + PARALLEL_PARSE_MIN_BODY_BYTES {
+        out.push_str(blocks);
+    }
+    out.push_str(&text[body_end..]);
+    out.into_bytes()
+}
+
+/// A well-formed document sized for the parallel path: `faces` grid
+/// triangles through `write_stla`, body asserted above the threshold.
+fn big_document(faces: usize) -> Vec<u8> {
+    let mut soup = Vec::with_capacity(faces);
+    for i in 0..faces {
+        let x = i as f32;
+        soup.push(Triangle::new(
+            Normal::new([0.0, 0.0, 1.0]),
+            [
+                Vertex::new([x, 0.0, 0.0]),
+                Vertex::new([x + 1.0, 0.0, 0.0]),
+                Vertex::new([x, 1.0, 0.0]),
+            ],
+        ));
+    }
+    let meta = MeshMetadata {
+        name: Some("big".to_string()),
+        ..Default::default()
+    };
+    let mesh = indexed_mesh_from_soup(Some(meta), soup, u32::MAX as usize).expect("soup builds");
+    let mut buf = Vec::new();
+    write_stla(&mesh, &mut buf).expect("write_stla succeeds");
+    assert!(buf.len() > PARALLEL_PARSE_MIN_BODY_BYTES);
+    buf
+}
+
+/// Replaces the first vertex line of facet `facet` with `replacement`.
+/// Relies on `write_stla`'s fixed 7-lines-per-facet layout.
+fn replace_first_vertex_line(doc: &[u8], facet: usize, replacement: &str) -> Vec<u8> {
+    let text = str::from_utf8(doc).expect("ASCII document");
+    let mut lines: Vec<&str> = text.lines().collect();
+    lines[1 + facet * 7 + 2] = replacement;
+    lines.join("\n").into_bytes()
+}
+
+#[test]
+fn parallel_path_matches_the_reference() {
+    assert_equivalent(&big_document(600));
+}
+
+#[test]
+fn parallel_path_reports_the_first_error_in_file_order() {
+    // 2 corrupted facets in different chunks: an unparseable float
+    // early, a short vertex line near the end. The early error is the
+    // canonical one; the reference agrees by construction.
+    let doc = big_document(600);
+    let doc = replace_first_vertex_line(&doc, 3, "      vertex NOPE 0e0 0e0");
+    let doc = replace_first_vertex_line(&doc, 590, "      vertex 0e0 0e0");
+    assert_equivalent(&doc);
+    match read_stla_slice(&doc).unwrap_err() {
+        LoadStlError::InvalidFloat { token, .. } => assert_eq!(token, "nope"),
+        other => panic!("expected the early InvalidFloat, got {other:?}"),
+    }
+}
+
+#[test]
+fn parallel_path_drops_facets_behind_the_first_endsolid() {
+    // Valid facet blocks after `endsolid` span several chunks; the
+    // sequential pass never reads them, so the parallel combination
+    // must drop them even though they parse cleanly on their own.
+    let mut doc = big_document(600);
+    let tail_block = "\n  facet normal 0e0 0e0 1e0\n    outer loop\n      vertex 0e0 0e0 5e0\n      vertex 1e0 0e0 5e0\n      vertex 0e0 1e0 5e0\n    endloop\n  endfacet";
+    for _ in 0..200 {
+        doc.extend_from_slice(tail_block.as_bytes());
+    }
+    doc.extend_from_slice(b"\nendsolid big");
+    assert_equivalent(&doc);
+
+    let scene = read_stla_slice(&doc).expect("first solid parses");
+    let leaf = scene.first_leaf_id().expect("one leaf");
+    let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
+    assert_eq!(mesh.faces().len(), 600);
+}
+
+#[test]
+fn parallel_path_missing_endsolid_reports_eof() {
+    let mut doc = big_document(600);
+    let endsolid_at = doc.len() - "endsolid big".len();
+    doc.truncate(endsolid_at);
+    assert_equivalent(&doc);
+    assert!(matches!(
+        read_stla_slice(&doc).unwrap_err(),
+        LoadStlError::AsciiEofWhileExpecting {
+            what: "facet or endsolid",
+        },
+    ));
+}
+
 // --- property tests --------------------------------------------------
 
 proptest! {
@@ -562,5 +674,13 @@ proptest! {
         second in mutation_strategy(),
     ) {
         assert_equivalent(&apply_mutation(apply_mutation(doc, first), second));
+    }
+
+    #[test]
+    fn parallel_path_matches_the_reference_on_mutated_documents(
+        doc in document_strategy(),
+        mutation in mutation_strategy(),
+    ) {
+        assert_equivalent(&apply_mutation(tile_document(doc), mutation));
     }
 }
