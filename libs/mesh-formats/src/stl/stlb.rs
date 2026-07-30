@@ -4,7 +4,10 @@
  */
 
 use std::ffi::CStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use rayon::iter::ParallelIterator;
+use rayon::slice::ParallelSlice;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_from_soup};
 
@@ -86,16 +89,97 @@ fn parse_triangle_records(bytes: &[u8]) -> Result<Vec<Triangle>> {
 
     let body = &bytes[PREAMBLE_BYTES..];
     let available = body.len() / STL_TRIANGLE_RECORD_BYTES;
-    let mut soup: Vec<Triangle> = Vec::with_capacity(num_faces.min(available));
-    for record in body.chunks_exact(STL_TRIANGLE_RECORD_BYTES).take(num_faces) {
-        soup.push(parse_triangle_record(record)?);
-    }
+    let wanted = num_faces.min(available);
+    let records = &body[..wanted * STL_TRIANGLE_RECORD_BYTES];
+
+    let soup = if wanted < PARALLEL_PARSE_MIN_RECORDS {
+        parse_records_sequential(records)?
+    } else {
+        // Collecting into Result<Vec<_>> would disable rayon's
+        // in-place indexed collect and cost more than the sequential
+        // parse (measured 5x). Instead the parallel pass is
+        // infallible with a shared validity flag, and a flagged
+        // document is re-parsed sequentially so the reported error is
+        // the first one in file order. Well-formed files never touch
+        // the flag or pay the second pass.
+        let saw_non_finite = AtomicBool::new(false);
+        let soup: Vec<Triangle> = records
+            .par_chunks(STL_TRIANGLE_RECORD_BYTES)
+            .map(|record| parse_triangle_record_lenient(record, &saw_non_finite))
+            .collect();
+        if saw_non_finite.load(Ordering::Relaxed) {
+            return parse_records_sequential(records);
+        }
+        soup
+    };
+
     if soup.len() < num_faces {
         return Err(LoadStlError::Truncated {
             what: "a triangle record",
         });
     }
     Ok(soup)
+}
+
+/// Sequential/parallel crossover for the record parse. Measured: the
+/// parallel split starts winning between 4k and 8k records; below
+/// that the fork/join overhead is on par with the parsing work.
+pub(super) const PARALLEL_PARSE_MIN_RECORDS: usize = 8192;
+
+fn parse_records_sequential(records: &[u8]) -> Result<Vec<Triangle>> {
+    let mut soup: Vec<Triangle> = Vec::with_capacity(records.len() / STL_TRIANGLE_RECORD_BYTES);
+    for record in records.chunks_exact(STL_TRIANGLE_RECORD_BYTES) {
+        soup.push(parse_triangle_record(record)?);
+    }
+    Ok(soup)
+}
+
+/// Infallible variant of [`parse_triangle_record`] for the parallel
+/// hot path: instead of returning an error it raises `saw_non_finite`
+/// and lets the caller re-parse sequentially for the canonical error.
+/// The produced triangle is discarded in that case, so its value does
+/// not matter.
+fn parse_triangle_record_lenient(record: &[u8], saw_non_finite: &AtomicBool) -> Triangle {
+    let f = |offset: usize| -> f32 {
+        f32::from_le_bytes([
+            record[offset],
+            record[offset + 1],
+            record[offset + 2],
+            record[offset + 3],
+        ])
+    };
+
+    let fields = [
+        f(0),
+        f(4),
+        f(8),
+        f(12),
+        f(16),
+        f(20),
+        f(24),
+        f(28),
+        f(32),
+        f(36),
+        f(40),
+        f(44),
+    ];
+    if fields.iter().any(|value| !value.is_finite()) {
+        saw_non_finite.store(true, Ordering::Relaxed);
+    }
+
+    let mut normal = Normal::new([fields[0], fields[1], fields[2]]);
+    let vertices = [
+        Vertex::new([fields[3], fields[4], fields[5]]),
+        Vertex::new([fields[6], fields[7], fields[8]]),
+        Vertex::new([fields[9], fields[10], fields[11]]),
+    ];
+    if normal == Normal::new([0.0_f32, 0.0_f32, 0.0_f32])
+        && let Ok(recomputed) = compute_normal_from_triangle_vertices(&vertices)
+    {
+        normal = recomputed;
+    }
+
+    Triangle::new(normal, vertices)
 }
 
 /// One 50-byte triangle record: normal, 3 vertices, attribute bytes.
@@ -148,7 +232,10 @@ fn parse_triangle_record(record: &[u8]) -> Result<Triangle> {
 
 #[cfg(test)]
 mod binary_stl_reader_tests {
-    use super::{MAX_MESH_ELEMENT_COUNT, PREAMBLE_BYTES, STL_HEADER_BYTES, read_stlb_slice};
+    use super::{
+        MAX_MESH_ELEMENT_COUNT, PARALLEL_PARSE_MIN_RECORDS, PREAMBLE_BYTES, STL_HEADER_BYTES,
+        STL_TRIANGLE_RECORD_BYTES, read_stlb_slice,
+    };
     use crate::error::LoadStlError;
 
     /// Builds an 84-byte binary STL preamble: a zero-padded name field
@@ -304,6 +391,51 @@ mod binary_stl_reader_tests {
             Err(LoadStlError::Truncated {
                 what: "a triangle record",
             }),
+        ));
+    }
+
+    /// Builds a document declaring `declared` triangles and carrying
+    /// `actual` copies of the same valid unit-triangle record.
+    fn repeated_record_document(declared: u32, actual: usize) -> Vec<u8> {
+        let mut bytes = header_with_declared_count(declared);
+        let record = single_triangle_with_attribute_bytes(0)[PREAMBLE_BYTES..].to_vec();
+        for _ in 0..actual {
+            bytes.extend_from_slice(&record);
+        }
+        bytes
+    }
+
+    fn corrupt_float(bytes: &mut [u8], record_idx: usize, field_offset: usize) {
+        let at = PREAMBLE_BYTES + record_idx * STL_TRIANGLE_RECORD_BYTES + field_offset;
+        bytes[at..at + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+    }
+
+    #[test]
+    fn first_error_in_file_order_wins_in_the_parallel_path() {
+        // Two bad records in different regions of an above-threshold
+        // document: the reported error must be the earlier one, even
+        // though the parallel collect may surface either.
+        let n = PARALLEL_PARSE_MIN_RECORDS + 1000;
+        let mut bytes = repeated_record_document(n as u32, n);
+        corrupt_float(&mut bytes, 5, 44); // v2.z
+        corrupt_float(&mut bytes, n - 500, 0); // normal.x
+        assert!(matches!(
+            read_stlb_slice(&bytes),
+            Err(LoadStlError::NonFiniteFloat { what: "v2.z", .. }),
+        ));
+    }
+
+    #[test]
+    fn parallel_path_bad_float_wins_over_truncation() {
+        // Above-threshold document that is BOTH truncated (one record
+        // short) and malformed earlier: the record error comes first
+        // in file order.
+        let n = PARALLEL_PARSE_MIN_RECORDS + 1000;
+        let mut bytes = repeated_record_document(n as u32, n - 1);
+        corrupt_float(&mut bytes, 100, 28); // v1.y
+        assert!(matches!(
+            read_stlb_slice(&bytes),
+            Err(LoadStlError::NonFiniteFloat { what: "v1.y", .. }),
         ));
     }
 

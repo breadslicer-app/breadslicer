@@ -11,6 +11,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
 float-cmp.workspace = true
+rayon.workspace = true
 sc-3mf.workspace = true
 sc-mesh-core.workspace = true
 

@@ -72,12 +72,11 @@ fn y_tunnel_prism_round_trips() {
     assert_fixture_round_trips(&cuboid_with_y_tunnel());
 }
 
-/// A generated torus: 24 x 16 quads, vertices shared across rings and
+/// A generated torus: n x m quads, vertices shared across rings and
 /// segments. Built through `indexed_mesh_from_soup`, so its vertex
 /// order IS first-appearance order and the round-trip must reproduce
 /// the full `IndexedMesh` exactly, metadata included.
-fn torus_mesh() -> IndexedMesh {
-    let (n, m) = (24_usize, 16_usize);
+fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
     let (major, minor) = (10.0_f32, 3.0_f32);
     let point = |i: usize, j: usize| -> Vertex {
         let u = (i % n) as f32 / n as f32 * std::f32::consts::TAU;
@@ -111,6 +110,16 @@ fn torus_mesh() -> IndexedMesh {
 
 #[test]
 fn generated_torus_round_trips_exactly() {
-    let mesh = torus_mesh();
+    // 768 faces: exercises the sequential record-parse path.
+    let mesh = torus_mesh(24, 16);
+    assert_eq!(round_trip(&mesh), mesh);
+}
+
+#[test]
+fn large_generated_torus_round_trips_exactly() {
+    // 8640 faces: exercises the parallel record-parse path, whose
+    // output must stay positionally identical to the sequential one.
+    const { assert!(2 * 72 * 60 > crate::stl::stlb::PARALLEL_PARSE_MIN_RECORDS) };
+    let mesh = torus_mesh(72, 60);
     assert_eq!(round_trip(&mesh), mesh);
 }

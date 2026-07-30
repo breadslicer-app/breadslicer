@@ -4765,6 +4765,7 @@ dependencies = [
  "anyhow",
  "float-cmp 0.10.0",
  "proptest",
+ "rayon",
  "regex",
  "sc-3mf",
  "sc-mesh-core",
