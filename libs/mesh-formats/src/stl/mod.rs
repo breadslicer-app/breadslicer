@@ -16,7 +16,7 @@ pub(crate) const STL_TRIANGLE_COUNT_BYTES: usize = 4;
 // 3*4 normal + 3*(3*4) verts + 2 attr
 pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 
-use std::io::{Cursor, Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use sc_mesh_core::Scene;
 use sc_mesh_core::TriangleIterator;
@@ -107,10 +107,17 @@ impl MeshReader for Stl {
     }
 }
 
-/// Reads the remaining stream into memory. The loader enforces the
+/// Reads the remaining stream into memory, learning the byte count
+/// with 2 seeks and reserving it up front: without the reservation,
+/// `read_to_end` through a non-specialized reader (the GUI wraps the
+/// file in a progress-counting adapter) degrades to the growth loop
+/// and costs about twice the ideal read. The loader enforces the
 /// file-size cap upstream, so peak memory is bounded by that cap.
-fn slurp<R: Read>(read: &mut R) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
+fn slurp<R: Read + Seek>(read: &mut R) -> Result<Vec<u8>> {
+    let start = read.stream_position()?;
+    let end = read.seek(SeekFrom::End(0))?;
+    read.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::with_capacity(end.saturating_sub(start) as usize);
     read.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
@@ -172,6 +179,19 @@ mod stl_bin_reader_tests {
         let mut buf = Vec::new();
         write_stlb(&mesh, &mut buf).expect("write_stlb succeeds");
         buf
+    }
+
+    #[test]
+    fn read_starts_at_the_current_stream_position() {
+        // A reader positioned past leading garbage parses only the
+        // remainder. This also exercises the slurp's exact-size
+        // reservation with a non-zero start offset.
+        let mut bytes = vec![0xAB_u8; 7];
+        bytes.extend_from_slice(&one_triangle_buffer());
+        let mut reader = Cursor::new(bytes);
+        reader.set_position(7);
+        let scene = super::read_stlb(&mut reader).expect("read_stlb succeeds");
+        assert_eq!(scene.reachable_leaf_count(), 1);
     }
 
     #[test]
