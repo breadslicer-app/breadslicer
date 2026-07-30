@@ -22,7 +22,7 @@ project and stands on its own.
 Reading and writing mesh files (STL, OBJ, 3MF) lives in
 [`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/),
 and slicing lives in
-[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer).
+[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/).
 This crate carries no rendering or GPU types.
 
 ## Conventions
