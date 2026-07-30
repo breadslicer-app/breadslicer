@@ -1,70 +1,52 @@
 # sc-mesh-core
 
-A [SoulCrafted](https://codeberg.org/SoulCrafted/) library with core types for
-3D meshes and scenes. Part of the
-[Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md)
-project.
+Triangle meshes and 3D scenes for Rust: indexed mesh storage, affine
+transforms, bounding boxes, a hierarchical scene graph, mesh validation,
+and mesh repair.
 
-## What this crate is for
+Written for the
+[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+a slicer for resin 3D printers, but it depends on nothing else in that
+project and stands on its own.
 
-`sc-mesh-core` is the shared vocabulary of the SoulCrafted slicer stack: the
-data structures that the format readers (`sc-mesh-formats`), the future
-slicer engine (`sl1cer`), the support generator, and the GUI all speak.
-Anything that needs to describe a 3D mesh, group meshes into a scene, place
-them in the world, or check that they're well-formed enough to print lives
-here.
+## Features
 
-It is intentionally narrow:
+- Indexed triangle meshes with optional metadata.
+- A hierarchical scene graph with groups, instancing and shared mesh
+  resources.
+- Affine transforms and axis-aligned bounding boxes.
+- Validation for non-finite coordinates, out-of-range face indices,
+  zero-length edges, holes, edges shared by more than 2 faces and
+  inconsistent winding, with repairs for some of those.
 
-- No file I/O (that's `sc-mesh-formats`).
-- No rendering, no GPU types (that's the GUI).
-- No slicing or supports.
+Reading and writing mesh files (STL, OBJ, 3MF) lives in
+[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/),
+and slicing lives in
+[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer).
+This crate carries no rendering or GPU types.
 
 ## Conventions
 
-- **Coordinate frame:** right-handed, **Z up**. The XY plane is the build
-  platform; +Z points away from it.
-- **Units:** every coordinate, length, and translation is in **millimetres**.
-  Vertex positions are stored as `f32`; transform matrices are `f64`. Both
-  share the same millimetre scale; there is no unit type yet.
-
-## Modules at a glance
-
-- `primitives`: `Vertex`, `Normal`, `Vector3D`, `Triangle`, `IndexedTriangle`.
-- `indexed_mesh`: `IndexedMesh` (vertex buffer + indexed face buffer + optional
-  metadata), plus mesh validation and repair routines. The witness chain
-  (`ValidatedFaces` for in-range face indices, `ValidatedManifoldMesh` for
-  closed manifolds) lets downstream APIs require the invariant they need
-  at the type level instead of re-validating defensively.
-- `aabb`: `Aabb` axis-aligned bounding boxes.
-- `transform`: `AffineTransform3D` 3×4 affine transforms in `f64`, with
-  composition, inversion, and a normal-aware apply.
-- `scene`: `Scene`, `SceneObject`, `Transform3D` (`Identity` /
-  `Affine`-tagged) for placing meshes in world space, plus `Scene::aabb` and
-  `Scene::merge_meshes` (transform baking).
-- `scene_edit`: `SceneEdit`, the typed mutation vocabulary over `Scene`
-  (variants + `apply_to_scene`). Cache layers like `sc-mesh-spatial`
-  dispatch on the same enum to attach invalidation hints.
-- `errors`: typed error enums returned by validators and transform routines,
-  including `MeshVertexError`, `MeshFaceError`, `MeshNormalVectorError`,
-  `MeshManifoldError`, `MeshFix`, `TransformError`, plus `Edge`,
-  `VertexIndex`, `FaceIndex` and friends.
-- `geometry`: small numeric helpers used across the crate (singularity
-  threshold, strict comparisons).
-
-For the actual API (types, methods, signatures, and example-based docs)
-see [docs.rs](https://docs.rs/sc-mesh-core).
+- **Right-handed, Z up.** The XY plane is the build platform.
+- **Millimetres** for every coordinate, length and translation. There is no
+  unit type, and readers of unit-less formats treat the file's numbers as
+  millimetres.
+- Vertex positions are `f32`; transform matrices are `f64`.
 
 ## Validation
 
-Mesh validation is split by concern: vertices, face indices, normal vectors,
-and manifoldness each have a dedicated `validate_*` method on `IndexedMesh`,
-and each returns `Result<(), Vec<…Error>>` listing every issue it found
-rather than bailing on the first. Repair routines (`fix_faces_orientation`,
-`fix_zero_length_edges`) consume those error vectors and return a
-`Vec<MeshFix>` describing what was actually changed.
+Two things about the validation API are worth knowing before you call it.
+
+Each check returns every problem it found rather than the first one, so
+fixing a broken mesh is one pass instead of a game of whack-a-mole.
+
+Checks that presuppose valid face indices are reachable only through a
+witness type minted by the check that establishes them. A function needing a
+closed manifold takes proof that it has one, so it never re-validates
+defensively and you never pay for the same check twice.
+
+For the API, see [docs.rs](https://docs.rs/sc-mesh-core/0.1.0).
 
 ## License
 
-Apache-2.0, see [LICENSE](./LICENSE.txt) or the SPDX headers in each source
-file.
+Apache-2.0, see [LICENSE](./LICENSE.md).
