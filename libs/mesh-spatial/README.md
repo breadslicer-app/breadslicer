@@ -66,7 +66,7 @@ slicing, which is in
 [`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/),
 and any rendering or GPU types.
 
-For the API, see [docs.rs](https://docs.rs/sc-mesh-spatial/0.1.0).
+For the API, see [docs.rs](https://docs.rs/sc-mesh-spatial).
 
 ## License
 

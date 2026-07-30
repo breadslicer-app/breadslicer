@@ -51,7 +51,7 @@ opening it, and every reader caps how many elements of a single kind it will
 allocate for, whether that is a binary STL's declared triangle count or an
 OBJ's vertex count.
 
-For the API, see [docs.rs](https://docs.rs/sc-mesh-formats/latest/sc_mesh_formats/).
+For the API, see [docs.rs](https://docs.rs/sc-mesh-formats/).
 
 ## Credits
 

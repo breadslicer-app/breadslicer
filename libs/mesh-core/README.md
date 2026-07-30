@@ -45,7 +45,7 @@ witness type minted by the check that establishes them. A function needing a
 closed manifold takes proof that it has one, so it never re-validates
 defensively and you never pay for the same check twice.
 
-For the API, see [docs.rs](https://docs.rs/sc-mesh-core/0.1.0).
+For the API, see [docs.rs](https://docs.rs/sc-mesh-core).
 
 ## License
 
