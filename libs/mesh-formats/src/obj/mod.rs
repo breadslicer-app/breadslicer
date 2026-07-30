@@ -4,6 +4,8 @@
  */
 
 mod reader;
+#[cfg(test)]
+mod tests_reader_equivalence;
 mod writer;
 
 use std::io::{Read, Seek, Write};

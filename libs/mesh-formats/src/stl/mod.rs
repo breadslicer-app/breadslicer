@@ -18,7 +18,7 @@ pub(crate) const STL_TRIANGLE_COUNT_BYTES: usize = 4;
 // 3*4 normal + 3*(3*4) verts + 2 attr
 pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, Write};
 
 use sc_mesh_core::Scene;
 
@@ -26,6 +26,7 @@ use crate::error::{LoadStlError, WriteSceneError};
 use crate::messages::LoadStlWarning;
 use crate::ports::{MeshReader, MeshWriter, sealed};
 use crate::scene_writer::{FlattenWarning, flatten_graph_to_mesh};
+use crate::slurp::slurp;
 
 pub use writers::{write_stla, write_stlb};
 
@@ -105,21 +106,6 @@ impl MeshReader for Stl {
     fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
         read_stl(reader).map(|scene| (scene, Vec::new()))
     }
-}
-
-/// Reads the remaining stream into memory, learning the byte count
-/// with 2 seeks and reserving it up front: without the reservation,
-/// `read_to_end` through a non-specialized reader (the GUI wraps the
-/// file in a progress-counting adapter) degrades to the growth loop
-/// and costs about twice the ideal read. The loader enforces the
-/// file-size cap upstream, so peak memory is bounded by that cap.
-fn slurp<R: Read + Seek>(read: &mut R) -> Result<Vec<u8>> {
-    let start = read.stream_position()?;
-    let end = read.seek(SeekFrom::End(0))?;
-    read.seek(SeekFrom::Start(start))?;
-    let mut bytes = Vec::with_capacity(end.saturating_sub(start) as usize);
-    read.read_to_end(&mut bytes)?;
-    Ok(bytes)
 }
 
 pub fn read_stl<R>(read: &mut R) -> Result<Scene>

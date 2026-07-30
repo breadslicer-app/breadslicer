@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::{Read, Seek};
 use std::sync::Arc;
 
 use float_cmp::approx_eq;
@@ -19,6 +18,7 @@ use sc_mesh_core::{
 use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadObjError;
 use crate::messages::LoadObjWarning;
+use crate::slurp::slurp;
 
 /// Hard ceiling on the number of vertex tokens a single `f` directive
 /// may carry. Bounds the fan-triangulation amplification for one
@@ -30,16 +30,79 @@ const MAX_FACE_TOKENS: usize = 1024;
 /// `read_obj_with_caps` lets tests drive small caps so we can exercise
 /// the cap branches without materialising 200 M vertices.
 #[derive(Clone, Copy, Debug)]
-struct Caps {
-    max_vertices: usize,
-    max_face_tokens: usize,
+pub(super) struct Caps {
+    pub(super) max_vertices: usize,
+    pub(super) max_face_tokens: usize,
 }
 
 impl Caps {
-    const DEFAULT: Self = Self {
+    pub(super) const DEFAULT: Self = Self {
         max_vertices: MAX_MESH_ELEMENT_COUNT,
         max_face_tokens: MAX_FACE_TOKENS,
     };
+}
+
+/// Marks a table slot the object being flushed has not referenced yet.
+/// Local vertex counts stay below [`MAX_MESH_ELEMENT_COUNT`], so this
+/// value can never collide with a real local index.
+const UNASSIGNED_LOCAL_INDEX: u32 = u32::MAX;
+
+/// Global-to-local vertex map for the object being flushed, indexed by
+/// global vertex id. Dense integer keys never needed hashing.
+///
+/// `touched` lists the slots the current object filled in, so the
+/// reset after a flush costs one write per referenced vertex instead
+/// of a walk over the whole table. That is what lets a single
+/// allocation serve every object in the file.
+struct VertexRemap {
+    local_of: Vec<u32>,
+    touched: Vec<u32>,
+}
+
+impl VertexRemap {
+    fn new() -> Self {
+        Self {
+            local_of: Vec::new(),
+            touched: Vec::new(),
+        }
+    }
+
+    /// Drains `faces` (global indices) into per-object faces carrying
+    /// local indices, alongside the local vertex list in
+    /// first-appearance order.
+    fn take_object(
+        &mut self,
+        global_vertices: &[Vertex],
+        faces: &mut Vec<IndexedTriangle>,
+    ) -> (Vec<Vertex>, Vec<IndexedTriangle>) {
+        if self.local_of.len() < global_vertices.len() {
+            self.local_of
+                .resize(global_vertices.len(), UNASSIGNED_LOCAL_INDEX);
+        }
+
+        let mut local_vertices: Vec<Vertex> = Vec::new();
+        let mut local_faces: Vec<IndexedTriangle> = Vec::with_capacity(faces.len());
+
+        for face in faces.drain(..) {
+            let mut local = [0_u32; 3];
+            for (slot, global_idx) in local.iter_mut().zip(face.vertices) {
+                let global_idx = usize::from(global_idx);
+                if self.local_of[global_idx] == UNASSIGNED_LOCAL_INDEX {
+                    self.local_of[global_idx] = local_vertices.len() as u32;
+                    local_vertices.push(global_vertices[global_idx]);
+                    self.touched.push(global_idx as u32);
+                }
+                *slot = self.local_of[global_idx];
+            }
+            local_faces.push(IndexedTriangle::from_raw_indices(face.normal, local));
+        }
+
+        for global_idx in self.touched.drain(..) {
+            self.local_of[global_idx as usize] = UNASSIGNED_LOCAL_INDEX;
+        }
+
+        (local_vertices, local_faces)
+    }
 }
 
 /// Finalises a pending object by extracting only the vertices it references,
@@ -50,37 +113,13 @@ fn flush_pending_object_as_mesh(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
+    remap: &mut VertexRemap,
 ) -> Option<IndexedMesh> {
     if current_faces.is_empty() {
         return None;
     }
 
-    // Build a local vertex list in first-appearance order.
-    let mut global_to_local: HashMap<VertexIndex, VertexIndex> = HashMap::new();
-    let mut local_vertices: Vec<Vertex> = Vec::new();
-
-    for face in current_faces.iter() {
-        for global_idx in face.vertices {
-            if let std::collections::hash_map::Entry::Vacant(e) = global_to_local.entry(global_idx)
-            {
-                let local_idx = VertexIndex::from(local_vertices.len() as u32);
-                e.insert(local_idx);
-                local_vertices.push(global_vertices[usize::from(global_idx)]);
-            }
-        }
-    }
-
-    let remapped_faces: Vec<IndexedTriangle> = current_faces
-        .drain(..)
-        .map(|f| IndexedTriangle {
-            normal: f.normal,
-            vertices: [
-                global_to_local[&f.vertices[0]],
-                global_to_local[&f.vertices[1]],
-                global_to_local[&f.vertices[2]],
-            ],
-        })
-        .collect();
+    let (local_vertices, remapped_faces) = remap.take_object(global_vertices, current_faces);
 
     let meta = current_name.map(|name| MeshMetadata {
         name: Some(name),
@@ -98,13 +137,15 @@ fn flush_pending_object(
     global_vertices: &[Vertex],
     current_faces: &mut Vec<IndexedTriangle>,
     current_name: Option<String>,
+    remap: &mut VertexRemap,
     graph: &mut Scene,
     root: NodeId,
 ) -> bool {
     if current_faces.is_empty() {
         return false;
     }
-    let Some(mesh) = flush_pending_object_as_mesh(global_vertices, current_faces, current_name)
+    let Some(mesh) =
+        flush_pending_object_as_mesh(global_vertices, current_faces, current_name, remap)
     else {
         return false;
     };
@@ -123,17 +164,87 @@ fn flush_pending_object(
 
 pub fn read_obj<R>(read: &mut R) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError>
 where
-    R: std::io::Read,
+    R: Read + Seek,
 {
     read_obj_with_caps(read, Caps::DEFAULT)
 }
 
-fn read_obj_with_caps<R>(
+pub(super) fn read_obj_with_caps<R>(
     read: &mut R,
     caps: Caps,
 ) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError>
 where
-    R: std::io::Read,
+    R: Read + Seek,
+{
+    let bytes = slurp(read)?;
+    read_obj_slice(&bytes, caps)
+}
+
+/// Reads an OBJ document from an in-memory byte slice.
+///
+/// UTF-8 validity is only required up to the line the parse stops at:
+/// the retired line-streaming reader decoded one line at a time, so a
+/// grammar error in an earlier line still wins over an invalid
+/// sequence further down the file.
+fn read_obj_slice(bytes: &[u8], caps: Caps) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
+    match str::from_utf8(bytes) {
+        Ok(text) => parse_document(text, caps),
+        Err(utf8_error) => {
+            let valid = str::from_utf8(&bytes[..utf8_error.valid_up_to()])
+                .map_err(|_| invalid_utf8_error())?;
+            let complete = match valid.rfind('\n') {
+                Some(newline) => &valid[..=newline],
+                None => "",
+            };
+            // The complete lines before the invalid sequence are parsed
+            // for their errors alone: getting through them means the
+            // retired reader would have reached the offending line next
+            // and failed to decode it.
+            parse_document(complete, caps)?;
+            Err(invalid_utf8_error())
+        }
+    }
+}
+
+/// The invalid-UTF-8 error value the retired reader surfaced from
+/// `BufRead::lines`: same variant, same kind, same message.
+fn invalid_utf8_error() -> LoadObjError {
+    LoadObjError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "stream did not contain valid UTF-8",
+    ))
+}
+
+/// Vertical tab: whitespace for `char::is_whitespace`, but not for
+/// `u8::is_ascii_whitespace`. A document free of it splits into the
+/// same tokens either way.
+const VERTICAL_TAB: u8 = 0x0B;
+
+fn parse_document(text: &str, caps: Caps) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
+    // Tokenization dispatch. An ASCII document with no vertical tab
+    // (every real OBJ file) takes the byte-level splitter; anything
+    // else falls back to the char-level one, whose Unicode whitespace
+    // handling the retired reader exposed. Both produce the same
+    // tokens for the text class they are chosen for, so the dispatch
+    // is invisible in the output.
+    if text.is_ascii() && !text.as_bytes().contains(&VERTICAL_TAB) {
+        parse_lines(text, caps, str::split_ascii_whitespace)
+    } else {
+        parse_lines(text, caps, str::split_whitespace)
+    }
+}
+
+/// Parses the document line by line, allocating nothing per line: the
+/// vertex arity check counts tokens in place, and the `f` directive
+/// scratch buffers are cleared rather than reallocated.
+fn parse_lines<'t, I, F>(
+    text: &'t str,
+    caps: Caps,
+    tokenize: F,
+) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I,
 {
     let mut warnings: Vec<LoadObjWarning> = Vec::new();
     // Loader-faithful topology: every leaf attaches under one
@@ -163,19 +274,24 @@ where
     let mut header_comment: Option<String> = None;
     let mut header_ended = false;
 
-    let buffer = BufReader::new(&mut *read);
+    // Reused across objects: one allocation for the whole file.
+    let mut remap = VertexRemap::new();
 
-    for (line_num, line_result) in buffer.lines().enumerate() {
-        let line = line_result?;
+    // Reused across `f` directives: cleared per line, so only the
+    // widest face in the file pays for an allocation.
+    let mut face_tokens: Vec<&str> = Vec::new();
+    let mut face_indices: Vec<VertexIndex> = Vec::new();
+
+    for (line_num, line) in text.lines().enumerate() {
         let line = line.trim();
 
         if line.is_empty() {
             continue;
         }
 
-        let first_token = match line.split_whitespace().next() {
-            Some(t) => t,
-            None => continue,
+        let mut tokens = tokenize(line);
+        let Some(first_token) = tokens.next() else {
+            continue;
         };
 
         match first_token {
@@ -204,6 +320,7 @@ where
                     &global_vertices,
                     &mut current_faces,
                     current_name.take(),
+                    &mut remap,
                     &mut graph,
                     root,
                 ) {
@@ -226,12 +343,21 @@ where
                         limit: caps.max_vertices,
                     });
                 }
-                let coords: Vec<&str> = line.split_whitespace().skip(1).collect();
-                let num_coords = coords.len();
+                // Every coordinate token is counted so the arity error
+                // keeps reporting the real count, but only the 4 the
+                // grammar can use are kept.
+                let mut coords: [&str; 4] = [""; 4];
+                let mut num_coords = 0_usize;
+                for token in tokens {
+                    if num_coords < coords.len() {
+                        coords[num_coords] = token;
+                    }
+                    num_coords += 1;
+                }
                 if !(3..=4).contains(&num_coords) {
                     return Err(LoadObjError::VertexCoordCountInvalid {
                         line: line_num + 1,
-                        got: coords.len(),
+                        got: num_coords,
                     });
                 }
                 let x = parse_f32(coords[0], line_num)?;
@@ -253,22 +379,20 @@ where
             }
             "f" => {
                 header_ended = true;
-                // `take(cap + 1)` caps the intermediate `tokens` allocation
-                // for one pathological line; we then refuse anything strictly
-                // above the cap. The +1 lets us tell "at cap" from "over cap"
-                // without scanning the whole iterator.
-                let tokens: Vec<&str> = line
-                    .split_whitespace()
-                    .skip(1)
-                    .take(caps.max_face_tokens + 1)
-                    .collect();
-                if tokens.len() < 3 {
+                // The vertex tokens are buffered before any of them is
+                // parsed, so an arity error still wins over a malformed
+                // index. `take(cap + 1)` stops one past the cap: enough
+                // to tell "at cap" from "over cap" without walking a
+                // pathological line to its end.
+                face_tokens.clear();
+                face_tokens.extend(tokens.take(caps.max_face_tokens + 1));
+                if face_tokens.len() < 3 {
                     return Err(LoadObjError::FaceTooFewVertices {
                         line: line_num + 1,
-                        got: tokens.len(),
+                        got: face_tokens.len(),
                     });
                 }
-                if tokens.len() > caps.max_face_tokens {
+                if face_tokens.len() > caps.max_face_tokens {
                     return Err(LoadObjError::FaceExceedsTokenLimit {
                         line: line_num + 1,
                         limit: caps.max_face_tokens,
@@ -276,21 +400,21 @@ where
                 }
 
                 let vertex_count = global_vertices.len();
-                let indices: Vec<VertexIndex> = tokens
-                    .iter()
-                    .map(|token| parse_face_vertex_index(token, vertex_count, line_num))
-                    .collect::<Result<Vec<VertexIndex>, LoadObjError>>()?;
+                face_indices.clear();
+                for token in &face_tokens {
+                    face_indices.push(parse_face_vertex_index(token, vertex_count, line_num)?);
+                }
 
                 // Reserve exactly the number of triangles this fan will emit;
-                // we already know `indices.len() >= 3` from the check above.
-                let new_faces = indices.len() - 2;
+                // we already know `face_indices.len() >= 3` from the check above.
+                let new_faces = face_indices.len() - 2;
                 current_faces
                     .try_reserve_exact(new_faces)
                     .map_err(|_| LoadObjError::OutOfMemoryFaces { line: line_num + 1 })?;
 
                 // Fan triangulation for polygons with more than 3 vertices.
-                for i in 1..indices.len() - 1 {
-                    let tri_vertices = [indices[0], indices[i], indices[i + 1]];
+                for i in 1..face_indices.len() - 1 {
+                    let tri_vertices = [face_indices[0], face_indices[i], face_indices[i + 1]];
                     let v0 = global_vertices[usize::from(tri_vertices[0])];
                     let v1 = global_vertices[usize::from(tri_vertices[1])];
                     let v2 = global_vertices[usize::from(tri_vertices[2])];
@@ -361,6 +485,7 @@ where
         &global_vertices,
         &mut current_faces,
         current_name,
+        &mut remap,
         &mut graph,
         root,
     ) {
@@ -1310,6 +1435,111 @@ f 1 3 4
         assert_eq!(mesh_b.vertices()[1], Vertex::new([0.0, 1.0, 0.0]));
         assert_eq!(mesh_b.vertices()[2], Vertex::new([1.0, 1.0, 0.0]));
         assert_eq!(mesh_b.faces()[0].vertices.map(u32::from), [0, 1, 2]);
+    }
+
+    #[test]
+    fn three_objects_can_reuse_the_same_global_vertices() {
+        // The per-object remap table is reused across objects, so a
+        // later object referencing vertices an earlier one already
+        // claimed must still get local indices from 0.
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+o A
+f 1 2 3
+o B
+f 3 2 1
+o C
+f 2 3 1
+";
+        let (graph, warnings) = read_obj_from_str(obj).unwrap();
+        assert!(warnings.is_empty());
+        let leaf_ids = collect_leaf_ids(&graph);
+        assert_eq!(leaf_ids.len(), 3);
+
+        for id in leaf_ids {
+            let mesh = graph.mesh_at_leaf(id).expect("leaf has a mesh");
+            assert_eq!(mesh.vertices().len(), 3);
+            assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
+        }
+
+        // Local order follows each object's own first appearance.
+        let leaf_ids = collect_leaf_ids(&graph);
+        let mesh_b = graph.mesh_at_leaf(leaf_ids[1]).expect("leaf B has a mesh");
+        assert_eq!(mesh_b.vertices()[0], Vertex::new([0.0, 1.0, 0.0]));
+        let mesh_c = graph.mesh_at_leaf(leaf_ids[2]).expect("leaf C has a mesh");
+        assert_eq!(mesh_c.vertices()[0], Vertex::new([1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn read_starts_at_the_current_stream_position() {
+        let mut reader =
+            Cursor::new(b"junk\nv 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n".to_vec());
+        reader.set_position(5);
+        let (graph, _) = read_obj(&mut reader).expect("parse from the current position");
+        assert_eq!(graph.reachable_leaf_count(), 1);
+    }
+
+    #[test]
+    fn vertex_coord_count_error_reports_every_token() {
+        // The arity check counts all coordinate tokens, not just the
+        // 4 the grammar can use.
+        let err = read_obj_from_str("v 1 2 3 4 5 6 7\n").unwrap_err();
+        assert!(err.to_string().contains("got 7"), "{err}");
+    }
+
+    #[test]
+    fn vertical_tab_separates_tokens() {
+        // Vertical tab is whitespace for `char::is_whitespace` but not
+        // for its ASCII counterpart, so it routes the document off the
+        // byte-level tokenizer.
+        let obj = "v 0.0\u{0B}0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n";
+        let (graph, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
+        assert_eq!(mesh.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn non_ascii_whitespace_separates_tokens() {
+        // A no-break space is Unicode whitespace: the document takes
+        // the char-level tokenizer and the coordinates still split.
+        let obj = "v 0.0\u{A0}0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n";
+        let (graph, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
+        assert_eq!(mesh.vertices()[0], Vertex::new([0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn invalid_utf8_is_reported_as_invalid_data() {
+        let mut bytes = b"v 0.0 0.0 0.0\n".to_vec();
+        bytes.push(0xFF);
+        bytes.push(b'\n');
+        let mut reader = Cursor::new(bytes);
+        let err = read_obj(&mut reader).unwrap_err();
+        match err {
+            super::LoadObjError::Io(io_error) => {
+                assert_eq!(io_error.kind(), std::io::ErrorKind::InvalidData);
+                assert_eq!(io_error.to_string(), "stream did not contain valid UTF-8");
+            }
+            other => panic!("expected an io error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_earlier_grammar_error_wins_over_later_invalid_utf8() {
+        let mut bytes = b"v 1.0 2.0\n".to_vec();
+        bytes.push(0xFF);
+        bytes.push(b'\n');
+        let mut reader = Cursor::new(bytes);
+        let err = read_obj(&mut reader).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                super::LoadObjError::VertexCoordCountInvalid { line: 1, got: 2 }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod messages;
 pub mod obj;
 pub mod ports;
 pub mod scene_writer;
+mod slurp;
 pub mod stl;
 pub mod threemf;
 
