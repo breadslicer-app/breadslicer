@@ -7,5 +7,5 @@ Exec=sc-slicer-gui %F
 Icon=it.soulcrafted.Slicer
 Terminal=false
 Categories=Graphics;3DGraphics;
-MimeType=model/stl;model/obj;
+MimeType=model/stl;model/obj;model/3mf;
 StartupNotify=true

@@ -27,6 +27,13 @@ $Iss = Join-Path $ScriptDir 'it.soulcrafted.Slicer.iss'
 # (ucrtbase.dll, api-ms-win-*) is part of Windows 10/11 and is not bundled.
 $CrtDlls = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')
 
+# Written into $LASTEXITCODE before running a console tool. Only a native
+# command that actually started writes that variable, so without a marker
+# a command that fails to launch leaves the previous command's exit code
+# in place and its failure reads as that command's success. Int32.MinValue
+# is not a value any of the tools here can return.
+$ExitCodeNotRun = -2147483648
+
 # Run a console tool and fail on a non-zero exit code. The error
 # preference is relaxed for the call because tools like cargo write
 # progress to stderr, which a 'Stop' preference would otherwise turn into
@@ -36,6 +43,7 @@ function Invoke-Tool {
         [Parameter(Mandatory = $true)][string]$What,
         [Parameter(Mandatory = $true)][scriptblock]$Action
     )
+    $global:LASTEXITCODE = $ExitCodeNotRun
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -43,6 +51,9 @@ function Invoke-Tool {
     }
     finally {
         $ErrorActionPreference = $previous
+    }
+    if ($LASTEXITCODE -eq $ExitCodeNotRun) {
+        throw "$What could not be started, so nothing was built."
     }
     if ($LASTEXITCODE -ne 0) {
         throw "$What failed with exit code $LASTEXITCODE."
@@ -55,6 +66,60 @@ function Read-AppVersion {
         return $Matches[1]
     }
     throw 'Could not read the version from apps\slicer-gui\Cargo.toml.'
+}
+
+# The icon the installer and the application window both use is generated
+# from the shared logo by `cargo run -p sc-icon-gen` and committed, with
+# nothing tying the copy back to its source. Catch the case where the logo
+# moved on and the icon was never regenerated.
+#
+# Ordering comes from the commit timestamps rather than the files' own
+# modification times. A checkout stamps every file with the time it was
+# written, which is identical for both files down to the sub-second tick
+# and says nothing about which was edited first, so a file-time
+# comparison here reports whichever way the checkout happened to land.
+function Get-CommitTime([string]$Path) {
+    $seconds = & git -C $RepoRoot log -1 --no-show-signature --format=%ct -- $Path 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $seconds) {
+        return $null
+    }
+    return [int64]$seconds.Trim()
+}
+
+function Test-Modified([string]$Path) {
+    $status = & git -C $RepoRoot status --porcelain -- $Path 2>$null
+    return [bool]$status
+}
+
+function Assert-IconCurrent {
+    $svg = 'packages/shared/it.soulcrafted.Slicer.svg'
+    $ico = 'apps/slicer-gui/assets/icons/it.soulcrafted.Slicer.ico'
+    foreach ($file in @($svg, $ico)) {
+        if (-not (Test-Path (Join-Path $RepoRoot $file))) {
+            throw "Expected icon file not found: $file"
+        }
+    }
+
+    $svgTime = Get-CommitTime $svg
+    $icoTime = Get-CommitTime $ico
+    if ($null -eq $svgTime -or $null -eq $icoTime) {
+        Write-Warning "Could not read commit times for $svg and $ico; skipping the icon freshness check."
+        return
+    }
+
+    $stale = 'The icon may not reflect the current logo. Regenerate it with ' +
+    '`cargo run -p sc-icon-gen`, commit the result, then re-run this script.'
+
+    # An edit sitting in the working tree has no commit time yet, so the
+    # comparison below cannot see it. A modified logo alongside an
+    # untouched icon is the drift this guards against, whether or not
+    # either change has been committed.
+    if ((Test-Modified $svg) -and -not (Test-Modified $ico)) {
+        throw "$svg has uncommitted changes but $ico does not. $stale"
+    }
+    if ($icoTime -lt $svgTime) {
+        throw "$ico was last committed before $svg. $stale"
+    }
 }
 
 function Find-VsInstall {
@@ -100,13 +165,33 @@ function Test-Imports([string]$VsInstall, [string[]]$Exes) {
     }
     $allowed = $CrtDlls | ForEach-Object { $_.ToLower() }
     foreach ($exe in $Exes) {
+        # A dumpbin that fails prints no import list, which looks exactly
+        # like an executable with nothing to flag; passing its output on
+        # unchecked would announce a clean result having inspected
+        # nothing. Both ways it can fail, refusing to start and exiting
+        # non-zero, become the same loud skip as a missing dumpbin above.
+        # This check stays advisory, so neither is fatal.
+        $global:LASTEXITCODE = $ExitCodeNotRun
         $previous = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
             $output = & $dumpbin.FullName /dependents $exe
         }
+        catch {
+            $global:LASTEXITCODE = $ExitCodeNotRun
+        }
         finally {
             $ErrorActionPreference = $previous
+        }
+        if ($LASTEXITCODE -ne 0) {
+            $why = if ($LASTEXITCODE -eq $ExitCodeNotRun) {
+                'could not be run'
+            }
+            else {
+                "exited with code $LASTEXITCODE"
+            }
+            Write-Warning "dumpbin $why for $(Split-Path $exe -Leaf); skipping the import self-containment check."
+            return
         }
         foreach ($line in $output) {
             $name = $line.Trim()
@@ -164,6 +249,7 @@ function Assert-InstallerComplete {
 # --- Build -------------------------------------------------------------
 
 $Version = Read-AppVersion
+Assert-IconCurrent
 Write-Host "Building SoulCrafted Slicer $Version for $Target ..."
 
 Push-Location $RepoRoot
@@ -225,10 +311,21 @@ if (-not $Iscc) {
     return
 }
 
+$Installer = Join-Path $Cache "sc-slicer-setup-$Version-x64.exe"
+
+# The output name is derived from a version that changes rarely and the
+# output directory is never cleaned, so an installer from an earlier run
+# is usually still sitting there under the name this run is about to
+# write. Delete it first: then anything found afterwards can only be the
+# product of this run, and a failed run leaves no installer to mistake
+# for a current one.
+if (Test-Path $Installer) {
+    Remove-Item $Installer -Force
+}
+
 Write-Host 'Building the installer with Inno Setup ...'
 Invoke-Tool 'ISCC' { & $Iscc "/DAppVersion=$Version" "/DStageDir=$Stage" "/DOutputDir=$Cache" $Iss }
 
-$Installer = Join-Path $Cache "sc-slicer-setup-$Version-x64.exe"
 Assert-InstallerComplete -Installer $Installer -StageDir $Stage -OutputDir $Cache
 
 Write-Host ''

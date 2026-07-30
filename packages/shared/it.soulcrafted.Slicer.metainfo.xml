@@ -16,6 +16,7 @@
   <provides>
     <mediatype>model/stl</mediatype>
     <mediatype>model/obj</mediatype>
+    <mediatype>model/3mf</mediatype>
   </provides>
   <developer id="it.soulcrafted">
     <name>SoulCrafted</name>
@@ -25,6 +26,6 @@
   <url type="vcs-browser">https://codeberg.org/SoulCrafted/Slicer</url>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.0.12" date="2026-06-21"/>
+    <release version="0.1.0" date="2026-07-30"/>
   </releases>
 </component>
