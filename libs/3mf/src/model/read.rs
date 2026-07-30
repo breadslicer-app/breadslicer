@@ -35,6 +35,7 @@ use quick_xml::reader::NsReader;
 use crate::error::ModelParseError;
 use crate::names::{CORE_NS, PRODUCTION_NS, SLICE_NS};
 
+use super::element_run;
 use super::slice::{
     MeshResolution, Slice, SlicePolygon, SliceRef, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,
@@ -183,7 +184,7 @@ fn parse_resource_id(value: &str) -> Result<ResourceId, ModelParseError> {
         })
 }
 
-fn parse_f64(
+pub(super) fn parse_f64(
     element: &'static str,
     attribute: &'static str,
     value: &str,
@@ -202,7 +203,7 @@ fn parse_f64(
         })
 }
 
-fn parse_index(
+pub(super) fn parse_index(
     element: &'static str,
     attribute: &'static str,
     value: &str,
@@ -919,9 +920,66 @@ fn parse_mesh(reader: &mut Reader<'_>, object_id: ResourceId) -> Result<MeshData
     Ok(mesh)
 }
 
+/// The name of the element at the reader's cursor, when it resolves to
+/// `local` in the core namespace. Resolution goes through the reader's
+/// own bindings, so the prefixed spelling of a core element is found
+/// and an element that merely looks the part is not.
+fn leading_core_element<'a>(reader: &Reader<'a>, local: &[u8]) -> Option<&'a [u8]> {
+    let input: &'a [u8] = reader.get_ref();
+    let name = element_run::leading_element_name(input)?;
+    let (namespace, found) = reader.resolver().resolve_element(QName(name));
+    (is_core_ns(&namespace) && found.as_ref() == local).then_some(name)
+}
+
+/// Move the reader past `consumed` bytes of its input.
+///
+/// quick-xml offers `Reader::stream` for reading raw bytes out of the
+/// source mid-document, but `NsReader` exposes neither it nor a way
+/// through to it, so the source slice is advanced directly. The one
+/// documented consequence is that `buffer_position` stops counting
+/// those bytes; nothing here reads it, and no error this crate reports
+/// carries a byte offset.
+fn advance<'a>(reader: &mut Reader<'a>, input: &'a [u8], consumed: usize) {
+    *reader.get_mut() = &input[consumed..];
+}
+
+/// Take the vertices that are spelled plainly enough to read straight
+/// from the input. Whatever the run does not cover, including the
+/// element that ended it, is left to the event loop, so every
+/// diagnosis still comes from the ordinary path.
+fn take_vertex_run<'a>(reader: &mut Reader<'a>, mesh: &mut MeshData) {
+    let Some(name) = leading_core_element(reader, b"vertex") else {
+        return;
+    };
+    let input: &'a [u8] = reader.get_ref();
+    let run = element_run::vertex_run(input, name);
+    if run.consumed == 0 {
+        return;
+    }
+    mesh.vertices.extend(run.items);
+    advance(reader, input, run.consumed);
+}
+
+/// The triangle counterpart. Indices are checked against the vertices
+/// read so far, which is the same list, at the same point in the
+/// document, that the event path checks against.
+fn take_triangle_run<'a>(reader: &mut Reader<'a>, mesh: &mut MeshData) {
+    let Some(name) = leading_core_element(reader, b"triangle") else {
+        return;
+    };
+    let input: &'a [u8] = reader.get_ref();
+    let run = element_run::triangle_run(input, name, mesh.vertices.len());
+    if run.consumed == 0 {
+        return;
+    }
+    mesh.triangles.extend(run.items);
+    advance(reader, input, run.consumed);
+}
+
 fn parse_vertices(reader: &mut Reader<'_>, mesh: &mut MeshData) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
+        take_vertex_run(reader, mesh);
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();
@@ -966,6 +1024,7 @@ fn parse_triangles(
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
+        take_triangle_run(reader, mesh);
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();

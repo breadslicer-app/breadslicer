@@ -7,7 +7,11 @@ edition = "2024"
 crc32fast.workspace = true
 flate2.workspace = true
 itoa.workspace = true
+memchr.workspace = true
 quick-xml.workspace = true
 rayon.workspace = true
 ryu.workspace = true
 zip.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -8,8 +8,11 @@
 //! converting to millimetres is the caller's job via
 //! [`Unit::scale_to_mm`].
 
+mod element_run;
 mod read;
 mod slice;
+#[cfg(test)]
+mod tests_element_run;
 mod types;
 mod write;
 

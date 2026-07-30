@@ -4719,6 +4719,8 @@ dependencies = [
  "crc32fast",
  "flate2",
  "itoa",
+ "memchr",
+ "proptest",
  "quick-xml 0.39.4",
  "rayon",
  "ryu",

@@ -1,0 +1,348 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Reading runs of mesh leaf elements straight from the model part's
+//! bytes.
+//!
+//! A large model part is dominated by two element lists, `<vertices>`
+//! and `<triangles>`, whose content the core schema pins down exactly:
+//! they hold nothing but their own leaf elements, the leaves have no
+//! child content, and their attributes are enumerated (x, y, z for a
+//! vertex; v1, v2, v3 plus the optional p1, p2, p3 and pid for a
+//! triangle), with any extension attribute required to carry a
+//! namespace prefix. That is narrow enough to read without building an
+//! event per element.
+//!
+//! A run covers the longest prefix of the input that this module can
+//! read with the same result the event parser would produce. It stops
+//! before anything else, including a malformed number or an index
+//! outside the mesh, so the caller's ordinary parsing path still sees
+//! those elements and still produces the diagnosis. Refusing is always
+//! safe; accepting is what needs proving, so every rule here errs
+//! towards stopping.
+//!
+//! The element name is supplied by the caller, which resolved it
+//! through the reader's namespace bindings. Inside a run the bindings
+//! cannot change (the elements are empty and the accepted attribute
+//! set admits no xmlns declaration), so requiring every element to
+//! spell its name with the same bytes keeps the resolution the caller
+//! made valid for all of them.
+
+use std::ops::Range;
+use std::str;
+
+use memchr::memmem;
+use rayon::prelude::*;
+
+use super::read::{parse_f64, parse_index};
+use super::types::{TriangleRef, Vertex3};
+
+/// A prefix of some input read as leaf elements.
+pub(super) struct ElementRun<T> {
+    /// The elements, in document order.
+    pub items: Vec<T>,
+    /// How many bytes of the input the run covers. Always ends right
+    /// after the last accepted element, so a caller that advances by
+    /// this much lands on markup.
+    pub consumed: usize,
+}
+
+/// The attribute keys the core schema gives `<vertex>`, all required.
+const VERTEX_KEYS: &[&[u8]] = &[b"x", b"y", b"z"];
+
+/// The attribute keys the core schema gives `<triangle>`: the three
+/// vertex indices, plus the property overrides this crate carries no
+/// model for and therefore only has to leave alone.
+const TRIANGLE_KEYS: &[&[u8]] = &[b"v1", b"v2", b"v3", b"p1", b"p2", b"p3", b"pid"];
+
+/// The most attributes any accepted element can hold.
+const MAX_ATTRIBUTES: usize = 7;
+
+/// Below this length a run is read on the calling thread: splitting a
+/// short one costs more than it saves.
+const MIN_PARALLEL_LEN: usize = 64 * 1024;
+
+/// Rough bytes per element, used only to pre-size the output.
+const ESTIMATED_ELEMENT_LEN: usize = 64;
+
+/// Read a run of `<vertex>` elements spelled `name`.
+pub(super) fn vertex_run(input: &[u8], name: &[u8]) -> ElementRun<Vertex3> {
+    read_run(input, |bytes| read_vertex(bytes, name))
+}
+
+/// Read a run of `<triangle>` elements spelled `name`, accepting only
+/// indices below `vertex_count`, as the parser's own range check does.
+pub(super) fn triangle_run(
+    input: &[u8],
+    name: &[u8],
+    vertex_count: usize,
+) -> ElementRun<TriangleRef> {
+    read_run(input, |bytes| read_triangle(bytes, name, vertex_count))
+}
+
+/// The name of the element the input starts with, once leading
+/// whitespace is skipped. Only the bytes are returned: whether that
+/// name is the wanted one is a question about namespace bindings, and
+/// only the caller holds those.
+pub(super) fn leading_element_name(input: &[u8]) -> Option<&[u8]> {
+    let rest = skip_space(input).strip_prefix(b"<".as_slice())?;
+    let end = rest
+        .iter()
+        .position(|byte| !is_name_byte(*byte))
+        .unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
+}
+
+/// The attributes of one leaf element, in document order.
+struct Attributes<'a> {
+    entries: [(&'a [u8], &'a str); MAX_ATTRIBUTES],
+    len: usize,
+}
+
+impl<'a> Attributes<'a> {
+    fn new() -> Self {
+        Self {
+            entries: [(b"", ""); MAX_ATTRIBUTES],
+            len: 0,
+        }
+    }
+
+    fn get(&self, key: &[u8]) -> Option<&'a str> {
+        self.entries[..self.len]
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| *value)
+    }
+
+    /// Records one attribute, refusing a repeat of a key already seen
+    /// (the event parser reports duplicates as an error) and refusing
+    /// more entries than the schema allows.
+    fn push(&mut self, key: &'a [u8], value: &'a str) -> Option<()> {
+        if self.len == MAX_ATTRIBUTES || self.get(key).is_some() {
+            return None;
+        }
+        self.entries[self.len] = (key, value);
+        self.len += 1;
+        Some(())
+    }
+}
+
+/// The 4 characters XML counts as whitespace.
+fn is_xml_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+/// The characters an accepted attribute key may use. Deliberately
+/// narrower than an XML name: a key holding anything else, a colon
+/// included, ends the key here and then fails the schema check.
+fn is_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+}
+
+/// The characters an element name may use here. A prefixed name is one
+/// spelling of a namespace-qualified element, so the colon belongs.
+fn is_name_byte(byte: u8) -> bool {
+    is_key_byte(byte) || byte == b':'
+}
+
+/// Attribute values are read verbatim, so they must be ones the event
+/// parser would also read verbatim: plain ASCII, no escape to resolve,
+/// no markup character.
+fn is_plain_value(value: &[u8]) -> bool {
+    value
+        .iter()
+        .all(|byte| byte.is_ascii() && !matches!(byte, b'&' | b'<'))
+}
+
+fn skip_space(input: &[u8]) -> &[u8] {
+    let end = input
+        .iter()
+        .position(|byte| !is_xml_space(*byte))
+        .unwrap_or(input.len());
+    &input[end..]
+}
+
+/// Read one `<name key="value" ... />` element from the front of
+/// `input`, returning its attributes and its length.
+///
+/// Everything outside that one spelling is refused: a different name,
+/// a key outside `keys`, a repeated key, a quoting or spacing variant,
+/// a value needing unescaping, and the `<name></name>` form.
+fn read_element<'a>(
+    input: &'a [u8],
+    name: &[u8],
+    keys: &[&[u8]],
+) -> Option<(Attributes<'a>, usize)> {
+    let mut rest = input.strip_prefix(b"<".as_slice())?.strip_prefix(name)?;
+    let mut attributes = Attributes::new();
+    loop {
+        let before = rest.len();
+        rest = skip_space(rest);
+        let spaced = rest.len() < before;
+        if let Some(tail) = rest.strip_prefix(b"/>".as_slice()) {
+            return Some((attributes, input.len() - tail.len()));
+        }
+        if !spaced {
+            return None;
+        }
+        let key_len = rest
+            .iter()
+            .position(|byte| !is_key_byte(*byte))
+            .unwrap_or(rest.len());
+        let (key, tail) = rest.split_at(key_len);
+        if key.is_empty() || !keys.contains(&key) {
+            return None;
+        }
+        let tail = tail.strip_prefix(b"=\"".as_slice())?;
+        let value_len = memchr::memchr(b'"', tail)?;
+        let value = &tail[..value_len];
+        if !is_plain_value(value) {
+            return None;
+        }
+        attributes.push(key, str::from_utf8(value).ok()?)?;
+        rest = &tail[value_len + 1..];
+    }
+}
+
+fn read_vertex(input: &[u8], name: &[u8]) -> Option<(Vertex3, usize)> {
+    let (attributes, length) = read_element(input, name, VERTEX_KEYS)?;
+    let vertex = Vertex3 {
+        x: parse_f64("vertex", "x", attributes.get(b"x")?).ok()?,
+        y: parse_f64("vertex", "y", attributes.get(b"y")?).ok()?,
+        z: parse_f64("vertex", "z", attributes.get(b"z")?).ok()?,
+    };
+    Some((vertex, length))
+}
+
+fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(TriangleRef, usize)> {
+    let (attributes, length) = read_element(input, name, TRIANGLE_KEYS)?;
+    let triangle = TriangleRef {
+        v1: parse_index("triangle", "v1", attributes.get(b"v1")?).ok()?,
+        v2: parse_index("triangle", "v2", attributes.get(b"v2")?).ok()?,
+        v3: parse_index("triangle", "v3", attributes.get(b"v3")?).ok()?,
+    };
+    for index in [triangle.v1, triangle.v2, triangle.v3] {
+        if index.get() as usize >= vertex_count {
+            return None;
+        }
+    }
+    Some((triangle, length))
+}
+
+/// What one chunk of a run yielded.
+struct Chunk<T> {
+    items: Vec<T>,
+    /// Offset just past the last accepted element, relative to the
+    /// chunk, or `None` when the chunk accepted nothing.
+    accepted_end: Option<usize>,
+    /// Whether the chunk reached its end with only whitespace left, as
+    /// opposed to stopping at something it would not read.
+    complete: bool,
+}
+
+fn read_chunk<T, F>(input: &[u8], read_one: &F) -> Chunk<T>
+where
+    F: Fn(&[u8]) -> Option<(T, usize)>,
+{
+    let mut items = Vec::with_capacity(input.len() / ESTIMATED_ELEMENT_LEN);
+    let mut accepted_end = None;
+    let mut rest = input;
+    loop {
+        rest = skip_space(rest);
+        if rest.is_empty() {
+            return Chunk {
+                items,
+                accepted_end,
+                complete: true,
+            };
+        }
+        let Some((item, length)) = read_one(rest) else {
+            return Chunk {
+                items,
+                accepted_end,
+                complete: false,
+            };
+        };
+        items.push(item);
+        rest = &rest[length..];
+        accepted_end = Some(input.len() - rest.len());
+    }
+}
+
+/// Where the run can end at the latest. The first end tag closes the
+/// element list, and a run of empty elements contains none, so the
+/// bytes beyond it are never part of the run. A shorter bound (an end
+/// tag spelled inside a comment, say) only costs acceleration.
+fn run_bound(input: &[u8]) -> usize {
+    memmem::find(input, b"</").unwrap_or(input.len())
+}
+
+/// Split `input` into chunks that start on an element boundary, so
+/// each can be read independently. A boundary lands after a `>`; one
+/// that lands mid-element instead (a `>` inside an attribute value)
+/// makes its chunk stop immediately, which shortens the run without
+/// changing what it accepted.
+fn element_chunks(input: &[u8]) -> Vec<Range<usize>> {
+    let threads = rayon::current_num_threads();
+    if input.len() < MIN_PARALLEL_LEN || threads < 2 {
+        return std::iter::once(0..input.len()).collect();
+    }
+    let target = input.len() / threads;
+    let mut bounds = Vec::with_capacity(threads + 1);
+    bounds.push(0);
+    let mut last = 0;
+    for step in 1..threads {
+        // An element longer than one chunk can push a boundary past
+        // the next nominal offset.
+        let nominal = target * step;
+        if nominal <= last {
+            continue;
+        }
+        let Some(offset) = memchr::memchr(b'>', &input[nominal..]) else {
+            break;
+        };
+        let boundary = nominal + offset + 1;
+        if boundary >= input.len() {
+            break;
+        }
+        bounds.push(boundary);
+        last = boundary;
+    }
+    bounds.push(input.len());
+    bounds.windows(2).map(|pair| pair[0]..pair[1]).collect()
+}
+
+fn read_run<T, F>(input: &[u8], read_one: F) -> ElementRun<T>
+where
+    T: Send,
+    F: Fn(&[u8]) -> Option<(T, usize)> + Sync,
+{
+    let bounded = &input[..run_bound(input)];
+    let ranges = element_chunks(bounded);
+    let chunks: Vec<Chunk<T>> = if ranges.len() < 2 {
+        ranges
+            .iter()
+            .map(|range| read_chunk(&bounded[range.clone()], &read_one))
+            .collect()
+    } else {
+        ranges
+            .par_iter()
+            .map(|range| read_chunk(&bounded[range.clone()], &read_one))
+            .collect()
+    };
+
+    let mut items = Vec::with_capacity(chunks.iter().map(|chunk| chunk.items.len()).sum());
+    let mut consumed = 0;
+    for (range, chunk) in ranges.iter().zip(chunks) {
+        items.extend(chunk.items);
+        if let Some(end) = chunk.accepted_end {
+            consumed = range.start + end;
+        }
+        if !chunk.complete {
+            break;
+        }
+    }
+    ElementRun { items, consumed }
+}
