@@ -1,57 +1,73 @@
 # sc-mesh-spatial
 
-A [SoulCrafted](https://codeberg.org/SoulCrafted/) library that caches
-spatial queries over [`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/README.md)
-types. Part of the
-[Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md)
-project.
+Cached spatial queries over
+[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+meshes and scenes: bounding boxes and triangle clusters, computed once and
+reused until the geometry changes.
 
-## What this crate is for
+Written for the
+[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+a slicer for resin 3D printers.
 
-`sc-mesh-spatial` keeps the results of geometric queries that callers
-ask for repeatedly: object-space AABBs and triangle clusters today,
-with room for further structures (BVH, half-edge, slab buckets,
-distance fields) as the slicer grows.
+## Features
 
-It is intentionally narrow:
+- Object-space bounding box per mesh.
+- World-space bounding box of a whole scene.
+- Bounding box of a mesh under an arbitrary transform, cached by the
+  transform's linear part, so repeated queries that differ only by
+  translation do not walk the vertices again.
+- Triangle clusters: fixed-size runs of consecutive faces, each with its own
+  bounding box, for narrowing ray and pick tests before touching triangles.
+- Lazy or eager cache population. The eager path is `Send` and reports
+  progress, so it can run off the calling thread.
 
-- No file I/O (that's `sc-mesh-formats`).
-- No rendering or GPU types (that's the GUI).
-- No slicing or supports.
+Meshes referencing the same shared mesh resource share one cache; leaves with
+inline meshes get their own.
 
-The dependency direction is one-way: `sc-mesh-spatial` reads from
-`sc-mesh-core` and never the other way around.
+## Usage
 
-## Conventions
+```rust
+use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
-Same as `sc-mesh-core`: right-handed, Z-up, millimetres. See the
-[core crate's README](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/README.md)
-for the full convention list.
+// `scene` is an sc_mesh_core::Scene; the spatial takes ownership of it.
+let spatial = SceneSpatial::from_graph(scene);
 
-## Modules at a glance
+let bounds = scene_aabb(&spatial);
 
-- `SceneSpatial`: owns a `Scene` and caches per-object spatial data.
-  Two constructors, `new` (lazy) and `primed` (eager); both produce a
-  value that is `Send` and safe to build on a worker thread.
-- `ObjectQuery`: borrowed view over a single scene object that exposes
-  cached queries (`local_aabb`, `clusters`) alongside the underlying
-  `SceneObject` and `IndexedMesh`.
-- `TriangleClusters`: spatially-grouped triangle ranges with per-cluster
-  AABBs, useful as a building block for picker and ray-traversal code.
-- `scene_aabb`: world-space AABB of a whole scene, computed from cached
-  per-object AABBs.
+if let Some(leaf) = spatial.graph().first_leaf_id()
+    && let Some(query) = spatial.leaf(leaf)
+{
+    let local = query.local_aabb();
+    let placement = query.world_transform();
+    let clusters = query.clusters();
+}
+```
 
-For the actual API (types, methods, signatures, and example-based
-docs) see [docs.rs](https://docs.rs/sc-mesh-spatial).
+Use `SceneSpatial::primed_graph` instead of `from_graph` to build every cache
+up front, or `primed_graph_with_progress` to be called back as it goes.
+
+Get the scene back with `into_graph`.
 
 ## Mutation
 
-Scenes mutate through `SceneSpatial::apply_edit`, which takes a
-`SceneEdit` from `sc-mesh-core` and invalidates exactly the cached
-queries that the edit affects. There is no direct mutation entry
-point; querying and mutating both go through `SceneSpatial`.
+Scenes are mutated by passing `SceneSpatial::apply_edit` one of the typed
+edits from `sc-mesh-core`. It applies the edit and drops the cache entries
+that edit affects. There is no other mutation entry point.
+
+## Conventions
+
+Same as `sc-mesh-core`: right-handed, Z up, millimetres.
+
+## Not included
+
+File I/O, which is in
+[`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/),
+slicing, which is in
+[`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/),
+and any rendering or GPU types.
+
+For the API, see [docs.rs](https://docs.rs/sc-mesh-spatial/0.1.0).
 
 ## License
 
-Apache-2.0, see [LICENSE](./LICENSE.txt) or the SPDX headers in each
-source file.
+Apache-2.0, see [LICENSE](./LICENSE.md).
