@@ -18,6 +18,11 @@ CACHE_DIR="$SCRIPT_DIR/.cache"
 SOURCE_FILE="$SCRIPT_DIR/skia-binaries.source.json"
 DEST_FILENAME="skia-binaries.tar.gz"
 
+if ! command -v jq >/dev/null 2>&1; then
+    echo "error: jq is required to read the build messages cargo reports." >&2
+    exit 1
+fi
+
 # A prebuilt Skia archive is not published for every target. When it is
 # missing, building Skia from source is the fallback; that path is not
 # implemented yet (see the rust-skia FORCE_SKIA_BUILD documentation).
@@ -28,25 +33,43 @@ build_from_source() {
     exit 1
 }
 
-# Resolve the skia-binaries archive URL for the configuration the
-# workspace pins by reading the URL skia-bindings recorded in its build
-# output. Requires that the workspace has been built at least once.
+# Resolve the skia-binaries archive URL for the configuration the workspace
+# pins by reading the URL skia-bindings recorded in its build output. Cargo is
+# asked which build directory that is: target/ keeps the output of every
+# skia-bindings version and feature set ever built there and cargo never prunes
+# it, so searching it directly turns up archives for configurations the
+# workspace stopped using long ago.
 resolve_archive_url() {
-    urls=$(grep -hE '^[[:space:]]*FROM:' \
-        "$REPO_ROOT"/target/*/build/skia-bindings-*/output 2>/dev/null \
-        | sed -E 's/^[[:space:]]*FROM:[[:space:]]*//' \
-        | sort -u || true)
+    messages=$(mktemp)
+    trap 'rm -f "$messages"' EXIT
 
-    if [ -z "$urls" ]; then
-        echo "error: no skia-bindings build output found under target/." >&2
-        echo "       Build the workspace once (cargo build) so skia-bindings" >&2
-        echo "       records the archive URL, then re-run this script." >&2
+    # Build script output is reported even when the script was not re-run, so
+    # an already built workspace answers this without recompiling anything.
+    if ! cargo build --manifest-path "$REPO_ROOT/Cargo.toml" \
+        --message-format=json >"$messages"; then
+        echo "error: the workspace does not build, so cargo cannot say which" >&2
+        echo "       archive skia-bindings needs." >&2
         exit 1
     fi
 
+    out_dirs=$(jq -r 'select(.reason == "build-script-executed")
+                      | select(.package_id | test("(^|[#/])skia-bindings[@ ]"))
+                      | .out_dir' "$messages" | sort -u)
+
+    if [ -z "$out_dirs" ]; then
+        echo "error: cargo reported no skia-bindings build script output, so" >&2
+        echo "       the workspace no longer depends on skia-bindings." >&2
+        exit 1
+    fi
+
+    # OUT_DIR is <build directory>/out; the captured stdout is its sibling.
+    urls=$(printf '%s\n' "$out_dirs" | while IFS= read -r out_dir; do
+        grep -hE '^[[:space:]]*FROM:' "${out_dir%/out}/output" || true
+    done | sed -E 's/^[[:space:]]*FROM:[[:space:]]*//' | sort -u)
+
     if [ "$(printf '%s\n' "$urls" | grep -c .)" -ne 1 ]; then
-        echo "error: skia-bindings recorded more than one archive URL; the" >&2
-        echo "       Skia build configuration is ambiguous:" >&2
+        echo "error: skia-bindings did not record exactly one archive URL for" >&2
+        echo "       the pinned configuration:" >&2
         printf '%s\n' "$urls" | sed 's/^/         /' >&2
         exit 1
     fi
@@ -86,4 +109,8 @@ EOF
     echo "  SKIA_BINARIES_URL=file://\$(pwd)/$DEST_FILENAME"
 }
 
-obtain_prebuilt "$(resolve_archive_url)"
+# Resolved into a variable first: a command substitution swallows the exit
+# status of what it runs, so inlining the call would carry on with an empty URL
+# after resolution has already reported why it failed.
+archive_url=$(resolve_archive_url)
+obtain_prebuilt "$archive_url"

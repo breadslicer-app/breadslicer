@@ -46,11 +46,13 @@ modules:
         /app/share/icons/hicolor/scalable/apps/it.soulcrafted.Slicer.svg
     sources:
       # A deterministic tarball of the working tree (without target/), packed
-      # by build.sh. An archive source is used rather than a dir source because
-      # flatpak-builder never caches a dir source: with the archive, an
-      # unchanged source reuses the cached build instead of recompiling.
-      - type: archive
-        path: .cache/source.tar
-        strip-components: 0
+      # by build.sh, which also generates this source list carrying the
+      # tarball's sha256. An archive source is used rather than a dir source
+      # because flatpak-builder never caches a dir source. The checksum is
+      # declared through the generated list because flatpak-builder keys its
+      # build cache on the declared checksum and never reads the file itself:
+      # without it, a changed working tree would silently reuse the previous
+      # build.
+      - .cache/source.source.json
       - cargo-sources.json
       - skia-binaries.source.json

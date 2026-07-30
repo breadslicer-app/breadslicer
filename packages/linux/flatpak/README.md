@@ -12,7 +12,10 @@ Flatpak package of the SoulCrafted Slicer.
 - `vendor-cargo-sources.sh` regenerates `cargo-sources.json` from `Cargo.lock`.
 - `vendor-skia-binaries.sh` regenerates `skia-binaries.source.json`.
 - `build.sh` packs the working tree into a cacheable archive and builds the
-  package from it into `.cache/build/`.
+  package from it into `.cache/build/`. It also generates
+  `.cache/source.source.json`, the source list that declares that archive and
+  its checksum; flatpak-builder keys its build cache on that checksum, so the
+  file has to be regenerated alongside the archive and is never committed.
 
 The `.desktop` entry and AppStream metainfo the manifest installs live under
 `../../shared/`; the icon is reused from `apps/slicer-gui/assets/`.
