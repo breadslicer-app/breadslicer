@@ -1,55 +1,73 @@
 # sc-mesh-formats
 
-A [SoulCrafted](https://codeberg.org/SoulCrafted/) library to read and write
-3D mesh files. Part of the
-[Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md)
-project.
+Reads and writes 3D mesh files as
+[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
+scenes and meshes.
 
-## What this crate is for
-
-`sc-mesh-formats` turns on-disk mesh files into the scene and mesh types of
-[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/),
-and writes them back out. It is the file-I/O layer of the SoulCrafted slicer
-stack; everything in-memory lives in `sc-mesh-core`.
-
-It is intentionally narrow:
-
-- No GPU or rendering concerns.
-- No mesh editing or repair (those live in `sc-mesh-core`).
-- No SLA-printer file formats; `.sl1`, `.ctb` and friends live in
-  [`sc-sla-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sla-formats/).
-- No project files; those live in
-  [`sc-project-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/project-formats/).
+Written for the
+[SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
+a slicer for resin 3D printers.
 
 ## Supported formats
 
 | Format               | Read    | Write   | Notes |
 |----------------------|:-------:|:-------:|-------|
-| STL (`.stl`)         | yes     | yes     | Probes the stream to pick ASCII or binary on read. Writes as binary by convention. |
+| STL (`.stl`)         | yes     | yes     | Detects ASCII or binary on read. Writes as binary by convention. |
 | STL ASCII (`.stla`)  | yes     | yes     | |
 | STL Binary (`.stlb`) | yes     | yes     | |
 | OBJ (`.obj`)         | yes     | yes     | Multi-mesh; per-object boundaries survive the round trip. |
-| 3MF (`.3mf`)         | yes     | yes     | Core specification. Shared meshes and group structure survive the round trip instead of being flattened. |
+| 3MF (`.3mf`)         | yes     | yes     | Core specification. Shared meshes and group structure survive the round trip. |
 | PLY (`.ply`)         | planned | planned | |
 | AMF (`.amf`)         | planned | planned | |
 
-The read side and the write side have separate types.
+## Usage
+
+```rust
+use std::path::Path;
+
+use sc_mesh_formats::filetypes::WriteFormat;
+use sc_mesh_formats::load_mesh_from_path;
+use sc_mesh_formats::scene_writer::write_scene;
+
+// Format inferred from the extension; pass `Some(kind)` to override it.
+// The third argument caps the accepted file size in bytes.
+let loaded = load_mesh_from_path(Path::new("model.obj"), None, None)?;
+
+for warning in &loaded.warnings {
+    eprintln!("{warning:?}");
+}
+
+let flatten_warnings =
+    write_scene(&loaded.graph, Path::new("model.stl"), WriteFormat::StlBin)?;
+```
+
+Reading and writing use separate format types: the read side names every
+format the loader accepts, the write side only those a writer exists for, and
+the conversion between them is fallible.
 
 ## Flattening
 
-Formats differ in what structure they can hold. OBJ and 3MF keep the scene's
-structure. STL cannot, so a scene is flattened before it is written: a
-single-mesh scene keeps its metadata, and a multi-mesh scene is merged and
-reports a warning, so the caller can tell the user that object boundaries were
-lost rather than letting them discover it later.
+- OBJ and 3MF keep the scene's structure.
+- STL cannot hold one, so a scene is flattened before it is written. A
+  single-mesh scene keeps its metadata; a multi-mesh scene is merged, and the
+  write returns a warning carrying the number of objects that were merged.
 
 ## Limits
 
-Readers refuse pathological input instead of exhausting memory on it. A
-path-level load checks the file's on-disk size against a ceiling before
-opening it, and every reader caps how many elements of a single kind it will
+A load from a path checks the file's size against the cap you pass before
+opening it. Every reader also caps how many elements of a single kind it will
 allocate for, whether that is a binary STL's declared triangle count or an
 OBJ's vertex count.
+
+## Not included
+
+Mesh editing and repair, which are in
+[`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/);
+printer output formats such as `.sl1` and `.ctb`, which are in
+[`sc-sla-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sla-formats/);
+project files, which are in
+[`sc-project-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/project-formats/).
+No rendering or GPU types.
 
 For the API, see [docs.rs](https://docs.rs/sc-mesh-formats/).
 
