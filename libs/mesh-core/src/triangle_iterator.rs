@@ -10,8 +10,9 @@
 //! `as_indexed_mesh` implementation when the deduplicated-vertex stream
 //! cannot fit into the indexed-mesh representation.
 
-use std::collections::HashMap;
 use std::fmt;
+
+use rayon::slice::ParallelSliceMut;
 
 use crate::indexed_mesh::{IndexedMesh, MeshMetadata};
 use crate::primitives::{IndexedTriangle, Triangle, Vertex};
@@ -74,56 +75,135 @@ pub(crate) fn build_indexed_mesh_with_cap<I>(
 where
     I: TriangleIterator + ?Sized,
 {
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut triangles: Vec<IndexedTriangle> = Vec::new();
-    let mut vertex_to_index: HashMap<[u32; 3], usize> = HashMap::new();
-
-    // Do not reserve memory in those structures based on size_hint, because we might have just
-    // read bogus data.
-    let mut vertex_indices: [u32; 3] = [0; 3];
+    // Do not reserve memory based on size_hint, because we might have
+    // just read bogus data.
+    let mut soup: Vec<Triangle> = Vec::new();
     for t in iter {
-        let t = t?;
-        for (i, vertex) in t.vertices.iter().enumerate() {
-            // f32 has no Eq and no Hash, but comparing the bits will do.
-            // This has the effect that if any coordinate is NaN (which does not make sense
-            // anyway), its NaN payload bits will be used as the identity of the vertex.
-            let bitpattern = vertex.coords().map(|f| {
-                if f == -0.0 {
-                    0.0_f32.to_bits()
-                } else {
-                    f.to_bits()
-                }
-            });
-            let index = *vertex_to_index
-                .entry(bitpattern)
-                .or_insert_with(|| vertices.len());
+        soup.push(t?);
+    }
+    indexed_mesh_from_soup(meta, soup, max_vertices).map_err(I::Error::from)
+}
 
-            if index == vertices.len() {
-                if vertices.len() >= max_vertices {
-                    return Err(I::Error::from(IndexedMeshBuildError::TooManyVertices {
-                        limit: max_vertices,
-                    }));
-                }
-                vertices.push(*vertex);
-            }
-
-            vertex_indices[i] = u32::try_from(index).map_err(|_| {
-                I::Error::from(IndexedMeshBuildError::TooManyVertices {
-                    limit: max_vertices,
-                })
-            })?;
+/// Identity of a vertex for deduplication purposes: the raw coordinate
+/// bit patterns, with `-0.0` folded onto `0.0` so both spellings share
+/// one slot. If any coordinate is NaN (which does not make sense
+/// anyway), its payload bits are used as part of the identity.
+fn dedup_key(vertex: &Vertex) -> [u32; 3] {
+    vertex.coords().map(|f| {
+        if f == -0.0 {
+            0.0_f32.to_bits()
+        } else {
+            f.to_bits()
         }
+    })
+}
 
-        triangles.push(IndexedTriangle::from_raw_indices(t.normal, vertex_indices));
+/// Builds an [`IndexedMesh`] from a triangle soup, deduplicating
+/// vertices by the bit-pattern identity of [`dedup_key`] while
+/// preserving first-appearance vertex order: the emitted vertex list
+/// and index values are exactly what a streaming first-occurrence
+/// builder would produce, but the work is done with 2 parallel sorts
+/// instead of a hash table.
+///
+/// This is the natural entry point for readers that already hold all
+/// triangles in memory; [`TriangleIterator::as_indexed_mesh`] funnels
+/// into it after draining its stream.
+///
+/// The cap is inclusive: a soup with exactly `max_vertices` unique
+/// vertices succeeds; one more distinct vertex returns
+/// [`IndexedMeshBuildError::TooManyVertices`].
+pub fn indexed_mesh_from_soup(
+    meta: Option<MeshMetadata>,
+    soup: Vec<Triangle>,
+    max_vertices: usize,
+) -> Result<IndexedMesh, IndexedMeshBuildError> {
+    let corner_count = soup.len() * 3;
+
+    // One record per corner: (dedup key, sequence number = face * 3 +
+    // corner). The sequence number fits in u32: a soup with more
+    // corners than u32 can count could never have been allocated (it
+    // would need over 100 GiB), and the format readers cap element
+    // counts far below that.
+    let mut records: Vec<([u32; 3], u32)> = Vec::with_capacity(corner_count);
+    for (face, t) in soup.iter().enumerate() {
+        for (corner, vertex) in t.vertices.iter().enumerate() {
+            records.push((dedup_key(vertex), (face * 3 + corner) as u32));
+        }
     }
 
-    vertices.shrink_to_fit();
-    triangles.shrink_to_fit();
+    // Tuple order sorts by key first, then by sequence number, so every
+    // equal-key run starts with that vertex's earliest appearance.
+    records.par_sort_unstable();
+
+    // First-appearance sequence number of every distinct vertex, in
+    // key-sorted run order.
+    let mut run_first_seq: Vec<u32> = Vec::new();
+    let mut prev_key: Option<[u32; 3]> = None;
+    for &(key, seq) in &records {
+        if prev_key != Some(key) {
+            run_first_seq.push(seq);
+            prev_key = Some(key);
+        }
+    }
+
+    if run_first_seq.len() > max_vertices {
+        return Err(IndexedMeshBuildError::TooManyVertices {
+            limit: max_vertices,
+        });
+    }
+
+    // Rank the runs by first appearance: that rank is the index a
+    // streaming first-occurrence builder would have assigned.
+    let mut runs_by_appearance: Vec<u32> = (0..run_first_seq.len() as u32).collect();
+    runs_by_appearance.par_sort_unstable_by_key(|&run| run_first_seq[run as usize]);
+    let mut index_of_run: Vec<u32> = vec![0; run_first_seq.len()];
+    for (index, &run) in runs_by_appearance.iter().enumerate() {
+        index_of_run[run as usize] = index as u32;
+    }
+
+    // Emit each distinct vertex from its first appearance, keeping the
+    // original bits (the key folds -0.0, the stored vertex does not).
+    let mut vertices: Vec<Vertex> = Vec::with_capacity(run_first_seq.len());
+    for &run in &runs_by_appearance {
+        let seq = run_first_seq[run as usize] as usize;
+        vertices.push(soup[seq / 3].vertices[seq % 3]);
+    }
+
+    // Scatter every corner's final vertex index back into document
+    // order.
+    let mut corner_indices: Vec<u32> = vec![0; corner_count];
+    let mut run: usize = 0;
+    let mut prev_key: Option<[u32; 3]> = None;
+    for &(key, seq) in &records {
+        if prev_key != Some(key) {
+            if prev_key.is_some() {
+                run += 1;
+            }
+            prev_key = Some(key);
+        }
+        corner_indices[seq as usize] = index_of_run[run];
+    }
+    drop(records);
+
+    let faces: Vec<IndexedTriangle> = soup
+        .iter()
+        .enumerate()
+        .map(|(face, t)| {
+            IndexedTriangle::from_raw_indices(
+                t.normal,
+                [
+                    corner_indices[3 * face],
+                    corner_indices[3 * face + 1],
+                    corner_indices[3 * face + 2],
+                ],
+            )
+        })
+        .collect();
 
     Ok(IndexedMesh {
         meta,
         vertices,
-        faces: triangles,
+        faces,
     })
 }
 

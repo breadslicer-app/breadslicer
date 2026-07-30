@@ -38,4 +38,9 @@ pub use crate::scene::fragment::SceneFragment;
 pub use crate::scene::node::{
     CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
-pub use crate::triangle_iterator::{IndexedMeshBuildError, TriangleIterator};
+pub use crate::triangle_iterator::{
+    IndexedMeshBuildError, TriangleIterator, indexed_mesh_from_soup,
+};
+
+#[cfg(test)]
+mod tests_triangle_iterator;
