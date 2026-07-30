@@ -24,6 +24,8 @@
 
 use sc_mesh_core::indexed_mesh::ValidatedManifoldMesh;
 
+use rayon::prelude::*;
+
 use crate::plane_intersect::{VertexClass, Z_CLASSIFY_EPS_MM, classify_vertex_z};
 
 /// CSR table of candidate faces per schedule plane.
@@ -42,40 +44,46 @@ pub(crate) struct LayerBuckets {
 impl LayerBuckets {
     /// Bucket every face of `mesh` over `planes`.
     ///
-    /// Two passes over the faces: one to size each layer's run, one
-    /// to fill it. Faces are visited in index order in the fill pass,
-    /// so each run comes out ascending. Face indices are stored as
-    /// `u32`; a mesh anywhere near `u32::MAX` faces would not fit in
-    /// memory to begin with.
+    /// The per-face candidate ranges are independent, so that pass
+    /// runs in parallel, collected positionally. The CSR assembly
+    /// (count, prefix, fill) stays sequential: the fill visits faces
+    /// in index order, which is what keeps each layer's run ascending
+    /// and the slice output byte-identical. Face indices are stored
+    /// as `u32`; a mesh anywhere near `u32::MAX` faces would not fit
+    /// in memory to begin with.
     pub(crate) fn build(mesh: &ValidatedManifoldMesh<'_>, planes: &[f64]) -> Self {
         let vertices = mesh.vertices();
         let faces = mesh.faces();
 
         // Candidate plane range per face, kept for the fill pass.
-        let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(faces.len());
+        // Leading planes the face floats entirely above (the plane
+        // sits below the lowest vertex), and the first plane the face
+        // sits entirely below (the plane clears the highest vertex).
+        // classify_vertex_z is monotone in the plane for a fixed
+        // vertex, so both predicates split the ascending planes in
+        // two and partition_point finds the boundary.
+        let ranges: Vec<(u32, u32)> = faces
+            .par_iter()
+            .map(|face| {
+                let [i0, i1, i2] = face.vertices;
+                let z0 = vertices[usize::from(i0)][2];
+                let z1 = vertices[usize::from(i1)][2];
+                let z2 = vertices[usize::from(i2)][2];
+                let z_min = z0.min(z1).min(z2);
+                let z_max = z0.max(z1).max(z2);
+                let lo = planes.partition_point(|&z_mm| {
+                    classify_vertex_z(z_min, z_mm, Z_CLASSIFY_EPS_MM) == VertexClass::Above
+                });
+                let hi = planes.partition_point(|&z_mm| {
+                    classify_vertex_z(z_max, z_mm, Z_CLASSIFY_EPS_MM) != VertexClass::Below
+                });
+                (lo as u32, hi as u32)
+            })
+            .collect();
+
         let mut counts = vec![0usize; planes.len() + 1];
-        for face in faces {
-            let [i0, i1, i2] = face.vertices;
-            let z0 = vertices[usize::from(i0)][2];
-            let z1 = vertices[usize::from(i1)][2];
-            let z2 = vertices[usize::from(i2)][2];
-            let z_min = z0.min(z1).min(z2);
-            let z_max = z0.max(z1).max(z2);
-            // Leading planes the face floats entirely above (the
-            // plane sits below the lowest vertex), and the first
-            // plane the face sits entirely below (the plane clears
-            // the highest vertex). classify_vertex_z is monotone in
-            // the plane for a fixed vertex, so both predicates split
-            // the ascending planes in two and partition_point finds
-            // the boundary.
-            let lo = planes.partition_point(|&z_mm| {
-                classify_vertex_z(z_min, z_mm, Z_CLASSIFY_EPS_MM) == VertexClass::Above
-            });
-            let hi = planes.partition_point(|&z_mm| {
-                classify_vertex_z(z_max, z_mm, Z_CLASSIFY_EPS_MM) != VertexClass::Below
-            });
-            ranges.push((lo as u32, hi as u32));
-            for count in &mut counts[lo + 1..hi + 1] {
+        for &(lo, hi) in &ranges {
+            for count in &mut counts[lo as usize + 1..hi as usize + 1] {
                 *count += 1;
             }
         }
