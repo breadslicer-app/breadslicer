@@ -37,6 +37,7 @@ use memchr::memmem;
 use rayon::prelude::*;
 
 use super::read::{parse_f64, parse_index};
+use super::slice::{SliceSegment, SliceVertex};
 use super::types::{TriangleRef, Vertex3};
 
 /// A prefix of some input read as leaf elements.
@@ -56,6 +57,13 @@ const VERTEX_KEYS: &[&[u8]] = &[b"x", b"y", b"z"];
 /// vertex indices, plus the property overrides this crate carries no
 /// model for and therefore only has to leave alone.
 const TRIANGLE_KEYS: &[&[u8]] = &[b"v1", b"v2", b"v3", b"p1", b"p2", b"p3", b"pid"];
+
+/// The attribute keys the slice extension gives its 2D `<vertex>`.
+const SLICE_VERTEX_KEYS: &[&[u8]] = &[b"x", b"y"];
+
+/// The attribute keys the slice extension gives `<segment>`: the end
+/// vertex, plus properties this crate accepts and drops.
+const SLICE_SEGMENT_KEYS: &[&[u8]] = &[b"v2", b"p1", b"p2", b"pid"];
 
 /// The most attributes any accepted element can hold.
 const MAX_ATTRIBUTES: usize = 7;
@@ -80,6 +88,22 @@ pub(super) fn triangle_run(
     vertex_count: usize,
 ) -> ElementRun<TriangleRef> {
     read_run(input, |bytes| read_triangle(bytes, name, vertex_count))
+}
+
+/// Read a run of slice-extension 2D `<vertex>` elements spelled
+/// `name`.
+pub(super) fn slice_vertex_run(input: &[u8], name: &[u8]) -> ElementRun<SliceVertex> {
+    read_run(input, |bytes| read_slice_vertex(bytes, name))
+}
+
+/// Read a run of `<segment>` elements spelled `name`, accepting only
+/// end indices below `vertex_count`, as the polygon's own check does.
+pub(super) fn slice_segment_run(
+    input: &[u8],
+    name: &[u8],
+    vertex_count: usize,
+) -> ElementRun<SliceSegment> {
+    read_run(input, |bytes| read_slice_segment(bytes, name, vertex_count))
 }
 
 /// The name of the element the input starts with, once leading
@@ -229,6 +253,28 @@ fn read_triangle(input: &[u8], name: &[u8], vertex_count: usize) -> Option<(Tria
         }
     }
     Some((triangle, length))
+}
+
+fn read_slice_vertex(input: &[u8], name: &[u8]) -> Option<(SliceVertex, usize)> {
+    let (attributes, length) = read_element(input, name, SLICE_VERTEX_KEYS)?;
+    let vertex = SliceVertex {
+        x: parse_f64("vertex", "x", attributes.get(b"x")?).ok()?,
+        y: parse_f64("vertex", "y", attributes.get(b"y")?).ok()?,
+    };
+    Some((vertex, length))
+}
+
+fn read_slice_segment(
+    input: &[u8],
+    name: &[u8],
+    vertex_count: usize,
+) -> Option<(SliceSegment, usize)> {
+    let (attributes, length) = read_element(input, name, SLICE_SEGMENT_KEYS)?;
+    let end = parse_index("segment", "v2", attributes.get(b"v2")?).ok()?;
+    if end.get() as usize >= vertex_count {
+        return None;
+    }
+    Some((SliceSegment { end }, length))
 }
 
 /// What one chunk of a run yielded.

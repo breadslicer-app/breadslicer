@@ -660,6 +660,13 @@ fn parse_slice_vertices(
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
+        take_run(
+            reader,
+            vertices,
+            is_slice_ns,
+            b"vertex",
+            element_run::slice_vertex_run,
+        );
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();
@@ -722,6 +729,13 @@ fn parse_slice_polygon(
     let mut segments: Vec<SliceSegment> = Vec::new();
     let mut buffer = Vec::new();
     loop {
+        take_run(
+            reader,
+            &mut segments,
+            is_slice_ns,
+            b"segment",
+            |input, name| element_run::slice_segment_run(input, name, vertex_count),
+        );
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();
@@ -921,65 +935,61 @@ fn parse_mesh(reader: &mut Reader<'_>, object_id: ResourceId) -> Result<MeshData
 }
 
 /// The name of the element at the reader's cursor, when it resolves to
-/// `local` in the core namespace. Resolution goes through the reader's
-/// own bindings, so the prefixed spelling of a core element is found
+/// `local` in the namespace `in_namespace` accepts. Resolution goes
+/// through the reader's own bindings, so a prefixed spelling is found
 /// and an element that merely looks the part is not.
-fn leading_core_element<'a>(reader: &Reader<'a>, local: &[u8]) -> Option<&'a [u8]> {
+fn leading_element<'a>(
+    reader: &Reader<'a>,
+    in_namespace: fn(&ResolveResult<'_>) -> bool,
+    local: &[u8],
+) -> Option<&'a [u8]> {
     let input: &'a [u8] = reader.get_ref();
     let name = element_run::leading_element_name(input)?;
     let (namespace, found) = reader.resolver().resolve_element(QName(name));
-    (is_core_ns(&namespace) && found.as_ref() == local).then_some(name)
+    (in_namespace(&namespace) && found.as_ref() == local).then_some(name)
 }
 
-/// Move the reader past `consumed` bytes of its input.
+/// Take the leaf elements that are spelled plainly enough to read
+/// straight from the input, and move the reader past them. Whatever
+/// the run does not cover, including the element that ended it, is
+/// left to the event loop, so every diagnosis still comes from the
+/// ordinary path.
 ///
-/// quick-xml offers `Reader::stream` for reading raw bytes out of the
-/// source mid-document, but `NsReader` exposes neither it nor a way
-/// through to it, so the source slice is advanced directly. The one
-/// documented consequence is that `buffer_position` stops counting
-/// those bytes; nothing here reads it, and no error this crate reports
-/// carries a byte offset.
-fn advance<'a>(reader: &mut Reader<'a>, input: &'a [u8], consumed: usize) {
-    *reader.get_mut() = &input[consumed..];
-}
-
-/// Take the vertices that are spelled plainly enough to read straight
-/// from the input. Whatever the run does not cover, including the
-/// element that ended it, is left to the event loop, so every
-/// diagnosis still comes from the ordinary path.
-fn take_vertex_run<'a>(reader: &mut Reader<'a>, mesh: &mut MeshData) {
-    let Some(name) = leading_core_element(reader, b"vertex") else {
+/// Moving the reader rewrites its source slice. quick-xml offers
+/// `Reader::stream` for reading raw bytes out of the source
+/// mid-document, but `NsReader` exposes neither it nor a way through
+/// to it. The one documented consequence is that `buffer_position`
+/// stops counting those bytes; nothing here reads it, and no error
+/// this crate reports carries a byte offset.
+fn take_run<'a, T>(
+    reader: &mut Reader<'a>,
+    target: &mut Vec<T>,
+    in_namespace: fn(&ResolveResult<'_>) -> bool,
+    local: &[u8],
+    read: impl Fn(&'a [u8], &'a [u8]) -> element_run::ElementRun<T>,
+) {
+    let Some(name) = leading_element(reader, in_namespace, local) else {
         return;
     };
     let input: &'a [u8] = reader.get_ref();
-    let run = element_run::vertex_run(input, name);
+    let run = read(input, name);
     if run.consumed == 0 {
         return;
     }
-    mesh.vertices.extend(run.items);
-    advance(reader, input, run.consumed);
-}
-
-/// The triangle counterpart. Indices are checked against the vertices
-/// read so far, which is the same list, at the same point in the
-/// document, that the event path checks against.
-fn take_triangle_run<'a>(reader: &mut Reader<'a>, mesh: &mut MeshData) {
-    let Some(name) = leading_core_element(reader, b"triangle") else {
-        return;
-    };
-    let input: &'a [u8] = reader.get_ref();
-    let run = element_run::triangle_run(input, name, mesh.vertices.len());
-    if run.consumed == 0 {
-        return;
-    }
-    mesh.triangles.extend(run.items);
-    advance(reader, input, run.consumed);
+    target.extend(run.items);
+    *reader.get_mut() = &input[run.consumed..];
 }
 
 fn parse_vertices(reader: &mut Reader<'_>, mesh: &mut MeshData) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
-        take_vertex_run(reader, mesh);
+        take_run(
+            reader,
+            &mut mesh.vertices,
+            is_core_ns,
+            b"vertex",
+            element_run::vertex_run,
+        );
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();
@@ -1024,7 +1034,17 @@ fn parse_triangles(
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
-        take_triangle_run(reader, mesh);
+        // The run checks indices against the vertices read so far,
+        // which is the list, at the point in the document, the event
+        // path checks against.
+        let vertex_count = mesh.vertices.len();
+        take_run(
+            reader,
+            &mut mesh.triangles,
+            is_core_ns,
+            b"triangle",
+            |input, name| element_run::triangle_run(input, name, vertex_count),
+        );
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();

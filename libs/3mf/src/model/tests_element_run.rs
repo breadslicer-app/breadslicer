@@ -12,7 +12,8 @@
 
 use proptest::prelude::*;
 
-use super::element_run::{triangle_run, vertex_run};
+use super::element_run::{slice_segment_run, slice_vertex_run, triangle_run, vertex_run};
+use super::slice::{Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent, SliceVertex};
 use super::types::{
     BuildItem, MeshData, ModelDocument, ObjectPayload, ObjectResource, ResourceId, ResourceIndex,
     TriangleRef, Vertex3,
@@ -621,5 +622,120 @@ mod parser_route_tests {
             },
         ));
         assert_eq!(format!("{accelerated:?}"), format!("{plain:?}"));
+    }
+}
+
+/// The slice extension's own leaf runs: 2D vertices and the segment
+/// chains of a polygon.
+#[cfg(test)]
+mod slice_run_tests {
+    use super::*;
+    use crate::model::ResourceId;
+
+    #[test]
+    fn reads_a_run_of_two_dimensional_vertices() {
+        let input =
+            br#"<s:vertex x="0.000" y="0.000" /><s:vertex x="10.103" y="0.000" /></s:vertices>"#;
+        let run = slice_vertex_run(input, b"s:vertex");
+        assert_eq!(run.items.len(), 2);
+        assert_eq!(run.items[1].x, 10.103);
+        assert_eq!(run.consumed, input.len() - b"</s:vertices>".len());
+    }
+
+    #[test]
+    fn stops_at_a_mesh_vertex_spelling() {
+        // A 3D vertex carries z, which the 2D element does not define.
+        let good = r#"<s:vertex x="1" y="2"/>"#;
+        let input = format!("{good}<s:vertex x=\"1\" y=\"2\" z=\"3\"/>");
+        let run = slice_vertex_run(input.as_bytes(), b"s:vertex");
+        assert_eq!(run.items.len(), 1);
+        assert_eq!(run.consumed, good.len());
+    }
+
+    #[test]
+    fn reads_a_segment_chain() {
+        let input = br#"<s:segment v2="1"/><s:segment v2="2"/><s:segment v2="0"/></s:polygon>"#;
+        let run = slice_segment_run(input, b"s:segment", 3);
+        assert_eq!(run.items.len(), 3);
+        assert_eq!(run.items[2].end.get(), 0);
+        assert_eq!(run.consumed, input.len() - b"</s:polygon>".len());
+    }
+
+    #[test]
+    fn accepts_the_segment_properties_the_extension_defines() {
+        let input = br#"<s:segment v2="1" p1="0" p2="0" pid="4"/>"#;
+        let run = slice_segment_run(input, b"s:segment", 2);
+        assert_eq!(run.items.len(), 1);
+        assert_eq!(run.consumed, input.len());
+    }
+
+    #[test]
+    fn stops_at_a_segment_beyond_the_slice_vertices() {
+        let good = r#"<s:segment v2="1"/>"#;
+        let input = format!("{good}<s:segment v2=\"2\"/>");
+        let run = slice_segment_run(input.as_bytes(), b"s:segment", 2);
+        assert_eq!(run.items.len(), 1);
+        assert_eq!(run.consumed, good.len());
+    }
+
+    fn square_slice(z_top: f64) -> Slice {
+        let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        Slice {
+            z_top,
+            vertices: corners
+                .iter()
+                .map(|(x, y)| SliceVertex { x: *x, y: *y })
+                .collect(),
+            polygons: vec![SlicePolygon {
+                start: index(0),
+                segments: vec![
+                    SliceSegment { end: index(1) },
+                    SliceSegment { end: index(2) },
+                    SliceSegment { end: index(3) },
+                    SliceSegment { end: index(0) },
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_sliced_document_parses_alike_with_and_without_the_runs() {
+        let stack_id = ResourceId::MIN;
+        let object_id = ResourceId::new(2).expect("id");
+        let document = ModelDocument {
+            slice_stacks: vec![SliceStack {
+                id: stack_id,
+                z_bottom: 0.0,
+                content: SliceStackContent::Slices(
+                    (1..=8)
+                        .map(|layer| square_slice(layer as f64 * 0.05))
+                        .collect(),
+                ),
+            }],
+            objects: vec![ObjectResource {
+                id: object_id,
+                object_type: Default::default(),
+                name: None,
+                partnumber: None,
+                property_ref: None,
+                slice_stack: Some(stack_id),
+                mesh_resolution: Default::default(),
+                payload: ObjectPayload::Mesh(MeshData::default()),
+            }],
+            build: vec![BuildItem {
+                object_id,
+                transform: None,
+                partnumber: None,
+            }],
+            ..ModelDocument::default()
+        };
+        let mut bytes = Vec::new();
+        write_model(&document, &mut bytes).expect("write");
+        let xml = String::from_utf8(bytes).expect("utf8");
+
+        let accelerated = parse_model(xml.as_bytes()).expect("parse");
+        let plain = parse_model(xml.replace('"', "'").as_bytes()).expect("parse");
+        assert_eq!(accelerated, plain);
+        assert_eq!(accelerated.slice_stacks, document.slice_stacks);
     }
 }
