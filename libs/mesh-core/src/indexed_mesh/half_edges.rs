@@ -52,6 +52,13 @@ pub(crate) fn face_of(value: u32) -> FaceIndex {
     FaceIndex::from((value >> 3) as usize)
 }
 
+/// The edge slot packed into a record value (0: v0-v1, 1: v1-v2,
+/// 2: v2-v0).
+#[inline]
+pub(crate) fn slot_of(value: u32) -> usize {
+    ((value >> 1) & 0b11) as usize
+}
+
 /// Whether the record's face traverses the edge higher-to-lower.
 #[inline]
 pub(crate) fn is_reversed(value: u32) -> bool {

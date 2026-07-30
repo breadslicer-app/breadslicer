@@ -5,10 +5,10 @@
 
 //! Topological indices over a [`ValidatedManifoldMesh`]:
 //!
-//! 1. `edge_to_faces`: every interior edge maps to the two faces
+//! 1. The edge table: every interior edge maps to the two faces
 //!    incident to it. The manifold witness guarantees exactly two
 //!    per edge.
-//! 2. `vertex_one_ring`: every vertex maps to its incident faces in
+//! 2. The vertex 1-rings: every vertex maps to its incident faces in
 //!    cyclic order, walked via the edge-to-face adjacency. The
 //!    direction of the cycle is implementation-defined (the manifold
 //!    is orientable, so the walk is well-formed, but the choice of
@@ -16,14 +16,17 @@
 //!    only invariant consumers should rely on is "consecutive entries
 //!    share an edge through the vertex."
 //!
-//! Both indices are built once from the witness; lookups are
-//! `HashMap` reads.
+//! Both indices are built once from the witness, from a single pass
+//! over the sorted directed half-edge records shared with the
+//! manifold validator: the edge table comes out as a sorted vector
+//! (edge lookups binary-search it) and the 1-rings as one flat array
+//! sliced per vertex.
 
-use std::collections::HashMap;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use crate::primitives::{FaceIndex, VertexIndex};
+use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 
-use super::ValidatedManifoldMesh;
+use super::{ValidatedManifoldMesh, half_edges};
 
 /// Canonical key for an undirected mesh edge: `(lo, hi)` with
 /// `lo <= hi`. Constructed via [`edge_key`].
@@ -37,23 +40,97 @@ pub fn edge_key(a: VertexIndex, b: VertexIndex) -> EdgeKey {
 
 /// Precomputed topology over a manifold mesh.
 ///
-/// Built once via [`MeshTopology::from_manifold`]; lookups against
-/// the two indices are constant time. The struct does not borrow the
-/// mesh, so the witness it was built from can be dropped.
+/// Built once via [`MeshTopology::from_manifold`]; edge lookups
+/// binary-search the sorted edge table, 1-ring lookups slice a flat
+/// per-vertex array. The struct does not borrow the mesh, so the
+/// witness it was built from can be dropped.
 #[derive(Debug, Clone)]
 pub struct MeshTopology {
-    edge_to_faces: HashMap<EdgeKey, [FaceIndex; 2]>,
-    vertex_one_ring: HashMap<VertexIndex, Vec<FaceIndex>>,
+    /// Sorted by packed canonical edge key; each entry carries the
+    /// two incident faces, ascending.
+    edges: Vec<(u64, [FaceIndex; 2])>,
+    /// CSR bounds into `ring_faces`: vertex `v`'s cyclic 1-ring is
+    /// `ring_faces[ring_offsets[v]..ring_offsets[v + 1]]`.
+    ring_offsets: Vec<usize>,
+    ring_faces: Vec<FaceIndex>,
 }
 
 impl MeshTopology {
     /// Build both indices from a manifold-validated mesh.
     pub fn from_manifold(mesh: &ValidatedManifoldMesh<'_>) -> Self {
-        let edge_to_faces = build_edge_to_faces(mesh);
-        let vertex_one_ring = build_vertex_one_ring(mesh, &edge_to_faces);
+        let faces = mesh.faces();
+        let records = half_edges::sorted_half_edge_records(faces);
+
+        // One scan over the sorted runs yields the edge table and the
+        // per-face neighbor across each edge slot; the latter is what
+        // the ring walks step through.
+        let mut edges: Vec<(u64, [FaceIndex; 2])> = Vec::with_capacity(records.len() / 2);
+        let mut face_adj: Vec<[FaceIndex; 3]> = vec![[FaceIndex::from(0_usize); 3]; faces.len()];
+        for run in records.chunk_by(|lhs, rhs| lhs.0 == rhs.0) {
+            assert_eq!(
+                run.len(),
+                2,
+                "manifold witness violated for edge {:?}: {} incident faces",
+                half_edges::key_vertices(run[0].0),
+                run.len(),
+            );
+            let f0 = half_edges::face_of(run[0].1);
+            let f1 = half_edges::face_of(run[1].1);
+            edges.push((run[0].0, [f0, f1]));
+            face_adj[f0.get()][half_edges::slot_of(run[0].1)] = f1;
+            face_adj[f1.get()][half_edges::slot_of(run[1].1)] = f0;
+        }
+
+        // Incident faces per vertex, CSR, ascending face order (so
+        // each ring walk starts from the lowest incident face).
+        let vertex_count = mesh.vertices().len();
+        let mut ring_offsets = vec![0usize; vertex_count + 1];
+        for face in faces {
+            for &v in &face.vertices {
+                ring_offsets[usize::from(v) + 1] += 1;
+            }
+        }
+        for k in 1..ring_offsets.len() {
+            ring_offsets[k] += ring_offsets[k - 1];
+        }
+        let mut incident = vec![FaceIndex::from(0_usize); ring_offsets[vertex_count]];
+        let mut cursors = ring_offsets[..vertex_count].to_vec();
+        for (idx, face) in faces.iter().enumerate() {
+            for &v in &face.vertices {
+                let cursor = &mut cursors[usize::from(v)];
+                incident[*cursor] = FaceIndex::from(idx);
+                *cursor += 1;
+            }
+        }
+
+        // Walk every vertex's cyclic ring. A ring visits each
+        // incident face exactly once, so the rings reuse the incident
+        // CSR offsets and the flattening below lands each ring in its
+        // vertex's slot.
+        let rings: Vec<Vec<FaceIndex>> = (0..vertex_count)
+            .into_par_iter()
+            .map(|v| {
+                let inc = &incident[ring_offsets[v]..ring_offsets[v + 1]];
+                let cyclic = walk_cyclic_one_ring(faces, VertexIndex::from(v as u32), inc, &face_adj);
+                assert_eq!(
+                    cyclic.len(),
+                    inc.len(),
+                    "cyclic walk around vertex {v} visited {} of {} incident faces; expected the witness to guarantee a full cycle",
+                    cyclic.len(),
+                    inc.len(),
+                );
+                cyclic
+            })
+            .collect();
+        let mut ring_faces = Vec::with_capacity(ring_offsets[vertex_count]);
+        for ring in &rings {
+            ring_faces.extend_from_slice(ring);
+        }
+
         Self {
-            edge_to_faces,
-            vertex_one_ring,
+            edges,
+            ring_offsets,
+            ring_faces,
         }
     }
 
@@ -64,7 +141,11 @@ impl MeshTopology {
     /// `current_face` vs the other.
     #[inline]
     pub fn edge_faces(&self, a: VertexIndex, b: VertexIndex) -> Option<[FaceIndex; 2]> {
-        self.edge_to_faces.get(&edge_key(a, b)).copied()
+        let key = half_edges::key(a, b);
+        self.edges
+            .binary_search_by_key(&key, |&(k, _)| k)
+            .ok()
+            .map(|found| self.edges[found].1)
     }
 
     /// The faces incident to `vertex` in cyclic order, or `None` if
@@ -73,86 +154,48 @@ impl MeshTopology {
     /// the first.
     #[inline]
     pub fn vertex_one_ring(&self, vertex: VertexIndex) -> Option<&[FaceIndex]> {
-        self.vertex_one_ring.get(&vertex).map(Vec::as_slice)
+        let v = usize::from(vertex);
+        if v + 1 >= self.ring_offsets.len() {
+            return None;
+        }
+        let ring = &self.ring_faces[self.ring_offsets[v]..self.ring_offsets[v + 1]];
+        if ring.is_empty() { None } else { Some(ring) }
     }
 
     /// Number of edges in the indexed mesh. Useful for tests; not
     /// part of the slicer's public hot path.
     pub fn edge_count(&self) -> usize {
-        self.edge_to_faces.len()
+        self.edges.len()
     }
 }
 
-fn build_edge_to_faces(mesh: &ValidatedManifoldMesh<'_>) -> HashMap<EdgeKey, [FaceIndex; 2]> {
-    let mut acc: HashMap<EdgeKey, Vec<FaceIndex>> = HashMap::new();
-    for (idx, face) in mesh.faces().iter().enumerate() {
-        let face_idx = FaceIndex::from(idx);
-        let [v0, v1, v2] = face.vertices;
-        for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
-            acc.entry(edge_key(a, b)).or_default().push(face_idx);
-        }
-    }
-    acc.into_iter()
-        .map(|(k, v)| {
-            assert_eq!(
-                v.len(),
-                2,
-                "manifold witness violated for edge {k:?}: {} incident faces",
-                v.len(),
-            );
-            (k, [v[0], v[1]])
-        })
-        .collect()
-}
-
-fn build_vertex_one_ring(
-    mesh: &ValidatedManifoldMesh<'_>,
-    edge_to_faces: &HashMap<EdgeKey, [FaceIndex; 2]>,
-) -> HashMap<VertexIndex, Vec<FaceIndex>> {
-    let mut incident: HashMap<VertexIndex, Vec<FaceIndex>> = HashMap::new();
-    for (idx, face) in mesh.faces().iter().enumerate() {
-        let face_idx = FaceIndex::from(idx);
-        for &v in &face.vertices {
-            incident.entry(v).or_default().push(face_idx);
-        }
-    }
-
-    let mut result: HashMap<VertexIndex, Vec<FaceIndex>> = HashMap::new();
-    for (vertex, incident_faces) in incident {
-        let cyclic = walk_cyclic_one_ring(mesh, vertex, &incident_faces, edge_to_faces);
-        assert_eq!(
-            cyclic.len(),
-            incident_faces.len(),
-            "cyclic walk around vertex {vertex:?} visited {} of {} incident faces; expected the witness to guarantee a full cycle",
-            cyclic.len(),
-            incident_faces.len(),
-        );
-        result.insert(vertex, cyclic);
-    }
-    result
-}
-
+/// Walk `vertex`'s incident faces into their cyclic order by stepping
+/// across the shared edge through the vertex: start at the lowest
+/// incident face, leave through its first edge slot touching the
+/// vertex, and keep crossing into the neighbor until the walk closes.
 fn walk_cyclic_one_ring(
-    mesh: &ValidatedManifoldMesh<'_>,
+    faces: &[IndexedTriangle],
     vertex: VertexIndex,
     incident: &[FaceIndex],
-    edge_to_faces: &HashMap<EdgeKey, [FaceIndex; 2]>,
+    face_adj: &[[FaceIndex; 3]],
 ) -> Vec<FaceIndex> {
+    if incident.is_empty() {
+        return Vec::new();
+    }
     let mut cyclic = Vec::with_capacity(incident.len());
     let start = incident[0];
     let mut current = start;
-    let mut prev_edge: Option<EdgeKey> = None;
+    let mut prev_edge: Option<u64> = None;
 
     loop {
         cyclic.push(current);
 
-        let face = &mesh.faces()[current.get()];
-        let [v0, v1, v2] = face.vertices;
-        let mut through_vertex: [Option<EdgeKey>; 2] = [None, None];
+        let [v0, v1, v2] = faces[current.get()].vertices;
+        let mut through_vertex: [(u64, usize); 2] = [(0, 0); 2];
         let mut written = 0;
-        for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
+        for (slot, &(a, b)) in [(v0, v1), (v1, v2), (v2, v0)].iter().enumerate() {
             if a == vertex || b == vertex {
-                through_vertex[written] = Some(edge_key(a, b));
+                through_vertex[written] = (half_edges::key(a, b), slot);
                 written += 1;
             }
         }
@@ -161,18 +204,18 @@ fn walk_cyclic_one_ring(
             "face {current:?} listed as incident to vertex {vertex:?} but has {written} edges through it",
         );
 
-        let edges = [through_vertex[0].unwrap(), through_vertex[1].unwrap()];
-        let next_edge = match prev_edge {
-            None => edges[0],
-            Some(p) => *edges
-                .iter()
-                .find(|e| **e != p)
-                .expect("no other edge through vertex"),
+        let (next_edge, next_slot) = match prev_edge {
+            None => through_vertex[0],
+            Some(p) => {
+                if through_vertex[0].0 != p {
+                    through_vertex[0]
+                } else {
+                    through_vertex[1]
+                }
+            }
         };
 
-        let [f1, f2] = edge_to_faces[&next_edge];
-        let next = if f1 == current { f2 } else { f1 };
-
+        let next = face_adj[current.get()][next_slot];
         if next == start {
             break;
         }
@@ -376,5 +419,212 @@ mod mesh_topology_tests {
         mesh.vertices.push(Vertex::new([0.0, 0.0, 5.0]));
         let topo = topology(&mesh);
         assert!(topo.vertex_one_ring(vi(4)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod sorted_topology_equivalence_tests {
+    use std::collections::HashMap;
+
+    use proptest::prelude::*;
+
+    use crate::indexed_mesh::IndexedMesh;
+    use crate::primitives::{IndexedTriangle, Normal, Vertex};
+
+    use super::*;
+
+    /// The previous hash-based topology builder, kept verbatim as the
+    /// reference the sorted implementation must reproduce bit for bit
+    /// (edge pairs including order, rings including order).
+    struct ReferenceTopology {
+        edge_to_faces: HashMap<EdgeKey, [FaceIndex; 2]>,
+        vertex_one_ring: HashMap<VertexIndex, Vec<FaceIndex>>,
+    }
+
+    fn reference_topology(mesh: &ValidatedManifoldMesh<'_>) -> ReferenceTopology {
+        let edge_to_faces = reference_edge_to_faces(mesh);
+        let vertex_one_ring = reference_vertex_one_ring(mesh, &edge_to_faces);
+        ReferenceTopology {
+            edge_to_faces,
+            vertex_one_ring,
+        }
+    }
+
+    fn reference_edge_to_faces(
+        mesh: &ValidatedManifoldMesh<'_>,
+    ) -> HashMap<EdgeKey, [FaceIndex; 2]> {
+        let mut acc: HashMap<EdgeKey, Vec<FaceIndex>> = HashMap::new();
+        for (idx, face) in mesh.faces().iter().enumerate() {
+            let face_idx = FaceIndex::from(idx);
+            let [v0, v1, v2] = face.vertices;
+            for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
+                acc.entry(edge_key(a, b)).or_default().push(face_idx);
+            }
+        }
+        acc.into_iter()
+            .map(|(k, v)| {
+                assert_eq!(v.len(), 2, "reference: manifold witness violated");
+                (k, [v[0], v[1]])
+            })
+            .collect()
+    }
+
+    fn reference_vertex_one_ring(
+        mesh: &ValidatedManifoldMesh<'_>,
+        edge_to_faces: &HashMap<EdgeKey, [FaceIndex; 2]>,
+    ) -> HashMap<VertexIndex, Vec<FaceIndex>> {
+        let mut incident: HashMap<VertexIndex, Vec<FaceIndex>> = HashMap::new();
+        for (idx, face) in mesh.faces().iter().enumerate() {
+            let face_idx = FaceIndex::from(idx);
+            for &v in &face.vertices {
+                incident.entry(v).or_default().push(face_idx);
+            }
+        }
+
+        let mut result: HashMap<VertexIndex, Vec<FaceIndex>> = HashMap::new();
+        for (vertex, incident_faces) in incident {
+            let cyclic = reference_walk(mesh, vertex, &incident_faces, edge_to_faces);
+            assert_eq!(cyclic.len(), incident_faces.len(), "reference: open fan");
+            result.insert(vertex, cyclic);
+        }
+        result
+    }
+
+    fn reference_walk(
+        mesh: &ValidatedManifoldMesh<'_>,
+        vertex: VertexIndex,
+        incident: &[FaceIndex],
+        edge_to_faces: &HashMap<EdgeKey, [FaceIndex; 2]>,
+    ) -> Vec<FaceIndex> {
+        let mut cyclic = Vec::with_capacity(incident.len());
+        let start = incident[0];
+        let mut current = start;
+        let mut prev_edge: Option<EdgeKey> = None;
+
+        loop {
+            cyclic.push(current);
+
+            let face = &mesh.faces()[current.get()];
+            let [v0, v1, v2] = face.vertices;
+            let mut through_vertex: [Option<EdgeKey>; 2] = [None, None];
+            let mut written = 0;
+            for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
+                if a == vertex || b == vertex {
+                    through_vertex[written] = Some(edge_key(a, b));
+                    written += 1;
+                }
+            }
+
+            let edges = [through_vertex[0].unwrap(), through_vertex[1].unwrap()];
+            let next_edge = match prev_edge {
+                None => edges[0],
+                Some(p) => *edges.iter().find(|e| **e != p).expect("other edge"),
+            };
+
+            let [f1, f2] = edge_to_faces[&next_edge];
+            let next = if f1 == current { f2 } else { f1 };
+
+            if next == start {
+                break;
+            }
+            prev_edge = Some(next_edge);
+            current = next;
+            assert!(cyclic.len() <= incident.len(), "reference: runaway walk");
+        }
+
+        cyclic
+    }
+
+    fn face(v: [u32; 3]) -> IndexedTriangle {
+        IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), v)
+    }
+
+    /// Closed grid torus, consistent winding; same construction as
+    /// the validator's equivalence tests.
+    fn torus_mesh(n: usize, m: usize) -> IndexedMesh {
+        let mut vertices = Vec::with_capacity(n * m);
+        for i in 0..n {
+            for j in 0..m {
+                vertices.push(Vertex::new([i as f32, j as f32, (i + j) as f32]));
+            }
+        }
+        let idx = |i: usize, j: usize| -> u32 { (i * m + j) as u32 };
+        let mut faces = Vec::with_capacity(2 * n * m);
+        for i in 0..n {
+            let i1 = (i + 1) % n;
+            for j in 0..m {
+                let j1 = (j + 1) % m;
+                faces.push(face([idx(i, j), idx(i1, j), idx(i1, j1)]));
+                faces.push(face([idx(i, j), idx(i1, j1), idx(i, j1)]));
+            }
+        }
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    fn tetrahedron() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([1.0, 1.0, 1.0]),
+                Vertex::new([1.0, -1.0, -1.0]),
+                Vertex::new([-1.0, 1.0, -1.0]),
+                Vertex::new([-1.0, -1.0, 1.0]),
+            ],
+            faces: vec![
+                face([0, 1, 2]),
+                face([0, 3, 1]),
+                face([0, 2, 3]),
+                face([1, 3, 2]),
+            ],
+        }
+    }
+
+    fn assert_matches_reference(mesh: &IndexedMesh) {
+        let witness = mesh
+            .validated_faces()
+            .expect("in-range faces")
+            .validated_manifold()
+            .expect("manifold mesh");
+        let topo = MeshTopology::from_manifold(&witness);
+        let reference = reference_topology(&witness);
+
+        assert_eq!(topo.edge_count(), reference.edge_to_faces.len());
+        for (&(a, b), &pair) in &reference.edge_to_faces {
+            assert_eq!(
+                topo.edge_faces(a, b),
+                Some(pair),
+                "edge ({a:?}, {b:?}): pair mismatch",
+            );
+        }
+        for v in 0..mesh.vertices.len() as u32 {
+            let vertex = VertexIndex::from(v);
+            let expected = reference.vertex_one_ring.get(&vertex).map(Vec::as_slice);
+            assert_eq!(
+                topo.vertex_one_ring(vertex),
+                expected,
+                "vertex {v}: ring mismatch",
+            );
+        }
+    }
+
+    #[test]
+    fn matches_the_reference_on_the_tetrahedron() {
+        assert_matches_reference(&tetrahedron());
+    }
+
+    #[test]
+    fn matches_the_reference_on_a_grid_torus() {
+        assert_matches_reference(&torus_mesh(5, 7));
+    }
+
+    proptest! {
+        #[test]
+        fn matches_the_reference_on_generated_tori(n in 3usize..8, m in 3usize..8) {
+            assert_matches_reference(&torus_mesh(n, m));
+        }
     }
 }
