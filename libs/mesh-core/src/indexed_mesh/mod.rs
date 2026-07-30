@@ -5,6 +5,7 @@
 
 pub mod error_summary;
 pub mod fix;
+mod half_edges;
 pub mod topology;
 pub mod validate;
 pub mod validated;

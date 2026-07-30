@@ -27,7 +27,6 @@
 //! lives on `IndexedMesh` itself and minted-via-shortcut: see
 //! `IndexedMesh::fix_zero_length_edges_into_validated`.
 
-use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use float_cmp::approx_eq;
@@ -38,6 +37,7 @@ use crate::geometry::{
 use crate::primitives::{FaceIndex, IndexedTriangle, Vector3D, Vertex, VertexIndex};
 
 use super::fix::{MeshFix, MeshFixError};
+use super::half_edges;
 use super::{FixFacesOptions, IndexedMesh};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -313,60 +313,43 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 /// as half-edge keys), so the in-range invariant is not a soundness
 /// requirement here: the witness gates this method only for API
 /// symmetry with `validate_normal_vectors`.
+///
+/// The directed half-edges are sorted so each undirected edge forms
+/// one contiguous run: run length 1 is a boundary edge, more than 2 an
+/// over-shared edge, and a length-2 run whose two faces traverse the
+/// edge in the same direction an inconsistent winding. Errors come out
+/// sorted by canonical edge (deterministic across runs), with the face
+/// lists inside each error ascending.
 fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldError>> {
-    let mut errors: Vec<MeshManifoldError> = vec![];
-
-    let mut half_edges: HashMap<(VertexIndex, VertexIndex), Vec<FaceIndex>> = HashMap::new();
-
     if mesh.faces.is_empty() {
-        errors.push(MeshManifoldError::EmptyMesh);
-        return Err(errors);
+        return Err(vec![MeshManifoldError::EmptyMesh]);
     }
 
-    for (idx, face) in mesh.faces.iter().enumerate() {
-        let face_idx = FaceIndex::from(idx);
-        let [v0, v1, v2] = face.vertices;
-        for &(a, b) in &[(v0, v1), (v1, v2), (v2, v0)] {
-            half_edges.entry((a, b)).or_default().push(face_idx);
-        }
-    }
+    let records = half_edges::sorted_half_edge_records(&mesh.faces);
 
-    let mut checked: HashSet<(VertexIndex, VertexIndex)> = HashSet::new();
-
-    for &(a, b) in half_edges.keys() {
-        let canonical = if a <= b { (a, b) } else { (b, a) };
-        if !checked.insert(canonical) {
-            continue;
-        }
-
-        let forward = half_edges.get(&(a, b)).cloned().unwrap_or_default();
-        let reverse = half_edges.get(&(b, a)).cloned().unwrap_or_default();
-
-        let total = forward.len() + reverse.len();
-
-        if total < 2 {
-            let face_idx = forward.first().or(reverse.first()).copied().unwrap();
-            errors.push(MeshManifoldError::BoundaryEdge {
-                edge: canonical,
-                face_idx,
-            });
-        } else if total > 2 {
-            let mut face_indices = forward.clone();
-            face_indices.extend(&reverse);
-            errors.push(MeshManifoldError::NonManifoldEdge {
-                edge: canonical,
-                face_indices,
-            });
-        } else if forward.len() == 2 {
-            errors.push(MeshManifoldError::InconsistentWindingOrder {
-                edge: canonical,
-                face_indices: [forward[0], forward[1]],
-            });
-        } else if reverse.len() == 2 {
-            errors.push(MeshManifoldError::InconsistentWindingOrder {
-                edge: canonical,
-                face_indices: [reverse[0], reverse[1]],
-            });
+    let mut errors: Vec<MeshManifoldError> = vec![];
+    for run in records.chunk_by(|lhs, rhs| lhs.0 == rhs.0) {
+        let edge = half_edges::key_vertices(run[0].0);
+        match run.len() {
+            1 => errors.push(MeshManifoldError::BoundaryEdge {
+                edge,
+                face_idx: half_edges::face_of(run[0].1),
+            }),
+            2 => {
+                if half_edges::is_reversed(run[0].1) == half_edges::is_reversed(run[1].1) {
+                    errors.push(MeshManifoldError::InconsistentWindingOrder {
+                        edge,
+                        face_indices: [
+                            half_edges::face_of(run[0].1),
+                            half_edges::face_of(run[1].1),
+                        ],
+                    });
+                }
+            }
+            _ => errors.push(MeshManifoldError::NonManifoldEdge {
+                edge,
+                face_indices: run.iter().map(|&(_, v)| half_edges::face_of(v)).collect(),
+            }),
         }
     }
 
