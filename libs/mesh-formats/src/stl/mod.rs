@@ -7,6 +7,8 @@ mod stla;
 mod stlb;
 #[cfg(test)]
 mod tests_roundtrip;
+#[cfg(test)]
+mod tests_stla_equivalence;
 mod writers;
 
 // Binary STL spec byte sizes. Shared by the reader and writer to keep
@@ -19,13 +21,11 @@ pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use sc_mesh_core::Scene;
-use sc_mesh_core::TriangleIterator;
 
 use crate::error::{LoadStlError, WriteSceneError};
 use crate::messages::LoadStlWarning;
 use crate::ports::{MeshReader, MeshWriter, sealed};
 use crate::scene_writer::{FlattenWarning, flatten_graph_to_mesh};
-use stla::AsciiStlReader;
 
 pub use writers::{write_stla, write_stlb};
 
@@ -128,11 +128,8 @@ where
 {
     let bytes = slurp(read)?;
     let mut cursor = Cursor::new(&bytes[..]);
-    if AsciiStlReader::probe(&mut cursor)? {
-        let metadata = AsciiStlReader::extract_metadata(&mut cursor)?;
-        let mesh = AsciiStlReader::create_triangles_iterator(&mut cursor)?
-            .as_indexed_mesh(Some(metadata))?;
-        Ok(Scene::from(mesh))
+    if stla::probe(&mut cursor)? {
+        stla::read_stla_slice(&bytes)
     } else {
         stlb::read_stlb_slice(&bytes)
     }
@@ -142,9 +139,8 @@ pub fn read_stla<R>(read: &mut R) -> Result<Scene>
 where
     R: std::io::Read + std::io::Seek,
 {
-    let metadata = AsciiStlReader::extract_metadata(read)?;
-    let mesh = AsciiStlReader::create_triangles_iterator(read)?.as_indexed_mesh(Some(metadata))?;
-    Ok(Scene::from(mesh))
+    let bytes = slurp(read)?;
+    stla::read_stla_slice(&bytes)
 }
 
 pub fn read_stlb<R>(read: &mut R) -> Result<Scene>

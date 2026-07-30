@@ -240,12 +240,9 @@ endsolid my_mesh",
         let mut buf: Vec<u8> = vec![];
         write_stla(&mesh, &mut buf).expect("write_stla succeeds on empty mesh");
 
-        let mut cursor = std::io::Cursor::new(buf);
-        let round_tripped =
-            crate::stl::stla::AsciiStlReader::create_triangles_iterator(&mut cursor)
-                .expect("reader constructs")
-                .as_indexed_mesh(None)
-                .expect("read succeeds");
+        let scene = crate::stl::stla::read_stla_slice(&buf).expect("empty document parses");
+        let leaf = scene.first_leaf_id().expect("one leaf");
+        let round_tripped = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
 
         assert_eq!(round_tripped.vertices().len(), 0);
         assert_eq!(round_tripped.faces().len(), 0);
@@ -272,12 +269,9 @@ endsolid my_mesh",
         let mut buf: Vec<u8> = vec![];
         write_stla(&mesh, &mut buf).expect("write_stla succeeds");
 
-        let mut cursor = std::io::Cursor::new(buf);
-        let round_tripped =
-            crate::stl::stla::AsciiStlReader::create_triangles_iterator(&mut cursor)
-                .expect("reader constructs")
-                .as_indexed_mesh(None)
-                .expect("read succeeds");
+        let scene = crate::stl::stla::read_stla_slice(&buf).expect("document parses");
+        let leaf = scene.first_leaf_id().expect("one leaf");
+        let round_tripped = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
 
         // Three vertices, one face. Vertex ordering inside the mesh
         // is first-seen so it matches the input.

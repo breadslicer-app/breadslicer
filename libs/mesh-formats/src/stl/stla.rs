@@ -11,18 +11,22 @@
 //! has emitted files with uppercase keywords. Slic3r adopted
 //! case-insensitive parsing after a real-world crash report against
 //! such a file: https://github.com/slic3r/Slic3r/issues/2971. This
-//! reader follows the same convention: tokens are lowered at
-//! line-split time and the probe regex matches case-insensitively.
+//! reader follows the same convention: keywords are compared with
+//! `eq_ignore_ascii_case` and the probe regex matches
+//! case-insensitively.
+//!
+//! The parser works over the whole document as one in-memory `str`;
+//! the facet grammar allocates nothing per line or per token.
 
 use std::io::{BufRead, BufReader, Read, Seek};
+use std::str::Lines;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex};
+use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_from_soup};
 
 use crate::error::LoadStlError;
-use crate::stl::TriangleIterator;
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
@@ -38,151 +42,186 @@ static ASTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(ASTL_HEADER
 static ASTL_HEADER_RE_LN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(ASTL_HEADER_PATTERN_LN).unwrap());
 
-pub struct AsciiStlReader<'a> {
-    lines: Box<dyn Iterator<Item = Result<Vec<String>>> + 'a>,
-}
+/// True when the stream's first line looks like an ASCII STL `solid`
+/// header. Seeks back to the start of the stream before returning.
+pub(crate) fn probe<F: Read + Seek>(read: &mut F) -> Result<bool> {
+    let mut header = String::new();
+    let maybe_read_error = BufReader::new(&mut *read).read_line(&mut header);
 
-impl<'a> Iterator for AsciiStlReader<'a> {
-    type Item = Result<Triangle>;
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.next_face() {
-            Ok(None) => None,
-            Ok(Some(t)) => Some(Ok(t)),
-            Err(e) => Some(Err(e)),
-        }
+    // Try to seek back to start before evaluating potential read errors.
+    read.seek(std::io::SeekFrom::Start(0))?;
+
+    match maybe_read_error {
+        Ok(_) => Ok(ASTL_HEADER_RE_LN.is_match(&header)),
+        Err(_) => Ok(false),
     }
 }
 
-impl<'a> AsciiStlReader<'a> {
-    pub fn probe<F: Read + Seek>(read: &mut F) -> Result<bool> {
-        let mut header = String::new();
-        let maybe_read_error = BufReader::new(&mut *read).read_line(&mut header);
-
-        // Try to seek back to start before evaluating potential read errors.
-        read.seek(std::io::SeekFrom::Start(0))?;
-
-        match maybe_read_error {
-            Ok(_) => Ok(ASTL_HEADER_RE_LN.is_match(&header)),
-            Err(_) => Ok(false),
-        }
-    }
-
-    pub fn extract_metadata<F: Read + Seek>(read: &mut F) -> Result<MeshMetadata> {
-        let mut header = String::new();
-        let maybe_read_error = BufReader::new(&mut *read).read_line(&mut header);
-
-        // Try to seek back to start before evaluating potential read errors.
-        read.seek(std::io::SeekFrom::Start(0))?;
-        maybe_read_error?; // Unwraps any potential error
-
-        match ASTL_HEADER_RE_LN.captures(&header) {
-            Some(c) => Ok(MeshMetadata {
-                name: match c.name("name") {
-                    Some(n) => {
-                        if !n.is_empty() {
-                            Some(String::from(n.as_str()))
-                        } else {
-                            None
-                        }
-                    }
-                    None => None,
-                },
-                ..Default::default()
-            }),
-            None => Ok(MeshMetadata::default()),
-        }
-    }
-
-    pub fn create_triangles_iterator(
-        read: &'a mut dyn Read,
-    ) -> Result<Box<dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError> + 'a>> {
-        let mut lines = BufReader::new(read).lines();
-
-        // Consume first line
-        match lines.next() {
-            Some(Err(e)) => return Err(e.into()),
-            Some(Ok(ref line)) if !ASTL_HEADER_RE.is_match(line) => {
-                return Err(LoadStlError::AsciiHeaderMissing);
+/// Reads an ASCII STL document from an in-memory byte slice into a
+/// one-leaf scene.
+///
+/// UTF-8 validity is only required up to the `endsolid` line: the
+/// retired line-streaming reader stopped there and never read the
+/// rest, so files carrying binary junk after the closing line load
+/// fine and must keep doing so.
+pub(crate) fn read_stla_slice(bytes: &[u8]) -> Result<Scene> {
+    match str::from_utf8(bytes) {
+        Ok(text) => parse_document(text),
+        Err(utf8_error) => {
+            // Parse the complete lines before the first invalid
+            // sequence. If the grammar concludes (via `endsolid`) or
+            // fails inside them, that outcome stands; only a document
+            // that needs the line holding the invalid sequence
+            // reports the invalid-data error the old line reader
+            // produced when it reached that line.
+            let valid = str::from_utf8(&bytes[..utf8_error.valid_up_to()])
+                .map_err(|_| invalid_utf8_error())?;
+            let complete = match valid.rfind('\n') {
+                Some(newline) => &valid[..=newline],
+                None => "",
+            };
+            match parse_document(complete) {
+                Err(
+                    LoadStlError::AsciiEmptyInput | LoadStlError::AsciiEofWhileExpecting { .. },
+                ) => Err(invalid_utf8_error()),
+                outcome => outcome,
             }
-            None => {
-                return Err(LoadStlError::AsciiEmptyInput);
-            }
-            _ => {}
         }
-
-        // Lowercase every token. Keyword comparisons downstream
-        // (`face_header[0] == "facet"`, `expect_static(...)`, etc.)
-        // are written against bare lowercase literals; lowering at
-        // this single point keeps them so. f32 parsing is unaffected:
-        // `1.0E+02` and `1.0e+02` both parse to the same value.
-        let lines = lines
-            .map(|line_result| {
-                line_result
-                    .map(|l| {
-                        l.split_whitespace()
-                            .map(|t| t.to_ascii_lowercase())
-                            .collect::<Vec<_>>()
-                    })
-                    .map_err(LoadStlError::from)
-            })
-            .filter(|result| !matches!(result, Ok(tokens) if tokens.is_empty()));
-
-        Ok(Box::new(AsciiStlReader {
-            lines: Box::new(lines),
-        })
-            as Box<
-                dyn TriangleIterator<Item = Result<Triangle>, Error = LoadStlError>,
-            >)
     }
+}
 
-    fn next_face(&mut self) -> Result<Option<Triangle>> {
-        let Some(face_header) = self.lines.next() else {
-            return Err(LoadStlError::AsciiEofWhileExpecting {
-                what: "facet or endsolid",
+/// The invalid-UTF-8 error value the retired reader surfaced from
+/// `BufRead::read_line`: same variant, same kind, same message.
+fn invalid_utf8_error() -> LoadStlError {
+    LoadStlError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "stream did not contain valid UTF-8",
+    ))
+}
+
+/// Parses a full ASCII STL document: `solid` header line, facet
+/// blocks, `endsolid`. Lines past `endsolid` are never examined.
+fn parse_document(text: &str) -> Result<Scene> {
+    let mut lines = text.lines();
+    match lines.next() {
+        None => return Err(LoadStlError::AsciiEmptyInput),
+        Some(header) if !ASTL_HEADER_RE.is_match(header) => {
+            return Err(LoadStlError::AsciiHeaderMissing);
+        }
+        Some(_) => {}
+    }
+    // Tokenization dispatch. ASCII documents (every real STL file)
+    // take the byte-level scanner; a document holding any non-ASCII
+    // byte falls back to char-level `split_whitespace`, whose Unicode
+    // whitespace handling the retired reader exposed. Each tokenizer
+    // produces exactly `split_whitespace`'s token boundaries for the
+    // text class it is chosen for, so the dispatch is invisible in
+    // the output.
+    let soup = if text.is_ascii() {
+        parse_facets(&mut lines, |line| AsciiWhitespaceSplit { rest: line })?
+    } else {
+        parse_facets(&mut lines, str::split_whitespace)?
+    };
+    let mesh = indexed_mesh_from_soup(Some(metadata_from_text(text)), soup, u32::MAX as usize)?;
+    Ok(Scene::from(mesh))
+}
+
+/// The ASCII subset of `char::is_whitespace`: `u8::is_ascii_whitespace`
+/// plus vertical tab (0x0B), which Unicode counts as whitespace but
+/// the ASCII helper does not. Splitting on this byte set over
+/// ASCII-only text yields exactly the tokens of `split_whitespace`.
+fn is_ascii_separator(byte: u8) -> bool {
+    matches!(byte, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
+}
+
+/// Byte-level `split_whitespace` stand-in for ASCII lines: same
+/// tokens, without the per-char UTF-8 decoding.
+struct AsciiWhitespaceSplit<'t> {
+    rest: &'t str,
+}
+
+impl<'t> Iterator for AsciiWhitespaceSplit<'t> {
+    type Item = &'t str;
+
+    fn next(&mut self) -> Option<&'t str> {
+        let bytes = self.rest.as_bytes();
+        let start = bytes.iter().position(|&b| !is_ascii_separator(b))?;
+        let end = bytes[start..]
+            .iter()
+            .position(|&b| is_ascii_separator(b))
+            .map_or(bytes.len(), |len| start + len);
+        let token = &self.rest[start..end];
+        self.rest = &self.rest[end..];
+        Some(token)
+    }
+}
+
+/// Mesh name from the document's first line. The regex is anchored on
+/// a bare trailing `\n`, exactly like the retired `read_line`-based
+/// extraction: a header line ending in `\r\n`, or one with no
+/// terminator at all, yields the default (nameless) metadata.
+fn metadata_from_text(text: &str) -> MeshMetadata {
+    let header_end = text.find('\n').map_or(text.len(), |i| i + 1);
+    match ASTL_HEADER_RE_LN.captures(&text[..header_end]) {
+        Some(c) => MeshMetadata {
+            name: match c.name("name") {
+                Some(n) if !n.is_empty() => Some(String::from(n.as_str())),
+                _ => None,
+            },
+            ..Default::default()
+        },
+        None => MeshMetadata::default(),
+    }
+}
+
+/// Parses facet blocks until `endsolid`, collecting the triangle soup.
+fn parse_facets<'t, I, F>(lines: &mut Lines<'t>, tokenize: F) -> Result<Vec<Triangle>>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I + Copy,
+{
+    let mut soup: Vec<Triangle> = Vec::new();
+    loop {
+        let mut content = next_content_line(lines, tokenize, "facet or endsolid")?;
+        if content.first.eq_ignore_ascii_case("endsolid") {
+            return Ok(soup);
+        }
+        if !content.first.eq_ignore_ascii_case("facet") {
+            return Err(LoadStlError::AsciiInvalidFacetHeader {
+                tokens: lowercased_tokens(content.line),
+            });
+        }
+        let (Some(keyword), Some(x), Some(y), Some(z), None) = (
+            content.rest.next(),
+            content.rest.next(),
+            content.rest.next(),
+            content.rest.next(),
+            content.rest.next(),
+        ) else {
+            return Err(LoadStlError::AsciiInvalidFacetHeader {
+                tokens: lowercased_tokens(content.line),
             });
         };
-
-        // Our iterator is fallible
-        let face_header = face_header?;
-
-        if !face_header.is_empty() && face_header[0] == "endsolid" {
-            return Ok(None);
-        }
-
-        if face_header.len() != 5 || face_header[0] != "facet" || face_header[1] != "normal" {
+        if !keyword.eq_ignore_ascii_case("normal") {
             return Err(LoadStlError::AsciiInvalidFacetHeader {
-                tokens: face_header,
+                tokens: lowercased_tokens(content.line),
             });
         }
+        let mut normal = Normal::new([
+            parse_finite_f32(x, "facet normal component")?,
+            parse_finite_f32(y, "facet normal component")?,
+            parse_finite_f32(z, "facet normal component")?,
+        ]);
 
-        let mut normal_components = [0.0_f32; 3];
-        AsciiStlReader::tokens_to_f32(
-            &face_header[2..5],
-            &mut normal_components,
-            "facet normal component",
-        )?;
-        let mut normal = Normal::new(normal_components);
-
-        self.expect_static(&["outer", "loop"], "outer loop")?;
+        expect_keywords(lines, tokenize, &["outer", "loop"], "outer loop")?;
 
         let mut vertices = [Vertex::new([0.0; 3]); 3];
         for vertex_slot in &mut vertices {
-            let Some(line) = self.lines.next() else {
-                return Err(LoadStlError::AsciiEofWhileExpecting { what: "vertex" });
-            };
-
-            let line = line?;
-
-            if line.len() != 4 || line[0] != "vertex" {
-                return Err(LoadStlError::AsciiInvalidVertexLine { tokens: line });
-            }
-            let mut coords = [0.0_f32; 3];
-            AsciiStlReader::tokens_to_f32(&line[1..4], &mut coords, "vertex coordinate")?;
-            *vertex_slot = Vertex::new(coords);
+            *vertex_slot = parse_vertex_line(lines, tokenize)?;
         }
 
-        self.expect_static(&["endloop"], "endloop")?;
-        self.expect_static(&["endfacet"], "endfacet")?;
+        expect_keywords(lines, tokenize, &["endloop"], "endloop")?;
+        expect_keywords(lines, tokenize, &["endfacet"], "endfacet")?;
 
         // We interpret a zero-length normal vector as a hint to compute it at load time.
         // If the triangle is truly degenerate the recomputation can't produce a meaningful
@@ -194,58 +233,135 @@ impl<'a> AsciiStlReader<'a> {
             normal = recomputed;
         }
 
-        Ok(Some(Triangle::new(normal, vertices)))
-    }
-
-    fn tokens_to_f32(tokens: &[String], output: &mut [f32], what: &'static str) -> Result<()> {
-        assert_eq!(tokens.len(), output.len());
-
-        for (token, out) in tokens.iter().zip(output.iter_mut()) {
-            let f = token
-                .parse::<f32>()
-                .map_err(|source| LoadStlError::InvalidFloat {
-                    token: token.clone(),
-                    source,
-                })?;
-
-            if !f.is_finite() {
-                return Err(LoadStlError::NonFiniteFloat { what, value: f });
-            }
-            *out = f;
-        }
-
-        Ok(())
-    }
-
-    fn expect_static(&mut self, expectation: &[&str], label: &'static str) -> Result<()> {
-        let Some(line) = self.lines.next() else {
-            return Err(LoadStlError::AsciiEofWhileExpecting { what: label });
-        };
-
-        let line = line?;
-
-        if line != expectation {
-            return Err(LoadStlError::AsciiUnexpected {
-                expected: label,
-                got: line,
-            });
-        }
-
-        Ok(())
+        soup.push(Triangle::new(normal, vertices));
     }
 }
 
-impl<'a> TriangleIterator for AsciiStlReader<'a> {
-    type Error = LoadStlError;
+/// One `vertex x y z` line.
+fn parse_vertex_line<'t, I, F>(lines: &mut Lines<'t>, tokenize: F) -> Result<Vertex>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I + Copy,
+{
+    let mut content = next_content_line(lines, tokenize, "vertex")?;
+    let (Some(x), Some(y), Some(z), None) = (
+        content.rest.next(),
+        content.rest.next(),
+        content.rest.next(),
+        content.rest.next(),
+    ) else {
+        return Err(LoadStlError::AsciiInvalidVertexLine {
+            tokens: lowercased_tokens(content.line),
+        });
+    };
+    if !content.first.eq_ignore_ascii_case("vertex") {
+        return Err(LoadStlError::AsciiInvalidVertexLine {
+            tokens: lowercased_tokens(content.line),
+        });
+    }
+    Ok(Vertex::new([
+        parse_finite_f32(x, "vertex coordinate")?,
+        parse_finite_f32(y, "vertex coordinate")?,
+        parse_finite_f32(z, "vertex coordinate")?,
+    ]))
+}
+
+/// The next content line must hold exactly `expectation`, compared
+/// token by token, case-insensitively.
+fn expect_keywords<'t, I, F>(
+    lines: &mut Lines<'t>,
+    tokenize: F,
+    expectation: &[&str],
+    label: &'static str,
+) -> Result<()>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I + Copy,
+{
+    let mut content = next_content_line(lines, tokenize, label)?;
+    let mut tokens = std::iter::once(content.first).chain(&mut content.rest);
+    let matches = expectation.iter().all(|expected| {
+        tokens
+            .next()
+            .is_some_and(|t| t.eq_ignore_ascii_case(expected))
+    }) && tokens.next().is_none();
+    if matches {
+        Ok(())
+    } else {
+        Err(LoadStlError::AsciiUnexpected {
+            expected: label,
+            got: lowercased_tokens(content.line),
+        })
+    }
+}
+
+/// A non-blank line together with its already-started token iterator,
+/// so no line is tokenized twice on the hot path.
+struct ContentLine<'t, I> {
+    line: &'t str,
+    first: &'t str,
+    rest: I,
+}
+
+/// The next line holding at least one token, skipping blank lines like
+/// the retired reader's token-level filter did. Running out of lines
+/// yields the EOF error for `expecting`.
+fn next_content_line<'t, I, F>(
+    lines: &mut Lines<'t>,
+    tokenize: F,
+    expecting: &'static str,
+) -> Result<ContentLine<'t, I>>
+where
+    I: Iterator<Item = &'t str>,
+    F: Fn(&'t str) -> I,
+{
+    for line in lines {
+        let mut tokens = tokenize(line);
+        if let Some(first) = tokens.next() {
+            return Ok(ContentLine {
+                line,
+                first,
+                rest: tokens,
+            });
+        }
+    }
+    Err(LoadStlError::AsciiEofWhileExpecting { what: expecting })
+}
+
+/// Parses a finite f32 straight from a token sub-slice. Acceptance is
+/// unaffected by case (f32 parsing already treats the inf/nan
+/// spellings case-insensitively), so lowercasing survives only here,
+/// on the error path: the retired reader lowercased every token up
+/// front and its error payloads carried the lowercased form.
+fn parse_finite_f32(token: &str, what: &'static str) -> Result<f32> {
+    let value = token
+        .parse::<f32>()
+        .map_err(|source| LoadStlError::InvalidFloat {
+            token: token.to_ascii_lowercase(),
+            source,
+        })?;
+    if !value.is_finite() {
+        return Err(LoadStlError::NonFiniteFloat { what, value });
+    }
+    Ok(value)
+}
+
+/// Error-payload helper: token vectors in the lowercased form the
+/// retired reader produced. Cold path only.
+fn lowercased_tokens(line: &str) -> Vec<String> {
+    line.split_whitespace()
+        .map(|t| t.to_ascii_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
 mod test_ascii_stl_reader {
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex};
 
-    use super::AsciiStlReader;
+    use super::{metadata_from_text, probe, read_stla_slice};
+    use crate::error::LoadStlError;
 
-    static STL_1: &[u8; 304] = b"solid foobar
+    static STL_1: &str = "solid foobar
    facet normal -1.000000e+000 0.000000e+000 0.000000e+000
       outer loop
          vertex 0.000000e+000 1.000000e+002 1.000000e+002
@@ -255,7 +371,7 @@ mod test_ascii_stl_reader {
    endfacet
 endsolid foobar";
 
-    static STL_2: &[u8; 291] = b"solid \n   facet normal -1.000000e+000 0.000000e+000 0.000000e+000
+    static STL_2: &str = "solid \n   facet normal -1.000000e+000 0.000000e+000 0.000000e+000
       outer loop
          vertex 0.000000e+000 1.000000e+002 1.000000e+002
          vertex 0.000000e+000 1.000000e+002 0.000000e+000
@@ -264,92 +380,77 @@ endsolid foobar";
    endfacet
 endsolid";
 
+    fn single_leaf_mesh(scene: &Scene) -> IndexedMesh {
+        let leaf = scene.first_leaf_id().expect("one leaf");
+        scene
+            .mesh_at_leaf(leaf)
+            .expect("leaf resolves to a mesh")
+            .clone()
+    }
+
     #[test]
     fn test_probe() {
-        let mut reader_1 = std::io::Cursor::new(*STL_1);
-        assert!(AsciiStlReader::probe(&mut reader_1).unwrap());
+        let mut reader_1 = std::io::Cursor::new(STL_1.as_bytes());
+        assert!(probe(&mut reader_1).unwrap());
 
-        let mut reader_2 = std::io::Cursor::new(*STL_2);
-        assert!(AsciiStlReader::probe(&mut reader_2).unwrap());
+        let mut reader_2 = std::io::Cursor::new(STL_2.as_bytes());
+        assert!(probe(&mut reader_2).unwrap());
 
         let mut reader_3 = std::io::Cursor::new(
             b"something
         else",
         );
-        assert!(!AsciiStlReader::probe(&mut reader_3).unwrap());
+        assert!(!probe(&mut reader_3).unwrap());
     }
 
     #[test]
-    fn test_extract_metadata() {
-        let mut reader_1 = std::io::Cursor::new(*STL_1);
-        let metadata_1 = AsciiStlReader::extract_metadata(&mut reader_1).unwrap();
+    fn metadata_captures_the_header_name() {
         assert_eq!(
+            metadata_from_text(STL_1),
             MeshMetadata {
                 name: Some("foobar".into()),
                 ..Default::default()
             },
-            metadata_1
         );
-
-        let mut reader_2 = std::io::Cursor::new(*STL_2);
-        let metadata_2 = AsciiStlReader::extract_metadata(&mut reader_2).unwrap();
-        assert_eq!(MeshMetadata::default(), metadata_2);
+        assert_eq!(metadata_from_text(STL_2), MeshMetadata::default());
     }
 
     #[test]
-    fn test_as_indexed_mesh() {
-        let mut reader_1 = std::io::Cursor::new(*STL_1);
-        let mesh = AsciiStlReader::create_triangles_iterator(&mut reader_1)
-            .unwrap()
-            .as_indexed_mesh(None)
-            .unwrap();
+    fn metadata_preserves_original_case_of_name() {
+        // The keyword `SOLID` matches case-insensitively but the
+        // captured name group retains its original case (regex
+        // captures are verbatim slices of the input). A user who
+        // exports an STL with a name like "PartA" must see it as
+        // "PartA", not "parta".
+        let scene = read_stla_slice(b"SOLID PartA-001\nendsolid PartA-001").unwrap();
+        let mesh = single_leaf_mesh(&scene);
+        let meta = mesh.meta.expect("reader attaches metadata");
+        assert_eq!(meta.name.as_deref(), Some("PartA-001"));
+    }
 
+    #[test]
+    fn crlf_header_line_yields_no_name() {
+        // Long-standing quirk, pinned: the name regex is anchored on a
+        // bare `\n`, so a `\r\n`-terminated header line never captures
+        // a name even though the document itself parses fine.
         assert_eq!(
-            IndexedMesh {
-                meta: None,
-                vertices: vec![
-                    Vertex::new([0.0, 100.0, 100.0]),
-                    Vertex::new([0.0, 100.0, 0.0]),
-                    Vertex::new([0.0, 0.0, 100.0]),
-                ],
-                faces: vec![IndexedTriangle::from_raw_indices(
-                    Normal::new([-1.0, 0.0, 0.0]),
-                    [0, 1, 2],
-                )],
-            },
-            mesh
+            metadata_from_text("solid foobar\r\nendsolid foobar\r\n"),
+            MeshMetadata::default(),
         );
     }
 
-    /// Same geometry as STL_1, every keyword uppercased. Mirrors the
-    /// admesh-style files that crashed Slic3r before it adopted
-    /// case-insensitive parsing.
-    static STL_1_UPPER: &[u8] = b"SOLID foobar
-   FACET NORMAL -1.000000e+000 0.000000e+000 0.000000e+000
-      OUTER LOOP
-         VERTEX 0.000000e+000 1.000000e+002 1.000000e+002
-         VERTEX 0.000000e+000 1.000000e+002 0.000000e+000
-         VERTEX 0.000000e+000 0.000000e+000 1.000000e+002
-      ENDLOOP
-   ENDFACET
-ENDSOLID foobar";
-
-    /// Same geometry as STL_1, keywords in title case. Catches the
-    /// in-between of "all lower" and "all upper", in case any
-    /// downstream comparison still uses an exact-match pattern.
-    static STL_1_MIXED: &[u8] = b"Solid foobar
-   Facet Normal -1.000000e+000 0.000000e+000 0.000000e+000
-      Outer Loop
-         Vertex 0.000000e+000 1.000000e+002 1.000000e+002
-         Vertex 0.000000e+000 1.000000e+002 0.000000e+000
-         Vertex 0.000000e+000 0.000000e+000 1.000000e+002
-      EndLoop
-   EndFacet
-EndSolid foobar";
+    #[test]
+    fn unterminated_header_line_yields_no_name() {
+        // Same anchor quirk: no trailing `\n`, no captured name.
+        assert_eq!(metadata_from_text("solid foobar"), MeshMetadata::default());
+    }
 
     fn expected_mesh() -> IndexedMesh {
         IndexedMesh {
-            meta: None,
+            meta: Some(MeshMetadata {
+                name: Some("foobar".into()),
+                ..Default::default()
+            }),
             vertices: vec![
                 Vertex::new([0.0, 100.0, 100.0]),
                 Vertex::new([0.0, 100.0, 0.0]),
@@ -363,35 +464,59 @@ EndSolid foobar";
     }
 
     #[test]
+    fn parses_a_single_facet_document() {
+        let scene = read_stla_slice(STL_1.as_bytes()).unwrap();
+        assert_eq!(single_leaf_mesh(&scene), expected_mesh());
+    }
+
+    /// Same geometry as STL_1, every keyword uppercased. Mirrors the
+    /// admesh-style files that crashed Slic3r before it adopted
+    /// case-insensitive parsing.
+    static STL_1_UPPER: &str = "SOLID foobar
+   FACET NORMAL -1.000000e+000 0.000000e+000 0.000000e+000
+      OUTER LOOP
+         VERTEX 0.000000e+000 1.000000e+002 1.000000e+002
+         VERTEX 0.000000e+000 1.000000e+002 0.000000e+000
+         VERTEX 0.000000e+000 0.000000e+000 1.000000e+002
+      ENDLOOP
+   ENDFACET
+ENDSOLID foobar";
+
+    /// Same geometry as STL_1, keywords in title case. Catches the
+    /// in-between of "all lower" and "all upper", in case any
+    /// downstream comparison still uses an exact-match pattern.
+    static STL_1_MIXED: &str = "Solid foobar
+   Facet Normal -1.000000e+000 0.000000e+000 0.000000e+000
+      Outer Loop
+         Vertex 0.000000e+000 1.000000e+002 1.000000e+002
+         Vertex 0.000000e+000 1.000000e+002 0.000000e+000
+         Vertex 0.000000e+000 0.000000e+000 1.000000e+002
+      EndLoop
+   EndFacet
+EndSolid foobar";
+
+    #[test]
     fn probe_accepts_uppercase_solid_header() {
-        let mut reader = std::io::Cursor::new(STL_1_UPPER);
-        assert!(AsciiStlReader::probe(&mut reader).unwrap());
+        let mut reader = std::io::Cursor::new(STL_1_UPPER.as_bytes());
+        assert!(probe(&mut reader).unwrap());
     }
 
     #[test]
     fn probe_accepts_mixed_case_solid_header() {
-        let mut reader = std::io::Cursor::new(STL_1_MIXED);
-        assert!(AsciiStlReader::probe(&mut reader).unwrap());
+        let mut reader = std::io::Cursor::new(STL_1_MIXED.as_bytes());
+        assert!(probe(&mut reader).unwrap());
     }
 
     #[test]
     fn parses_all_uppercase_keywords() {
-        let mut reader = std::io::Cursor::new(STL_1_UPPER);
-        let mesh = AsciiStlReader::create_triangles_iterator(&mut reader)
-            .unwrap()
-            .as_indexed_mesh(None)
-            .unwrap();
-        assert_eq!(mesh, expected_mesh());
+        let scene = read_stla_slice(STL_1_UPPER.as_bytes()).unwrap();
+        assert_eq!(single_leaf_mesh(&scene), expected_mesh());
     }
 
     #[test]
     fn parses_mixed_case_keywords() {
-        let mut reader = std::io::Cursor::new(STL_1_MIXED);
-        let mesh = AsciiStlReader::create_triangles_iterator(&mut reader)
-            .unwrap()
-            .as_indexed_mesh(None)
-            .unwrap();
-        assert_eq!(mesh, expected_mesh());
+        let scene = read_stla_slice(STL_1_MIXED.as_bytes()).unwrap();
+        assert_eq!(single_leaf_mesh(&scene), expected_mesh());
     }
 
     #[test]
@@ -417,15 +542,79 @@ EndSolid foobar";
     }
 
     #[test]
-    fn extract_metadata_preserves_original_case_of_name() {
-        // The keyword `SOLID` matches case-insensitively but the
-        // captured name group retains its original case (regex
-        // captures are verbatim slices of the input). A user who
-        // exports an STL with a name like "PartA" must see it as
-        // "PartA", not "parta".
-        let bytes: &[u8] = b"SOLID PartA-001\nendsolid PartA-001";
-        let mut reader = std::io::Cursor::new(bytes);
-        let metadata = AsciiStlReader::extract_metadata(&mut reader).unwrap();
-        assert_eq!(metadata.name.as_deref(), Some("PartA-001"));
+    fn binary_junk_after_the_endsolid_line_is_ignored() {
+        // The retired streaming reader stopped at `endsolid` and never
+        // read further, so trailing binary garbage (invalid UTF-8
+        // included) does not fail the load.
+        let mut bytes = STL_1.as_bytes().to_vec();
+        bytes.extend_from_slice(b"\n\xFF\x00\xFE binary junk");
+        let scene = read_stla_slice(&bytes).unwrap();
+        assert_eq!(single_leaf_mesh(&scene), expected_mesh());
+    }
+
+    #[test]
+    fn invalid_utf8_where_the_grammar_needs_it_is_invalid_data() {
+        let err = read_stla_slice(b"solid foo\n\xFF\xFEfacet").unwrap_err();
+        match err {
+            LoadStlError::Io(io) => {
+                assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+            }
+            other => panic!("expected an Io error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn earlier_grammar_error_wins_over_later_invalid_utf8() {
+        // The grammar fails on the facet line before the line holding
+        // the invalid sequence is ever needed, exactly like the
+        // line-by-line reader behaved.
+        let err = read_stla_slice(b"solid foo\n  facet banana 0 0 0\n\xFF").unwrap_err();
+        assert!(matches!(err, LoadStlError::AsciiInvalidFacetHeader { .. }));
+    }
+
+    #[test]
+    fn missing_endsolid_reports_eof_while_expecting() {
+        let err = read_stla_slice(b"solid foo\n").unwrap_err();
+        assert!(matches!(
+            err,
+            LoadStlError::AsciiEofWhileExpecting {
+                what: "facet or endsolid",
+            },
+        ));
+    }
+
+    #[test]
+    fn vertical_tab_separates_tokens_on_the_ascii_path() {
+        // 0x0B is whitespace for `char::is_whitespace` but not for
+        // `u8::is_ascii_whitespace`; the byte-level tokenizer must
+        // treat it as a separator to match the retired reader.
+        let doc = b"solid s\nfacet normal 0 0 1\nouter loop\nvertex\x0B0 0 0\n\
+            vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s";
+        let scene = read_stla_slice(doc).unwrap();
+        assert_eq!(single_leaf_mesh(&scene).faces().len(), 1);
+    }
+
+    #[test]
+    fn nbsp_separates_tokens_on_the_unicode_path() {
+        // A no-break space is Unicode whitespace, so the retired
+        // reader split on it; the non-ASCII byte routes the document
+        // to the char-level tokenizer, which does the same.
+        let doc = "solid s\nfacet normal 0 0 1\nouter loop\nvertex\u{00A0}0 0 0\n\
+            vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s";
+        let scene = read_stla_slice(doc.as_bytes()).unwrap();
+        assert_eq!(single_leaf_mesh(&scene).faces().len(), 1);
+    }
+
+    #[test]
+    fn invalid_float_error_carries_the_lowercased_token() {
+        // The retired reader lowercased every token up front, so its
+        // error payloads carried the lowercased form; that payload
+        // shape is preserved.
+        let doc = b"solid foo\n facet normal 0 0 1\n outer loop\n vertex NOPE 0 0\n";
+        let err = read_stla_slice(doc).unwrap_err();
+        match err {
+            LoadStlError::InvalidFloat { token, .. } => assert_eq!(token, "nope"),
+            other => panic!("expected InvalidFloat, got {other:?}"),
+        }
     }
 }
