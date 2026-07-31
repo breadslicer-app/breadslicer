@@ -23,6 +23,7 @@ mod clipboard;
 mod error_dialog;
 mod gizmo;
 mod gizmo_geometry;
+pub mod graphics_adapter;
 mod i18n;
 mod language;
 mod load_progress;
@@ -109,16 +110,22 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         backends,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("slicer shared device"),
-        required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::default(),
-        memory_hints: wgpu::MemoryHints::default(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        trace: wgpu::Trace::Off,
-    }))?;
+    // Adapter choice goes through `graphics_adapter` rather than
+    // `Instance::request_adapter`, which with default options returns
+    // whatever the platform enumerated first. See that module for why
+    // that matters on machines carrying more than one adapter.
+    let (adapter, device, queue) = graphics_adapter::select_adapter_and_device(
+        &instance,
+        backends,
+        &wgpu::DeviceDescriptor {
+            label: Some("slicer shared device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            trace: wgpu::Trace::Off,
+        },
+    )?;
 
     // Pin wgpu-core's SNATCH_LOCK_TRACE thread-local on the main
     // thread before BackendSelector::select() registers Slint's own
