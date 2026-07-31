@@ -120,12 +120,18 @@ fn install_rendering_notifier(
 ) -> Result<(), slint::SetRenderingNotifierError> {
     ui.window()
         .set_rendering_notifier(move |state, api| match state {
-            slint::RenderingState::RenderingSetup => {
-                let slint::GraphicsAPI::WGPU29 { device, queue, .. } = api else {
-                    return;
-                };
-                ctrl.handle_rendering_setup(device.clone(), queue.clone());
-            }
+            slint::RenderingState::RenderingSetup => match api {
+                slint::GraphicsAPI::WGPU29 { device, queue, .. } => {
+                    ctrl.handle_rendering_setup(device.clone(), queue.clone());
+                }
+                // Slint hands over whatever the surface it built runs
+                // on, and the viewport is drawn with wgpu, so anything
+                // else leaves this window without a device for good.
+                // Recording which API arrived turns that into something
+                // the user can be told and a report can name, rather
+                // than a viewport that silently stays empty.
+                other => ctrl.handle_unsupported_graphics_api(format!("{other:?}")),
+            },
             slint::RenderingState::BeforeRendering => {
                 ctrl.handle_before_rendering();
             }

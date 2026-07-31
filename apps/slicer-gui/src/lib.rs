@@ -24,6 +24,7 @@ mod error_dialog;
 mod gizmo;
 mod gizmo_geometry;
 pub mod graphics_adapter;
+mod graphics_status;
 mod i18n;
 mod language;
 mod load_progress;

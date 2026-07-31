@@ -1032,6 +1032,15 @@ impl ViewportController {
         self.post_renderer_install();
     }
 
+    /// `RenderingSetup` handler for the case the viewport cannot use:
+    /// the window is rendering through a graphics API other than the
+    /// wgpu one this build draws with, so no device will be published
+    /// for it and the viewport stays empty. Records which API arrived
+    /// so anything that needs a device can explain the absence.
+    pub fn handle_unsupported_graphics_api(&self, api: String) {
+        self.session.loader().note_unsupported_graphics_api(api);
+    }
+
     /// Post-install side effects that are independent of the wgpu
     /// device / queue: rearm the loader's upload-failure counter,
     /// flag an upload if a scene is already loaded, request a redraw,

@@ -29,6 +29,7 @@ use sc_project_formats::{
 
 use crate::build_volume::BuildVolume;
 use crate::error_dialog::DialogManager;
+use crate::graphics_status::GraphicsUnavailable;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
     MAX_MESH_FILE_SIZE_BYTES, check_file_size, ensure_measured_size_within, panic_message,
@@ -184,9 +185,46 @@ fn start_load_with_ticket_deposits_an_err_when_no_gpu_snapshot_is_available() {
     let Err(err) = result else {
         panic!("no-gpu must deposit an Err");
     };
+    // No setup has run, so the device may still be on its way and the
+    // dialog has to say so rather than name an internal condition.
+    assert_eq!(
+        err.to_string(),
+        GraphicsUnavailable::AwaitingSetup.message(),
+        "the bailout must report why there is no device"
+    );
+}
+
+#[test]
+fn start_load_with_ticket_reports_an_unusable_renderer_when_one_was_seen() {
+    // Same empty device slot as above, but here a setup already went
+    // past carrying an API this build cannot draw with. Waiting will
+    // not help, so the user must be told something different.
+    let l = loader();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("small.stl");
+    std::fs::File::create(&path).expect("create");
+    l.note_unsupported_graphics_api("GraphicsAPI::NativeOpenGL".to_string());
+    let ticket = l.begin_load().expect("begin");
+    start_load_with_ticket(
+        ticket,
+        path.clone(),
+        &l,
+        BuildVolume::new(100.0, 60.0, 80.0),
+    );
+    let (drained_path, result) = l
+        .drain_deposit_for_test()
+        .expect("no-gpu bailout must deposit a result");
+    assert_eq!(drained_path, path);
+    let Err(err) = result else {
+        panic!("no-gpu must deposit an Err");
+    };
+    assert_eq!(
+        err.to_string(),
+        GraphicsUnavailable::UnsupportedApi("GraphicsAPI::NativeOpenGL".to_string()).message()
+    );
     assert!(
-        err.to_string().contains("Graphics device"),
-        "expected 'Graphics device' wording, got: {err}"
+        err.to_string().contains("GraphicsAPI::NativeOpenGL"),
+        "the renderer in use must reach the dialog: {err}"
     );
 }
 

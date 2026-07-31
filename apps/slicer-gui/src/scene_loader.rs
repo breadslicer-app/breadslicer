@@ -53,6 +53,7 @@ use slint::wgpu_29::wgpu;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
+use crate::graphics_status::{GraphicsGap, GraphicsUnavailable};
 use crate::i18n::ctr;
 use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
@@ -228,6 +229,11 @@ pub struct SceneLoader {
     // `spawn_load` time so parse + GPU upload both run off the UI
     // thread; the UI thread only installs the finished `MeshGpu`.
     gpu: Mutex<Option<(wgpu::Device, crate::mesh_render::DeviceToken, wgpu::Queue)>>,
+    // Why `gpu` is empty, for the times it is. Only consulted when the
+    // slot holds nothing, so it can never disagree with the slot about
+    // whether a device exists. Driven from the same two calls that fill
+    // and empty the slot, which is what keeps the pair in step.
+    graphics_gap: GraphicsGap,
     // Shared load-progress cell: packed (phase, permille) values, see
     // `load_progress`. The worker writes through a `LoadProgressSink`
     // clone; the UI polls it while a load is in flight.
@@ -250,6 +256,7 @@ impl SceneLoader {
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
             gpu: Mutex::new(None),
+            graphics_gap: GraphicsGap::default(),
             progress: Arc::new(AtomicU32::new(0)),
             progress_timer: Rc::new(slint::Timer::default()),
         }
@@ -272,6 +279,7 @@ impl SceneLoader {
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
             gpu: Mutex::new(None),
+            graphics_gap: GraphicsGap::default(),
             progress: Arc::new(AtomicU32::new(0)),
             progress_timer: Rc::new(slint::Timer::default()),
         }
@@ -383,6 +391,30 @@ impl SceneLoader {
     ) {
         *self.gpu.lock().unwrap_or_else(PoisonError::into_inner) =
             Some((device, device_token, queue));
+        self.graphics_gap.note_device_published();
+    }
+
+    /// Records that a `RenderingSetup` arrived carrying a graphics API
+    /// this build cannot render through. The device slot stays empty,
+    /// and anything that needs a device now has a reason to report
+    /// instead of an unexplained absence.
+    pub fn note_unsupported_graphics_api(&self, api: String) {
+        self.graphics_gap.note_unsupported_api(api);
+    }
+
+    /// Why there is no device, or `None` when there is one. Derived
+    /// from the device slot so readiness has a single source: the
+    /// recorded reason only speaks for an empty slot.
+    pub fn graphics_unavailable(&self) -> Option<GraphicsUnavailable> {
+        if self
+            .gpu
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+        {
+            return None;
+        }
+        Some(self.graphics_gap.reason())
     }
 
     /// Clears the graphics device/queue. Called on
@@ -918,6 +950,59 @@ mod scene_loader_tests {
         assert!(
             loader.gpu_snapshot().is_none(),
             "clear_gpu on an already-empty slot must stay empty"
+        );
+    }
+
+    #[test]
+    fn a_fresh_loader_is_awaiting_setup() {
+        let loader = loader();
+        assert_eq!(
+            loader.graphics_unavailable(),
+            Some(GraphicsUnavailable::AwaitingSetup),
+            "before any setup, a device may still arrive"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_api_is_remembered() {
+        let loader = loader();
+        loader.note_unsupported_graphics_api("GraphicsAPI::NativeOpenGL".to_string());
+        assert_eq!(
+            loader.graphics_unavailable(),
+            Some(GraphicsUnavailable::UnsupportedApi(
+                "GraphicsAPI::NativeOpenGL".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_second_unsupported_api_replaces_the_first() {
+        // The window can only render through one API at a time, so the
+        // latest setup is the one that describes the current state.
+        let loader = loader();
+        loader.note_unsupported_graphics_api("GraphicsAPI::NativeOpenGL".to_string());
+        loader.note_unsupported_graphics_api("GraphicsAPI::WebGL".to_string());
+        assert_eq!(
+            loader.graphics_unavailable(),
+            Some(GraphicsUnavailable::UnsupportedApi(
+                "GraphicsAPI::WebGL".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn an_unsupported_api_survives_a_teardown() {
+        // A teardown does not make an unusable renderer usable, so the
+        // reason has to outlive it; otherwise the next request would
+        // claim a device is still on its way.
+        let loader = loader();
+        loader.note_unsupported_graphics_api("GraphicsAPI::NativeOpenGL".to_string());
+        loader.clear_gpu();
+        assert_eq!(
+            loader.graphics_unavailable(),
+            Some(GraphicsUnavailable::UnsupportedApi(
+                "GraphicsAPI::NativeOpenGL".to_string()
+            ))
         );
     }
 }

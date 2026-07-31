@@ -38,6 +38,7 @@ use sc_project_formats::{
 use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
+use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink, ProgressReader};
 use crate::mesh_health::scene_mesh_health;
@@ -124,12 +125,13 @@ pub(crate) fn start_load_with_ticket(
     let Some((device, device_token, _queue)) = loader.gpu_snapshot() else {
         // RenderingSetup hasn't fired (or a teardown cleared the
         // slot between ticket acquisition and now). `begin_load` does
-        // not gate on this; bail with a synthetic error so the user
-        // sees *something* rather than a stuck `loading=true`.
-        ticket.deposit(
-            path,
-            Err(anyhow::anyhow!("Graphics device is not available yet")),
-        );
+        // not gate on this; bail with the loader's own account of why
+        // there is no device, so the dialog says something the user can
+        // act on rather than naming an internal condition.
+        let reason = loader
+            .graphics_unavailable()
+            .unwrap_or(GraphicsUnavailable::AwaitingSetup);
+        ticket.deposit(path, Err(anyhow::Error::msg(reason.message())));
         return;
     };
     let sink = loader.progress_sink();
