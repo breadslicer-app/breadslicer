@@ -19,7 +19,8 @@ use crate::app_settings::AppSettings;
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
 use crate::i18n::ctr;
 use crate::mesh_loader::{
-    SUPPORTED_MESH_EXTENSIONS, is_supported_mesh_extension, start_load_with_ticket,
+    LoadDispatch, SUPPORTED_MESH_EXTENSIONS, decide_load_dispatch, is_supported_mesh_extension,
+    start_load_with_ticket,
 };
 use crate::pending_load::PendingLoad;
 use crate::preferences_bus::{
@@ -859,7 +860,7 @@ impl AppState {
                 wired.controller.build_volume(),
             )
         };
-        if loader.gpu_snapshot().is_none() {
+        if decide_load_dispatch(loader.graphics_unavailable()) == LoadDispatch::Queue {
             // Pre-first-paint: the controller will dispatch this once
             // `handle_rendering_setup` publishes the device.
             pending.queue(path);
@@ -869,6 +870,11 @@ impl AppState {
             // Decision #2: drop onto a busy window is silently ignored.
             return;
         };
+        // Covers both a ready device and a renderer that will never
+        // provide one; `start_load_with_ticket` reads the same graphics
+        // state and deposits the reason for the latter, so a path that
+        // can never open reports itself instead of waiting forever on a
+        // setup that is not coming.
         start_load_with_ticket(ticket, path, &loader, build_volume);
     }
 

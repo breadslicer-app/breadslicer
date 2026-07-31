@@ -101,6 +101,35 @@ pub(crate) fn check_file_size(path: &Path) -> anyhow::Result<()> {
     ))
 }
 
+/// What to do with a path the user asked to open, given whether the
+/// window has a graphics device.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LoadDispatch {
+    /// A device is available: hand the path to the loader now.
+    Start,
+    /// No device yet, but one may still arrive. Park the path so it
+    /// opens by itself once the viewport starts, rather than failing a
+    /// request the user would only have to repeat.
+    Queue,
+    /// No device, and none is coming. Parking here would swallow the
+    /// request for the rest of the session, so say why instead.
+    Report(GraphicsUnavailable),
+}
+
+/// Routes a picked path against the graphics state, as reported by
+/// [`crate::scene_loader::SceneLoader::graphics_unavailable`].
+///
+/// Every way of opening a file goes through this, so a window that has
+/// not painted yet behaves the same whether the path came from the
+/// menu, from argv, or from a drop.
+pub(crate) fn decide_load_dispatch(unavailable: Option<GraphicsUnavailable>) -> LoadDispatch {
+    match unavailable {
+        None => LoadDispatch::Start,
+        Some(reason) if reason.may_still_arrive() => LoadDispatch::Queue,
+        Some(reason) => LoadDispatch::Report(reason),
+    }
+}
+
 /// Shared post-pick pipeline: file-size precheck, gpu-snapshot fetch,
 /// hand-off to the background loader. Both the menu flow (which
 /// acquires the ticket before the file dialog) and path-driven entries

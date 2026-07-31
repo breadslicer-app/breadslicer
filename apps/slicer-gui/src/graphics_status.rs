@@ -39,6 +39,16 @@ pub(crate) enum GraphicsUnavailable {
 }
 
 impl GraphicsUnavailable {
+    /// Whether a device can still turn up, which decides between
+    /// parking a request until it does and telling the user it never
+    /// will.
+    pub(crate) fn may_still_arrive(&self) -> bool {
+        match self {
+            Self::AwaitingSetup => true,
+            Self::UnsupportedApi(_) => false,
+        }
+    }
+
     /// What to tell the user when this blocks something they asked for.
     /// Split by variant because the two cases warrant opposite advice:
     /// one is worth retrying, the other is not.
@@ -172,6 +182,21 @@ mod graphics_unavailable_tests {
         assert_eq!(
             GraphicsUnavailable::default(),
             GraphicsUnavailable::AwaitingSetup
+        );
+    }
+
+    #[test]
+    fn a_device_may_still_arrive_while_awaiting_setup() {
+        assert!(GraphicsUnavailable::AwaitingSetup.may_still_arrive());
+    }
+
+    #[test]
+    fn no_device_is_coming_for_an_unsupported_api() {
+        // Waiting through this one would park a request forever, since
+        // the renderer in use does not change on its own.
+        assert!(
+            !GraphicsUnavailable::UnsupportedApi("GraphicsAPI::NativeOpenGL".to_string())
+                .may_still_arrive()
         );
     }
 

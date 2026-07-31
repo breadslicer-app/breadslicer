@@ -32,8 +32,9 @@ use crate::error_dialog::DialogManager;
 use crate::graphics_status::GraphicsUnavailable;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
-    MAX_MESH_FILE_SIZE_BYTES, check_file_size, ensure_measured_size_within, panic_message,
-    parse_source, place_on_plate, start_load_with_ticket,
+    LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch,
+    ensure_measured_size_within, panic_message, parse_source, place_on_plate,
+    start_load_with_ticket,
 };
 use crate::scene_loader::SceneLoader;
 
@@ -226,6 +227,47 @@ fn start_load_with_ticket_reports_an_unusable_renderer_when_one_was_seen() {
         err.to_string().contains("GraphicsAPI::NativeOpenGL"),
         "the renderer in use must reach the dialog: {err}"
     );
+}
+
+// --- decide_load_dispatch --------------------------------------------
+
+#[test]
+fn a_ready_device_starts_the_load() {
+    assert_eq!(decide_load_dispatch(None), LoadDispatch::Start);
+}
+
+#[test]
+fn a_pick_made_before_the_first_paint_is_parked() {
+    // The window is cold rather than broken, so the request waits for
+    // the device instead of failing in the user's face.
+    assert_eq!(
+        decide_load_dispatch(Some(GraphicsUnavailable::AwaitingSetup)),
+        LoadDispatch::Queue
+    );
+}
+
+#[test]
+fn a_pick_on_an_unusable_renderer_is_reported_not_parked() {
+    // Parking this one would swallow the request for the rest of the
+    // session, since no later setup is going to arrive.
+    let reason = GraphicsUnavailable::UnsupportedApi("GraphicsAPI::NativeOpenGL".to_string());
+    assert_eq!(
+        decide_load_dispatch(Some(reason.clone())),
+        LoadDispatch::Report(reason)
+    );
+}
+
+#[test]
+fn the_reported_reason_reaches_the_caller_intact() {
+    // The caller turns this into the dialog body, so the API name has
+    // to survive the decision rather than be flattened to a generic
+    // failure.
+    let LoadDispatch::Report(reason) = decide_load_dispatch(Some(
+        GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()),
+    )) else {
+        panic!("an unusable renderer must be reported");
+    };
+    assert!(reason.message().contains("GraphicsAPI::WebGL"));
 }
 
 // --- panic_message ---------------------------------------------------

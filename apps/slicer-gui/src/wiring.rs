@@ -18,7 +18,7 @@ use slint::ComponentHandle;
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
 use crate::i18n::ctr;
-use crate::mesh_loader;
+use crate::mesh_loader::{self, LoadDispatch};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::SceneDocument;
@@ -288,7 +288,27 @@ async fn run_open_file_flow(
         return;
     };
     remember_open_directory(&prefs, &path);
-    mesh_loader::start_load_with_ticket(ticket, path, &ctrl.loader(), ctrl.build_volume());
+    let loader = ctrl.loader();
+    match mesh_loader::decide_load_dispatch(loader.graphics_unavailable()) {
+        LoadDispatch::Start => {
+            mesh_loader::start_load_with_ticket(ticket, path, &loader, ctrl.build_volume());
+        }
+        LoadDispatch::Queue => {
+            // The viewport has not started yet, which on a cold window
+            // is a matter of the first paint rather than a failure.
+            // Park the pick where `handle_rendering_setup` drains it,
+            // and let the ticket drop so the loader gate reopens; the
+            // drain takes a fresh one when it dispatches.
+            ctrl.pending_load().queue(path);
+            drop(ticket);
+        }
+        LoadDispatch::Report(reason) => {
+            // Depositing rather than dropping keeps the failure on the
+            // one path that already reports load errors, so the user
+            // gets the usual dialog naming the file they picked.
+            ticket.deposit(path, Err(anyhow::Error::msg(reason.message())));
+        }
+    }
 }
 
 /// Picks the directory the open dialog should start in: the last opened

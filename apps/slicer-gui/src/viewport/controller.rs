@@ -211,6 +211,14 @@ impl ViewportController {
         self.session.loader().clone()
     }
 
+    /// Access to the slot holding a load request that arrived before
+    /// the window had a graphics device. `wiring.rs` parks the menu's
+    /// picked path here when the viewport has not started yet;
+    /// `post_renderer_install` drains it.
+    pub fn pending_load(&self) -> Rc<PendingLoad> {
+        self.session.pending_load().clone()
+    }
+
     /// Access to the document. Used by `wiring.rs` to drive the
     /// `Export As` flow (read scene + source path) without going
     /// through delegating methods on the controller.
