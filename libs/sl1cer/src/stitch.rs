@@ -18,10 +18,11 @@
 //! - [`EndpointTag::Edge`] endpoints are paired by tag equality;
 //!   exactly two per `Edge` tag is the manifold guarantee.
 //! - [`EndpointTag::Vertex`] endpoints are sorted by their source
-//!   face's position in the vertex's cyclic 1-ring of incident
-//!   faces, then paired in consecutive groups of two. This is the
-//!   well-formed pairing for a saddle vertex on an orientable
-//!   manifold.
+//!   face's position in the vertex's cyclic fans of incident faces,
+//!   then paired in consecutive groups of two within each fan. This
+//!   is the well-formed pairing for a saddle vertex on an orientable
+//!   surface; at a pinch vertex (several fans) each lobe's contour
+//!   closes through its own fan.
 //!
 //! Endpoints whose pairing budget cannot be balanced raise
 //! [`SliceError::NonManifoldDuringStitching`] as a runtime safety
@@ -109,10 +110,10 @@ fn point_at(seg: &Segment, side: Side) -> Point2D {
 /// Stitch one layer of crossing and through-vertex segments into
 /// closed rings.
 ///
-/// `topology` provides the cyclic 1-ring of each on-plane vertex so
+/// `topology` provides the cyclic fans of each on-plane vertex so
 /// that [`EndpointTag::Vertex`] hubs can be paired by consecutive
-/// AOB-incident faces. `z_mm` is carried through to the error
-/// variant for diagnostics. Returns one [`ClosedRing`] per chain, in
+/// AOB-incident faces within each fan. `z_mm` is carried through to
+/// the error variant for diagnostics. Returns one [`ClosedRing`] per chain, in
 /// arbitrary order; the vertex orientation of each ring is not
 /// normalised here (that is the winding-canonicalisation pass).
 pub fn stitch_layer(
@@ -218,12 +219,17 @@ fn build_pairings(
 }
 
 /// Sort the `entries` of an on-plane vertex hub by their source
-/// face's position in `vertex`'s cyclic 1-ring, then pair them in
-/// consecutive groups of two. Returns `None` if the topology lacks
-/// a 1-ring for the vertex or any entry's source face is not part
-/// of it.
+/// face's position in `vertex`'s cyclic fans, then pair them in
+/// consecutive groups of two within each fan. Returns `None` if the
+/// topology lacks fans for the vertex, any entry's source face is
+/// not part of them, or a fan holds an odd number of entries.
 ///
-/// The position lookup is a linear scan of the ring: hubs and rings
+/// Pairing never crosses fans: at a pinch vertex each fan belongs
+/// to a separate surface lobe, and each lobe's contour must close
+/// through its own faces (the lobes meet only at the on-plane
+/// point).
+///
+/// The position lookup is a linear scan of the fans: hubs and fans
 /// are both a handful of entries, so a lookup table would cost more
 /// to build than the scans it saves.
 fn pair_vertex_hub(
@@ -232,22 +238,32 @@ fn pair_vertex_hub(
     segments: &[Segment],
     topology: &MeshTopology,
 ) -> Option<Vec<(Endpoint, Endpoint)>> {
-    let ring = topology.vertex_one_ring(vertex)?;
-    let ring_position = |face: FaceIndex| ring.iter().position(|&f| f == face);
+    let fans: Vec<&[FaceIndex]> = topology.vertex_fans(vertex)?.collect();
+    let fan_position = |face: FaceIndex| {
+        fans.iter().enumerate().find_map(|(fan_idx, fan)| {
+            fan.iter()
+                .position(|&f| f == face)
+                .map(|pos| (fan_idx, pos))
+        })
+    };
 
-    let mut sorted: Vec<(usize, Endpoint)> = Vec::with_capacity(entries.len());
+    let mut sorted: Vec<((usize, usize), Endpoint)> = Vec::with_capacity(entries.len());
     for &(_, endpoint) in entries {
-        let position = ring_position(segments[endpoint.0].source_face)?;
+        let position = fan_position(segments[endpoint.0].source_face)?;
         sorted.push((position, endpoint));
     }
     sorted.sort_by_key(|&(position, _)| position);
 
-    Some(
-        sorted
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0].1, chunk[1].1))
-            .collect(),
-    )
+    let mut pairs = Vec::with_capacity(sorted.len() / 2);
+    for fan_group in sorted.chunk_by(|lhs, rhs| lhs.0.0 == rhs.0.0) {
+        if !fan_group.len().is_multiple_of(2) {
+            return None;
+        }
+        for chunk in fan_group.chunks_exact(2) {
+            pairs.push((chunk[0].1, chunk[1].1));
+        }
+    }
+    Some(pairs)
 }
 
 /// Reverse the vertex order of any clockwise ring so every ring's

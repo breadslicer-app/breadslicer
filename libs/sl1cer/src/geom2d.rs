@@ -94,7 +94,7 @@ impl EdgeId {
 ///   the AOB triangle slice). A given on-plane mesh vertex can act as
 ///   a contour hub for `2k` such endpoints (`k` contour passes
 ///   through that vertex); the stitcher resolves the pairing using
-///   the mesh's cyclic 1-ring of incident triangles.
+///   the vertex's cyclic fans of incident triangles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EndpointTag {
     Edge(EdgeId),
@@ -106,7 +106,7 @@ pub enum EndpointTag {
 /// segments from neighbouring triangles to chain them into closed
 /// rings; `source_face` records which mesh triangle emitted the
 /// segment, which the stitcher uses to locate vertex-tagged
-/// endpoints in the mesh's 1-ring cyclic order.
+/// endpoints in the vertex's cyclic fan order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
     pub a: Point2D,

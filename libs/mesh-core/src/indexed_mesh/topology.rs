@@ -8,19 +8,26 @@
 //! 1. The edge table: every interior edge maps to the two faces
 //!    incident to it. The manifold witness guarantees exactly two
 //!    per edge.
-//! 2. The vertex 1-rings: every vertex maps to its incident faces in
-//!    cyclic order, walked via the edge-to-face adjacency. The
-//!    direction of the cycle is implementation-defined (the manifold
-//!    is orientable, so the walk is well-formed, but the choice of
-//!    starting direction is unobservable from the public API). The
-//!    only invariant consumers should rely on is "consecutive entries
-//!    share an edge through the vertex."
+//! 2. The vertex fans: every vertex maps to its incident faces,
+//!    partitioned into cyclic fans walked via the edge-to-face
+//!    adjacency. A vertex whose neighbourhood is a disk has exactly
+//!    one fan; a pinch vertex (2 or more surface lobes touching at
+//!    a point, which the edge-level witness accepts) has one fan
+//!    per lobe. The direction of each cycle is
+//!    implementation-defined (the surface is orientable, so the
+//!    walk is well-formed, but the choice of starting direction is
+//!    unobservable from the public API). The only invariants
+//!    consumers should rely on are "consecutive entries of a fan
+//!    share an edge through the vertex" and "fans partition the
+//!    vertex's incident faces."
 //!
 //! Both indices are built once from the witness, from a single pass
 //! over the sorted directed half-edge records shared with the
 //! manifold validator: the edge table comes out as a sorted vector
-//! (edge lookups binary-search it) and the 1-rings as one flat array
-//! sliced per vertex.
+//! (edge lookups binary-search it) and the fans as one flat array
+//! sliced per fan, with a per-vertex index over the fans.
+
+use std::collections::HashSet;
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -38,21 +45,26 @@ pub fn edge_key(a: VertexIndex, b: VertexIndex) -> EdgeKey {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-/// Precomputed topology over a manifold mesh.
+/// Precomputed topology over an edge-manifold mesh.
 ///
 /// Built once via [`MeshTopology::from_manifold`]; edge lookups
-/// binary-search the sorted edge table, 1-ring lookups slice a flat
-/// per-vertex array. The struct does not borrow the mesh, so the
-/// witness it was built from can be dropped.
+/// binary-search the sorted edge table, fan lookups slice a flat
+/// array through a per-vertex fan index. The struct does not borrow
+/// the mesh, so the witness it was built from can be dropped.
 #[derive(Debug, Clone)]
 pub struct MeshTopology {
     /// Sorted by packed canonical edge key; each entry carries the
     /// two incident faces, ascending.
     edges: Vec<(u64, [FaceIndex; 2])>,
-    /// CSR bounds into `ring_faces`: vertex `v`'s cyclic 1-ring is
-    /// `ring_faces[ring_offsets[v]..ring_offsets[v + 1]]`.
-    ring_offsets: Vec<usize>,
+    /// Every vertex's incident faces, fan by fan: fan `k` is
+    /// `ring_faces[fan_bounds[k]..fan_bounds[k + 1]]`, cyclic.
     ring_faces: Vec<FaceIndex>,
+    /// CSR bounds into `ring_faces`, one entry per fan plus a final
+    /// sentinel equal to `ring_faces.len()`.
+    fan_bounds: Vec<usize>,
+    /// CSR bounds into `fan_bounds`: vertex `v` owns the fan indices
+    /// `vertex_fan_ranges[v]..vertex_fan_ranges[v + 1]`.
+    vertex_fan_ranges: Vec<usize>,
 }
 
 impl MeshTopology {
@@ -103,34 +115,36 @@ impl MeshTopology {
             }
         }
 
-        // Walk every vertex's cyclic ring. A ring visits each
-        // incident face exactly once, so the rings reuse the incident
-        // CSR offsets and the flattening below lands each ring in its
-        // vertex's slot.
-        let rings: Vec<Vec<FaceIndex>> = (0..vertex_count)
+        // Partition every vertex's incident faces into cyclic fans.
+        // Each incident face has exactly 2 edges through the vertex
+        // and, per the witness, exactly 1 neighbour across each, so
+        // the incident faces split into disjoint simple cycles: one
+        // fan for a disk neighbourhood, several for a pinch vertex.
+        let fans_per_vertex: Vec<Vec<Vec<FaceIndex>>> = (0..vertex_count)
             .into_par_iter()
             .map(|v| {
                 let inc = &incident[ring_offsets[v]..ring_offsets[v + 1]];
-                let cyclic = walk_cyclic_one_ring(faces, VertexIndex::from(v as u32), inc, &face_adj);
-                assert_eq!(
-                    cyclic.len(),
-                    inc.len(),
-                    "cyclic walk around vertex {v} visited {} of {} incident faces; expected the witness to guarantee a full cycle",
-                    cyclic.len(),
-                    inc.len(),
-                );
-                cyclic
+                walk_cyclic_fans(faces, VertexIndex::from(v as u32), inc, &face_adj)
             })
             .collect();
+
         let mut ring_faces = Vec::with_capacity(ring_offsets[vertex_count]);
-        for ring in &rings {
-            ring_faces.extend_from_slice(ring);
+        let mut fan_bounds = vec![0usize];
+        let mut vertex_fan_ranges = Vec::with_capacity(vertex_count + 1);
+        vertex_fan_ranges.push(0);
+        for fans in &fans_per_vertex {
+            for fan in fans {
+                ring_faces.extend_from_slice(fan);
+                fan_bounds.push(ring_faces.len());
+            }
+            vertex_fan_ranges.push(fan_bounds.len() - 1);
         }
 
         Self {
             edges,
-            ring_offsets,
             ring_faces,
+            fan_bounds,
+            vertex_fan_ranges,
         }
     }
 
@@ -148,18 +162,27 @@ impl MeshTopology {
             .map(|found| self.edges[found].1)
     }
 
-    /// The faces incident to `vertex` in cyclic order, or `None` if
-    /// the vertex is not part of any face. Consecutive entries share
-    /// a mesh edge through `vertex`; the last entry shares one with
-    /// the first.
+    /// The faces incident to `vertex`, grouped into cyclic fans, or
+    /// `None` if the vertex is not part of any face. Within a fan,
+    /// consecutive entries share a mesh edge through `vertex` and
+    /// the last entry shares one with the first. A vertex whose
+    /// neighbourhood is a disk has exactly 1 fan; a pinch vertex
+    /// has 1 fan per surface lobe touching it, and the fans
+    /// partition its incident faces.
     #[inline]
-    pub fn vertex_one_ring(&self, vertex: VertexIndex) -> Option<&[FaceIndex]> {
+    pub fn vertex_fans(
+        &self,
+        vertex: VertexIndex,
+    ) -> Option<impl Iterator<Item = &[FaceIndex]> + '_> {
         let v = usize::from(vertex);
-        if v + 1 >= self.ring_offsets.len() {
+        if v + 1 >= self.vertex_fan_ranges.len() {
             return None;
         }
-        let ring = &self.ring_faces[self.ring_offsets[v]..self.ring_offsets[v + 1]];
-        if ring.is_empty() { None } else { Some(ring) }
+        let fans = self.vertex_fan_ranges[v]..self.vertex_fan_ranges[v + 1];
+        if fans.is_empty() {
+            return None;
+        }
+        Some(fans.map(move |k| &self.ring_faces[self.fan_bounds[k]..self.fan_bounds[k + 1]]))
     }
 
     /// Number of edges in the indexed mesh. Useful for tests; not
@@ -169,68 +192,73 @@ impl MeshTopology {
     }
 }
 
-/// Walk `vertex`'s incident faces into their cyclic order by stepping
-/// across the shared edge through the vertex: start at the lowest
-/// incident face, leave through its first edge slot touching the
-/// vertex, and keep crossing into the neighbor until the walk closes.
-fn walk_cyclic_one_ring(
+/// Partition `vertex`'s incident faces into their cyclic fans by
+/// stepping across the shared edge through the vertex: start at the
+/// lowest unvisited incident face, leave through its first edge slot
+/// touching the vertex, and keep crossing into the neighbor until
+/// the walk returns to its start face; repeat until every incident
+/// face belongs to a fan. Each incident face has exactly 2 edges
+/// through `vertex` and, per the witness, exactly 1 neighbor across
+/// each, so the incident faces form disjoint simple cycles and every
+/// walk closes at its start.
+fn walk_cyclic_fans(
     faces: &[IndexedTriangle],
     vertex: VertexIndex,
     incident: &[FaceIndex],
     face_adj: &[[FaceIndex; 3]],
-) -> Vec<FaceIndex> {
-    if incident.is_empty() {
-        return Vec::new();
-    }
-    let mut cyclic = Vec::with_capacity(incident.len());
-    let start = incident[0];
-    let mut current = start;
-    let mut prev_edge: Option<u64> = None;
+) -> Vec<Vec<FaceIndex>> {
+    let mut fans = Vec::new();
+    let mut visited: HashSet<FaceIndex> = HashSet::with_capacity(incident.len());
 
-    loop {
-        cyclic.push(current);
-
-        let [v0, v1, v2] = faces[current.get()].vertices;
-        let mut through_vertex: [(u64, usize); 2] = [(0, 0); 2];
-        let mut written = 0;
-        for (slot, &(a, b)) in [(v0, v1), (v1, v2), (v2, v0)].iter().enumerate() {
-            if a == vertex || b == vertex {
-                through_vertex[written] = (half_edges::key(a, b), slot);
-                written += 1;
-            }
+    for &start in incident {
+        if visited.contains(&start) {
+            continue;
         }
-        debug_assert_eq!(
-            written, 2,
-            "face {current:?} listed as incident to vertex {vertex:?} but has {written} edges through it",
-        );
+        let mut fan = Vec::new();
+        let mut current = start;
+        let mut prev_edge: Option<u64> = None;
 
-        let (next_edge, next_slot) = match prev_edge {
-            None => through_vertex[0],
-            Some(p) => {
-                if through_vertex[0].0 != p {
-                    through_vertex[0]
-                } else {
-                    through_vertex[1]
+        loop {
+            fan.push(current);
+            visited.insert(current);
+
+            let [v0, v1, v2] = faces[current.get()].vertices;
+            let mut through_vertex: [(u64, usize); 2] = [(0, 0); 2];
+            let mut written = 0;
+            for (slot, &(a, b)) in [(v0, v1), (v1, v2), (v2, v0)].iter().enumerate() {
+                if a == vertex || b == vertex {
+                    through_vertex[written] = (half_edges::key(a, b), slot);
+                    written += 1;
                 }
             }
-        };
-
-        let next = face_adj[current.get()][next_slot];
-        if next == start {
-            break;
-        }
-        prev_edge = Some(next_edge);
-        current = next;
-
-        if cyclic.len() > incident.len() {
-            panic!(
-                "cyclic walk around vertex {vertex:?} did not terminate within {} steps; topology is not a closed disk fan",
-                incident.len(),
+            debug_assert_eq!(
+                written, 2,
+                "face {current:?} listed as incident to vertex {vertex:?} but has {written} edges through it",
             );
+
+            let (next_edge, next_slot) = match prev_edge {
+                None => through_vertex[0],
+                Some(p) => {
+                    if through_vertex[0].0 != p {
+                        through_vertex[0]
+                    } else {
+                        through_vertex[1]
+                    }
+                }
+            };
+
+            let next = face_adj[current.get()][next_slot];
+            if next == start {
+                break;
+            }
+            prev_edge = Some(next_edge);
+            current = next;
         }
+
+        fans.push(fan);
     }
 
-    cyclic
+    fans
 }
 
 #[cfg(test)]
@@ -303,13 +331,53 @@ mod mesh_topology_tests {
         }
     }
 
+    /// Two tetrahedra sharing vertex 0 (a bowtie). The second lobe
+    /// is the point reflection of the first through vertex 0, with
+    /// winding reversed so both lobes stay consistently wound. The
+    /// mesh is edge-manifold (every edge has exactly 2 faces), but
+    /// vertex 0's 6 incident faces form 2 disjoint fans.
+    fn bowtie() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([1.0, 1.0, 1.0]),
+                Vertex::new([1.0, -1.0, -1.0]),
+                Vertex::new([-1.0, 1.0, -1.0]),
+                Vertex::new([-1.0, -1.0, 1.0]),
+                Vertex::new([1.0, 3.0, 3.0]),
+                Vertex::new([3.0, 1.0, 3.0]),
+                Vertex::new([3.0, 3.0, 1.0]),
+            ],
+            faces: vec![
+                face([0, 1, 2]),
+                face([0, 3, 1]),
+                face([0, 2, 3]),
+                face([1, 3, 2]),
+                face([0, 5, 4]),
+                face([0, 4, 6]),
+                face([0, 6, 5]),
+                face([4, 5, 6]),
+            ],
+        }
+    }
+
     fn topology(mesh: &IndexedMesh) -> MeshTopology {
         let witness = mesh
             .validated_faces()
-            .expect("tetrahedron has in-range vertex indices")
+            .expect("fixture has in-range vertex indices")
             .validated_manifold()
-            .expect("tetrahedron is a closed manifold");
+            .expect("fixture is edge-manifold with consistent winding");
         MeshTopology::from_manifold(&witness)
+    }
+
+    #[test]
+    fn from_manifold_accepts_the_bowtie() {
+        // Regression: the bowtie mints the manifold witness, so the
+        // topology build must succeed; the pinch vertex simply has
+        // more than one fan.
+        let mesh = bowtie();
+        let topo = topology(&mesh);
+        assert_eq!(topo.edge_count(), 12);
     }
 
     #[test]
@@ -355,33 +423,17 @@ mod mesh_topology_tests {
         assert!(topo.edge_faces(vi(0), vi(99)).is_none());
     }
 
-    #[test]
-    fn vertex_one_ring_length_matches_vertex_degree_for_tetrahedron() {
-        // Each vertex of a tetrahedron is incident to exactly three faces.
-        let mesh = tetrahedron();
-        let topo = topology(&mesh);
-        for v in 0u32..4 {
-            let ring = topo.vertex_one_ring(vi(v)).unwrap_or_else(|| {
-                panic!("vertex {v} not present in vertex_one_ring");
-            });
-            assert_eq!(
-                ring.len(),
-                3,
-                "vertex {v} expected 3 incident faces, got {}",
-                ring.len(),
-            );
-        }
-    }
-
-    #[test]
-    fn vertex_one_ring_consecutive_faces_share_an_edge_through_the_vertex() {
-        let mesh = tetrahedron();
-        let topo = topology(&mesh);
-        for v in 0u32..4 {
-            let ring = topo.vertex_one_ring(vi(v)).unwrap();
-            for i in 0..ring.len() {
-                let curr = ring[i];
-                let next = ring[(i + 1) % ring.len()];
+    /// Assert the cyclic invariant for every fan of `v`: consecutive
+    /// entries (wrapping around) share a mesh edge through `v`.
+    fn assert_fans_are_cyclic(mesh: &IndexedMesh, topo: &MeshTopology, v: u32) {
+        let fans: Vec<&[FaceIndex]> = topo
+            .vertex_fans(vi(v))
+            .unwrap_or_else(|| panic!("vertex {v} not present in vertex_fans"))
+            .collect();
+        for fan in fans {
+            for i in 0..fan.len() {
+                let curr = fan[i];
+                let next = fan[(i + 1) % fan.len()];
                 let shared_edge_exists = mesh.faces[curr.get()].vertices.iter().any(|&w| {
                     w != vi(v) && mesh.faces[next.get()].vertices.contains(&w) && {
                         let pair = topo.edge_faces(vi(v), w).unwrap();
@@ -390,35 +442,89 @@ mod mesh_topology_tests {
                 });
                 assert!(
                     shared_edge_exists,
-                    "ring entries {curr:?} and {next:?} around vertex {v} do not share an edge through it",
+                    "fan entries {curr:?} and {next:?} around vertex {v} do not share an edge through it",
                 );
             }
         }
     }
 
     #[test]
-    fn vertex_one_ring_visits_every_incident_face_exactly_once() {
+    fn vertex_fans_yield_a_single_fan_of_three_for_the_tetrahedron() {
+        // Each tetrahedron vertex has a disk neighbourhood: exactly
+        // one fan holding its three incident faces.
         let mesh = tetrahedron();
         let topo = topology(&mesh);
         for v in 0u32..4 {
-            let ring = topo.vertex_one_ring(vi(v)).unwrap();
-            let mut seen: std::collections::HashSet<FaceIndex> = std::collections::HashSet::new();
-            for &f in ring {
-                assert!(
-                    seen.insert(f),
-                    "face {f:?} appears twice in ring of vertex {v}"
-                );
+            let fans: Vec<&[FaceIndex]> = topo
+                .vertex_fans(vi(v))
+                .unwrap_or_else(|| panic!("vertex {v} not present in vertex_fans"))
+                .collect();
+            assert_eq!(fans.len(), 1, "vertex {v} expected a single fan");
+            assert_eq!(fans[0].len(), 3, "vertex {v} expected 3 incident faces");
+        }
+    }
+
+    #[test]
+    fn vertex_fans_consecutive_faces_share_an_edge_through_the_vertex() {
+        let mesh = tetrahedron();
+        let topo = topology(&mesh);
+        for v in 0u32..4 {
+            assert_fans_are_cyclic(&mesh, &topo, v);
+        }
+    }
+
+    #[test]
+    fn vertex_fans_partition_incident_faces_without_repeats() {
+        let mesh = tetrahedron();
+        let topo = topology(&mesh);
+        for v in 0u32..4 {
+            let mut seen: HashSet<FaceIndex> = HashSet::new();
+            for fan in topo.vertex_fans(vi(v)).unwrap() {
+                for &f in fan {
+                    assert!(
+                        seen.insert(f),
+                        "face {f:?} appears twice across fans of vertex {v}"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn vertex_one_ring_returns_none_for_unreferenced_vertex() {
+    fn vertex_fans_returns_none_for_unreferenced_vertex() {
         // Add a 5th vertex with no incident faces.
         let mut mesh = tetrahedron();
         mesh.vertices.push(Vertex::new([0.0, 0.0, 5.0]));
         let topo = topology(&mesh);
-        assert!(topo.vertex_one_ring(vi(4)).is_none());
+        assert!(topo.vertex_fans(vi(4)).is_none());
+    }
+
+    #[test]
+    fn bowtie_pinch_vertex_has_two_lobe_fans_and_others_have_one() {
+        let mesh = bowtie();
+        let topo = topology(&mesh);
+        let fan_sets: Vec<HashSet<usize>> = topo
+            .vertex_fans(vi(0))
+            .expect("pinch vertex has incident faces")
+            .map(|fan| fan.iter().map(|f| f.get()).collect())
+            .collect();
+        assert_eq!(fan_sets.len(), 2, "pinch vertex expected 2 fans");
+        // Faces 0..2 touch vertex 0 in the lower lobe, 4..6 in the
+        // upper lobe (faces 3 and 7 are the opposite bases).
+        let lower: HashSet<usize> = [0, 1, 2].into();
+        let upper: HashSet<usize> = [4, 5, 6].into();
+        assert!(
+            (fan_sets[0] == lower && fan_sets[1] == upper)
+                || (fan_sets[0] == upper && fan_sets[1] == lower),
+            "fans {fan_sets:?} do not match the bowtie lobes"
+        );
+        for v in 0u32..7 {
+            assert_fans_are_cyclic(&mesh, &topo, v);
+        }
+        for v in 1u32..7 {
+            let count = topo.vertex_fans(vi(v)).unwrap().count();
+            assert_eq!(count, 1, "vertex {v} expected a single fan");
+        }
     }
 }
 
@@ -603,11 +709,20 @@ mod sorted_topology_equivalence_tests {
         for v in 0..mesh.vertices.len() as u32 {
             let vertex = VertexIndex::from(v);
             let expected = reference.vertex_one_ring.get(&vertex).map(Vec::as_slice);
-            assert_eq!(
-                topo.vertex_one_ring(vertex),
-                expected,
-                "vertex {v}: ring mismatch",
-            );
+            let fans: Option<Vec<&[FaceIndex]>> = topo.vertex_fans(vertex).map(Iterator::collect);
+            match (fans, expected) {
+                (None, None) => {}
+                (Some(fans), Some(ring)) => {
+                    // The reference meshes are vertex-manifold, so the
+                    // fan partition must be a single fan reproducing
+                    // the reference ring bit for bit.
+                    assert_eq!(fans.len(), 1, "vertex {v}: expected a single fan");
+                    assert_eq!(fans[0], ring, "vertex {v}: fan mismatch");
+                }
+                (fans, expected) => {
+                    panic!("vertex {v}: presence mismatch (got {fans:?}, expected {expected:?})")
+                }
+            }
         }
     }
 

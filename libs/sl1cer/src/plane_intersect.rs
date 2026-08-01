@@ -69,7 +69,7 @@ pub enum TriangleSlice {
     /// one [`EndpointTag::Vertex`] endpoint at the on-vertex and one
     /// [`EndpointTag::Edge`] endpoint on the opposite edge; the
     /// stitcher pairs vertex-tagged endpoints around a hub using the
-    /// mesh's 1-ring cyclic order.
+    /// vertex's cyclic fan order.
     ThroughVertex {
         vertex_idx: VertexIndex,
         segment: Segment,
@@ -82,8 +82,8 @@ pub enum TriangleSlice {
 /// the canonical id of the triangle edge between vertex `i` and
 /// vertex `(i + 1) % 3`. `face_idx` is the index of the triangle in
 /// the source mesh; it is recorded on any emitted [`Segment`] so the
-/// stitcher can locate vertex-tagged endpoints in the mesh's 1-ring
-/// cyclic order.
+/// stitcher can locate vertex-tagged endpoints in the vertex's
+/// cyclic fan order.
 ///
 /// The endpoint interpolation uses the signed-distance ratio in f64
 /// so precision stays predictable across edges of very different
