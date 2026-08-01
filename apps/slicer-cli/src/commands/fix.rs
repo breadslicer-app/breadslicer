@@ -175,7 +175,7 @@ fn fix_mesh(
         .validate_normal_vectors()
         .err()
         .unwrap_or_default();
-    let manifold_errors = validated.validate_manifold().err().unwrap_or_default();
+    let manifold_errors = validated.validate_edge_manifold().err().unwrap_or_default();
 
     if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
         fixes.extend(validated.fix_faces_orientation(

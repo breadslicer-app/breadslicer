@@ -14,7 +14,7 @@ use std::fmt;
 
 use sc_mesh_core::SceneError;
 use sc_mesh_core::indexed_mesh::{
-    MeshErrorReport, MeshFaceError, MeshManifoldError, group_errors_by_variant,
+    MeshEdgeManifoldError, MeshErrorReport, MeshFaceError, group_errors_by_variant,
 };
 use sc_mesh_core::scene::node::NodeId;
 
@@ -44,7 +44,7 @@ pub enum SliceError {
     /// The baked mesh failed face-index / zero-length-edge validation.
     FacesValidationFailed(Vec<MeshFaceError>),
     /// The baked mesh is not a closed manifold.
-    ManifoldCheckFailed(Vec<MeshManifoldError>),
+    ManifoldCheckFailed(Vec<MeshEdgeManifoldError>),
     /// Baking the leaf to world space failed.
     BakeFailed(SceneError),
     /// Stitching at a Z layer found segment endpoints without mates,
@@ -167,7 +167,7 @@ pub enum InvalidLeafGeometry {
     /// Face-index / zero-length-edge validation failed.
     Faces(Vec<MeshFaceError>),
     /// The mesh passed face validation but is not a closed manifold.
-    Manifold(Vec<MeshManifoldError>),
+    Manifold(Vec<MeshEdgeManifoldError>),
 }
 
 impl From<InvalidLeafGeometry> for SliceError {
@@ -484,20 +484,20 @@ mod faces_validation_summary_tests {
 
 #[cfg(test)]
 mod manifold_check_summary_tests {
-    use sc_mesh_core::indexed_mesh::MeshManifoldError;
+    use sc_mesh_core::indexed_mesh::MeshEdgeManifoldError;
     use sc_mesh_core::primitives::VertexIndex;
 
     use super::*;
 
-    fn boundary(face: usize, a: u32, b: u32) -> MeshManifoldError {
-        MeshManifoldError::BoundaryEdge {
+    fn boundary(face: usize, a: u32, b: u32) -> MeshEdgeManifoldError {
+        MeshEdgeManifoldError::BoundaryEdge {
             edge: (VertexIndex::from(a), VertexIndex::from(b)),
             face_idx: face.into(),
         }
     }
 
-    fn winding(a: u32, b: u32, fa: usize, fb: usize) -> MeshManifoldError {
-        MeshManifoldError::InconsistentWindingOrder {
+    fn winding(a: u32, b: u32, fa: usize, fb: usize) -> MeshEdgeManifoldError {
+        MeshEdgeManifoldError::InconsistentWindingOrder {
             edge: (VertexIndex::from(a), VertexIndex::from(b)),
             face_indices: [fa.into(), fb.into()],
         }
@@ -505,7 +505,7 @@ mod manifold_check_summary_tests {
 
     #[test]
     fn empty_mesh_variant_renders_without_face_examples() {
-        let errors = vec![MeshManifoldError::EmptyMesh];
+        let errors = vec![MeshEdgeManifoldError::EmptyMesh];
         let msg = format!("{}", SliceError::ManifoldCheckFailed(errors));
         let lines: Vec<&str> = msg.lines().collect();
         assert_eq!(lines.len(), 2, "msg: {msg}");
@@ -530,7 +530,7 @@ mod slice_scene_error_tests {
     use std::error::Error as _;
 
     use sc_mesh_core::Scene;
-    use sc_mesh_core::indexed_mesh::MeshManifoldError;
+    use sc_mesh_core::indexed_mesh::MeshEdgeManifoldError;
     use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
     use sc_mesh_core::transform::Transform3D;
 
@@ -608,7 +608,7 @@ mod slice_scene_error_tests {
             LeafValidationFailure {
                 leaf: b,
                 leaf_name: None,
-                geometry: InvalidLeafGeometry::Manifold(vec![MeshManifoldError::EmptyMesh]),
+                geometry: InvalidLeafGeometry::Manifold(vec![MeshEdgeManifoldError::EmptyMesh]),
             },
         ]);
         let msg = format!("{err}");
@@ -655,7 +655,7 @@ mod slice_scene_error_tests {
         let faces: SliceError = InvalidLeafGeometry::Faces(vec![zle(1)]).into();
         assert!(matches!(faces, SliceError::FacesValidationFailed(v) if v.len() == 1));
         let manifold: SliceError =
-            InvalidLeafGeometry::Manifold(vec![MeshManifoldError::EmptyMesh]).into();
+            InvalidLeafGeometry::Manifold(vec![MeshEdgeManifoldError::EmptyMesh]).into();
         assert!(matches!(
             manifold,
             SliceError::ManifoldCheckFailed(v) if v.len() == 1,

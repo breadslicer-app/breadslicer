@@ -104,7 +104,7 @@ fn bowtie_mints_the_edge_level_manifold_witness() {
         .validated_faces()
         .expect("bowtie faces must be structurally valid");
     faces
-        .validated_manifold()
+        .validated_edge_manifold()
         .expect("bowtie must pass edge-level manifold validation");
 }
 
@@ -145,7 +145,7 @@ fn pinched_tunnel_mints_the_edge_level_manifold_witness() {
         .validated_faces()
         .expect("pinched tunnel faces must be structurally valid");
     faces
-        .validated_manifold()
+        .validated_edge_manifold()
         .expect("pinched tunnel must pass edge-level manifold validation");
 }
 

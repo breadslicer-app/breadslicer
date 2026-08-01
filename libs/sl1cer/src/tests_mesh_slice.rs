@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 
 use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::VertexIndex;
-use sc_mesh_core::{IndexedMesh, ValidatedManifoldMesh, Vertex};
+use sc_mesh_core::{IndexedMesh, ValidatedEdgeManifoldMesh, Vertex};
 use sc_mesh_fixtures::{
     aob_saddle_tetrahedron, bowtie_tetrahedra, cuboid_with_pinched_z_tunnel, cuboid_with_y_tunnel,
     cuboid_with_z_tunnel, on_edge_crossing_tetrahedron, on_edge_skim_above_tetrahedron,
@@ -40,10 +40,10 @@ use crate::profile::LayerSchedule;
 use crate::stitch::stitch_layer;
 use crate::z_bins::LayerBuckets;
 
-fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
+fn witness(mesh: &IndexedMesh) -> ValidatedEdgeManifoldMesh<'_> {
     mesh.validated_faces()
         .expect("in-range faces")
-        .validated_manifold()
+        .validated_edge_manifold()
         .expect("manifold mesh")
 }
 
@@ -52,18 +52,18 @@ fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
 /// to expose the topology so threading it through every call would
 /// be noise; this helper keeps the call sites symmetric with the
 /// pre-topology era.
-fn slice_at(w: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<Segment> {
-    let topology = MeshTopology::from_manifold(w);
+fn slice_at(w: &ValidatedEdgeManifoldMesh<'_>, z_mm: f64) -> Vec<Segment> {
+    let topology = MeshTopology::from_edge_manifold(w);
     segments_at_z(w, z_mm, &topology)
 }
 
 /// Test-only wrapper around [`slice_mesh`] that builds the
 /// [`MeshTopology`] inline.
 fn slice_schedule<'a>(
-    w: &'a ValidatedManifoldMesh<'a>,
+    w: &'a ValidatedEdgeManifoldMesh<'a>,
     schedule: &'a LayerSchedule,
 ) -> Vec<(f64, Vec<Segment>)> {
-    let topology = MeshTopology::from_manifold(w);
+    let topology = MeshTopology::from_edge_manifold(w);
     slice_mesh(w, schedule, &topology)
 }
 
@@ -396,7 +396,7 @@ fn aob_saddle_tetrahedron_stitch_closes_into_a_single_triangle_ring() {
     let mesh = aob_saddle_tetrahedron();
     let w = witness(&mesh);
     let segments = slice_at(&w, 0.0);
-    let topology = MeshTopology::from_manifold(&w);
+    let topology = MeshTopology::from_edge_manifold(&w);
     let rings = stitch_layer(&segments, 0.0, &topology).expect("AOB hub closes cleanly");
     assert_eq!(
         rings.len(),
@@ -458,7 +458,7 @@ fn on_edge_crossing_tetrahedron_at_z_zero_has_one_double_vertex_tagged_segment()
 fn on_edge_crossing_tetrahedron_stitch_closes_into_a_single_triangle_ring() {
     let mesh = on_edge_crossing_tetrahedron();
     let w = witness(&mesh);
-    let topology = MeshTopology::from_manifold(&w);
+    let topology = MeshTopology::from_edge_manifold(&w);
     let segments = slice_at(&w, 0.0);
     let rings = stitch_layer(&segments, 0.0, &topology).expect("on-edge resolution closes cleanly");
     assert_eq!(
@@ -525,7 +525,7 @@ fn probe_planes(mesh: &IndexedMesh) -> Vec<f64> {
 
 fn assert_bucketed_scan_matches_full_scan(mesh: &IndexedMesh) {
     let w = witness(mesh);
-    let topology = MeshTopology::from_manifold(&w);
+    let topology = MeshTopology::from_edge_manifold(&w);
     let planes = probe_planes(mesh);
     let buckets = LayerBuckets::build(&w, &planes);
     for (k, &z_mm) in planes.iter().enumerate() {
@@ -549,7 +549,7 @@ fn bucketed_scan_matches_the_full_scan_on_every_fixture() {
 fn bucketed_scan_with_every_face_is_the_full_scan() {
     let mesh = cuboid_with_z_tunnel();
     let w = witness(&mesh);
-    let topology = MeshTopology::from_manifold(&w);
+    let topology = MeshTopology::from_edge_manifold(&w);
     let all_faces: Vec<u32> = (0..w.faces().len() as u32).collect();
     for z_mm in [0.0, 0.5, 1.0, 1.999] {
         assert_eq!(
@@ -587,7 +587,7 @@ fn quarter_turned_about_x(mut mesh: IndexedMesh) -> IndexedMesh {
 /// tag).
 fn stitched_rings(mesh: &IndexedMesh, z_mm: f64) -> Vec<ClosedRing> {
     let w = witness(mesh);
-    let topology = MeshTopology::from_manifold(&w);
+    let topology = MeshTopology::from_edge_manifold(&w);
     let segments = segments_at_z(&w, z_mm, &topology);
     stitch_layer(&segments, z_mm, &topology).expect("pinched layer stitches cleanly")
 }
@@ -613,7 +613,7 @@ fn upright_bowtie_through_pinch_yields_an_empty_layer() {
     // measure-zero cross-section, so no segments and no rings.
     let mesh = bowtie_tetrahedra();
     let w = witness(&mesh);
-    let topology = MeshTopology::from_manifold(&w);
+    let topology = MeshTopology::from_edge_manifold(&w);
     assert!(segments_at_z(&w, 1.0, &topology).is_empty());
     assert!(stitched_rings(&mesh, 1.0).is_empty());
 }

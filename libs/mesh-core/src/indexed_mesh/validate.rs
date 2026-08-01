@@ -886,9 +886,9 @@ mod indexed_mesh_validate_normal_vectors_tests {
 }
 
 #[cfg(test)]
-mod indexed_mesh_validate_manifold_tests {
+mod indexed_mesh_validate_edge_manifold_tests {
     use super::*;
-    use crate::indexed_mesh::validated::MeshManifoldError;
+    use crate::indexed_mesh::validated::MeshEdgeManifoldError;
     use crate::primitives::{FaceIndex, Normal, VertexIndex};
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
@@ -936,7 +936,7 @@ mod indexed_mesh_validate_manifold_tests {
             tetrahedron()
                 .validated_faces()
                 .unwrap()
-                .validate_manifold()
+                .validate_edge_manifold()
                 .is_ok()
         );
     }
@@ -947,10 +947,10 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], MeshManifoldError::EmptyMesh));
+        assert!(matches!(errors[0], MeshEdgeManifoldError::EmptyMesh));
     }
 
     #[test]
@@ -960,13 +960,13 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         assert_eq!(errors.len(), 3);
         assert!(
             errors
                 .iter()
-                .all(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+                .all(|e| matches!(e, MeshEdgeManifoldError::BoundaryEdge { .. }))
         );
     }
 
@@ -981,11 +981,11 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let boundary_count = errors
             .iter()
-            .filter(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+            .filter(|e| matches!(e, MeshEdgeManifoldError::BoundaryEdge { .. }))
             .count();
         assert_eq!(boundary_count, 4);
     }
@@ -1000,15 +1000,15 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let winding_errors: Vec<_> = errors
             .iter()
-            .filter(|e| matches!(e, MeshManifoldError::InconsistentWindingOrder { .. }))
+            .filter(|e| matches!(e, MeshEdgeManifoldError::InconsistentWindingOrder { .. }))
             .collect();
         assert_eq!(winding_errors.len(), 1);
         match &winding_errors[0] {
-            MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
+            MeshEdgeManifoldError::InconsistentWindingOrder { edge, face_indices } => {
                 assert_eq!(*edge, (VertexIndex::from(0_u32), VertexIndex::from(1_u32)));
                 let zero: FaceIndex = 0_usize.into();
                 let one: FaceIndex = 1_usize.into();
@@ -1029,18 +1029,18 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let non_manifold_errors: Vec<_> = errors
             .iter()
-            .filter(|e| matches!(e, MeshManifoldError::NonManifoldEdge { .. }))
+            .filter(|e| matches!(e, MeshEdgeManifoldError::NonManifoldEdge { .. }))
             .collect();
         assert!(
             !non_manifold_errors.is_empty(),
             "expected at least one NonManifoldEdge error"
         );
         let has_edge_01 = non_manifold_errors.iter().any(|e| match e {
-            MeshManifoldError::NonManifoldEdge { edge, face_indices } => {
+            MeshEdgeManifoldError::NonManifoldEdge { edge, face_indices } => {
                 *edge == (VertexIndex::from(0_u32), VertexIndex::from(1_u32))
                     && face_indices.len() == 3
             }
@@ -1060,11 +1060,11 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let winding_errors: Vec<_> = errors
             .iter()
-            .filter(|e| matches!(e, MeshManifoldError::InconsistentWindingOrder { .. }))
+            .filter(|e| matches!(e, MeshEdgeManifoldError::InconsistentWindingOrder { .. }))
             .collect();
         // Flipping one face of a tetrahedron causes inconsistent winding on all 3 of its edges
         assert_eq!(winding_errors.len(), 3);
@@ -1078,14 +1078,14 @@ mod indexed_mesh_validate_manifold_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let has_winding = errors
             .iter()
-            .any(|e| matches!(e, MeshManifoldError::InconsistentWindingOrder { .. }));
+            .any(|e| matches!(e, MeshEdgeManifoldError::InconsistentWindingOrder { .. }));
         let has_boundary = errors
             .iter()
-            .any(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }));
+            .any(|e| matches!(e, MeshEdgeManifoldError::BoundaryEdge { .. }));
         assert!(has_winding, "expected InconsistentWindingOrder errors");
         assert!(has_boundary, "expected BoundaryEdge errors");
     }
@@ -1165,7 +1165,7 @@ mod manifold_sort_equivalence_tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::indexed_mesh::validated::MeshManifoldError;
+    use crate::indexed_mesh::validated::MeshEdgeManifoldError;
     use crate::primitives::{FaceIndex, Normal, VertexIndex};
 
     fn face(v: [u32; 3]) -> IndexedTriangle {
@@ -1187,13 +1187,15 @@ mod manifold_sort_equivalence_tests {
     /// The previous hash-based validator, kept verbatim as the
     /// reference the sort-based implementation must agree with (up to
     /// the error order, which the reference never fixed).
-    fn reference_validate_manifold(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldError>> {
-        let mut errors: Vec<MeshManifoldError> = vec![];
+    fn reference_validate_edge_manifold(
+        mesh: &IndexedMesh,
+    ) -> Result<(), Vec<MeshEdgeManifoldError>> {
+        let mut errors: Vec<MeshEdgeManifoldError> = vec![];
 
         let mut half_edges: HashMap<(VertexIndex, VertexIndex), Vec<FaceIndex>> = HashMap::new();
 
         if mesh.faces.is_empty() {
-            errors.push(MeshManifoldError::EmptyMesh);
+            errors.push(MeshEdgeManifoldError::EmptyMesh);
             return Err(errors);
         }
 
@@ -1220,24 +1222,24 @@ mod manifold_sort_equivalence_tests {
 
             if total < 2 {
                 let face_idx = forward.first().or(reverse.first()).copied().unwrap();
-                errors.push(MeshManifoldError::BoundaryEdge {
+                errors.push(MeshEdgeManifoldError::BoundaryEdge {
                     edge: canonical,
                     face_idx,
                 });
             } else if total > 2 {
                 let mut face_indices = forward.clone();
                 face_indices.extend(&reverse);
-                errors.push(MeshManifoldError::NonManifoldEdge {
+                errors.push(MeshEdgeManifoldError::NonManifoldEdge {
                     edge: canonical,
                     face_indices,
                 });
             } else if forward.len() == 2 {
-                errors.push(MeshManifoldError::InconsistentWindingOrder {
+                errors.push(MeshEdgeManifoldError::InconsistentWindingOrder {
                     edge: canonical,
                     face_indices: [forward[0], forward[1]],
                 });
             } else if reverse.len() == 2 {
-                errors.push(MeshManifoldError::InconsistentWindingOrder {
+                errors.push(MeshEdgeManifoldError::InconsistentWindingOrder {
                     edge: canonical,
                     face_indices: [reverse[0], reverse[1]],
                 });
@@ -1255,18 +1257,18 @@ mod manifold_sort_equivalence_tests {
     /// compared as sets: variant rank, canonical edge, then the face
     /// list sorted (the implementations may legitimately disagree on
     /// face order inside one error).
-    fn sort_key(e: &MeshManifoldError) -> (u8, u32, u32, Vec<usize>) {
+    fn sort_key(e: &MeshEdgeManifoldError) -> (u8, u32, u32, Vec<usize>) {
         match e {
-            MeshManifoldError::EmptyMesh => (0, 0, 0, vec![]),
-            MeshManifoldError::BoundaryEdge { edge, face_idx } => {
+            MeshEdgeManifoldError::EmptyMesh => (0, 0, 0, vec![]),
+            MeshEdgeManifoldError::BoundaryEdge { edge, face_idx } => {
                 (1, edge.0.get(), edge.1.get(), vec![face_idx.get()])
             }
-            MeshManifoldError::NonManifoldEdge { edge, face_indices } => {
+            MeshEdgeManifoldError::NonManifoldEdge { edge, face_indices } => {
                 let mut faces: Vec<usize> = face_indices.iter().map(|f| f.get()).collect();
                 faces.sort_unstable();
                 (2, edge.0.get(), edge.1.get(), faces)
             }
-            MeshManifoldError::InconsistentWindingOrder { edge, face_indices } => {
+            MeshEdgeManifoldError::InconsistentWindingOrder { edge, face_indices } => {
                 let mut faces = vec![face_indices[0].get(), face_indices[1].get()];
                 faces.sort_unstable();
                 (3, edge.0.get(), edge.1.get(), faces)
@@ -1274,7 +1276,9 @@ mod manifold_sort_equivalence_tests {
         }
     }
 
-    fn normalized(result: Result<(), Vec<MeshManifoldError>>) -> Vec<(u8, u32, u32, Vec<usize>)> {
+    fn normalized(
+        result: Result<(), Vec<MeshEdgeManifoldError>>,
+    ) -> Vec<(u8, u32, u32, Vec<usize>)> {
         match result {
             Ok(()) => vec![],
             Err(errors) => {
@@ -1312,10 +1316,10 @@ mod manifold_sort_equivalence_tests {
         }
     }
 
-    fn validate(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldError>> {
+    fn validate(mesh: &IndexedMesh) -> Result<(), Vec<MeshEdgeManifoldError>> {
         mesh.validated_faces()
             .expect("test meshes keep faces in range")
-            .validate_manifold()
+            .validate_edge_manifold()
     }
 
     proptest! {
@@ -1323,7 +1327,7 @@ mod manifold_sort_equivalence_tests {
         fn agrees_with_the_reference_on_valid_tori(n in 3usize..8, m in 3usize..8) {
             let mesh = torus_mesh(n, m);
             prop_assert!(validate(&mesh).is_ok());
-            prop_assert!(reference_validate_manifold(&mesh).is_ok());
+            prop_assert!(reference_validate_edge_manifold(&mesh).is_ok());
         }
 
         #[test]
@@ -1352,7 +1356,7 @@ mod manifold_sort_equivalence_tests {
                 }
             }
             let ours = normalized(validate(&mesh));
-            let reference = normalized(reference_validate_manifold(&mesh));
+            let reference = normalized(reference_validate_edge_manifold(&mesh));
             prop_assert!(!ours.is_empty(), "mutation must produce errors");
             prop_assert_eq!(ours, reference);
         }
@@ -1367,7 +1371,7 @@ mod manifold_sort_equivalence_tests {
         let edges: Vec<_> = errors
             .iter()
             .map(|e| match e {
-                MeshManifoldError::BoundaryEdge { edge, .. } => *edge,
+                MeshEdgeManifoldError::BoundaryEdge { edge, .. } => *edge,
                 other => panic!("expected BoundaryEdge, got {other:?}"),
             })
             .collect();
@@ -1382,7 +1386,7 @@ mod manifold_sort_equivalence_tests {
         let winding = errors
             .iter()
             .find_map(|e| match e {
-                MeshManifoldError::InconsistentWindingOrder { face_indices, .. } => {
+                MeshEdgeManifoldError::InconsistentWindingOrder { face_indices, .. } => {
                     Some(*face_indices)
                 }
                 _ => None,
@@ -1403,7 +1407,7 @@ mod manifold_sort_equivalence_tests {
         let shared = errors
             .iter()
             .find_map(|e| match e {
-                MeshManifoldError::NonManifoldEdge { edge, face_indices }
+                MeshEdgeManifoldError::NonManifoldEdge { edge, face_indices }
                     if *edge == (vi(0), vi(1)) =>
                 {
                     Some(face_indices.clone())

@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Topological indices over a [`ValidatedManifoldMesh`]:
+//! Topological indices over a [`ValidatedEdgeManifoldMesh`]:
 //!
-//! 1. The edge table: every interior edge maps to the two faces
-//!    incident to it. The manifold witness guarantees exactly two
-//!    per edge.
+//! 1. The edge table: every edge maps to the two faces incident to
+//!    it. The edge-manifold witness guarantees exactly two per edge.
 //! 2. The vertex fans: every vertex maps to its incident faces,
 //!    partitioned into cyclic fans walked via the edge-to-face
 //!    adjacency. A vertex whose neighbourhood is a disk has exactly
@@ -23,9 +22,9 @@
 //!
 //! Both indices are built once from the witness, from a single pass
 //! over the sorted directed half-edge records shared with the
-//! manifold validator: the edge table comes out as a sorted vector
-//! (edge lookups binary-search it) and the fans as one flat array
-//! sliced per fan, with a per-vertex index over the fans.
+//! edge-manifold validator: the edge table comes out as a sorted
+//! vector (edge lookups binary-search it) and the fans as one flat
+//! array sliced per fan, with a per-vertex index over the fans.
 
 use std::collections::HashSet;
 
@@ -33,7 +32,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::primitives::{FaceIndex, IndexedTriangle, VertexIndex};
 
-use super::{ValidatedManifoldMesh, half_edges};
+use super::{ValidatedEdgeManifoldMesh, half_edges};
 
 /// Canonical key for an undirected mesh edge: `(lo, hi)` with
 /// `lo <= hi`. Constructed via [`edge_key`].
@@ -47,7 +46,7 @@ pub fn edge_key(a: VertexIndex, b: VertexIndex) -> EdgeKey {
 
 /// Precomputed topology over an edge-manifold mesh.
 ///
-/// Built once via [`MeshTopology::from_manifold`]; edge lookups
+/// Built once via [`MeshTopology::from_edge_manifold`]; edge lookups
 /// binary-search the sorted edge table, fan lookups slice a flat
 /// array through a per-vertex fan index. The struct does not borrow
 /// the mesh, so the witness it was built from can be dropped.
@@ -68,8 +67,8 @@ pub struct MeshTopology {
 }
 
 impl MeshTopology {
-    /// Build both indices from a manifold-validated mesh.
-    pub fn from_manifold(mesh: &ValidatedManifoldMesh<'_>) -> Self {
+    /// Build both indices from an edge-manifold-validated mesh.
+    pub fn from_edge_manifold(mesh: &ValidatedEdgeManifoldMesh<'_>) -> Self {
         let faces = mesh.faces();
         let records = half_edges::sorted_half_edge_records(faces);
 
@@ -82,7 +81,7 @@ impl MeshTopology {
             assert_eq!(
                 run.len(),
                 2,
-                "manifold witness violated for edge {:?}: {} incident faces",
+                "edge-manifold witness violated for edge {:?}: {} incident faces",
                 half_edges::key_vertices(run[0].0),
                 run.len(),
             );
@@ -365,13 +364,13 @@ mod mesh_topology_tests {
         let witness = mesh
             .validated_faces()
             .expect("fixture has in-range vertex indices")
-            .validated_manifold()
+            .validated_edge_manifold()
             .expect("fixture is edge-manifold with consistent winding");
-        MeshTopology::from_manifold(&witness)
+        MeshTopology::from_edge_manifold(&witness)
     }
 
     #[test]
-    fn from_manifold_accepts_the_bowtie() {
+    fn from_edge_manifold_accepts_the_bowtie() {
         // Regression: the bowtie mints the manifold witness, so the
         // topology build must succeed; the pinch vertex simply has
         // more than one fan.
@@ -547,7 +546,7 @@ mod sorted_topology_equivalence_tests {
         vertex_one_ring: HashMap<VertexIndex, Vec<FaceIndex>>,
     }
 
-    fn reference_topology(mesh: &ValidatedManifoldMesh<'_>) -> ReferenceTopology {
+    fn reference_topology(mesh: &ValidatedEdgeManifoldMesh<'_>) -> ReferenceTopology {
         let edge_to_faces = reference_edge_to_faces(mesh);
         let vertex_one_ring = reference_vertex_one_ring(mesh, &edge_to_faces);
         ReferenceTopology {
@@ -557,7 +556,7 @@ mod sorted_topology_equivalence_tests {
     }
 
     fn reference_edge_to_faces(
-        mesh: &ValidatedManifoldMesh<'_>,
+        mesh: &ValidatedEdgeManifoldMesh<'_>,
     ) -> HashMap<EdgeKey, [FaceIndex; 2]> {
         let mut acc: HashMap<EdgeKey, Vec<FaceIndex>> = HashMap::new();
         for (idx, face) in mesh.faces().iter().enumerate() {
@@ -576,7 +575,7 @@ mod sorted_topology_equivalence_tests {
     }
 
     fn reference_vertex_one_ring(
-        mesh: &ValidatedManifoldMesh<'_>,
+        mesh: &ValidatedEdgeManifoldMesh<'_>,
         edge_to_faces: &HashMap<EdgeKey, [FaceIndex; 2]>,
     ) -> HashMap<VertexIndex, Vec<FaceIndex>> {
         let mut incident: HashMap<VertexIndex, Vec<FaceIndex>> = HashMap::new();
@@ -597,7 +596,7 @@ mod sorted_topology_equivalence_tests {
     }
 
     fn reference_walk(
-        mesh: &ValidatedManifoldMesh<'_>,
+        mesh: &ValidatedEdgeManifoldMesh<'_>,
         vertex: VertexIndex,
         incident: &[FaceIndex],
         edge_to_faces: &HashMap<EdgeKey, [FaceIndex; 2]>,
@@ -693,9 +692,9 @@ mod sorted_topology_equivalence_tests {
         let witness = mesh
             .validated_faces()
             .expect("in-range faces")
-            .validated_manifold()
+            .validated_edge_manifold()
             .expect("manifold mesh");
-        let topo = MeshTopology::from_manifold(&witness);
+        let topo = MeshTopology::from_edge_manifold(&witness);
         let reference = reference_topology(&witness);
 
         assert_eq!(topo.edge_count(), reference.edge_to_faces.len());

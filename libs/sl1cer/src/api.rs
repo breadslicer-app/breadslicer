@@ -5,7 +5,7 @@
 
 //! Public slicer entry points.
 //!
-//! [`slice_leaf`] turns one baked, manifold leaf into a vector
+//! [`slice_leaf`] turns one baked, edge-manifold leaf into a vector
 //! [`ContourStack`]; [`slice_scene`] applies the same pipeline to
 //! every mesh leaf reachable from the scene roots and returns one
 //! stack per leaf. Both compose the per-Z slice, stitch, winding
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rayon::prelude::*;
-use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedManifoldMesh};
+use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedEdgeManifoldMesh};
 use sc_mesh_core::scene::bake::bake_leaf_to_world;
 use sc_mesh_core::scene::node::{NodeId, NodeKind};
 use sc_mesh_core::{IndexedMesh, Scene};
@@ -34,7 +34,7 @@ use crate::z_bins::LayerBuckets;
 /// carried by `profile`.
 ///
 /// The leaf is baked to world space, validated for face-index
-/// integrity and manifoldness, then each scheduled Z plane is
+/// integrity and edge-manifoldness, then each scheduled Z plane is
 /// intersected with the mesh's triangles. The resulting crossing
 /// segments are stitched into closed rings, canonicalised to CCW,
 /// and grouped into outer-plus-holes polygons.
@@ -399,12 +399,14 @@ fn leaf_display_name(scene: &Scene, id: NodeId) -> Option<String> {
 }
 
 /// Run both geometry validation stages on a baked mesh.
-fn validate_baked(baked: &IndexedMesh) -> Result<ValidatedManifoldMesh<'_>, InvalidLeafGeometry> {
+fn validate_baked(
+    baked: &IndexedMesh,
+) -> Result<ValidatedEdgeManifoldMesh<'_>, InvalidLeafGeometry> {
     let faces = baked
         .validated_faces()
         .map_err(InvalidLeafGeometry::Faces)?;
     faces
-        .validated_manifold()
+        .validated_edge_manifold()
         .map_err(InvalidLeafGeometry::Manifold)
 }
 
@@ -414,7 +416,7 @@ fn validate_baked(baked: &IndexedMesh) -> Result<ValidatedManifoldMesh<'_>, Inva
 /// [`slice_manifold_mesh_observed`] with a token that is never
 /// cancelled and a no-op progress callback.
 fn slice_manifold_mesh(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     profile: &SliceProfile,
 ) -> Result<ContourStack, SliceError> {
     let total = profile.layer_schedule().total_layers() as usize;
@@ -450,7 +452,7 @@ fn slice_manifold_mesh(
 /// every leaf of the run so the reported progress spans the whole
 /// scene.
 fn slice_manifold_mesh_observed<F>(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     profile: &SliceProfile,
     cancel: &CancelToken,
     on_progress: &F,
@@ -460,7 +462,7 @@ fn slice_manifold_mesh_observed<F>(
 where
     F: Fn(SliceProgress) + Sync,
 {
-    let topology = MeshTopology::from_manifold(mesh);
+    let topology = MeshTopology::from_edge_manifold(mesh);
     let zs: Vec<f64> = profile.layer_schedule().iter_z().collect();
     let buckets = LayerBuckets::build(mesh, &zs);
     // `Ok(None)` marks a layer skipped by the cancellation poll. The
@@ -500,7 +502,7 @@ where
 /// producing the same bytes no matter which thread or order runs
 /// them.
 pub(crate) fn slice_layer(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
     candidates: &[u32],

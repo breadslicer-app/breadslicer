@@ -4,8 +4,8 @@
  */
 
 //! Mesh-health status captured at load time and the initial workspace
-//! section derived from it. A scene whose meshes are all clean closed
-//! manifolds is safe to edit and slice, so it opens in Transform;
+//! section derived from it. A scene whose meshes are all closed and
+//! edge-manifold is safe to edit and slice, so it opens in Transform;
 //! anything with detected problems (or not yet checked) opens in
 //! Prepare, the home of the future mesh-repair tooling.
 
@@ -19,18 +19,18 @@ pub(crate) enum MeshHealth {
     /// Not checked yet: no scene loaded, or the pre-validation state.
     #[default]
     Unknown,
-    /// Every leaf is a clean closed manifold.
+    /// Every leaf is closed and edge-manifold.
     ProblemFree,
-    /// At least one leaf's mesh is not a valid closed manifold.
+    /// At least one leaf's mesh is not closed and edge-manifold.
     HasProblems,
 }
 
-/// Classifies a scene by validating every mesh (faces + manifold). A
+/// Classifies a scene by validating every mesh (faces + edge-manifold). A
 /// scene with no problematic leaves is `ProblemFree`; one or more
 /// defective leaves make it `HasProblems`. An empty scene has no
 /// problematic leaves and so reports `ProblemFree`.
 pub(crate) fn scene_mesh_health(scene: &Scene) -> MeshHealth {
-    if scene.non_manifold_leaves().is_empty() {
+    if scene.non_edge_manifold_leaves().is_empty() {
         MeshHealth::ProblemFree
     } else {
         MeshHealth::HasProblems

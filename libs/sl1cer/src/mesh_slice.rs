@@ -5,7 +5,7 @@
 
 //! Per-Z mesh slicer.
 //!
-//! Intersects faces of a validated manifold mesh with a single Z
+//! Intersects faces of a validated edge-manifold mesh with a single Z
 //! plane and collects the crossing segments. [`segments_at_z`] walks
 //! every face (O(faces) per layer, the reference path);
 //! [`segments_at_z_for_faces`] walks only a caller-supplied
@@ -15,7 +15,7 @@
 //! touching the plane they emit identical segments in identical
 //! order.
 
-use sc_mesh_core::ValidatedManifoldMesh;
+use sc_mesh_core::ValidatedEdgeManifoldMesh;
 use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::FaceIndex;
 
@@ -42,7 +42,7 @@ use crate::profile::LayerSchedule;
 /// is currently dropped; consumers can revisit this when a mesh in
 /// the wild demands it.
 pub fn segments_at_z(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
 ) -> Vec<Segment> {
@@ -57,7 +57,7 @@ pub fn segments_at_z(
 /// exactly; the production pipeline obtains such a list from the
 /// per-layer buckets in [`crate::z_bins`].
 pub(crate) fn segments_at_z_for_faces(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
     candidates: &[u32],
@@ -74,7 +74,7 @@ pub(crate) fn segments_at_z_for_faces(
 /// faces with the plane and append the crossing segments in visit
 /// order.
 fn collect_segments_at_z(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     z_mm: f64,
     topology: &MeshTopology,
     face_indices: impl Iterator<Item = usize>,
@@ -136,7 +136,7 @@ fn resolve_on_edge_contour_segment(
     edge_id: EdgeId,
     segment: Segment,
     face_idx: FaceIndex,
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     topology: &MeshTopology,
     z_mm: f64,
 ) -> Option<Segment> {
@@ -185,7 +185,7 @@ fn resolve_on_edge_contour_segment(
 /// [`LayerSchedule::iter_z`]; the returned vector preserves the
 /// schedule's strict-monotone Z ordering.
 pub fn slice_mesh(
-    mesh: &ValidatedManifoldMesh<'_>,
+    mesh: &ValidatedEdgeManifoldMesh<'_>,
     schedule: &LayerSchedule,
     topology: &MeshTopology,
 ) -> Vec<(f64, Vec<Segment>)> {

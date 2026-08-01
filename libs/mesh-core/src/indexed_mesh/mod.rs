@@ -15,8 +15,8 @@ pub use fix::{MeshFix, MeshFixError};
 pub use topology::{EdgeKey, MeshTopology, edge_key};
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{
-    MeshManifoldError, MeshNormalVectorError, ValidatedFaces, ValidatedFacesMut,
-    ValidatedManifoldMesh,
+    MeshEdgeManifoldError, MeshNormalVectorError, ValidatedEdgeManifoldMesh, ValidatedFaces,
+    ValidatedFacesMut,
 };
 
 use crate::aabb::Aabb;

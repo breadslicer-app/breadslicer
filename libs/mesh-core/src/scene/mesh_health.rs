@@ -4,9 +4,9 @@
  */
 
 //! Scene-wide mesh soundness sweep: which leaves carry a mesh that is
-//! not a valid closed manifold. Used to decide whether a freshly loaded
-//! scene is safe to edit and slice, and to point future repair tooling
-//! at the leaves that need attention.
+//! not closed and edge-manifold. Used to decide whether a freshly
+//! loaded scene is safe to edit and slice, and to point future repair
+//! tooling at the leaves that need attention.
 
 use std::num::NonZeroU32;
 
@@ -14,13 +14,15 @@ use crate::scene::Scene;
 use crate::scene::node::{LeafPayload, NodeId, NodeKind};
 
 impl Scene {
-    /// Returns the ids of every leaf whose mesh is not a valid closed
-    /// manifold. A leaf is flagged when its mesh fails face validation
-    /// (out-of-range indices or zero-length edges) or the manifold
-    /// check (boundary edges / holes, edges shared by three or more
-    /// faces, or inconsistent winding). An empty result means every
-    /// leaf is a clean watertight manifold. Face-invalid meshes are
-    /// included because a mesh with invalid faces cannot be a manifold.
+    /// Returns the ids of every leaf whose mesh is not closed and
+    /// edge-manifold. A leaf is flagged when its mesh fails face
+    /// validation (out-of-range indices or zero-length edges) or the
+    /// edge-manifold check (boundary edges / holes, edges shared by
+    /// three or more faces, or inconsistent winding). An empty result
+    /// means every leaf is watertight and edge-manifold; a
+    /// vertex-pinched mesh is NOT flagged, since it bounds a valid
+    /// solid and slices fine. Face-invalid meshes are included
+    /// because a mesh with invalid faces cannot be edge-manifold.
     ///
     /// Both inline-mesh leaves and mesh-resource leaves are walked;
     /// mesh-resource leaves referencing a dangling slot are skipped
@@ -31,7 +33,7 @@ impl Scene {
     ///
     /// Complexity: O(total face count) time; each mesh is a single
     /// half-edge pass.
-    pub fn non_manifold_leaves(&self) -> Vec<NodeId> {
+    pub fn non_edge_manifold_leaves(&self) -> Vec<NodeId> {
         let mut out = Vec::new();
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
             let Some(node) = slot else { continue };
@@ -45,14 +47,15 @@ impl Scene {
                     None => continue,
                 },
             };
-            // A leaf is sound iff the manifold witness can be minted:
-            // in-range faces first, then the manifold upgrade. The two
-            // validators carry different error types, so this is an
-            // `is_ok_and` rather than a `?`/`and_then` chain.
-            let is_valid_manifold = mesh
+            // A leaf is sound iff the edge-manifold witness can be
+            // minted: in-range faces first, then the edge-manifold
+            // upgrade. The two validators carry different error types,
+            // so this is an `is_ok_and` rather than a `?`/`and_then`
+            // chain.
+            let is_edge_manifold = mesh
                 .validated_faces()
-                .is_ok_and(|faces| faces.validated_manifold().is_ok());
-            if !is_valid_manifold {
+                .is_ok_and(|faces| faces.validated_edge_manifold().is_ok());
+            if !is_edge_manifold {
                 out.push(leaf_id_at(slot_idx));
             }
         }
@@ -132,22 +135,22 @@ mod mesh_health_tests {
     }
 
     #[test]
-    fn empty_scene_has_no_non_manifold_leaves() {
-        assert!(Scene::new().non_manifold_leaves().is_empty());
+    fn empty_scene_has_no_non_edge_manifold_leaves() {
+        assert!(Scene::new().non_edge_manifold_leaves().is_empty());
     }
 
     #[test]
     fn a_closed_manifold_leaf_is_not_flagged() {
         let (mut graph, root) = scene_with_root();
         add_inline_leaf(&mut graph, root, tetrahedron_mesh());
-        assert!(graph.non_manifold_leaves().is_empty());
+        assert!(graph.non_edge_manifold_leaves().is_empty());
     }
 
     #[test]
     fn an_open_mesh_leaf_is_flagged() {
         let (mut graph, root) = scene_with_root();
         let leaf = add_inline_leaf(&mut graph, root, open_triangle_mesh());
-        assert_eq!(graph.non_manifold_leaves(), vec![leaf]);
+        assert_eq!(graph.non_edge_manifold_leaves(), vec![leaf]);
     }
 
     #[test]
@@ -155,7 +158,7 @@ mod mesh_health_tests {
         let (mut graph, root) = scene_with_root();
         add_inline_leaf(&mut graph, root, tetrahedron_mesh());
         let bad = add_inline_leaf(&mut graph, root, open_triangle_mesh());
-        assert_eq!(graph.non_manifold_leaves(), vec![bad]);
+        assert_eq!(graph.non_edge_manifold_leaves(), vec![bad]);
     }
 
     #[test]
@@ -166,6 +169,6 @@ mod mesh_health_tests {
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
             .unwrap();
         graph.add_child(root, leaf).unwrap();
-        assert_eq!(graph.non_manifold_leaves(), vec![leaf]);
+        assert_eq!(graph.non_edge_manifold_leaves(), vec![leaf]);
     }
 }

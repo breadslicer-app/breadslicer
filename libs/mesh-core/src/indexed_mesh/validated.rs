@@ -14,11 +14,13 @@
 //!    that index into `vertices` / `faces` without bounds checks live
 //!    on the witness, so the in-range invariant is statically enforced
 //!    rather than relying on the caller's discipline.
-//! 2. [`ValidatedManifoldMesh`]: in addition, every interior edge is
+//! 2. [`ValidatedEdgeManifoldMesh`]: in addition, every edge is
 //!    incident to exactly two faces and consistently oriented across
-//!    that edge. Minted by [`ValidatedFaces::validated_manifold`],
-//!    which consumes the in-range witness, runs the manifold check,
-//!    and on success upgrades the borrow to the stronger witness.
+//!    that edge. Minted by [`ValidatedFaces::validated_edge_manifold`],
+//!    which consumes the in-range witness, runs the edge-manifold
+//!    check, and on success upgrades the borrow to the stronger
+//!    witness. Vertex-manifoldness is deliberately NOT part of the
+//!    claim: pinch vertices pass.
 //!
 //! Operations that preserve the in-range invariant
 //! (`fix_faces_orientation`, either reverses a face's vertex order in
@@ -48,7 +50,7 @@ pub enum MeshNormalVectorError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MeshManifoldError {
+pub enum MeshEdgeManifoldError {
     EmptyMesh,
     /// An edge that belongs to only one face (the mesh has a boundary).
     BoundaryEdge {
@@ -86,7 +88,7 @@ impl fmt::Display for MeshNormalVectorError {
     }
 }
 
-impl fmt::Display for MeshManifoldError {
+impl fmt::Display for MeshEdgeManifoldError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyMesh => f.write_str("mesh has no faces"),
@@ -146,45 +148,55 @@ impl<'a> ValidatedFaces<'a> {
         validate_normal_vectors_impl(self.mesh)
     }
 
-    pub fn validate_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
-        validate_manifold_impl(self.mesh)
+    pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
+        validate_edge_manifold_impl(self.mesh)
     }
 
-    /// Run the manifold validation and, on success, return a stronger
-    /// witness whose existence proves the wrapped mesh is manifold.
-    /// Consumes `self` so the in-range witness is upgraded rather than
-    /// duplicated; the resulting `ValidatedManifoldMesh<'a>` ties to the
-    /// same `&'a IndexedMesh` borrow.
-    pub fn validated_manifold(self) -> Result<ValidatedManifoldMesh<'a>, Vec<MeshManifoldError>> {
-        validate_manifold_impl(self.mesh)?;
-        Ok(ValidatedManifoldMesh::new_unchecked(self.mesh))
+    /// Run the edge-manifold validation and, on success, return a
+    /// stronger witness whose existence proves the wrapped mesh is
+    /// edge-manifold. Consumes `self` so the in-range witness is
+    /// upgraded rather than duplicated; the resulting
+    /// `ValidatedEdgeManifoldMesh<'a>` ties to the same
+    /// `&'a IndexedMesh` borrow.
+    pub fn validated_edge_manifold(
+        self,
+    ) -> Result<ValidatedEdgeManifoldMesh<'a>, Vec<MeshEdgeManifoldError>> {
+        validate_edge_manifold_impl(self.mesh)?;
+        Ok(ValidatedEdgeManifoldMesh::new_unchecked(self.mesh))
     }
 }
 
-/// Read-only witness that the underlying `IndexedMesh` is manifold:
-/// every interior edge is incident to exactly two faces (no boundary
-/// edges, no edges shared by three or more faces) and consistently
-/// oriented across that edge (no two coincident half-edges traversing
-/// the same direction). The in-range invariant of [`ValidatedFaces`]
-/// is also carried by this witness, since the only path to construct
-/// one is through [`ValidatedFaces::validated_manifold`].
+/// Read-only witness that the underlying `IndexedMesh` is
+/// edge-manifold: every edge is incident to exactly two faces (no
+/// boundary edges, no edges shared by three or more faces) and
+/// consistently oriented across that edge (no two coincident
+/// half-edges traversing the same direction). The in-range invariant
+/// of [`ValidatedFaces`] is also carried by this witness, since the
+/// only path to construct one is through
+/// [`ValidatedFaces::validated_edge_manifold`].
 ///
 /// What this witness does NOT guarantee:
+/// - Vertex-manifoldness: a vertex may be a pinch where several
+///   surface lobes touch at a single point, its incident faces then
+///   forming several disjoint fans. Such a mesh still bounds a
+///   well-defined solid; consumers that need the per-vertex fan
+///   structure get it from `MeshTopology`.
 /// - Per-face normal vectors are correct (covered by
 ///   [`ValidatedFaces::validate_normal_vectors`]).
 /// - Every triangle has non-zero area / no zero-length edges (covered
 ///   by `validate_faces`).
 /// - Any particular global winding convention (CCW outward, etc.):
-///   manifold inputs may still be globally inside-out.
+///   edge-manifold inputs may still be globally inside-out.
 #[derive(Debug)]
-pub struct ValidatedManifoldMesh<'a> {
+pub struct ValidatedEdgeManifoldMesh<'a> {
     mesh: &'a IndexedMesh,
 }
 
-impl<'a> ValidatedManifoldMesh<'a> {
-    /// Mint a manifold witness from a mesh whose manifoldness has just
-    /// been confirmed. `pub(super)` so the only public path is via
-    /// [`ValidatedFaces::validated_manifold`].
+impl<'a> ValidatedEdgeManifoldMesh<'a> {
+    /// Mint an edge-manifold witness from a mesh whose
+    /// edge-manifoldness has just been confirmed. `pub(super)` so the
+    /// only public path is via
+    /// [`ValidatedFaces::validated_edge_manifold`].
     pub(super) fn new_unchecked(mesh: &'a IndexedMesh) -> Self {
         Self { mesh }
     }
@@ -219,8 +231,8 @@ impl<'a> ValidatedFacesMut<'a> {
         validate_normal_vectors_impl(self.mesh)
     }
 
-    pub fn validate_manifold(&self) -> Result<(), Vec<MeshManifoldError>> {
-        validate_manifold_impl(self.mesh)
+    pub fn validate_edge_manifold(&self) -> Result<(), Vec<MeshEdgeManifoldError>> {
+        validate_edge_manifold_impl(self.mesh)
     }
 
     /// Repair winding-order and/or normal-vector errors. The flip
@@ -232,7 +244,7 @@ impl<'a> ValidatedFacesMut<'a> {
     /// remains a valid witness afterwards.
     pub fn fix_faces_orientation(
         &mut self,
-        manifold_errors: &[MeshManifoldError],
+        manifold_errors: &[MeshEdgeManifoldError],
         normal_vector_errors: &[MeshNormalVectorError],
         options: FixFacesOptions,
     ) -> Result<Vec<MeshFix>, MeshFixError> {
@@ -308,7 +320,7 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
     }
 }
 
-/// Body of `validate_manifold`. Strictly speaking this routine never
+/// Body of `validate_edge_manifold`. Strictly speaking this routine never
 /// indexes into `mesh.vertices` (it only uses `face.vertices` values
 /// as half-edge keys), so the in-range invariant is not a soundness
 /// requirement here: the witness gates this method only for API
@@ -320,24 +332,24 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
 /// edge in the same direction an inconsistent winding. Errors come out
 /// sorted by canonical edge (deterministic across runs), with the face
 /// lists inside each error ascending.
-fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldError>> {
+fn validate_edge_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshEdgeManifoldError>> {
     if mesh.faces.is_empty() {
-        return Err(vec![MeshManifoldError::EmptyMesh]);
+        return Err(vec![MeshEdgeManifoldError::EmptyMesh]);
     }
 
     let records = half_edges::sorted_half_edge_records(&mesh.faces);
 
-    let mut errors: Vec<MeshManifoldError> = vec![];
+    let mut errors: Vec<MeshEdgeManifoldError> = vec![];
     for run in records.chunk_by(|lhs, rhs| lhs.0 == rhs.0) {
         let edge = half_edges::key_vertices(run[0].0);
         match run.len() {
-            1 => errors.push(MeshManifoldError::BoundaryEdge {
+            1 => errors.push(MeshEdgeManifoldError::BoundaryEdge {
                 edge,
                 face_idx: half_edges::face_of(run[0].1),
             }),
             2 => {
                 if half_edges::is_reversed(run[0].1) == half_edges::is_reversed(run[1].1) {
-                    errors.push(MeshManifoldError::InconsistentWindingOrder {
+                    errors.push(MeshEdgeManifoldError::InconsistentWindingOrder {
                         edge,
                         face_indices: [
                             half_edges::face_of(run[0].1),
@@ -346,7 +358,7 @@ fn validate_manifold_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshManifoldErro
                     });
                 }
             }
-            _ => errors.push(MeshManifoldError::NonManifoldEdge {
+            _ => errors.push(MeshEdgeManifoldError::NonManifoldEdge {
                 edge,
                 face_indices: run.iter().map(|&(_, v)| half_edges::face_of(v)).collect(),
             }),
@@ -466,7 +478,7 @@ mod indexed_mesh_validated_faces_tests {
 
     /// Hand-rolled closed-tetrahedron mesh with consistent outward
     /// winding, mirroring the helper in
-    /// `indexed_mesh_validate_manifold_tests`.
+    /// `indexed_mesh_validate_edge_manifold_tests`.
     fn closed_tetrahedron() -> IndexedMesh {
         IndexedMesh {
             meta: None,
@@ -481,24 +493,24 @@ mod indexed_mesh_validated_faces_tests {
     }
 
     #[test]
-    fn validated_manifold_succeeds_on_closed_mesh() {
+    fn validated_edge_manifold_succeeds_on_closed_mesh() {
         let mesh = closed_tetrahedron();
         let witness = mesh
             .validated_faces()
             .expect("in-range indices")
-            .validated_manifold()
+            .validated_edge_manifold()
             .expect("manifold tetrahedron");
         assert_eq!(witness.vertices().len(), 4);
         assert_eq!(witness.faces().len(), 4);
     }
 
     #[test]
-    fn validated_manifold_round_trips_buffers() {
+    fn validated_edge_manifold_round_trips_buffers() {
         let mesh = closed_tetrahedron();
         let witness = mesh
             .validated_faces()
             .unwrap()
-            .validated_manifold()
+            .validated_edge_manifold()
             .unwrap();
         assert_eq!(witness.vertices(), mesh.vertices.as_slice());
         assert_eq!(witness.faces(), mesh.faces.as_slice());
@@ -506,7 +518,7 @@ mod indexed_mesh_validated_faces_tests {
     }
 
     #[test]
-    fn validated_manifold_fails_on_boundary_edge() {
+    fn validated_edge_manifold_fails_on_boundary_edge() {
         // Two triangles glued along one edge: a non-closed strip whose
         // remaining edges are boundary edges, which the manifold check
         // rejects.
@@ -514,12 +526,12 @@ mod indexed_mesh_validated_faces_tests {
         let errors = mesh
             .validated_faces()
             .unwrap()
-            .validated_manifold()
+            .validated_edge_manifold()
             .expect_err("open strip");
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, MeshManifoldError::BoundaryEdge { .. }))
+                .any(|e| matches!(e, MeshEdgeManifoldError::BoundaryEdge { .. }))
         );
     }
 }
@@ -567,12 +579,12 @@ mod mesh_normal_vector_error_display_tests {
 }
 
 #[cfg(test)]
-mod mesh_manifold_error_display_tests {
+mod mesh_edge_manifold_error_display_tests {
     use super::*;
 
     #[test]
     fn empty_mesh_renders_short_phrase() {
-        let msg = format!("{}", MeshManifoldError::EmptyMesh);
+        let msg = format!("{}", MeshEdgeManifoldError::EmptyMesh);
         assert_eq!(msg, "mesh has no faces");
     }
 
@@ -580,7 +592,7 @@ mod mesh_manifold_error_display_tests {
     fn boundary_edge_renders_edge_and_face() {
         let msg = format!(
             "{}",
-            MeshManifoldError::BoundaryEdge {
+            MeshEdgeManifoldError::BoundaryEdge {
                 edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
                 face_idx: 17_usize.into(),
             },
@@ -595,7 +607,7 @@ mod mesh_manifold_error_display_tests {
     fn non_manifold_edge_renders_edge_and_count() {
         let msg = format!(
             "{}",
-            MeshManifoldError::NonManifoldEdge {
+            MeshEdgeManifoldError::NonManifoldEdge {
                 edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
                 face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into(),],
             },
@@ -610,7 +622,7 @@ mod mesh_manifold_error_display_tests {
     fn inconsistent_winding_renders_edge_and_both_face_ids() {
         let msg = format!(
             "{}",
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
                 face_indices: [17_usize.into(), 42_usize.into()],
             },

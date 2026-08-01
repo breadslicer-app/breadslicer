@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{
-    MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
+    MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError, MeshVertexError,
 };
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
@@ -86,7 +86,7 @@ fn diagnose_mesh(mesh: &IndexedMesh, out: &mut dyn Write) -> bool {
     }
 
     // `validated_faces` is the gate that produces the witness needed
-    // by `validate_normal_vectors` and `validate_manifold`. If it
+    // by `validate_normal_vectors` and `validate_edge_manifold`. If it
     // fails, vertex indices are out of range or edges are
     // collapsed; neither downstream check is meaningful in that
     // state, so the function returns early after surfacing the
@@ -104,7 +104,7 @@ fn diagnose_mesh(mesh: &IndexedMesh, out: &mut dyn Write) -> bool {
         show_normal_vector_errors(&vector_errors, out);
     }
 
-    if let Err(manifold_errors) = validated.validate_manifold() {
+    if let Err(manifold_errors) = validated.validate_edge_manifold() {
         detected_problems = true;
         show_manifold_errors(&manifold_errors, out);
     }
@@ -136,7 +136,7 @@ pub(crate) fn show_normal_vector_errors(
     }
 }
 
-pub(crate) fn show_manifold_errors(manifold_errors: &[MeshManifoldError], out: &mut dyn Write) {
+pub(crate) fn show_manifold_errors(manifold_errors: &[MeshEdgeManifoldError], out: &mut dyn Write) {
     let _ = writeln!(out, "Manifold errors ({}):", manifold_errors.len());
     for manifold_error in manifold_errors {
         let _ = writeln!(out, "\t- {manifold_error}");

@@ -159,7 +159,7 @@ fn write_clean_3mf(path: &Path) {
 
 /// Tetrahedron with face 0's winding reversed. The other three faces
 /// keep their original winding, so the result is internally
-/// inconsistent: `validate_manifold` flags every edge of face 0 with
+/// inconsistent: `validate_edge_manifold` flags every edge of face 0 with
 /// `InconsistentWindingOrder`. The stored normal is left as-is so
 /// `validate_normal_vectors` flags `ExpectationMismatch` on the same
 /// face. All vertex indices remain in range.
@@ -222,7 +222,7 @@ fn mesh_with_zero_length_edge() -> IndexedMesh {
 }
 
 /// A mesh with exactly one triangle. Every edge appears once and only
-/// in one direction; `validate_manifold` flags all three as
+/// in one direction; `validate_edge_manifold` flags all three as
 /// `BoundaryEdge` because nothing closes them.
 fn single_triangle_mesh() -> IndexedMesh {
     IndexedMesh {
@@ -241,7 +241,7 @@ fn single_triangle_mesh() -> IndexedMesh {
 
 /// Three triangles all sharing the edge `(v0, v1)`. The half-edge
 /// `(0, 1)` appears three times forward and zero times reverse, which
-/// `validate_manifold` flags as `NonManifoldEdge`.
+/// `validate_edge_manifold` flags as `NonManifoldEdge`.
 fn three_triangles_sharing_edge_mesh() -> IndexedMesh {
     let vertices = vec![
         Vertex::new([0.0, 0.0, 0.0]),
@@ -1385,7 +1385,7 @@ mod fix_no_panic_contract_tests {
     #[test]
     fn fix_with_validate_faces_skipped_does_not_panic_on_winding_errors() {
         // Face 0 is wound backwards relative to its neighbours, so
-        // `validate_manifold` returns `InconsistentWindingOrder`
+        // `validate_edge_manifold` returns `InconsistentWindingOrder`
         // errors and `validate_normal_vectors` returns an
         // `ExpectationMismatch` for face 0. With `--fix-zero-length-edges=false`,
         // `validate_faces` is skipped: the fix routine receives

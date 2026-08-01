@@ -11,7 +11,7 @@
 //! refactor that drops a case can be caught.
 
 use sc_mesh_core::indexed_mesh::{
-    MeshFaceError, MeshManifoldError, MeshNormalVectorError, MeshVertexError,
+    MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError, MeshVertexError,
 };
 use sc_mesh_core::primitives::{CoordAxis, FaceIndex, TriVertexSlot, VertexIndex};
 
@@ -106,12 +106,12 @@ fn show_normal_vector_errors_covers_every_variant() {
 #[test]
 fn show_manifold_errors_covers_every_variant() {
     let errors = vec![
-        MeshManifoldError::EmptyMesh,
-        MeshManifoldError::BoundaryEdge {
+        MeshEdgeManifoldError::EmptyMesh,
+        MeshEdgeManifoldError::BoundaryEdge {
             edge: (VertexIndex::from(2_u32), VertexIndex::from(5_u32)),
             face_idx: FaceIndex::from(9_usize),
         },
-        MeshManifoldError::NonManifoldEdge {
+        MeshEdgeManifoldError::NonManifoldEdge {
             edge: (VertexIndex::from(1_u32), VertexIndex::from(4_u32)),
             face_indices: vec![
                 FaceIndex::from(10_usize),
@@ -119,7 +119,7 @@ fn show_manifold_errors_covers_every_variant() {
                 FaceIndex::from(12_usize),
             ],
         },
-        MeshManifoldError::InconsistentWindingOrder {
+        MeshEdgeManifoldError::InconsistentWindingOrder {
             edge: (VertexIndex::from(3_u32), VertexIndex::from(8_u32)),
             face_indices: [FaceIndex::from(20_usize), FaceIndex::from(21_usize)],
         },

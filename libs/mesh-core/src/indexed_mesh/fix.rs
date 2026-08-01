@@ -10,7 +10,7 @@ use crate::geometry::{GeometryError, compute_normal_from_triangle_vertices};
 use crate::primitives::{FaceIndex, Normal, VertexIndex};
 
 use super::validate::MeshFaceError;
-use super::validated::{MeshManifoldError, MeshNormalVectorError};
+use super::validated::{MeshEdgeManifoldError, MeshNormalVectorError};
 use super::{FixFacesOptions, IndexedMesh};
 
 #[cfg(test)]
@@ -104,7 +104,7 @@ struct PlannedFaceFix {
 /// the only caller takes that invariant as its precondition.
 pub(super) fn fix_faces_orientation_impl(
     mesh: &mut IndexedMesh,
-    manifold_errors: &[MeshManifoldError],
+    manifold_errors: &[MeshEdgeManifoldError],
     normal_vector_errors: &[MeshNormalVectorError],
     options: FixFacesOptions,
 ) -> Result<Vec<MeshFix>, MeshFixError> {
@@ -114,7 +114,7 @@ pub(super) fn fix_faces_orientation_impl(
 
     if options.flipped {
         for error in manifold_errors {
-            if let MeshManifoldError::InconsistentWindingOrder {
+            if let MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: _,
                 face_indices,
             } = error
@@ -297,7 +297,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     use crate::geometry::compute_normal_from_triangle_vertices;
 
     /// Test-local shorthand for `VertexIndex::from(n)`. Keeps the
-    /// dense `MeshManifoldError::*` literals readable.
+    /// dense `MeshEdgeManifoldError::*` literals readable.
     fn vi(n: u32) -> VertexIndex {
         VertexIndex::from(n)
     }
@@ -378,7 +378,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let normal_errors = mesh
             .validated_faces()
@@ -417,7 +417,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let normal_errors = mesh
             .validated_faces()
@@ -448,7 +448,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // Give face 0 a wrong normal but keep correct winding
         mesh.faces[0].normal = Normal::new([1.0, 0.0, 0.0]);
 
-        let manifold_errors: Vec<MeshManifoldError> = vec![];
+        let manifold_errors: Vec<MeshEdgeManifoldError> = vec![];
         let normal_errors = mesh
             .validated_faces()
             .unwrap()
@@ -479,7 +479,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let correct = mesh.faces[1].normal.coords();
         mesh.faces[1].normal = Normal::new([correct[0] * 2.0, correct[1] * 2.0, correct[2] * 2.0]);
 
-        let manifold_errors: Vec<MeshManifoldError> = vec![];
+        let manifold_errors: Vec<MeshEdgeManifoldError> = vec![];
         let normal_errors = mesh
             .validated_faces()
             .unwrap()
@@ -514,7 +514,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let normal_errors = mesh
             .validated_faces()
@@ -550,19 +550,19 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         // Craft manifold errors where face 0 appears in 4 InconsistentWindingOrder entries
         let manifold_errors = vec![
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(3)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
@@ -590,29 +590,29 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // Create errors that mark faces 0, 1, 2 as needing flipping (each with 3 errors)
         let manifold_errors = vec![
             // Face 0: 3 errors
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
             // Face 1: 2 more errors (already has 1 from above)
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(3)),
                 face_indices: [1_usize.into(), 2_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(3), vi(1)),
                 face_indices: [1_usize.into(), 3_usize.into()],
             },
             // Face 2: 1 more error (already has 2 from above)
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(2), vi(3)),
                 face_indices: [2_usize.into(), 3_usize.into()],
             },
@@ -635,11 +635,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let original = mesh.clone();
 
         let manifold_errors = vec![
-            MeshManifoldError::BoundaryEdge {
+            MeshEdgeManifoldError::BoundaryEdge {
                 edge: (vi(0), vi(1)),
                 face_idx: 0_usize.into(),
             },
-            MeshManifoldError::NonManifoldEdge {
+            MeshEdgeManifoldError::NonManifoldEdge {
                 edge: (vi(1), vi(2)),
                 face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into()],
             },
@@ -688,7 +688,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let original = mesh.clone();
 
         // Only 1 winding error for face 0, below threshold of 2
-        let manifold_errors = vec![MeshManifoldError::InconsistentWindingOrder {
+        let manifold_errors = vec![MeshEdgeManifoldError::InconsistentWindingOrder {
             edge: (vi(0), vi(1)),
             face_indices: [0_usize.into(), 1_usize.into()],
         }];
@@ -718,7 +718,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let normal_errors = mesh
             .validated_faces()
@@ -791,7 +791,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let normal_errors = mesh
             .validated_faces()
@@ -830,7 +830,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let manifold_errors = mesh
             .validated_faces()
             .unwrap()
-            .validate_manifold()
+            .validate_edge_manifold()
             .unwrap_err();
         let normal_errors = mesh
             .validated_faces()
@@ -850,7 +850,12 @@ mod indexed_mesh_fix_faces_orientation_tests {
             .unwrap();
 
         // After fix, the mesh should pass all validations
-        assert!(mesh.validated_faces().unwrap().validate_manifold().is_ok());
+        assert!(
+            mesh.validated_faces()
+                .unwrap()
+                .validate_edge_manifold()
+                .is_ok()
+        );
         assert!(
             mesh.validated_faces()
                 .unwrap()
@@ -922,11 +927,11 @@ mod indexed_mesh_fix_faces_orientation_tests {
         // 2 errors mention face 0 → it crosses the n_errors >= 2
         // threshold and enters the flip branch.
         let manifold_errors = vec![
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(collinear[0]), vi(collinear[1])),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(collinear[1]), vi(collinear[2])),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
@@ -1034,19 +1039,19 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let original = mesh.clone();
 
         let manifold_errors = vec![
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(3)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
@@ -1072,27 +1077,27 @@ mod indexed_mesh_fix_faces_orientation_tests {
         let original = mesh.clone();
 
         let manifold_errors = vec![
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(1)),
                 face_indices: [0_usize.into(), 1_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(1), vi(2)),
                 face_indices: [0_usize.into(), 2_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(2), vi(0)),
                 face_indices: [0_usize.into(), 3_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(0), vi(3)),
                 face_indices: [1_usize.into(), 2_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(3), vi(1)),
                 face_indices: [1_usize.into(), 3_usize.into()],
             },
-            MeshManifoldError::InconsistentWindingOrder {
+            MeshEdgeManifoldError::InconsistentWindingOrder {
                 edge: (vi(2), vi(3)),
                 face_indices: [2_usize.into(), 3_usize.into()],
             },

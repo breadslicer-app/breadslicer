@@ -22,7 +22,7 @@
 //! for, in the same ascending face order; the bucketed scan
 //! reproduces the full scan's output bit for bit.
 
-use sc_mesh_core::indexed_mesh::ValidatedManifoldMesh;
+use sc_mesh_core::indexed_mesh::ValidatedEdgeManifoldMesh;
 
 use rayon::prelude::*;
 
@@ -51,7 +51,7 @@ impl LayerBuckets {
     /// and the slice output byte-identical. Face indices are stored
     /// as `u32`; a mesh anywhere near `u32::MAX` faces would not fit
     /// in memory to begin with.
-    pub(crate) fn build(mesh: &ValidatedManifoldMesh<'_>, planes: &[f64]) -> Self {
+    pub(crate) fn build(mesh: &ValidatedEdgeManifoldMesh<'_>, planes: &[f64]) -> Self {
         let vertices = mesh.vertices();
         let faces = mesh.faces();
 
@@ -120,16 +120,16 @@ mod z_bins_tests {
 
     use super::*;
 
-    fn witness(mesh: &IndexedMesh) -> ValidatedManifoldMesh<'_> {
+    fn witness(mesh: &IndexedMesh) -> ValidatedEdgeManifoldMesh<'_> {
         mesh.validated_faces()
             .expect("in-range faces")
-            .validated_manifold()
+            .validated_edge_manifold()
             .expect("manifold mesh")
     }
 
     /// The definitionally-correct bucket: test every face against the
     /// plane with the same classification the scan uses.
-    fn brute_force_bucket(w: &ValidatedManifoldMesh<'_>, z_mm: f64) -> Vec<u32> {
+    fn brute_force_bucket(w: &ValidatedEdgeManifoldMesh<'_>, z_mm: f64) -> Vec<u32> {
         let vertices = w.vertices();
         w.faces()
             .iter()

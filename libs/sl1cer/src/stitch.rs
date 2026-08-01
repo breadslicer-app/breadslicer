@@ -6,7 +6,7 @@
 //! Layer-stitch step: glue a layer of crossing segments into closed
 //! polygon rings.
 //!
-//! On a watertight manifold mesh, every interior edge crossed by a
+//! On a watertight edge-manifold mesh, every edge crossed by a
 //! slicing plane contributes exactly two segment endpoints to the
 //! layer's segment list (one per incident triangle), and every
 //! vertex sitting exactly on the plane acts as a hub for `2k`
@@ -16,7 +16,7 @@
 //! Pairing proceeds in two ways:
 //!
 //! - [`EndpointTag::Edge`] endpoints are paired by tag equality;
-//!   exactly two per `Edge` tag is the manifold guarantee.
+//!   exactly two per `Edge` tag is the edge-manifold guarantee.
 //! - [`EndpointTag::Vertex`] endpoints are sorted by their source
 //!   face's position in the vertex's cyclic fans of incident faces,
 //!   then paired in consecutive groups of two within each fan. This
@@ -26,7 +26,7 @@
 //!
 //! Endpoints whose pairing budget cannot be balanced raise
 //! [`SliceError::NonManifoldDuringStitching`] as a runtime safety
-//! net for inputs that slipped the upstream manifold check.
+//! net for inputs that slipped the upstream edge-manifold check.
 
 use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::{FaceIndex, VertexIndex};
@@ -80,7 +80,7 @@ const UNPAIRED: usize = usize::MAX;
 
 /// Endpoint-to-mate table built once per layer, then traversed to
 /// recover closed rings. A flat vector indexed by [`slot`]; on a
-/// manifold layer every slot is written exactly once.
+/// well-formed layer every slot is written exactly once.
 struct EndpointPairings(Vec<usize>);
 
 impl EndpointPairings {
@@ -340,9 +340,9 @@ mod stitch_tests {
             let witness = mesh
                 .validated_faces()
                 .expect("tetrahedron has in-range vertex indices")
-                .validated_manifold()
+                .validated_edge_manifold()
                 .expect("tetrahedron is manifold");
-            MeshTopology::from_manifold(&witness)
+            MeshTopology::from_edge_manifold(&witness)
         };
         (mesh, topology)
     }

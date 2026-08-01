@@ -16,12 +16,12 @@
 //! exposes a variant name and an optional representative face index
 //! for each error. The trait is implemented for
 //! [`MeshFaceError`](super::MeshFaceError) and
-//! [`MeshManifoldError`](super::MeshManifoldError); other validation
+//! [`MeshEdgeManifoldError`](super::MeshEdgeManifoldError); other validation
 //! error enums can opt in by implementing it.
 
 use crate::primitives::FaceIndex;
 
-use super::{MeshFaceError, MeshManifoldError};
+use super::{MeshEdgeManifoldError, MeshFaceError};
 
 /// Surface a variant name and (where applicable) a representative
 /// face index for aggregation into summaries.
@@ -32,7 +32,7 @@ pub trait MeshErrorReport {
 
     /// Face index this error is anchored on, when the variant
     /// carries one. `None` for variants that do not refer to a
-    /// specific face (for example, [`MeshManifoldError::EmptyMesh`]).
+    /// specific face (for example, [`MeshEdgeManifoldError::EmptyMesh`]).
     fn example_face(&self) -> Option<FaceIndex>;
 }
 
@@ -52,7 +52,7 @@ impl MeshErrorReport for MeshFaceError {
     }
 }
 
-impl MeshErrorReport for MeshManifoldError {
+impl MeshErrorReport for MeshEdgeManifoldError {
     fn variant_name(&self) -> &'static str {
         match self {
             Self::EmptyMesh => "EmptyMesh",
@@ -121,17 +121,17 @@ mod variant_name_tests {
     }
 
     #[test]
-    fn mesh_manifold_error_variant_names_round_trip() {
-        let empty = MeshManifoldError::EmptyMesh;
-        let boundary = MeshManifoldError::BoundaryEdge {
+    fn mesh_edge_manifold_error_variant_names_round_trip() {
+        let empty = MeshEdgeManifoldError::EmptyMesh;
+        let boundary = MeshEdgeManifoldError::BoundaryEdge {
             edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
             face_idx: 0_usize.into(),
         };
-        let non_manifold = MeshManifoldError::NonManifoldEdge {
+        let non_manifold = MeshEdgeManifoldError::NonManifoldEdge {
             edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
             face_indices: vec![0_usize.into(), 1_usize.into(), 2_usize.into()],
         };
-        let winding = MeshManifoldError::InconsistentWindingOrder {
+        let winding = MeshEdgeManifoldError::InconsistentWindingOrder {
             edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
             face_indices: [0_usize.into(), 1_usize.into()],
         };
@@ -161,12 +161,12 @@ mod example_face_tests {
 
     #[test]
     fn manifold_empty_mesh_has_no_example_face() {
-        assert_eq!(MeshManifoldError::EmptyMesh.example_face(), None);
+        assert_eq!(MeshEdgeManifoldError::EmptyMesh.example_face(), None);
     }
 
     #[test]
     fn manifold_non_manifold_edge_returns_first_face_index() {
-        let err = MeshManifoldError::NonManifoldEdge {
+        let err = MeshEdgeManifoldError::NonManifoldEdge {
             edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
             face_indices: vec![17_usize.into(), 18_usize.into(), 19_usize.into()],
         };
@@ -175,7 +175,7 @@ mod example_face_tests {
 
     #[test]
     fn manifold_inconsistent_winding_returns_first_face_index() {
-        let err = MeshManifoldError::InconsistentWindingOrder {
+        let err = MeshEdgeManifoldError::InconsistentWindingOrder {
             edge: (VertexIndex::from(0_u32), VertexIndex::from(1_u32)),
             face_indices: [42_usize.into(), 43_usize.into()],
         };

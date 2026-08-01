@@ -497,8 +497,8 @@ mod parallel_equivalence_tests {
     ) -> ContourStack {
         let baked = bake_leaf_to_world(scene, leaf).expect("leaf bakes");
         let faces = baked.validated_faces().expect("faces validate");
-        let mesh = faces.validated_manifold().expect("mesh is manifold");
-        let topology = MeshTopology::from_manifold(&mesh);
+        let mesh = faces.validated_edge_manifold().expect("mesh is manifold");
+        let topology = MeshTopology::from_edge_manifold(&mesh);
         let all_faces: Vec<u32> = (0..mesh.faces().len() as u32).collect();
         let layers: Vec<ContourLayer> = profile
             .layer_schedule()
