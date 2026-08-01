@@ -21,6 +21,8 @@ pub mod build_volume;
 pub mod camera;
 mod clipboard;
 mod error_dialog;
+mod export_progress;
+mod export_progress_panel;
 mod gizmo;
 mod gizmo_geometry;
 pub mod graphics_adapter;

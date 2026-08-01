@@ -24,6 +24,7 @@ use std::rc::Rc;
 use crate::WorkspaceSection;
 use crate::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use crate::error_dialog::DialogManager;
+use crate::export_progress_panel::ExportProgressPanel;
 use crate::pending_load::PendingLoad;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneSubscription};
@@ -33,6 +34,7 @@ pub(super) struct SessionState {
     document: Rc<SceneDocument>,
     loader: Rc<SceneLoader>,
     save_progress: Rc<SaveProgressPanel>,
+    export_progress: Rc<ExportProgressPanel>,
     pending_load: Rc<PendingLoad>,
     dialogs: Rc<DialogManager>,
     /// Held by the controller so it's dropped alongside the
@@ -56,6 +58,7 @@ impl SessionState {
         document: Rc<SceneDocument>,
         loader: Rc<SceneLoader>,
         save_progress: Rc<SaveProgressPanel>,
+        export_progress: Rc<ExportProgressPanel>,
         pending_load: Rc<PendingLoad>,
         dialogs: Rc<DialogManager>,
     ) -> Self {
@@ -63,6 +66,7 @@ impl SessionState {
             document,
             loader,
             save_progress,
+            export_progress,
             pending_load,
             dialogs,
             document_subscription: RefCell::new(None),
@@ -81,6 +85,10 @@ impl SessionState {
 
     pub(super) fn save_progress(&self) -> &Rc<SaveProgressPanel> {
         &self.save_progress
+    }
+
+    pub(super) fn export_progress(&self) -> &Rc<ExportProgressPanel> {
+        &self.export_progress
     }
 
     pub(super) fn dialogs(&self) -> &Rc<DialogManager> {
@@ -143,6 +151,7 @@ mod session_state_tests {
             SceneDocument::new(),
             Rc::new(SceneLoader::new_for_test(dialogs.clone())),
             Rc::new(SaveProgressPanel::new(slint::Weak::default())),
+            Rc::new(ExportProgressPanel::new(slint::Weak::default())),
             Rc::new(PendingLoad::new()),
             dialogs,
         )

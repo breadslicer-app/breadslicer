@@ -33,7 +33,11 @@ export enum LoadPhase { ReadingFile, PreparingGeometry, UploadingToGpu }
 
 // Phases of a project save, mirroring the Rust-side worker phases; the
 // Rust poll maps between the two.
-export enum SavePhase { Serializing, Compressing, Writing }
+// Shared by the save and export flows: both drive the same progress
+// panel and busy flag, and each phase value maps onto one panel line.
+// Flattening is only ever set by exports (STL formats merge the scene
+// into one mesh first); saves start at Serializing.
+export enum SavePhase { Flattening, Serializing, Compressing, Writing }
 
 // Menu presentation for the main window. `Bar` shows the top menu bar;
 // `Compact` hides it to reclaim vertical space. Linux and Windows only:
@@ -397,7 +401,7 @@ export component MainWindow inherits Window {
             MenuItem {
                 title: @tr("MenuBar" => "Export As…");
                 shortcut: @keys(Control + Shift + E);
-                enabled: root.has-scene && !root.loading;
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.export-as-requested();
                 }
@@ -916,7 +920,7 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Export As…");
-                    enabled: root.has-scene && !root.loading;
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.export-as-requested();
                     }
@@ -1150,7 +1154,9 @@ export component MainWindow inherits Window {
             spacing: 8px;
 
             Text {
-                text: root.save-phase == SavePhase.Serializing
+                text: root.save-phase == SavePhase.Flattening
+                    ? @tr("Preparing geometry…")
+                    : root.save-phase == SavePhase.Serializing
                     ? @tr("Serializing model…")
                     : root.save-phase == SavePhase.Compressing
                     ? @tr("Compressing…")

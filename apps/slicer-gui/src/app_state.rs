@@ -947,11 +947,13 @@ impl AppState {
         };
         let doc = controller.document();
         let dialogs = controller.dialogs();
+        let export_progress = controller.export_progress();
         let stem = default_export_stem(&doc);
         let ext = default_export_extension(&doc);
         let app_weak = Rc::downgrade(self);
         if let Err(err) = slint::spawn_local(async move {
-            let saved = crate::wiring::run_export_as_flow(doc, dialogs, stem, ext).await;
+            let saved =
+                crate::wiring::run_export_as_flow(doc, dialogs, export_progress, stem, ext).await;
             if !saved {
                 return;
             }

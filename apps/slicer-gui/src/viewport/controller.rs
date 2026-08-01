@@ -42,6 +42,7 @@ use crate::camera::AxisView;
 use crate::clipboard;
 use crate::clipboard::Clipboard;
 use crate::error_dialog::DialogManager;
+use crate::export_progress_panel::ExportProgressPanel;
 #[cfg(test)]
 use crate::gizmo;
 use crate::i18n::ctr;
@@ -78,9 +79,17 @@ impl ViewportController {
         let dialogs = DialogManager::new();
         let loader = Rc::new(SceneLoader::new(ui, dialogs.clone()));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
+        let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
         Self {
             ui: ui.as_weak(),
-            session: SessionState::new(document, loader, save_progress, pending_load, dialogs),
+            session: SessionState::new(
+                document,
+                loader,
+                save_progress,
+                export_progress,
+                pending_load,
+                dialogs,
+            ),
             camera: CameraController::new(),
             render: RenderHost::new(ui),
             input: InputDispatch::new(),
@@ -99,6 +108,7 @@ impl ViewportController {
         let dialogs = DialogManager::new();
         let loader = Rc::new(SceneLoader::new_for_test(dialogs.clone()));
         let save_progress = Rc::new(SaveProgressPanel::new(slint::Weak::default()));
+        let export_progress = Rc::new(ExportProgressPanel::new(slint::Weak::default()));
         let pending_load = Rc::new(PendingLoad::new());
         let controller = Self {
             ui: slint::Weak::default(),
@@ -106,6 +116,7 @@ impl ViewportController {
                 SceneDocument::new(),
                 loader,
                 save_progress,
+                export_progress,
                 pending_load,
                 dialogs,
             ),
@@ -237,6 +248,10 @@ impl ViewportController {
     /// The save-progress panel driver, shared with the async save flow.
     pub fn save_progress(&self) -> Rc<SaveProgressPanel> {
         self.session.save_progress().clone()
+    }
+
+    pub fn export_progress(&self) -> Rc<ExportProgressPanel> {
+        self.session.export_progress().clone()
     }
 
     /// Subscribes the controller to its document. Called from

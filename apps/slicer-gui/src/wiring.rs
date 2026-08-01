@@ -17,6 +17,7 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
+use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
 use crate::mesh_loader::{self, LoadDispatch};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
@@ -583,10 +584,18 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
     ui.on_export_as_requested(move || {
         let doc = ctrl.document();
         let dialogs = ctrl.dialogs();
+        let export_progress = ctrl.export_progress();
         let default_stem = scene_export::default_export_stem(&doc);
         let default_extension = scene_export::default_export_extension(&doc);
         if let Err(err) = slint::spawn_local(async move {
-            let _ = run_export_as_flow(doc, dialogs, default_stem, default_extension).await;
+            let _ = run_export_as_flow(
+                doc,
+                dialogs,
+                export_progress,
+                default_stem,
+                default_extension,
+            )
+            .await;
         }) {
             eprintln!("Failed to spawn export dialog task: {err}");
         }
@@ -594,16 +603,18 @@ fn wire_export_as(ui: &MainWindow, ctrl: Rc<ViewportController>) {
 }
 
 /// Orchestrates one "Export As" command: show the file-save dialog,
-/// infer the format from the chosen extension, and call into
-/// `scene_export`. Returns `true` only when a file was actually
-/// written (so a chained "Export & Open" caller knows it's safe to
-/// discard the current scene); user cancellation, unknown extensions,
-/// and write failures all return `false`. Errors and unknown
-/// extensions surface dialogs from this function so callers don't
-/// have to.
+/// infer the format from the chosen extension, snapshot the scene on
+/// the UI thread, and write the file on a worker thread while the
+/// export-progress panel polls, so the event loop stays responsive
+/// throughout. Returns `true` only when a file was actually written
+/// (so a chained "Export & Open" caller knows it's safe to discard
+/// the current scene); user cancellation, unknown extensions, and
+/// write failures all return `false`. Errors and unknown extensions
+/// surface dialogs from this function so callers don't have to.
 pub(crate) async fn run_export_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
+    export_progress: Rc<ExportProgressPanel>,
     default_stem: Option<String>,
     default_extension: &'static str,
 ) -> bool {
@@ -621,34 +632,74 @@ pub(crate) async fn run_export_as_flow(
                 "Unable to infer file format from filename. Use one of: \
                  .stl (binary STL), .stla (ASCII STL), .obj, or .3mf."
             );
-            dialogs.show_error(
-                ctr!("ErrorDialog", "Failed to export").as_str(),
-                Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
-                err.to_string(),
-                format_anyhow_chain(&err),
-            );
+            show_export_error(&dialogs, &target, &err);
             false
         }
         ExportDispatch::Ready { target, format } => {
-            match scene_export::export_scene_as(&doc, &target, format) {
-                Ok(warnings) => {
+            // Snapshot on the UI thread: one borrow, one cheap clone
+            // that the worker owns outright, so the written bytes
+            // match the on-screen scene at this instant. The menu
+            // gates exports without a scene, but a stale callback
+            // could still race the close path.
+            let Some(scene) = scene_export::prepare_export(&doc) else {
+                let err = anyhow::anyhow!("No scene loaded");
+                show_export_error(&dialogs, &target, &err);
+                return false;
+            };
+
+            export_progress.begin();
+            let sink = export_progress.sink();
+            let (tx, rx) = oneshot::channel();
+            let worker_target = target.clone();
+            std::thread::spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    scene_export::write_export(
+                        &scene,
+                        &worker_target,
+                        format,
+                        |phase, done, total| sink.set(phase, done, total),
+                    )
+                }))
+                .unwrap_or_else(|payload| {
+                    Err(anyhow::anyhow!(mesh_loader::panic_message(&payload)))
+                });
+                // Deliver on the UI thread so the awaiting task wakes
+                // there. If the event loop is gone (shutdown), the
+                // sender drops and the receiver resolves to a
+                // cancellation.
+                let _ = slint::invoke_from_event_loop(move || {
+                    let _ = tx.send(result);
+                });
+            });
+
+            let outcome = rx.await;
+            export_progress.end();
+            match outcome {
+                Ok(Ok(warnings)) => {
                     for w in &warnings {
                         eprintln!("WARNING [{}]: {}", target.display(), w.user_message());
                     }
                     true
                 }
-                Err(err) => {
-                    dialogs.show_error(
-                        ctr!("ErrorDialog", "Failed to export").as_str(),
-                        Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
-                        err.to_string(),
-                        format_anyhow_chain(&err),
-                    );
+                Ok(Err(err)) => {
+                    show_export_error(&dialogs, &target, &err);
                     false
                 }
+                // The sender dropped without sending (event loop gone
+                // at shutdown): treat as not exported.
+                Err(_canceled) => false,
             }
         }
     }
+}
+
+fn show_export_error(dialogs: &Rc<DialogManager>, target: &std::path::Path, err: &anyhow::Error) {
+    dialogs.show_error(
+        ctr!("ErrorDialog", "Failed to export").as_str(),
+        Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
+        err.to_string(),
+        format_anyhow_chain(err),
+    );
 }
 
 async fn pick_export_target(

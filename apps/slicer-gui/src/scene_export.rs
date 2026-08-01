@@ -3,16 +3,20 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! "Export As" support: pure functions over `&SceneDocument`. The
-//! viewport stays out of this module; the wiring layer drives the
-//! file dialog, then calls in here to produce the file.
+//! "Export As" support: pure functions over `&SceneDocument` plus the
+//! worker-side write step. The viewport stays out of this module; the
+//! wiring layer drives the file dialog and the worker thread, then
+//! calls in here to snapshot the scene and produce the file.
 
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
+use sc_mesh_core::Scene;
 use sc_mesh_formats::filetypes::WriteFormat;
+use sc_mesh_formats::ports::WriteSceneProgress;
 use sc_mesh_formats::scene_writer::{self, FlattenWarning};
 
+use crate::export_progress::ExportPhase;
 use crate::scene_document::SceneDocument;
 
 /// Fallback extension used when we can't infer a better one from the
@@ -20,7 +24,7 @@ use crate::scene_document::SceneDocument;
 const DEFAULT_EXPORT_EXTENSION: &str = "stl";
 
 /// Default filename stem to seed the file-save dialog with: the
-/// original load path's stem (e.g. `gear.obj` → `gear`). `None` when
+/// original load path's stem (e.g. `gear.obj` -> `gear`). `None` when
 /// no scene is loaded or the source path has no recognisable stem.
 pub(crate) fn default_export_stem(doc: &SceneDocument) -> Option<String> {
     doc.with_source_path(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_owned()))
@@ -54,22 +58,51 @@ pub(crate) fn default_export_extension(doc: &SceneDocument) -> &'static str {
     }
 }
 
-/// Writes the document's current scene out to `target` in `format`.
-/// Returns the warnings the flatten step produced (currently
-/// `MultiObjectMerge` for STL with >1 object). Errors when no scene is
-/// loaded: the menu item should be disabled in that case, but the
-/// guard catches a stale callback racing the close path.
+/// Snapshots the document's scene for an off-thread export: one
+/// borrow, one clone. The clone shares mesh payloads through `Arc`,
+/// so it is cheap relative to the write, and taking it releases the
+/// scene borrow so the document stays usable while a worker writes
+/// the clone. Returns `None` when no scene is loaded.
+pub(crate) fn prepare_export(doc: &SceneDocument) -> Option<Scene> {
+    doc.with_scene(|spatial| spatial.graph().clone())
+}
+
+/// Writes a snapshotted scene to `target` in `format`, reporting each
+/// phase through `progress`. Pure with respect to the document, so it
+/// runs on a worker thread; the caller surfaces warnings and errors on
+/// the UI thread. Returns the warnings the flatten step produced
+/// (currently `MultiObjectMerge` for STL with >1 object).
+pub(crate) fn write_export(
+    scene: &Scene,
+    target: &Path,
+    format: WriteFormat,
+    mut progress: impl FnMut(ExportPhase, u64, u64),
+) -> Result<Vec<FlattenWarning>> {
+    scene_writer::write_scene_with_progress(scene, target, format, |report| match report {
+        WriteSceneProgress::Flatten { done, total } => progress(ExportPhase::Flatten, done, total),
+        WriteSceneProgress::Serialize { done, total } => {
+            progress(ExportPhase::Serialize, done, total)
+        }
+        WriteSceneProgress::Compress { done, total } => {
+            progress(ExportPhase::Compress, done, total)
+        }
+        WriteSceneProgress::Write { done, total } => progress(ExportPhase::Write, done, total),
+    })
+    .map_err(anyhow::Error::from)
+}
+
+/// The synchronous form of a full export against `target`: snapshot
+/// plus write in the caller's thread. The GUI drives the write off the
+/// UI thread instead; this direct composition backs the format
+/// round-trip tests. Errors when no scene is loaded.
+#[cfg(test)]
 pub(crate) fn export_scene_as(
     doc: &SceneDocument,
     target: &Path,
     format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
-    let warnings = doc
-        .with_scene(|spatial| -> Result<Vec<FlattenWarning>> {
-            scene_writer::write_scene(spatial.graph(), target, format).map_err(anyhow::Error::from)
-        })
-        .ok_or_else(|| anyhow!("No scene loaded"))??;
-    Ok(warnings)
+    let scene = prepare_export(doc).ok_or_else(|| anyhow::anyhow!("No scene loaded"))?;
+    write_export(&scene, target, format, |_, _, _| {})
 }
 
 #[cfg(test)]
@@ -222,6 +255,79 @@ mod scene_export_tests {
         let target = tmp_path("no_scene");
         let result = export_scene_as(&doc, &target, WriteFormat::StlBin);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn prepare_export_returns_none_without_a_scene() {
+        let doc = SceneDocument::new();
+        assert!(prepare_export(&doc).is_none());
+    }
+
+    #[test]
+    fn prepare_export_releases_the_scene_borrow() {
+        // The snapshot exists so a worker can write it while the
+        // document stays usable; holding it must not keep the scene
+        // borrowed.
+        let doc = SceneDocument::new();
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.obj"));
+        let snapshot = prepare_export(&doc).expect("scene is loaded");
+        assert!(doc.with_scene(|_| ()).is_some());
+        drop(snapshot);
+    }
+
+    #[test]
+    fn export_snapshot_is_independent_of_later_scene_edits() {
+        let doc = SceneDocument::new();
+        doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.obj"));
+        let snapshot = prepare_export(&doc).expect("scene is loaded");
+
+        // Replace the document's scene after the snapshot; the write
+        // must still produce the snapshotted single-object scene.
+        doc.install_graph(two_object_graph(), PathBuf::from("/tmp/other.obj"));
+
+        let target = tmp_path("snapshot_3mf");
+        let warnings = write_export(&snapshot, &target, WriteFormat::ThreeMf, |_, _, _| {})
+            .expect("write should succeed");
+        assert!(warnings.is_empty());
+        let loaded = sc_mesh_formats::load_mesh_from_path(
+            &target,
+            Some(sc_mesh_formats::filetypes::MeshFileType::_3mf),
+            None,
+        )
+        .expect("exported 3MF must load back");
+        assert_eq!(loaded.graph.reachable_leaf_count(), 1);
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn write_export_reports_phases_in_order_for_stl() {
+        let doc = SceneDocument::new();
+        doc.install_graph(two_object_graph(), PathBuf::from("/tmp/multi.obj"));
+        let snapshot = prepare_export(&doc).expect("scene is loaded");
+
+        let target = tmp_path("phases_stlb");
+        let mut reports: Vec<(ExportPhase, u64, u64)> = Vec::new();
+        write_export(
+            &snapshot,
+            &target,
+            WriteFormat::StlBin,
+            |phase, done, total| {
+                reports.push((phase, done, total));
+            },
+        )
+        .expect("write should succeed");
+
+        assert_eq!(reports.first(), Some(&(ExportPhase::Flatten, 0, 1)));
+        assert!(reports.contains(&(ExportPhase::Flatten, 1, 1)));
+        assert!(
+            reports
+                .iter()
+                .any(|(p, done, total)| *p == ExportPhase::Serialize
+                    && done == total
+                    && *total > 0)
+        );
+        assert_eq!(reports.last(), Some(&(ExportPhase::Write, 1, 1)));
+        let _ = std::fs::remove_file(&target);
     }
 
     #[test]
