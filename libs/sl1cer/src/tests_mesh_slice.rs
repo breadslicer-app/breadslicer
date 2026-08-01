@@ -25,12 +25,14 @@ use std::collections::{HashMap, HashSet};
 
 use sc_mesh_core::indexed_mesh::MeshTopology;
 use sc_mesh_core::primitives::VertexIndex;
-use sc_mesh_core::{IndexedMesh, ValidatedManifoldMesh};
+use sc_mesh_core::{IndexedMesh, ValidatedManifoldMesh, Vertex};
 use sc_mesh_fixtures::{
-    aob_saddle_tetrahedron, cuboid_with_y_tunnel, cuboid_with_z_tunnel,
-    on_edge_crossing_tetrahedron, on_edge_skim_above_tetrahedron, unit_cube_mesh,
+    aob_saddle_tetrahedron, bowtie_tetrahedra, cuboid_with_pinched_z_tunnel, cuboid_with_y_tunnel,
+    cuboid_with_z_tunnel, on_edge_crossing_tetrahedron, on_edge_skim_above_tetrahedron,
+    unit_cube_mesh,
 };
 
+use crate::contour::ClosedRing;
 use crate::geom2d::{EndpointTag, Segment};
 use crate::mesh_slice::{segments_at_z, segments_at_z_for_faces, slice_mesh};
 use crate::plane_intersect::Z_CLASSIFY_EPS_MM;
@@ -555,4 +557,164 @@ fn bucketed_scan_with_every_face_is_the_full_scan() {
             segments_at_z(&w, z_mm, &topology),
         );
     }
+}
+
+// =====================================================================
+// Pinched-fixture tests. Both fixtures carry a pinch vertex at
+// (0, 0, 1): edge-manifold meshes whose pinch has 2 fans. Each is
+// exercised in 2 orientations: upright (the lobes sit above and
+// below the through-pinch plane) and quarter-turned about X (the
+// through-pinch plane cuts both lobes at once).
+// =====================================================================
+
+/// Rotate every vertex a quarter turn about the X axis:
+/// (x, y, z) -> (x, z, -y). Exact for the integer-coordinate pinch
+/// fixtures, and a proper rotation, so winding stays consistent and
+/// the witness still mints. The fixtures' pinch at (0, 0, 1) maps
+/// to (0, 1, 0), putting the pinch on the plane `z = 0` with a lobe
+/// on each side.
+fn quarter_turned_about_x(mut mesh: IndexedMesh) -> IndexedMesh {
+    for v in &mut mesh.vertices {
+        let [x, y, z] = v.coords();
+        *v = Vertex::new([x, z, -y]);
+    }
+    mesh
+}
+
+/// Slice at `z_mm` and stitch the layer into closed rings through
+/// the production pairing (the tag-graph component helper above is
+/// blind to fans: it would fuse rings that share a pinch vertex
+/// tag).
+fn stitched_rings(mesh: &IndexedMesh, z_mm: f64) -> Vec<ClosedRing> {
+    let w = witness(mesh);
+    let topology = MeshTopology::from_manifold(&w);
+    let segments = segments_at_z(&w, z_mm, &topology);
+    stitch_layer(&segments, z_mm, &topology).expect("pinched layer stitches cleanly")
+}
+
+/// Occurrences of the point `(x, y)` among the ring's vertices.
+fn point_occurrences(ring: &ClosedRing, x: f64, y: f64) -> usize {
+    ring.vertices()
+        .iter()
+        .filter(|p| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9)
+        .count()
+}
+
+#[test]
+fn upright_bowtie_below_pinch_yields_one_triangle_ring() {
+    let rings = stitched_rings(&bowtie_tetrahedra(), 0.5);
+    assert_eq!(rings.len(), 1, "one lobe cross-section expected");
+    assert_eq!(rings[0].len(), 3);
+}
+
+#[test]
+fn upright_bowtie_through_pinch_yields_an_empty_layer() {
+    // Both lobes touch the z = 1 plane only at the pinch point: a
+    // measure-zero cross-section, so no segments and no rings.
+    let mesh = bowtie_tetrahedra();
+    let w = witness(&mesh);
+    let topology = MeshTopology::from_manifold(&w);
+    assert!(segments_at_z(&w, 1.0, &topology).is_empty());
+    assert!(stitched_rings(&mesh, 1.0).is_empty());
+}
+
+#[test]
+fn upright_bowtie_above_pinch_yields_one_triangle_ring() {
+    let rings = stitched_rings(&bowtie_tetrahedra(), 1.5);
+    assert_eq!(rings.len(), 1, "one lobe cross-section expected");
+    assert_eq!(rings[0].len(), 3);
+}
+
+#[test]
+fn sideways_bowtie_through_pinch_yields_two_rings_sharing_the_pinch_point() {
+    // The through-pinch plane cuts both lobes: a figure-8 of 2
+    // triangle rings joined at the pinch, which projects to (0, 1).
+    // Per-fan hub pairing must keep each lobe's ring closed through
+    // its own faces instead of cross-stitching the lobes.
+    let rings = stitched_rings(&quarter_turned_about_x(bowtie_tetrahedra()), 0.0);
+    assert_eq!(rings.len(), 2, "one ring per lobe expected");
+    for ring in &rings {
+        assert_eq!(ring.len(), 3);
+        assert_eq!(
+            point_occurrences(ring, 0.0, 1.0),
+            1,
+            "each lobe ring passes through the pinch point once"
+        );
+    }
+}
+
+#[test]
+fn sideways_bowtie_off_pinch_yields_two_disjoint_rings() {
+    let rings = stitched_rings(&quarter_turned_about_x(bowtie_tetrahedra()), 0.5);
+    assert_eq!(rings.len(), 2, "one ring per lobe expected");
+    for a in rings[0].vertices() {
+        for b in rings[1].vertices() {
+            assert!(
+                (a.x - b.x).abs() > 1e-9 || (a.y - b.y).abs() > 1e-9,
+                "off-pinch lobe rings must not share any point"
+            );
+        }
+    }
+}
+
+#[test]
+fn upright_pinched_tunnel_below_pinch_yields_outer_ring_and_hole_ring() {
+    let rings = stitched_rings(&cuboid_with_pinched_z_tunnel(), 0.5);
+    let mut lens: Vec<usize> = rings.iter().map(ClosedRing::len).collect();
+    lens.sort_unstable();
+    assert_eq!(
+        lens,
+        vec![4, 8],
+        "expected the 4-point cavity ring inside the 8-point outer ring"
+    );
+}
+
+#[test]
+fn upright_pinched_tunnel_through_pinch_yields_outer_ring_only() {
+    // At z = 1 the cavity has narrowed to the pinch point itself:
+    // the hole vanishes and only the outer wall contour remains.
+    let rings = stitched_rings(&cuboid_with_pinched_z_tunnel(), 1.0);
+    assert_eq!(rings.len(), 1, "the point-sized hole must not emit a ring");
+    assert_eq!(rings[0].len(), 8);
+    assert_eq!(
+        point_occurrences(&rings[0], 0.0, 0.0),
+        0,
+        "the pinch contributes no contour vertex"
+    );
+}
+
+#[test]
+fn upright_pinched_tunnel_above_pinch_yields_outer_ring_and_hole_ring() {
+    let rings = stitched_rings(&cuboid_with_pinched_z_tunnel(), 1.5);
+    let mut lens: Vec<usize> = rings.iter().map(ClosedRing::len).collect();
+    lens.sort_unstable();
+    assert_eq!(lens, vec![4, 8]);
+}
+
+#[test]
+fn sideways_pinched_tunnel_through_pinch_yields_one_ring_visiting_the_pinch_twice() {
+    // Quarter-turned, the tunnel runs along Y and opens at y = 0 and
+    // y = 2; the through-pinch plane contains the tunnel axis. The
+    // cross-section is the outer rectangle with 2 triangular notches
+    // (one per cavity pyramid) meeting at the pinch, which projects
+    // to (0, 1): a single boundary ring that passes through the
+    // pinch point twice. Cross-fan pairing would instead cut the
+    // section in half with 2 rings through solid material.
+    let rings = stitched_rings(&quarter_turned_about_x(cuboid_with_pinched_z_tunnel()), 0.0);
+    assert_eq!(rings.len(), 1, "expected a single self-touching boundary");
+    assert_eq!(
+        point_occurrences(&rings[0], 0.0, 1.0),
+        2,
+        "the boundary visits the pinch point once per notch"
+    );
+}
+
+#[test]
+fn sideways_pinched_tunnel_off_pinch_yields_one_ring_avoiding_the_pinch() {
+    // Above the pinch plane but still inside the cavity band: the 2
+    // notches shorten and no longer reach the pinch, leaving one
+    // simple boundary ring.
+    let rings = stitched_rings(&quarter_turned_about_x(cuboid_with_pinched_z_tunnel()), 0.2);
+    assert_eq!(rings.len(), 1);
+    assert_eq!(point_occurrences(&rings[0], 0.0, 1.0), 0);
 }

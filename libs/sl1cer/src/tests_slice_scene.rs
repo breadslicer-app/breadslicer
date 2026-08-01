@@ -645,3 +645,100 @@ mod sliceable_leaves_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod pinched_leaf_tests {
+    use super::*;
+
+    use sc_mesh_fixtures::{bowtie_tetrahedra, cuboid_with_pinched_z_tunnel};
+
+    /// One 2 mm slab covering the whole fixture: its plane sits at
+    /// exactly z = 1, the pinch height of both pinch fixtures.
+    fn through_pinch_profile() -> SliceProfile {
+        SliceProfile::new(
+            BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
+            PixelResolution::new(100, 100).unwrap(),
+            LayerSchedule::uniform(2.0, 2.0, 1).unwrap(),
+            Mirror::default(),
+            AaLevel::Off,
+            PackingMode::None,
+        )
+    }
+
+    /// Eight 0.25 mm slabs: planes at 0.125 .. 1.875, straddling the
+    /// pinch at z = 1 without ever landing on it.
+    fn eight_layer_profile() -> SliceProfile {
+        SliceProfile::new(
+            BuildVolume::new(20.0, 20.0, 20.0).unwrap(),
+            PixelResolution::new(100, 100).unwrap(),
+            LayerSchedule::uniform(0.25, 0.25, 8).unwrap(),
+            Mirror::default(),
+            AaLevel::Off,
+            PackingMode::None,
+        )
+    }
+
+    #[test]
+    fn bowtie_leaf_slices_end_to_end_through_the_pinch() {
+        // Regression: this exact call used to panic inside the
+        // topology build before pinch vertices were accepted.
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "bowtie", bowtie_tetrahedra());
+        let stack =
+            slice_leaf(&scene, leaf, &through_pinch_profile()).expect("pinched leaf slices");
+        assert_eq!(stack.layers().len(), 1);
+        assert!(
+            stack.layers()[0].polygons().is_empty(),
+            "the through-pinch plane meets the bowtie in a single point"
+        );
+    }
+
+    #[test]
+    fn bowtie_leaf_slices_one_lobe_polygon_per_off_pinch_layer() {
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "bowtie", bowtie_tetrahedra());
+        let stack = slice_leaf(&scene, leaf, &eight_layer_profile()).expect("pinched leaf slices");
+        assert_eq!(stack.layers().len(), 8);
+        for layer in stack.layers() {
+            assert_eq!(
+                layer.polygons().len(),
+                1,
+                "layer {} expected exactly one lobe cross-section",
+                layer.z_mm()
+            );
+            assert!(layer.polygons()[0].holes().is_empty());
+        }
+    }
+
+    #[test]
+    fn pinched_tunnel_leaf_slices_end_to_end_through_the_pinch() {
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "pinched tunnel", cuboid_with_pinched_z_tunnel());
+        let stack =
+            slice_leaf(&scene, leaf, &through_pinch_profile()).expect("pinched leaf slices");
+        assert_eq!(stack.layers().len(), 1);
+        let polygons = stack.layers()[0].polygons();
+        assert_eq!(polygons.len(), 1);
+        assert!(
+            polygons[0].holes().is_empty(),
+            "the tunnel hole degenerates to the pinch point on this plane"
+        );
+    }
+
+    #[test]
+    fn pinched_tunnel_leaf_keeps_its_hole_on_every_off_pinch_layer() {
+        let mut scene = Scene::new();
+        let leaf = add_root_mesh(&mut scene, "pinched tunnel", cuboid_with_pinched_z_tunnel());
+        let stack = slice_leaf(&scene, leaf, &eight_layer_profile()).expect("pinched leaf slices");
+        assert_eq!(stack.layers().len(), 8);
+        for layer in stack.layers() {
+            assert_eq!(layer.polygons().len(), 1);
+            assert_eq!(
+                layer.polygons()[0].holes().len(),
+                1,
+                "layer {} expected the shrunk tunnel hole",
+                layer.z_mm()
+            );
+        }
+    }
+}
