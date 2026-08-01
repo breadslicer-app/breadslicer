@@ -49,9 +49,13 @@ fn get_unnamed_mesh() -> IndexedMesh {
 }
 
 fn get_named_mesh() -> IndexedMesh {
+    get_mesh_named("my_mesh")
+}
+
+fn get_mesh_named(name: &str) -> IndexedMesh {
     IndexedMesh {
         meta: Some(MeshMetadata {
-            name: Some(String::from("my_mesh")),
+            name: Some(String::from(name)),
             ..Default::default()
         }),
         vertices: vec![
@@ -64,6 +68,19 @@ fn get_named_mesh() -> IndexedMesh {
             [0, 1, 2],
         )],
     }
+}
+
+/// Writes the mesh as ASCII STL and reads it back, returning the
+/// recovered mesh name.
+fn stla_round_tripped_name(mesh: &IndexedMesh) -> Option<String> {
+    let mut out: Vec<u8> = vec![];
+    write_stla(mesh, &mut out).expect("write_stla succeeds");
+    let mut reader = std::io::Cursor::new(out);
+    let graph = read_stla(&mut reader).expect("written document parses back");
+    single_leaf_mesh(&graph)
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.name.clone())
 }
 
 #[cfg(test)]
@@ -126,6 +143,27 @@ mod stla_tests {
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
         assert_eq!(recovered_mesh, &mesh_named);
+    }
+
+    #[test]
+    fn dotted_name_round_trips() {
+        let name = stla_round_tripped_name(&get_mesh_named("Part.001"));
+        assert_eq!(name.as_deref(), Some("Part.001"));
+    }
+
+    #[test]
+    fn multi_word_name_round_trips() {
+        let name = stla_round_tripped_name(&get_mesh_named("Part A"));
+        assert_eq!(name.as_deref(), Some("Part A"));
+    }
+
+    #[test]
+    fn newline_in_name_is_normalized_on_write_and_round_trips() {
+        // The writer collapses whitespace runs (line breaks included)
+        // into single spaces, so the document stays well-formed and
+        // the recovered name is the normalized form.
+        let name = stla_round_tripped_name(&get_mesh_named("a\nb"));
+        assert_eq!(name.as_deref(), Some("a b"));
     }
 }
 

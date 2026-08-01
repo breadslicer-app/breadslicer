@@ -12,10 +12,8 @@
 //! message rather than by internal representation.
 
 use std::io::{BufRead, BufReader, Cursor, Read};
-use std::sync::LazyLock;
 
 use proptest::prelude::*;
-use regex::Regex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{
     IndexedMesh, MeshMetadata, Normal, Scene, Triangle, TriangleIterator, Vertex,
@@ -23,23 +21,20 @@ use sc_mesh_core::{
 };
 
 use crate::error::LoadStlError;
-use crate::stl::stla::{PARALLEL_PARSE_MIN_BODY_BYTES, read_stla_slice};
+use crate::stl::stla::{PARALLEL_PARSE_MIN_BODY_BYTES, parse_solid_header, read_stla_slice};
 use crate::stl::write_stla;
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
-// --- verbatim copy of the retired streaming reader -------------------
-// Kept byte for byte as it was in `stla.rs` before the slice rewrite
-// (struct renamed, regex statics duplicated here because the originals
-// were private to that module). This is the behavioral reference.
-
-const REF_HEADER_PATTERN: &str = r"(?i-u)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$";
-const REF_HEADER_PATTERN_LN: &str =
-    r"(?i-u)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$";
-
-static REF_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(REF_HEADER_PATTERN).unwrap());
-static REF_HEADER_RE_LN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(REF_HEADER_PATTERN_LN).unwrap());
+// --- copy of the retired streaming reader -----------------------------
+// The facet-block state machine below is kept byte for byte as it was
+// in `stla.rs` before the slice rewrite (struct renamed); it remains
+// the behavioral reference for everything past the first line. The
+// header gate and name capture are the one deliberate divergence: the
+// retired reader's strict header regex was itself a defect (it refused
+// free-text names, CRLF terminators, and leading whitespace that occur
+// in circulated files), so both sides of the equivalence now share the
+// production `parse_solid_header` routine.
 
 struct ReferenceAsciiStlReader<'a> {
     lines: Box<dyn Iterator<Item = Result<Vec<String>>> + 'a>,
@@ -64,18 +59,13 @@ impl<'a> ReferenceAsciiStlReader<'a> {
         read.seek(std::io::SeekFrom::Start(0))?;
         maybe_read_error?;
 
-        match REF_HEADER_RE_LN.captures(&header) {
-            Some(c) => Ok(MeshMetadata {
-                name: match c.name("name") {
-                    Some(n) => {
-                        if !n.is_empty() {
-                            Some(String::from(n.as_str()))
-                        } else {
-                            None
-                        }
-                    }
-                    None => None,
-                },
+        // Deliberate divergence from the retired reader: shared
+        // header routine instead of the strict regex (see the module
+        // section comment above).
+        let line = header.strip_suffix('\n').unwrap_or(&header);
+        match parse_solid_header(line) {
+            Some(solid_header) => Ok(MeshMetadata {
+                name: solid_header.name.map(String::from),
                 ..Default::default()
             }),
             None => Ok(MeshMetadata::default()),
@@ -85,10 +75,12 @@ impl<'a> ReferenceAsciiStlReader<'a> {
     fn create_triangles_iterator(read: &'a mut dyn Read) -> Result<Self> {
         let mut lines = BufReader::new(read).lines();
 
-        // Consume first line
+        // Consume first line. Deliberate divergence from the retired
+        // reader: shared header routine instead of the strict regex
+        // (see the module section comment above).
         match lines.next() {
             Some(Err(e)) => return Err(e.into()),
-            Some(Ok(ref line)) if !REF_HEADER_RE.is_match(line) => {
+            Some(Ok(ref line)) if parse_solid_header(line).is_none() => {
                 return Err(LoadStlError::AsciiHeaderMissing);
             }
             None => {
@@ -318,6 +310,12 @@ fn name_strategy() -> impl Strategy<Value = Option<String>> {
         Just(None),
         Just(Some("part_a-01".to_string())),
         Just(Some("Part A".to_string())),
+        Just(Some("Part.001".to_string())),
+        Just(Some("Exported from Blender-2.79 (sub 0)".to_string())),
+        // Not a normalization fixpoint: the writer collapses it, so
+        // the generated document carries "a b" and both parsers must
+        // agree on that.
+        Just(Some("a \t b".to_string())),
     ]
 }
 

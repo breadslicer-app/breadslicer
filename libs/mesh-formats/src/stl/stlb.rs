@@ -28,6 +28,25 @@ pub(crate) fn read_stlb_slice(bytes: &[u8]) -> Result<Scene> {
     Ok(Scene::from(mesh))
 }
 
+/// True when the byte length equals the binary layout exactly for the
+/// triangle count declared at offset 80: header, count field, and
+/// `count` fixed-width records, nothing more. Real binary files whose
+/// header text happens to start with `solid` exist, and this equality
+/// is what routes them to the binary parser regardless of that text.
+pub(crate) fn matches_exact_binary_layout(bytes: &[u8]) -> bool {
+    let Some(count_bytes) = bytes.get(STL_HEADER_BYTES..PREAMBLE_BYTES) else {
+        return false;
+    };
+    let Ok(count_bytes) = <[u8; STL_TRIANGLE_COUNT_BYTES]>::try_from(count_bytes) else {
+        return false;
+    };
+    let declared = u32::from_le_bytes(count_bytes) as usize;
+    declared
+        .checked_mul(STL_TRIANGLE_RECORD_BYTES)
+        .and_then(|records| records.checked_add(PREAMBLE_BYTES))
+        .is_some_and(|total| total == bytes.len())
+}
+
 /// Mesh name from the 80-byte header: the bytes up to the first nul,
 /// trimmed, required to be ASCII. An all-zero or whitespace-only
 /// header yields the default (nameless) metadata.
@@ -246,6 +265,37 @@ mod binary_stl_reader_tests {
         let mut buf = vec![0u8; PREAMBLE_BYTES];
         buf[STL_HEADER_BYTES..PREAMBLE_BYTES].copy_from_slice(&count.to_le_bytes());
         buf
+    }
+
+    #[test]
+    fn exact_layout_is_recognized() {
+        use super::matches_exact_binary_layout;
+
+        // 0 records: preamble alone.
+        assert!(matches_exact_binary_layout(&header_with_declared_count(0)));
+
+        // 2 records, exact length.
+        let mut bytes = header_with_declared_count(2);
+        bytes.extend(std::iter::repeat_n(0u8, 2 * STL_TRIANGLE_RECORD_BYTES));
+        assert!(matches_exact_binary_layout(&bytes));
+
+        // 1 byte short and 1 byte long both fail the equality.
+        let mut short = bytes.clone();
+        short.pop();
+        assert!(!matches_exact_binary_layout(&short));
+        let mut long = bytes;
+        long.push(0);
+        assert!(!matches_exact_binary_layout(&long));
+
+        // Too short to even hold the count field.
+        assert!(!matches_exact_binary_layout(&[0u8; STL_HEADER_BYTES]));
+
+        // A count whose layout cannot fit in memory never matches;
+        // on 64-bit this exercises the checked arithmetic staying
+        // finite rather than wrapping.
+        assert!(!matches_exact_binary_layout(&header_with_declared_count(
+            u32::MAX
+        )));
     }
 
     #[test]

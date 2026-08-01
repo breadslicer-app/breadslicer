@@ -19,19 +19,35 @@ fn encode_triangle_count(count: usize) -> Result<[u8; STL_TRIANGLE_COUNT_BYTES],
         .map_err(|_| WriteStlError::FaceCountExceedsU32 { count })
 }
 
+/// Name as emitted on the `solid` and `endsolid` lines: trimmed, with
+/// every whitespace run (line breaks included) collapsed to a single
+/// space, so the header always stays one line no matter what the
+/// in-memory name contains. A name that normalizes to the empty
+/// string is written like a missing name. The metadata itself is
+/// never modified.
+fn normalized_stla_name(name: &str) -> Option<String> {
+    let mut normalized = String::with_capacity(name.len());
+    for token in name.split_whitespace() {
+        if !normalized.is_empty() {
+            normalized.push(' ');
+        }
+        normalized.push_str(token);
+    }
+    (!normalized.is_empty()).then_some(normalized)
+}
+
 pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
 {
-    let mesh_name = if let Some(metadata) = &mesh.meta() {
-        &metadata.name
-    } else {
-        &None
+    let mesh_name = match &mesh.meta() {
+        Some(metadata) => metadata.name.as_deref().and_then(normalized_stla_name),
+        None => None,
     };
 
     // Write "header"
     writer.write_all(b"solid ")?;
-    if let Some(name) = mesh_name {
+    if let Some(name) = &mesh_name {
         writer.write_all(name.as_bytes())?;
     }
     writer.write_all(b"\n")?;
@@ -57,7 +73,7 @@ where
     }
 
     // Closing mesh
-    if let Some(name) = mesh_name {
+    if let Some(name) = &mesh_name {
         writer.write_all(b"endsolid ")?;
         writer.write_all(name.as_bytes())?;
     } else {
@@ -246,6 +262,79 @@ endsolid my_mesh",
 
         assert_eq!(round_tripped.vertices().len(), 0);
         assert_eq!(round_tripped.faces().len(), 0);
+    }
+
+    /// Writes a one-facet mesh carrying `name` and returns the whole
+    /// ASCII output as text.
+    fn written_stla_text(name: &str) -> String {
+        let mesh = IndexedMesh {
+            meta: Some(MeshMetadata {
+                name: Some(String::from(name)),
+                ..Default::default()
+            }),
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        let mut out: Vec<u8> = vec![];
+        write_stla(&mesh, &mut out).expect("write_stla succeeds");
+        String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    fn first_line(text: &str) -> &str {
+        text.lines().next().expect("output has a header line")
+    }
+
+    fn last_line(text: &str) -> &str {
+        text.lines().last().expect("output has an endsolid line")
+    }
+
+    #[test]
+    fn name_is_trimmed_on_write() {
+        let text = written_stla_text("  Part.001  ");
+        assert_eq!(first_line(&text), "solid Part.001");
+        assert_eq!(last_line(&text), "endsolid Part.001");
+    }
+
+    #[test]
+    fn newline_in_name_collapses_to_a_space() {
+        let text = written_stla_text("a\nb");
+        assert_eq!(first_line(&text), "solid a b");
+        assert_eq!(last_line(&text), "endsolid a b");
+    }
+
+    #[test]
+    fn mixed_whitespace_run_collapses_to_one_space() {
+        let text = written_stla_text("a \r\n\t b");
+        assert_eq!(first_line(&text), "solid a b");
+        assert_eq!(last_line(&text), "endsolid a b");
+    }
+
+    #[test]
+    fn internal_double_space_collapses() {
+        let text = written_stla_text("a  b");
+        assert_eq!(first_line(&text), "solid a b");
+        assert_eq!(last_line(&text), "endsolid a b");
+    }
+
+    #[test]
+    fn unicode_whitespace_collapses_too() {
+        let text = written_stla_text("a\u{00A0}b");
+        assert_eq!(first_line(&text), "solid a b");
+        assert_eq!(last_line(&text), "endsolid a b");
+    }
+
+    #[test]
+    fn whitespace_only_name_writes_the_nameless_shape() {
+        let text = written_stla_text("  ");
+        assert_eq!(first_line(&text), "solid ");
+        assert_eq!(last_line(&text), "endsolid");
     }
 
     #[test]

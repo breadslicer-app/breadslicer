@@ -12,18 +12,16 @@
 //! case-insensitive parsing after a real-world crash report against
 //! such a file: https://github.com/slic3r/Slic3r/issues/2971. This
 //! reader follows the same convention: keywords are compared with
-//! `eq_ignore_ascii_case` and the probe regex matches
-//! case-insensitively.
+//! `eq_ignore_ascii_case`, in the facet grammar and in the `solid`
+//! header recognition alike.
 //!
 //! The parser works over the whole document as one in-memory `str`;
 //! the facet grammar allocates nothing per line or per token.
 
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::str::Lines;
-use std::sync::LazyLock;
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use regex::Regex;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_from_soup};
 
@@ -31,20 +29,50 @@ use crate::error::LoadStlError;
 
 type Result<T> = std::result::Result<T, LoadStlError>;
 
-// The leading `(?i-u)` makes keyword matching case-insensitive over ASCII
-// only. The `-u` is necessary: it keeps the patterns from requiring the
-// `regex` crate's `unicode-case` feature, which is absent in some build
-// configurations and would otherwise make `Regex::new` fail at startup.
-const ASTL_HEADER_PATTERN: &str = r"(?i-u)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)$";
-const ASTL_HEADER_PATTERN_LN: &str =
-    r"(?i-u)^solid (?P<name>([a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*)?)\n$";
+/// A recognized `solid` header line: the optional free-text name.
+pub(crate) struct SolidHeader<'t> {
+    pub(crate) name: Option<&'t str>,
+}
 
-static ASTL_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(ASTL_HEADER_PATTERN).unwrap());
-static ASTL_HEADER_RE_LN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(ASTL_HEADER_PATTERN_LN).unwrap());
+/// Recognizes an ASCII STL `solid` header line. The single routine
+/// behind the probe, the document gate, and the name capture, so the
+/// 3 can never disagree on the same bytes.
+///
+/// `line` is one line without its `\n`; a trailing `\r` (CRLF input)
+/// is stripped here, so callers may hand in either a `str::lines`
+/// item or raw `read_line` output minus the final `\n`. Acceptance
+/// follows the de facto grammar of widely used readers (admesh,
+/// assimp, trimesh): optional leading spaces or tabs, the keyword
+/// `solid` compared case-insensitively, then either end-of-line or
+/// an ASCII whitespace separator. The remainder, trimmed of
+/// surrounding whitespace, is the free-text name; its charset is
+/// unrestricted because real exporters put dots, commas, parentheses
+/// and arbitrary words there.
+pub(crate) fn parse_solid_header(line: &str) -> Option<SolidHeader<'_>> {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let rest = line.trim_start_matches([' ', '\t']);
+    let bytes = rest.as_bytes();
+    if bytes.len() < 5 || !bytes[..5].eq_ignore_ascii_case(b"solid") {
+        return None;
+    }
+    // The first 5 bytes are ASCII letters, so index 5 sits on a char
+    // boundary.
+    let after = &rest[5..];
+    if after.is_empty() {
+        return Some(SolidHeader { name: None });
+    }
+    if !after.as_bytes()[0].is_ascii_whitespace() {
+        // `solidify ...` and friends: the keyword needs a boundary.
+        return None;
+    }
+    let name = after.trim();
+    Some(SolidHeader {
+        name: (!name.is_empty()).then_some(name),
+    })
+}
 
-/// True when the stream's first line looks like an ASCII STL `solid`
-/// header. Seeks back to the start of the stream before returning.
+/// True when the stream's first line is an ASCII STL `solid` header.
+/// Seeks back to the start of the stream before returning.
 pub(crate) fn probe<F: Read + Seek>(read: &mut F) -> Result<bool> {
     let mut header = String::new();
     let maybe_read_error = BufReader::new(&mut *read).read_line(&mut header);
@@ -53,7 +81,10 @@ pub(crate) fn probe<F: Read + Seek>(read: &mut F) -> Result<bool> {
     read.seek(std::io::SeekFrom::Start(0))?;
 
     match maybe_read_error {
-        Ok(_) => Ok(ASTL_HEADER_RE_LN.is_match(&header)),
+        Ok(_) => {
+            let line = header.strip_suffix('\n').unwrap_or(&header);
+            Ok(parse_solid_header(line).is_some())
+        }
         Err(_) => Ok(false),
     }
 }
@@ -105,7 +136,7 @@ fn invalid_utf8_error() -> LoadStlError {
 fn parse_document(text: &str) -> Result<Scene> {
     match text.lines().next() {
         None => return Err(LoadStlError::AsciiEmptyInput),
-        Some(header) if !ASTL_HEADER_RE.is_match(header) => {
+        Some(header) if parse_solid_header(header).is_none() => {
             return Err(LoadStlError::AsciiHeaderMissing);
         }
         Some(_) => {}
@@ -270,18 +301,13 @@ impl<'t> Iterator for AsciiWhitespaceSplit<'t> {
     }
 }
 
-/// Mesh name from the document's first line. The regex is anchored on
-/// a bare trailing `\n`, exactly like the retired `read_line`-based
-/// extraction: a header line ending in `\r\n`, or one with no
-/// terminator at all, yields the default (nameless) metadata.
+/// Mesh name from the document's first line, captured through the
+/// same routine the header gate uses: CRLF terminators and missing
+/// terminators make no difference to the captured name.
 fn metadata_from_text(text: &str) -> MeshMetadata {
-    let header_end = text.find('\n').map_or(text.len(), |i| i + 1);
-    match ASTL_HEADER_RE_LN.captures(&text[..header_end]) {
-        Some(c) => MeshMetadata {
-            name: match c.name("name") {
-                Some(n) if !n.is_empty() => Some(String::from(n.as_str())),
-                _ => None,
-            },
+    match text.lines().next().and_then(parse_solid_header) {
+        Some(header) => MeshMetadata {
+            name: header.name.map(String::from),
             ..Default::default()
         },
         None => MeshMetadata::default(),
@@ -548,10 +574,9 @@ endsolid";
     #[test]
     fn metadata_preserves_original_case_of_name() {
         // The keyword `SOLID` matches case-insensitively but the
-        // captured name group retains its original case (regex
-        // captures are verbatim slices of the input). A user who
-        // exports an STL with a name like "PartA" must see it as
-        // "PartA", not "parta".
+        // captured name retains its original case (it is a verbatim
+        // slice of the input). A user who exports an STL with a name
+        // like "PartA" must see it as "PartA", not "parta".
         let scene = read_stla_slice(b"SOLID PartA-001\nendsolid PartA-001").unwrap();
         let mesh = single_leaf_mesh(&scene);
         let meta = mesh.meta.expect("reader attaches metadata");
@@ -559,20 +584,28 @@ endsolid";
     }
 
     #[test]
-    fn crlf_header_line_yields_no_name() {
-        // Long-standing quirk, pinned: the name regex is anchored on a
-        // bare `\n`, so a `\r\n`-terminated header line never captures
-        // a name even though the document itself parses fine.
+    fn crlf_header_line_yields_the_name() {
+        // A `\r\n`-terminated header line names the mesh exactly like
+        // an LF-terminated one; the `\r` never reaches the name.
         assert_eq!(
             metadata_from_text("solid foobar\r\nendsolid foobar\r\n"),
-            MeshMetadata::default(),
+            MeshMetadata {
+                name: Some("foobar".into()),
+                ..Default::default()
+            },
         );
     }
 
     #[test]
-    fn unterminated_header_line_yields_no_name() {
-        // Same anchor quirk: no trailing `\n`, no captured name.
-        assert_eq!(metadata_from_text("solid foobar"), MeshMetadata::default());
+    fn unterminated_header_line_yields_the_name() {
+        // A header line with no trailing `\n` still names the mesh.
+        assert_eq!(
+            metadata_from_text("solid foobar"),
+            MeshMetadata {
+                name: Some("foobar".into()),
+                ..Default::default()
+            },
+        );
     }
 
     fn expected_mesh() -> IndexedMesh {
@@ -650,28 +683,6 @@ EndSolid foobar";
     }
 
     #[test]
-    fn header_patterns_use_ascii_only_case_insensitivity() {
-        // Guards a regression where the patterns used the Unicode-aware
-        // `(?i)` flag. When the `regex` crate's `unicode-case` feature is
-        // not enabled (which happens in some build configurations, e.g.
-        // when no other crate pulls it in via feature unification),
-        // compiling such a pattern fails at runtime with "Unicode-aware
-        // case insensitivity matching is not available". STL keywords and
-        // names are ASCII, so the case folding must stay ASCII-only via
-        // the `(?i-u)` flag.
-        for pattern in [super::ASTL_HEADER_PATTERN, super::ASTL_HEADER_PATTERN_LN] {
-            assert!(
-                pattern.starts_with("(?i-u)"),
-                "header pattern must use ASCII-only case-insensitivity via `(?i-u)`: {pattern}"
-            );
-            assert!(
-                !pattern.contains("(?i)"),
-                "header pattern must not use Unicode-aware case-insensitivity via `(?i)`: {pattern}"
-            );
-        }
-    }
-
-    #[test]
     fn binary_junk_after_the_endsolid_line_is_ignored() {
         // The retired streaming reader stopped at `endsolid` and never
         // read further, so trailing binary garbage (invalid UTF-8
@@ -746,5 +757,136 @@ EndSolid foobar";
             LoadStlError::InvalidFloat { token, .. } => assert_eq!(token, "nope"),
             other => panic!("expected InvalidFloat, got {other:?}"),
         }
+    }
+
+    /// One-facet body shared by the header-grammar tests below; only
+    /// the header line varies across them.
+    static HEADER_TEST_BODY: &str = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\n\
+        vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid\n";
+
+    fn doc_with_header(header: &str) -> String {
+        format!("{header}\n{HEADER_TEST_BODY}")
+    }
+
+    fn parsed_name(document: &str) -> Option<String> {
+        let scene = read_stla_slice(document.as_bytes()).expect("document parses");
+        single_leaf_mesh(&scene).meta.and_then(|meta| meta.name)
+    }
+
+    #[test]
+    fn dotted_name_header_parses_with_the_name() {
+        assert_eq!(
+            parsed_name(&doc_with_header("solid Part.001")).as_deref(),
+            Some("Part.001"),
+        );
+    }
+
+    #[test]
+    fn bare_solid_header_parses_nameless() {
+        assert_eq!(parsed_name(&doc_with_header("solid")), None);
+    }
+
+    #[test]
+    fn free_text_header_parses_with_the_whole_sentence_as_name() {
+        assert_eq!(
+            parsed_name(&doc_with_header(
+                "solid MYSOLID created by IVCON, original data in file.obj"
+            ))
+            .as_deref(),
+            Some("MYSOLID created by IVCON, original data in file.obj"),
+        );
+    }
+
+    #[test]
+    fn leading_whitespace_before_solid_is_accepted() {
+        assert_eq!(
+            parsed_name(&doc_with_header(" solid part")).as_deref(),
+            Some("part"),
+        );
+        assert_eq!(
+            parsed_name(&doc_with_header("\tsolid part")).as_deref(),
+            Some("part"),
+        );
+    }
+
+    #[test]
+    fn double_space_after_solid_yields_the_trimmed_name() {
+        assert_eq!(
+            parsed_name(&doc_with_header("solid  part")).as_deref(),
+            Some("part"),
+        );
+    }
+
+    #[test]
+    fn trailing_whitespace_after_the_name_is_trimmed() {
+        assert_eq!(
+            parsed_name(&doc_with_header("solid part ")).as_deref(),
+            Some("part"),
+        );
+    }
+
+    #[test]
+    fn tab_after_solid_separates_the_name() {
+        assert_eq!(
+            parsed_name(&doc_with_header("solid\tpart")).as_deref(),
+            Some("part"),
+        );
+    }
+
+    #[test]
+    fn non_ascii_name_is_preserved() {
+        assert_eq!(
+            parsed_name(&doc_with_header("solid Pi\u{00E8}ce")).as_deref(),
+            Some("Pi\u{00E8}ce"),
+        );
+    }
+
+    #[test]
+    fn solid_keyword_needs_a_boundary() {
+        let err = read_stla_slice(doc_with_header("solidify then junk").as_bytes()).unwrap_err();
+        assert!(matches!(err, LoadStlError::AsciiHeaderMissing));
+    }
+
+    #[test]
+    fn truncated_keyword_is_not_a_header() {
+        let err = read_stla_slice(doc_with_header("sol").as_bytes()).unwrap_err();
+        assert!(matches!(err, LoadStlError::AsciiHeaderMissing));
+    }
+
+    #[test]
+    fn probe_accepts_crlf_documents() {
+        let bytes = STL_1.replace('\n', "\r\n").into_bytes();
+        let mut reader = std::io::Cursor::new(bytes);
+        assert!(probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn probe_accepts_dotted_name_headers() {
+        let mut reader = std::io::Cursor::new(doc_with_header("solid Part.001").into_bytes());
+        assert!(probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn probe_accepts_a_bare_solid_header() {
+        let mut reader = std::io::Cursor::new(doc_with_header("solid").into_bytes());
+        assert!(probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn probe_accepts_leading_whitespace_before_solid() {
+        let mut reader = std::io::Cursor::new(doc_with_header(" solid x").into_bytes());
+        assert!(probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn probe_rejects_a_solid_prefixed_word() {
+        let mut reader = std::io::Cursor::new(doc_with_header("solidify et al").into_bytes());
+        assert!(!probe(&mut reader).unwrap());
+    }
+
+    #[test]
+    fn probe_rejects_an_empty_stream() {
+        let mut reader = std::io::Cursor::new(Vec::<u8>::new());
+        assert!(!probe(&mut reader).unwrap());
     }
 }

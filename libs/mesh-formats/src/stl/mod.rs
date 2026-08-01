@@ -91,10 +91,11 @@ impl MeshWriter for StlAscii {
     }
 }
 
-/// Format marker for the auto-detecting STL reader. Probes the first
-/// bytes of `reader` to decide between ASCII and binary, then
-/// dispatches internally. Use [`StlBin`] or [`StlAscii`] directly when
-/// the variant is known.
+/// Format marker for the auto-detecting STL reader. Detection order:
+/// a byte length that matches the binary layout exactly for the
+/// declared triangle count means binary; otherwise a `solid` header
+/// line means ASCII; anything else is treated as binary. Use
+/// [`StlBin`] or [`StlAscii`] directly when the variant is known.
 pub struct Stl;
 
 impl sealed::Sealed for Stl {}
@@ -113,6 +114,14 @@ where
     R: std::io::Read + std::io::Seek,
 {
     let bytes = slurp(read)?;
+    // Binary first: a byte length that matches the binary layout
+    // exactly for the declared triangle count identifies a binary
+    // file even when its header text starts with `solid` (such files
+    // exist in the wild). Only then does a `solid` header line select
+    // the ASCII parser; everything else is treated as binary.
+    if stlb::matches_exact_binary_layout(&bytes) {
+        return stlb::read_stlb_slice(&bytes);
+    }
     let mut cursor = Cursor::new(&bytes[..]);
     if stla::probe(&mut cursor)? {
         stla::read_stla_slice(&bytes)

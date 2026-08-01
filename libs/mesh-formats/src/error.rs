@@ -273,7 +273,9 @@ impl fmt::Display for LoadStlError {
             Self::HeaderNotAscii => write!(f, "Mesh name is not ASCII"),
             Self::HeaderNotNulTerminated => write!(f, "Mesh name is not NUL-terminated"),
             Self::HeaderNotUtf8(e) => write!(f, "Mesh name is not valid UTF-8: {e}"),
-            Self::AsciiHeaderMissing => write!(f, "Ascii STL does not start with \"solid \""),
+            Self::AsciiHeaderMissing => {
+                write!(f, "Ascii STL does not start with the \"solid\" keyword")
+            }
             Self::AsciiEmptyInput => write!(f, "File seems to be empty"),
             Self::AsciiInvalidFacetHeader { tokens } => {
                 write!(f, "invalid facet header: {tokens:?}")

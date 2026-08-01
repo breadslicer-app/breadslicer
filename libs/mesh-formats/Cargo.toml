@@ -15,8 +15,6 @@ rayon.workspace = true
 sc-3mf.workspace = true
 sc-mesh-core.workspace = true
 
-regex = { version = "1.12.3", default-features = false }
-
 [dev-dependencies]
 anyhow.workspace = true
 proptest.workspace = true
