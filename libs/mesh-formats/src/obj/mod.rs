@@ -14,11 +14,11 @@ use sc_mesh_core::Scene;
 
 use crate::error::{LoadObjError, WriteSceneError};
 use crate::messages::LoadObjWarning;
-use crate::ports::{MeshReader, MeshWriter, sealed};
+use crate::ports::{MeshReader, MeshWriter, WriteSceneProgress, sealed};
 use crate::scene_writer::FlattenWarning;
 
 pub use reader::read_obj;
-pub use writer::write_obj;
+pub use writer::{write_obj, write_obj_with_progress};
 
 /// Format marker for the OBJ format. Implements [`MeshReader`] via
 /// static dispatch; the dispatcher in [`crate::loader`] invokes
@@ -40,11 +40,12 @@ impl MeshWriter for Obj {
     type Error = WriteSceneError;
     type Warning = FlattenWarning;
 
-    fn write<W: Write>(
+    fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
         scene: &Scene,
         writer: &mut W,
+        progress: F,
     ) -> Result<Vec<FlattenWarning>, WriteSceneError> {
-        write_obj(scene, writer)?;
+        write_obj_with_progress(scene, writer, progress)?;
         Ok(Vec::new())
     }
 }

@@ -32,6 +32,8 @@ mod tests_write_obj_error;
 #[cfg(test)]
 mod tests_write_scene_error;
 #[cfg(test)]
+mod tests_write_scene_progress;
+#[cfg(test)]
 mod tests_write_stl_error;
 
 pub use loader::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};

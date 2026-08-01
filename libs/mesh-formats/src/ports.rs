@@ -41,10 +41,33 @@ pub trait MeshReader: sealed::Sealed {
     fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<Self::Warning>), Self::Error>;
 }
 
+/// Progress reported while a scene is serialised, in the order the
+/// phases run. Not every format visits every phase: the STL variants
+/// flatten first, 3MF compresses after serialising, OBJ only
+/// serialises. Each report carries `(done, total)` in phase-specific
+/// units: merge steps for `Flatten`, elements (faces, or vertex and
+/// face lines) for the plain-text `Serialize` phases, bytes for the
+/// 3MF `Serialize` and `Compress` phases. The 3MF serialise total is
+/// an estimate, so a consumer deriving a fraction should clamp it.
+/// `Write` brackets the final flush, fsync and rename performed by
+/// [`crate::scene_writer::write_scene_with_progress`]; the per-format
+/// writers never report it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteSceneProgress {
+    /// Merging the scene into a single mesh (STL formats only).
+    Flatten { done: u64, total: u64 },
+    /// Serialising geometry into the output stream.
+    Serialize { done: u64, total: u64 },
+    /// Compressing the assembled package (3MF only).
+    Compress { done: u64, total: u64 },
+    /// Flushing, fsyncing and renaming the temp file over the target.
+    Write { done: u64, total: u64 },
+}
+
 /// A format-specific mesh serialiser.
 ///
-/// Like [`MeshReader`], implementors are unit structs and `write` is
-/// an associated function. `Warning` is the per-format warning enum
+/// Like [`MeshReader`], implementors are unit structs and the methods
+/// are associated functions. `Warning` is the per-format warning enum
 /// surfaced by the write step (for STL formats this is
 /// [`crate::scene_writer::FlattenWarning`], emitted when the scene
 /// must be merged before serialisation; OBJ returns an empty vec
@@ -53,5 +76,16 @@ pub trait MeshWriter: sealed::Sealed {
     type Error: std::error::Error + Send + Sync + 'static;
     type Warning;
 
-    fn write<W: Write>(scene: &Scene, writer: &mut W) -> Result<Vec<Self::Warning>, Self::Error>;
+    /// Serialises `scene` into `writer`, reporting the format's phases
+    /// through `progress` (see [`WriteSceneProgress`] for the units).
+    fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
+        scene: &Scene,
+        writer: &mut W,
+        progress: F,
+    ) -> Result<Vec<Self::Warning>, Self::Error>;
+
+    /// [`MeshWriter::write_with_progress`] without progress reporting.
+    fn write<W: Write>(scene: &Scene, writer: &mut W) -> Result<Vec<Self::Warning>, Self::Error> {
+        Self::write_with_progress(scene, writer, |_| {})
+    }
 }

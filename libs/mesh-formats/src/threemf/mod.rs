@@ -24,13 +24,15 @@ use sc_mesh_core::Scene;
 
 use crate::error::{LoadThreeMfError, WriteSceneError};
 use crate::messages::LoadThreeMfWarning;
-use crate::ports::{MeshReader, MeshWriter, sealed};
+use crate::ports::{MeshReader, MeshWriter, WriteSceneProgress, sealed};
 use crate::scene_writer::FlattenWarning;
 
 pub use reader::{
     MAX_COMPONENT_DEPTH, MAX_EXPANDED_LEAF_COUNT, read_threemf, read_threemf_from_package,
 };
-pub use writer::{mesh_to_model_data, scene_to_model_document, write_threemf};
+pub use writer::{
+    mesh_to_model_data, scene_to_model_document, write_threemf, write_threemf_with_progress,
+};
 
 /// Format marker for 3MF packages. Implements [`MeshReader`] via
 /// static dispatch; the dispatcher in [`crate::loader`] invokes
@@ -54,11 +56,12 @@ impl MeshWriter for ThreeMf {
     type Error = WriteSceneError;
     type Warning = FlattenWarning;
 
-    fn write<W: Write>(
+    fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
         scene: &Scene,
         writer: &mut W,
+        progress: F,
     ) -> Result<Vec<FlattenWarning>, WriteSceneError> {
-        write_threemf(scene, writer).map_err(WriteSceneError::from)?;
+        write_threemf_with_progress(scene, writer, progress).map_err(WriteSceneError::from)?;
         // Nothing is flattened or dropped: meshes, groups, names and
         // transforms all survive, so there is never a warning.
         Ok(Vec::new())

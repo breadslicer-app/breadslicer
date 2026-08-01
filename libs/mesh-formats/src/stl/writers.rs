@@ -6,6 +6,8 @@
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 
 use crate::error::WriteStlError;
+use crate::ports::WriteSceneProgress;
+use crate::scene_writer::SerializeTally;
 use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES};
 
 // Binary STL stores the triangle count in a fixed STL_TRIANGLE_COUNT_BYTES
@@ -40,6 +42,20 @@ pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlE
 where
     W: std::io::Write,
 {
+    write_stla_with_progress(mesh, writer, |_| {})
+}
+
+/// [`write_stla`], reporting one `Serialize` unit per facet through
+/// `progress` (throttled by [`SerializeTally`]).
+pub fn write_stla_with_progress<W, F>(
+    mesh: &IndexedMesh,
+    writer: &mut W,
+    mut progress: F,
+) -> Result<(), WriteStlError>
+where
+    W: std::io::Write,
+    F: FnMut(WriteSceneProgress),
+{
     let mesh_name = match &mesh.meta() {
         Some(metadata) => metadata.name.as_deref().and_then(normalized_stla_name),
         None => None,
@@ -52,6 +68,8 @@ where
     }
     writer.write_all(b"\n")?;
 
+    let mut tally = SerializeTally::new(mesh.faces().len() as u64);
+    tally.begin(&mut progress);
     for face in mesh.faces() {
         writeln!(
             writer,
@@ -70,6 +88,7 @@ where
         writeln!(writer, "      vertex {:e} {:e} {:e}", v2[0], v2[1], v2[2])?;
 
         writer.write_all(b"    endloop\n  endfacet\n")?;
+        tally.tick(&mut progress);
     }
 
     // Closing mesh
@@ -88,6 +107,20 @@ pub fn write_stlb<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlE
 where
     W: std::io::Write,
 {
+    write_stlb_with_progress(mesh, writer, |_| {})
+}
+
+/// [`write_stlb`], reporting one `Serialize` unit per triangle record
+/// through `progress` (throttled by [`SerializeTally`]).
+pub fn write_stlb_with_progress<W, F>(
+    mesh: &IndexedMesh,
+    writer: &mut W,
+    mut progress: F,
+) -> Result<(), WriteStlError>
+where
+    W: std::io::Write,
+    F: FnMut(WriteSceneProgress),
+{
     // Header: mesh name (zero-padded) in STL_HEADER_BYTES.
     let mut header = [0u8; STL_HEADER_BYTES];
     if let Some(MeshMetadata {
@@ -104,6 +137,8 @@ where
     writer.write_all(&encode_triangle_count(mesh.faces().len())?)?;
 
     // Per-triangle records
+    let mut tally = SerializeTally::new(mesh.faces().len() as u64);
+    tally.begin(&mut progress);
     for face in mesh.faces() {
         writer.write_all(&face.normal[0].to_le_bytes())?;
         writer.write_all(&face.normal[1].to_le_bytes())?;
@@ -118,6 +153,7 @@ where
 
         // Attribute byte count (unused, always 0)
         writer.write_all(&0u16.to_le_bytes())?;
+        tally.tick(&mut progress);
     }
 
     writer.flush()?;

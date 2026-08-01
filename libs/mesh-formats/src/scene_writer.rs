@@ -29,7 +29,7 @@ use sc_mesh_core::{IndexedMesh, Scene, bake_leaf_to_world};
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
 use crate::obj::Obj;
-use crate::ports::MeshWriter;
+use crate::ports::{MeshWriter, WriteSceneProgress};
 use crate::stl::{StlAscii, StlBin};
 use crate::threemf::ThreeMf;
 
@@ -123,6 +123,56 @@ pub fn write_bytes_atomically(target_path: &Path, bytes: &[u8]) -> Result<()> {
     })
 }
 
+// Target number of progress reports per serialise phase. Consumers
+// display progress at permille resolution, so reporting more often
+// than 1000 times per phase cannot change what is shown and only adds
+// callback overhead to the per-element serialisation loops.
+const SERIALIZE_REPORT_SLOTS: u64 = 1000;
+
+/// Running `done` / `total` counter for a per-element serialise phase,
+/// throttled to about [`SERIALIZE_REPORT_SLOTS`] reports plus the
+/// completion report regardless of the element count. Shared by the
+/// STL and OBJ writers; the 3MF writer counts bytes instead.
+pub(crate) struct SerializeTally {
+    done: u64,
+    total: u64,
+    step: u64,
+}
+
+impl SerializeTally {
+    pub(crate) fn new(total: u64) -> Self {
+        Self {
+            done: 0,
+            total,
+            // Elements per report; at least 1 so meshes smaller than
+            // the slot count report on every element instead of
+            // dividing by zero in `tick`.
+            step: (total / SERIALIZE_REPORT_SLOTS).max(1),
+        }
+    }
+
+    /// Reports `0 / total` so the serialise phase becomes visible
+    /// before the first throttle step lands.
+    pub(crate) fn begin(&self, progress: &mut impl FnMut(WriteSceneProgress)) {
+        progress(WriteSceneProgress::Serialize {
+            done: 0,
+            total: self.total,
+        });
+    }
+
+    /// Counts one serialised element, reporting at every throttle step
+    /// and at completion.
+    pub(crate) fn tick(&mut self, progress: &mut impl FnMut(WriteSceneProgress)) {
+        self.done += 1;
+        if self.done.is_multiple_of(self.step) || self.done == self.total {
+            progress(WriteSceneProgress::Serialize {
+                done: self.done,
+                total: self.total,
+            });
+        }
+    }
+}
+
 /// A warning produced by `flatten_graph_to_mesh` that the caller may
 /// want to surface to the user (or ignore). Distinct from errors:
 /// warnings do not prevent the flattened mesh from being usable.
@@ -203,17 +253,88 @@ pub fn write_scene(
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
+    write_scene_with_progress(graph, target_path, target_format, |_| {})
+}
+
+/// [`write_scene`], reporting phase progress through `progress`: the
+/// format's own phases while serialising into the temp file (see
+/// [`WriteSceneProgress`] for which phases each format visits), then
+/// `Write { 0, 1 }` before the flush + fsync + rename and
+/// `Write { 1, 1 }` once the rename lands.
+pub fn write_scene_with_progress(
+    graph: &Scene,
+    target_path: &Path,
+    target_format: WriteFormat,
+    mut progress: impl FnMut(WriteSceneProgress),
+) -> Result<Vec<FlattenWarning>> {
     let mut warnings: Vec<FlattenWarning> = Vec::new();
     write_atomically(target_path, |writer| {
         warnings = match target_format {
-            WriteFormat::Obj => Obj::write(graph, writer)?,
-            WriteFormat::StlBin => StlBin::write(graph, writer)?,
-            WriteFormat::StlAscii => StlAscii::write(graph, writer)?,
-            WriteFormat::ThreeMf => ThreeMf::write(graph, writer)?,
+            WriteFormat::Obj => Obj::write_with_progress(graph, writer, &mut progress)?,
+            WriteFormat::StlBin => StlBin::write_with_progress(graph, writer, &mut progress)?,
+            WriteFormat::StlAscii => StlAscii::write_with_progress(graph, writer, &mut progress)?,
+            WriteFormat::ThreeMf => ThreeMf::write_with_progress(graph, writer, &mut progress)?,
         };
+        progress(WriteSceneProgress::Write { done: 0, total: 1 });
         Ok(())
     })?;
+    progress(WriteSceneProgress::Write { done: 1, total: 1 });
     Ok(warnings)
+}
+
+#[cfg(test)]
+mod serialize_tally_tests {
+    use super::{SERIALIZE_REPORT_SLOTS, SerializeTally};
+    use crate::ports::WriteSceneProgress;
+
+    /// Runs `begin` plus `ticks` ticks against a fresh tally and
+    /// returns the `(done, total)` pairs it reported.
+    fn collect(total: u64, ticks: u64) -> Vec<(u64, u64)> {
+        let mut reports = Vec::new();
+        let mut push = |p: WriteSceneProgress| {
+            if let WriteSceneProgress::Serialize { done, total } = p {
+                reports.push((done, total));
+            }
+        };
+        let mut tally = SerializeTally::new(total);
+        tally.begin(&mut push);
+        for _ in 0..ticks {
+            tally.tick(&mut push);
+        }
+        reports
+    }
+
+    #[test]
+    fn small_totals_report_every_element() {
+        assert_eq!(
+            collect(5, 5),
+            vec![(0, 5), (1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
+        );
+    }
+
+    #[test]
+    fn large_totals_throttle_to_the_slot_count() {
+        let total = SERIALIZE_REPORT_SLOTS * 7;
+        let reports = collect(total, total);
+        // The begin report plus one report per full step; the
+        // completion tick lands exactly on the last step.
+        assert_eq!(reports.len() as u64, 1 + SERIALIZE_REPORT_SLOTS);
+        assert_eq!(reports.first(), Some(&(0, total)));
+        assert_eq!(reports.last(), Some(&(total, total)));
+        assert!(reports.windows(2).all(|w| w[0].0 < w[1].0));
+    }
+
+    #[test]
+    fn completion_reports_even_when_total_is_off_step() {
+        let total = SERIALIZE_REPORT_SLOTS * 2 + 1;
+        let reports = collect(total, total);
+        assert_eq!(reports.last(), Some(&(total, total)));
+    }
+
+    #[test]
+    fn zero_total_only_reports_the_begin() {
+        assert_eq!(collect(0, 0), vec![(0, 0)]);
+    }
 }
 
 #[cfg(test)]

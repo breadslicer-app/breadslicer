@@ -6,6 +6,8 @@
 use sc_mesh_core::{IndexedMesh, NodeId, NodeKind, Scene, bake_leaf_to_world};
 
 use crate::error::WriteObjError;
+use crate::ports::WriteSceneProgress;
+use crate::scene_writer::SerializeTally;
 
 // OBJ face indices are 1-based, so the writer emits `local + offset + 1`
 // for every vertex reference. `to_global_face_index` performs that math
@@ -31,6 +33,23 @@ pub fn write_obj<W>(graph: &Scene, writer: &mut W) -> Result<(), WriteObjError>
 where
     W: std::io::Write,
 {
+    write_obj_with_progress(graph, writer, |_| {})
+}
+
+/// [`write_obj`], reporting one `Serialize` unit per emitted vertex or
+/// face line through `progress` (throttled by [`SerializeTally`]). The
+/// total is precomputed over the reachable leaves, skipping faceless
+/// meshes with the same rule the section writer applies, so `done`
+/// reaches `total` exactly when the last line lands.
+pub fn write_obj_with_progress<W, F>(
+    graph: &Scene,
+    writer: &mut W,
+    mut progress: F,
+) -> Result<(), WriteObjError>
+where
+    W: std::io::Write,
+    F: FnMut(WriteSceneProgress),
+{
     if let Some(meta) = graph.meta()
         && let Some(comment) = &meta.comment
     {
@@ -48,6 +67,16 @@ where
     let write_object_markers = leaf_ids.len() > 1;
     let mut vertex_offset: u32 = 0;
 
+    let mut total: u64 = 0;
+    for &id in &leaf_ids {
+        let mesh = graph.mesh_at_leaf(id)?;
+        if !mesh.faces().is_empty() {
+            total += mesh.vertices().len() as u64 + mesh.faces().len() as u64;
+        }
+    }
+    let mut tally = SerializeTally::new(total);
+    tally.begin(&mut progress);
+
     for id in leaf_ids {
         // OBJ has no per-object transform, so each leaf's composed
         // world transform is baked into its vertices and face
@@ -61,6 +90,8 @@ where
             name.as_deref(),
             write_object_markers,
             &mut vertex_offset,
+            &mut tally,
+            &mut progress,
             writer,
         )?;
     }
@@ -93,15 +124,18 @@ fn collect_reachable_leaves(graph: &Scene) -> Vec<NodeId> {
     ids
 }
 
-fn write_mesh_section<W>(
+fn write_mesh_section<W, F>(
     mesh: &IndexedMesh,
     obj_name: Option<&str>,
     write_object_marker: bool,
     vertex_offset: &mut u32,
+    tally: &mut SerializeTally,
+    progress: &mut F,
     writer: &mut W,
 ) -> Result<(), WriteObjError>
 where
     W: std::io::Write,
+    F: FnMut(WriteSceneProgress),
 {
     if mesh.faces().is_empty() {
         return Ok(());
@@ -116,6 +150,7 @@ where
 
     for v in mesh.vertices() {
         writeln!(writer, "v {} {} {}", v[0], v[1], v[2])?;
+        tally.tick(progress);
     }
 
     for face in mesh.faces() {
@@ -123,6 +158,7 @@ where
         let v1 = to_global_face_index(u32::from(face.vertices[1]), *vertex_offset)?;
         let v2 = to_global_face_index(u32::from(face.vertices[2]), *vertex_offset)?;
         writeln!(writer, "f {v0} {v1} {v2}")?;
+        tally.tick(progress);
     }
 
     *vertex_offset = advance_vertex_offset(*vertex_offset, mesh.vertices().len())?;
@@ -360,7 +396,7 @@ mod tests {
             LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
         );
         let out = write_to_string(&graph);
-        // Vertex 0 was (1,0,0); after x→-x it's (-1,0,0). Winding goes
+        // Vertex 0 was (1,0,0); after x -> -x it's (-1,0,0). Winding goes
         // from [0,1,2] to [0,2,1] (1-based indices: 1 3 2).
         assert_eq!(out, "v -1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\n");
     }
