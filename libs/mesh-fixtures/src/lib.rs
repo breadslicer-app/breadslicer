@@ -18,8 +18,19 @@
 //! the surface crosses, and one where the surface only skims the
 //! plane along the on-edge. More fixtures land here as duplicates in
 //! other crates migrate over.
+//!
+//! Two fixtures are deliberate exceptions to the "manifold by
+//! construction" rule: [`bowtie_tetrahedra`] and
+//! [`cuboid_with_pinched_z_tunnel`] are edge-manifold (closed,
+//! every edge shared by exactly 2 consistently wound faces) but
+//! vertex-pinched: one vertex whose incident faces form 2 disjoint
+//! fans. They exist to pin the pipeline's behaviour on meshes that
+//! bound a valid solid while not being a manifold surface.
 
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+
+#[cfg(test)]
+mod tests_pinch;
 
 /// Closed unit cube centred at the origin (side 1). Manifold by
 /// construction.
@@ -254,6 +265,86 @@ pub fn on_edge_crossing_tetrahedron() -> IndexedMesh {
         ],
         faces: vec![f([0, 1, 2]), f([0, 3, 1]), f([0, 2, 3]), f([1, 3, 2])],
     }
+}
+
+/// Two closed tetrahedra sharing a single vertex (a "bowtie").
+///
+/// The lower lobe has its base triangle at `z = 0` and its apex at
+/// V3 = (0, 0, 1); the upper lobe mirrors it, base at `z = 2`, same
+/// apex. V3 is the pinch: its 6 incident faces form 2 disjoint
+/// fans, so the mesh is edge-manifold with consistent winding but
+/// deliberately NOT vertex-manifold. The 2 lobes share no edge, so
+/// they are 2 separate edge-connected components joined only
+/// through the pinch point. 7 vertices, 8 triangles, 12 edges
+/// (Euler V - E + F = 3, two spheres sharing a point).
+pub fn bowtie_tetrahedra() -> IndexedMesh {
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    IndexedMesh {
+        meta: None,
+        vertices: vec![
+            // 0..2 lower base triangle (z = 0).
+            Vertex::new([1.0, 1.0, 0.0]),
+            Vertex::new([-1.0, 1.0, 0.0]),
+            Vertex::new([0.0, -1.0, 0.0]),
+            // 3 shared apex (the pinch).
+            Vertex::new([0.0, 0.0, 1.0]),
+            // 4..6 upper base triangle (z = 2).
+            Vertex::new([1.0, 1.0, 2.0]),
+            Vertex::new([-1.0, 1.0, 2.0]),
+            Vertex::new([0.0, -1.0, 2.0]),
+        ],
+        faces: vec![
+            // Lower lobe (outward wound: base faces -Z, sides tilt up).
+            f([0, 2, 1]),
+            f([3, 0, 1]),
+            f([3, 1, 2]),
+            f([3, 2, 0]),
+            // Upper lobe (mirror image, base faces +Z).
+            f([4, 5, 6]),
+            f([3, 5, 4]),
+            f([3, 6, 5]),
+            f([3, 4, 6]),
+        ],
+    }
+}
+
+/// Variant of [`cuboid_with_z_tunnel`] whose square tunnel pinches
+/// shut at mid-height.
+///
+/// Same outer box (x, y in [-1, 1], z in [0, 2]) and the same
+/// square tunnel mouths at z = 0 and z = 2, but the tunnel walls
+/// are replaced by 2 square pyramids meeting apex-to-apex at
+/// V16 = (0, 0, 1): the tunnel narrows linearly to a point at
+/// mid-height and reopens above it. Topologically this is a pinched
+/// torus (the tunnel's genus-1 loop strangled at one point): a
+/// SINGLE edge-connected component, edge-manifold with consistent
+/// winding, deliberately NOT vertex-manifold at the pinch (8
+/// incident faces in 2 fans of 4). 17 vertices, 32 triangles, 48
+/// edges (Euler V - E + F = 1, the pinched torus).
+pub fn cuboid_with_pinched_z_tunnel() -> IndexedMesh {
+    let mut mesh = cuboid_with_z_tunnel();
+    mesh.vertices.push(Vertex::new([0.0, 0.0, 1.0]));
+    let placeholder = Normal::new([0.0, 0.0, 1.0]);
+    let f = |abc: [u32; 3]| IndexedTriangle::from_raw_indices(placeholder, abc);
+    // The straight tunnel walls are the last 8 faces of the donor
+    // fixture; everything else (annuli, outer sides) carries over.
+    mesh.faces.truncate(24);
+    mesh.faces.extend([
+        // Lower cavity pyramid (base = bottom tunnel square 8..11,
+        // apex = 16; normals point into the cavity).
+        f([8, 16, 9]),
+        f([9, 16, 10]),
+        f([10, 16, 11]),
+        f([11, 16, 8]),
+        // Upper cavity pyramid (base = top tunnel square 12..15,
+        // apex = 16; normals point into the cavity).
+        f([13, 16, 12]),
+        f([14, 16, 13]),
+        f([15, 16, 14]),
+        f([12, 16, 15]),
+    ]);
+    mesh
 }
 
 /// Tetrahedron whose vertices V0 and V1 sit exactly on the plane
