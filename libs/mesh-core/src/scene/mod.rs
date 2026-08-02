@@ -1255,6 +1255,38 @@ mod scene_construction_tests {
     }
 
     #[test]
+    fn add_child_children_only_cycle_rejected() {
+        // Floating subtree a -> b (a is never registered as a scene
+        // root); closing b -> a would form a children-only cycle.
+        let mut g = Scene::new();
+        let a = g.add_group(None, Transform3D::Identity);
+        let b = g.add_group(None, Transform3D::Identity);
+        g.add_child(a, b).unwrap();
+        let result = g.add_child(b, a);
+        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
+        // Rollback worked: a still parent-less, b has no children.
+        assert_eq!(g.parent_of(a), None);
+        assert!(matches!(
+            &g.node(b).unwrap().kind,
+            NodeKind::Group { children } if children.is_empty()
+        ));
+    }
+
+    #[test]
+    fn add_child_self_loop_rejected() {
+        let mut g = Scene::new();
+        let c = g.add_group(None, Transform3D::Identity);
+        let result = g.add_child(c, c);
+        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
+        // Rollback worked: c still parent-less and childless.
+        assert_eq!(g.parent_of(c), None);
+        assert!(matches!(
+            &g.node(c).unwrap().kind,
+            NodeKind::Group { children } if children.is_empty()
+        ));
+    }
+
+    #[test]
     fn register_subtree_resource_happy_path() {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
