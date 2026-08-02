@@ -203,15 +203,11 @@ fn hash_transform(hasher: &mut Sha384, transform: &Transform3D) {
 /// fields as little-endian bit patterns.
 fn hash_schedule(hasher: &mut Sha384, schedule: &LayerSchedule) {
     match schedule {
-        LayerSchedule::Uniform {
-            layer_height_mm,
-            first_layer_height_mm,
-            total_layers,
-        } => {
+        LayerSchedule::Uniform(uniform) => {
             hasher.update([0u8]);
-            hasher.update(layer_height_mm.to_bits().to_le_bytes());
-            hasher.update(first_layer_height_mm.to_bits().to_le_bytes());
-            hasher.update(total_layers.to_le_bytes());
+            hasher.update(uniform.layer_height().value().to_bits().to_le_bytes());
+            hasher.update(uniform.first_layer_height().value().to_bits().to_le_bytes());
+            hasher.update(uniform.total_layers().get().to_le_bytes());
         }
     }
 }

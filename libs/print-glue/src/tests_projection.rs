@@ -102,14 +102,10 @@ fn projection_uses_resolved_layer_height_and_passed_scene_params() {
     assert_eq!(profile.aa_level(), AaLevel::X4);
     assert_eq!(profile.packing_mode(), PackingMode::None);
     match profile.layer_schedule() {
-        LayerSchedule::Uniform {
-            layer_height_mm,
-            first_layer_height_mm,
-            total_layers,
-        } => {
-            assert_eq!(*layer_height_mm, 0.05);
-            assert_eq!(*first_layer_height_mm, 0.15);
-            assert_eq!(*total_layers, 20);
+        LayerSchedule::Uniform(uniform) => {
+            assert_eq!(uniform.layer_height().value(), 0.05);
+            assert_eq!(uniform.first_layer_height().value(), 0.15);
+            assert_eq!(uniform.total_layers().get(), 20);
         }
     }
 }
@@ -149,14 +145,10 @@ fn hardware_projection_builds_from_hardware_and_layer_height_alone() {
     assert_eq!(profile.pixel_resolution().x(), 8520);
     assert!(profile.mirror().x);
     match profile.layer_schedule() {
-        LayerSchedule::Uniform {
-            layer_height_mm,
-            first_layer_height_mm,
-            total_layers,
-        } => {
-            assert_eq!(*layer_height_mm, 0.05);
-            assert_eq!(*first_layer_height_mm, 0.1);
-            assert_eq!(*total_layers, 10);
+        LayerSchedule::Uniform(uniform) => {
+            assert_eq!(uniform.layer_height().value(), 0.05);
+            assert_eq!(uniform.first_layer_height().value(), 0.1);
+            assert_eq!(uniform.total_layers().get(), 10);
         }
     }
 }

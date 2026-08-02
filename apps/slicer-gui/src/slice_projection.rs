@@ -398,14 +398,10 @@ z = 0.0
             build_slice_profile(&printer, &resin, None, AaLevel::Off, &cube_scene_top(0.97))
                 .expect("valid projection");
         match profile.layer_schedule() {
-            LayerSchedule::Uniform {
-                layer_height_mm,
-                first_layer_height_mm,
-                total_layers,
-            } => {
-                assert_eq!(*layer_height_mm, 0.05);
-                assert_eq!(*first_layer_height_mm, 0.05);
-                assert_eq!(*total_layers, 20);
+            LayerSchedule::Uniform(uniform) => {
+                assert_eq!(uniform.layer_height().value(), 0.05);
+                assert_eq!(uniform.first_layer_height().value(), 0.05);
+                assert_eq!(uniform.total_layers().get(), 20);
             }
         }
     }
@@ -424,13 +420,9 @@ z = 0.0
         )
         .expect("valid projection");
         match profile.layer_schedule() {
-            LayerSchedule::Uniform {
-                first_layer_height_mm,
-                total_layers,
-                ..
-            } => {
-                assert_eq!(*first_layer_height_mm, 0.15);
-                assert_eq!(*total_layers, 18);
+            LayerSchedule::Uniform(uniform) => {
+                assert_eq!(uniform.first_layer_height().value(), 0.15);
+                assert_eq!(uniform.total_layers().get(), 18);
             }
         }
     }
@@ -464,9 +456,7 @@ z = 0.0
                 .expect("a material without exposure calibration must still slice");
         assert_eq!(profile.build_volume().x_mm(), 153.36);
         match profile.layer_schedule() {
-            LayerSchedule::Uniform {
-                layer_height_mm, ..
-            } => assert_eq!(*layer_height_mm, 0.05),
+            LayerSchedule::Uniform(uniform) => assert_eq!(uniform.layer_height().value(), 0.05),
         }
     }
 }

@@ -11,6 +11,7 @@
 //! assembles them and never fails.
 
 use std::fmt;
+use std::num::NonZeroU32;
 
 pub use sc_print_primitives::{
     AaLevel, AxisOutOfRange, BuildVolume, LengthOutOfRange, Mirror, ParseLengthError,
@@ -68,6 +69,52 @@ pub enum PackingMode {
     None,
 }
 
+/// Validated payload of [`LayerSchedule::Uniform`]: both heights are
+/// strictly positive finite millimetres and the layer count is
+/// non-zero, held behind private fields so no raw-float state can
+/// bypass them. Every plane sequence derived from such a payload is
+/// strictly monotone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UniformSchedule {
+    layer_height: PositiveFiniteMm,
+    first_layer_height: PositiveFiniteMm,
+    total_layers: NonZeroU32,
+}
+
+impl UniformSchedule {
+    /// Assemble from already-validated parts. Infallible: the
+    /// invariants ride on the parameter types.
+    pub fn new(
+        layer_height: PositiveFiniteMm,
+        first_layer_height: PositiveFiniteMm,
+        total_layers: NonZeroU32,
+    ) -> Self {
+        Self {
+            layer_height,
+            first_layer_height,
+            total_layers,
+        }
+    }
+
+    /// The height of every slab above the first, in millimetres.
+    #[inline]
+    pub fn layer_height(&self) -> PositiveFiniteMm {
+        self.layer_height
+    }
+
+    /// The height of the first slab, in millimetres.
+    #[inline]
+    pub fn first_layer_height(&self) -> PositiveFiniteMm {
+        self.first_layer_height
+    }
+
+    /// The number of slabs.
+    #[inline]
+    pub fn total_layers(&self) -> NonZeroU32 {
+        self.total_layers
+    }
+}
+
 /// How the layer-by-layer slicing planes are positioned along Z.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LayerSchedule {
@@ -83,73 +130,74 @@ pub enum LayerSchedule {
     /// `k >= 1`. When `h0 == h` this degenerates to the classical
     /// `(k + 0.5) * h` formula. Total print height is
     /// `h0 + (n - 1) * h`.
-    Uniform {
-        layer_height_mm: f64,
-        first_layer_height_mm: f64,
-        total_layers: u32,
-    },
+    Uniform(UniformSchedule),
 }
 
 impl LayerSchedule {
+    /// Validating constructor from raw values. Callers that already
+    /// hold typed parts can build the variant directly from a
+    /// [`UniformSchedule`] instead.
     pub fn uniform(
         layer_height_mm: f64,
         first_layer_height_mm: f64,
         total_layers: u32,
     ) -> Result<Self, InvalidLayerSchedule> {
-        PositiveFiniteMm::new(layer_height_mm)
+        let layer_height = PositiveFiniteMm::new(layer_height_mm)
             .map_err(InvalidLayerSchedule::LayerHeightOutOfRange)?;
-        PositiveFiniteMm::new(first_layer_height_mm)
+        let first_layer_height = PositiveFiniteMm::new(first_layer_height_mm)
             .map_err(InvalidLayerSchedule::FirstLayerHeightOutOfRange)?;
-        if total_layers == 0 {
-            return Err(InvalidLayerSchedule::ZeroTotalLayers);
-        }
-        Ok(Self::Uniform {
-            layer_height_mm,
-            first_layer_height_mm,
+        let total_layers =
+            NonZeroU32::new(total_layers).ok_or(InvalidLayerSchedule::ZeroTotalLayers)?;
+        Ok(Self::Uniform(UniformSchedule::new(
+            layer_height,
+            first_layer_height,
             total_layers,
-        })
+        )))
     }
 
     /// The number of layers (sampling planes) the schedule yields, the
-    /// length of [`iter_z`](Self::iter_z).
+    /// length of [`iter_z`](Self::iter_z), as a plain count for layer
+    /// arithmetic. The typed non-zero value sits on the variant
+    /// payload.
     pub fn total_layers(&self) -> u32 {
         match *self {
-            Self::Uniform { total_layers, .. } => total_layers,
+            Self::Uniform(uniform) => uniform.total_layers().get(),
         }
     }
 
     /// Iterator of absolute Z values (millimetres above the build
     /// plate) where each layer slab should be sampled. Always strictly
-    /// monotonically increasing under the constructor's invariants.
+    /// monotonically increasing: the payload's heights are strictly
+    /// positive by type.
     pub fn iter_z(&self) -> impl Iterator<Item = f64> {
         match *self {
-            Self::Uniform {
-                layer_height_mm: h,
-                first_layer_height_mm: h0,
-                total_layers: n,
-            } => (0..n).map(move |k| {
-                if k == 0 {
-                    h0 * 0.5
-                } else {
-                    (f64::from(k) - 0.5).mul_add(h, h0)
-                }
-            }),
+            Self::Uniform(uniform) => {
+                let h = uniform.layer_height().value();
+                let h0 = uniform.first_layer_height().value();
+                (0..uniform.total_layers().get()).map(move |k| {
+                    if k == 0 {
+                        h0 * 0.5
+                    } else {
+                        (f64::from(k) - 0.5).mul_add(h, h0)
+                    }
+                })
+            }
         }
     }
 
     /// Iterator of each slab's TOP surface in absolute Z (millimetres
     /// above the build plate): `h0` for slab 0, `h0 + k * h` for slab
-    /// `k >= 1`. Strictly monotonically increasing under the
-    /// constructor's invariants. Writers that record cured-layer
+    /// `k >= 1`. Always strictly monotonically increasing, like
+    /// [`iter_z`](Self::iter_z). Writers that record cured-layer
     /// extents (e.g. slice-file formats) want these values, not the
-    /// centred sampling planes of [`iter_z`](Self::iter_z).
+    /// centred sampling planes.
     pub fn iter_slab_tops(&self) -> impl Iterator<Item = f64> {
         match *self {
-            Self::Uniform {
-                layer_height_mm: h,
-                first_layer_height_mm: h0,
-                total_layers: n,
-            } => (0..n).map(move |k| f64::from(k).mul_add(h, h0)),
+            Self::Uniform(uniform) => {
+                let h = uniform.layer_height().value();
+                let h0 = uniform.first_layer_height().value();
+                (0..uniform.total_layers().get()).map(move |k| f64::from(k).mul_add(h, h0))
+            }
         }
     }
 }
@@ -255,6 +303,27 @@ mod profile_tests {
     fn layer_schedule_uniform_rejects_zero_total_layers() {
         let err = LayerSchedule::uniform(0.05, 0.05, 0).unwrap_err();
         assert!(matches!(err, InvalidLayerSchedule::ZeroTotalLayers));
+    }
+
+    #[test]
+    fn uniform_schedule_accessors_return_the_parts() {
+        let layer_height = PositiveFiniteMm::new(0.05).unwrap();
+        let first_layer_height = PositiveFiniteMm::new(0.15).unwrap();
+        let total_layers = NonZeroU32::new(10).unwrap();
+        let uniform = UniformSchedule::new(layer_height, first_layer_height, total_layers);
+        assert_eq!(uniform.layer_height(), layer_height);
+        assert_eq!(uniform.first_layer_height(), first_layer_height);
+        assert_eq!(uniform.total_layers(), total_layers);
+    }
+
+    #[test]
+    fn typed_construction_equals_the_validating_constructor() {
+        let typed = LayerSchedule::Uniform(UniformSchedule::new(
+            PositiveFiniteMm::new(0.05).unwrap(),
+            PositiveFiniteMm::new(0.15).unwrap(),
+            NonZeroU32::new(10).unwrap(),
+        ));
+        assert_eq!(typed, LayerSchedule::uniform(0.05, 0.15, 10).unwrap());
     }
 
     #[test]

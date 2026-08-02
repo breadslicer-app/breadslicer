@@ -163,12 +163,11 @@ fn add_metadata_chunks(
 
 fn format_layer_schedule(schedule: &LayerSchedule) -> String {
     match *schedule {
-        LayerSchedule::Uniform {
-            layer_height_mm,
-            first_layer_height_mm,
-            total_layers,
-        } => format!(
-            "uniform layer-height-mm={layer_height_mm} first-layer-height-mm={first_layer_height_mm} total-layers={total_layers}",
+        LayerSchedule::Uniform(uniform) => format!(
+            "uniform layer-height-mm={} first-layer-height-mm={} total-layers={}",
+            uniform.layer_height().value(),
+            uniform.first_layer_height().value(),
+            uniform.total_layers().get(),
         ),
     }
 }
@@ -352,6 +351,9 @@ mod png_tests {
         assert_eq!(by_key("aa-level"), Some("off".into()));
         assert_eq!(by_key("layer-z-mm"), Some("0.05".into()));
         assert_eq!(by_key("layer-index"), Some("0".into()));
-        assert!(by_key("layer-schedule").unwrap().starts_with("uniform "));
+        assert_eq!(
+            by_key("layer-schedule"),
+            Some("uniform layer-height-mm=0.1 first-layer-height-mm=0.1 total-layers=8".into()),
+        );
     }
 }
