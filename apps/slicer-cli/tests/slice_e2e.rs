@@ -409,23 +409,23 @@ fn cube_fixture_png_per_layer_emits_8bit_grayscale_500x500_per_layer() {
         );
     }
 
-    // Layer 0 cuts the cube at z = 0.1; the cube occupies mesh-frame
-    // x, y in [-0.5, +0.5] mm. The PNG writer shifts polygons by
-    // (+2.5, +2.5) to fit pixel_map's [0, 5] mm contract, so the
-    // cube renders at build-frame x, y in [2, 3] mm, i.e. pixels
-    // [200, 300]. Inside: pixel (250, 250) at build mm (2.5, 2.5),
-    // which is the mesh origin and the raster centre. Outside:
-    // pixel (100, 100) at build mm (1, 1), well below the cube.
+    // Layer 0 cuts the cube at z = 0.1; the cube occupies printer-
+    // frame x, y in [-0.5, +0.5] mm. The 5 mm plate maps to 500 px
+    // (100 px/mm) with the envelope's min corner (-2.5, -2.5) at
+    // pixel (0, 0), so the cube renders at pixels [200, 300].
+    // Inside: pixel (250, 250) at printer mm (0, 0), the plate
+    // origin and the raster centre. Outside: pixel (100, 100) at
+    // printer mm (-1.5, -1.5), well below the cube.
     let (w, h, buf) = decode_grayscale_png(&layers[0]);
     assert_eq!(
         sample_at(&buf, w, h, 250, 250),
         255,
-        "raster pixel (250, 250) at mesh origin sits inside the cube",
+        "raster pixel (250, 250) at the plate origin sits inside the cube",
     );
     assert_eq!(
         sample_at(&buf, w, h, 100, 100),
         0,
-        "raster pixel (100, 100) at build mm (1, 1) sits outside the cube",
+        "raster pixel (100, 100) at printer mm (-1.5, -1.5) sits outside the cube",
     );
 }
 
@@ -447,17 +447,17 @@ fn z_tunnel_prism_png_per_layer_carries_the_inner_hole_pixels() {
         assert_eq!(h, 500);
     }
 
-    // Outer box mesh-frame x, y in [-1, +1] mm, tunnel mesh-frame
-    // x, y in [-0.4, +0.4] mm. The PNG writer shifts polygons by
-    // (+2.5, +2.5), so the outer renders at build-frame [1.5, 3.5]
-    // (pixels [150, 350]) and the tunnel at [2.1, 2.9] (pixels
-    // [210, 290]). In raster pixel coords:
-    // - (170, 170) at build mm (1.7, 1.7): inside the outer ring,
-    //   outside the tunnel -> filled (255).
-    // - (250, 250) at build mm (2.5, 2.5) (mesh origin, raster
+    // Outer box printer-frame x, y in [-1, +1] mm, tunnel x, y in
+    // [-0.4, +0.4] mm. At 100 px/mm with the envelope's min corner
+    // (-2.5, -2.5) at pixel (0, 0), the outer renders at pixels
+    // [150, 350] and the tunnel at pixels [210, 290]. In raster
+    // pixel coords:
+    // - (170, 170) at printer mm (-0.8, -0.8): inside the outer
+    //   ring, outside the tunnel -> filled (255).
+    // - (250, 250) at printer mm (0, 0) (the plate origin, raster
     //   centre): inside the tunnel hole -> empty (0).
-    // - (100, 100) at build mm (1, 1): outside the outer ring ->
-    //   empty (0).
+    // - (100, 100) at printer mm (-1.5, -1.5): outside the outer
+    //   ring -> empty (0).
     let (w, h, buf) = decode_grayscale_png(&layers[0]);
     assert_eq!(
         sample_at(&buf, w, h, 170, 170),
@@ -467,12 +467,12 @@ fn z_tunnel_prism_png_per_layer_carries_the_inner_hole_pixels() {
     assert_eq!(
         sample_at(&buf, w, h, 250, 250),
         0,
-        "raster pixel (250, 250) at the mesh origin sits inside the tunnel hole",
+        "raster pixel (250, 250) at the plate origin sits inside the tunnel hole",
     );
     assert_eq!(
         sample_at(&buf, w, h, 100, 100),
         0,
-        "raster pixel (100, 100) at build mm (1, 1) sits outside the outer ring",
+        "raster pixel (100, 100) at printer mm (-1.5, -1.5) sits outside the outer ring",
     );
 }
 
@@ -488,35 +488,34 @@ fn y_tunnel_prism_png_per_layer_transitions_above_below_and_through_the_tunnel()
         "expected 10 PNG layers for the y-tunnel prism"
     );
 
-    // Outer box mesh-frame x, y in [-1, +1] mm, tunnel slab mesh-frame
-    // x in [-0.4, +0.4] (spanning all Y). PNG writer shift (+2.5,
-    // +2.5): outer in build-frame [1.5, 3.5] (pixels [150, 350]),
-    // tunnel slab x in build-frame [2.1, 2.9] (pixel columns
-    // [210, 290]).
+    // Outer box printer-frame x, y in [-1, +1] mm, tunnel slab x in
+    // [-0.4, +0.4] (spanning all Y). At 100 px/mm with the
+    // envelope's min corner (-2.5, -2.5) at pixel (0, 0): outer at
+    // pixels [150, 350], tunnel slab at pixel columns [210, 290].
 
     // Layer 0 (z = 0.1, below tunnel): solid outer rect. Pixel
-    // (250, 250) at the mesh origin should be filled.
+    // (250, 250) at the plate origin should be filled.
     let (w, h, below) = decode_grayscale_png(&layers[0]);
     assert_eq!(
         sample_at(&below, w, h, 250, 250),
         255,
-        "below-tunnel layer should be solid at the mesh origin",
+        "below-tunnel layer should be solid at the plate origin",
     );
 
     // Layer 3 (z = 0.7, in tunnel): outer rect minus tunnel slab.
-    // Pixel (250, 250) (mesh origin) sits inside the tunnel slab ->
-    // empty. Pixel (170, 250) at build mm (1.7, 2.5) sits outside
-    // the tunnel slab but inside the outer ring -> filled.
+    // Pixel (250, 250) (the plate origin) sits inside the tunnel
+    // slab -> empty. Pixel (170, 250) at printer mm (-0.8, 0) sits
+    // outside the tunnel slab but inside the outer ring -> filled.
     let (_, _, through) = decode_grayscale_png(&layers[3]);
     assert_eq!(
         sample_at(&through, w, h, 250, 250),
         0,
-        "through-tunnel layer should be empty at the mesh origin (inside the tunnel slab)",
+        "through-tunnel layer should be empty at the plate origin (inside the tunnel slab)",
     );
     assert_eq!(
         sample_at(&through, w, h, 170, 250),
         255,
-        "through-tunnel layer should be filled at build mm (1.7, 2.5) (outside the tunnel slab)",
+        "through-tunnel layer should be filled at printer mm (-0.8, 0) (outside the tunnel slab)",
     );
 }
 

@@ -67,8 +67,10 @@ fn collect_edges(layer: &ContourLayer, pixel_map: &PixelMap) -> Vec<Edge> {
 }
 
 /// Rasterise `layer` to a binary (`0` or `255`) [`LayerRaster`]
-/// sized by `pixel_map`'s pixel resolution. The output layer
-/// inherits `layer.z_mm()`.
+/// sized by `pixel_map`'s pixel resolution. The layer's coordinates
+/// are printer-frame millimetres (XY centred on the plate origin);
+/// the centring shift into the pixel grid is `pixel_map`'s job, not
+/// the caller's. The output layer inherits `layer.z_mm()`.
 pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> LayerRaster {
     let width_px = pixel_map.pixel_resolution().x();
     let height_px = pixel_map.pixel_resolution().y();
@@ -113,7 +115,9 @@ pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> Lay
     LayerRaster::new(layer.z_mm(), width_px, height_px, acc.into_runs())
 }
 
-/// Rasterise `layer` with the chosen anti-aliasing level.
+/// Rasterise `layer` with the chosen anti-aliasing level. As in
+/// [`rasterize_layer_binary`], the layer's coordinates are
+/// printer-frame millimetres (XY centred on the plate origin).
 ///
 /// [`AaLevel::Off`] short-circuits to [`rasterize_layer_binary`].
 /// [`AaLevel::X2`] / [`AaLevel::X4`] / [`AaLevel::X8`] run N Y
@@ -296,7 +300,7 @@ mod scanline_tests {
 
     #[test]
     fn unit_square_fills_every_pixel_with_255() {
-        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
+        let outer = ccw_square(p(-0.5, -0.5), p(0.5, 0.5));
         let polygon = Polygon::new(outer, vec![]).unwrap();
         let layer = ContourLayer::new(0.05, vec![polygon]);
         let raster = rasterize_layer_binary(&layer, &one_mm_per_hundred_pixels());
@@ -314,11 +318,11 @@ mod scanline_tests {
 
     #[test]
     fn polygon_with_hole_leaves_hole_pixels_at_zero() {
-        // CCW outer covering [0, 1]^2 mm, with a CW hole over
-        // [0.25, 0.75]^2 mm. On a 100x100 / 1x1 mm build the hole
-        // covers integer pixel rows / cols 25..=74.
-        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
-        let hole = cw_square(p(0.25, 0.25), p(0.75, 0.75));
+        // CCW outer covering the whole [-0.5, 0.5]^2 mm plate, with
+        // a CW hole over [-0.25, 0.25]^2 mm. On a 100x100 / 1x1 mm
+        // build the hole covers integer pixel rows / cols 25..=74.
+        let outer = ccw_square(p(-0.5, -0.5), p(0.5, 0.5));
+        let hole = cw_square(p(-0.25, -0.25), p(0.25, 0.25));
         let polygon = Polygon::new(outer, vec![hole]).unwrap();
         let layer = ContourLayer::new(0.05, vec![polygon]);
         let raster = rasterize_layer_binary(&layer, &one_mm_per_hundred_pixels());
@@ -339,10 +343,10 @@ mod scanline_tests {
 
     #[test]
     fn small_polygon_fills_only_the_pixels_it_covers() {
-        // Half-mm square in the middle of the build plate. With
-        // 1 mm build and 100 px resolution this covers pixel rows
-        // / cols 25..=74.
-        let outer = ccw_square(p(0.25, 0.25), p(0.75, 0.75));
+        // Half-mm square centred on the build plate. With 1 mm
+        // build and 100 px resolution this covers pixel rows /
+        // cols 25..=74.
+        let outer = ccw_square(p(-0.25, -0.25), p(0.25, 0.25));
         let polygon = Polygon::new(outer, vec![]).unwrap();
         let layer = ContourLayer::new(0.05, vec![polygon]);
         let raster = rasterize_layer_binary(&layer, &one_mm_per_hundred_pixels());
@@ -366,8 +370,38 @@ mod scanline_tests {
     }
 
     #[test]
+    fn negative_quadrant_polygon_fills_the_lower_left_pixels() {
+        // Printer-frame coordinates are centred on the plate origin:
+        // a square at x, y in [-0.4, -0.1] mm on the 1 mm plate sits
+        // in the plate's lower-left quarter and must render there
+        // (pixel rows / cols 10..=39), not be clipped away.
+        let outer = ccw_square(p(-0.4, -0.4), p(-0.1, -0.1));
+        let polygon = Polygon::new(outer, vec![]).unwrap();
+        let layer = ContourLayer::new(0.05, vec![polygon]);
+        let raster = rasterize_layer_binary(&layer, &one_mm_per_hundred_pixels());
+
+        // Inside the square.
+        assert_eq!(pixel_value(&raster, 25, 25), 255);
+        assert_eq!(pixel_value(&raster, 10, 10), 255);
+        assert_eq!(pixel_value(&raster, 39, 39), 255);
+        // Outside: below the square, the plate origin, the far corner.
+        assert_eq!(pixel_value(&raster, 5, 5), 0);
+        assert_eq!(pixel_value(&raster, 50, 50), 0);
+        assert_eq!(pixel_value(&raster, 90, 90), 0);
+
+        // Exactly the 30x30 covered pixels are filled.
+        let filled: u64 = raster
+            .runs()
+            .iter()
+            .filter(|r| r.value == 255)
+            .map(|r| u64::from(r.length))
+            .sum();
+        assert_eq!(filled, 30 * 30);
+    }
+
+    #[test]
     fn rasterise_inherits_layer_z_and_pixel_map_dimensions() {
-        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
+        let outer = ccw_square(p(-0.5, -0.5), p(0.5, 0.5));
         let polygon = Polygon::new(outer, vec![]).unwrap();
         let layer = ContourLayer::new(0.42, vec![polygon]);
         let pm = PixelMap::new(
@@ -384,18 +418,18 @@ mod scanline_tests {
     }
 
     fn unit_diamond_layer() -> ContourLayer {
-        // Unit square rotated 45 degrees about (0.5, 0.5). Every edge
-        // crosses pixels at non-integer Y, so the AA pass produces
-        // gradient pixels along every edge.
-        let outer = ClosedRing::new(vec![p(0.5, 0.0), p(1.0, 0.5), p(0.5, 1.0), p(0.0, 0.5)]);
+        // Unit square rotated 45 degrees about the plate origin.
+        // Every edge crosses pixels at non-integer Y, so the AA pass
+        // produces gradient pixels along every edge.
+        let outer = ClosedRing::new(vec![p(0.0, -0.5), p(0.5, 0.0), p(0.0, 0.5), p(-0.5, 0.0)]);
         let polygon = Polygon::new(outer, vec![]).unwrap();
         ContourLayer::new(0.05, vec![polygon])
     }
 
     #[test]
     fn aa_off_matches_the_binary_path_bitwise() {
-        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
-        let hole = cw_square(p(0.25, 0.25), p(0.75, 0.75));
+        let outer = ccw_square(p(-0.5, -0.5), p(0.5, 0.5));
+        let hole = cw_square(p(-0.25, -0.25), p(0.25, 0.25));
         let polygon = Polygon::new(outer, vec![hole]).unwrap();
         let layer = ContourLayer::new(0.05, vec![polygon]);
         let pm = one_mm_per_hundred_pixels();
@@ -419,7 +453,7 @@ mod scanline_tests {
     fn aa_axis_aligned_unit_square_is_uniformly_filled() {
         // Pixel edges line up with the polygon's mm edges, so even
         // with AA on every pixel ends up at exactly 100% coverage.
-        let outer = ccw_square(p(0.0, 0.0), p(1.0, 1.0));
+        let outer = ccw_square(p(-0.5, -0.5), p(0.5, 0.5));
         let polygon = Polygon::new(outer, vec![]).unwrap();
         let layer = ContourLayer::new(0.05, vec![polygon]);
         let raster = rasterize_layer(&layer, &one_mm_per_hundred_pixels(), AaLevel::X4, 0.0);
@@ -470,10 +504,10 @@ mod scanline_tests {
     /// stay panic-free on its own.
     fn nan_x_layer() -> ContourLayer {
         let ring = ClosedRing::new(vec![
-            p(f64::NAN, 0.0),
-            p(1.0, 0.0),
-            p(1.0, 1.0),
-            p(0.0, 1.0),
+            p(f64::NAN, -0.5),
+            p(0.5, -0.5),
+            p(0.5, 0.5),
+            p(-0.5, 0.5),
         ]);
         ContourLayer::new(0.05, vec![Polygon::new_unchecked(ring, vec![])])
     }

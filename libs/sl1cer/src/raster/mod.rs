@@ -7,7 +7,10 @@
 //!
 //! Turns a vector [`ContourLayer`](crate::contour::ContourLayer)
 //! into a per-layer grayscale raster of run-length-encoded pixel
-//! runs in physical pixel space. The submodules:
+//! runs in physical pixel space. Input layers are printer-frame
+//! millimetres, XY centred on the plate origin; the projection to
+//! the corner-indexed pixel grid is owned by this tier. The
+//! submodules:
 //!
 //! - [`pixel_map`] holds the millimetre-to-pixel projection.
 //! - [`rle`] holds the run-length-encoded raster types and the

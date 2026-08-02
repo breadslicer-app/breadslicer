@@ -10,9 +10,8 @@
 //! The cap is a viewport preview, so it rasterises at a modest display
 //! resolution (the longest build-area side maps to at most
 //! [`MAX_CAP_SIDE_PX`] texels), not the printer's full pixel grid. The
-//! world-centred contour is shifted into the corner-origin raster frame
-//! before filling, matching the millimetre-to-pixel convention of
-//! [`PixelMap`].
+//! contour stays in the printer frame (XY centred on the build
+//! origin): that is the frame [`PixelMap`] projects from.
 
 use sc_print_primitives::{BuildVolume as RasterBuildVolume, Mirror, PixelResolution};
 use sc_sl1cer::contour::ContourLayer;
@@ -62,10 +61,7 @@ pub(crate) fn build_cap_raster(
     // un-mirrored world mesh, so it is never applied here.
     let pixel_map = PixelMap::new(raster_volume, resolution, Mirror { x: false, y: false });
 
-    // The world contour is centred on the build origin; shift it into
-    // the corner-origin raster frame before filling.
-    let shifted = layer.translated_xy(-f64::from(env_min.x), -f64::from(env_min.y));
-    let raster = rasterize_layer_binary(&shifted, &pixel_map);
+    let raster = rasterize_layer_binary(layer, &pixel_map);
 
     let mut coverage = Vec::with_capacity((res_x as usize) * (res_y as usize));
     for run in raster.runs() {

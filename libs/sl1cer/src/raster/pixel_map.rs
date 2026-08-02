@@ -12,9 +12,11 @@
 //!
 //! Frame conventions:
 //!
-//! - The build-plate origin in millimetres sits at the pixel-space
-//!   origin. Mm `(0, 0)` projects to pixel `(0, 0)`; mm
-//!   `(build_volume.x_mm(), build_volume.y_mm())` projects to pixel
+//! - Input points are printer-frame millimetres: XY centred on the
+//!   plate origin, the frame the build volume's envelope corners
+//!   define. Mm `(0, 0)` (the plate centre) projects to the raster
+//!   centre; the envelope's minimum XY corner projects to pixel
+//!   `(0, 0)` and its maximum XY corner to pixel
 //!   `(pixel_resolution.x(), pixel_resolution.y())`.
 //! - Pixel coordinates are subpixel `f64`, not integer indices.
 //!   Integer rounding is the scanline fill's job; keeping subpixel
@@ -65,15 +67,19 @@ impl PixelMap {
         self.mirror
     }
 
-    /// Project a 2D point in millimetres to subpixel raster
-    /// coordinates. With the corresponding mirror flag set, the
-    /// projected axis is reflected across the centre of the
-    /// raster.
+    /// Project a 2D point in printer-frame millimetres (XY centred
+    /// on the plate origin) to subpixel raster coordinates. With the
+    /// corresponding mirror flag set, the projected axis is
+    /// reflected across the centre of the raster; in printer-frame
+    /// terms that reflection is the same as negating the coordinate
+    /// before projecting.
     pub fn mm_to_pixel(&self, point: Point2D) -> (f64, f64) {
         let res_x = f64::from(self.pixel_resolution.x());
         let res_y = f64::from(self.pixel_resolution.y());
-        let raw_x = point.x * res_x / self.build_volume.x_mm();
-        let raw_y = point.y * res_y / self.build_volume.y_mm();
+        let bx = self.build_volume.x_mm();
+        let by = self.build_volume.y_mm();
+        let raw_x = (point.x + 0.5 * bx) * res_x / bx;
+        let raw_y = (point.y + 0.5 * by) * res_y / by;
         let px_x = if self.mirror.x { res_x - raw_x } else { raw_x };
         let px_y = if self.mirror.y { res_y - raw_y } else { raw_y };
         (px_x, px_y)
@@ -97,60 +103,61 @@ mod pixel_map_tests {
     }
 
     #[test]
-    fn origin_maps_to_pixel_origin_without_mirror() {
+    fn plate_centre_maps_to_raster_centre_without_mirror() {
         let pm = unmirrored_pixel_map(60.0, 60.0, 1920, 1080);
-        assert_eq!(pm.mm_to_pixel(p(0.0, 0.0)), (0.0, 0.0));
+        assert_eq!(pm.mm_to_pixel(p(0.0, 0.0)), (960.0, 540.0));
     }
 
     #[test]
-    fn build_volume_corner_maps_to_pixel_resolution_without_mirror() {
+    fn envelope_min_corner_maps_to_pixel_origin_without_mirror() {
         let pm = unmirrored_pixel_map(60.0, 60.0, 1920, 1080);
-        assert_eq!(pm.mm_to_pixel(p(60.0, 60.0)), (1920.0, 1080.0));
+        assert_eq!(pm.mm_to_pixel(p(-30.0, -30.0)), (0.0, 0.0));
     }
 
     #[test]
-    fn build_volume_centre_maps_to_raster_centre() {
-        let pm = unmirrored_pixel_map(60.0, 40.0, 600, 400);
-        assert_eq!(pm.mm_to_pixel(p(30.0, 20.0)), (300.0, 200.0));
+    fn envelope_max_corner_maps_to_pixel_resolution_without_mirror() {
+        let pm = unmirrored_pixel_map(60.0, 60.0, 1920, 1080);
+        assert_eq!(pm.mm_to_pixel(p(30.0, 30.0)), (1920.0, 1080.0));
     }
 
     #[test]
     fn axes_are_independent() {
         let pm = unmirrored_pixel_map(60.0, 40.0, 600, 400);
-        // 10 mm along X with build = 60 mm and res = 600 px -> 100 px.
-        // 30 mm along Y with build = 40 mm and res = 400 px -> 300 px.
-        assert_eq!(pm.mm_to_pixel(p(10.0, 30.0)), (100.0, 300.0));
+        // -20 mm along X with build = 60 mm and res = 600 px -> 100 px.
+        // +10 mm along Y with build = 40 mm and res = 400 px -> 300 px.
+        assert_eq!(pm.mm_to_pixel(p(-20.0, 10.0)), (100.0, 300.0));
     }
 
     #[test]
     fn subpixel_input_yields_subpixel_output() {
         let pm = unmirrored_pixel_map(2.0, 2.0, 200, 200);
-        let (px, py) = pm.mm_to_pixel(p(0.123, 1.876));
-        // 0.123 mm * 100 px/mm = 12.3 px; 1.876 mm * 100 px/mm = 187.6 px.
+        let (px, py) = pm.mm_to_pixel(p(-0.877, 0.876));
+        // (-0.877 + 1) mm * 100 px/mm = 12.3 px;
+        // (0.876 + 1) mm * 100 px/mm = 187.6 px.
         assert!((px - 12.3).abs() < 1e-12);
         assert!((py - 187.6).abs() < 1e-12);
     }
 
     #[test]
-    fn mirror_x_reflects_origin_to_right_edge() {
+    fn mirror_x_reflects_min_corner_to_right_edge() {
         let pm = PixelMap::new(
             BuildVolume::new(60.0, 60.0, 100.0).unwrap(),
             PixelResolution::new(1920, 1080).unwrap(),
             Mirror { x: true, y: false },
         );
-        assert_eq!(pm.mm_to_pixel(p(0.0, 0.0)), (1920.0, 0.0));
-        assert_eq!(pm.mm_to_pixel(p(60.0, 60.0)), (0.0, 1080.0));
+        assert_eq!(pm.mm_to_pixel(p(-30.0, -30.0)), (1920.0, 0.0));
+        assert_eq!(pm.mm_to_pixel(p(30.0, 30.0)), (0.0, 1080.0));
     }
 
     #[test]
-    fn mirror_y_reflects_origin_to_top_edge() {
+    fn mirror_y_reflects_min_corner_to_top_edge() {
         let pm = PixelMap::new(
             BuildVolume::new(60.0, 60.0, 100.0).unwrap(),
             PixelResolution::new(1920, 1080).unwrap(),
             Mirror { x: false, y: true },
         );
-        assert_eq!(pm.mm_to_pixel(p(0.0, 0.0)), (0.0, 1080.0));
-        assert_eq!(pm.mm_to_pixel(p(60.0, 60.0)), (1920.0, 0.0));
+        assert_eq!(pm.mm_to_pixel(p(-30.0, -30.0)), (0.0, 1080.0));
+        assert_eq!(pm.mm_to_pixel(p(30.0, 30.0)), (1920.0, 0.0));
     }
 
     #[test]
@@ -160,18 +167,32 @@ mod pixel_map_tests {
             PixelResolution::new(1920, 1080).unwrap(),
             Mirror { x: true, y: true },
         );
-        assert_eq!(pm.mm_to_pixel(p(0.0, 0.0)), (1920.0, 1080.0));
-        assert_eq!(pm.mm_to_pixel(p(60.0, 60.0)), (0.0, 0.0));
+        assert_eq!(pm.mm_to_pixel(p(-30.0, -30.0)), (1920.0, 1080.0));
+        assert_eq!(pm.mm_to_pixel(p(30.0, 30.0)), (0.0, 0.0));
     }
 
     #[test]
-    fn mirror_preserves_centre() {
+    fn mirror_preserves_plate_centre() {
         let pm = PixelMap::new(
             BuildVolume::new(60.0, 40.0, 100.0).unwrap(),
             PixelResolution::new(600, 400).unwrap(),
             Mirror { x: true, y: true },
         );
-        assert_eq!(pm.mm_to_pixel(p(30.0, 20.0)), (300.0, 200.0));
+        assert_eq!(pm.mm_to_pixel(p(0.0, 0.0)), (300.0, 200.0));
+    }
+
+    #[test]
+    fn mirror_equals_negating_the_printer_coordinate() {
+        let plain = unmirrored_pixel_map(60.0, 40.0, 600, 400);
+        let mirrored = PixelMap::new(
+            BuildVolume::new(60.0, 40.0, 100.0).unwrap(),
+            PixelResolution::new(600, 400).unwrap(),
+            Mirror { x: true, y: true },
+        );
+        assert_eq!(
+            mirrored.mm_to_pixel(p(12.5, -7.25)),
+            plain.mm_to_pixel(p(-12.5, 7.25)),
+        );
     }
 
     #[test]
