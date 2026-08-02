@@ -6,7 +6,7 @@
 //! Serializer for the 3D Model part. Assumes a structurally
 //! well-formed [`ModelDocument`] (adapters construct them), but
 //! enforces the slice-extension invariants a conforming file must
-//! satisfy: strictly increasing slice boundaries, closed contours
+//! satisfy: finite, strictly increasing slice boundaries, closed contours
 //! for model-type objects, resolvable stack references, and planar
 //! transforms on sliced objects. Numbers use a shortest-round-trip
 //! decimal form; text and attribute values are XML-escaped by
@@ -101,8 +101,19 @@ pub fn write_model(
 fn validate_slice_content(document: &ModelDocument) -> Result<BTreeSet<u32>, ModelWriteError> {
     for stack in &document.slice_stacks {
         if let SliceStackContent::Slices(slices) = &stack.content {
+            if !stack.z_bottom.is_finite() {
+                return Err(ModelWriteError::SliceZBottomNotFinite {
+                    stack_id: stack.id.get(),
+                });
+            }
             let mut previous = stack.z_bottom;
             for (index, slice) in slices.iter().enumerate() {
+                if !slice.z_top.is_finite() {
+                    return Err(ModelWriteError::SliceZTopNotFinite {
+                        stack_id: stack.id.get(),
+                        index,
+                    });
+                }
                 if slice.z_top <= previous {
                     return Err(ModelWriteError::SliceZNotIncreasing {
                         stack_id: stack.id.get(),

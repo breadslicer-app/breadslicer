@@ -433,6 +433,19 @@ pub enum ModelWriteError {
         stack_id: u32,
         index: usize,
     },
+    /// A slice's ztop is NaN or infinite. Checked before the
+    /// increasing-z comparison, which is false against NaN and would
+    /// let a non-finite boundary through into the XML.
+    SliceZTopNotFinite {
+        stack_id: u32,
+        index: usize,
+    },
+    /// A stack's zbottom is NaN or infinite. It seeds the
+    /// increasing-z comparison, so a non-finite value would disable
+    /// that check for the first slice.
+    SliceZBottomNotFinite {
+        stack_id: u32,
+    },
     /// A slice polygon carries no segments.
     PolygonWithoutSegments {
         stack_id: u32,
@@ -472,6 +485,13 @@ impl fmt::Display for ModelWriteError {
                 f,
                 "slice stack {stack_id}: slice {index} does not increase the stack's z",
             ),
+            Self::SliceZTopNotFinite { stack_id, index } => write!(
+                f,
+                "slice stack {stack_id}: slice {index} has a non-finite ztop",
+            ),
+            Self::SliceZBottomNotFinite { stack_id } => {
+                write!(f, "slice stack {stack_id}: the zbottom is not finite",)
+            }
             Self::PolygonWithoutSegments { stack_id } => {
                 write!(f, "slice stack {stack_id} has a polygon with no segments")
             }
@@ -510,6 +530,8 @@ impl std::error::Error for ModelWriteError {
         match self {
             Self::Io(err) => Some(err),
             Self::SliceZNotIncreasing { .. }
+            | Self::SliceZTopNotFinite { .. }
+            | Self::SliceZBottomNotFinite { .. }
             | Self::PolygonWithoutSegments { .. }
             | Self::SliceIndexOutOfRange { .. }
             | Self::OpenPolygonOnModelObject { .. }

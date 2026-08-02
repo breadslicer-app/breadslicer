@@ -391,6 +391,90 @@ mod write_validation_tests {
     }
 
     #[test]
+    fn nan_slice_boundaries_are_rejected() {
+        let source = document(
+            vec![inline_stack(
+                1,
+                0.0,
+                vec![square_slice(0.5), square_slice(f64::NAN)],
+            )],
+            vec![sliced_object(2, 1)],
+        );
+        let err = write_err(&source);
+        assert!(matches!(
+            err,
+            ModelWriteError::SliceZTopNotFinite {
+                stack_id: 1,
+                index: 1,
+            },
+        ));
+        assert_eq!(
+            err.to_string(),
+            "slice stack 1: slice 1 has a non-finite ztop",
+        );
+    }
+
+    #[test]
+    fn infinite_slice_boundaries_are_rejected() {
+        let source = document(
+            vec![inline_stack(
+                1,
+                0.0,
+                vec![square_slice(0.5), square_slice(f64::INFINITY)],
+            )],
+            vec![sliced_object(2, 1)],
+        );
+        assert!(matches!(
+            write_err(&source),
+            ModelWriteError::SliceZTopNotFinite {
+                stack_id: 1,
+                index: 1,
+            },
+        ));
+    }
+
+    #[test]
+    fn nan_zbottom_is_rejected() {
+        let source = document(
+            vec![inline_stack(1, f64::NAN, vec![square_slice(0.5)])],
+            vec![sliced_object(2, 1)],
+        );
+        let err = write_err(&source);
+        assert!(matches!(
+            err,
+            ModelWriteError::SliceZBottomNotFinite { stack_id: 1 },
+        ));
+        assert_eq!(err.to_string(), "slice stack 1: the zbottom is not finite");
+    }
+
+    #[test]
+    fn negative_infinite_zbottom_is_rejected() {
+        let source = document(
+            vec![inline_stack(1, f64::NEG_INFINITY, vec![square_slice(0.5)])],
+            vec![sliced_object(2, 1)],
+        );
+        assert!(matches!(
+            write_err(&source),
+            ModelWriteError::SliceZBottomNotFinite { stack_id: 1 },
+        ));
+    }
+
+    #[test]
+    fn infinite_zbottom_reports_the_zbottom_not_the_first_slice() {
+        // With a +inf zbottom the first slice also fails the
+        // increasing-z comparison; the finiteness check runs first and
+        // names the actual defect.
+        let source = document(
+            vec![inline_stack(1, f64::INFINITY, vec![square_slice(0.5)])],
+            vec![sliced_object(2, 1)],
+        );
+        assert!(matches!(
+            write_err(&source),
+            ModelWriteError::SliceZBottomNotFinite { stack_id: 1 },
+        ));
+    }
+
+    #[test]
     fn open_polygons_are_refused_for_model_objects() {
         let source = document(
             vec![inline_stack(1, 0.0, vec![open_slice(0.5)])],
