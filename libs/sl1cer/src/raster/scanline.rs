@@ -22,6 +22,11 @@
 //! For each row, runs of equal-value adjacent pixels are pushed into
 //! a single [`RleRunAccumulator`], which merges across row breaks
 //! when consecutive rows end and begin with the same value.
+//!
+//! The per-row crossing sort uses `f64::total_cmp`, so contour input
+//! carrying NaN coordinates (constructible through the public
+//! [`ContourLayer`] API, which performs no coordinate validation)
+//! degrades to deterministic garbage output instead of panicking.
 
 use crate::contour::{ClosedRing, ContourLayer};
 use crate::profile::AaLevel;
@@ -83,7 +88,7 @@ pub fn rasterize_layer_binary(layer: &ContourLayer, pixel_map: &PixelMap) -> Lay
                 crossings.push((x_int, dir));
             }
         }
-        crossings.sort_by(|p, q| p.0.partial_cmp(&q.0).unwrap());
+        crossings.sort_by(|p, q| p.0.total_cmp(&q.0));
 
         let width_minus_1 = i64::from(width_px) - 1;
         let mut prev_pixel: u32 = 0;
@@ -168,7 +173,7 @@ fn rasterize_layer_aa(
                     crossings.push((x_int, dir));
                 }
             }
-            crossings.sort_by(|p, q| p.0.partial_cmp(&q.0).unwrap());
+            crossings.sort_by(|p, q| p.0.total_cmp(&q.0));
 
             let mut winding = 0i32;
             let mut span_start: Option<f64> = None;
@@ -455,5 +460,54 @@ mod scanline_tests {
                 run.value,
             );
         }
+    }
+
+    /// A unit square whose first vertex has a NaN X coordinate but a
+    /// finite Y: the edge into that vertex still straddles sample
+    /// rows, so its crossing interpolates to a NaN X and lands in the
+    /// per-row sort. `ClosedRing` accepts the point verbatim (the
+    /// pre-slice gate is a different layer), so the raster tier must
+    /// stay panic-free on its own.
+    fn nan_x_layer() -> ContourLayer {
+        let ring = ClosedRing::new(vec![
+            p(f64::NAN, 0.0),
+            p(1.0, 0.0),
+            p(1.0, 1.0),
+            p(0.0, 1.0),
+        ]);
+        ContourLayer::new(0.05, vec![Polygon::new_unchecked(ring, vec![])])
+    }
+
+    #[test]
+    fn nan_x_contour_does_not_panic_in_the_binary_fill() {
+        let raster = rasterize_layer_binary(&nan_x_layer(), &one_mm_per_hundred_pixels());
+        let total: u64 = raster.runs().iter().map(|r| u64::from(r.length)).sum();
+        assert_eq!(total, 100 * 100, "the raster must still cover every pixel");
+    }
+
+    #[test]
+    fn nan_x_contour_does_not_panic_in_the_aa_fill() {
+        let raster = rasterize_layer(
+            &nan_x_layer(),
+            &one_mm_per_hundred_pixels(),
+            AaLevel::X4,
+            0.0,
+        );
+        let total: u64 = raster.runs().iter().map(|r| u64::from(r.length)).sum();
+        assert_eq!(total, 100 * 100, "the raster must still cover every pixel");
+    }
+
+    #[test]
+    fn nan_x_contour_output_is_deterministic_across_invocations() {
+        let layer = nan_x_layer();
+        let pm = one_mm_per_hundred_pixels();
+        assert_eq!(
+            rasterize_layer_binary(&layer, &pm),
+            rasterize_layer_binary(&layer, &pm),
+        );
+        assert_eq!(
+            rasterize_layer(&layer, &pm, AaLevel::X4, 0.0),
+            rasterize_layer(&layer, &pm, AaLevel::X4, 0.0),
+        );
     }
 }
