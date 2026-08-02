@@ -3,14 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::num::NonZeroU32;
+
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode};
 
-use super::projection::{
-    ProjectionError, UnschedulableHeight, project_hardware_to_slice_profile,
-    project_to_slice_profile,
-};
+use super::projection::{project_hardware_to_slice_profile, project_to_slice_profile};
+
+fn layers(count: u32) -> NonZeroU32 {
+    NonZeroU32::new(count).expect("test counts are non-zero")
+}
 
 const PRINTER_TOML: &str = r#"
 [identity]
@@ -74,9 +77,8 @@ fn projection_copies_hardware_geometry_verbatim() {
         AaLevel::Off,
         PackingMode::None,
         PositiveFiniteMm::new(0.1).unwrap(),
-        20,
-    )
-    .unwrap();
+        layers(20),
+    );
 
     assert_eq!(profile.build_volume().x_mm(), 153.36);
     assert_eq!(profile.build_volume().y_mm(), 77.76);
@@ -95,9 +97,8 @@ fn projection_uses_resolved_layer_height_and_passed_scene_params() {
         AaLevel::X4,
         PackingMode::None,
         PositiveFiniteMm::new(0.15).unwrap(),
-        20,
-    )
-    .unwrap();
+        layers(20),
+    );
 
     assert_eq!(profile.aa_level(), AaLevel::X4);
     assert_eq!(profile.packing_mode(), PackingMode::None);
@@ -120,9 +121,8 @@ fn projection_carries_printer_machine_z_not_a_mesh_height() {
         AaLevel::Off,
         PackingMode::None,
         PositiveFiniteMm::new(0.05).unwrap(),
-        5,
-    )
-    .unwrap();
+        layers(5),
+    );
     assert_eq!(profile.build_volume().z_mm(), 165.0);
 }
 
@@ -137,9 +137,8 @@ fn hardware_projection_builds_from_hardware_and_layer_height_alone() {
         AaLevel::Off,
         PackingMode::None,
         PositiveFiniteMm::new(0.1).unwrap(),
-        10,
-    )
-    .unwrap();
+        layers(10),
+    );
 
     assert_eq!(profile.build_volume().x_mm(), 153.36);
     assert_eq!(profile.pixel_resolution().x(), 8520);
@@ -151,37 +150,4 @@ fn hardware_projection_builds_from_hardware_and_layer_height_alone() {
             assert_eq!(uniform.total_layers().get(), 10);
         }
     }
-}
-
-#[test]
-fn projection_rejects_zero_total_layers() {
-    let config = resolved_config();
-    let err = project_to_slice_profile(
-        &config,
-        AaLevel::Off,
-        PackingMode::None,
-        PositiveFiniteMm::new(0.1).unwrap(),
-        0,
-    )
-    .unwrap_err();
-    assert!(matches!(err, ProjectionError::LayerSchedule(_)));
-}
-
-#[test]
-fn unschedulable_height_wraps_into_projection_error_with_source() {
-    use std::error::Error as _;
-
-    let height = UnschedulableHeight::NonFiniteHeight {
-        z_max_mm: f64::INFINITY,
-    };
-    let err = ProjectionError::UnschedulableHeight(height);
-    assert!(
-        err.to_string()
-            .starts_with("could not derive the layer count:"),
-        "msg: {err}",
-    );
-    assert!(
-        err.source().is_some(),
-        "the height error must be the source"
-    );
 }

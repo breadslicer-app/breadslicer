@@ -7,10 +7,11 @@
 //! profile.
 
 use std::fmt;
+use std::num::NonZeroU32;
 
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{PrinterHardware, ResolvedPrintConfig};
-use sc_sl1cer::profile::{AaLevel, InvalidLayerSchedule, LayerSchedule, PackingMode, SliceProfile};
+use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile, UniformSchedule};
 
 /// Why a scene height cannot be covered by a valid layer count.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,39 +41,6 @@ impl fmt::Display for UnschedulableHeight {
 
 impl std::error::Error for UnschedulableHeight {}
 
-/// Why [`project_to_slice_profile`] could not build a
-/// [`SliceProfile`].
-#[derive(Debug)]
-pub enum ProjectionError {
-    /// The layer schedule could not be built from the resolved
-    /// layer height, the first-layer height, and the layer count.
-    LayerSchedule(InvalidLayerSchedule),
-    /// The scene height does not yield a representable layer count.
-    UnschedulableHeight(UnschedulableHeight),
-}
-
-impl fmt::Display for ProjectionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::LayerSchedule(err) => {
-                write!(f, "could not build the layer schedule: {err}")
-            }
-            Self::UnschedulableHeight(err) => {
-                write!(f, "could not derive the layer count: {err}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ProjectionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::LayerSchedule(err) => Some(err),
-            Self::UnschedulableHeight(err) => Some(err),
-        }
-    }
-}
-
 /// Build a [`SliceProfile`] from a resolved print configuration plus
 /// the per-print slicing parameters that live outside the printer
 /// and material profiles.
@@ -95,8 +63,8 @@ pub fn project_to_slice_profile(
     aa_level: AaLevel,
     packing_mode: PackingMode,
     first_layer_height_mm: PositiveFiniteMm,
-    total_layers: u32,
-) -> Result<SliceProfile, ProjectionError> {
+    total_layers: NonZeroU32,
+) -> SliceProfile {
     project_hardware_to_slice_profile(
         &config.printer.hardware,
         config.material_resolved.layer_height_mm,
@@ -122,23 +90,22 @@ pub fn project_hardware_to_slice_profile(
     aa_level: AaLevel,
     packing_mode: PackingMode,
     first_layer_height_mm: PositiveFiniteMm,
-    total_layers: u32,
-) -> Result<SliceProfile, ProjectionError> {
-    let layer_schedule = LayerSchedule::uniform(
-        layer_height_mm.value(),
-        first_layer_height_mm.value(),
+    total_layers: NonZeroU32,
+) -> SliceProfile {
+    let layer_schedule = LayerSchedule::Uniform(UniformSchedule::new(
+        layer_height_mm,
+        first_layer_height_mm,
         total_layers,
-    )
-    .map_err(ProjectionError::LayerSchedule)?;
+    ));
 
-    Ok(SliceProfile::new(
+    SliceProfile::new(
         hardware.build_volume(),
         hardware.pixel_resolution(),
         layer_schedule,
         hardware.mirror(),
         aa_level,
         packing_mode,
-    ))
+    )
 }
 
 /// Pick the smallest layer count whose slab layout covers a model up to
@@ -160,12 +127,12 @@ pub fn total_layers_for_height(
     z_max: f64,
     layer_height: f64,
     first_layer_height: f64,
-) -> Result<u32, UnschedulableHeight> {
+) -> Result<NonZeroU32, UnschedulableHeight> {
     if !z_max.is_finite() {
         return Err(UnschedulableHeight::NonFiniteHeight { z_max_mm: z_max });
     }
     if z_max <= first_layer_height {
-        return Ok(1);
+        return Ok(NonZeroU32::MIN);
     }
     let beyond_first = z_max - first_layer_height;
     let extra = (beyond_first / layer_height).ceil();
@@ -174,30 +141,40 @@ pub fn total_layers_for_height(
     if !(extra.is_finite() && extra < f64::from(u32::MAX)) {
         return Err(UnschedulableHeight::LayerCountOverflow { z_max_mm: z_max });
     }
-    Ok(1 + extra as u32)
+    // In range by the guard above; stays total anyway rather than
+    // unwrapping.
+    NonZeroU32::MIN
+        .checked_add(extra as u32)
+        .ok_or(UnschedulableHeight::LayerCountOverflow { z_max_mm: z_max })
 }
 
 #[cfg(test)]
 mod total_layers_tests {
+    use std::num::NonZeroU32;
+
     use super::{UnschedulableHeight, total_layers_for_height};
+
+    fn n(count: u32) -> NonZeroU32 {
+        NonZeroU32::new(count).expect("test counts are non-zero")
+    }
 
     #[test]
     fn returns_one_when_model_fits_in_the_first_slab() {
-        assert_eq!(total_layers_for_height(0.04, 0.1, 0.05), Ok(1));
-        assert_eq!(total_layers_for_height(0.05, 0.1, 0.05), Ok(1));
+        assert_eq!(total_layers_for_height(0.04, 0.1, 0.05), Ok(n(1)));
+        assert_eq!(total_layers_for_height(0.05, 0.1, 0.05), Ok(n(1)));
     }
 
     #[test]
     fn adds_extra_layers_to_cover_above_first_slab() {
         // first slab covers [0, 0.05]; each extra slab is 0.1 thick.
         // z_max = 0.5: needs (0.5 - 0.05) / 0.1 = 4.5, ceil = 5 extra slabs.
-        assert_eq!(total_layers_for_height(0.5, 0.1, 0.05), Ok(6));
+        assert_eq!(total_layers_for_height(0.5, 0.1, 0.05), Ok(n(6)));
     }
 
     #[test]
     fn uniform_schedule_matches_classical_count() {
         // h0 = h = 0.2, z_max = 2.0. classical: ceil(2.0 / 0.2) = 10.
-        assert_eq!(total_layers_for_height(2.0, 0.2, 0.2), Ok(10));
+        assert_eq!(total_layers_for_height(2.0, 0.2, 0.2), Ok(n(10)));
     }
 
     #[test]
@@ -243,7 +220,7 @@ mod total_layers_tests {
         // 5e9 layers do not.
         assert_eq!(
             total_layers_for_height(4_294_966_000.0, 1.0, 1.0),
-            Ok(4_294_966_000),
+            Ok(n(4_294_966_000)),
         );
         assert_eq!(
             total_layers_for_height(5.0e9, 1.0, 1.0),

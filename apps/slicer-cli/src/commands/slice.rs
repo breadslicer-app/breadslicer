@@ -116,8 +116,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         PackingMode::None,
         first_layer_height,
         total_layers,
-    )
-    .map_err(|e| anyhow!("could not build the slice profile: {e}"))?;
+    );
 
     let leaf_slices = match slice_scene(&loaded.graph, &profile) {
         Ok(slices) => slices,

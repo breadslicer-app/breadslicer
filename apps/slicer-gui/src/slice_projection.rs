@@ -21,7 +21,7 @@ use std::fmt;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
 use sc_print_glue::{
-    ProjectionError, SliceInputFingerprintError, project_hardware_to_slice_profile,
+    SliceInputFingerprintError, UnschedulableHeight, project_hardware_to_slice_profile,
     total_layers_for_height,
 };
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
@@ -52,8 +52,8 @@ pub(crate) enum SliceFailure {
     SceneBelowPlate { z_max: f64 },
     /// The print configuration could not be resolved.
     Resolve(ResolveError),
-    /// The slice profile could not be built from the resolved config.
-    Projection(ProjectionError),
+    /// The scene height does not yield a schedulable layer count.
+    Projection(UnschedulableHeight),
     /// The slicing engine rejected the scene.
     Slice(SliceSceneError),
     /// The per-leaf slice stacks disagreed on their layer grid and could
@@ -87,7 +87,7 @@ impl fmt::Display for SliceFailure {
             Self::Resolve(err) => {
                 write!(f, "Could not resolve the print configuration: {err}")
             }
-            Self::Projection(err) => write!(f, "Could not build the slice profile: {err}"),
+            Self::Projection(err) => write!(f, "Could not derive the layer count: {err}"),
             Self::Slice(err) => write!(f, "Slicing failed: {err}"),
             Self::SliceMerge => write!(
                 f,
@@ -168,16 +168,15 @@ pub(crate) fn build_slice_profile(
     let z_max = scene_top_z(scene)?;
     let total_layers =
         total_layers_for_height(z_max, layer_height.value(), first_layer_height.value())
-            .map_err(|e| SliceFailure::Projection(ProjectionError::UnschedulableHeight(e)))?;
-    project_hardware_to_slice_profile(
+            .map_err(SliceFailure::Projection)?;
+    Ok(project_hardware_to_slice_profile(
         &printer.hardware,
         layer_height,
         aa_level,
         PackingMode::None,
         first_layer_height,
         total_layers,
-    )
-    .map_err(SliceFailure::Projection)
+    ))
 }
 
 /// Resolve the layer schedule for the current scene and selection the
