@@ -272,6 +272,7 @@ fn report_validation_failure(err: &SliceSceneError, verbose: bool, out: &mut dyn
             let _ = writeln!(out);
             let _ = writeln!(out, "{}:", leaf_label(failure));
             match &failure.geometry {
+                InvalidLeafGeometry::Vertices(errors) => write_grouped_errors(errors, out),
                 InvalidLeafGeometry::Faces(errors) => write_grouped_errors(errors, out),
                 InvalidLeafGeometry::Manifold(errors) => write_grouped_errors(errors, out),
             }

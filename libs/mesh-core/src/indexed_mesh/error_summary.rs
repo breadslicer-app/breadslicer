@@ -15,13 +15,14 @@
 //! The buckets are powered by the [`MeshErrorReport`] trait, which
 //! exposes a variant name and an optional representative face index
 //! for each error. The trait is implemented for
+//! [`MeshVertexError`](super::MeshVertexError),
 //! [`MeshFaceError`](super::MeshFaceError) and
 //! [`MeshEdgeManifoldError`](super::MeshEdgeManifoldError); other validation
 //! error enums can opt in by implementing it.
 
 use crate::primitives::FaceIndex;
 
-use super::{MeshEdgeManifoldError, MeshFaceError};
+use super::{MeshEdgeManifoldError, MeshFaceError, MeshVertexError};
 
 /// Surface a variant name and (where applicable) a representative
 /// face index for aggregation into summaries.
@@ -34,6 +35,22 @@ pub trait MeshErrorReport {
     /// carries one. `None` for variants that do not refer to a
     /// specific face (for example, [`MeshEdgeManifoldError::EmptyMesh`]).
     fn example_face(&self) -> Option<FaceIndex>;
+}
+
+impl MeshErrorReport for MeshVertexError {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Self::InfiniteCoordinate { .. } => "InfiniteCoordinate",
+            Self::NaNCoordinate { .. } => "NaNCoordinate",
+        }
+    }
+
+    /// Vertex errors anchor on a vertex, not a face; the summary's
+    /// face-typed example hook has nothing to offer here. Per-vertex
+    /// detail stays available through each error's `Display`.
+    fn example_face(&self) -> Option<FaceIndex> {
+        None
+    }
 }
 
 impl MeshErrorReport for MeshFaceError {
@@ -104,6 +121,20 @@ mod variant_name_tests {
     use super::*;
 
     #[test]
+    fn mesh_vertex_error_variant_names_round_trip() {
+        let infinite = MeshVertexError::InfiniteCoordinate {
+            vertex_idx: 0,
+            coord: crate::primitives::CoordAxis::X,
+        };
+        let nan = MeshVertexError::NaNCoordinate {
+            vertex_idx: 0,
+            coord: crate::primitives::CoordAxis::Z,
+        };
+        assert_eq!(infinite.variant_name(), "InfiniteCoordinate");
+        assert_eq!(nan.variant_name(), "NaNCoordinate");
+    }
+
+    #[test]
     fn mesh_face_error_variant_names_round_trip() {
         let out_of_range = MeshFaceError::OutOfRangeVertexIndex {
             face_idx: 0_usize.into(),
@@ -147,6 +178,20 @@ mod example_face_tests {
     use crate::primitives::{TriVertexSlot, VertexIndex};
 
     use super::*;
+
+    #[test]
+    fn mesh_vertex_errors_have_no_example_face() {
+        let infinite = MeshVertexError::InfiniteCoordinate {
+            vertex_idx: 7,
+            coord: crate::primitives::CoordAxis::Y,
+        };
+        let nan = MeshVertexError::NaNCoordinate {
+            vertex_idx: 7,
+            coord: crate::primitives::CoordAxis::Y,
+        };
+        assert_eq!(infinite.example_face(), None);
+        assert_eq!(nan.example_face(), None);
+    }
 
     #[test]
     fn mesh_face_error_example_face_is_the_face_index() {

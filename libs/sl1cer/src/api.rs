@@ -33,11 +33,11 @@ use crate::z_bins::LayerBuckets;
 /// [`ContourStack`] using the per-layer schedule and other parameters
 /// carried by `profile`.
 ///
-/// The leaf is baked to world space, validated for face-index
-/// integrity and edge-manifoldness, then each scheduled Z plane is
-/// intersected with the mesh's triangles. The resulting crossing
-/// segments are stitched into closed rings, canonicalised to CCW,
-/// and grouped into outer-plus-holes polygons.
+/// The leaf is baked to world space, validated for vertex
+/// finiteness, face-index integrity and edge-manifoldness, then each
+/// scheduled Z plane is intersected with the mesh's triangles. The
+/// resulting crossing segments are stitched into closed rings,
+/// canonicalised to CCW, and grouped into outer-plus-holes polygons.
 ///
 /// The returned stack has strictly monotone Z by construction: the
 /// schedule yields Z values in strict-monotone order and each is
@@ -57,7 +57,8 @@ use crate::z_bins::LayerBuckets;
 /// - [`SliceError::CsgNotYetSupported`] /
 ///   [`SliceError::InstanceNotYetSupported`] for the deferred kinds.
 /// - [`SliceError::BakeFailed`] when [`bake_leaf_to_world`] fails.
-/// - [`SliceError::FacesValidationFailed`] /
+/// - [`SliceError::VerticesValidationFailed`] /
+///   [`SliceError::FacesValidationFailed`] /
 ///   [`SliceError::ManifoldCheckFailed`] when the baked mesh fails
 ///   validation.
 /// - [`SliceError::NonManifoldDuringStitching`] if a layer's segment
@@ -398,10 +399,21 @@ fn leaf_display_name(scene: &Scene, id: NodeId) -> Option<String> {
         })
 }
 
-/// Run both geometry validation stages on a baked mesh.
+/// Run the 3 geometry validation stages on a baked mesh, in order:
+/// vertices (NaN/inf coordinates), faces (index range, collapsed
+/// edges), edge-manifoldness. Each stage short-circuits, so a leaf
+/// reports exactly one stage's errors.
+///
+/// The vertex stage runs on the BAKED vertices deliberately: the
+/// f64 transform chain downcasts to f32 per vertex, and a finite
+/// transform can saturate coordinates to infinity, so validating the
+/// source mesh alone would miss overflow introduced by the bake.
 fn validate_baked(
     baked: &IndexedMesh,
 ) -> Result<ValidatedEdgeManifoldMesh<'_>, InvalidLeafGeometry> {
+    baked
+        .validate_vertices()
+        .map_err(InvalidLeafGeometry::Vertices)?;
     let faces = baked
         .validated_faces()
         .map_err(InvalidLeafGeometry::Faces)?;

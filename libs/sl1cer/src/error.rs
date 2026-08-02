@@ -14,13 +14,14 @@ use std::fmt;
 
 use sc_mesh_core::SceneError;
 use sc_mesh_core::indexed_mesh::{
-    MeshEdgeManifoldError, MeshErrorReport, MeshFaceError, group_errors_by_variant,
+    MeshEdgeManifoldError, MeshErrorReport, MeshFaceError, MeshVertexError, group_errors_by_variant,
 };
 use sc_mesh_core::scene::node::NodeId;
 
 /// Maximum number of representative face indices listed per variant
 /// in the [`SliceError`] summary output. Larger lists are truncated;
 /// the full list is reachable via the underlying error vec on the
+/// [`SliceError::VerticesValidationFailed`] /
 /// [`SliceError::FacesValidationFailed`] /
 /// [`SliceError::ManifoldCheckFailed`] variants.
 const SUMMARY_FACE_EXAMPLE_LIMIT: usize = 5;
@@ -41,6 +42,10 @@ pub enum SliceError {
     /// The targeted node is an `Instance` reference. Instance slicing
     /// is deferred to a follow-on plan.
     InstanceNotYetSupported { node_id: NodeId },
+    /// The baked mesh carries NaN or infinite vertex coordinates.
+    /// Detected on the baked vertices, so transform overflow is
+    /// caught here too, not only poisoned source files.
+    VerticesValidationFailed(Vec<MeshVertexError>),
     /// The baked mesh failed face-index / zero-length-edge validation.
     FacesValidationFailed(Vec<MeshFaceError>),
     /// The baked mesh is not a closed manifold.
@@ -112,6 +117,14 @@ impl fmt::Display for SliceError {
                 "node #{} is an Instance reference; instance slicing is not yet supported",
                 node_id.get(),
             ),
+            Self::VerticesValidationFailed(errors) => {
+                write!(
+                    f,
+                    "mesh vertex validation failed: {} error(s)",
+                    errors.len(),
+                )?;
+                write_aggregated_summary(f, errors)
+            }
             Self::FacesValidationFailed(errors) => {
                 write!(f, "mesh face validation failed: {} error(s)", errors.len())?;
                 write_aggregated_summary(f, errors)
@@ -146,6 +159,7 @@ impl std::error::Error for SliceError {
             | Self::NotALeaf { .. }
             | Self::CsgNotYetSupported { .. }
             | Self::InstanceNotYetSupported { .. }
+            | Self::VerticesValidationFailed(_)
             | Self::FacesValidationFailed(_)
             | Self::ManifoldCheckFailed(_)
             | Self::NonManifoldDuringStitching { .. } => None,
@@ -159,11 +173,13 @@ impl From<SceneError> for SliceError {
     }
 }
 
-/// Which validation stage rejected a leaf's baked mesh. The stages
-/// run in order and the second requires the first to pass, so one
-/// leaf carries exactly one of the two error lists.
+/// Which validation stage rejected a leaf's baked mesh. The 3 stages
+/// run in order (vertices, then faces, then manifold), each requiring
+/// the previous to pass, so one leaf carries exactly one error list.
 #[derive(Debug)]
 pub enum InvalidLeafGeometry {
+    /// A vertex coordinate is NaN or infinite.
+    Vertices(Vec<MeshVertexError>),
     /// Face-index / zero-length-edge validation failed.
     Faces(Vec<MeshFaceError>),
     /// The mesh passed face validation but is not a closed manifold.
@@ -173,6 +189,7 @@ pub enum InvalidLeafGeometry {
 impl From<InvalidLeafGeometry> for SliceError {
     fn from(geometry: InvalidLeafGeometry) -> Self {
         match geometry {
+            InvalidLeafGeometry::Vertices(errors) => Self::VerticesValidationFailed(errors),
             InvalidLeafGeometry::Faces(errors) => Self::FacesValidationFailed(errors),
             InvalidLeafGeometry::Manifold(errors) => Self::ManifoldCheckFailed(errors),
         }
@@ -236,6 +253,14 @@ fn write_leaf_label(
 impl fmt::Display for InvalidLeafGeometry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Vertices(errors) => {
+                write!(
+                    f,
+                    "mesh vertex validation failed: {} error(s)",
+                    errors.len(),
+                )?;
+                write_aggregated_summary(f, errors)
+            }
             Self::Faces(errors) => {
                 write!(f, "mesh face validation failed: {} error(s)", errors.len())?;
                 write_aggregated_summary(f, errors)
@@ -382,6 +407,11 @@ mod slice_error_tests {
     #[test]
     fn source_returns_none_for_leaf_variants() {
         assert!(SliceError::EmptyScene.source().is_none());
+        assert!(
+            SliceError::VerticesValidationFailed(vec![])
+                .source()
+                .is_none(),
+        );
         assert!(SliceError::FacesValidationFailed(vec![]).source().is_none());
         assert!(SliceError::ManifoldCheckFailed(vec![]).source().is_none());
         assert!(
@@ -483,6 +513,53 @@ mod faces_validation_summary_tests {
 }
 
 #[cfg(test)]
+mod vertices_validation_summary_tests {
+    use sc_mesh_core::indexed_mesh::MeshVertexError;
+    use sc_mesh_core::primitives::CoordAxis;
+
+    use super::*;
+
+    fn nan(vertex: usize) -> MeshVertexError {
+        MeshVertexError::NaNCoordinate {
+            vertex_idx: vertex,
+            coord: CoordAxis::X,
+        }
+    }
+
+    fn infinite(vertex: usize) -> MeshVertexError {
+        MeshVertexError::InfiniteCoordinate {
+            vertex_idx: vertex,
+            coord: CoordAxis::Z,
+        }
+    }
+
+    #[test]
+    fn header_carries_total_count_and_variant_lines_have_no_face_examples() {
+        let errors = vec![nan(0), infinite(3), nan(7)];
+        let msg = format!("{}", SliceError::VerticesValidationFailed(errors));
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines.len(), 3, "msg: {msg}");
+        assert_eq!(lines[0], "mesh vertex validation failed: 3 error(s)");
+        assert_eq!(lines[1], "  2x NaNCoordinate");
+        assert_eq!(lines[2], "  1x InfiniteCoordinate");
+    }
+
+    #[test]
+    fn no_debug_dump_in_output() {
+        let errors = vec![nan(0), infinite(1)];
+        let msg = format!("{}", SliceError::VerticesValidationFailed(errors));
+        assert!(
+            !msg.contains("NaNCoordinate {"),
+            "regression: Debug formatter leaked into Display output: {msg}",
+        );
+        assert!(
+            !msg.contains("vertex_idx:"),
+            "regression: Debug formatter leaked into Display output: {msg}",
+        );
+    }
+}
+
+#[cfg(test)]
 mod manifold_check_summary_tests {
     use sc_mesh_core::indexed_mesh::MeshEdgeManifoldError;
     use sc_mesh_core::primitives::VertexIndex;
@@ -530,8 +607,8 @@ mod slice_scene_error_tests {
     use std::error::Error as _;
 
     use sc_mesh_core::Scene;
-    use sc_mesh_core::indexed_mesh::MeshEdgeManifoldError;
-    use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
+    use sc_mesh_core::indexed_mesh::{MeshEdgeManifoldError, MeshVertexError};
+    use sc_mesh_core::primitives::{CoordAxis, TriVertexSlot, VertexIndex};
     use sc_mesh_core::transform::Transform3D;
 
     use super::*;
@@ -652,6 +729,16 @@ mod slice_scene_error_tests {
 
     #[test]
     fn invalid_leaf_geometry_converts_into_the_matching_slice_error_variant() {
+        let vertices: SliceError =
+            InvalidLeafGeometry::Vertices(vec![MeshVertexError::NaNCoordinate {
+                vertex_idx: 0,
+                coord: CoordAxis::X,
+            }])
+            .into();
+        assert!(matches!(
+            vertices,
+            SliceError::VerticesValidationFailed(v) if v.len() == 1,
+        ));
         let faces: SliceError = InvalidLeafGeometry::Faces(vec![zle(1)]).into();
         assert!(matches!(faces, SliceError::FacesValidationFailed(v) if v.len() == 1));
         let manifold: SliceError =
@@ -660,5 +747,27 @@ mod slice_scene_error_tests {
             manifold,
             SliceError::ManifoldCheckFailed(v) if v.len() == 1,
         ));
+    }
+
+    #[test]
+    fn display_leaves_validation_failed_renders_a_vertices_failure() {
+        let leaf = mint_node_id();
+        let err = SliceSceneError::LeavesValidationFailed(vec![LeafValidationFailure {
+            leaf,
+            leaf_name: Some("poisoned".to_string()),
+            geometry: InvalidLeafGeometry::Vertices(vec![MeshVertexError::InfiniteCoordinate {
+                vertex_idx: 4,
+                coord: CoordAxis::Y,
+            }]),
+        }]);
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(&format!(
+                "leaf #{} (\"poisoned\"): mesh vertex validation failed: 1 error(s)",
+                leaf.get(),
+            )),
+            "msg: {msg}",
+        );
+        assert!(msg.contains("1x InfiniteCoordinate"), "msg: {msg}");
     }
 }
