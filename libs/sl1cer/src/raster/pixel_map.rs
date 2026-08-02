@@ -5,18 +5,18 @@
 
 //! Millimetre-to-pixel projection for the raster tier.
 //!
-//! [`PixelMap`] derives the per-axis mm-to-pixel ratios from a
-//! [`BuildVolume`] and a [`PixelResolution`], and applies the
+//! [`PixelMap`] derives the per-axis mm-to-pixel ratios from the
+//! plate's XY extents and a [`PixelResolution`], and applies the
 //! per-axis [`Mirror`] flags so downstream scanline fill code can
 //! ignore raster orientation.
 //!
 //! Frame conventions:
 //!
 //! - Input points are printer-frame millimetres: XY centred on the
-//!   plate origin, the frame the build volume's envelope corners
-//!   define. Mm `(0, 0)` (the plate centre) projects to the raster
-//!   centre; the envelope's minimum XY corner projects to pixel
-//!   `(0, 0)` and its maximum XY corner to pixel
+//!   plate origin. Mm `(0, 0)` (the plate centre) projects to the
+//!   raster centre; the plate's minimum corner
+//!   `(-plate_x/2, -plate_y/2)` projects to pixel `(0, 0)` and its
+//!   maximum corner to pixel
 //!   `(pixel_resolution.x(), pixel_resolution.y())`.
 //! - Pixel coordinates are subpixel `f64`, not integer indices.
 //!   Integer rounding is the scanline fill's job; keeping subpixel
@@ -24,37 +24,46 @@
 //!   fractional positions without re-projecting.
 
 use crate::geom2d::Point2D;
-use crate::profile::{BuildVolume, Mirror, PixelResolution};
+use crate::profile::{Mirror, PixelResolution, PositiveFiniteMm};
 
 /// Mapping from millimetres in the build-plate frame to subpixel
-/// coordinates in raster space.
+/// coordinates in raster space. The projection needs only the
+/// plate's XY extents; the machine's Z height plays no part in it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PixelMap {
-    build_volume: BuildVolume,
+    plate_x: PositiveFiniteMm,
+    plate_y: PositiveFiniteMm,
     pixel_resolution: PixelResolution,
     mirror: Mirror,
 }
 
 impl PixelMap {
     /// Assemble a [`PixelMap`] from its already-validated components.
-    /// Infallible: the build volume and pixel resolution are checked
-    /// by their own constructors.
+    /// Infallible: the plate extents and the pixel resolution are
+    /// checked by their own constructors.
     #[inline]
     pub fn new(
-        build_volume: BuildVolume,
+        plate_x: PositiveFiniteMm,
+        plate_y: PositiveFiniteMm,
         pixel_resolution: PixelResolution,
         mirror: Mirror,
     ) -> Self {
         Self {
-            build_volume,
+            plate_x,
+            plate_y,
             pixel_resolution,
             mirror,
         }
     }
 
     #[inline]
-    pub fn build_volume(&self) -> &BuildVolume {
-        &self.build_volume
+    pub fn plate_x(&self) -> PositiveFiniteMm {
+        self.plate_x
+    }
+
+    #[inline]
+    pub fn plate_y(&self) -> PositiveFiniteMm {
+        self.plate_y
     }
 
     #[inline]
@@ -76,8 +85,8 @@ impl PixelMap {
     pub fn mm_to_pixel(&self, point: Point2D) -> (f64, f64) {
         let res_x = f64::from(self.pixel_resolution.x());
         let res_y = f64::from(self.pixel_resolution.y());
-        let bx = self.build_volume.x_mm();
-        let by = self.build_volume.y_mm();
+        let bx = self.plate_x.value();
+        let by = self.plate_y.value();
         let raw_x = (point.x + 0.5 * bx) * res_x / bx;
         let raw_y = (point.y + 0.5 * by) * res_y / by;
         let px_x = if self.mirror.x { res_x - raw_x } else { raw_x };
@@ -94,9 +103,14 @@ mod pixel_map_tests {
         Point2D::new(x, y)
     }
 
+    fn mm(v: f64) -> PositiveFiniteMm {
+        PositiveFiniteMm::new(v).unwrap()
+    }
+
     fn unmirrored_pixel_map(bx: f64, by: f64, res_x: u32, res_y: u32) -> PixelMap {
         PixelMap::new(
-            BuildVolume::new(bx, by, 100.0).unwrap(),
+            mm(bx),
+            mm(by),
             PixelResolution::new(res_x, res_y).unwrap(),
             Mirror::default(),
         )
@@ -141,7 +155,8 @@ mod pixel_map_tests {
     #[test]
     fn mirror_x_reflects_min_corner_to_right_edge() {
         let pm = PixelMap::new(
-            BuildVolume::new(60.0, 60.0, 100.0).unwrap(),
+            mm(60.0),
+            mm(60.0),
             PixelResolution::new(1920, 1080).unwrap(),
             Mirror { x: true, y: false },
         );
@@ -152,7 +167,8 @@ mod pixel_map_tests {
     #[test]
     fn mirror_y_reflects_min_corner_to_top_edge() {
         let pm = PixelMap::new(
-            BuildVolume::new(60.0, 60.0, 100.0).unwrap(),
+            mm(60.0),
+            mm(60.0),
             PixelResolution::new(1920, 1080).unwrap(),
             Mirror { x: false, y: true },
         );
@@ -163,7 +179,8 @@ mod pixel_map_tests {
     #[test]
     fn mirror_both_reflects_to_opposite_corner() {
         let pm = PixelMap::new(
-            BuildVolume::new(60.0, 60.0, 100.0).unwrap(),
+            mm(60.0),
+            mm(60.0),
             PixelResolution::new(1920, 1080).unwrap(),
             Mirror { x: true, y: true },
         );
@@ -174,7 +191,8 @@ mod pixel_map_tests {
     #[test]
     fn mirror_preserves_plate_centre() {
         let pm = PixelMap::new(
-            BuildVolume::new(60.0, 40.0, 100.0).unwrap(),
+            mm(60.0),
+            mm(40.0),
             PixelResolution::new(600, 400).unwrap(),
             Mirror { x: true, y: true },
         );
@@ -185,7 +203,8 @@ mod pixel_map_tests {
     fn mirror_equals_negating_the_printer_coordinate() {
         let plain = unmirrored_pixel_map(60.0, 40.0, 600, 400);
         let mirrored = PixelMap::new(
-            BuildVolume::new(60.0, 40.0, 100.0).unwrap(),
+            mm(60.0),
+            mm(40.0),
             PixelResolution::new(600, 400).unwrap(),
             Mirror { x: true, y: true },
         );
@@ -197,11 +216,13 @@ mod pixel_map_tests {
 
     #[test]
     fn accessors_round_trip_construction_inputs() {
-        let bv = BuildVolume::new(60.0, 40.0, 100.0).unwrap();
+        let plate_x = mm(60.0);
+        let plate_y = mm(40.0);
         let res = PixelResolution::new(600, 400).unwrap();
         let mirror = Mirror { x: true, y: false };
-        let pm = PixelMap::new(bv, res, mirror);
-        assert_eq!(pm.build_volume(), &bv);
+        let pm = PixelMap::new(plate_x, plate_y, res, mirror);
+        assert_eq!(pm.plate_x(), plate_x);
+        assert_eq!(pm.plate_y(), plate_y);
         assert_eq!(pm.pixel_resolution(), &res);
         assert_eq!(pm.mirror(), mirror);
     }

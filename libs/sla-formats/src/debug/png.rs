@@ -47,8 +47,10 @@ pub fn write_per_layer(
     dir: &Path,
     options: &WriterOptions,
 ) -> Result<(), WriterError> {
+    let bv = options.build_volume();
     let pixel_map = PixelMap::new(
-        *options.build_volume(),
+        bv.x(),
+        bv.y(),
         *options.pixel_resolution(),
         options.mirror(),
     );

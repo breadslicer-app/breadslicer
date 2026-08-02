@@ -253,17 +253,22 @@ mod scanline_tests {
     use super::*;
     use crate::contour::{ClosedRing, Polygon};
     use crate::geom2d::Point2D;
-    use crate::profile::{BuildVolume, Mirror, PixelResolution};
+    use crate::profile::{Mirror, PixelResolution, PositiveFiniteMm};
 
     fn p(x: f64, y: f64) -> Point2D {
         Point2D::new(x, y)
     }
 
-    /// 1 mm x 1 mm build, 100 px x 100 px resolution. One pixel
+    fn mm(v: f64) -> PositiveFiniteMm {
+        PositiveFiniteMm::new(v).unwrap()
+    }
+
+    /// 1 mm x 1 mm plate, 100 px x 100 px resolution. One pixel
     /// equals 1/100 mm.
     fn one_mm_per_hundred_pixels() -> PixelMap {
         PixelMap::new(
-            BuildVolume::new(1.0, 1.0, 1.0).unwrap(),
+            mm(1.0),
+            mm(1.0),
             PixelResolution::new(100, 100).unwrap(),
             Mirror::default(),
         )
@@ -405,7 +410,8 @@ mod scanline_tests {
         let polygon = Polygon::new(outer, vec![]).unwrap();
         let layer = ContourLayer::new(0.42, vec![polygon]);
         let pm = PixelMap::new(
-            BuildVolume::new(1.0, 1.0, 1.0).unwrap(),
+            mm(1.0),
+            mm(1.0),
             PixelResolution::new(50, 80).unwrap(),
             Mirror::default(),
         );

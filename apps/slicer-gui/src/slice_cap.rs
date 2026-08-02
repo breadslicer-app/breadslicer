@@ -13,7 +13,7 @@
 //! contour stays in the printer frame (XY centred on the build
 //! origin): that is the frame [`PixelMap`] projects from.
 
-use sc_print_primitives::{BuildVolume as RasterBuildVolume, Mirror, PixelResolution};
+use sc_print_primitives::{Mirror, PixelResolution, PositiveFiniteMm};
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer_binary;
@@ -56,10 +56,11 @@ pub(crate) fn build_cap_raster(
     let res_y = ((y_mm / mm_per_px).round() as u32).max(1);
 
     let resolution = PixelResolution::new(res_x, res_y).ok()?;
-    let raster_volume = RasterBuildVolume::new(x_mm, y_mm, 1.0).ok()?;
+    let plate_x = PositiveFiniteMm::new(x_mm).ok()?;
+    let plate_y = PositiveFiniteMm::new(y_mm).ok()?;
     // Mirror is a printer-output flip; the on-screen cap must match the
     // un-mirrored world mesh, so it is never applied here.
-    let pixel_map = PixelMap::new(raster_volume, resolution, Mirror { x: false, y: false });
+    let pixel_map = PixelMap::new(plate_x, plate_y, resolution, Mirror { x: false, y: false });
 
     let raster = rasterize_layer_binary(layer, &pixel_map);
 
