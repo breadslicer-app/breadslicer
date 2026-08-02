@@ -368,7 +368,20 @@ where
                     if approx_eq!(f32, w, 0.0, ulps = 2) {
                         return Err(LoadObjError::VertexWZero { line: line_num + 1 });
                     }
-                    Vertex::new([x / w, y / w, z / w])
+                    // The operands are individually finite, but the
+                    // quotient can still overflow f32 (e.g. 1e38 over
+                    // a small w), so it gets the same finiteness gate
+                    // as the raw tokens.
+                    let divided = [x / w, y / w, z / w];
+                    for value in divided {
+                        if !value.is_finite() {
+                            return Err(LoadObjError::NonFiniteFloat {
+                                line: line_num + 1,
+                                value,
+                            });
+                        }
+                    }
+                    Vertex::new(divided)
                 } else {
                     Vertex::new([x, y, z])
                 };
@@ -798,7 +811,7 @@ mod read_obj_tests {
     use sc_mesh_core::SceneMetadata;
     use sc_mesh_core::{IndexedMesh, MeshMetadata, NodeId, NodeKind, Normal, Scene, Vertex};
 
-    use super::{LoadObjWarning, read_obj};
+    use super::{LoadObjError, LoadObjWarning, read_obj};
 
     fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadObjWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
@@ -1220,6 +1233,59 @@ f 1 2 3
     fn vertex_with_w_zero_is_error() {
         let obj = "v 1.0 2.0 3.0 0.0\n";
         assert!(read_obj_from_str(obj).is_err());
+    }
+
+    #[test]
+    fn vertex_with_fractional_w_divides() {
+        let obj = "\
+v 1.0 2.0 3.0 0.5
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+";
+        let (graph, _) = read_obj_from_str(obj).unwrap();
+        let mesh = single_mesh(&graph);
+        assert_eq!(mesh.vertices()[0], Vertex::new([2.0, 4.0, 6.0]));
+    }
+
+    /// Every token of `v 1e38 1.0 2.6 0.1` is individually finite,
+    /// but the homogeneous division `1e38 / 0.1 = 1e39` overflows
+    /// f32. The quotient must be rejected like any other non-finite
+    /// coordinate; each axis takes a turn as the overflowing one.
+    #[test]
+    fn vertex_with_overflowing_quotient_is_error_on_every_axis() {
+        for obj in [
+            "v 1e38 1.0 2.6 0.1\n",
+            "v 1.0 1e38 2.6 0.1\n",
+            "v 1.0 2.6 1e38 0.1\n",
+            "v -1e38 1.0 2.6 0.1\n",
+        ] {
+            let err = read_obj_from_str(obj)
+                .expect_err("an overflowing homogeneous quotient must be rejected");
+            assert!(
+                matches!(
+                    err,
+                    LoadObjError::NonFiniteFloat { line: 1, value } if value.is_infinite(),
+                ),
+                "input {obj:?} must reject the infinite quotient; got: {err:?}",
+            );
+        }
+    }
+
+    /// A subnormal `w` sits tens of thousands of ULPs away from zero,
+    /// so the dedicated near-zero check does not fire; the overflow
+    /// still happens in the division and must be caught there.
+    #[test]
+    fn vertex_with_subnormal_w_overflowing_quotient_is_error() {
+        let err = read_obj_from_str("v 1.0 1.0 1.0 1e-40\n")
+            .expect_err("a subnormal w that overflows the quotient must be rejected");
+        assert!(
+            matches!(
+                err,
+                LoadObjError::NonFiniteFloat { line: 1, value } if value.is_infinite(),
+            ),
+            "got: {err:?}",
+        );
     }
 
     #[test]

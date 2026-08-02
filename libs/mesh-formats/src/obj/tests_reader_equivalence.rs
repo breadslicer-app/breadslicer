@@ -207,7 +207,19 @@ where
                     if approx_eq!(f32, w, 0.0, ulps = 2) {
                         return Err(LoadObjError::VertexWZero { line: line_num + 1 });
                     }
-                    Vertex::new([x / w, y / w, z / w])
+                    // Mirrors the production reader's post-division
+                    // finiteness gate; the equivalence contract needs
+                    // both sides to reject the same quotients.
+                    let divided = [x / w, y / w, z / w];
+                    for value in divided {
+                        if !value.is_finite() {
+                            return Err(LoadObjError::NonFiniteFloat {
+                                line: line_num + 1,
+                                value,
+                            });
+                        }
+                    }
+                    Vertex::new(divided)
                 } else {
                     Vertex::new([x, y, z])
                 };
@@ -969,6 +981,18 @@ fn matches_the_reference_on_an_empty_document() {
     assert_equivalent(b"");
     assert_equivalent(b"\n");
     assert_equivalent(b"   \n\t\n");
+}
+
+#[test]
+fn matches_the_reference_on_overflowing_homogeneous_quotients() {
+    // Individually finite tokens whose w division overflows f32:
+    // both sides must reject with the same error value.
+    assert_equivalent(b"v 1e38 1.0 2.6 0.1\n");
+    assert_equivalent(b"v -1e38 1.0 2.6 0.1\n");
+    assert_equivalent(b"v 1.0 1.0 1.0 1e-40\n");
+    // Near-miss control: the same shape with a quotient inside f32
+    // range must load identically on both sides.
+    assert_equivalent(b"v 1e30 1.0 2.6 0.1\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
 }
 
 // --- property tests --------------------------------------------------
