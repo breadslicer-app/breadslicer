@@ -74,7 +74,7 @@ pub enum PackingMode {
 /// non-zero, held behind private fields so no raw-float state can
 /// bypass them. Every plane sequence derived from such a payload is
 /// strictly monotone.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UniformSchedule {
     layer_height: PositiveFiniteMm,
     first_layer_height: PositiveFiniteMm,
@@ -116,7 +116,7 @@ impl UniformSchedule {
 }
 
 /// How the layer-by-layer slicing planes are positioned along Z.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerSchedule {
     /// Uniform layer height with an optionally distinct first-layer
     /// height. Slab layout in absolute Z above the build plate:
@@ -303,6 +303,15 @@ mod profile_tests {
     fn layer_schedule_uniform_rejects_zero_total_layers() {
         let err = LayerSchedule::uniform(0.05, 0.05, 0).unwrap_err();
         assert!(matches!(err, InvalidLayerSchedule::ZeroTotalLayers));
+    }
+
+    #[test]
+    fn schedules_are_eq() {
+        // Sound because the payload's validated types exclude NaN and
+        // both zeroes; guards against the derive being dropped.
+        fn assert_eq_bound<T: Eq>() {}
+        assert_eq_bound::<UniformSchedule>();
+        assert_eq_bound::<LayerSchedule>();
     }
 
     #[test]

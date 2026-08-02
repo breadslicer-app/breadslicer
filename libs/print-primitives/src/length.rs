@@ -103,6 +103,12 @@ impl PositiveFiniteMm {
     }
 }
 
+// `PartialEq` is a total equivalence on the inhabited values: the
+// constructor rejects NaN (no incomparable value exists) and rejects
+// both zeroes, so the one equal-but-distinct-bits pair of `f64`
+// (`-0.0 == +0.0`) is unrepresentable.
+impl Eq for PositiveFiniteMm {}
+
 impl fmt::Display for PositiveFiniteMm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)
@@ -149,6 +155,10 @@ impl PositiveFiniteMicrons {
         self.0
     }
 }
+
+// Total equivalence for the same reason as `PositiveFiniteMm`: NaN
+// and both zeroes are unrepresentable.
+impl Eq for PositiveFiniteMicrons {}
 
 impl fmt::Display for PositiveFiniteMicrons {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

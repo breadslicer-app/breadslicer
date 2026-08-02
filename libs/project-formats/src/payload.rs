@@ -16,9 +16,7 @@ use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use crate::messages::ProfileRefWarning;
 
 /// Project-level data stored next to the scene in a project file.
-// Not `Eq`: `first_layer_height` wraps an `f64`. The invariant on
-// `PositiveFiniteMm` rules out `NaN`, but the type is only `PartialEq`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProjectPayload {
     /// The printer profile the project was saved with, if any.
     pub printer: Option<PrinterId>,
@@ -116,4 +114,18 @@ pub enum EmbeddedProfile {
 pub enum EmbedProfiles {
     Yes,
     No,
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+
+    #[test]
+    fn project_payloads_are_eq() {
+        // Sound since PositiveFiniteMm became Eq (NaN and both zeroes
+        // are unrepresentable); guards against the derive being
+        // dropped.
+        fn assert_eq_bound<T: Eq>() {}
+        assert_eq_bound::<ProjectPayload>();
+    }
 }

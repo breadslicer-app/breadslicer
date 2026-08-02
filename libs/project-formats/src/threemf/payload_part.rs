@@ -80,9 +80,7 @@ struct VersionProbe {
 }
 
 /// What parsing the project part yielded.
-// Not `Eq`: `first_layer_height` carries a `PositiveFiniteMm` (an
-// `f64` newtype that is only `PartialEq`).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum PayloadParseOutcome {
     /// A version-1 document with its profile references and per-print
     /// settings.

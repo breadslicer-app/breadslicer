@@ -9,6 +9,13 @@ use super::length::{
 };
 
 #[test]
+fn positive_finite_lengths_are_eq() {
+    fn assert_eq_bound<T: Eq>() {}
+    assert_eq_bound::<PositiveFiniteMm>();
+    assert_eq_bound::<PositiveFiniteMicrons>();
+}
+
+#[test]
 fn positive_finite_mm_new_accepts_positive_finite() {
     let v = PositiveFiniteMm::new(0.1).unwrap();
     assert_eq!(v.value(), 0.1);
