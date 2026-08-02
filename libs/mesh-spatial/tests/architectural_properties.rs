@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
- * SPDX-License-Identifier: AGPL-3.0-only
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 //! Architectural property tests: enforce the layering rule of this
