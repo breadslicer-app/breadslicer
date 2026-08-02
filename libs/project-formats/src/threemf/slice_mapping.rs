@@ -24,7 +24,7 @@ use sc_3mf::model::{
     ResourceId, ResourceIndex, Slice, SlicePolygon, SliceSegment, SliceStack, SliceStackContent,
     SliceVertex,
 };
-use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
+use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, ContourStackError, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 
 /// Why mapping between a contour stack and a [`SliceStack`] failed.
@@ -38,6 +38,9 @@ pub enum SliceMappingError {
     /// The reconstructed layers are not in strictly increasing Z, so they
     /// cannot form a contour stack.
     NonMonotoneLayers,
+    /// A reconstructed layer's Z is NaN or infinite, so the layers
+    /// cannot form a contour stack.
+    NonFiniteLayerZ,
     /// The stack stores slicerefs to other model parts, which the reverse
     /// mapping does not follow; our own projects always inline slices.
     SliceRefsUnsupported,
@@ -59,6 +62,9 @@ impl std::fmt::Display for SliceMappingError {
                     f,
                     "the reconstructed slice layers are not in strictly increasing Z"
                 )
+            }
+            Self::NonFiniteLayerZ => {
+                write!(f, "a reconstructed slice layer has a non-finite Z")
             }
             Self::SliceRefsUnsupported => write!(
                 f,
@@ -117,7 +123,10 @@ pub(crate) fn contours_from_slice_stack(
         .iter()
         .map(layer_from_slice)
         .collect::<Result<Vec<_>, _>>()?;
-    ContourStack::new(layers).map_err(|_| SliceMappingError::NonMonotoneLayers)
+    ContourStack::new(layers).map_err(|e| match e {
+        ContourStackError::NonFiniteZ { .. } => SliceMappingError::NonFiniteLayerZ,
+        ContourStackError::NonMonotoneZ { .. } => SliceMappingError::NonMonotoneLayers,
+    })
 }
 
 /// Rebuild one [`ContourLayer`] from a slice. Rings that collapse to
@@ -391,6 +400,37 @@ mod reverse_mapping_tests {
             contours_from_slice_stack(&stack),
             Err(SliceMappingError::VertexIndexOutOfRange { index: 9 })
         ));
+    }
+
+    #[test]
+    fn errors_on_a_non_finite_slice_z() {
+        // Unreachable from file bytes (the XML layer rejects a
+        // non-finite ztop at parse), but the mapping must stay total
+        // for in-memory callers.
+        let stack = SliceStack {
+            id: ResourceId::MIN,
+            z_bottom: 0.0,
+            content: SliceStackContent::Slices(vec![
+                Slice {
+                    z_top: 1.0,
+                    vertices: vec![],
+                    polygons: vec![],
+                },
+                Slice {
+                    z_top: f64::NAN,
+                    vertices: vec![],
+                    polygons: vec![],
+                },
+            ]),
+        };
+        assert_eq!(
+            contours_from_slice_stack(&stack),
+            Err(SliceMappingError::NonFiniteLayerZ),
+        );
+        assert_eq!(
+            SliceMappingError::NonFiniteLayerZ.to_string(),
+            "a reconstructed slice layer has a non-finite Z",
+        );
     }
 
     #[test]

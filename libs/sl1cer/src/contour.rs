@@ -11,8 +11,8 @@
 //!
 //! - A `Polygon`'s outer ring has strictly positive signed area (CCW);
 //!   every hole ring has strictly negative signed area (CW).
-//! - A `ContourStack`'s `ContourLayer`s are ordered by strictly
-//!   increasing `z_mm` (millimetres).
+//! - A `ContourStack`'s `ContourLayer`s carry finite `z_mm` values
+//!   (millimetres) in strictly increasing order.
 
 use crate::geom2d::Point2D;
 
@@ -212,6 +212,11 @@ impl ContourLayer {
 /// Why building a `ContourStack` from raw layers failed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ContourStackError {
+    /// A layer's Z is NaN or infinite. `idx` is the offending layer's
+    /// position in the input slice. Checked before the ordering scan:
+    /// the plain `<=` comparison there is false against NaN, so a
+    /// non-finite Z would otherwise slide through it.
+    NonFiniteZ { idx: usize, z_mm: f64 },
     /// Two consecutive layers have non-strict-increasing Z.
     /// `prev_idx` is the position of the first of the offending pair
     /// in the input slice.
@@ -230,8 +235,19 @@ pub struct ContourStack {
 }
 
 impl ContourStack {
-    /// Checked constructor. Rejects any non-strict-increasing Z step.
+    /// Checked constructor. Rejects any non-finite layer Z, then any
+    /// non-strict-increasing Z step. Non-finiteness anywhere wins over
+    /// an earlier ordering violation: it is the more fundamental
+    /// corruption, and the ordering scan cannot classify NaN anyway.
     pub fn new(layers: Vec<ContourLayer>) -> Result<Self, ContourStackError> {
+        for (idx, layer) in layers.iter().enumerate() {
+            if !layer.z_mm.is_finite() {
+                return Err(ContourStackError::NonFiniteZ {
+                    idx,
+                    z_mm: layer.z_mm,
+                });
+            }
+        }
         for i in 1..layers.len() {
             let prev_z = layers[i - 1].z_mm;
             let next_z = layers[i].z_mm;
@@ -456,6 +472,88 @@ mod contour_tests {
     fn contour_stack_new_accepts_empty_input() {
         let stack = ContourStack::new(vec![]).unwrap();
         assert!(stack.layers().is_empty());
+    }
+
+    #[test]
+    fn contour_stack_new_rejects_nan_z() {
+        let layers = vec![
+            ContourLayer::new(0.125, vec![]),
+            ContourLayer::new(f64::NAN, vec![]),
+        ];
+        let err = ContourStack::new(layers).unwrap_err();
+        assert!(
+            matches!(err, ContourStackError::NonFiniteZ { idx: 1, z_mm } if z_mm.is_nan()),
+            "got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn contour_stack_new_rejects_nan_z_in_first_position() {
+        let layers = vec![
+            ContourLayer::new(f64::NAN, vec![]),
+            ContourLayer::new(0.125, vec![]),
+        ];
+        let err = ContourStack::new(layers).unwrap_err();
+        assert!(
+            matches!(err, ContourStackError::NonFiniteZ { idx: 0, z_mm } if z_mm.is_nan()),
+            "got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn contour_stack_new_rejects_a_single_nan_layer() {
+        let layers = vec![ContourLayer::new(f64::NAN, vec![])];
+        let err = ContourStack::new(layers).unwrap_err();
+        assert!(
+            matches!(err, ContourStackError::NonFiniteZ { idx: 0, z_mm } if z_mm.is_nan()),
+            "got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn contour_stack_new_rejects_infinite_z() {
+        let layers = vec![
+            ContourLayer::new(0.125, vec![]),
+            ContourLayer::new(f64::INFINITY, vec![]),
+        ];
+        assert_eq!(
+            ContourStack::new(layers).unwrap_err(),
+            ContourStackError::NonFiniteZ {
+                idx: 1,
+                z_mm: f64::INFINITY,
+            },
+        );
+    }
+
+    #[test]
+    fn contour_stack_new_rejects_negative_infinite_z_in_first_position() {
+        let layers = vec![
+            ContourLayer::new(f64::NEG_INFINITY, vec![]),
+            ContourLayer::new(0.125, vec![]),
+        ];
+        assert_eq!(
+            ContourStack::new(layers).unwrap_err(),
+            ContourStackError::NonFiniteZ {
+                idx: 0,
+                z_mm: f64::NEG_INFINITY,
+            },
+        );
+    }
+
+    #[test]
+    fn contour_stack_new_reports_non_finite_z_over_an_earlier_ordering_violation() {
+        // [0.3, 0.1, NaN]: the ordering breaks at the first pair, but
+        // the finiteness sweep runs first over the whole slice.
+        let layers = vec![
+            ContourLayer::new(0.3, vec![]),
+            ContourLayer::new(0.1, vec![]),
+            ContourLayer::new(f64::NAN, vec![]),
+        ];
+        let err = ContourStack::new(layers).unwrap_err();
+        assert!(
+            matches!(err, ContourStackError::NonFiniteZ { idx: 2, z_mm } if z_mm.is_nan()),
+            "got: {err:?}",
+        );
     }
 }
 
