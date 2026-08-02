@@ -60,17 +60,10 @@ fn display_empty_intersection() {
 }
 
 #[test]
-fn display_instance_cycle() {
-    let s = SceneError::InstanceCycle { node_id: node(4) }.to_string();
-    assert!(s.contains("instance cycle"), "{s}");
+fn display_expansion_cycle() {
+    let s = SceneError::ExpansionCycle { node_id: node(4) }.to_string();
+    assert!(s.contains("cycle in the expansion graph"), "{s}");
     assert!(s.contains("4"), "{s}");
-}
-
-#[test]
-fn display_structural_cycle() {
-    let s = SceneError::StructuralCycle { node_id: node(8) }.to_string();
-    assert!(s.contains("structural cycle"), "{s}");
-    assert!(s.contains("8"), "{s}");
 }
 
 #[test]

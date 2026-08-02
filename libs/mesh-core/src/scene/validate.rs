@@ -178,10 +178,11 @@ impl Scene {
 
         // (8) Expansion-graph acyclicity.
         if let Some(witness) = self.find_cycle_in_expansion() {
-            // The children-only graph cannot cycle under the parent
-            // bookkeeping above, so any cycle witnessed here must
-            // involve an Instance edge.
-            return Err(SceneError::InstanceCycle { node_id: witness });
+            // A cycle witnessed here involves either an Instance edge
+            // or forged / floating children edges (a detached 2-cycle
+            // with consistent parent records passes the checks above).
+            // The mutator-facing guard against both is in add_child.
+            return Err(SceneError::ExpansionCycle { node_id: witness });
         }
 
         Ok(())
@@ -379,7 +380,7 @@ mod scene_validate_tests {
         g.parents[inst.index()] = Some(res_root);
         assert!(matches!(
             g.validate(),
-            Err(SceneError::InstanceCycle { .. })
+            Err(SceneError::ExpansionCycle { .. })
         ));
     }
 }

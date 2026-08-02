@@ -25,12 +25,10 @@ pub enum SceneError {
     /// A `NodeKind::Csg { op: Intersection, children }` has zero children.
     EmptyIntersection { node_id: NodeId },
     /// The expansion graph (children edges plus `Instance -> resource root`)
-    /// contains a cycle reachable from this node.
-    InstanceCycle { node_id: NodeId },
-    /// The children-only structural graph contains a cycle reachable from
-    /// this node. Mutators prevent this, so the variant signals a
-    /// corrupted graph rather than a routine API misuse.
-    StructuralCycle { node_id: NodeId },
+    /// contains a cycle reachable from this node. Covers children-only
+    /// cycles (floating subtrees, self-loops) and cycles closed through
+    /// an Instance edge alike.
+    ExpansionCycle { node_id: NodeId },
     /// A child is listed under two different parents, or recorded with a
     /// parent that does not list it as a child.
     ParentMismatch {
@@ -87,11 +85,12 @@ impl fmt::Display for SceneError {
             Self::EmptyIntersection { node_id } => {
                 write!(f, "empty intersection at node {}", node_id.get())
             }
-            Self::InstanceCycle { node_id } => {
-                write!(f, "instance cycle reachable from node {}", node_id.get())
-            }
-            Self::StructuralCycle { node_id } => {
-                write!(f, "structural cycle reachable from node {}", node_id.get())
+            Self::ExpansionCycle { node_id } => {
+                write!(
+                    f,
+                    "cycle in the expansion graph reachable from node {}",
+                    node_id.get()
+                )
             }
             Self::ParentMismatch { node_id, recorded } => {
                 let r = recorded.map(NodeId::get);

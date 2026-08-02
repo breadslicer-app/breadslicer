@@ -635,7 +635,7 @@ impl Scene {
                 _ => unreachable!(),
             }
             self.parents[child.index()] = None;
-            return Err(SceneError::InstanceCycle { node_id: cycle_id });
+            return Err(SceneError::ExpansionCycle { node_id: cycle_id });
         }
         Ok(())
     }
@@ -1229,7 +1229,7 @@ mod scene_construction_tests {
         let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
         // Try to put the Instance inside its own subtree.
         let result = g.add_child(res_root, inst);
-        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
+        assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
         // Rollback worked: instance still parent-less, res_root has no children.
         assert_eq!(g.parent_of(inst), None);
         assert!(matches!(
@@ -1251,7 +1251,7 @@ mod scene_construction_tests {
         g.add_child(s1_root, inst_to_s2).unwrap();
         let inst_to_s1 = g.add_instance(None, Transform3D::Identity, s1_id).unwrap();
         let result = g.add_child(s2_root, inst_to_s1);
-        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
+        assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
     }
 
     #[test]
@@ -1263,7 +1263,7 @@ mod scene_construction_tests {
         let b = g.add_group(None, Transform3D::Identity);
         g.add_child(a, b).unwrap();
         let result = g.add_child(b, a);
-        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
+        assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
         // Rollback worked: a still parent-less, b has no children.
         assert_eq!(g.parent_of(a), None);
         assert!(matches!(
@@ -1277,7 +1277,7 @@ mod scene_construction_tests {
         let mut g = Scene::new();
         let c = g.add_group(None, Transform3D::Identity);
         let result = g.add_child(c, c);
-        assert!(matches!(result, Err(SceneError::InstanceCycle { .. })));
+        assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
         // Rollback worked: c still parent-less and childless.
         assert_eq!(g.parent_of(c), None);
         assert!(matches!(
