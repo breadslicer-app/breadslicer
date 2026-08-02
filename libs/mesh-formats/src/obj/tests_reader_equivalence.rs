@@ -970,6 +970,7 @@ fn matches_the_reference_under_small_caps() {
                 Caps {
                     max_vertices,
                     max_face_tokens,
+                    ..Caps::DEFAULT
                 },
             );
         }
@@ -1026,6 +1027,6 @@ proptest! {
         max_vertices in 0_usize..6,
         max_face_tokens in 3_usize..6,
     ) {
-        assert_equivalent_with_caps(&doc, Caps { max_vertices, max_face_tokens });
+        assert_equivalent_with_caps(&doc, Caps { max_vertices, max_face_tokens, ..Caps::DEFAULT });
     }
 }

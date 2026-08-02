@@ -25,6 +25,11 @@ use crate::slurp::slurp;
 /// pathological line; real OBJ exporters stay well below this.
 const MAX_FACE_TOKENS: usize = 1024;
 
+/// Hard ceiling on the number of objects (scene leaves) a single OBJ
+/// document may produce. Mirrors the 3MF reader's expanded-leaf cap,
+/// so no loaded scene exceeds this leaf count regardless of format.
+const MAX_OBJECTS: usize = 100_000;
+
 /// Resource caps applied while parsing an OBJ. The public `read_obj`
 /// always uses the production values via `Caps::DEFAULT`; the internal
 /// `read_obj_with_caps` lets tests drive small caps so we can exercise
@@ -33,12 +38,14 @@ const MAX_FACE_TOKENS: usize = 1024;
 pub(super) struct Caps {
     pub(super) max_vertices: usize,
     pub(super) max_face_tokens: usize,
+    pub(super) max_objects: usize,
 }
 
 impl Caps {
     pub(super) const DEFAULT: Self = Self {
         max_vertices: MAX_MESH_ELEMENT_COUNT,
         max_face_tokens: MAX_FACE_TOKENS,
+        max_objects: MAX_OBJECTS,
     };
 }
 
@@ -282,7 +289,12 @@ where
     let mut face_tokens: Vec<&str> = Vec::new();
     let mut face_indices: Vec<VertexIndex> = Vec::new();
 
+    // Last consumed line, 1-based: the line the end-of-file flush
+    // reports if the final object trips the object cap.
+    let mut last_line = 0_usize;
+
     for (line_num, line) in text.lines().enumerate() {
+        last_line = line_num + 1;
         let line = line.trim();
 
         if line.is_empty() {
@@ -316,6 +328,15 @@ where
                 header_ended = true;
 
                 // Finalise the previous pending object (if it has faces).
+                // The cap is checked before the flush so the scene never
+                // holds more than `max_objects` leaves; faceless groups
+                // never reach the guard.
+                if !current_faces.is_empty() && leaf_count >= caps.max_objects {
+                    return Err(LoadObjError::ObjectCountExceedsLimit {
+                        line: line_num + 1,
+                        limit: caps.max_objects,
+                    });
+                }
                 if flush_pending_object(
                     &global_vertices,
                     &mut current_faces,
@@ -494,6 +515,12 @@ where
     }
 
     // Finalise the last pending object.
+    if !current_faces.is_empty() && leaf_count >= caps.max_objects {
+        return Err(LoadObjError::ObjectCountExceedsLimit {
+            line: last_line,
+            limit: caps.max_objects,
+        });
+    }
     if flush_pending_object(
         &global_vertices,
         &mut current_faces,
@@ -1633,7 +1660,7 @@ f 2 3 1
 mod caps_tests {
     use std::io::Cursor;
 
-    use super::{Caps, MAX_FACE_TOKENS, MAX_MESH_ELEMENT_COUNT, read_obj_with_caps};
+    use super::{Caps, read_obj_with_caps};
 
     fn parse_with_caps(s: &str, caps: Caps) -> Result<usize, super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
@@ -1648,7 +1675,7 @@ mod caps_tests {
     fn vertex_count_at_cap_succeeds() {
         let caps = Caps {
             max_vertices: 3,
-            max_face_tokens: MAX_FACE_TOKENS,
+            ..Caps::DEFAULT
         };
         let obj = "\
 v 0.0 0.0 0.0
@@ -1666,7 +1693,7 @@ f 1 2 3
         // line trips the cap and returns a line-numbered error.
         let caps = Caps {
             max_vertices: 2,
-            max_face_tokens: MAX_FACE_TOKENS,
+            ..Caps::DEFAULT
         };
         let obj = "\
 v 0.0 0.0 0.0
@@ -1684,8 +1711,8 @@ v 0.0 1.0 0.0
         // Cap of 4 admits an `f` with exactly 4 tokens; the fan emits
         // 2 triangles.
         let caps = Caps {
-            max_vertices: MAX_MESH_ELEMENT_COUNT,
             max_face_tokens: 4,
+            ..Caps::DEFAULT
         };
         let obj = "\
 v 0.0 0.0 0.0
@@ -1702,8 +1729,8 @@ f 1 2 3 4
     fn face_token_count_above_cap_is_error() {
         // Cap of 3 admits triangles but rejects the 4-token quad.
         let caps = Caps {
-            max_vertices: MAX_MESH_ELEMENT_COUNT,
             max_face_tokens: 3,
+            ..Caps::DEFAULT
         };
         let obj = "\
 v 0.0 0.0 0.0
@@ -1726,8 +1753,8 @@ f 1 2 3 4
         // possible from a test, but we can at least confirm the
         // error fires before any allocation could explode.
         let caps = Caps {
-            max_vertices: MAX_MESH_ELEMENT_COUNT,
             max_face_tokens: 3,
+            ..Caps::DEFAULT
         };
         // 50 tokens, well above the cap; with `take(4)` the parser sees
         // at most 4 of them before bailing.
@@ -1741,5 +1768,120 @@ f 1 2 3 4
         );
         let err = parse_with_caps(&obj, caps).unwrap_err();
         assert!(err.to_string().contains("exceeds the 3-vertex limit"));
+    }
+
+    fn leaf_count_with_caps(s: &str, caps: Caps) -> Result<usize, super::LoadObjError> {
+        let mut reader = Cursor::new(s.as_bytes());
+        let (graph, _warnings) = read_obj_with_caps(&mut reader, caps)?;
+        Ok(graph.reachable_leaf_count())
+    }
+
+    #[test]
+    fn object_count_at_cap_succeeds() {
+        let caps = Caps {
+            max_objects: 2,
+            ..Caps::DEFAULT
+        };
+        let obj = "\
+o A
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o B
+f 1 2 3
+";
+        let leaf_count = leaf_count_with_caps(obj, caps).unwrap();
+        assert_eq!(leaf_count, 2);
+    }
+
+    #[test]
+    fn object_count_above_cap_is_error() {
+        // Cap of 2 admits objects A and B; C's flush at end of file
+        // trips the cap and reports the file's last line.
+        let caps = Caps {
+            max_objects: 2,
+            ..Caps::DEFAULT
+        };
+        let obj = "\
+o A
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o B
+f 1 2 3
+o C
+f 1 2 3
+";
+        let err = leaf_count_with_caps(obj, caps).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("line 9"), "{msg}");
+        assert!(msg.contains("more than 2 objects"), "{msg}");
+    }
+
+    #[test]
+    fn object_flush_at_o_directive_reports_its_line() {
+        // Cap of 1 admits object A; B's flush is triggered by the
+        // `o C` directive, whose line the error must carry.
+        let caps = Caps {
+            max_objects: 1,
+            ..Caps::DEFAULT
+        };
+        let obj = "\
+o A
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o B
+f 1 2 3
+o C
+f 1 2 3
+";
+        let err = leaf_count_with_caps(obj, caps).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("line 8"), "{msg}");
+        assert!(msg.contains("more than 1 objects"), "{msg}");
+    }
+
+    #[test]
+    fn empty_o_directives_do_not_count_toward_object_cap() {
+        // Faceless `o` groups produce no leaf and must not consume
+        // cap budget: only Real flushes, under a cap of 1.
+        let caps = Caps {
+            max_objects: 1,
+            ..Caps::DEFAULT
+        };
+        let obj = "\
+o Empty1
+o Empty2
+o Real
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+o Empty3
+";
+        let leaf_count = leaf_count_with_caps(obj, caps).unwrap();
+        assert_eq!(leaf_count, 1);
+    }
+
+    #[test]
+    fn objectless_obj_loads_under_cap_one() {
+        // No `o` directive: the implicit single object is the only
+        // leaf and fits a cap of 1.
+        let caps = Caps {
+            max_objects: 1,
+            ..Caps::DEFAULT
+        };
+        let obj = "\
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+f 1 2 3
+";
+        let leaf_count = leaf_count_with_caps(obj, caps).unwrap();
+        assert_eq!(leaf_count, 1);
     }
 }

@@ -351,6 +351,10 @@ pub enum LoadObjError {
         line: usize,
         limit: usize,
     },
+    ObjectCountExceedsLimit {
+        line: usize,
+        limit: usize,
+    },
     OutOfMemoryVertices {
         line: usize,
     },
@@ -410,6 +414,9 @@ impl fmt::Display for LoadObjError {
             }
             Self::VertexCountExceedsLimit { line, limit } => {
                 write!(f, "line {line}: file declares more than {limit} vertices",)
+            }
+            Self::ObjectCountExceedsLimit { line, limit } => {
+                write!(f, "line {line}: file declares more than {limit} objects",)
             }
             Self::OutOfMemoryVertices { line } => {
                 write!(f, "line {line}: out of memory while parsing OBJ vertices")
