@@ -30,8 +30,8 @@ pub use fingerprint::{
     slice_input_fingerprint, validate_persisted_slices,
 };
 pub use projection::{
-    ProjectionError, project_hardware_to_slice_profile, project_to_slice_profile,
-    total_layers_for_height,
+    ProjectionError, UnschedulableHeight, project_hardware_to_slice_profile,
+    project_to_slice_profile, total_layers_for_height,
 };
 
 #[cfg(test)]

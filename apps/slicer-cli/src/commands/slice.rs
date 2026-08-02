@@ -107,7 +107,8 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     let layer_height = resolved.material_resolved.layer_height_mm;
     let first_layer_height = args.first_layer_height.unwrap_or(layer_height);
     let total_layers =
-        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value());
+        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value())
+            .map_err(|e| anyhow!("cannot derive a layer count for this scene: {e}"))?;
 
     let profile = project_to_slice_profile(
         &resolved,

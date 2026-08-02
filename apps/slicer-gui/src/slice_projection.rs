@@ -167,7 +167,8 @@ pub(crate) fn build_slice_profile(
     let first_layer_height = first_layer_height.unwrap_or(layer_height);
     let z_max = scene_top_z(scene)?;
     let total_layers =
-        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value());
+        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value())
+            .map_err(|e| SliceFailure::Projection(ProjectionError::UnschedulableHeight(e)))?;
     project_hardware_to_slice_profile(
         &printer.hardware,
         layer_height,

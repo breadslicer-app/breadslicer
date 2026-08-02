@@ -8,7 +8,8 @@ use sc_print_profiles::{MaterialProfile, PrinterProfile, ResolvedPrintConfig, Sc
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode};
 
 use super::projection::{
-    ProjectionError, project_hardware_to_slice_profile, project_to_slice_profile,
+    ProjectionError, UnschedulableHeight, project_hardware_to_slice_profile,
+    project_to_slice_profile,
 };
 
 const PRINTER_TOML: &str = r#"
@@ -172,4 +173,23 @@ fn projection_rejects_zero_total_layers() {
     )
     .unwrap_err();
     assert!(matches!(err, ProjectionError::LayerSchedule(_)));
+}
+
+#[test]
+fn unschedulable_height_wraps_into_projection_error_with_source() {
+    use std::error::Error as _;
+
+    let height = UnschedulableHeight::NonFiniteHeight {
+        z_max_mm: f64::INFINITY,
+    };
+    let err = ProjectionError::UnschedulableHeight(height);
+    assert!(
+        err.to_string()
+            .starts_with("could not derive the layer count:"),
+        "msg: {err}",
+    );
+    assert!(
+        err.source().is_some(),
+        "the height error must be the source"
+    );
 }
