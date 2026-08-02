@@ -231,6 +231,20 @@ mod token_tests {
     }
 
     #[test]
+    fn the_token_byte_layout_is_pinned() {
+        // The token is a compatibility contract with persisted
+        // projects: slices saved beside this token are revalidated by
+        // recomputing it, so the hashed byte layout must only ever
+        // change together with SCHEME_VERSION. If this assertion goes
+        // red, the layout changed: either restore it, or bump
+        // SCHEME_VERSION deliberately and update this literal.
+        assert_eq!(
+            fingerprint(&identity_cube_scene()).to_token(),
+            "1da4b55cf6ee216aaab05074a99c02e62c6e39e05158cdce57f886b1de9a6ce822b6edf154baba6abf03da464afb8b70",
+        );
+    }
+
+    #[test]
     fn a_token_is_ninety_six_lowercase_hex_characters() {
         let token = fingerprint(&identity_cube_scene()).to_token();
         assert_eq!(token.len(), 96);
