@@ -16,6 +16,23 @@ fn build_volume_new_accepts_positive_finite() {
 }
 
 #[test]
+fn build_volume_is_eq() {
+    // Sound since the axes are stored as PositiveFiniteMm witnesses
+    // (NaN and both zeroes are unrepresentable); guards against the
+    // derive being dropped.
+    fn assert_eq_bound<T: Eq>() {}
+    assert_eq_bound::<BuildVolume>();
+}
+
+#[test]
+fn build_volume_witness_accessors_match_the_raw_accessors() {
+    let bv = BuildVolume::new(60.0, 40.0, 100.0).unwrap();
+    assert_eq!(bv.x().value(), bv.x_mm());
+    assert_eq!(bv.y().value(), bv.y_mm());
+    assert_eq!(bv.z().value(), bv.z_mm());
+}
+
+#[test]
 fn build_volume_new_rejects_zero_x_axis() {
     let err = BuildVolume::new(0.0, 60.0, 100.0).unwrap_err();
     assert_eq!(err.axis, CoordAxis::X);

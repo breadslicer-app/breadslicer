@@ -17,17 +17,19 @@ use sc_mesh_core::primitives::CoordAxis;
 use crate::length::{LengthOutOfRange, PositiveFiniteMm};
 
 /// Build volume in millimetres, validated finite and strictly positive
-/// per axis on construction.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// per axis on construction. Each axis is stored as its
+/// [`PositiveFiniteMm`] witness, so `Eq` is sound (NaN and both
+/// zeroes are unrepresentable).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(
     feature = "serde",
     serde(try_from = "RawBuildVolume", into = "RawBuildVolume")
 )]
 pub struct BuildVolume {
-    x_mm: f64,
-    y_mm: f64,
-    z_mm: f64,
+    x: PositiveFiniteMm,
+    y: PositiveFiniteMm,
+    z: PositiveFiniteMm,
 }
 
 #[cfg(feature = "serde")]
@@ -50,9 +52,9 @@ impl TryFrom<RawBuildVolume> for BuildVolume {
 impl From<BuildVolume> for RawBuildVolume {
     fn from(bv: BuildVolume) -> Self {
         Self {
-            x_mm: bv.x_mm,
-            y_mm: bv.y_mm,
-            z_mm: bv.z_mm,
+            x_mm: bv.x.value(),
+            y_mm: bv.y.value(),
+            z_mm: bv.z.value(),
         }
     }
 }
@@ -87,34 +89,52 @@ impl BuildVolume {
     /// [`AxisOutOfRange`] when any axis is zero, negative, or
     /// non-finite.
     pub fn new(x_mm: f64, y_mm: f64, z_mm: f64) -> Result<Self, AxisOutOfRange> {
-        PositiveFiniteMm::new(x_mm).map_err(|source| AxisOutOfRange {
+        let x = PositiveFiniteMm::new(x_mm).map_err(|source| AxisOutOfRange {
             axis: CoordAxis::X,
             source,
         })?;
-        PositiveFiniteMm::new(y_mm).map_err(|source| AxisOutOfRange {
+        let y = PositiveFiniteMm::new(y_mm).map_err(|source| AxisOutOfRange {
             axis: CoordAxis::Y,
             source,
         })?;
-        PositiveFiniteMm::new(z_mm).map_err(|source| AxisOutOfRange {
+        let z = PositiveFiniteMm::new(z_mm).map_err(|source| AxisOutOfRange {
             axis: CoordAxis::Z,
             source,
         })?;
-        Ok(Self { x_mm, y_mm, z_mm })
+        Ok(Self { x, y, z })
     }
 
     #[inline]
     pub fn x_mm(&self) -> f64 {
-        self.x_mm
+        self.x.value()
     }
 
     #[inline]
     pub fn y_mm(&self) -> f64 {
-        self.y_mm
+        self.y.value()
     }
 
     #[inline]
     pub fn z_mm(&self) -> f64 {
-        self.z_mm
+        self.z.value()
+    }
+
+    /// Validated witness for the X axis length.
+    #[inline]
+    pub fn x(&self) -> PositiveFiniteMm {
+        self.x
+    }
+
+    /// Validated witness for the Y axis length.
+    #[inline]
+    pub fn y(&self) -> PositiveFiniteMm {
+        self.y
+    }
+
+    /// Validated witness for the Z axis length.
+    #[inline]
+    pub fn z(&self) -> PositiveFiniteMm {
+        self.z
     }
 
     /// Minimum corner of the build envelope in printer coordinates:
@@ -123,13 +143,13 @@ impl BuildVolume {
     /// [`BuildVolume::envelope_min_mm`] in `apps/slicer-gui`.
     #[inline]
     pub fn envelope_min_mm(&self) -> [f64; 3] {
-        [-0.5 * self.x_mm, -0.5 * self.y_mm, 0.0]
+        [-0.5 * self.x.value(), -0.5 * self.y.value(), 0.0]
     }
 
     /// Maximum corner of the build envelope in printer coordinates:
     /// `[+x_mm/2, +y_mm/2, z_mm]`. Mirror of [`Self::envelope_min_mm`].
     #[inline]
     pub fn envelope_max_mm(&self) -> [f64; 3] {
-        [0.5 * self.x_mm, 0.5 * self.y_mm, self.z_mm]
+        [0.5 * self.x.value(), 0.5 * self.y.value(), self.z.value()]
     }
 }
