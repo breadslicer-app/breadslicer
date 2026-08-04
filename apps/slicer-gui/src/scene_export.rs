@@ -446,18 +446,21 @@ mod scene_export_tests {
         let _ = std::fs::remove_file(&target);
     }
 
-    // Capability pins above the library seam: the export flow both
-    // frontends share expands instance-bearing scenes. Permanent
-    // pins; a refusal or skipping walk below this seam turns them
-    // red.
+    // Capability pins on write_export, the worker-side write path
+    // the GUI drives: it must expand instance-bearing scenes.
+    // Permanent pins; a refusal or skipping walk below this seam
+    // turns them red. They call write_export on a bare Scene rather
+    // than going through a SceneDocument because SceneSpatial's
+    // cached walks do not expand instances and its construction
+    // rejects instance scenes in debug builds; the export write
+    // path operates on the raw graph and carries no such limit.
 
     #[test]
     fn export_instance_scene_expands_for_obj() {
-        let doc = SceneDocument::new();
-        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let scene = instanced_graph();
         let target = tmp_path("instanced_obj");
-        let warnings =
-            export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");
+        let warnings = write_export(&scene, &target, WriteFormat::Obj, |_, _, _| {})
+            .expect("write should succeed");
         assert!(warnings.is_empty());
         let text = std::fs::read_to_string(&target).expect("file should exist");
         assert_eq!(text.lines().filter(|l| l.starts_with("f ")).count(), 3);
@@ -474,11 +477,10 @@ mod scene_export_tests {
 
     #[test]
     fn export_instance_scene_expands_for_binary_stl() {
-        let doc = SceneDocument::new();
-        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let scene = instanced_graph();
         let target = tmp_path("instanced_stlb");
-        let warnings =
-            export_scene_as(&doc, &target, WriteFormat::StlBin).expect("write should succeed");
+        let warnings = write_export(&scene, &target, WriteFormat::StlBin, |_, _, _| {})
+            .expect("write should succeed");
         assert_eq!(
             warnings,
             vec![FlattenWarning::MultiObjectMerge { object_count: 3 }]
@@ -491,11 +493,10 @@ mod scene_export_tests {
 
     #[test]
     fn export_instance_scene_expands_for_ascii_stl() {
-        let doc = SceneDocument::new();
-        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let scene = instanced_graph();
         let target = tmp_path("instanced_stla");
-        let warnings =
-            export_scene_as(&doc, &target, WriteFormat::StlAscii).expect("write should succeed");
+        let warnings = write_export(&scene, &target, WriteFormat::StlAscii, |_, _, _| {})
+            .expect("write should succeed");
         assert_eq!(
             warnings,
             vec![FlattenWarning::MultiObjectMerge { object_count: 3 }]
@@ -511,11 +512,10 @@ mod scene_export_tests {
         // 3MF represents the instances natively; the expanding
         // reader loads the written package back as all 3
         // occurrences.
-        let doc = SceneDocument::new();
-        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let scene = instanced_graph();
         let target = tmp_path("instanced_3mf");
-        let warnings =
-            export_scene_as(&doc, &target, WriteFormat::ThreeMf).expect("write should succeed");
+        let warnings = write_export(&scene, &target, WriteFormat::ThreeMf, |_, _, _| {})
+            .expect("write should succeed");
         assert!(warnings.is_empty(), "3MF export preserves everything");
         let loaded = sc_mesh_formats::load_mesh_from_path(
             &target,
