@@ -147,6 +147,47 @@ mod scene_export_tests {
         g
     }
 
+    /// Graph with a registered single-triangle subtree, one plain
+    /// leaf at the origin, and 2 instances of the subtree at
+    /// x = +10 / +20: 3 expanded occurrences in total.
+    fn instanced_graph() -> Scene {
+        let mut g = Scene::new();
+        let sub_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("add subtree leaf");
+        let sub_root = g.add_group(None, Transform3D::Identity);
+        g.add_child(sub_root, sub_leaf)
+            .expect("attach subtree leaf");
+        let rid = g
+            .register_subtree_resource(sub_root)
+            .expect("unparented group registers");
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        for x in [10.0, 20.0] {
+            let inst = g
+                .add_instance(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                    rid,
+                )
+                .expect("registered resource resolves");
+            g.add_child(root, inst).expect("attach instance");
+        }
+        g
+    }
+
     /// Loader-shape two-object graph: both leaves attached under a
     /// shared identity-Group root.
     fn two_object_graph() -> Scene {
@@ -403,6 +444,88 @@ mod scene_export_tests {
             vec![FlattenWarning::MultiObjectMerge { object_count: 2 }]
         );
         let _ = std::fs::remove_file(&target);
+    }
+
+    // Capability pins above the library seam: the export flow both
+    // frontends share expands instance-bearing scenes. Permanent
+    // pins; a refusal or skipping walk below this seam turns them
+    // red.
+
+    #[test]
+    fn export_instance_scene_expands_for_obj() {
+        let doc = SceneDocument::new();
+        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let target = tmp_path("instanced_obj");
+        let warnings =
+            export_scene_as(&doc, &target, WriteFormat::Obj).expect("write should succeed");
+        assert!(warnings.is_empty());
+        let text = std::fs::read_to_string(&target).expect("file should exist");
+        assert_eq!(text.lines().filter(|l| l.starts_with("f ")).count(), 3);
+        assert!(
+            text.contains("v 11 0 0"),
+            "first instanced occurrence missing"
+        );
+        assert!(
+            text.contains("v 21 0 0"),
+            "second instanced occurrence missing"
+        );
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn export_instance_scene_expands_for_binary_stl() {
+        let doc = SceneDocument::new();
+        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let target = tmp_path("instanced_stlb");
+        let warnings =
+            export_scene_as(&doc, &target, WriteFormat::StlBin).expect("write should succeed");
+        assert_eq!(
+            warnings,
+            vec![FlattenWarning::MultiObjectMerge { object_count: 3 }]
+        );
+        let bytes = std::fs::read(&target).expect("file should exist");
+        // Binary STL layout: 80-byte header + 4-byte count + 3 * 50.
+        assert_eq!(bytes.len(), 80 + 4 + 3 * 50);
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn export_instance_scene_expands_for_ascii_stl() {
+        let doc = SceneDocument::new();
+        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let target = tmp_path("instanced_stla");
+        let warnings =
+            export_scene_as(&doc, &target, WriteFormat::StlAscii).expect("write should succeed");
+        assert_eq!(
+            warnings,
+            vec![FlattenWarning::MultiObjectMerge { object_count: 3 }]
+        );
+        let text = std::fs::read_to_string(&target).expect("file should exist");
+        assert!(text.starts_with("solid"));
+        assert_eq!(text.matches("facet normal").count(), 3);
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn export_instance_scene_fails_loud_for_threemf_for_now() {
+        // Interim pin, not a target state: replaced by an
+        // export-correctly pin when the writer maps instances to
+        // native 3MF components, never by silence.
+        use sc_mesh_formats::error::{WriteSceneError, WriteThreeMfError};
+
+        let doc = SceneDocument::new();
+        doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
+        let target = tmp_path("instanced_3mf");
+        let err = export_scene_as(&doc, &target, WriteFormat::ThreeMf)
+            .expect_err("3MF cannot represent this scene yet; the export must fail loud");
+        let write_err = err
+            .downcast_ref::<WriteSceneError>()
+            .expect("typed error crosses the export seam");
+        assert!(matches!(
+            write_err,
+            WriteSceneError::ThreeMf(WriteThreeMfError::InstanceUnrepresentable { .. })
+        ));
+        assert!(!target.exists(), "a failed export must not leave a file");
     }
 
     #[test]
