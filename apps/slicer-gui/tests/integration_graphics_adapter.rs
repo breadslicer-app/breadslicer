@@ -25,7 +25,8 @@
 use std::sync::Mutex;
 
 use sc_slicer_gui::graphics_adapter::{
-    AdapterFacts, rank_adapters, select_adapter_and_device, select_adapter_and_device_with,
+    AdapterFacts, AdapterSelection, rank_adapters, select_adapter_and_device,
+    select_adapter_and_device_with,
 };
 
 use slint::wgpu_29::wgpu;
@@ -111,11 +112,22 @@ fn infos_of(adapters: &[wgpu::Adapter]) -> Vec<wgpu::AdapterInfo> {
 /// True when `adapter` accepts the application's device profile. The
 /// device is drained and dropped before returning, so probing an
 /// adapter leaves nothing in flight.
+///
+/// A refusal is printed with its error: this probe has been seen to
+/// fail transiently on hardware that accepts a device moments later,
+/// and the error text is the only way to attribute such a run.
 fn can_open_device(adapter: &wgpu::Adapter) -> bool {
-    let Ok((device, _queue)) = pollster::block_on(
+    let (device, _queue) = match pollster::block_on(
         adapter.request_device(&device_descriptor("graphics-adapter probe device")),
-    ) else {
-        return false;
+    ) {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!(
+                "  probe: {} refused a device request: {error}",
+                adapter.get_info().name
+            );
+            return false;
+        }
     };
     let _ = device.poll(wgpu::PollType::wait_indefinitely());
     true
@@ -145,7 +157,9 @@ fn selection_returns_the_top_ranked_adapter_that_opens_a_device() {
             return;
         };
 
-        let (adapter, device, _queue) = select_adapter_and_device(
+        let AdapterSelection {
+            adapter, device, ..
+        } = select_adapter_and_device(
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter selection test"),
@@ -179,7 +193,9 @@ fn a_software_adapter_is_never_chosen_while_a_gpu_can_serve() {
             return;
         }
 
-        let (adapter, device, _queue) = select_adapter_and_device(
+        let AdapterSelection {
+            adapter, device, ..
+        } = select_adapter_and_device(
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter software-avoidance test"),
@@ -209,7 +225,9 @@ fn a_discrete_gpu_wins_over_the_rest_when_it_can_serve() {
             return;
         }
 
-        let (adapter, device, _queue) = select_adapter_and_device(
+        let AdapterSelection {
+            adapter, device, ..
+        } = select_adapter_and_device(
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter discrete-preference test"),
@@ -234,7 +252,7 @@ fn the_selected_device_can_carry_gpu_work() {
     // every ordering assertion above and still leave the viewport
     // blank, which is the symptom this whole module exists to prevent.
     with_gpu_turn(|instance, _adapters| {
-        let Ok((_adapter, device, queue)) = select_adapter_and_device(
+        let Ok(AdapterSelection { device, queue, .. }) = select_adapter_and_device(
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter usability test"),
@@ -278,7 +296,9 @@ fn an_override_naming_a_present_adapter_selects_that_adapter() {
             return;
         };
 
-        let (adapter, device, _queue) = select_adapter_and_device_with(
+        let AdapterSelection {
+            adapter, device, ..
+        } = select_adapter_and_device_with(
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter override test"),
@@ -306,7 +326,9 @@ fn an_override_matching_nothing_falls_back_to_the_normal_choice() {
             return;
         };
 
-        let (adapter, device, _queue) = select_adapter_and_device_with(
+        let AdapterSelection {
+            adapter, device, ..
+        } = select_adapter_and_device_with(
             instance,
             PLATFORM_BACKENDS,
             &device_descriptor("graphics-adapter unmatched-override test"),

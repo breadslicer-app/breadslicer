@@ -117,7 +117,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // `Instance::request_adapter`, which with default options returns
     // whatever the platform enumerated first. See that module for why
     // that matters on machines carrying more than one adapter.
-    let (adapter, device, queue) = graphics_adapter::select_adapter_and_device(
+    let graphics_adapter::AdapterSelection {
+        adapter,
+        device,
+        queue,
+        skipped,
+    } = graphics_adapter::select_adapter_and_device(
         &instance,
         backends,
         &wgpu::DeviceDescriptor {
@@ -129,6 +134,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             trace: wgpu::Trace::Off,
         },
     )?;
+    // A skipped adapter means the session is running on hardware the
+    // ordering policy ranks below what the machine carries. That can
+    // be a real refusal (unsupported limits) or a transient driver
+    // failure; either way the reason has to reach a bug report, since
+    // the only user-visible symptom is a slower viewport.
+    for refusal in &skipped {
+        eprintln!(
+            "Graphics adapter {} refused a device request: {}",
+            refusal.name, refusal.error
+        );
+    }
 
     // Pin wgpu-core's SNATCH_LOCK_TRACE thread-local on the main
     // thread before BackendSelector::select() registers Slint's own

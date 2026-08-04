@@ -111,22 +111,31 @@ fn adapter_name_override() -> Option<String> {
     parse_adapter_name_override(Some(&raw)).map(str::to_string)
 }
 
+/// Refusals collected while walking candidates: each entry pairs the
+/// refusing candidate's index with the error it gave.
+type Refusals<E> = Vec<(usize, E)>;
+
 /// Walks `order`, calling `open` until one candidate succeeds. Returns
-/// the winning index with its value, or every failure in the order they
-/// happened.
+/// the winning index with its value plus the refusals walked past on
+/// the way there, or every failure in the order they happened when no
+/// candidate succeeds.
 ///
 /// Trying more than one candidate matters because opening a device is
 /// the first point where an adapter can refuse the limits we ask for.
 /// Giving up on the first refusal would fail the launch while a usable
 /// second adapter sat unqueried.
+///
+/// The refusals are kept on the success path too: a refusal there
+/// means a better-ranked adapter was passed over, and silently landing
+/// on a lower-ranked one would leave no trace of why.
 fn open_first_available<T, E>(
     order: &[usize],
     mut open: impl FnMut(usize) -> Result<T, E>,
-) -> Result<(usize, T), Vec<(usize, E)>> {
+) -> Result<(usize, T, Refusals<E>), Refusals<E>> {
     let mut failures = Vec::new();
     for &index in order {
         match open(index) {
-            Ok(value) => return Ok((index, value)),
+            Ok(value) => return Ok((index, value, failures)),
             Err(err) => failures.push((index, err)),
         }
     }
@@ -151,6 +160,29 @@ fn describe_adapter_failures<E: std::fmt::Display>(
         .join("; ")
 }
 
+/// An adapter the selection walked past: ranked above the winner but
+/// refused the device request. The error is kept in its typed form
+/// rather than as text so a future recovery policy can distinguish
+/// refusal kinds instead of guessing from a message.
+#[derive(Debug)]
+pub struct SkippedAdapter {
+    pub name: String,
+    pub error: wgpu::RequestDeviceError,
+}
+
+/// What adapter selection settled on: the winning adapter with its
+/// open device and queue, plus every better-ranked adapter that
+/// refused a device on the way there. A non-empty `skipped` means the
+/// session is not running on the adapter the policy would prefer, and
+/// the caller should say so rather than let that pass silently.
+#[derive(Debug)]
+pub struct AdapterSelection {
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub skipped: Vec<SkippedAdapter>,
+}
+
 /// Enumerates the adapters `backends` exposes, orders them with
 /// [`rank_adapters`], and opens a device on the first one that accepts
 /// `descriptor`. The adapter override is read from [`ADAPTER_NAME_ENV`].
@@ -158,7 +190,7 @@ pub fn select_adapter_and_device(
     instance: &wgpu::Instance,
     backends: wgpu::Backends,
     descriptor: &wgpu::DeviceDescriptor<'_>,
-) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+) -> anyhow::Result<AdapterSelection> {
     select_adapter_and_device_with(
         instance,
         backends,
@@ -176,7 +208,7 @@ pub fn select_adapter_and_device_with(
     backends: wgpu::Backends,
     descriptor: &wgpu::DeviceDescriptor<'_>,
     preferred_name: Option<&str>,
-) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+) -> anyhow::Result<AdapterSelection> {
     let adapters = pollster::block_on(instance.enumerate_adapters(backends));
     let infos: Vec<wgpu::AdapterInfo> = adapters.iter().map(|adapter| adapter.get_info()).collect();
     let candidates: Vec<AdapterFacts<'_>> = infos
@@ -194,7 +226,18 @@ pub fn select_adapter_and_device_with(
     match open_first_available(&order, |index| {
         pollster::block_on(adapters[index].request_device(descriptor))
     }) {
-        Ok((index, (device, queue))) => Ok((adapters[index].clone(), device, queue)),
+        Ok((index, (device, queue), refusals)) => Ok(AdapterSelection {
+            adapter: adapters[index].clone(),
+            device,
+            queue,
+            skipped: refusals
+                .into_iter()
+                .map(|(refused_index, error)| SkippedAdapter {
+                    name: infos[refused_index].name.clone(),
+                    error,
+                })
+                .collect(),
+        }),
         Err(failures) => anyhow::bail!(
             "No graphics adapter accepted a device request. Tried: {}",
             describe_adapter_failures(&candidates, &failures)
@@ -430,7 +473,7 @@ mod open_first_available_tests {
             attempts.push(index);
             Ok::<_, &str>(format!("device {index}"))
         });
-        assert_eq!(result, Ok((2, "device 2".to_string())));
+        assert_eq!(result, Ok((2, "device 2".to_string(), vec![])));
         assert_eq!(attempts, vec![2], "later candidates must stay unqueried");
     }
 
@@ -443,12 +486,38 @@ mod open_first_available_tests {
                 Ok(index)
             }
         });
-        assert_eq!(result, Ok((1, 1)));
+        assert_eq!(
+            result,
+            Ok((1, 1, vec![(0, "refused the requested limits")])),
+            "the refusal walked past must be carried alongside the winner"
+        );
+    }
+
+    #[test]
+    fn refusals_before_the_winner_are_carried_in_walk_order() {
+        let result = open_first_available(&[2, 0, 1], |index| {
+            if index == 1 {
+                Ok("device")
+            } else {
+                Err(format!("adapter {index} refused"))
+            }
+        });
+        assert_eq!(
+            result,
+            Ok((
+                1,
+                "device",
+                vec![
+                    (2, "adapter 2 refused".to_string()),
+                    (0, "adapter 0 refused".to_string()),
+                ]
+            ))
+        );
     }
 
     #[test]
     fn every_refusal_is_reported_in_order() {
-        let result: Result<(usize, ()), _> =
+        let result: Result<(usize, (), _), _> =
             open_first_available(&[1, 0], |index| Err(format!("adapter {index} refused")));
         assert_eq!(
             result,
@@ -461,7 +530,8 @@ mod open_first_available_tests {
 
     #[test]
     fn empty_order_reports_no_failures() {
-        let result: Result<(usize, ()), Vec<(usize, &str)>> = open_first_available(&[], |_| Ok(()));
+        let result: Result<(usize, (), Refusals<&str>), Refusals<&str>> =
+            open_first_available(&[], |_| Ok(()));
         assert_eq!(result, Err(vec![]));
     }
 }
