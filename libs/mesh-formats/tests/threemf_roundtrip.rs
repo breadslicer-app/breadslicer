@@ -128,7 +128,7 @@ fn prism_trio_survives_a_write_load_cycle() {
 #[test]
 fn official_box_sample_survives_a_load_write_load_cycle() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/official")
+        .join("tests/fixtures/official/3mf-samples")
         .join("box.3mf");
     let first: LoadedMesh = load_mesh_from_path(&source, None, None).expect("sample loads");
 

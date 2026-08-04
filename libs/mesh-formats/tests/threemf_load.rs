@@ -27,7 +27,7 @@ use sc_mesh_formats::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/official")
+        .join("tests/fixtures/official/3mf-samples")
         .join(name)
 }
 

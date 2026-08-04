@@ -172,22 +172,31 @@ mod vendored_fixture_tests {
 
     #[test]
     fn flat_loads() {
-        assert_fixture_loads(include_bytes!("fixtures/official/flat.stl"), 3);
+        assert_fixture_loads(
+            include_bytes!("fixtures/official/burkardt-stla/flat.stl"),
+            3,
+        );
     }
 
     #[test]
     fn cube_loads() {
-        assert_fixture_loads(include_bytes!("fixtures/official/cube.stl"), 12);
+        assert_fixture_loads(
+            include_bytes!("fixtures/official/burkardt-stla/cube.stl"),
+            12,
+        );
     }
 
     #[test]
     fn block100_loads() {
-        assert_fixture_loads(include_bytes!("fixtures/official/block100.stl"), 12);
+        assert_fixture_loads(
+            include_bytes!("fixtures/official/burkardt-stla/block100.stl"),
+            12,
+        );
     }
 
     #[test]
     fn humanoid_free_text_name_loads() {
-        let bytes = include_bytes!("fixtures/official/humanoid.stl");
+        let bytes = include_bytes!("fixtures/official/burkardt-stla/humanoid.stl");
         assert_fixture_loads(bytes, 96);
         let scene = read_stl_bytes(bytes).unwrap();
         assert_eq!(
@@ -198,23 +207,33 @@ mod vendored_fixture_tests {
 
     #[test]
     fn sphere_trailing_space_header_loads() {
-        assert_fixture_loads(include_bytes!("fixtures/official/sphere.stl"), 228);
+        assert_fixture_loads(
+            include_bytes!("fixtures/official/burkardt-stla/sphere.stl"),
+            228,
+        );
     }
 
     #[test]
     fn bottle_leading_space_header_loads() {
-        assert_fixture_loads(include_bytes!("fixtures/official/bottle.stl"), 1240);
+        assert_fixture_loads(
+            include_bytes!("fixtures/official/burkardt-stla/bottle.stl"),
+            1240,
+        );
     }
 
     #[test]
     fn teapot_leading_space_header_loads() {
-        assert_fixture_loads(include_bytes!("fixtures/official/teapot.stl"), 2016);
+        assert_fixture_loads(
+            include_bytes!("fixtures/official/burkardt-stla/teapot.stl"),
+            2016,
+        );
     }
 
     #[test]
     fn flat_with_crlf_line_endings_loads() {
-        let text = String::from_utf8(include_bytes!("fixtures/official/flat.stl").to_vec())
-            .expect("vendored ASCII file");
+        let text =
+            String::from_utf8(include_bytes!("fixtures/official/burkardt-stla/flat.stl").to_vec())
+                .expect("vendored ASCII file");
         let scene = read_stl_bytes(&crlf(&text)).unwrap();
         assert_eq!(single_leaf_mesh(&scene).faces().len(), 3);
     }
