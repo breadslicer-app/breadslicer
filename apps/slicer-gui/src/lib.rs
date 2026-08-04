@@ -122,6 +122,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         device,
         queue,
         skipped,
+        recovery,
     } = graphics_adapter::select_adapter_and_device(
         &instance,
         backends,
@@ -140,9 +141,30 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // failure; either way the reason has to reach a bug report, since
     // the only user-visible symptom is a slower viewport.
     for refusal in &skipped {
+        let attempts = refusal
+            .errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; on retry: ");
+        match &refusal.shortfall {
+            Some(shortfall) => eprintln!(
+                "Graphics adapter {} cannot satisfy the device profile ({}); refused: {}",
+                refusal.name, shortfall, attempts
+            ),
+            None => eprintln!(
+                "Graphics adapter {} refused a device request: {}",
+                refusal.name, attempts
+            ),
+        }
+    }
+    // A recovered refusal leaves the session on the right adapter but
+    // is still the trace of a transient failure; keep it visible.
+    if let Some(recovered) = &recovery {
         eprintln!(
-            "Graphics adapter {} refused a device request: {}",
-            refusal.name, refusal.error
+            "Graphics adapter {} refused its first device request and accepted the retry: {}",
+            adapter.get_info().name,
+            recovered.error
         );
     }
 

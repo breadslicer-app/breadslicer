@@ -23,8 +23,19 @@
 //! diagnosing a machine we cannot reproduce on. The policy is split from
 //! the wgpu calls so it can be tested without a GPU:
 //! [`rank_adapters`] decides the order, `open_first_available` walks it,
+//! `open_with_one_retry` gives a refused candidate its second chance,
 //! and [`select_adapter_and_device`] is the thin layer that talks to
 //! wgpu.
+//!
+//! Refusals are split into two classes before any request is made.
+//! [`capability_shortfall`] mirrors the feature and limit checks wgpu
+//! itself applies at request time: an adapter falling short there will
+//! be refused deterministically, so retrying it is pointless. An
+//! adapter that passes those checks and is still refused failed for a
+//! reason outside its advertised capabilities (driver or environment
+//! state), which is the class a single delayed re-attempt can recover.
+
+use std::time::Duration;
 
 use slint::wgpu_29::wgpu;
 
@@ -94,6 +105,107 @@ pub fn rank_adapters(candidates: &[AdapterFacts<'_>], preferred_name: Option<&st
     order
 }
 
+/// Delay before the single re-attempt of a refused device request.
+/// A compromise: long enough that a device caught mid power-state
+/// transition has settled by the second try, short enough that a
+/// launch falling through to the next adapter is not noticeably
+/// stalled.
+const RETRY_DELAY: Duration = Duration::from_millis(300);
+
+/// An advertised capability that falls short of what the device
+/// descriptor requires. Computed from the same predicates wgpu
+/// validates at request time, so a shortfall predicts a deterministic
+/// refusal; the request is still made (wgpu stays the authority), but
+/// re-attempting such a refusal would be pointless.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CapabilityShortfall {
+    /// Features the descriptor requires that the adapter does not
+    /// advertise; only the missing ones are carried.
+    MissingFeatures(wgpu::Features),
+    /// A limit whose required value the adapter cannot honour, named
+    /// as wgpu names it. `required` and `allowed` follow the limit's
+    /// own orientation (some limits are best high, others best low).
+    LimitOutOfRange {
+        name: &'static str,
+        required: u64,
+        allowed: u64,
+    },
+}
+
+impl std::fmt::Display for CapabilityShortfall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingFeatures(missing) => {
+                write!(f, "missing features: {missing:?}")
+            }
+            Self::LimitOutOfRange {
+                name,
+                required,
+                allowed,
+            } => write!(
+                f,
+                "limit {name}: required {required}, adapter allows {allowed}"
+            ),
+        }
+    }
+}
+
+/// Compares what a device descriptor requires against what an adapter
+/// advertises, mirroring the checks `request_device` applies. `None`
+/// means every mirrored check passes. Features are checked first and
+/// limits second, and only the first failing limit is reported: one
+/// named cause is enough to explain a skip.
+pub fn capability_shortfall(
+    required_features: wgpu::Features,
+    required_limits: &wgpu::Limits,
+    available_features: wgpu::Features,
+    available_limits: &wgpu::Limits,
+) -> Option<CapabilityShortfall> {
+    if !available_features.contains(required_features) {
+        return Some(CapabilityShortfall::MissingFeatures(
+            required_features - available_features,
+        ));
+    }
+    let mut first_failure = None;
+    required_limits.check_limits_with_fail_fn(available_limits, true, |name, required, allowed| {
+        first_failure = Some(CapabilityShortfall::LimitOutOfRange {
+            name,
+            required,
+            allowed,
+        });
+    });
+    first_failure
+}
+
+/// Opens one candidate under the retry policy: a first attempt always,
+/// and for `retry_eligible` candidates a single re-attempt after
+/// `delay`. On success the first attempt's error is carried alongside
+/// the value when it was the re-attempt that succeeded, so a recovered
+/// refusal stays visible instead of being swallowed. On failure every
+/// error is returned in attempt order.
+///
+/// The delay is injected through `sleep` so tests exercise the policy
+/// with a recording stub instead of real waiting.
+fn open_with_one_retry<T, E>(
+    retry_eligible: bool,
+    delay: Duration,
+    sleep: impl FnOnce(Duration),
+    mut open: impl FnMut() -> Result<T, E>,
+) -> Result<(T, Option<E>), Vec<E>> {
+    let first = match open() {
+        Ok(value) => return Ok((value, None)),
+        Err(error) => error,
+    };
+    if !retry_eligible {
+        return Err(vec![first]);
+    }
+    sleep(delay);
+    match open() {
+        Ok(value) => Ok((value, Some(first))),
+        Err(second) => Err(vec![first, second]),
+    }
+}
+
 /// Normalises a raw override value. Blank or whitespace-only counts as
 /// unset, so clearing the variable with an empty string behaves the way
 /// people expect rather than matching every adapter.
@@ -161,26 +273,40 @@ fn describe_adapter_failures<E: std::fmt::Display>(
 }
 
 /// An adapter the selection walked past: ranked above the winner but
-/// refused the device request. The error is kept in its typed form
-/// rather than as text so a future recovery policy can distinguish
-/// refusal kinds instead of guessing from a message.
+/// refused its device request(s). `shortfall` carries the predicted
+/// cause when the refusal was foreseen from advertised capabilities;
+/// `errors` holds every attempt's error in order (one entry, or two
+/// when the refusal was retried).
 #[derive(Debug)]
 pub struct SkippedAdapter {
     pub name: String,
+    pub shortfall: Option<CapabilityShortfall>,
+    pub errors: Vec<wgpu::RequestDeviceError>,
+}
+
+/// The winner's own stumble: its first device request was refused and
+/// the single re-attempt succeeded. Surfaced separately so a recovered
+/// launch still reports the refusal it survived; swallowing it would
+/// hide exactly the evidence a transient failure leaves behind.
+#[derive(Debug)]
+pub struct RecoveredRefusal {
     pub error: wgpu::RequestDeviceError,
 }
 
 /// What adapter selection settled on: the winning adapter with its
 /// open device and queue, plus every better-ranked adapter that
-/// refused a device on the way there. A non-empty `skipped` means the
-/// session is not running on the adapter the policy would prefer, and
-/// the caller should say so rather than let that pass silently.
+/// refused a device on the way there and, when the winner itself
+/// needed its re-attempt, the refusal it recovered from. A non-empty
+/// `skipped` means the session is not running on the adapter the
+/// policy would prefer, and the caller should say so rather than let
+/// that pass silently.
 #[derive(Debug)]
 pub struct AdapterSelection {
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub skipped: Vec<SkippedAdapter>,
+    pub recovery: Option<RecoveredRefusal>,
 }
 
 /// Enumerates the adapters `backends` exposes, orders them with
@@ -222,26 +348,60 @@ pub fn select_adapter_and_device_with(
         anyhow::bail!("No graphics adapter is available for backends {backends:?}");
     }
 
+    // Predicted per adapter before any request: a shortfall marks the
+    // refusal as deterministic, which disqualifies it from the retry.
+    let shortfalls: Vec<Option<CapabilityShortfall>> = adapters
+        .iter()
+        .map(|adapter| {
+            capability_shortfall(
+                descriptor.required_features,
+                &descriptor.required_limits,
+                adapter.features(),
+                &adapter.limits(),
+            )
+        })
+        .collect();
+
     let order = rank_adapters(&candidates, preferred_name);
     match open_first_available(&order, |index| {
-        pollster::block_on(adapters[index].request_device(descriptor))
+        open_with_one_retry(
+            shortfalls[index].is_none(),
+            RETRY_DELAY,
+            std::thread::sleep,
+            || pollster::block_on(adapters[index].request_device(descriptor)),
+        )
     }) {
-        Ok((index, (device, queue), refusals)) => Ok(AdapterSelection {
+        Ok((index, ((device, queue), recovered_from), refusals)) => Ok(AdapterSelection {
             adapter: adapters[index].clone(),
             device,
             queue,
             skipped: refusals
                 .into_iter()
-                .map(|(refused_index, error)| SkippedAdapter {
+                .map(|(refused_index, errors)| SkippedAdapter {
                     name: infos[refused_index].name.clone(),
-                    error,
+                    shortfall: shortfalls[refused_index].clone(),
+                    errors,
                 })
                 .collect(),
+            recovery: recovered_from.map(|error| RecoveredRefusal { error }),
         }),
-        Err(failures) => anyhow::bail!(
-            "No graphics adapter accepted a device request. Tried: {}",
-            describe_adapter_failures(&candidates, &failures)
-        ),
+        Err(failures) => {
+            let flattened: Vec<(usize, String)> = failures
+                .into_iter()
+                .map(|(index, errors)| {
+                    let attempts = errors
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; on retry: ");
+                    (index, attempts)
+                })
+                .collect();
+            anyhow::bail!(
+                "No graphics adapter accepted a device request. Tried: {}",
+                describe_adapter_failures(&candidates, &flattened)
+            )
+        }
     }
 }
 
@@ -459,6 +619,208 @@ mod parse_adapter_name_override_tests {
     #[test]
     fn plain_value_passes_through() {
         assert_eq!(parse_adapter_name_override(Some("nvidia")), Some("nvidia"));
+    }
+}
+
+#[cfg(test)]
+mod capability_shortfall_tests {
+    use super::*;
+
+    #[test]
+    fn an_adapter_meeting_the_profile_has_no_shortfall() {
+        assert_eq!(
+            capability_shortfall(
+                wgpu::Features::empty(),
+                &wgpu::Limits::default(),
+                wgpu::Features::empty(),
+                &wgpu::Limits::default(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_roomier_adapter_is_no_shortfall_either() {
+        // Requirements sitting strictly inside the advertised envelope
+        // must pass; only shortfalls matter, not inequality itself.
+        let required = wgpu::Limits::downlevel_defaults();
+        assert_eq!(
+            capability_shortfall(
+                wgpu::Features::empty(),
+                &required,
+                wgpu::Features::all(),
+                &wgpu::Limits::default(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn only_the_missing_features_are_reported() {
+        let required = wgpu::Features::DEPTH_CLIP_CONTROL | wgpu::Features::TIMESTAMP_QUERY;
+        let available = wgpu::Features::TIMESTAMP_QUERY;
+        assert_eq!(
+            capability_shortfall(
+                required,
+                &wgpu::Limits::default(),
+                available,
+                &wgpu::Limits::default(),
+            ),
+            Some(CapabilityShortfall::MissingFeatures(
+                wgpu::Features::DEPTH_CLIP_CONTROL
+            ))
+        );
+    }
+
+    #[test]
+    fn a_best_when_high_limit_the_adapter_cannot_reach_is_named() {
+        let required = wgpu::Limits {
+            max_texture_dimension_2d: 1 << 20,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            capability_shortfall(
+                wgpu::Features::empty(),
+                &required,
+                wgpu::Features::empty(),
+                &wgpu::Limits::default(),
+            ),
+            Some(CapabilityShortfall::LimitOutOfRange {
+                name: "max_texture_dimension_2d",
+                required: 1 << 20,
+                allowed: u64::from(wgpu::Limits::default().max_texture_dimension_2d),
+            })
+        );
+    }
+
+    #[test]
+    fn a_best_when_low_limit_the_adapter_cannot_reach_is_named() {
+        // Alignment limits invert the comparison: requiring a finer
+        // alignment than the adapter offers is the failure.
+        let required = wgpu::Limits {
+            min_uniform_buffer_offset_alignment: 1,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            capability_shortfall(
+                wgpu::Features::empty(),
+                &required,
+                wgpu::Features::empty(),
+                &wgpu::Limits::default(),
+            ),
+            Some(CapabilityShortfall::LimitOutOfRange {
+                name: "min_uniform_buffer_offset_alignment",
+                required: 1,
+                allowed: u64::from(wgpu::Limits::default().min_uniform_buffer_offset_alignment),
+            })
+        );
+    }
+
+    #[test]
+    fn missing_features_outrank_limit_failures() {
+        // One named cause is reported, and features come first: a
+        // report naming a feature must not hide behind a limit.
+        let required_limits = wgpu::Limits {
+            max_texture_dimension_2d: 1 << 20,
+            ..wgpu::Limits::default()
+        };
+        let shortfall = capability_shortfall(
+            wgpu::Features::DEPTH_CLIP_CONTROL,
+            &required_limits,
+            wgpu::Features::empty(),
+            &wgpu::Limits::default(),
+        );
+        assert!(matches!(
+            shortfall,
+            Some(CapabilityShortfall::MissingFeatures(_))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod open_with_one_retry_tests {
+    use super::*;
+
+    #[test]
+    fn a_first_attempt_success_neither_sleeps_nor_retries() {
+        let mut slept = Vec::new();
+        let mut attempts = 0;
+        let result = open_with_one_retry(
+            true,
+            Duration::from_millis(300),
+            |delay| slept.push(delay),
+            || {
+                attempts += 1;
+                Ok::<_, &str>("device")
+            },
+        );
+        assert_eq!(result, Ok(("device", None)));
+        assert_eq!(attempts, 1);
+        assert!(slept.is_empty());
+    }
+
+    #[test]
+    fn an_eligible_refusal_is_retried_after_the_delay() {
+        let mut slept = Vec::new();
+        let mut attempts = 0;
+        let result = open_with_one_retry(
+            true,
+            Duration::from_millis(300),
+            |delay| slept.push(delay),
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("mid-transition refusal")
+                } else {
+                    Ok(7)
+                }
+            },
+        );
+        assert_eq!(
+            result,
+            Ok((7, Some("mid-transition refusal"))),
+            "the refusal the winner survived must stay visible"
+        );
+        assert_eq!(slept, vec![Duration::from_millis(300)]);
+    }
+
+    #[test]
+    fn an_ineligible_refusal_is_neither_retried_nor_slept_on() {
+        let mut slept = Vec::new();
+        let mut attempts = 0;
+        let result: Result<((), Option<&str>), _> = open_with_one_retry(
+            false,
+            Duration::from_millis(300),
+            |delay| slept.push(delay),
+            || {
+                attempts += 1;
+                Err("cannot satisfy the profile")
+            },
+        );
+        assert_eq!(result, Err(vec!["cannot satisfy the profile"]));
+        assert_eq!(attempts, 1);
+        assert!(slept.is_empty());
+    }
+
+    #[test]
+    fn a_refusal_on_both_attempts_reports_both_in_order() {
+        let mut attempts = 0;
+        let result: Result<((), Option<String>), _> = open_with_one_retry(
+            true,
+            Duration::ZERO,
+            |_| {},
+            || {
+                attempts += 1;
+                Err(format!("attempt {attempts} refused"))
+            },
+        );
+        assert_eq!(
+            result,
+            Err(vec![
+                "attempt 1 refused".to_string(),
+                "attempt 2 refused".to_string(),
+            ])
+        );
     }
 }
 
