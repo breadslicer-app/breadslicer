@@ -109,22 +109,60 @@ fn infos_of(adapters: &[wgpu::Adapter]) -> Vec<wgpu::AdapterInfo> {
     adapters.iter().map(|adapter| adapter.get_info()).collect()
 }
 
+/// Runtime power-management state of a PCI device, read from sysfs.
+/// `None` when the platform has no such interface, the adapter did
+/// not report a bus id, or the file cannot be read.
+///
+/// This exists to attribute transient device refusals: laptop
+/// discrete GPUs runtime-suspend, and a request that fails while its
+/// device reads `suspended` or `resuming` points at a wake failure
+/// rather than a refusal of the requested profile.
+fn runtime_power_status(pci_bus_id: &str) -> Option<String> {
+    if pci_bus_id.is_empty() {
+        return None;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let path = format!("/sys/bus/pci/devices/{pci_bus_id}/power/runtime_status");
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|status| status.trim().to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[test]
+fn runtime_power_status_is_none_without_a_readable_device() {
+    assert_eq!(runtime_power_status(""), None);
+    assert_eq!(runtime_power_status("no-such-pci-device"), None);
+}
+
 /// True when `adapter` accepts the application's device profile. The
 /// device is drained and dropped before returning, so probing an
 /// adapter leaves nothing in flight.
 ///
-/// A refusal is printed with its error: this probe has been seen to
+/// A refusal is printed with its error and the device's power state
+/// before the request and at the refusal: this probe has been seen to
 /// fail transiently on hardware that accepts a device moments later,
-/// and the error text is the only way to attribute such a run.
+/// and those details are the only way to attribute such a run.
 fn can_open_device(adapter: &wgpu::Adapter) -> bool {
+    let info = adapter.get_info();
+    let power_before = runtime_power_status(&info.device_pci_bus_id);
     let (device, _queue) = match pollster::block_on(
         adapter.request_device(&device_descriptor("graphics-adapter probe device")),
     ) {
         Ok(pair) => pair,
         Err(error) => {
+            let power_at_refusal = runtime_power_status(&info.device_pci_bus_id);
             eprintln!(
-                "  probe: {} refused a device request: {error}",
-                adapter.get_info().name
+                "  probe: {} refused a device request: {error} \
+                 (power state before: {}, at refusal: {})",
+                info.name,
+                power_before.as_deref().unwrap_or("unknown"),
+                power_at_refusal.as_deref().unwrap_or("unknown"),
             );
             return false;
         }
