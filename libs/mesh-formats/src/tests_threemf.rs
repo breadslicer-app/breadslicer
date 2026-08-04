@@ -808,24 +808,216 @@ mod writer_tests {
         ));
     }
 
+    /// Subtree resource holding one triangle leaf under an identity
+    /// group; returns the resource id.
+    fn triangle_subtree(g: &mut Scene) -> sc_mesh_core::SubtreeResourceId {
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            )
+            .expect("add subtree leaf");
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_child(root, leaf).expect("attach subtree leaf");
+        g.register_subtree_resource(root).expect("register subtree")
+    }
+
+    fn translation_row(matrix: &Option<Matrix3D>) -> [f64; 3] {
+        let m = matrix.as_ref().expect("transform attribute present");
+        [m.0[9], m.0[10], m.0[11]]
+    }
+
     #[test]
-    fn instance_nodes_are_refused() {
+    fn instances_write_as_build_items_sharing_one_object() {
+        // 2 instances of the same subtree: the geometry serialises
+        // once, and each occurrence is a build item referencing the
+        // shared object under its own transform.
         let mut g = Scene::new();
-        let subtree_root = g.add_group(None, Transform3D::Identity);
-        let resource = g
-            .register_subtree_resource(subtree_root)
+        let rid = triangle_subtree(&mut g);
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        for x in [10.0, 20.0] {
+            let inst = g
+                .add_instance(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                    rid,
+                )
+                .expect("add instance");
+            g.add_child(root, inst).expect("attach instance");
+        }
+
+        let document = written_document(&g);
+        assert_eq!(document.objects.len(), 2);
+        let mesh_objects = document
+            .objects
+            .iter()
+            .filter(|o| matches!(o.payload, ObjectPayload::Mesh(_)))
+            .count();
+        assert_eq!(mesh_objects, 1, "shared geometry serialises once");
+        let subtree_object = document
+            .objects
+            .iter()
+            .find(|o| matches!(o.payload, ObjectPayload::Components(_)))
+            .expect("the subtree becomes a components object");
+
+        assert_eq!(document.build.len(), 2);
+        for (item, expected_x) in document.build.iter().zip([10.0, 20.0]) {
+            assert_eq!(item.object_id, subtree_object.id);
+            assert_eq!(translation_row(&item.transform), [expected_x, 0.0, 0.0]);
+        }
+    }
+
+    #[test]
+    fn nested_instances_write_as_nested_components() {
+        // Outer subtree holds 2 instances of the inner subtree; the
+        // scene holds 2 instances of the outer. 4 expanded
+        // occurrences, but the geometry serialises exactly once and
+        // the document stays proportional to the node count.
+        let mut g = Scene::new();
+        let inner = triangle_subtree(&mut g);
+        let outer_root = g.add_group(None, Transform3D::Identity);
+        for x in [2.0, 4.0] {
+            let inst = g
+                .add_instance(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                    inner,
+                )
+                .expect("add inner instance");
+            g.add_child(outer_root, inst)
+                .expect("attach inner instance");
+        }
+        let outer = g
+            .register_subtree_resource(outer_root)
+            .expect("register outer subtree");
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        for y in [0.0, 10.0] {
+            let inst = g
+                .add_instance(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([0.0, y, 0.0])),
+                    outer,
+                )
+                .expect("add outer instance");
+            g.add_child(root, inst).expect("attach outer instance");
+        }
+
+        let document = written_document(&g);
+        // 1 mesh object, the inner subtree object, the outer subtree
+        // object; nothing per occurrence.
+        assert_eq!(document.objects.len(), 3);
+        let mesh_objects = document
+            .objects
+            .iter()
+            .filter(|o| matches!(o.payload, ObjectPayload::Mesh(_)))
+            .count();
+        assert_eq!(mesh_objects, 1, "shared geometry serialises once");
+
+        let outer_object = document
+            .objects
+            .iter()
+            .rfind(|o| matches!(o.payload, ObjectPayload::Components(_)))
+            .expect("the outer subtree becomes a components object");
+        let ObjectPayload::Components(components) = &outer_object.payload else {
+            unreachable!("filtered on the components payload");
+        };
+        assert_eq!(components.len(), 2);
+        assert_eq!(translation_row(&components[0].transform), [2.0, 0.0, 0.0]);
+        assert_eq!(translation_row(&components[1].transform), [4.0, 0.0, 0.0]);
+
+        assert_eq!(document.build.len(), 2);
+        assert_eq!(
+            translation_row(&document.build[1].transform),
+            [0.0, 10.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn instance_transform_composes_with_the_subtree_root_transform() {
+        // A 3MF reference carries a single matrix, so the instance's
+        // call-site transform and the subtree root's own transform
+        // must compose into it, in call-site-first order.
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh(None))),
+            )
+            .expect("add subtree leaf");
+        let root_group = g.add_group(
+            None,
+            Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
+        );
+        g.add_child(root_group, leaf).expect("attach subtree leaf");
+        let rid = g
+            .register_subtree_resource(root_group)
             .expect("register subtree");
-        let instance = g
-            .add_instance(None, Transform3D::Identity, resource)
+        let inst = g
+            .add_instance(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
+                rid,
+            )
             .expect("add instance");
-        g.add_root(instance).expect("instance root");
+        g.add_root(inst).expect("instance root");
+
+        let document = written_document(&g);
+        assert_eq!(document.build.len(), 1);
+        assert_eq!(
+            translation_row(&document.build[0].transform),
+            [11.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn an_instanced_subtree_round_trips_through_the_reader() {
+        // The reader expands components into per-occurrence leaves,
+        // so the written package loads back as 2 triangles at the 2
+        // call sites.
+        let mut g = Scene::new();
+        let rid = triangle_subtree(&mut g);
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        for x in [10.0, 20.0] {
+            let inst = g
+                .add_instance(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
+                    rid,
+                )
+                .expect("add instance");
+            g.add_child(root, inst).expect("attach instance");
+        }
 
         let mut bytes = Vec::new();
-        let err = write_threemf(&g, &mut bytes).expect_err("instance refused");
-        assert!(matches!(
-            err,
-            WriteThreeMfError::InstanceUnrepresentable { node_id } if node_id == instance,
-        ));
+        write_threemf(&g, &mut bytes).expect("write succeeds");
+        let (loaded, warnings) = read_threemf(&mut Cursor::new(bytes)).expect("read succeeds");
+        assert!(warnings.is_empty());
+        assert_eq!(loaded.reachable_leaf_count(), 2);
+
+        let merged = loaded
+            .merge_meshes()
+            .expect("merge succeeds")
+            .expect("geometry present");
+        assert_eq!(merged.faces.len(), 2);
+        // tri_mesh's first vertex sits at (1, 0, 0); the occurrences
+        // place it at x = 11 and x = 21.
+        assert!(
+            merged
+                .vertices
+                .iter()
+                .any(|v| v.coords() == [11.0, 0.0, 0.0])
+        );
+        assert!(
+            merged
+                .vertices
+                .iter()
+                .any(|v| v.coords() == [21.0, 0.0, 0.0])
+        );
     }
 }
 

@@ -709,9 +709,6 @@ pub enum WriteThreeMfError {
     /// exporting the operands as plain objects would misrepresent
     /// the geometry the user sees.
     CsgUnrepresentable { node_id: NodeId },
-    /// The scene contains an Instance node; subtree-resource
-    /// expansion on export is not implemented.
-    InstanceUnrepresentable { node_id: NodeId },
 }
 
 impl fmt::Display for WriteThreeMfError {
@@ -726,11 +723,6 @@ impl fmt::Display for WriteThreeMfError {
                 "3MF writer: node {} is a CSG operation, which 3MF cannot represent",
                 node_id.get(),
             ),
-            Self::InstanceUnrepresentable { node_id } => write!(
-                f,
-                "3MF writer: node {} is an instance reference, which this writer cannot represent yet",
-                node_id.get(),
-            ),
         }
     }
 }
@@ -742,7 +734,7 @@ impl std::error::Error for WriteThreeMfError {
             Self::Model(e) => Some(e),
             Self::Io(e) => Some(e),
             Self::Graph(e) => Some(e),
-            Self::CsgUnrepresentable { .. } | Self::InstanceUnrepresentable { .. } => None,
+            Self::CsgUnrepresentable { .. } => None,
         }
     }
 }

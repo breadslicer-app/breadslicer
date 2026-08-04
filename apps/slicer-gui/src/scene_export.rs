@@ -507,25 +507,24 @@ mod scene_export_tests {
     }
 
     #[test]
-    fn export_instance_scene_fails_loud_for_threemf_for_now() {
-        // Interim pin, not a target state: replaced by an
-        // export-correctly pin when the writer maps instances to
-        // native 3MF components, never by silence.
-        use sc_mesh_formats::error::{WriteSceneError, WriteThreeMfError};
-
+    fn export_instance_scene_expands_for_threemf() {
+        // 3MF represents the instances natively; the expanding
+        // reader loads the written package back as all 3
+        // occurrences.
         let doc = SceneDocument::new();
         doc.install_graph(instanced_graph(), PathBuf::from("/tmp/instanced.obj"));
         let target = tmp_path("instanced_3mf");
-        let err = export_scene_as(&doc, &target, WriteFormat::ThreeMf)
-            .expect_err("3MF cannot represent this scene yet; the export must fail loud");
-        let write_err = err
-            .downcast_ref::<WriteSceneError>()
-            .expect("typed error crosses the export seam");
-        assert!(matches!(
-            write_err,
-            WriteSceneError::ThreeMf(WriteThreeMfError::InstanceUnrepresentable { .. })
-        ));
-        assert!(!target.exists(), "a failed export must not leave a file");
+        let warnings =
+            export_scene_as(&doc, &target, WriteFormat::ThreeMf).expect("write should succeed");
+        assert!(warnings.is_empty(), "3MF export preserves everything");
+        let loaded = sc_mesh_formats::load_mesh_from_path(
+            &target,
+            Some(sc_mesh_formats::filetypes::MeshFileType::_3mf),
+            None,
+        )
+        .expect("exported 3MF must load back");
+        assert_eq!(loaded.graph.reachable_leaf_count(), 3);
+        let _ = std::fs::remove_file(&target);
     }
 
     #[test]

@@ -13,7 +13,9 @@
 //! document lengths scaled to millimetres and 3MF's row-vector
 //! transforms mapped to [`sc_mesh_core::transform::Transform3D`]
 //! values. On write, the same mapping runs in reverse, preserving
-//! shared meshes and group structure instead of flattening.
+//! shared meshes and group structure instead of flattening;
+//! instanced subtrees serialise once, referenced per occurrence
+//! through components and build items.
 
 mod reader;
 mod writer;

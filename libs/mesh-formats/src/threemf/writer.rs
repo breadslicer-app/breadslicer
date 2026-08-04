@@ -7,8 +7,10 @@
 //!
 //! Unlike the STL/OBJ writers, nothing is flattened or baked: meshes
 //! stay shared (one object per unique mesh), groups become component
-//! objects, and node transforms become 3MF item/component transforms.
-//! Coordinates are written as millimetres, the workspace unit.
+//! objects, instanced subtrees serialise once and are referenced per
+//! occurrence, and node transforms become 3MF item/component
+//! transforms. Coordinates are written as millimetres, the workspace
+//! unit.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -22,7 +24,7 @@ use sc_3mf::model::{
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::scene::node::{Node, NodeId, NodeKind};
+use sc_mesh_core::scene::node::{Node, NodeId, NodeKind, SubtreeResourceId};
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, Scene, SceneError};
 
@@ -168,6 +170,9 @@ struct DocumentBuilder<'graph> {
     /// Mesh identity (Arc pointer) -> the object id it was emitted
     /// as, so every leaf sharing a mesh references one object.
     mesh_objects: HashMap<*const IndexedMesh, ResourceId>,
+    /// Subtree resource -> the object id its root was emitted as,
+    /// so every instance of a subtree references one object.
+    subtree_objects: HashMap<SubtreeResourceId, ResourceId>,
     next_id: u32,
 }
 
@@ -181,6 +186,7 @@ pub fn scene_to_model_document(graph: &Scene) -> Result<ModelDocument, WriteThre
         graph,
         document: ModelDocument::default(),
         mesh_objects: HashMap::new(),
+        subtree_objects: HashMap::new(),
         next_id: 1,
     };
 
@@ -314,8 +320,31 @@ impl<'graph> DocumentBuilder<'graph> {
                 Ok((id, transform))
             }
             NodeKind::Csg { .. } => Err(WriteThreeMfError::CsgUnrepresentable { node_id }),
-            NodeKind::Instance { .. } => {
-                Err(WriteThreeMfError::InstanceUnrepresentable { node_id })
+            NodeKind::Instance { resource } => {
+                // The referenced subtree serialises once (its root
+                // becomes an object, recursively) and every instance
+                // references that object. A 3MF reference carries a
+                // single matrix, so the call-site transform composes
+                // with the subtree root's own transform, call site
+                // first, matching the expanding walk.
+                let resource = *resource;
+                let root_id =
+                    self.graph
+                        .subtree_resource_root(resource)
+                        .ok_or(WriteThreeMfError::Graph(
+                            SceneError::DanglingSubtreeResource { id: resource },
+                        ))?;
+                let root_local = self.node(root_id)?.local_transform;
+                let object_id = match self.subtree_objects.get(&resource) {
+                    Some(&existing) => existing,
+                    None => {
+                        let (id, _) = self.object_for_node(root_id)?;
+                        self.subtree_objects.insert(resource, id);
+                        id
+                    }
+                };
+                let combined = node.local_transform.compose(&root_local);
+                Ok((object_id, transform_to_matrix(&combined)))
             }
         }
     }

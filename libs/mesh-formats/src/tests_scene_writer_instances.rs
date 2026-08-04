@@ -6,14 +6,11 @@
 //! Capability pins for scene writing over instance-bearing scenes:
 //! [`flatten_graph_to_mesh`] and [`write_scene`] expand instances,
 //! so every occurrence of an instanced subtree reaches the written
-//! file under its composed call-site transform. These pins are
-//! permanent: a refusal, witness, or instance-skipping walk on these
-//! paths must turn them red, never ship green.
-//!
-//! The 3MF branch is the one exception, pinned separately below as
-//! an interim typed error until the writer maps instances to native
-//! 3MF components; that pin exists only to keep the gap loud, and
-//! it is replaced by an export-correctly pin, never by silence.
+//! file under its composed call-site transform, while the 3MF
+//! branch represents the instances natively (shared objects
+//! referenced by components and build items). These pins are
+//! permanent: a refusal, witness, or instance-skipping walk on
+//! these paths must turn them red, never ship green.
 
 use std::sync::Arc;
 
@@ -24,7 +21,7 @@ use sc_mesh_core::{
 };
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 
-use crate::error::{WriteObjError, WriteSceneError, WriteThreeMfError};
+use crate::error::{WriteObjError, WriteSceneError};
 use crate::filetypes::WriteFormat;
 use crate::scene_writer::{FlattenWarning, flatten_graph_to_mesh, write_scene};
 use crate::stl::read_stlb;
@@ -295,23 +292,31 @@ fn stl_writes_an_instanced_prism_trio_in_full() {
 }
 
 #[test]
-fn threemf_write_of_an_instance_scene_fails_loud_for_now() {
-    // Interim pin, not a target state: the 3MF writer does not map
-    // instances to native components yet, and until it does the gap
-    // must stay a typed error, never silent geometry loss. This pin
-    // is replaced by an export-correctly pin when the component
-    // mapping lands; it must never be replaced by silence.
+fn threemf_writes_an_instance_scene_that_loads_back_expanded() {
+    // 3MF represents the instances natively (components and build
+    // items over shared objects); loading the written package back
+    // through the expanding reader yields all 3 occurrences.
     let scene = scene_with_instance(2);
     let dir = tempfile::tempdir().expect("temp dir");
     let target = dir.path().join("scene.3mf");
-    match write_scene(&scene, &target, WriteFormat::ThreeMf) {
-        Err(WriteSceneError::ThreeMf(WriteThreeMfError::InstanceUnrepresentable { .. })) => {}
-        Err(other) => panic!("wrong error: {other:?}"),
-        Ok(_) => panic!("3MF cannot represent this scene yet; writing it must fail loud"),
-    }
+    let warnings = write_scene(&scene, &target, WriteFormat::ThreeMf).expect("write succeeds");
+    assert!(warnings.is_empty(), "3MF export preserves everything");
+
+    let loaded =
+        crate::load_mesh_from_path(&target, Some(crate::filetypes::MeshFileType::_3mf), None)
+            .expect("written 3MF loads back");
+    assert_eq!(loaded.graph.reachable_leaf_count(), 3);
+    let merged = loaded
+        .graph
+        .merge_meshes()
+        .expect("merge succeeds")
+        .expect("geometry present");
     assert!(
-        !target.exists(),
-        "a failed write must not leave a target file"
+        merged
+            .vertices
+            .iter()
+            .any(|v| v.coords() == [11.0, 0.0, 0.0]),
+        "instanced occurrence missing from the loaded package"
     );
 }
 
