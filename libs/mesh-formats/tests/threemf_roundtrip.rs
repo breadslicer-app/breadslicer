@@ -18,7 +18,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, MeshMetadata, Scene};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::WriteFormat;
-use sc_mesh_formats::scene_writer::write_scene;
+use sc_mesh_formats::scene_writer::{InstanceFreeScene, write_scene};
 use sc_mesh_formats::threemf::{read_threemf, read_threemf_from_package, write_threemf};
 use sc_mesh_formats::{LoadedMesh, load_mesh_from_path};
 
@@ -81,8 +81,8 @@ fn prism_trio_survives_a_write_load_cycle() {
     let dir = tempfile::tempdir().expect("temp dir");
     let target = dir.path().join("trio.3mf");
 
-    let warnings =
-        write_scene(&source_scene, &target, WriteFormat::ThreeMf).expect("write succeeds");
+    let source = InstanceFreeScene::try_new(&source_scene).expect("fixture has no instances");
+    let warnings = write_scene(source, &target, WriteFormat::ThreeMf).expect("write succeeds");
     assert!(warnings.is_empty(), "3MF write never warns: {warnings:?}");
 
     let loaded = load_mesh_from_path(&target, None, None).expect("written file loads");
@@ -134,7 +134,8 @@ fn official_box_sample_survives_a_load_write_load_cycle() {
 
     let dir = tempfile::tempdir().expect("temp dir");
     let target = dir.path().join("box-rewritten.3mf");
-    write_scene(&first.graph, &target, WriteFormat::ThreeMf).expect("rewrite succeeds");
+    let rewrite = InstanceFreeScene::try_new(&first.graph).expect("sample has no instances");
+    write_scene(rewrite, &target, WriteFormat::ThreeMf).expect("rewrite succeeds");
 
     let second = load_mesh_from_path(&target, None, None).expect("rewritten file loads");
     let children = root_children(&second.graph);

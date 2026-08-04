@@ -534,7 +534,7 @@ mod binary_stl_malformed_tests {
         triangle[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    /// MF-C-1 regression: NaN bit-patterns in any f32 of a binary STL
+    /// Regression: NaN bit-patterns in any f32 of a binary STL
     /// triangle record must be rejected, mirroring the ASCII reader's
     /// `tokens_to_f32` finite-only guard. Each offset corresponds to a
     /// distinct field (normal.x/y/z, v0.x/y/z, v1.x/y/z, v2.x/y/z) so
@@ -553,7 +553,7 @@ mod binary_stl_malformed_tests {
         }
     }
 
-    /// MF-C-1 regression: positive and negative infinity in any f32
+    /// Regression: positive and negative infinity in any f32
     /// field of a binary STL triangle record must be rejected.
     #[test]
     fn infinity_in_any_triangle_field_is_an_error() {
@@ -571,7 +571,7 @@ mod binary_stl_malformed_tests {
         }
     }
 
-    /// MF-C-1 regression: a triangle whose stored normal is all-zero
+    /// Regression: a triangle whose stored normal is all-zero
     /// (the "recompute me" sentinel) but whose vertex coordinates are
     /// non-finite must still be rejected. Before the fix, the
     /// `normal == Normal::new([0,0,0])` shortcut would short-circuit
@@ -589,7 +589,7 @@ mod binary_stl_malformed_tests {
         assert!(read_stlb(&mut reader).is_err());
     }
 
-    /// MF-C-1 regression: a representative NaN bit-pattern that is
+    /// Regression: a representative NaN bit-pattern that is
     /// *not* the canonical `f32::NAN` (different payload bits) must
     /// also be rejected. Guards against a fix that compares the bit
     /// pattern against a single NaN encoding instead of using
@@ -607,7 +607,7 @@ mod binary_stl_malformed_tests {
         assert!(read_stlb(&mut reader).is_err());
     }
 
-    /// MF-C-1 regression: subnormal (denormalised) f32 values are
+    /// Regression: subnormal (denormalised) f32 values are
     /// finite per IEEE-754 and must continue to be accepted, even
     /// after the finite-only guard is in place.
     #[test]

@@ -21,6 +21,8 @@ use std::io::{Read, Seek, Write};
 
 use sc_mesh_core::Scene;
 
+use crate::scene_writer::InstanceFreeScene;
+
 pub(crate) mod sealed {
     pub trait Sealed {}
 }
@@ -72,6 +74,11 @@ pub enum WriteSceneProgress {
 /// [`crate::scene_writer::FlattenWarning`], emitted when the scene
 /// must be merged before serialisation; OBJ returns an empty vec
 /// because it preserves per-leaf object boundaries on disk).
+///
+/// Writers take the [`InstanceFreeScene`] witness rather than a raw
+/// `Scene`: none of the formats can represent `Instance` nodes yet,
+/// and the witness moves that refusal to a single mint site instead
+/// of trusting every walk to handle instances.
 pub trait MeshWriter: sealed::Sealed {
     type Error: std::error::Error + Send + Sync + 'static;
     type Warning;
@@ -79,13 +86,16 @@ pub trait MeshWriter: sealed::Sealed {
     /// Serialises `scene` into `writer`, reporting the format's phases
     /// through `progress` (see [`WriteSceneProgress`] for the units).
     fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
-        scene: &Scene,
+        scene: InstanceFreeScene<'_>,
         writer: &mut W,
         progress: F,
     ) -> Result<Vec<Self::Warning>, Self::Error>;
 
     /// [`MeshWriter::write_with_progress`] without progress reporting.
-    fn write<W: Write>(scene: &Scene, writer: &mut W) -> Result<Vec<Self::Warning>, Self::Error> {
+    fn write<W: Write>(
+        scene: InstanceFreeScene<'_>,
+        writer: &mut W,
+    ) -> Result<Vec<Self::Warning>, Self::Error> {
         Self::write_with_progress(scene, writer, |_| {})
     }
 }

@@ -6,15 +6,18 @@
 //! Flatten a `Scene` and write it to a single-mesh file format
 //! (`.stl` binary / ASCII, `.obj`).
 //!
+//! Entry is gated by [`InstanceFreeScene`]: the walks below do not
+//! descend into `Instance` nodes, so scenes using them are refused
+//! once, at witness mint, instead of silently losing geometry.
+//!
 //! Two layers:
 //! - [`flatten_graph_to_mesh`] bakes the composed-ancestor transform
 //!   for every reachable leaf into a single `IndexedMesh`, returning
 //!   the merged mesh plus any non-fatal warnings (currently only
 //!   [`FlattenWarning::MultiObjectMerge`]).
 //! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
-//!   appropriate format. OBJ goes through `write_obj(&Scene, ...)`
-//!   (preserving per-object boundaries), while the STL variants
-//!   route through `flatten_graph_to_mesh` first.
+//!   appropriate format. OBJ preserves per-object boundaries, while
+//!   the STL variants route through `flatten_graph_to_mesh` first.
 //!
 //! Warnings are returned to the caller. The CLI surfaces them via
 //! `eprintln!`; the GUI may surface them through its dialog stack.
@@ -34,6 +37,44 @@ use crate::stl::{StlAscii, StlBin};
 use crate::threemf::ThreeMf;
 
 type Result<T> = std::result::Result<T, WriteSceneError>;
+
+/// Witness that a [`Scene`] contains no `Instance` node.
+///
+/// The scene writers cannot represent instances yet, and the walks
+/// they are built on do not descend into them, so accepting a raw
+/// [`Scene`] would silently drop instanced geometry. Minting this
+/// witness is the only way into [`write_scene`] and
+/// [`flatten_graph_to_mesh`]; the refusal happens once, at
+/// [`InstanceFreeScene::try_new`], and names the offending node.
+///
+/// Registered subtree resources without a referencing instance are
+/// admitted: they contribute no geometry to any walk, so the written
+/// file matches what every other consumer of the scene sees.
+///
+/// Borrows the scene and is `Copy`, so it flows through the
+/// per-format writer entries unchanged.
+#[derive(Clone, Copy, Debug)]
+pub struct InstanceFreeScene<'a> {
+    scene: &'a Scene,
+}
+
+impl<'a> InstanceFreeScene<'a> {
+    /// Certifies that `scene` holds no `Instance` node, detached
+    /// ones included. Errors with
+    /// [`WriteSceneError::InstanceUnrepresentable`] naming the first
+    /// instance in arena order.
+    pub fn try_new(scene: &'a Scene) -> Result<Self> {
+        match scene.first_instance_node() {
+            Some(node_id) => Err(WriteSceneError::InstanceUnrepresentable { node_id }),
+            None => Ok(Self { scene }),
+        }
+    }
+
+    /// The certified scene.
+    pub fn scene(&self) -> &'a Scene {
+        self.scene
+    }
+}
 
 // Process-wide counter that disambiguates concurrent atomic writes
 // from inside the same process (e.g. multiple parallel test threads
@@ -216,8 +257,11 @@ pub struct FlattenedScene {
 ///
 /// Errors out with [`WriteSceneError::Graph`] on a graph containing
 /// an unevaluated `Csg` node, since there is no kernel yet to reduce
-/// it.
-pub fn flatten_graph_to_mesh(graph: &Scene) -> Result<FlattenedScene> {
+/// it. Scenes containing `Instance` nodes never reach this function:
+/// they are refused at [`InstanceFreeScene::try_new`], before any
+/// walk runs.
+pub fn flatten_graph_to_mesh(scene: InstanceFreeScene<'_>) -> Result<FlattenedScene> {
+    let graph = scene.scene();
     match graph.reachable_leaf_count() {
         0 => Err(WriteSceneError::EmptyScene),
         1 => {
@@ -243,13 +287,15 @@ pub fn flatten_graph_to_mesh(graph: &Scene) -> Result<FlattenedScene> {
 }
 
 /// Writes `graph` to `target_path` in the given `target_format`.
+/// Callers certify the scene first via
+/// [`InstanceFreeScene::try_new`].
 ///
 /// Returns the warnings that surfaced during flatten; the caller
 /// decides how to surface them (CLI -> `eprintln!`; GUI -> dialog or
 /// log). For OBJ the per-leaf boundaries are preserved, so no
 /// flatten happens and the warning vec is always empty.
 pub fn write_scene(
-    graph: &Scene,
+    graph: InstanceFreeScene<'_>,
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<Vec<FlattenWarning>> {
@@ -262,7 +308,7 @@ pub fn write_scene(
 /// `Write { 0, 1 }` before the flush + fsync + rename and
 /// `Write { 1, 1 }` once the rename lands.
 pub fn write_scene_with_progress(
-    graph: &Scene,
+    graph: InstanceFreeScene<'_>,
     target_path: &Path,
     target_format: WriteFormat,
     mut progress: impl FnMut(WriteSceneProgress),
@@ -341,12 +387,16 @@ mod serialize_tally_tests {
 mod flatten_scene_to_mesh_tests {
     use std::sync::Arc;
 
-    use super::{FlattenWarning, flatten_graph_to_mesh};
+    use super::{FlattenWarning, InstanceFreeScene, flatten_graph_to_mesh};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{
         IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, Vertex,
     };
+
+    fn witness(scene: &Scene) -> InstanceFreeScene<'_> {
+        InstanceFreeScene::try_new(scene).expect("test scenes carry no instances")
+    }
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -378,13 +428,13 @@ mod flatten_scene_to_mesh_tests {
     #[test]
     fn empty_scene_returns_error() {
         let graph = Scene::new();
-        assert!(flatten_graph_to_mesh(&graph).is_err());
+        assert!(flatten_graph_to_mesh(witness(&graph)).is_err());
     }
 
     #[test]
     fn single_object_identity_preserves_vertices_and_name() {
         let graph = single_leaf_graph(unit_triangle_mesh(Some("MyMesh")), Transform3D::Identity);
-        let result = flatten_graph_to_mesh(&graph).unwrap();
+        let result = flatten_graph_to_mesh(witness(&graph)).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [1.0, 0.0, 0.0]);
         assert_eq!(result.mesh.vertices()[1].coords(), [0.0, 1.0, 0.0]);
@@ -399,7 +449,7 @@ mod flatten_scene_to_mesh_tests {
     fn single_object_affine_bakes_translation() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
         let graph = single_leaf_graph(unit_triangle_mesh(None), t);
-        let result = flatten_graph_to_mesh(&graph).unwrap();
+        let result = flatten_graph_to_mesh(witness(&graph)).unwrap();
         assert!(result.warnings.is_empty());
         assert_eq!(result.mesh.vertices()[0].coords(), [11.0, -5.0, 2.0]);
         assert_eq!(result.mesh.vertices()[1].coords(), [10.0, -4.0, 2.0]);
@@ -410,7 +460,7 @@ mod flatten_scene_to_mesh_tests {
     fn single_object_affine_preserves_source_name() {
         let t = Transform3D::Affine(AffineTransform3D::from_translation([1.0, 2.0, 3.0]));
         let graph = single_leaf_graph(unit_triangle_mesh(Some("Translated")), t);
-        let result = flatten_graph_to_mesh(&graph).unwrap();
+        let result = flatten_graph_to_mesh(witness(&graph)).unwrap();
         // The transform was baked into the vertices, but the source
         // mesh's name was preserved (so STL writers can put it in the
         // `solid <name>` / 80-byte header).
@@ -440,7 +490,7 @@ mod flatten_scene_to_mesh_tests {
             .expect("add leaf B");
         graph.add_root(leaf_b).expect("add root B");
 
-        let result = flatten_graph_to_mesh(&graph).unwrap();
+        let result = flatten_graph_to_mesh(witness(&graph)).unwrap();
         // Both objects' vertices are present; the second is translated.
         assert_eq!(result.mesh.vertices().len(), 6);
         assert_eq!(result.mesh.vertices()[3].coords(), [11.0, 0.0, 0.0]);
@@ -460,7 +510,7 @@ mod flatten_scene_to_mesh_tests {
             [0.0, 0.0, 0.0],
         );
         let graph = single_leaf_graph(unit_triangle_mesh(None), Transform3D::Affine(singular));
-        assert!(flatten_graph_to_mesh(&graph).is_err());
+        assert!(flatten_graph_to_mesh(witness(&graph)).is_err());
     }
 }
 
@@ -501,9 +551,13 @@ mod atomic_temp_path_tests {
 
 #[cfg(test)]
 mod write_scene_atomicity_tests {
-    use super::write_scene;
+    use super::{InstanceFreeScene, write_scene};
     use crate::filetypes::WriteFormat;
     use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
+
+    fn witness(scene: &Scene) -> InstanceFreeScene<'_> {
+        InstanceFreeScene::try_new(scene).expect("test scenes carry no instances")
+    }
 
     fn valid_graph() -> Scene {
         Scene::from(IndexedMesh {
@@ -542,7 +596,8 @@ mod write_scene_atomicity_tests {
     fn happy_path_writes_target_and_leaves_no_temp_file() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("output.obj");
-        let warnings = write_scene(&valid_graph(), &target, WriteFormat::Obj).unwrap();
+        let graph = valid_graph();
+        let warnings = write_scene(witness(&graph), &target, WriteFormat::Obj).unwrap();
         assert!(warnings.is_empty());
 
         let contents = std::fs::read_to_string(&target).unwrap();
@@ -565,7 +620,8 @@ mod write_scene_atomicity_tests {
         let original: &[u8] = b"original contents that must survive\n";
         std::fs::write(&target, original).unwrap();
 
-        let result = write_scene(&graph_that_fails_mid_obj_write(), &target, WriteFormat::Obj);
+        let graph = graph_that_fails_mid_obj_write();
+        let result = write_scene(witness(&graph), &target, WriteFormat::Obj);
         assert!(
             result.is_err(),
             "writer must propagate the mid-stream error"
@@ -596,7 +652,8 @@ mod write_scene_atomicity_tests {
         std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
         let target = readonly.join("output.obj");
 
-        let result = write_scene(&valid_graph(), &target, WriteFormat::Obj);
+        let graph = valid_graph();
+        let result = write_scene(witness(&graph), &target, WriteFormat::Obj);
 
         // Restore write permissions so `tempdir` cleanup succeeds.
         std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -617,8 +674,8 @@ mod write_scene_atomicity_tests {
         assert!(entries.is_empty(), "no temp file should remain");
     }
 
-    // CLI-H-1: a symlink planted at the target path between validation
-    // and write must not be followed. With the buggy `File::create`,
+    // A symlink planted at the target path between validation and
+    // write must not be followed. With the buggy `File::create`,
     // the write transparently follows the symlink and clobbers the
     // pointed-to file; the fix opens the temp file with
     // `create_new(true)` (which never follows symlinks) and renames
@@ -635,7 +692,8 @@ mod write_scene_atomicity_tests {
         let target = dir.path().join("output.obj");
         std::os::unix::fs::symlink(&secret, &target).unwrap();
 
-        write_scene(&valid_graph(), &target, WriteFormat::Obj).unwrap();
+        let graph = valid_graph();
+        write_scene(witness(&graph), &target, WriteFormat::Obj).unwrap();
 
         // The pointed-to file is untouched.
         assert_eq!(std::fs::read(&secret).unwrap(), secret_bytes);

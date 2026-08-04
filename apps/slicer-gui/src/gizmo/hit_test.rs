@@ -597,7 +597,7 @@ mod ray_hits_rotate_cones_tests {
 
     #[test]
     fn rotate_cones_reject_zero_radius_without_nan() {
-        // Regression for GG-H-1: a zero `arc_radius_world` used to
+        // Regression: a zero `arc_radius_world` used to
         // make `ray_hits_rotate_cones` compute
         // `(pivot - pivot).normalize()` (NaN), then feed those NaNs
         // through the cylinder math. The fix in `arc_midpoint_world`

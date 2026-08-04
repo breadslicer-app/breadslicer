@@ -42,6 +42,25 @@ fn empty_scene_variant_display_and_source() {
 }
 
 #[test]
+fn instance_unrepresentable_variant_display_and_source() {
+    // A real instance id minted through the Scene API, so the
+    // display text names an id that could actually occur.
+    let mut scene = Scene::new();
+    let subtree = scene.add_group(None, Transform3D::Identity);
+    let rid = scene
+        .register_subtree_resource(subtree)
+        .expect("unparented group registers");
+    let node_id = scene
+        .add_instance(None, Transform3D::Identity, rid)
+        .expect("registered resource resolves");
+    let err = WriteSceneError::InstanceUnrepresentable { node_id };
+    let s = err.to_string();
+    assert!(s.contains("instance reference"));
+    assert!(s.contains(&node_id.get().to_string()));
+    assert!(err.source().is_none());
+}
+
+#[test]
 fn path_has_no_file_name_variant_display_and_source() {
     let err = WriteSceneError::PathHasNoFileName(PathBuf::from("/"));
     let s = err.to_string();

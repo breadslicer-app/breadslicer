@@ -26,6 +26,8 @@ mod tests_load_obj_error;
 #[cfg(test)]
 mod tests_load_stl_error;
 #[cfg(test)]
+mod tests_scene_writer_instances;
+#[cfg(test)]
 mod tests_threemf;
 #[cfg(test)]
 mod tests_write_obj_error;

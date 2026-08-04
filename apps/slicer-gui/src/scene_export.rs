@@ -78,6 +78,7 @@ pub(crate) fn write_export(
     format: WriteFormat,
     mut progress: impl FnMut(ExportPhase, u64, u64),
 ) -> Result<Vec<FlattenWarning>> {
+    let scene = scene_writer::InstanceFreeScene::try_new(scene).map_err(anyhow::Error::from)?;
     scene_writer::write_scene_with_progress(scene, target, format, |report| match report {
         WriteSceneProgress::Flatten { done, total } => progress(ExportPhase::Flatten, done, total),
         WriteSceneProgress::Serialize { done, total } => {

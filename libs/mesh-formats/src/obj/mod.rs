@@ -15,7 +15,7 @@ use sc_mesh_core::Scene;
 use crate::error::{LoadObjError, WriteSceneError};
 use crate::messages::LoadObjWarning;
 use crate::ports::{MeshReader, MeshWriter, WriteSceneProgress, sealed};
-use crate::scene_writer::FlattenWarning;
+use crate::scene_writer::{FlattenWarning, InstanceFreeScene};
 
 pub use reader::read_obj;
 pub use writer::{write_obj, write_obj_with_progress};
@@ -41,11 +41,11 @@ impl MeshWriter for Obj {
     type Warning = FlattenWarning;
 
     fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
-        scene: &Scene,
+        scene: InstanceFreeScene<'_>,
         writer: &mut W,
         progress: F,
     ) -> Result<Vec<FlattenWarning>, WriteSceneError> {
-        write_obj_with_progress(scene, writer, progress)?;
+        write_obj_with_progress(scene.scene(), writer, progress)?;
         Ok(Vec::new())
     }
 }
