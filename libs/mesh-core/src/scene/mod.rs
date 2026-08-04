@@ -32,6 +32,14 @@ use crate::scene::node::{
 };
 use crate::transform::Transform3D;
 
+/// Recover the [`NodeId`] for the slot at index `i` in the node
+/// arena. Slots are append-only and never reused, so the id at
+/// index `i` is always `NodeId(NonZeroU32::new(i + 1))`.
+fn node_id_at_index(i: usize) -> NodeId {
+    let raw = u32::try_from(i + 1).expect("node index overflow");
+    NodeId(NonZeroU32::new(raw).expect("index + 1 is non-zero"))
+}
+
 /// Recover the [`MeshResourceId`] for the slot at index `i` in the
 /// resource arena. Slots are append-only and never reused, so the
 /// id at index `i` is always `MeshResourceId(NonZeroU32::new(i + 1))`.
@@ -184,6 +192,10 @@ impl Scene {
     /// pre-order. Mirrors what callers see if they enumerate via
     /// repeated `leaf_id_at_index(0..)` calls but does it in a
     /// single O(n) walk.
+    ///
+    /// `Instance` nodes are not descended: leaves inside instanced
+    /// subtrees do not count. Contrast with [`Scene::merge_meshes`]
+    /// and [`Scene::aabb`], which expand instances.
     pub fn reachable_leaf_count(&self) -> usize {
         let mut count = 0usize;
         let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
@@ -208,6 +220,9 @@ impl Scene {
     /// `None` when the graph has no leaves. Format writers that walk
     /// the graph and have already verified `reachable_leaf_count() == 1`
     /// use this to grab the only leaf without re-walking via an index.
+    ///
+    /// `Instance` nodes are not descended, matching
+    /// [`Scene::reachable_leaf_count`].
     pub fn first_leaf_id(&self) -> Option<NodeId> {
         let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
@@ -225,6 +240,22 @@ impl Scene {
             }
         }
         None
+    }
+
+    /// The id of the first live `Instance` node in arena slot order,
+    /// or `None` when the scene holds none. Scans the whole node
+    /// arena, so instances detached from `roots()` count too: the
+    /// question answered is "does this scene use instancing at all",
+    /// not "is an instance reachable". Intended for callers that do
+    /// not support instances yet and refuse them at their own
+    /// boundary; the returned id lets their error name the node.
+    pub fn first_instance_node(&self) -> Option<NodeId> {
+        self.nodes.iter().enumerate().find_map(|(i, slot)| {
+            slot.as_ref().and_then(|node| match &node.kind {
+                NodeKind::Instance { .. } => Some(node_id_at_index(i)),
+                _ => None,
+            })
+        })
     }
 
     /// Mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
@@ -267,6 +298,16 @@ impl Scene {
 
     pub fn subtree_resource_root(&self, id: SubtreeResourceId) -> Option<NodeId> {
         self.subtree_resources.get(id.index())?.as_ref().copied()
+    }
+
+    /// Whether any subtree resource is currently registered.
+    /// Complements [`Scene::first_instance_node`] for callers whose
+    /// phase contract excludes the whole instancing vocabulary, not
+    /// just `Instance` nodes: a registered subtree without a
+    /// referencing instance still puts leaves outside every
+    /// root-based walk.
+    pub fn has_subtree_resources(&self) -> bool {
+        self.subtree_resources.iter().any(Option::is_some)
     }
 
     pub fn parent_of(&self, id: NodeId) -> Option<NodeId> {
@@ -906,6 +947,110 @@ impl From<IndexedMesh> for Scene {
         g.add_root(leaf)
             .expect("freshly allocated leaf has no parent and is not a root");
         g
+    }
+}
+
+#[cfg(test)]
+mod instancing_query_tests {
+    use super::*;
+    use crate::primitives::{IndexedTriangle, Normal, Vertex};
+    use std::sync::Arc;
+
+    fn unit_triangle() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    fn registered_subtree(g: &mut Scene) -> SubtreeResourceId {
+        let root = g.add_group(None, Transform3D::Identity);
+        g.register_subtree_resource(root).unwrap()
+    }
+
+    #[test]
+    fn empty_scene_reports_no_instancing() {
+        let g = Scene::new();
+        assert_eq!(g.first_instance_node(), None);
+        assert!(!g.has_subtree_resources());
+    }
+
+    #[test]
+    fn instance_free_scene_reports_none_across_node_kinds() {
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        let group = g.add_group(None, Transform3D::Identity);
+        g.add_child(group, leaf).unwrap();
+        g.add_root(group).unwrap();
+        let csg_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        let csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![csg_leaf])
+            .unwrap();
+        g.add_root(csg).unwrap();
+        assert_eq!(g.first_instance_node(), None);
+        assert!(!g.has_subtree_resources());
+    }
+
+    #[test]
+    fn parented_instance_is_found_by_id() {
+        let mut g = Scene::new();
+        let rid = registered_subtree(&mut g);
+        let root = g.add_group(None, Transform3D::Identity);
+        let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        g.add_child(root, inst).unwrap();
+        g.add_root(root).unwrap();
+        // Two group nodes occupy earlier arena slots; the scan must
+        // filter by kind, not return the first live node.
+        assert_eq!(g.first_instance_node(), Some(inst));
+    }
+
+    #[test]
+    fn detached_instance_still_counts() {
+        let mut g = Scene::new();
+        let rid = registered_subtree(&mut g);
+        let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        // Never parented, never a root: the arena scan still sees it.
+        assert_eq!(g.first_instance_node(), Some(inst));
+    }
+
+    #[test]
+    fn earliest_slot_wins_with_two_instances() {
+        let mut g = Scene::new();
+        let rid = registered_subtree(&mut g);
+        let first = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let second = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        assert!(first.get() < second.get());
+        assert_eq!(g.first_instance_node(), Some(first));
+    }
+
+    #[test]
+    fn subtree_registration_flips_the_flag_without_instances() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        assert!(!g.has_subtree_resources());
+        g.register_subtree_resource(root).unwrap();
+        assert!(g.has_subtree_resources());
+        assert_eq!(g.first_instance_node(), None);
     }
 }
 
