@@ -78,7 +78,7 @@ pub(super) fn build_object_list_names(graph: &Scene) -> Vec<String> {
 /// Pre-order list of `NodeId`s for every reachable leaf reachable from
 /// `graph.roots()`, in the same traversal order as
 /// `SceneSpatial::leaf_id_at_index`. Groups and CSG nodes recurse;
-/// `Instance` nodes are skipped (the current phase does not produce
+/// `Reference` nodes are skipped (the current phase does not produce
 /// them, and expansion semantics get their own resolver later).
 fn pre_order_leaves(graph: &Scene) -> Vec<NodeId> {
     let mut out = Vec::new();
@@ -94,7 +94,7 @@ fn pre_order_leaves(graph: &Scene) -> Vec<NodeId> {
                     stack.push(*child);
                 }
             }
-            NodeKind::Instance { .. } => {}
+            NodeKind::Reference { .. } => {}
         }
     }
     out
@@ -234,7 +234,7 @@ mod build_object_list_names_tests {
         // A metadata-named "Object 2" at index 0 collides with the
         // anonymous fallback for the object at index 1 (whose 1-indexed
         // position is also 2). The dedup pass treats them uniformly:
-        // both are "Object 2", so the second instance gets a "(2)"
+        // both are "Object 2", so the second occurrence gets a "(2)"
         // suffix; the third anonymous, at index 2, falls back to the
         // unique "Object 3".
         let (mut g, root) = graph_with_group_root();

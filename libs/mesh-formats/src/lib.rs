@@ -26,7 +26,7 @@ mod tests_load_obj_error;
 #[cfg(test)]
 mod tests_load_stl_error;
 #[cfg(test)]
-mod tests_scene_writer_instances;
+mod tests_scene_writer_shared_subtrees;
 #[cfg(test)]
 mod tests_threemf;
 #[cfg(test)]

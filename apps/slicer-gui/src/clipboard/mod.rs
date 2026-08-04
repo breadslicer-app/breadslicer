@@ -105,7 +105,7 @@ pub(crate) fn fragment_world_aabb(fragment: &SceneFragment) -> Option<Aabb> {
     let mesh_arc = match &node.kind {
         NodeKind::Leaf(LeafPayload::Mesh(arc)) => arc.clone(),
         NodeKind::Leaf(LeafPayload::MeshResource(rid)) => scene.mesh_resource_arc(*rid)?.clone(),
-        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => return None,
+        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => return None,
     };
     let local_aabb = mesh_arc.local_aabb()?;
     Some(match node.local_transform {

@@ -45,6 +45,12 @@ pub struct PrimingProgress {
 /// for this when they need cached spatial queries; headless callers
 /// (`mesh-formats`, `slicer-cli`) never construct one.
 ///
+/// Construction contract: the cached walks do not expand
+/// `Reference` nodes, so scenes using the sharing vocabulary
+/// (registered subtree resources and references to them) are
+/// outside this type's supported phase and are rejected at
+/// construction in debug builds.
+///
 /// Built either lazily ([`SceneSpatial::from_graph`]) or eagerly
 /// ([`SceneSpatial::primed_graph`]). The query API is identical for
 /// both; the only difference is when cache priming work runs.
@@ -54,7 +60,7 @@ pub struct SceneSpatial {
     /// vector is sized to [`Scene::nodes_len`] so any live
     /// `NodeId` is always in bounds. `Some(_)` only for nodes whose
     /// kind is `Leaf(LeafPayload::Mesh(_))`; `None` for groups, CSG
-    /// nodes, instances, mesh-resource-backed leaves (whose cache
+    /// nodes, references, mesh-resource-backed leaves (whose cache
     /// lives in `mesh_resources` below) and tombstoned slots.
     leaves: Vec<Option<MeshSpatial>>,
     /// Per-mesh-resource spatial caches. Indexed by
@@ -124,7 +130,7 @@ impl SceneSpatial {
     ///
     /// * the id is dangling or names a tombstone,
     /// * the addressed node is not a `Leaf` (groups, CSG and
-    ///   instances do not carry geometry of their own),
+    ///   references do not carry geometry of their own),
     /// * the leaf payload is a `MeshResource` whose resource is
     ///   dangling.
     ///
@@ -277,12 +283,9 @@ impl SceneSpatial {
                         stack.push(*child);
                     }
                 }
-                NodeKind::Instance { .. } => {
-                    // Phase contract: production code does not
-                    // construct instances at this stage of the
-                    // graph migration. When instance expansion
-                    // lands, ranking inside an instance subtree
-                    // gets its own resolver.
+                NodeKind::Reference { .. } => {
+                    // Unreachable: the construction contract rejects
+                    // scenes with subtree references.
                 }
             }
         }
@@ -314,7 +317,7 @@ impl SceneSpatial {
                         stack.push(*child);
                     }
                 }
-                NodeKind::Instance { .. } => {}
+                NodeKind::Reference { .. } => {}
             }
         }
         None
@@ -322,6 +325,8 @@ impl SceneSpatial {
 
     /// Inner constructor shared by all entry points.
     fn build(graph: Scene) -> Self {
+        #[cfg(debug_assertions)]
+        Self::assert_supported_vocabulary(&graph);
         let mut leaves: Vec<Option<MeshSpatial>> = (0..graph.nodes_len()).map(|_| None).collect();
         let mesh_resources: Vec<MeshSpatial> = (0..graph.mesh_resources_len())
             .map(|_| MeshSpatial::default())
@@ -332,6 +337,25 @@ impl SceneSpatial {
             leaves,
             mesh_resources,
         }
+    }
+
+    /// Debug-build enforcement of the construction contract: the
+    /// cached walks in this type skip `Reference` nodes, so a scene
+    /// using the sharing vocabulary would prime caches that silently
+    /// disagree with the graph. Such scenes are rejected here, at
+    /// the single shared constructor.
+    #[cfg(debug_assertions)]
+    fn assert_supported_vocabulary(graph: &Scene) {
+        if let Some(node_id) = graph.first_reference_node() {
+            panic!(
+                "SceneSpatial cannot hold subtree references: node {} references a subtree",
+                node_id.get(),
+            );
+        }
+        assert!(
+            !graph.has_subtree_resources(),
+            "SceneSpatial requires a scene without registered subtree resources",
+        );
     }
 
     fn allocate_inline_cache_slots(graph: &Scene, leaves: &mut [Option<MeshSpatial>]) {
@@ -502,7 +526,7 @@ fn compose_world_transform(graph: &Scene, leaf: NodeId) -> Transform3D {
 }
 
 /// Pre-order traversal of every node reachable from the scene roots
-/// without expanding `Instance` edges. `visit` is called once per
+/// without expanding `Reference` edges. `visit` is called once per
 /// reachable node.
 fn for_each_reachable_node<F>(graph: &Scene, mut visit: F)
 where
@@ -520,7 +544,7 @@ where
                     stack.push(*child);
                 }
             }
-            NodeKind::Leaf(_) | NodeKind::Instance { .. } => {}
+            NodeKind::Leaf(_) | NodeKind::Reference { .. } => {}
         }
     }
 }

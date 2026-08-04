@@ -838,7 +838,7 @@ impl SceneDocument {
         // Step 2: walk the fragment's roots, allocate target node ids,
         // emit AddRootLeaf for each mesh-resource leaf root. Future
         // CSG / multi-select phases extend this match with AddGroup /
-        // AddCsg / AddInstance branches.
+        // AddCsg / AddReference branches.
         let mut first_new_root: Option<NodeId> = None;
         for &frag_root in frag_scene.roots() {
             let frag_node = frag_scene
@@ -849,7 +849,7 @@ impl SceneDocument {
                 NodeKind::Leaf(LeafPayload::Mesh(_))
                 | NodeKind::Group { .. }
                 | NodeKind::Csg { .. }
-                | NodeKind::Instance { .. } => {
+                | NodeKind::Reference { .. } => {
                     // The current SceneFragment builder only emits
                     // mesh-resource leaf roots, so skipping the other
                     // shapes here keeps the contract additive:
@@ -1048,13 +1048,13 @@ fn build_delete_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
     let local_transform = node.local_transform;
     let payload = match &node.kind {
         NodeKind::Leaf(payload) => payload.clone(),
-        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => return None,
+        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => return None,
     };
     let attachment = if let Some(parent) = graph.parent_of(node_id) {
         let parent_node = graph.node(parent)?;
         let children = match &parent_node.kind {
             NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
-            NodeKind::Leaf(_) | NodeKind::Instance { .. } => return None,
+            NodeKind::Leaf(_) | NodeKind::Reference { .. } => return None,
         };
         let position = children.iter().position(|c| *c == node_id)?;
         LeafAttachment::Parent { parent, position }

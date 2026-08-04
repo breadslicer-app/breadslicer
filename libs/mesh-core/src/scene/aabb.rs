@@ -20,8 +20,8 @@ impl Scene {
     /// `Group` contributes via the union of its children. `Csg`
     /// contributes the union of its children's world AABBs (a
     /// conservative bound: tight for `Union`, an upper bound for
-    /// `Difference` and `Intersection`). `Instance` expands the
-    /// referenced subtree under the instance's local transform.
+    /// `Difference` and `Intersection`). `Reference` expands the
+    /// referenced subtree under the reference's local transform.
     /// `Leaf` contributes the mesh's local AABB, transformed by the
     /// composed ancestor chain via Arvo's method.
     ///
@@ -93,7 +93,7 @@ impl Scene {
                 accum.union(&world_aabb);
                 *has_any = true;
             }
-            NodeKind::Instance { resource } => {
+            NodeKind::Reference { resource } => {
                 let root = self
                     .subtree_resource_root(*resource)
                     .ok_or(SceneError::DanglingSubtreeResource { id: *resource })?;
@@ -242,7 +242,7 @@ mod scene_aabb_tests {
     }
 
     #[test]
-    fn aabb_two_instances_of_same_subtree_resource() {
+    fn aabb_two_references_to_same_subtree_resource() {
         // A subtree contains a single unit cube. Instantiated twice
         // under different transforms; AABB unions both occurrences.
         let mut g = Scene::new();
@@ -259,7 +259,7 @@ mod scene_aabb_tests {
 
         let r1 = g.add_group(None, Transform3D::Identity);
         let i1 = g
-            .add_instance(
+            .add_reference(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.0])),
                 rid,
@@ -270,7 +270,7 @@ mod scene_aabb_tests {
 
         let r2 = g.add_group(None, Transform3D::Identity);
         let i2 = g
-            .add_instance(
+            .add_reference(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([5.0, 0.0, 0.0])),
                 rid,

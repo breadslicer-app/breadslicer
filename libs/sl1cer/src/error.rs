@@ -39,9 +39,10 @@ pub enum SliceError {
     /// The targeted node is a CSG combinator. CSG slicing is deferred
     /// to a follow-on plan.
     CsgNotYetSupported { node_id: NodeId },
-    /// The targeted node is an `Instance` reference. Instance slicing
+    /// The targeted node is a subtree reference. Slicing scenes with
+    /// subtree references
     /// is deferred to a follow-on plan.
-    InstanceNotYetSupported { node_id: NodeId },
+    SubtreeReferenceNotYetSupported { node_id: NodeId },
     /// The baked mesh carries NaN or infinite vertex coordinates.
     /// Detected on the baked vertices, so transform overflow is
     /// caught here too, not only poisoned source files.
@@ -112,9 +113,9 @@ impl fmt::Display for SliceError {
                 "node #{} is a CSG combinator; CSG slicing is not yet supported",
                 node_id.get(),
             ),
-            Self::InstanceNotYetSupported { node_id } => write!(
+            Self::SubtreeReferenceNotYetSupported { node_id } => write!(
                 f,
-                "node #{} is an Instance reference; instance slicing is not yet supported",
+                "node #{} is a subtree reference; slicing scenes with subtree references is not yet supported",
                 node_id.get(),
             ),
             Self::VerticesValidationFailed(errors) => {
@@ -158,7 +159,7 @@ impl std::error::Error for SliceError {
             | Self::NodeNotFound { .. }
             | Self::NotALeaf { .. }
             | Self::CsgNotYetSupported { .. }
-            | Self::InstanceNotYetSupported { .. }
+            | Self::SubtreeReferenceNotYetSupported { .. }
             | Self::VerticesValidationFailed(_)
             | Self::FacesValidationFailed(_)
             | Self::ManifoldCheckFailed(_)
@@ -222,9 +223,10 @@ pub enum SliceSceneError {
     /// as independent solids would silently produce union semantics
     /// regardless of the operator, so the scene is rejected instead.
     CsgNotYetSupported { node_id: NodeId },
-    /// Discovery reached an `Instance` reference. Instance slicing is
+    /// Discovery reached a subtree reference. Slicing scenes with
+    /// subtree references is
     /// deferred together with CSG.
-    InstanceNotYetSupported { node_id: NodeId },
+    SubtreeReferenceNotYetSupported { node_id: NodeId },
     /// Baking or slicing one specific leaf failed. In practice the
     /// wrapped error is `BakeFailed` or `NonManifoldDuringStitching`;
     /// validation failures never take this path.
@@ -286,9 +288,9 @@ impl fmt::Display for SliceSceneError {
                 "node #{} is a CSG combinator; CSG slicing is not yet supported",
                 node_id.get(),
             ),
-            Self::InstanceNotYetSupported { node_id } => write!(
+            Self::SubtreeReferenceNotYetSupported { node_id } => write!(
                 f,
-                "node #{} is an Instance reference; instance slicing is not yet supported",
+                "node #{} is a subtree reference; slicing scenes with subtree references is not yet supported",
                 node_id.get(),
             ),
             Self::LeafSlicingFailed {
@@ -323,7 +325,7 @@ impl std::error::Error for SliceSceneError {
             Self::LeafSlicingFailed { error, .. } => Some(error),
             Self::EmptyScene
             | Self::CsgNotYetSupported { .. }
-            | Self::InstanceNotYetSupported { .. }
+            | Self::SubtreeReferenceNotYetSupported { .. }
             | Self::LeavesValidationFailed(_) => None,
         }
     }
@@ -372,10 +374,13 @@ mod slice_error_tests {
     }
 
     #[test]
-    fn display_instance_not_yet_supported_mentions_instance() {
+    fn display_subtree_reference_not_yet_supported_names_it() {
         let id = mint_node_id();
-        let msg = format!("{}", SliceError::InstanceNotYetSupported { node_id: id });
-        assert!(msg.contains("Instance"), "msg: {msg}");
+        let msg = format!(
+            "{}",
+            SliceError::SubtreeReferenceNotYetSupported { node_id: id }
+        );
+        assert!(msg.contains("subtree reference"), "msg: {msg}");
     }
 
     #[test]
@@ -642,13 +647,13 @@ mod slice_scene_error_tests {
     }
 
     #[test]
-    fn display_instance_not_yet_supported_mentions_instance() {
+    fn display_subtree_reference_not_yet_supported_names_it() {
         let id = mint_node_id();
         let msg = format!(
             "{}",
-            SliceSceneError::InstanceNotYetSupported { node_id: id },
+            SliceSceneError::SubtreeReferenceNotYetSupported { node_id: id },
         );
-        assert!(msg.contains("Instance"), "msg: {msg}");
+        assert!(msg.contains("subtree reference"), "msg: {msg}");
     }
 
     #[test]

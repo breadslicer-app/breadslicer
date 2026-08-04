@@ -379,7 +379,7 @@ where
                 descend_leaves(graph, c, world_from_self, f)?;
             }
         }
-        NodeKind::Instance { resource } => {
+        NodeKind::Reference { resource } => {
             let root = graph
                 .subtree_resource_root(*resource)
                 .ok_or_else(|| anyhow!("dangling subtree resource id {}", resource.get()))?;

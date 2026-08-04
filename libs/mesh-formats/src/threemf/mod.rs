@@ -14,8 +14,8 @@
 //! transforms mapped to [`sc_mesh_core::transform::Transform3D`]
 //! values. On write, the same mapping runs in reverse, preserving
 //! shared meshes and group structure instead of flattening;
-//! instanced subtrees serialise once, referenced per occurrence
-//! through components and build items.
+//! referenced subtrees serialise once and are placed per
+//! occurrence through components and build items.
 
 mod reader;
 mod writer;

@@ -20,7 +20,7 @@ impl Scene {
             NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
                 children.get(child_i).copied()
             }
-            NodeKind::Instance { resource } => {
+            NodeKind::Reference { resource } => {
                 if child_i == 0 {
                     self.subtree_resource_root(*resource)
                 } else {
@@ -33,7 +33,7 @@ impl Scene {
 
     pub(crate) fn find_cycle_in_expansion(&self) -> Option<NodeId> {
         // Three-color iterative DFS over the expansion graph (children
-        // edges plus `Instance -> resource root` edges). A back edge to
+        // edges plus `Reference -> resource root` edges). A back edge to
         // a gray vertex is the cycle witness; we return the id of the
         // vertex the back edge points to.
         const WHITE: u8 = 0;
@@ -109,7 +109,7 @@ impl Scene {
                         }
                     }
                 },
-                NodeKind::Instance { resource } => {
+                NodeKind::Reference { resource } => {
                     if self.subtree_resource_root(*resource).is_none() {
                         return Err(SceneError::DanglingSubtreeResource { id: *resource });
                     }
@@ -178,7 +178,7 @@ impl Scene {
 
         // (8) Expansion-graph acyclicity.
         if let Some(witness) = self.find_cycle_in_expansion() {
-            // A cycle witnessed here involves either an Instance edge
+            // A cycle witnessed here involves either a Reference edge
             // or forged / floating children edges (a detached 2-cycle
             // with consistent parent records passes the checks above).
             // The mutator-facing guard against both is in add_child.
@@ -241,7 +241,7 @@ mod scene_validate_tests {
     }
 
     #[test]
-    fn validate_passes_on_subtree_instance_graph() {
+    fn validate_passes_on_subtree_reference_graph() {
         let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let res_leaf = g
@@ -255,8 +255,8 @@ mod scene_validate_tests {
         let rid = g.register_subtree_resource(res_root).unwrap();
         let r1 = g.add_group(None, Transform3D::Identity);
         let r2 = g.add_group(None, Transform3D::Identity);
-        let i1 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
-        let i2 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let i1 = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+        let i2 = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         g.add_child(r1, i1).unwrap();
         g.add_child(r2, i2).unwrap();
         g.add_root(r1).unwrap();
@@ -337,7 +337,7 @@ mod scene_validate_tests {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(root).unwrap();
-        g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        g.add_reference(None, Transform3D::Identity, rid).unwrap();
         // Forge: clear the resource slot.
         g.subtree_resources[rid.index()] = None;
         assert_eq!(
@@ -365,12 +365,12 @@ mod scene_validate_tests {
     }
 
     #[test]
-    fn validate_detects_instance_cycle() {
+    fn validate_detects_reference_cycle() {
         let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
-        let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
-        // Forge: insert the instance as a child of res_root, bypassing
+        let inst = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+        // Forge: insert the reference as a child of res_root, bypassing
         // the cycle check that `add_child` performs.
         if let Some(node) = g.nodes[res_root.index()].as_mut()
             && let NodeKind::Group { children } = &mut node.kind

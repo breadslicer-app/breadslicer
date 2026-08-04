@@ -123,7 +123,7 @@ fn collect_inline_leaf_ids(graph: &Scene) -> Vec<NodeId> {
                     stack.push(*child);
                 }
             }
-            NodeKind::Instance { .. } => {}
+            NodeKind::Reference { .. } => {}
         }
     }
     ids

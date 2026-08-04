@@ -192,7 +192,7 @@ fn first_leaf(graph: &Scene) -> NodeId {
                     stack.push(*child);
                 }
             }
-            NodeKind::Instance { .. } => {}
+            NodeKind::Reference { .. } => {}
         }
     }
     panic!("test fixture has no leaves");

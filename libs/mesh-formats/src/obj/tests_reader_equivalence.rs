@@ -498,7 +498,7 @@ fn scene_bits(scene: &Scene) -> SceneBits {
                     stack.push(*child);
                 }
             }
-            NodeKind::Instance { .. } => {}
+            NodeKind::Reference { .. } => {}
         }
     }
     (scene.meta().clone(), scene.roots().len(), leaves)

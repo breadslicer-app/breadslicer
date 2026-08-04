@@ -42,7 +42,7 @@ where
 /// faceless meshes with the same rule the section writer applies, so
 /// `done` reaches `total` exactly when the last line lands.
 ///
-/// The walk expands `Instance` nodes: a subtree instanced N times
+/// The walk expands `Reference` nodes: a subtree referenced N times
 /// serialises N times, each occurrence under its composed call-site
 /// transform. Expansion can multiply occurrences exponentially in the
 /// node count, so the scene's expanded occurrence count is checked

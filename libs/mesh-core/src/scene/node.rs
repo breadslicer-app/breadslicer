@@ -44,8 +44,8 @@ impl NodeId {
 /// Stable, never-reused identifier of a shared mesh resource.
 ///
 /// Distinct type from [`SubtreeResourceId`] so a leaf cannot
-/// accidentally reference a subtree resource, and an `Instance` cannot
-/// reference a mesh.
+/// accidentally reference a subtree resource, and a `Reference`
+/// cannot reference a mesh.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct MeshResourceId(pub(crate) NonZeroU32);
 
@@ -116,11 +116,11 @@ pub enum NodeKind {
     /// `children.len() >= 1`.
     Csg { op: CsgOp, children: Vec<NodeId> },
     /// References a stored subtree by id. Evaluation expands the
-    /// referenced subtree under this node's `local_transform`. All
-    /// `Instance` nodes referencing the same resource share identity: an
-    /// edit to a node inside the resource subtree is observed at every
-    /// reference site.
-    Instance { resource: SubtreeResourceId },
+    /// referenced subtree under this node's `local_transform`, one
+    /// occurrence per reference. All `Reference` nodes naming the same
+    /// resource share identity: an edit to a node inside the resource
+    /// subtree is observed at every reference site.
+    Reference { resource: SubtreeResourceId },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,12 +153,13 @@ pub enum CsgOp {
 impl NodeKind {
     /// Number of children references this kind exposes through the
     /// children-only structural graph (Group + Csg). `Leaf` and
-    /// `Instance` carry no children edges in that graph; see
-    /// `expansion_successor` for the graph that includes Instance edges.
+    /// `Reference` carry no children edges in that graph; see
+    /// `expansion_successor` for the graph that includes Reference
+    /// edges.
     pub(crate) fn children(&self) -> &[NodeId] {
         match self {
             Self::Group { children } | Self::Csg { children, .. } => children.as_slice(),
-            Self::Leaf(_) | Self::Instance { .. } => &[],
+            Self::Leaf(_) | Self::Reference { .. } => &[],
         }
     }
 }
@@ -217,8 +218,8 @@ mod scene_node_tests {
     }
 
     #[test]
-    fn instance_kind_exposes_no_children_through_structural_graph() {
-        let kind = NodeKind::Instance {
+    fn reference_kind_exposes_no_children_through_structural_graph() {
+        let kind = NodeKind::Reference {
             resource: SubtreeResourceId(NonZeroU32::new(1).unwrap()),
         };
         assert!(kind.children().is_empty());

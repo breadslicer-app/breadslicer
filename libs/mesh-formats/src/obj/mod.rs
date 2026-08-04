@@ -7,7 +7,7 @@ mod reader;
 #[cfg(test)]
 mod tests_reader_equivalence;
 #[cfg(test)]
-mod tests_writer_instances;
+mod tests_writer_shared_subtrees;
 mod writer;
 
 use std::io::{Read, Seek, Write};

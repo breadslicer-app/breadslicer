@@ -194,9 +194,9 @@ impl Scene {
     /// repeated `leaf_id_at_index(0..)` calls but does it in a
     /// single O(n) walk.
     ///
-    /// `Instance` nodes are not descended: leaves inside instanced
+    /// `Reference` nodes are not descended: leaves inside referenced
     /// subtrees do not count. Contrast with [`Scene::merge_meshes`]
-    /// and [`Scene::aabb`], which expand instances.
+    /// and [`Scene::aabb`], which expand references.
     pub fn reachable_leaf_count(&self) -> usize {
         let mut count = 0usize;
         let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
@@ -211,7 +211,7 @@ impl Scene {
                         stack.push(*child);
                     }
                 }
-                NodeKind::Instance { .. } => {}
+                NodeKind::Reference { .. } => {}
             }
         }
         count
@@ -222,7 +222,7 @@ impl Scene {
     /// the graph and have already verified `reachable_leaf_count() == 1`
     /// use this to grab the only leaf without re-walking via an index.
     ///
-    /// `Instance` nodes are not descended, matching
+    /// `Reference` nodes are not descended, matching
     /// [`Scene::reachable_leaf_count`].
     pub fn first_leaf_id(&self) -> Option<NodeId> {
         let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
@@ -237,30 +237,30 @@ impl Scene {
                         stack.push(*child);
                     }
                 }
-                NodeKind::Instance { .. } => {}
+                NodeKind::Reference { .. } => {}
             }
         }
         None
     }
 
-    /// The id of the first live `Instance` node in arena slot order,
+    /// The id of the first live `Reference` node in arena slot order,
     /// or `None` when the scene holds none. Scans the whole node
-    /// arena, so instances detached from `roots()` count too: the
-    /// question answered is "does this scene use instancing at all",
-    /// not "is an instance reachable". Intended for callers that do
-    /// not support instances yet and refuse them at their own
+    /// arena, so references detached from `roots()` count too: the
+    /// question answered is "does this scene use sharing at all",
+    /// not "is a reference reachable". Intended for callers that do
+    /// not support subtree references yet and refuse them at their own
     /// boundary; the returned id lets their error name the node.
-    pub fn first_instance_node(&self) -> Option<NodeId> {
+    pub fn first_reference_node(&self) -> Option<NodeId> {
         self.nodes.iter().enumerate().find_map(|(i, slot)| {
             slot.as_ref().and_then(|node| match &node.kind {
-                NodeKind::Instance { .. } => Some(node_id_at_index(i)),
+                NodeKind::Reference { .. } => Some(node_id_at_index(i)),
                 _ => None,
             })
         })
     }
 
     /// Mutable borrow into the inline mesh of a `Leaf(Mesh(_))` node.
-    /// `None` for any other node kind (groups, CSG, instances,
+    /// `None` for any other node kind (groups, CSG, references,
     /// mesh-resource-backed leaves) or a dangling id. Focused
     /// accessor: callers can repair the mesh in place without being
     /// handed `&mut Node` (which would let them change `kind` and
@@ -293,7 +293,7 @@ impl Scene {
         match &node.kind {
             NodeKind::Leaf(LeafPayload::Mesh(arc)) => Some(arc),
             NodeKind::Leaf(LeafPayload::MeshResource(rid)) => self.mesh_resource_arc(*rid),
-            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => None,
+            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => None,
         }
     }
 
@@ -302,10 +302,10 @@ impl Scene {
     }
 
     /// Whether any subtree resource is currently registered.
-    /// Complements [`Scene::first_instance_node`] for callers whose
-    /// phase contract excludes the whole instancing vocabulary, not
-    /// just `Instance` nodes: a registered subtree without a
-    /// referencing instance still puts leaves outside every
+    /// Complements [`Scene::first_reference_node`] for callers whose
+    /// phase contract excludes the whole sharing vocabulary (subtree resources and references), not
+    /// just `Reference` nodes: a registered subtree without a
+    /// reference to it still puts leaves outside every
     /// root-based walk.
     pub fn has_subtree_resources(&self) -> bool {
         self.subtree_resources.iter().any(Option::is_some)
@@ -575,7 +575,7 @@ impl Scene {
         Ok(id)
     }
 
-    pub fn add_instance(
+    pub fn add_reference(
         &mut self,
         meta: Option<SceneMetadata>,
         local_transform: Transform3D,
@@ -588,7 +588,7 @@ impl Scene {
         self.nodes[id.index()] = Some(Node {
             meta,
             local_transform,
-            kind: NodeKind::Instance { resource },
+            kind: NodeKind::Reference { resource },
         });
         Ok(id)
     }
@@ -815,8 +815,8 @@ impl Scene {
                 .expect("parents[id] must point at a live parent by Scene invariants");
             let children = match &mut parent_node.kind {
                 NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
-                NodeKind::Leaf(_) | NodeKind::Instance { .. } => unreachable!(
-                    "Scene invariants forbid a Leaf or Instance from parenting a child"
+                NodeKind::Leaf(_) | NodeKind::Reference { .. } => unreachable!(
+                    "Scene invariants forbid a Leaf or Reference from parenting a child"
                 ),
             };
             let position = children
@@ -841,7 +841,7 @@ impl Scene {
         let local_transform = removed.local_transform;
         let payload = match removed.kind {
             NodeKind::Leaf(payload) => payload,
-            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Instance { .. } => {
+            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => {
                 unreachable!("validated Leaf at top of remove_leaf")
             }
         };
@@ -869,7 +869,7 @@ impl Scene {
     /// - [`SceneError::DanglingMeshResource`] if the payload
     ///   references a missing mesh resource.
     /// - [`SceneError::NotABranch`] if the attachment is `Parent`
-    ///   and the parent is a leaf or instance.
+    ///   and the parent is a leaf or reference.
     ///
     /// On error the scene is unchanged. The position field of a
     /// `Parent` attachment is not bounds-checked here: paired use
@@ -900,7 +900,7 @@ impl Scene {
                 .ok_or(SceneError::DanglingNodeId { id: parent })?;
             match parent_node.kind {
                 NodeKind::Group { .. } | NodeKind::Csg { .. } => {}
-                NodeKind::Leaf(_) | NodeKind::Instance { .. } => {
+                NodeKind::Leaf(_) | NodeKind::Reference { .. } => {
                     return Err(SceneError::NotABranch { node_id: parent });
                 }
             }
@@ -920,7 +920,7 @@ impl Scene {
                     .expect("validated live above");
                 let children = match &mut parent_node.kind {
                     NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
-                    NodeKind::Leaf(_) | NodeKind::Instance { .. } => {
+                    NodeKind::Leaf(_) | NodeKind::Reference { .. } => {
                         unreachable!("validated branch above")
                     }
                 };
@@ -952,7 +952,7 @@ impl From<IndexedMesh> for Scene {
 }
 
 #[cfg(test)]
-mod instancing_query_tests {
+mod sharing_query_tests {
     use super::*;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
     use std::sync::Arc;
@@ -978,14 +978,14 @@ mod instancing_query_tests {
     }
 
     #[test]
-    fn empty_scene_reports_no_instancing() {
+    fn empty_scene_reports_no_sharing() {
         let g = Scene::new();
-        assert_eq!(g.first_instance_node(), None);
+        assert_eq!(g.first_reference_node(), None);
         assert!(!g.has_subtree_resources());
     }
 
     #[test]
-    fn instance_free_scene_reports_none_across_node_kinds() {
+    fn scene_without_references_reports_none_across_node_kinds() {
         let mut g = Scene::new();
         let leaf = g
             .add_leaf(
@@ -1008,50 +1008,50 @@ mod instancing_query_tests {
             .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![csg_leaf])
             .unwrap();
         g.add_root(csg).unwrap();
-        assert_eq!(g.first_instance_node(), None);
+        assert_eq!(g.first_reference_node(), None);
         assert!(!g.has_subtree_resources());
     }
 
     #[test]
-    fn parented_instance_is_found_by_id() {
+    fn parented_reference_is_found_by_id() {
         let mut g = Scene::new();
         let rid = registered_subtree(&mut g);
         let root = g.add_group(None, Transform3D::Identity);
-        let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
-        g.add_child(root, inst).unwrap();
+        let reference = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+        g.add_child(root, reference).unwrap();
         g.add_root(root).unwrap();
         // Two group nodes occupy earlier arena slots; the scan must
         // filter by kind, not return the first live node.
-        assert_eq!(g.first_instance_node(), Some(inst));
+        assert_eq!(g.first_reference_node(), Some(reference));
     }
 
     #[test]
-    fn detached_instance_still_counts() {
+    fn detached_reference_still_counts() {
         let mut g = Scene::new();
         let rid = registered_subtree(&mut g);
-        let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let reference = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         // Never parented, never a root: the arena scan still sees it.
-        assert_eq!(g.first_instance_node(), Some(inst));
+        assert_eq!(g.first_reference_node(), Some(reference));
     }
 
     #[test]
-    fn earliest_slot_wins_with_two_instances() {
+    fn earliest_slot_wins_with_two_references() {
         let mut g = Scene::new();
         let rid = registered_subtree(&mut g);
-        let first = g.add_instance(None, Transform3D::Identity, rid).unwrap();
-        let second = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let first = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+        let second = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         assert!(first.get() < second.get());
-        assert_eq!(g.first_instance_node(), Some(first));
+        assert_eq!(g.first_reference_node(), Some(first));
     }
 
     #[test]
-    fn subtree_registration_flips_the_flag_without_instances() {
+    fn subtree_registration_flips_the_flag_without_references() {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         assert!(!g.has_subtree_resources());
         g.register_subtree_resource(root).unwrap();
         assert!(g.has_subtree_resources());
-        assert_eq!(g.first_instance_node(), None);
+        assert_eq!(g.first_reference_node(), None);
     }
 }
 
@@ -1336,11 +1336,11 @@ mod scene_construction_tests {
     }
 
     #[test]
-    fn add_child_under_instance_errors() {
+    fn add_child_under_reference_errors() {
         let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
-        let parent = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let parent = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         let child = g.add_group(None, Transform3D::Identity);
         let result = g.add_child(parent, child);
         assert_eq!(result, Err(SceneError::NotABranch { node_id: parent }));
@@ -1368,16 +1368,16 @@ mod scene_construction_tests {
     }
 
     #[test]
-    fn add_child_direct_instance_cycle_rejected() {
+    fn add_child_direct_reference_cycle_rejected() {
         let mut g = Scene::new();
         let res_root = g.add_group(None, Transform3D::Identity);
         let rid = g.register_subtree_resource(res_root).unwrap();
-        let inst = g.add_instance(None, Transform3D::Identity, rid).unwrap();
-        // Try to put the Instance inside its own subtree.
-        let result = g.add_child(res_root, inst);
+        let reference = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+        // Try to put the Reference inside its own subtree.
+        let result = g.add_child(res_root, reference);
         assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
-        // Rollback worked: instance still parent-less, res_root has no children.
-        assert_eq!(g.parent_of(inst), None);
+        // Rollback worked: reference still parent-less, res_root has no children.
+        assert_eq!(g.parent_of(reference), None);
         assert!(matches!(
             &g.node(res_root).unwrap().kind,
             NodeKind::Group { children } if children.is_empty()
@@ -1385,17 +1385,17 @@ mod scene_construction_tests {
     }
 
     #[test]
-    fn add_child_indirect_instance_cycle_rejected() {
-        // S1 root contains instance to S2; S2 root would then need to
-        // contain instance to S1 to close the loop.
+    fn add_child_indirect_reference_cycle_rejected() {
+        // S1 root contains a reference to S2; S2 root would then need
+        // a reference to S1 to close the loop.
         let mut g = Scene::new();
         let s1_root = g.add_group(None, Transform3D::Identity);
         let s2_root = g.add_group(None, Transform3D::Identity);
         let s1_id = g.register_subtree_resource(s1_root).unwrap();
         let s2_id = g.register_subtree_resource(s2_root).unwrap();
-        let inst_to_s2 = g.add_instance(None, Transform3D::Identity, s2_id).unwrap();
+        let inst_to_s2 = g.add_reference(None, Transform3D::Identity, s2_id).unwrap();
         g.add_child(s1_root, inst_to_s2).unwrap();
-        let inst_to_s1 = g.add_instance(None, Transform3D::Identity, s1_id).unwrap();
+        let inst_to_s1 = g.add_reference(None, Transform3D::Identity, s1_id).unwrap();
         let result = g.add_child(s2_root, inst_to_s1);
         assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
     }
@@ -1472,10 +1472,10 @@ mod scene_construction_tests {
     }
 
     #[test]
-    fn add_instance_with_dangling_resource_errors() {
+    fn add_reference_with_dangling_resource_errors() {
         let mut g = Scene::new();
         let bogus = SubtreeResourceId(NonZeroU32::new(7).unwrap());
-        let result = g.add_instance(None, Transform3D::Identity, bogus);
+        let result = g.add_reference(None, Transform3D::Identity, bogus);
         assert_eq!(
             result,
             Err(SceneError::DanglingSubtreeResource { id: bogus })

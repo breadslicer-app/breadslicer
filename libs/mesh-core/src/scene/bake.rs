@@ -18,8 +18,8 @@ impl Scene {
     /// Merges all leaf meshes reachable from scene roots into a single
     /// [`IndexedMesh`], baking the composed ancestor-chain transform
     /// into each leaf's vertices and normals. Runs on
-    /// [`Scene::for_each_expanded_leaf`], so `Group` and `Instance`
-    /// nodes are traversed (an instanced subtree contributes one baked
+    /// [`Scene::for_each_expanded_leaf`], so `Group` and `Reference`
+    /// nodes are traversed (an referenced subtree contributes one baked
     /// copy per occurrence). `Csg` nodes are an error
     /// ([`CsgPolicy::Refuse`]): there is no evaluator yet, so any
     /// caller that wants to flatten a graph containing CSG must first
@@ -74,7 +74,7 @@ impl Scene {
 /// Bakes a single leaf into its ancestor-chain frame. For a leaf under
 /// a scene root, the result is in world space. For a leaf inside a
 /// subtree resource, the result is in the subtree's own external frame
-/// (the Instance call site is not consulted), which is the natural
+/// (the reference call site is not consulted), which is the natural
 /// per-leaf invariant of stable [`NodeId`] addressing.
 ///
 /// Errors if `node_id` does not resolve to a `Leaf`.
@@ -305,8 +305,8 @@ mod scene_bake_tests {
     }
 
     #[test]
-    fn merge_meshes_duplicates_geometry_for_two_instances() {
-        // Subtree contains one triangle. Two instances at different
+    fn merge_meshes_duplicates_geometry_for_two_references() {
+        // Subtree contains one triangle. Two references at different
         // translations should each contribute a baked copy.
         let mut g = Scene::new();
         let res_leaf = g
@@ -324,13 +324,13 @@ mod scene_bake_tests {
         let rid = g.register_subtree_resource(res_root).unwrap();
 
         let r1 = g.add_group(None, Transform3D::Identity);
-        let i1 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let i1 = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         g.add_child(r1, i1).unwrap();
         g.add_root(r1).unwrap();
 
         let r2 = g.add_group(None, Transform3D::Identity);
         let i2 = g
-            .add_instance(
+            .add_reference(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([100.0, 0.0, 0.0])),
                 rid,
@@ -342,7 +342,7 @@ mod scene_bake_tests {
         let merged = g.merge_meshes().unwrap().unwrap();
         assert_eq!(merged.vertices.len(), 6);
         assert_eq!(merged.faces.len(), 2);
-        // Second instance's first vertex is at (100, 0, 0).
+        // Second occurrence's first vertex is at (100, 0, 0).
         assert_approx_eq!(f32, merged.vertices[3][0], 100.0, epsilon = 1e-6);
     }
 

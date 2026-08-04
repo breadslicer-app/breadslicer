@@ -829,8 +829,8 @@ mod writer_tests {
     }
 
     #[test]
-    fn instances_write_as_build_items_sharing_one_object() {
-        // 2 instances of the same subtree: the geometry serialises
+    fn references_write_as_build_items_sharing_one_object() {
+        // 2 references to the same subtree: the geometry serialises
         // once, and each occurrence is a build item referencing the
         // shared object under its own transform.
         let mut g = Scene::new();
@@ -838,14 +838,14 @@ mod writer_tests {
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         for x in [10.0, 20.0] {
-            let inst = g
-                .add_instance(
+            let reference = g
+                .add_reference(
                     None,
                     Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
                     rid,
                 )
-                .expect("add instance");
-            g.add_child(root, inst).expect("attach instance");
+                .expect("add reference");
+            g.add_child(root, reference).expect("attach reference");
         }
 
         let document = written_document(&g);
@@ -870,24 +870,24 @@ mod writer_tests {
     }
 
     #[test]
-    fn nested_instances_write_as_nested_components() {
-        // Outer subtree holds 2 instances of the inner subtree; the
-        // scene holds 2 instances of the outer. 4 expanded
+    fn nested_references_write_as_nested_components() {
+        // Outer subtree holds 2 references to the inner subtree; the
+        // scene holds 2 references to the outer. 4 expanded
         // occurrences, but the geometry serialises exactly once and
         // the document stays proportional to the node count.
         let mut g = Scene::new();
         let inner = triangle_subtree(&mut g);
         let outer_root = g.add_group(None, Transform3D::Identity);
         for x in [2.0, 4.0] {
-            let inst = g
-                .add_instance(
+            let reference = g
+                .add_reference(
                     None,
                     Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
                     inner,
                 )
-                .expect("add inner instance");
-            g.add_child(outer_root, inst)
-                .expect("attach inner instance");
+                .expect("add inner reference");
+            g.add_child(outer_root, reference)
+                .expect("attach inner reference");
         }
         let outer = g
             .register_subtree_resource(outer_root)
@@ -895,14 +895,15 @@ mod writer_tests {
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         for y in [0.0, 10.0] {
-            let inst = g
-                .add_instance(
+            let reference = g
+                .add_reference(
                     None,
                     Transform3D::Affine(AffineTransform3D::from_translation([0.0, y, 0.0])),
                     outer,
                 )
-                .expect("add outer instance");
-            g.add_child(root, inst).expect("attach outer instance");
+                .expect("add outer reference");
+            g.add_child(root, reference)
+                .expect("attach outer reference");
         }
 
         let document = written_document(&g);
@@ -936,8 +937,8 @@ mod writer_tests {
     }
 
     #[test]
-    fn instance_transform_composes_with_the_subtree_root_transform() {
-        // A 3MF reference carries a single matrix, so the instance's
+    fn reference_transform_composes_with_the_subtree_root_transform() {
+        // A 3MF reference carries a single matrix, so the reference's
         // call-site transform and the subtree root's own transform
         // must compose into it, in call-site-first order.
         let mut g = Scene::new();
@@ -956,14 +957,14 @@ mod writer_tests {
         let rid = g
             .register_subtree_resource(root_group)
             .expect("register subtree");
-        let inst = g
-            .add_instance(
+        let reference = g
+            .add_reference(
                 None,
                 Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0])),
                 rid,
             )
-            .expect("add instance");
-        g.add_root(inst).expect("instance root");
+            .expect("add reference");
+        g.add_root(reference).expect("reference root");
 
         let document = written_document(&g);
         assert_eq!(document.build.len(), 1);
@@ -974,7 +975,7 @@ mod writer_tests {
     }
 
     #[test]
-    fn an_instanced_subtree_round_trips_through_the_reader() {
+    fn a_referenced_subtree_round_trips_through_the_reader() {
         // The reader expands components into per-occurrence leaves,
         // so the written package loads back as 2 triangles at the 2
         // call sites.
@@ -983,14 +984,14 @@ mod writer_tests {
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).expect("group root");
         for x in [10.0, 20.0] {
-            let inst = g
-                .add_instance(
+            let reference = g
+                .add_reference(
                     None,
                     Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
                     rid,
                 )
-                .expect("add instance");
-            g.add_child(root, inst).expect("attach instance");
+                .expect("add reference");
+            g.add_child(root, reference).expect("attach reference");
         }
 
         let mut bytes = Vec::new();

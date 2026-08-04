@@ -7,7 +7,7 @@
 //!
 //! Unlike the STL/OBJ writers, nothing is flattened or baked: meshes
 //! stay shared (one object per unique mesh), groups become component
-//! objects, instanced subtrees serialise once and are referenced per
+//! objects, referenced subtrees serialise once and are referenced per
 //! occurrence, and node transforms become 3MF item/component
 //! transforms. Coordinates are written as millimetres, the workspace
 //! unit.
@@ -171,7 +171,7 @@ struct DocumentBuilder<'graph> {
     /// as, so every leaf sharing a mesh references one object.
     mesh_objects: HashMap<*const IndexedMesh, ResourceId>,
     /// Subtree resource -> the object id its root was emitted as,
-    /// so every instance of a subtree references one object.
+    /// so every reference to a subtree names one object.
     subtree_objects: HashMap<SubtreeResourceId, ResourceId>,
     next_id: u32,
 }
@@ -320,10 +320,10 @@ impl<'graph> DocumentBuilder<'graph> {
                 Ok((id, transform))
             }
             NodeKind::Csg { .. } => Err(WriteThreeMfError::CsgUnrepresentable { node_id }),
-            NodeKind::Instance { resource } => {
+            NodeKind::Reference { resource } => {
                 // The referenced subtree serialises once (its root
-                // becomes an object, recursively) and every instance
-                // references that object. A 3MF reference carries a
+                // becomes an object, recursively) and every reference
+                // site names that object. A 3MF reference carries a
                 // single matrix, so the call-site transform composes
                 // with the subtree root's own transform, call site
                 // first, matching the expanding walk.

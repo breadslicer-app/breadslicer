@@ -223,7 +223,7 @@ mod discovery_tests {
     }
 
     #[test]
-    fn instance_node_rejects_the_scene() {
+    fn reference_node_rejects_the_scene() {
         let mut scene = Scene::new();
         let template = scene
             .add_leaf(
@@ -235,16 +235,16 @@ mod discovery_tests {
         let resource = scene
             .register_subtree_resource(template)
             .expect("parentless non-root leaf registers");
-        let instance = scene
-            .add_instance(None, Transform3D::Identity, resource)
-            .expect("instance of a live resource");
-        scene.add_root(instance).expect("instance becomes a root");
+        let reference = scene
+            .add_reference(None, Transform3D::Identity, resource)
+            .expect("reference to a live resource");
+        scene.add_root(reference).expect("reference becomes a root");
 
         let err = slice_scene(&scene, &four_layer_profile()).unwrap_err();
         assert!(
             matches!(
                 err,
-                SliceSceneError::InstanceNotYetSupported { node_id } if node_id == instance,
+                SliceSceneError::SubtreeReferenceNotYetSupported { node_id } if node_id == reference,
             ),
             "err: {err:?}",
         );
@@ -623,7 +623,7 @@ mod sliceable_leaves_tests {
     }
 
     #[test]
-    fn instance_node_aborts_the_walk() {
+    fn reference_node_aborts_the_walk() {
         let mut scene = Scene::new();
         let template = scene
             .add_leaf(
@@ -635,13 +635,13 @@ mod sliceable_leaves_tests {
         let resource = scene
             .register_subtree_resource(template)
             .expect("parentless non-root leaf registers");
-        let instance = scene
-            .add_instance(None, Transform3D::Identity, resource)
-            .expect("instance of a live resource");
-        scene.add_root(instance).expect("instance becomes a root");
+        let reference = scene
+            .add_reference(None, Transform3D::Identity, resource)
+            .expect("reference to a live resource");
+        scene.add_root(reference).expect("reference becomes a root");
         assert!(matches!(
             sliceable_leaves(&scene).unwrap_err(),
-            SliceSceneError::InstanceNotYetSupported { node_id } if node_id == instance,
+            SliceSceneError::SubtreeReferenceNotYetSupported { node_id } if node_id == reference,
         ));
     }
 }

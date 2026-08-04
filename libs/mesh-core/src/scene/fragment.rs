@@ -11,12 +11,12 @@
 //! own arenas. The paste primitive in the document layer walks the
 //! fragment, allocates target ids in the destination scene's arenas,
 //! emits the matching `AddMeshResource` / `AddRootLeaf` (and later
-//! `AddGroup` / `AddCsg` / `AddInstance`) typed edits, and wraps the
+//! `AddGroup` / `AddCsg` / `AddReference`) typed edits, and wraps the
 //! whole thing in a single [`crate::scene::edit::SceneEdit::Compound`].
 //!
 //! The current builder only populates the fragment with a single
 //! root leaf and a single mesh resource. The same type generalises
-//! to subtrees (group / CSG / instances) without a redesign: the
+//! to subtrees (group / CSG / references) without a redesign: the
 //! wrapper exposes the underlying `Scene` for reads, and growth on
 //! the paste side is variant-additive rather than shape-changing.
 

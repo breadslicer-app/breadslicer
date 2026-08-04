@@ -9,7 +9,7 @@
 //! load with all 5 shared-geometry occurrences and re-export through
 //! every write format: expanded for the flattening formats, sharing
 //! preserved for 3MF. Permanent capability pins; a refusal or
-//! instance-skipping walk on any of these paths must turn them red.
+//! reference-skipping walk on any of these paths must turn them red.
 
 use std::path::PathBuf;
 

@@ -113,7 +113,7 @@ pub enum WriteSceneError {
     EmptyScene,
     /// The scene expands to more leaf occurrences than the flatten
     /// path accepts (see `sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`).
-    /// Mirrors the 3MF reader's load-side budget: instanced
+    /// Mirrors the 3MF reader's load-side budget: referenced
     /// subtrees can multiply occurrences exponentially in the node
     /// count, so the writers bound the work before walking.
     LeafBudgetExceeded {
@@ -627,7 +627,7 @@ pub enum WriteObjError {
     Graph(SceneError),
     /// The scene expands to more leaf occurrences than the writer
     /// accepts (see `sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`).
-    /// Mirrors the 3MF reader's load-side budget: instanced
+    /// Mirrors the 3MF reader's load-side budget: referenced
     /// subtrees can multiply occurrences exponentially in the node
     /// count, so the writer bounds the work before walking.
     LeafBudgetExceeded {

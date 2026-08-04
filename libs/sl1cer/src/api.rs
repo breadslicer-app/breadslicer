@@ -55,7 +55,7 @@ use crate::z_bins::LayerBuckets;
 /// - [`SliceError::NodeNotFound`] if `leaf` does not resolve.
 /// - [`SliceError::NotALeaf`] if it resolves to a [`NodeKind::Group`].
 /// - [`SliceError::CsgNotYetSupported`] /
-///   [`SliceError::InstanceNotYetSupported`] for the deferred kinds.
+///   [`SliceError::SubtreeReferenceNotYetSupported`] for the deferred kinds.
 /// - [`SliceError::BakeFailed`] when [`bake_leaf_to_world`] fails.
 /// - [`SliceError::VerticesValidationFailed`] /
 ///   [`SliceError::FacesValidationFailed`] /
@@ -78,8 +78,8 @@ pub fn slice_leaf(
         NodeKind::Csg { .. } => {
             return Err(SliceError::CsgNotYetSupported { node_id: leaf });
         }
-        NodeKind::Instance { .. } => {
-            return Err(SliceError::InstanceNotYetSupported { node_id: leaf });
+        NodeKind::Reference { .. } => {
+            return Err(SliceError::SubtreeReferenceNotYetSupported { node_id: leaf });
         }
     }
 
@@ -206,7 +206,7 @@ pub enum SliceOutcome {
 ///
 /// - [`SliceSceneError::EmptyScene`] when no mesh leaf is reachable.
 /// - [`SliceSceneError::CsgNotYetSupported`] /
-///   [`SliceSceneError::InstanceNotYetSupported`] when discovery
+///   [`SliceSceneError::SubtreeReferenceNotYetSupported`] when discovery
 ///   reaches one of the deferred node kinds, anywhere in the scene.
 /// - [`SliceSceneError::LeavesValidationFailed`] with every invalid
 ///   leaf when geometry validation rejects at least one of them.
@@ -339,7 +339,7 @@ where
 /// about the same leaf set without slicing share this one walk, so they
 /// cannot disagree on which leaves a scene slices. `Group` containers
 /// are entered at any depth; dangling child ids are skipped, matching
-/// the scene's own traversal helpers. `Csg` and `Instance` nodes abort
+/// the scene's own traversal helpers. `Csg` and `Reference` nodes abort
 /// the walk, since their leaves are operands, not independent solids,
 /// and slicing them as such would silently apply union semantics
 /// regardless of the operator. An empty result is reported as
@@ -361,8 +361,8 @@ pub fn sliceable_leaves(scene: &Scene) -> Result<Vec<NodeId>, SliceSceneError> {
             NodeKind::Csg { .. } => {
                 return Err(SliceSceneError::CsgNotYetSupported { node_id: id });
             }
-            NodeKind::Instance { .. } => {
-                return Err(SliceSceneError::InstanceNotYetSupported { node_id: id });
+            NodeKind::Reference { .. } => {
+                return Err(SliceSceneError::SubtreeReferenceNotYetSupported { node_id: id });
             }
         }
     }

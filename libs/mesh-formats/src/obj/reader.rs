@@ -867,7 +867,7 @@ mod read_obj_tests {
                         stack.push(*c);
                     }
                 }
-                NodeKind::Instance { .. } => {}
+                NodeKind::Reference { .. } => {}
             }
         }
         ids

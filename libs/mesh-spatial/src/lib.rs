@@ -60,7 +60,7 @@ pub fn scene_aabb(spatial: &SceneSpatial) -> Option<Aabb> {
                     stack.push(*child);
                 }
             }
-            NodeKind::Instance { .. } => {}
+            NodeKind::Reference { .. } => {}
         }
     }
     has_any.then_some(aabb)

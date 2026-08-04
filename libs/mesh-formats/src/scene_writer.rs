@@ -8,8 +8,8 @@
 //!
 //! Two layers:
 //! - [`flatten_graph_to_mesh`] bakes the composed transform of every
-//!   expanded leaf occurrence (instances included, one occurrence
-//!   per call site) into a single `IndexedMesh`, returning the
+//!   expanded leaf occurrence (subtree references expand, one
+//!   occurrence per call site) into a single `IndexedMesh`, returning the
 //!   merged mesh plus any non-fatal warnings (currently only
 //!   [`FlattenWarning::MultiObjectMerge`]).
 //! - [`write_scene`] dispatches on [`WriteFormat`] and writes the
@@ -17,8 +17,8 @@
 //!   the STL variants route through `flatten_graph_to_mesh` first.
 //!
 //! Expanding paths bound their work against
-//! [`sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`] before walking, so an
-//! instanced construction describing an exponential occurrence count
+//! [`sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`] before walking, so a
+//! construction describing an exponential occurrence count
 //! is refused with a typed error instead of wedging an export.
 //!
 //! Warnings are returned to the caller. The CLI surfaces them via
@@ -210,14 +210,14 @@ pub struct FlattenedScene {
 
 /// Produces a single `IndexedMesh` representing the whole graph with
 /// composed transforms baked into vertices and face normals.
-/// `Instance` nodes expand: every occurrence of an instanced subtree
+/// `Reference` nodes expand: every occurrence of an referenced subtree
 /// contributes its geometry under its composed call-site transform,
 /// and the dispatch below counts occurrences, not leaf nodes.
 ///
 /// - With exactly one occurrence, returns that occurrence baked to
 ///   world space with the source mesh's metadata (notably its name,
 ///   which the ASCII STL writer puts in the `solid <name>` header)
-///   preserved, even when the occurrence sits behind an instance.
+///   preserved, even when the occurrence sits behind a reference.
 /// - With more occurrences, returns the result of
 ///   `Scene::merge_meshes`, which concatenates baked
 ///   vertices/faces and drops per-leaf names, plus a

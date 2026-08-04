@@ -148,9 +148,9 @@ mod scene_export_tests {
     }
 
     /// Graph with a registered single-triangle subtree, one plain
-    /// leaf at the origin, and 2 instances of the subtree at
+    /// leaf at the origin, and 2 references to the subtree at
     /// x = +10 / +20: 3 expanded occurrences in total.
-    fn instanced_graph() -> Scene {
+    fn graph_with_subtree_references() -> Scene {
         let mut g = Scene::new();
         let sub_leaf = g
             .add_leaf(
@@ -176,14 +176,14 @@ mod scene_export_tests {
             .expect("add leaf");
         g.add_child(root, leaf).expect("attach leaf");
         for x in [10.0, 20.0] {
-            let inst = g
-                .add_instance(
+            let reference = g
+                .add_reference(
                     None,
                     Transform3D::Affine(AffineTransform3D::from_translation([x, 0.0, 0.0])),
                     rid,
                 )
                 .expect("registered resource resolves");
-            g.add_child(root, inst).expect("attach instance");
+            g.add_child(root, reference).expect("attach reference");
         }
         g
     }
@@ -447,38 +447,32 @@ mod scene_export_tests {
     }
 
     // Capability pins on write_export, the worker-side write path
-    // the GUI drives: it must expand instance-bearing scenes.
+    // the GUI drives: it must expand scenes with subtree references.
     // Permanent pins; a refusal or skipping walk below this seam
     // turns them red. They call write_export on a bare Scene rather
     // than going through a SceneDocument because SceneSpatial's
-    // cached walks do not expand instances and its construction
-    // rejects instance scenes in debug builds; the export write
+    // cached walks do not expand references and its construction
+    // rejects scenes with subtree references in debug builds; the export write
     // path operates on the raw graph and carries no such limit.
 
     #[test]
-    fn export_instance_scene_expands_for_obj() {
-        let scene = instanced_graph();
-        let target = tmp_path("instanced_obj");
+    fn export_expands_subtree_references_for_obj() {
+        let scene = graph_with_subtree_references();
+        let target = tmp_path("referenced_obj");
         let warnings = write_export(&scene, &target, WriteFormat::Obj, |_, _, _| {})
             .expect("write should succeed");
         assert!(warnings.is_empty());
         let text = std::fs::read_to_string(&target).expect("file should exist");
         assert_eq!(text.lines().filter(|l| l.starts_with("f ")).count(), 3);
-        assert!(
-            text.contains("v 11 0 0"),
-            "first instanced occurrence missing"
-        );
-        assert!(
-            text.contains("v 21 0 0"),
-            "second instanced occurrence missing"
-        );
+        assert!(text.contains("v 11 0 0"), "first occurrence missing");
+        assert!(text.contains("v 21 0 0"), "second occurrence missing");
         let _ = std::fs::remove_file(&target);
     }
 
     #[test]
-    fn export_instance_scene_expands_for_binary_stl() {
-        let scene = instanced_graph();
-        let target = tmp_path("instanced_stlb");
+    fn export_expands_subtree_references_for_binary_stl() {
+        let scene = graph_with_subtree_references();
+        let target = tmp_path("referenced_stlb");
         let warnings = write_export(&scene, &target, WriteFormat::StlBin, |_, _, _| {})
             .expect("write should succeed");
         assert_eq!(
@@ -492,9 +486,9 @@ mod scene_export_tests {
     }
 
     #[test]
-    fn export_instance_scene_expands_for_ascii_stl() {
-        let scene = instanced_graph();
-        let target = tmp_path("instanced_stla");
+    fn export_expands_subtree_references_for_ascii_stl() {
+        let scene = graph_with_subtree_references();
+        let target = tmp_path("referenced_stla");
         let warnings = write_export(&scene, &target, WriteFormat::StlAscii, |_, _, _| {})
             .expect("write should succeed");
         assert_eq!(
@@ -508,12 +502,12 @@ mod scene_export_tests {
     }
 
     #[test]
-    fn export_instance_scene_expands_for_threemf() {
-        // 3MF represents the instances natively; the expanding
+    fn export_expands_subtree_references_for_threemf() {
+        // 3MF keeps the sharing native; the expanding
         // reader loads the written package back as all 3
         // occurrences.
-        let scene = instanced_graph();
-        let target = tmp_path("instanced_3mf");
+        let scene = graph_with_subtree_references();
+        let target = tmp_path("referenced_3mf");
         let warnings = write_export(&scene, &target, WriteFormat::ThreeMf, |_, _, _| {})
             .expect("write should succeed");
         assert!(warnings.is_empty(), "3MF export preserves everything");

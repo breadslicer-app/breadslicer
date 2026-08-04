@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Capability pins for the OBJ writer over instance-bearing scenes:
-//! every occurrence of an instanced subtree serialises in full, in
+//! Capability pins for the OBJ writer over scenes with subtree references:
+//! every occurrence of an referenced subtree serialises in full, in
 //! scene pre-order, under the occurrence's composed transform, with
 //! mesh names taken verbatim (duplicate `o` markers are the standing
 //! representation for repeated names). These pins are permanent:
-//! a refusal, witness, or instance-skipping walk on this path must
+//! a refusal, witness, or reference-skipping walk on this path must
 //! turn them red, never ship green.
 
 use std::sync::Arc;
@@ -59,15 +59,17 @@ fn register_triangle_subtree(scene: &mut Scene, name: Option<&str>) -> SubtreeRe
         .expect("unparented group registers")
 }
 
-fn add_instance_at(scene: &mut Scene, parent: NodeId, rid: SubtreeResourceId, t: [f64; 3]) {
-    let inst = scene
-        .add_instance(
+fn add_reference_at(scene: &mut Scene, parent: NodeId, rid: SubtreeResourceId, t: [f64; 3]) {
+    let reference = scene
+        .add_reference(
             None,
             Transform3D::Affine(AffineTransform3D::from_translation(t)),
             rid,
         )
         .expect("registered resource resolves");
-    scene.add_child(parent, inst).expect("attach instance");
+    scene
+        .add_child(parent, reference)
+        .expect("attach reference");
 }
 
 fn write_to_string(scene: &Scene) -> String {
@@ -77,22 +79,22 @@ fn write_to_string(scene: &Scene) -> String {
 }
 
 #[test]
-fn single_instance_occurrence_serialises_like_a_plain_leaf() {
+fn a_single_occurrence_serialises_like_a_plain_leaf() {
     let mut g = Scene::new();
     let rid = register_triangle_subtree(&mut g, None);
     let root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
     g.add_root(root).expect("add root");
     assert_eq!(write_to_string(&g), "v 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
 }
 
 #[test]
-fn two_instances_serialise_two_occurrences_with_verbatim_names() {
+fn two_references_serialise_two_occurrences_with_verbatim_names() {
     let mut g = Scene::new();
     let rid = register_triangle_subtree(&mut g, Some("Part"));
     let root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
-    add_instance_at(&mut g, root, rid, [10.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [10.0, 0.0, 0.0]);
     g.add_root(root).expect("add root");
     assert_eq!(
         write_to_string(&g),
@@ -102,21 +104,21 @@ fn two_instances_serialise_two_occurrences_with_verbatim_names() {
 }
 
 #[test]
-fn nested_instances_serialise_the_full_product_of_occurrences() {
-    // Inner: one triangle. Outer: 2 inner instances at x = +2 / +4.
-    // Scene: 2 outer instances at y = 0 / +10. Expansion: 2 x 2 = 4
+fn nested_references_serialise_the_full_product_of_occurrences() {
+    // Inner: one triangle. Outer: 2 inner references at x = +2 / +4.
+    // Scene: 2 outer references at y = 0 / +10. Expansion: 2 x 2 = 4
     // occurrences, pre-order, each under its composed translation.
     let mut g = Scene::new();
     let inner = register_triangle_subtree(&mut g, None);
     let outer_root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, outer_root, inner, [2.0, 0.0, 0.0]);
-    add_instance_at(&mut g, outer_root, inner, [4.0, 0.0, 0.0]);
+    add_reference_at(&mut g, outer_root, inner, [2.0, 0.0, 0.0]);
+    add_reference_at(&mut g, outer_root, inner, [4.0, 0.0, 0.0]);
     let outer = g
         .register_subtree_resource(outer_root)
         .expect("unparented group registers");
     let root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, root, outer, [0.0, 0.0, 0.0]);
-    add_instance_at(&mut g, root, outer, [0.0, 10.0, 0.0]);
+    add_reference_at(&mut g, root, outer, [0.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, outer, [0.0, 10.0, 0.0]);
     g.add_root(root).expect("add root");
     assert_eq!(
         write_to_string(&g),
@@ -128,7 +130,7 @@ fn nested_instances_serialise_the_full_product_of_occurrences() {
 }
 
 #[test]
-fn instanced_occurrences_keep_their_position_in_scene_order() {
+fn occurrences_keep_their_position_in_scene_order() {
     let mut g = Scene::new();
     let rid = register_triangle_subtree(&mut g, Some("S"));
     let root = g.add_group(None, Transform3D::Identity);
@@ -140,7 +142,7 @@ fn instanced_occurrences_keep_their_position_in_scene_order() {
         )
         .expect("add leaf A");
     g.add_child(root, a).expect("attach leaf A");
-    add_instance_at(&mut g, root, rid, [10.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [10.0, 0.0, 0.0]);
     let b = g
         .add_leaf(
             None,
@@ -159,7 +161,7 @@ fn instanced_occurrences_keep_their_position_in_scene_order() {
 }
 
 #[test]
-fn instanced_prism_trio_serialises_every_occurrence_in_full() {
+fn a_referenced_prism_trio_serialises_every_occurrence_in_full() {
     let meshes = [
         unit_cube_mesh(),
         cuboid_with_z_tunnel(),
@@ -188,8 +190,8 @@ fn instanced_prism_trio_serialises_every_occurrence_in_full() {
         .register_subtree_resource(sub_root)
         .expect("unparented group registers");
     let root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
-    add_instance_at(&mut g, root, rid, [0.0, 100.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [0.0, 100.0, 0.0]);
     g.add_root(root).expect("add root");
 
     let out = write_to_string(&g);
@@ -214,16 +216,17 @@ fn instanced_prism_trio_serialises_every_occurrence_in_full() {
 
 /// Registers a chain of subtree resources whose top resource expands
 /// to 10^levels triangle occurrences, using O(levels) nodes: each
-/// level is a group of 10 instances of the previous one.
+/// level is a group of 10 references to the previous one.
 fn register_power_of_ten_chain(g: &mut Scene, levels: u32) -> SubtreeResourceId {
     let mut rid = register_triangle_subtree(g, None);
     for _ in 0..levels {
         let group = g.add_group(None, Transform3D::Identity);
         for _ in 0..10 {
-            let inst = g
-                .add_instance(None, Transform3D::Identity, rid)
+            let reference = g
+                .add_reference(None, Transform3D::Identity, rid)
                 .expect("registered resource resolves");
-            g.add_child(group, inst).expect("attach chain instance");
+            g.add_child(group, reference)
+                .expect("attach chain reference");
         }
         rid = g
             .register_subtree_resource(group)
@@ -241,7 +244,7 @@ fn at_cap_expansion_serialises() {
     let mut g = Scene::new();
     let rid = register_power_of_ten_chain(&mut g, 5);
     let root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
     g.add_root(root).expect("add root");
     assert_eq!(
         g.expanded_leaf_count(CsgPolicy::Descend)
@@ -256,7 +259,7 @@ fn over_cap_expansion_is_refused_before_any_output() {
     let mut g = Scene::new();
     let rid = register_power_of_ten_chain(&mut g, 5);
     let root = g.add_group(None, Transform3D::Identity);
-    add_instance_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
+    add_reference_at(&mut g, root, rid, [0.0, 0.0, 0.0]);
     // One plain leaf pushes the expansion to the cap plus 1.
     let extra = g
         .add_leaf(

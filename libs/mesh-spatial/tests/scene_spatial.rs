@@ -902,3 +902,53 @@ mod transformed_aabb {
         assert_eq!(a_identity, a_identity_again);
     }
 }
+
+mod construction_contract {
+    use super::*;
+
+    /// A scene with one subtree reference: a registered single-leaf
+    /// subtree plus one reference under the group root.
+    fn graph_with_a_subtree_reference() -> Scene {
+        let (mut graph, root) = graph_with_group_root();
+        let sub_leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(triangle_mesh(1.0))),
+            )
+            .expect("add subtree leaf");
+        let sub_root = graph.add_group(None, Transform3D::Identity);
+        graph
+            .add_child(sub_root, sub_leaf)
+            .expect("attach subtree leaf");
+        let rid = graph
+            .register_subtree_resource(sub_root)
+            .expect("unparented group registers");
+        let reference = graph
+            .add_reference(None, Transform3D::Identity, rid)
+            .expect("registered resource resolves");
+        graph.add_child(root, reference).expect("attach reference");
+        graph
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "subtree")]
+    fn construction_rejects_a_scene_with_a_subtree_reference() {
+        let _ = SceneSpatial::from_graph(graph_with_a_subtree_reference());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "subtree resource")]
+    fn construction_rejects_a_scene_with_registered_subtrees() {
+        // Even without a reference, the vocabulary marks
+        // the scene as outside the cached walks' supported phase.
+        let (mut graph, _root) = graph_with_group_root();
+        let orphan = graph.add_group(None, Transform3D::Identity);
+        graph
+            .register_subtree_resource(orphan)
+            .expect("unparented group registers");
+        let _ = SceneSpatial::from_graph(graph);
+    }
+}

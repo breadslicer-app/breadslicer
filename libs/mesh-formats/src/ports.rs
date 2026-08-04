@@ -73,7 +73,7 @@ pub enum WriteSceneProgress {
 /// must be merged before serialisation; OBJ returns an empty vec
 /// because it preserves per-leaf object boundaries on disk).
 ///
-/// `Instance` nodes expand: each occurrence of an instanced subtree
+/// `Reference` nodes expand: each occurrence of an referenced subtree
 /// serialises under its composed call-site transform. Expanding
 /// walks bound their occurrence count against
 /// [`sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`] before serialising.

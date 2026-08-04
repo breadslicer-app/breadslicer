@@ -1177,7 +1177,7 @@ mod gpu_integration_tests {
                         stack.push(*child);
                     }
                 }
-                NodeKind::Instance { .. } => {}
+                NodeKind::Reference { .. } => {}
             }
         }
         panic!("test fixture has no leaves");

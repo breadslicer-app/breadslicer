@@ -24,10 +24,10 @@ pub enum SceneError {
     DanglingSubtreeResource { id: SubtreeResourceId },
     /// A `NodeKind::Csg { op: Intersection, children }` has zero children.
     EmptyIntersection { node_id: NodeId },
-    /// The expansion graph (children edges plus `Instance -> resource root`)
+    /// The expansion graph (children edges plus `Reference -> resource root`)
     /// contains a cycle reachable from this node. Covers children-only
     /// cycles (floating subtrees, self-loops) and cycles closed through
-    /// an Instance edge alike.
+    /// a Reference edge alike.
     ExpansionCycle { node_id: NodeId },
     /// A child is listed under two different parents, or recorded with a
     /// parent that does not list it as a child.
@@ -47,7 +47,7 @@ pub enum SceneError {
     /// A child appears more than once in a single parent's children list.
     DuplicateChild { parent: NodeId, child: NodeId },
     /// A mutator that requires a Group or Csg parent was given a Leaf or
-    /// Instance node.
+    /// Reference node.
     NotABranch { node_id: NodeId },
     /// A query that expects a leaf was given a non-leaf node.
     NotALeaf { node_id: NodeId },

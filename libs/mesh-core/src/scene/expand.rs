@@ -5,10 +5,10 @@
 
 //! Expansion-aware leaf traversal for [`Scene`].
 //!
-//! "Expansion" means following `Instance -> subtree resource` edges,
-//! so a subtree instanced N times is visited N times, each under the
+//! "Expansion" means following `Reference -> subtree resource` edges,
+//! so a subtree referenced N times is visited N times, each under the
 //! composed transform of its call site. This is the walk the baking
-//! and export paths share; walks that deliberately skip instances
+//! and export paths share; walks that deliberately skip references
 //! (cache layers, selection indexing) do not belong here.
 
 use std::collections::HashMap;
@@ -19,12 +19,12 @@ use crate::scene::error::SceneError;
 use crate::scene::node::{LeafPayload, NodeId, NodeKind, SubtreeResourceId};
 use crate::transform::Transform3D;
 
-/// Hard ceiling shared by consumers that expand instance references
+/// Hard ceiling shared by consumers that expand subtree references
 /// into leaf occurrences (format readers, scene writers). Expansion
 /// graphs are acyclic but can multiply: a subtree holding 2
-/// instances of its predecessor doubles the occurrence count per
+/// references to its predecessor doubles the occurrence count per
 /// level, so a small scene or document can describe 2^n placements.
-/// Real plates hold thousands of instances at most; the cap bounds
+/// Real plates hold thousands of occurrences at most; the cap bounds
 /// the work a crafted or accidental construction can demand.
 /// Consumers compare [`Scene::expanded_leaf_count`] against this
 /// before walking with [`Scene::for_each_expanded_leaf`].
@@ -47,16 +47,16 @@ pub enum CsgPolicy {
 
 impl Scene {
     /// Pre-order traversal of every leaf occurrence reachable from
-    /// the scene roots, expanding `Instance` edges.
+    /// the scene roots, expanding `Reference` edges.
     ///
     /// `visit` receives the leaf's stable [`NodeId`], the composed
     /// world transform of this occurrence (root applied last,
-    /// instance call-site chains included), and the resolved mesh.
-    /// A leaf inside a subtree instanced N times is visited N
+    /// call-site chains included), and the resolved mesh.
+    /// A leaf inside a subtree referenced N times is visited N
     /// times, with the same `NodeId` and N different transforms.
     ///
     /// The number of occurrences can grow exponentially in the node
-    /// count when instanced subtrees nest (each level multiplies).
+    /// count when referenced subtrees nest (each level multiplies).
     /// Callers that accept untrusted or unbounded scenes must check
     /// [`Scene::expanded_leaf_count`] against their budget before
     /// walking.
@@ -104,7 +104,7 @@ impl Scene {
                     };
                     visit(id, &world, mesh)?;
                 }
-                NodeKind::Instance { resource } => {
+                NodeKind::Reference { resource } => {
                     let root = self
                         .subtree_resource_root(*resource)
                         .ok_or(SceneError::DanglingSubtreeResource { id: *resource })?;
@@ -187,7 +187,7 @@ impl Scene {
 
     /// Counts the leaves directly inside one expansion scope (the
     /// main scene, or one subtree resource's interior) and records
-    /// each `Instance` reference with multiplicity, without
+    /// each subtree reference with multiplicity, without
     /// descending through it.
     fn tally_scope(
         &self,
@@ -208,7 +208,7 @@ impl Scene {
                     CsgPolicy::Descend => stack.extend(children.iter().copied()),
                 },
                 NodeKind::Leaf(_) => local_leaves += 1,
-                NodeKind::Instance { resource } => {
+                NodeKind::Reference { resource } => {
                     if self.subtree_resource_root(*resource).is_none() {
                         return Err(SceneError::DanglingSubtreeResource { id: *resource });
                     }
@@ -220,7 +220,7 @@ impl Scene {
     }
 }
 
-/// Leaves and instance references found directly inside one
+/// Leaves and subtree references found directly inside one
 /// expansion scope; see [`Scene::tally_scope`].
 struct ScopeTally {
     local_leaves: usize,
@@ -316,43 +316,43 @@ mod expand_tests {
     }
 
     #[test]
-    fn instance_occurrence_composes_the_call_site_chain() {
+    fn occurrence_composes_the_call_site_chain() {
         let mut g = Scene::new();
         let rid = register_triangle_subtree(&mut g, translation(1.0, 0.0, 0.0));
         let outer = g.add_group(None, translation(0.0, 50.0, 0.0));
-        let inst = g
-            .add_instance(None, translation(10.0, 0.0, 0.0), rid)
+        let reference = g
+            .add_reference(None, translation(10.0, 0.0, 0.0), rid)
             .unwrap();
-        g.add_child(outer, inst).unwrap();
+        g.add_child(outer, reference).unwrap();
         g.add_root(outer).unwrap();
 
         let seen = collect_occurrences(&g, CsgPolicy::Refuse);
         assert_eq!(seen.len(), 1);
-        // outer (0,50,0) + instance (10,0,0) + subtree leaf (1,0,0).
+        // outer (0,50,0) + reference (10,0,0) + subtree leaf (1,0,0).
         assert_approx_eq!(f64, seen[0].1[0], 11.0);
         assert_approx_eq!(f64, seen[0].1[1], 50.0);
     }
 
     #[test]
-    fn nested_instances_multiply_and_compose() {
+    fn nested_references_multiply_and_compose() {
         let mut g = Scene::new();
         let inner = register_triangle_subtree(&mut g, Transform3D::Identity);
-        // Outer subtree: a group holding 2 instances of the inner
+        // Outer subtree: a group holding 2 references to the inner
         // subtree at x = 0 and x = 1.
-        let i1 = g.add_instance(None, Transform3D::Identity, inner).unwrap();
+        let i1 = g.add_reference(None, Transform3D::Identity, inner).unwrap();
         let i2 = g
-            .add_instance(None, translation(1.0, 0.0, 0.0), inner)
+            .add_reference(None, translation(1.0, 0.0, 0.0), inner)
             .unwrap();
         let outer_root = g.add_group(None, Transform3D::Identity);
         g.add_child(outer_root, i1).unwrap();
         g.add_child(outer_root, i2).unwrap();
         let outer = g.register_subtree_resource(outer_root).unwrap();
 
-        // Scene: 2 instances of the outer subtree at x = 0 and x = 10.
+        // Scene: 2 references to the outer subtree at x = 0 and x = 10.
         let root = g.add_group(None, Transform3D::Identity);
-        let o1 = g.add_instance(None, Transform3D::Identity, outer).unwrap();
+        let o1 = g.add_reference(None, Transform3D::Identity, outer).unwrap();
         let o2 = g
-            .add_instance(None, translation(10.0, 0.0, 0.0), outer)
+            .add_reference(None, translation(10.0, 0.0, 0.0), outer)
             .unwrap();
         g.add_child(root, o1).unwrap();
         g.add_child(root, o2).unwrap();
@@ -360,7 +360,7 @@ mod expand_tests {
 
         let seen = collect_occurrences(&g, CsgPolicy::Refuse);
         let xs: Vec<f64> = seen.iter().map(|(_, t)| t[0]).collect();
-        assert_eq!(xs.len(), 4, "2 x 2 nested instances yield 4 occurrences");
+        assert_eq!(xs.len(), 4, "2 x 2 nested references yield 4 occurrences");
         assert_approx_eq!(f64, xs[0], 0.0);
         assert_approx_eq!(f64, xs[1], 1.0);
         assert_approx_eq!(f64, xs[2], 10.0);
@@ -372,9 +372,9 @@ mod expand_tests {
         let mut g = Scene::new();
         let rid = register_triangle_subtree(&mut g, Transform3D::Identity);
         let root = g.add_group(None, Transform3D::Identity);
-        let i1 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+        let i1 = g.add_reference(None, Transform3D::Identity, rid).unwrap();
         let i2 = g
-            .add_instance(None, translation(5.0, 0.0, 0.0), rid)
+            .add_reference(None, translation(5.0, 0.0, 0.0), rid)
             .unwrap();
         g.add_child(root, i1).unwrap();
         g.add_child(root, i2).unwrap();
@@ -455,18 +455,18 @@ mod expand_tests {
     }
 
     /// Builds a multiplicative chain: level 0 is a single-leaf
-    /// subtree, each further level is a subtree holding 2 instances
-    /// of the previous one, and the scene holds 1 instance of the
+    /// subtree, each further level is a subtree holding 2 references
+    /// to the previous one, and the scene holds 1 reference to the
     /// top level. Expanded count = 2^levels.
     fn doubling_chain(levels: usize) -> Scene {
         let mut g = Scene::new();
         let mut current = register_triangle_subtree(&mut g, Transform3D::Identity);
         for _ in 0..levels {
             let i1 = g
-                .add_instance(None, Transform3D::Identity, current)
+                .add_reference(None, Transform3D::Identity, current)
                 .unwrap();
             let i2 = g
-                .add_instance(None, Transform3D::Identity, current)
+                .add_reference(None, Transform3D::Identity, current)
                 .unwrap();
             let root = g.add_group(None, Transform3D::Identity);
             g.add_child(root, i1).unwrap();
@@ -474,7 +474,7 @@ mod expand_tests {
             current = g.register_subtree_resource(root).unwrap();
         }
         let top = g
-            .add_instance(None, Transform3D::Identity, current)
+            .add_reference(None, Transform3D::Identity, current)
             .unwrap();
         let scene_root = g.add_group(None, Transform3D::Identity);
         g.add_child(scene_root, top).unwrap();
@@ -488,7 +488,7 @@ mod expand_tests {
 
     #[test]
     fn count_matches_the_walk_on_every_shape() {
-        // Plain, instanced, nested, diamond and csg-descend scenes:
+        // Plain, shared, nested, diamond and csg-descend scenes:
         // the count must equal the number of occurrences the walk
         // visits.
         let builders: Vec<fn() -> Scene> = vec![
@@ -510,8 +510,8 @@ mod expand_tests {
                 let mut g = Scene::new();
                 let rid = register_triangle_subtree(&mut g, Transform3D::Identity);
                 let root = g.add_group(None, Transform3D::Identity);
-                let i1 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
-                let i2 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+                let i1 = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+                let i2 = g.add_reference(None, Transform3D::Identity, rid).unwrap();
                 g.add_child(root, i1).unwrap();
                 g.add_child(root, i2).unwrap();
                 g.add_root(root).unwrap();
