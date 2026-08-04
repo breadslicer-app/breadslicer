@@ -132,7 +132,10 @@ impl SceneSpatial {
     /// * the addressed node is not a `Leaf` (groups, CSG and
     ///   references do not carry geometry of their own),
     /// * the leaf payload is a `MeshResource` whose resource is
-    ///   dangling.
+    ///   dangling,
+    /// * the leaf sits inside a registered subtree: such scenes are
+    ///   outside the construction contract (rejected in debug
+    ///   builds), and no cache slot exists for their inline meshes.
     ///
     /// The returned [`ObjectQuery`] bundles the node, the resolved
     /// mesh and the spatial cache that belongs to that mesh, plus

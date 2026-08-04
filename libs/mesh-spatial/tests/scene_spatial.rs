@@ -398,10 +398,11 @@ mod scene_aabb_consistency {
 
     /// `Scene::aabb` (in `mesh-core`) and `scene_aabb` (in
     /// `mesh-spatial`) implement the same Arvo loop at different
-    /// caching layers, a known duplication. These
-    /// cases pin the cross-layer equivalence on every transform
-    /// shape the renderer is likely to produce, so a drift between
-    /// the two surfaces fails CI rather than picker / framing.
+    /// caching layers, a known duplication. These cases pin the
+    /// cross-crate agreement of the 2 loops on scenes without
+    /// subtree references (the only scenes `SceneSpatial` admits),
+    /// on every transform shape the renderer is likely to produce,
+    /// so a drift between the 2 implementations fails in CI.
     fn assert_cached_matches_uncached(mut build: impl FnMut() -> Scene) {
         let uncached = build().aabb().unwrap();
         let spatial = SceneSpatial::primed_graph(build());

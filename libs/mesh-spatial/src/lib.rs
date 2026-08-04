@@ -27,11 +27,14 @@ use sc_mesh_core::{Aabb, NodeId, NodeKind};
 /// AABBs and unioned via Arvo's transformed-AABB formula. Returns
 /// `None` for a scene with no geometry.
 ///
-/// This is the cached counterpart to the uncached
-/// [`sc_mesh_core::Scene`] AABB walk, which recomputes from
-/// vertex data each call. Callers that query repeatedly should
-/// construct a [`SceneSpatial`] and use this function; one-shot
-/// callers may use the uncached form directly.
+/// The walk does not descend `Reference` nodes. That cannot drop
+/// geometry here because [`SceneSpatial`]'s construction contract
+/// rejects scenes with subtree references, so on every
+/// constructible input this function agrees with the uncached,
+/// reference-expanding [`sc_mesh_core::Scene::aabb`] walk, which
+/// recomputes from vertex data each call. Callers that query
+/// repeatedly should construct a [`SceneSpatial`] and use this
+/// function; one-shot callers may use the uncached form directly.
 pub fn scene_aabb(spatial: &SceneSpatial) -> Option<Aabb> {
     let graph = spatial.graph();
     let mut aabb = Aabb::empty();
