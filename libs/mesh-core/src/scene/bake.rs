@@ -93,9 +93,28 @@ pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh,
             .ok_or(SceneError::DanglingMeshResource { id: *rid })?,
     };
     let world = world_from_ancestor_chain(graph, leaf_node, node_id)?;
+    bake_mesh_to_world(mesh, &world)
+}
+
+/// Bakes `mesh` under the frame `world`: vertices and face normals are
+/// transformed, and triangle winding is reversed when `world` mirrors
+/// (negative determinant). The result carries no metadata; callers
+/// that want the source mesh's name re-attach it themselves.
+///
+/// This is the per-occurrence companion of
+/// [`Scene::for_each_expanded_leaf`]: the walk hands each occurrence's
+/// composed world transform to its callback, and this bakes the
+/// occurrence's mesh under that transform. [`bake_leaf_to_world`]
+/// covers the ancestor-chain case instead.
+///
+/// Errors when `world` cannot map normals (singular linear part).
+pub fn bake_mesh_to_world(
+    mesh: &IndexedMesh,
+    world: &Transform3D,
+) -> Result<IndexedMesh, SceneError> {
     let mut vertices = Vec::with_capacity(mesh.vertices.len());
     let mut faces = Vec::with_capacity(mesh.faces.len());
-    bake_into(mesh, &world, &mut vertices, &mut faces)?;
+    bake_into(mesh, world, &mut vertices, &mut faces)?;
     Ok(IndexedMesh {
         meta: None,
         vertices,
@@ -424,6 +443,72 @@ mod scene_bake_tests {
         assert_approx_eq!(f32, baked.faces[0].normal[0], 0.0, epsilon = 1e-6);
         assert_approx_eq!(f32, baked.faces[0].normal[1], 1.0, epsilon = 1e-6);
         assert_approx_eq!(f32, baked.faces[0].normal[2], 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn bake_mesh_to_world_identity_passes_geometry_through() {
+        let mesh = triangle_mesh(
+            vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+            [0, 1, 2],
+        );
+        let baked = bake_mesh_to_world(&mesh, &Transform3D::Identity).unwrap();
+        assert_eq!(baked.vertices, mesh.vertices);
+        assert_eq!(baked.faces, mesh.faces);
+    }
+
+    #[test]
+    fn bake_mesh_to_world_drops_source_metadata() {
+        use crate::indexed_mesh::MeshMetadata;
+
+        let mut mesh = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        );
+        mesh.meta = Some(MeshMetadata {
+            name: Some("Named".to_string()),
+            ..Default::default()
+        });
+        let baked = bake_mesh_to_world(&mesh, &Transform3D::Identity).unwrap();
+        assert!(baked.meta.is_none());
+    }
+
+    #[test]
+    fn bake_mesh_to_world_applies_translation() {
+        let mesh = triangle_mesh(
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [0, 1, 2],
+        );
+        let world = Transform3D::Affine(AffineTransform3D::from_translation([10.0, -5.0, 2.0]));
+        let baked = bake_mesh_to_world(&mesh, &world).unwrap();
+        assert_approx_eq!(f32, baked.vertices[0][0], 10.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.vertices[0][1], -5.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.vertices[0][2], 2.0, epsilon = 1e-6);
+        assert_approx_eq!(f32, baked.vertices[1][0], 11.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn bake_mesh_to_world_reverses_winding_under_mirror() {
+        let mesh = triangle_mesh(
+            vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0, 1, 2],
+        );
+        let world =
+            Transform3D::Affine(AffineTransform3D::from_non_uniform_scale([-1.0, 1.0, 1.0]));
+        let baked = bake_mesh_to_world(&mesh, &world).unwrap();
+        assert_eq!(baked.faces[0].vertices.map(u32::from), [0, 2, 1]);
+    }
+
+    #[test]
+    fn bake_mesh_to_world_errors_on_singular_transform() {
+        let mesh = triangle_mesh(
+            vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0, 1, 2],
+        );
+        let singular = AffineTransform3D::from_linear_and_translation(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 0.0],
+        );
+        assert!(bake_mesh_to_world(&mesh, &Transform3D::Affine(singular)).is_err());
     }
 
     #[test]

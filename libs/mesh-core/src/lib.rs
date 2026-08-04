@@ -32,7 +32,7 @@ pub use crate::aabb::Aabb;
 pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata, ValidatedEdgeManifoldMesh};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 pub use crate::scene::Scene;
-pub use crate::scene::bake::bake_leaf_to_world;
+pub use crate::scene::bake::{bake_leaf_to_world, bake_mesh_to_world};
 pub use crate::scene::error::SceneError;
 pub use crate::scene::expand::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT};
 pub use crate::scene::fragment::SceneFragment;
