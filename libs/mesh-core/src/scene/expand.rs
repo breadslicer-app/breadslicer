@@ -11,11 +11,24 @@
 //! and export paths share; walks that deliberately skip instances
 //! (cache layers, selection indexing) do not belong here.
 
+use std::collections::HashMap;
+
 use crate::indexed_mesh::IndexedMesh;
 use crate::scene::Scene;
 use crate::scene::error::SceneError;
-use crate::scene::node::{LeafPayload, NodeId, NodeKind};
+use crate::scene::node::{LeafPayload, NodeId, NodeKind, SubtreeResourceId};
 use crate::transform::Transform3D;
+
+/// Hard ceiling shared by consumers that expand instance references
+/// into leaf occurrences (format readers, scene writers). Expansion
+/// graphs are acyclic but can multiply: a subtree holding 2
+/// instances of its predecessor doubles the occurrence count per
+/// level, so a small scene or document can describe 2^n placements.
+/// Real plates hold thousands of instances at most; the cap bounds
+/// the work a crafted or accidental construction can demand.
+/// Consumers compare [`Scene::expanded_leaf_count`] against this
+/// before walking with [`Scene::for_each_expanded_leaf`].
+pub const MAX_EXPANDED_LEAF_COUNT: usize = 100_000;
 
 /// What an expanding walk does when it reaches an unevaluated
 /// [`NodeKind::Csg`] node. The stances differ per consumer and both
@@ -101,6 +114,117 @@ impl Scene {
         }
         Ok(())
     }
+
+    /// The number of leaf occurrences [`Scene::for_each_expanded_leaf`]
+    /// would visit, computed WITHOUT walking occurrences: each
+    /// reachable subtree resource is tallied once and its total is
+    /// reused per reference, so a scene describing 2^n placements is
+    /// counted in time proportional to its node count, not its
+    /// occurrence count. Totals saturate at [`usize::MAX`].
+    ///
+    /// This is the budget pre-pass for the expanding walk;
+    /// [`MAX_EXPANDED_LEAF_COUNT`] is the shared default budget.
+    ///
+    /// Leaf payloads are not resolved; the count needs only the
+    /// graph structure. `csg` follows the same semantics as the
+    /// walk; dangling node ids and dangling subtree resources
+    /// error, and scopes not reachable from the scene roots
+    /// (unreferenced registered subtrees) are never examined.
+    pub fn expanded_leaf_count(&self, csg: CsgPolicy) -> Result<usize, SceneError> {
+        let main = self.tally_scope(self.roots().iter().copied(), csg)?;
+
+        // Tally every reachable resource scope exactly once.
+        let mut tally_of: HashMap<SubtreeResourceId, ScopeTally> = HashMap::new();
+        let mut queue: Vec<SubtreeResourceId> = main.refs.clone();
+        while let Some(rid) = queue.pop() {
+            if tally_of.contains_key(&rid) {
+                continue;
+            }
+            let root = self
+                .subtree_resource_root(rid)
+                .ok_or(SceneError::DanglingSubtreeResource { id: rid })?;
+            let tally = self.tally_scope(std::iter::once(root), csg)?;
+            queue.extend(tally.refs.iter().copied());
+            tally_of.insert(rid, tally);
+        }
+
+        // Resolve totals bottom-up. The expansion graph is acyclic
+        // (enforced at every mutation), so each pass resolves at
+        // least one scope whose references are all resolved; a pass
+        // without progress would mean that invariant broke, and the
+        // loop reports it as the cycle it is instead of spinning.
+        let mut totals: HashMap<SubtreeResourceId, usize> = HashMap::new();
+        let mut unresolved: Vec<SubtreeResourceId> = tally_of.keys().copied().collect();
+        while !unresolved.is_empty() {
+            let before = unresolved.len();
+            unresolved.retain(|&rid| {
+                let tally = &tally_of[&rid];
+                if tally.refs.iter().all(|r| totals.contains_key(r)) {
+                    let total = tally
+                        .refs
+                        .iter()
+                        .fold(tally.local_leaves, |acc, r| acc.saturating_add(totals[r]));
+                    totals.insert(rid, total);
+                    false
+                } else {
+                    true
+                }
+            });
+            if unresolved.len() == before {
+                let stuck = unresolved[0];
+                let node_id = self
+                    .subtree_resource_root(stuck)
+                    .ok_or(SceneError::DanglingSubtreeResource { id: stuck })?;
+                return Err(SceneError::ExpansionCycle { node_id });
+            }
+        }
+
+        Ok(main
+            .refs
+            .iter()
+            .fold(main.local_leaves, |acc, r| acc.saturating_add(totals[r])))
+    }
+
+    /// Counts the leaves directly inside one expansion scope (the
+    /// main scene, or one subtree resource's interior) and records
+    /// each `Instance` reference with multiplicity, without
+    /// descending through it.
+    fn tally_scope(
+        &self,
+        starts: impl IntoIterator<Item = NodeId>,
+        csg: CsgPolicy,
+    ) -> Result<ScopeTally, SceneError> {
+        let mut stack: Vec<NodeId> = starts.into_iter().collect();
+        let mut local_leaves = 0usize;
+        let mut refs: Vec<SubtreeResourceId> = Vec::new();
+        while let Some(id) = stack.pop() {
+            let node = self.node(id).ok_or(SceneError::DanglingNodeId { id })?;
+            match &node.kind {
+                NodeKind::Group { children } => stack.extend(children.iter().copied()),
+                NodeKind::Csg { children, .. } => match csg {
+                    CsgPolicy::Refuse => {
+                        return Err(SceneError::UnevaluatedCsg { node_id: id });
+                    }
+                    CsgPolicy::Descend => stack.extend(children.iter().copied()),
+                },
+                NodeKind::Leaf(_) => local_leaves += 1,
+                NodeKind::Instance { resource } => {
+                    if self.subtree_resource_root(*resource).is_none() {
+                        return Err(SceneError::DanglingSubtreeResource { id: *resource });
+                    }
+                    refs.push(*resource);
+                }
+            }
+        }
+        Ok(ScopeTally { local_leaves, refs })
+    }
+}
+
+/// Leaves and instance references found directly inside one
+/// expansion scope; see [`Scene::tally_scope`].
+struct ScopeTally {
+    local_leaves: usize,
+    refs: Vec<SubtreeResourceId>,
 }
 
 #[cfg(test)]
@@ -328,6 +452,173 @@ mod expand_tests {
         });
         assert!(result.is_err());
         assert_eq!(visits, 1, "the first callback error stops the walk");
+    }
+
+    /// Builds a multiplicative chain: level 0 is a single-leaf
+    /// subtree, each further level is a subtree holding 2 instances
+    /// of the previous one, and the scene holds 1 instance of the
+    /// top level. Expanded count = 2^levels.
+    fn doubling_chain(levels: usize) -> Scene {
+        let mut g = Scene::new();
+        let mut current = register_triangle_subtree(&mut g, Transform3D::Identity);
+        for _ in 0..levels {
+            let i1 = g
+                .add_instance(None, Transform3D::Identity, current)
+                .unwrap();
+            let i2 = g
+                .add_instance(None, Transform3D::Identity, current)
+                .unwrap();
+            let root = g.add_group(None, Transform3D::Identity);
+            g.add_child(root, i1).unwrap();
+            g.add_child(root, i2).unwrap();
+            current = g.register_subtree_resource(root).unwrap();
+        }
+        let top = g
+            .add_instance(None, Transform3D::Identity, current)
+            .unwrap();
+        let scene_root = g.add_group(None, Transform3D::Identity);
+        g.add_child(scene_root, top).unwrap();
+        g.add_root(scene_root).unwrap();
+        g
+    }
+
+    fn count(g: &Scene, csg: CsgPolicy) -> Result<usize, SceneError> {
+        g.expanded_leaf_count(csg)
+    }
+
+    #[test]
+    fn count_matches_the_walk_on_every_shape() {
+        // Plain, instanced, nested, diamond and csg-descend scenes:
+        // the count must equal the number of occurrences the walk
+        // visits.
+        let builders: Vec<fn() -> Scene> = vec![
+            || {
+                let mut g = Scene::new();
+                let root = g.add_group(None, Transform3D::Identity);
+                let leaf = g
+                    .add_leaf(
+                        None,
+                        Transform3D::Identity,
+                        LeafPayload::Mesh(Arc::new(tri_mesh())),
+                    )
+                    .unwrap();
+                g.add_child(root, leaf).unwrap();
+                g.add_root(root).unwrap();
+                g
+            },
+            || {
+                let mut g = Scene::new();
+                let rid = register_triangle_subtree(&mut g, Transform3D::Identity);
+                let root = g.add_group(None, Transform3D::Identity);
+                let i1 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+                let i2 = g.add_instance(None, Transform3D::Identity, rid).unwrap();
+                g.add_child(root, i1).unwrap();
+                g.add_child(root, i2).unwrap();
+                g.add_root(root).unwrap();
+                g
+            },
+            || doubling_chain(3),
+        ];
+        for (i, build) in builders.iter().enumerate() {
+            let g = build();
+            let walked = collect_occurrences(&g, CsgPolicy::Refuse).len();
+            assert_eq!(
+                count(&g, CsgPolicy::Refuse).unwrap(),
+                walked,
+                "shape {i}: count diverged from the walk"
+            );
+        }
+    }
+
+    #[test]
+    fn count_handles_exponential_scenes_without_walking_them() {
+        // 2^20 occurrences from ~65 nodes; the count must be exact
+        // and fast, and it exceeds the shared budget.
+        let g = doubling_chain(20);
+        let n = count(&g, CsgPolicy::Refuse).unwrap();
+        assert_eq!(n, 1 << 20);
+        assert!(n > MAX_EXPANDED_LEAF_COUNT);
+    }
+
+    #[test]
+    fn count_saturates_instead_of_overflowing() {
+        // 2^70 exceeds usize on 64-bit targets; the fold must
+        // saturate, not wrap.
+        let g = doubling_chain(70);
+        assert_eq!(count(&g, CsgPolicy::Refuse).unwrap(), usize::MAX);
+    }
+
+    #[test]
+    fn count_csg_semantics_match_the_walk() {
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh())),
+            )
+            .unwrap();
+        let csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![leaf])
+            .unwrap();
+        g.add_root(csg).unwrap();
+
+        assert_eq!(
+            count(&g, CsgPolicy::Refuse),
+            Err(SceneError::UnevaluatedCsg { node_id: csg })
+        );
+        assert_eq!(count(&g, CsgPolicy::Descend).unwrap(), 1);
+    }
+
+    #[test]
+    fn count_ignores_unreachable_registered_subtrees() {
+        // An unreferenced subtree containing a CSG node must not
+        // affect the count, even under Refuse: it is outside the
+        // scene's expansion.
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh())),
+            )
+            .unwrap();
+        g.add_child(root, leaf).unwrap();
+        g.add_root(root).unwrap();
+
+        let orphan_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(tri_mesh())),
+            )
+            .unwrap();
+        let orphan_csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![orphan_leaf])
+            .unwrap();
+        let orphan_root = g.add_group(None, Transform3D::Identity);
+        g.add_child(orphan_root, orphan_csg).unwrap();
+        g.register_subtree_resource(orphan_root).unwrap();
+
+        assert_eq!(count(&g, CsgPolicy::Refuse).unwrap(), 1);
+    }
+
+    #[test]
+    fn count_matches_the_walk_for_resource_backed_leaves() {
+        let mut g = Scene::new();
+        let mid = g.add_mesh_resource(tri_mesh());
+        let root = g.add_group(None, Transform3D::Identity);
+        for _ in 0..2 {
+            let leaf = g
+                .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(mid))
+                .unwrap();
+            g.add_child(root, leaf).unwrap();
+        }
+        g.add_root(root).unwrap();
+
+        assert_eq!(count(&g, CsgPolicy::Refuse).unwrap(), 2);
+        assert_eq!(collect_occurrences(&g, CsgPolicy::Refuse).len(), 2);
     }
 
     #[test]

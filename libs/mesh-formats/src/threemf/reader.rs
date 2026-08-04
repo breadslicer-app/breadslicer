@@ -23,16 +23,14 @@ use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Ve
 use crate::error::LoadThreeMfError;
 use crate::messages::LoadThreeMfWarning;
 
-/// Hard ceiling on the number of leaves a build may expand to. The
-/// parser's definition-before-use rule makes reference cycles
-/// impossible, but a component DAG can still multiply: an object
-/// holding two components of its predecessor doubles the leaf count
-/// per level, so a small document can describe 2^n placements. The
-/// count is computed up front and an oversized document is refused
-/// before any scene node is built. Real plates hold thousands of
-/// instances at most; the cap bounds the damage a crafted file can
-/// do, in the same spirit as [`crate::MAX_MESH_ELEMENT_COUNT`].
-pub const MAX_EXPANDED_LEAF_COUNT: usize = 100_000;
+/// The shared expansion budget, re-exported from `sc-mesh-core`
+/// (which owns the expansion vocabulary). The parser's
+/// definition-before-use rule makes reference cycles impossible, but
+/// a component DAG can still multiply, so the expanded leaf count is
+/// computed up front and an oversized document is refused before any
+/// scene node is built, in the same spirit as
+/// [`crate::MAX_MESH_ELEMENT_COUNT`].
+pub use sc_mesh_core::MAX_EXPANDED_LEAF_COUNT;
 
 /// Hard ceiling on component nesting depth. The conversion recurses
 /// one frame per `<components>` level; the parser's
