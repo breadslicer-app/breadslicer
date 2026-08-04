@@ -9,6 +9,7 @@ use crate::indexed_mesh::IndexedMesh;
 use crate::primitives::{IndexedTriangle, Vertex};
 use crate::scene::Scene;
 use crate::scene::error::SceneError;
+use crate::scene::expand::CsgPolicy;
 use crate::scene::node::{LeafPayload, Node, NodeId, NodeKind};
 use crate::transform::AffineTransform3D;
 use crate::transform::Transform3D;
@@ -16,16 +17,19 @@ use crate::transform::Transform3D;
 impl Scene {
     /// Merges all leaf meshes reachable from scene roots into a single
     /// [`IndexedMesh`], baking the composed ancestor-chain transform
-    /// into each leaf's vertices and normals. `Group` and `Instance`
-    /// nodes are traversed. `Csg` nodes are an error: there is no
-    /// evaluator yet, so any caller that wants to flatten a graph
-    /// containing CSG must first resolve those nodes through a kernel.
+    /// into each leaf's vertices and normals. Runs on
+    /// [`Scene::for_each_expanded_leaf`], so `Group` and `Instance`
+    /// nodes are traversed (an instanced subtree contributes one baked
+    /// copy per occurrence). `Csg` nodes are an error
+    /// ([`CsgPolicy::Refuse`]): there is no evaluator yet, so any
+    /// caller that wants to flatten a graph containing CSG must first
+    /// resolve those nodes through a kernel.
     pub fn merge_meshes(&self) -> Result<Option<IndexedMesh>, SceneError> {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut faces: Vec<IndexedTriangle> = Vec::new();
-        for &root in self.roots() {
-            self.bake_subtree(root, Transform3D::Identity, &mut vertices, &mut faces)?;
-        }
+        self.for_each_expanded_leaf(CsgPolicy::Refuse, |_, world, mesh| {
+            bake_into(mesh, world, &mut vertices, &mut faces)
+        })?;
         if faces.is_empty() {
             Ok(None)
         } else {
@@ -35,40 +39,6 @@ impl Scene {
                 faces,
             }))
         }
-    }
-
-    fn bake_subtree(
-        &self,
-        node_id: NodeId,
-        parent_world: Transform3D,
-        vertices: &mut Vec<Vertex>,
-        faces: &mut Vec<IndexedTriangle>,
-    ) -> Result<(), SceneError> {
-        let node = self
-            .node(node_id)
-            .ok_or(SceneError::DanglingNodeId { id: node_id })?;
-        let world_from_self = parent_world.compose(&node.local_transform);
-        match &node.kind {
-            NodeKind::Group { children } => {
-                for &c in children {
-                    self.bake_subtree(c, world_from_self, vertices, faces)?;
-                }
-            }
-            NodeKind::Csg { .. } => {
-                return Err(SceneError::UnevaluatedCsg { node_id });
-            }
-            NodeKind::Leaf(payload) => {
-                let mesh = self.resolve_leaf_mesh(payload)?;
-                bake_into(mesh, &world_from_self, vertices, faces)?;
-            }
-            NodeKind::Instance { resource } => {
-                let root = self
-                    .subtree_resource_root(*resource)
-                    .ok_or(SceneError::DanglingSubtreeResource { id: *resource })?;
-                self.bake_subtree(root, world_from_self, vertices, faces)?;
-            }
-        }
-        Ok(())
     }
 
     fn resolve_leaf_mesh<'a>(

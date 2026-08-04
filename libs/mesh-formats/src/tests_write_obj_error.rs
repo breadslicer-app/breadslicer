@@ -39,6 +39,24 @@ fn graph_variant_display_and_source() {
 }
 
 #[test]
+fn instance_unrepresentable_variant_display_and_source() {
+    let mut scene = Scene::new();
+    let subtree = scene.add_group(None, Transform3D::Identity);
+    let rid = scene
+        .register_subtree_resource(subtree)
+        .expect("unparented group registers");
+    let node_id = scene
+        .add_instance(None, Transform3D::Identity, rid)
+        .expect("registered resource resolves");
+    let err = WriteObjError::InstanceUnrepresentable { node_id };
+    let s = err.to_string();
+    assert!(s.contains("OBJ writer"));
+    assert!(s.contains("instance reference"));
+    assert!(s.contains(&node_id.get().to_string()));
+    assert!(err.source().is_none());
+}
+
+#[test]
 fn face_index_overflow_variant_display_and_source() {
     let err = WriteObjError::FaceIndexOverflow {
         local: 100,

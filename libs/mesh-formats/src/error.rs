@@ -627,9 +627,23 @@ impl From<std::io::Error> for WriteStlError {
 pub enum WriteObjError {
     Io(std::io::Error),
     Graph(SceneError),
-    FaceIndexOverflow { local: u32, offset: u32 },
-    VertexCountExceedsU32 { vertex_count: usize },
-    VertexOffsetOverflow { offset: u32, added: u32 },
+    /// The scene contains an `Instance` node; this writer's walk
+    /// does not expand instances, so serialising would silently
+    /// drop their geometry. Mirrors the 3MF writer's stance.
+    InstanceUnrepresentable {
+        node_id: NodeId,
+    },
+    FaceIndexOverflow {
+        local: u32,
+        offset: u32,
+    },
+    VertexCountExceedsU32 {
+        vertex_count: usize,
+    },
+    VertexOffsetOverflow {
+        offset: u32,
+        added: u32,
+    },
 }
 
 impl fmt::Display for WriteObjError {
@@ -637,6 +651,11 @@ impl fmt::Display for WriteObjError {
         match self {
             Self::Io(e) => write!(f, "OBJ writer I/O error: {e}"),
             Self::Graph(e) => write!(f, "OBJ writer: {e}"),
+            Self::InstanceUnrepresentable { node_id } => write!(
+                f,
+                "OBJ writer: node {} is an instance reference, which this writer cannot represent yet",
+                node_id.get(),
+            ),
             Self::FaceIndexOverflow { local, offset } => write!(
                 f,
                 "OBJ writer: face vertex index overflow (local={local}, offset={offset})",

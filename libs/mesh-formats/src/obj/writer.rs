@@ -50,6 +50,15 @@ where
     W: std::io::Write,
     F: FnMut(WriteSceneProgress),
 {
+    // The leaf walk below does not expand Instance nodes, so an
+    // instance-bearing scene must be refused up front instead of
+    // serialising with its instanced geometry silently missing.
+    // Callers arriving through the scene-writer boundary hold an
+    // instance-free witness already; this entry is independently
+    // public, so it enforces the same contract itself.
+    if let Some(node_id) = graph.first_instance_node() {
+        return Err(WriteObjError::InstanceUnrepresentable { node_id });
+    }
     if let Some(meta) = graph.meta()
         && let Some(comment) = &meta.comment
     {
@@ -219,7 +228,7 @@ mod tests {
         Vertex,
     };
 
-    use super::write_obj;
+    use super::{WriteObjError, write_obj};
 
     fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -244,6 +253,42 @@ mod tests {
         let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
         g.add_root(leaf).expect("add root");
         g
+    }
+
+    #[test]
+    fn instance_scene_is_refused_naming_the_node() {
+        // The leaf walk does not expand instances; without the entry
+        // refusal, serialising this scene would silently omit the
+        // instanced triangle.
+        let mut g = Scene::new();
+        let res_leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
+            )
+            .expect("add subtree leaf");
+        let res_root = g.add_group(None, Transform3D::Identity);
+        g.add_child(res_root, res_leaf).expect("attach");
+        let rid = g
+            .register_subtree_resource(res_root)
+            .expect("unparented group registers");
+        let root = g.add_group(None, Transform3D::Identity);
+        let inst = g
+            .add_instance(None, Transform3D::Identity, rid)
+            .expect("registered resource resolves");
+        g.add_child(root, inst).expect("attach");
+        g.add_root(root).expect("add root");
+
+        let mut buf: Vec<u8> = Vec::new();
+        match write_obj(&g, &mut buf) {
+            Err(WriteObjError::InstanceUnrepresentable { node_id }) => {
+                assert_eq!(node_id, inst, "refusal names the instance node");
+            }
+            Err(other) => panic!("wrong error: {other:?}"),
+            Ok(()) => panic!("instance scene serialised instead of being refused"),
+        }
+        assert!(buf.is_empty(), "refusal must precede any output bytes");
     }
 
     fn multi_mesh_graph(meshes: Vec<IndexedMesh>) -> Scene {

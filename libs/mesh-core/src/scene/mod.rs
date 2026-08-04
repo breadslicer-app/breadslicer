@@ -11,6 +11,7 @@ pub mod aabb;
 pub mod bake;
 pub mod edit;
 pub mod error;
+pub mod expand;
 pub mod fragment;
 pub mod mesh_health;
 pub mod node;
