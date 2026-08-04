@@ -42,21 +42,11 @@ fn empty_scene_variant_display_and_source() {
 }
 
 #[test]
-fn instance_unrepresentable_variant_display_and_source() {
-    // A real instance id minted through the Scene API, so the
-    // display text names an id that could actually occur.
-    let mut scene = Scene::new();
-    let subtree = scene.add_group(None, Transform3D::Identity);
-    let rid = scene
-        .register_subtree_resource(subtree)
-        .expect("unparented group registers");
-    let node_id = scene
-        .add_instance(None, Transform3D::Identity, rid)
-        .expect("registered resource resolves");
-    let err = WriteSceneError::InstanceUnrepresentable { node_id };
+fn leaf_budget_exceeded_variant_display_and_source() {
+    let err = WriteSceneError::LeafBudgetExceeded { limit: 100_000 };
     let s = err.to_string();
-    assert!(s.contains("instance reference"));
-    assert!(s.contains(&node_id.get().to_string()));
+    assert!(s.contains("100000"));
+    assert!(s.contains("mesh placements"));
     assert!(err.source().is_none());
 }
 

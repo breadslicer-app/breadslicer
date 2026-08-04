@@ -22,7 +22,7 @@ use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::WriteFormat;
-use sc_mesh_formats::scene_writer::{InstanceFreeScene, write_scene};
+use sc_mesh_formats::scene_writer::write_scene;
 use sc_project_formats::{
     EmbedProfiles, ProjectPayload, infer_project_file_type_from_extension, write_project,
 };
@@ -372,8 +372,7 @@ fn parse_source_obj_ends_the_parse_phase_complete() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.obj");
     let trio = prism_trio_scene();
-    let trio = InstanceFreeScene::try_new(&trio).expect("trio has no instances");
-    write_scene(trio, &path, WriteFormat::Obj).expect("obj writes");
+    write_scene(&trio, &path, WriteFormat::Obj).expect("obj writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("obj parses");
     assert_eq!(root_child_count(&parsed.graph), 3);
@@ -388,8 +387,7 @@ fn parse_source_binary_stl_ends_the_parse_phase_complete() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("trio.stl");
     let trio = prism_trio_scene();
-    let trio = InstanceFreeScene::try_new(&trio).expect("trio has no instances");
-    write_scene(trio, &path, WriteFormat::StlBin).expect("stl writes");
+    write_scene(&trio, &path, WriteFormat::StlBin).expect("stl writes");
     let (sink, cell) = sink_and_cell();
     let parsed = parse_source(&path, &sink).expect("stl parses");
     assert!(

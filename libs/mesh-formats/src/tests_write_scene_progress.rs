@@ -15,13 +15,7 @@ use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mes
 
 use crate::filetypes::WriteFormat;
 use crate::ports::WriteSceneProgress;
-use crate::scene_writer::{
-    FlattenWarning, InstanceFreeScene, write_scene, write_scene_with_progress,
-};
-
-fn witness(scene: &Scene) -> InstanceFreeScene<'_> {
-    InstanceFreeScene::try_new(scene).expect("test scenes carry no instances")
-}
+use crate::scene_writer::{FlattenWarning, write_scene, write_scene_with_progress};
 
 /// The 3 standing fixtures every format test writes: the cube plus
 /// the Z-tunnel and Y-tunnel prisms.
@@ -74,7 +68,7 @@ fn write_collecting(
     let dir = tempfile::tempdir().expect("temp dir");
     let target = dir.path().join(file_name);
     let mut reports = Vec::new();
-    let warnings = write_scene_with_progress(witness(graph), &target, format, |p| reports.push(p))
+    let warnings = write_scene_with_progress(graph, &target, format, |p| reports.push(p))
         .expect("write succeeds");
     let bytes = std::fs::read(&target).expect("target written");
     (reports, warnings, bytes)
@@ -271,7 +265,7 @@ fn progress_reporting_keeps_output_bytes_identical() {
         let graph = scene_with_leaves(fixture_meshes());
         let dir = tempfile::tempdir().expect("temp dir");
         let plain_target = dir.path().join(file_name);
-        write_scene(witness(&graph), &plain_target, format).expect("plain write succeeds");
+        write_scene(&graph, &plain_target, format).expect("plain write succeeds");
         let plain_bytes = std::fs::read(&plain_target).expect("plain target written");
 
         let (_, _, progress_bytes) = write_collecting(&graph, format, file_name);

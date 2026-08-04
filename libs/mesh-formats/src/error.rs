@@ -111,11 +111,13 @@ impl From<LoadThreeMfError> for LoadMeshError {
 pub enum WriteSceneError {
     Io(std::io::Error),
     EmptyScene,
-    /// The scene contains an `Instance` node; no writable format
-    /// represents instances yet. Raised when minting the
-    /// instance-free witness the scene writers require.
-    InstanceUnrepresentable {
-        node_id: NodeId,
+    /// The scene expands to more leaf occurrences than the flatten
+    /// path accepts (see `sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`).
+    /// Mirrors the 3MF reader's load-side budget: instanced
+    /// subtrees can multiply occurrences exponentially in the node
+    /// count, so the writers bound the work before walking.
+    LeafBudgetExceeded {
+        limit: usize,
     },
     PathHasNoFileName(PathBuf),
     CreateTempFile {
@@ -138,11 +140,9 @@ impl fmt::Display for WriteSceneError {
         match self {
             Self::Io(e) => write!(f, "I/O error while writing scene: {e}"),
             Self::EmptyScene => write!(f, "Cannot flatten an empty scene to a single mesh"),
-            Self::InstanceUnrepresentable { node_id } => write!(
-                f,
-                "node {} is an instance reference, which scene writing cannot represent yet",
-                node_id.get(),
-            ),
+            Self::LeafBudgetExceeded { limit } => {
+                write!(f, "the scene expands to more than {limit} mesh placements")
+            }
             Self::PathHasNoFileName(p) => {
                 write!(f, "Target path {} has no file name", p.display())
             }
@@ -172,9 +172,7 @@ impl std::error::Error for WriteSceneError {
             Self::Stl(e) => Some(e),
             Self::Obj(e) => Some(e),
             Self::ThreeMf(e) => Some(e),
-            Self::EmptyScene
-            | Self::PathHasNoFileName(_)
-            | Self::InstanceUnrepresentable { .. } => None,
+            Self::EmptyScene | Self::PathHasNoFileName(_) | Self::LeafBudgetExceeded { .. } => None,
         }
     }
 }

@@ -22,8 +22,7 @@ pub(crate) fn write_scene(
     target_path: &Path,
     target_format: WriteFormat,
 ) -> Result<()> {
-    let scene = scene_writer::InstanceFreeScene::try_new(graph)?;
-    let warnings = scene_writer::write_scene(scene, target_path, target_format)?;
+    let warnings = scene_writer::write_scene(graph, target_path, target_format)?;
     for w in &warnings {
         eprintln!("WARNING: {}", w.user_message());
     }

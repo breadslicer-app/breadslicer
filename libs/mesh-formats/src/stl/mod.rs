@@ -25,7 +25,7 @@ use sc_mesh_core::Scene;
 use crate::error::{LoadStlError, WriteSceneError};
 use crate::messages::LoadStlWarning;
 use crate::ports::{MeshReader, MeshWriter, WriteSceneProgress, sealed};
-use crate::scene_writer::{FlattenWarning, InstanceFreeScene, flatten_graph_to_mesh};
+use crate::scene_writer::{FlattenWarning, flatten_graph_to_mesh};
 use crate::slurp::slurp;
 
 pub use writers::{write_stla, write_stla_with_progress, write_stlb, write_stlb_with_progress};
@@ -53,7 +53,7 @@ impl MeshWriter for StlBin {
     type Warning = FlattenWarning;
 
     fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
-        scene: InstanceFreeScene<'_>,
+        scene: &Scene,
         writer: &mut W,
         mut progress: F,
     ) -> std::result::Result<Vec<FlattenWarning>, WriteSceneError> {
@@ -85,7 +85,7 @@ impl MeshWriter for StlAscii {
     type Warning = FlattenWarning;
 
     fn write_with_progress<W: Write, F: FnMut(WriteSceneProgress)>(
-        scene: InstanceFreeScene<'_>,
+        scene: &Scene,
         writer: &mut W,
         mut progress: F,
     ) -> std::result::Result<Vec<FlattenWarning>, WriteSceneError> {
