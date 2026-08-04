@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::{IndexedMesh, NodeId, NodeKind, Scene, bake_leaf_to_world};
+use sc_mesh_core::{CsgPolicy, IndexedMesh, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
 
 use crate::error::WriteObjError;
 use crate::ports::WriteSceneProgress;
@@ -38,9 +38,18 @@ where
 
 /// [`write_obj`], reporting one `Serialize` unit per emitted vertex or
 /// face line through `progress` (throttled by [`SerializeTally`]). The
-/// total is precomputed over the reachable leaves, skipping faceless
-/// meshes with the same rule the section writer applies, so `done`
-/// reaches `total` exactly when the last line lands.
+/// total is precomputed over the expanded leaf occurrences, skipping
+/// faceless meshes with the same rule the section writer applies, so
+/// `done` reaches `total` exactly when the last line lands.
+///
+/// The walk expands `Instance` nodes: a subtree instanced N times
+/// serialises N times, each occurrence under its composed call-site
+/// transform. Expansion can multiply occurrences exponentially in the
+/// node count, so the scene's expanded occurrence count is checked
+/// against [`MAX_EXPANDED_LEAF_COUNT`] first and an over-budget scene
+/// is refused with [`WriteObjError::LeafBudgetExceeded`] before any
+/// byte is written. CSG nodes descend: their operands serialise as
+/// plain objects.
 pub fn write_obj_with_progress<W, F>(
     graph: &Scene,
     writer: &mut W,
@@ -50,15 +59,13 @@ where
     W: std::io::Write,
     F: FnMut(WriteSceneProgress),
 {
-    // The leaf walk below does not expand Instance nodes, so an
-    // instance-bearing scene must be refused up front instead of
-    // serialising with its instanced geometry silently missing.
-    // Callers arriving through the scene-writer boundary hold an
-    // instance-free witness already; this entry is independently
-    // public, so it enforces the same contract itself.
-    if let Some(node_id) = graph.first_instance_node() {
-        return Err(WriteObjError::InstanceUnrepresentable { node_id });
+    let expanded = graph.expanded_leaf_count(CsgPolicy::Descend)?;
+    if expanded > MAX_EXPANDED_LEAF_COUNT {
+        return Err(WriteObjError::LeafBudgetExceeded {
+            limit: MAX_EXPANDED_LEAF_COUNT,
+        });
     }
+
     if let Some(meta) = graph.meta()
         && let Some(comment) = &meta.comment
     {
@@ -72,65 +79,39 @@ where
         }
     }
 
-    let leaf_ids = collect_reachable_leaves(graph);
-    let write_object_markers = leaf_ids.len() > 1;
-    let mut vertex_offset: u32 = 0;
+    let write_object_markers = expanded > 1;
 
     let mut total: u64 = 0;
-    for &id in &leaf_ids {
-        let mesh = graph.mesh_at_leaf(id)?;
+    graph.for_each_expanded_leaf(CsgPolicy::Descend, |_, _, mesh| {
         if !mesh.faces().is_empty() {
             total += mesh.vertices().len() as u64 + mesh.faces().len() as u64;
         }
-    }
+        Ok::<(), WriteObjError>(())
+    })?;
     let mut tally = SerializeTally::new(total);
     tally.begin(&mut progress);
 
-    for id in leaf_ids {
-        // OBJ has no per-object transform, so each leaf's composed
-        // world transform is baked into its vertices and face
-        // normals. The source mesh's name is preserved via the `o`
-        // marker; the baked mesh drops metadata by design.
-        let mesh = graph.mesh_at_leaf(id)?;
-        let name = mesh.meta().as_ref().and_then(|m| m.name.clone());
-        let baked = bake_leaf_to_world(graph, id)?;
+    let mut vertex_offset: u32 = 0;
+    graph.for_each_expanded_leaf(CsgPolicy::Descend, |_, world, mesh| {
+        // OBJ has no per-object transform, so each occurrence's
+        // composed world transform is baked into its vertices and
+        // face normals. The source mesh's name is preserved via the
+        // `o` marker; the baked mesh drops metadata by design.
+        let name = mesh.meta().as_ref().and_then(|m| m.name.as_deref());
+        let baked = bake_mesh_to_world(mesh, world)?;
         write_mesh_section(
             &baked,
-            name.as_deref(),
+            name,
             write_object_markers,
             &mut vertex_offset,
             &mut tally,
             &mut progress,
             writer,
-        )?;
-    }
+        )
+    })?;
 
     writer.flush()?;
     Ok(())
-}
-
-/// Reachable leaves under `graph.roots()` in pre-order traversal.
-/// Groups, CSG and instance edges descend; `Instance` is currently
-/// skipped because production scenes do not construct them yet (the
-/// phase contract from the master plan).
-fn collect_reachable_leaves(graph: &Scene) -> Vec<NodeId> {
-    let mut ids: Vec<NodeId> = Vec::new();
-    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(node) = graph.node(id) else {
-            continue;
-        };
-        match &node.kind {
-            NodeKind::Leaf(_) => ids.push(id),
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
-            }
-            NodeKind::Instance { .. } => {}
-        }
-    }
-    ids
 }
 
 fn write_mesh_section<W, F>(
@@ -228,7 +209,7 @@ mod tests {
         Vertex,
     };
 
-    use super::{WriteObjError, write_obj};
+    use super::write_obj;
 
     fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -253,42 +234,6 @@ mod tests {
         let leaf = g.add_leaf(None, transform, payload).expect("add leaf");
         g.add_root(leaf).expect("add root");
         g
-    }
-
-    #[test]
-    fn instance_scene_is_refused_naming_the_node() {
-        // The leaf walk does not expand instances; without the entry
-        // refusal, serialising this scene would silently omit the
-        // instanced triangle.
-        let mut g = Scene::new();
-        let res_leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(make_triangle_mesh(None))),
-            )
-            .expect("add subtree leaf");
-        let res_root = g.add_group(None, Transform3D::Identity);
-        g.add_child(res_root, res_leaf).expect("attach");
-        let rid = g
-            .register_subtree_resource(res_root)
-            .expect("unparented group registers");
-        let root = g.add_group(None, Transform3D::Identity);
-        let inst = g
-            .add_instance(None, Transform3D::Identity, rid)
-            .expect("registered resource resolves");
-        g.add_child(root, inst).expect("attach");
-        g.add_root(root).expect("add root");
-
-        let mut buf: Vec<u8> = Vec::new();
-        match write_obj(&g, &mut buf) {
-            Err(WriteObjError::InstanceUnrepresentable { node_id }) => {
-                assert_eq!(node_id, inst, "refusal names the instance node");
-            }
-            Err(other) => panic!("wrong error: {other:?}"),
-            Ok(()) => panic!("instance scene serialised instead of being refused"),
-        }
-        assert!(buf.is_empty(), "refusal must precede any output bytes");
     }
 
     fn multi_mesh_graph(meshes: Vec<IndexedMesh>) -> Scene {
