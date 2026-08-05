@@ -6,7 +6,7 @@
 use std::fs;
 
 use sc_print_primitives::{BuildVolume, PrinterId};
-use sc_print_profiles::load_material_profile_from_path;
+use sc_print_profiles::{MaterialExtensionIssue, load_material_profile_from_path};
 use slint::Model;
 
 use super::*;
@@ -61,6 +61,14 @@ fn parse(toml: &str) -> MaterialProfile {
     load_material_profile_from_path(&path).unwrap()
 }
 
+/// Compose a base and an optional extension, asserting the pair is
+/// clean; tests about dirty pairs compose inline instead.
+fn effective(base: MaterialProfile, extension: Option<MaterialProfile>) -> EffectiveMaterial {
+    let (material, issues) = EffectiveMaterial::compose(base, extension);
+    assert!(issues.is_empty(), "issues: {issues:?}");
+    material
+}
+
 fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
     PrinterCatalogEntry {
         id: PrinterId::new(id).unwrap(),
@@ -99,10 +107,9 @@ fn fields(section: &ProfileViewSection) -> Vec<(String, String)> {
 
 #[test]
 fn sections_are_ordered_identity_intent_defaults_then_blocks() {
-    let profile = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     let sections = build_profile_view_model(
-        &profile,
-        None,
+        &material,
         &printers(),
         Some(&printer("printer-a")),
         ProfileSource::Bundled,
@@ -122,10 +129,9 @@ fn sections_are_ordered_identity_intent_defaults_then_blocks() {
 
 #[test]
 fn the_default_printers_block_is_first_and_highlighted() {
-    let profile = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     let sections = build_profile_view_model(
-        &profile,
-        None,
+        &material,
         &printers(),
         Some(&printer("printer-a")),
         ProfileSource::Bundled,
@@ -140,12 +146,11 @@ fn the_default_printers_block_is_first_and_highlighted() {
 
 #[test]
 fn the_generic_block_is_highlighted_when_it_is_the_fallback() {
-    let profile = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     // printer-b has no block of its own; the generic block is what it
     // would print with.
     let sections = build_profile_view_model(
-        &profile,
-        None,
+        &material,
         &printers(),
         Some(&printer("printer-b")),
         ProfileSource::Bundled,
@@ -160,16 +165,15 @@ fn the_generic_block_is_highlighted_when_it_is_the_fallback() {
 
 #[test]
 fn nothing_is_highlighted_without_a_default_printer_or_matching_block() {
-    let profile = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     let none_selected =
-        build_profile_view_model(&profile, None, &printers(), None, ProfileSource::Bundled);
+        build_profile_view_model(&material, &printers(), None, ProfileSource::Bundled);
     assert!(none_selected.iter().all(|s| !s.highlighted));
 
     let mut no_generic = parse(BASE_TOML);
     no_generic.per_printer.remove(&printer("generic-machine"));
     let unmatched = build_profile_view_model(
-        &no_generic,
-        None,
+        &effective(no_generic, None),
         &printers(),
         Some(&printer("printer-b")),
         ProfileSource::Bundled,
@@ -179,11 +183,9 @@ fn nothing_is_highlighted_without_a_default_printer_or_matching_block() {
 
 #[test]
 fn extension_blocks_are_included_in_display_name_order() {
-    let profile = parse(BASE_TOML);
-    let extension = parse(EXTENSION_TOML);
+    let material = effective(parse(BASE_TOML), Some(parse(EXTENSION_TOML)));
     let sections = build_profile_view_model(
-        &profile,
-        Some(&extension),
+        &material,
         &printers(),
         Some(&printer("printer-a")),
         ProfileSource::Bundled,
@@ -200,11 +202,56 @@ fn extension_blocks_are_included_in_display_name_order() {
 }
 
 #[test]
-fn unset_optional_fields_render_the_not_set_text() {
-    let profile = parse(BASE_TOML);
+fn an_overlapping_extension_pair_renders_one_section_with_the_base_values() {
+    // An imported extension can overlap the base (the extend dialog
+    // never authors this). The composed view holds one block per
+    // printer, the base's, so the viewer renders a single section
+    // instead of duplicates.
+    let overlapping = "\
+extension = true
+
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"1.2.0\"
+
+[intent]
+
+[defaults]
+
+[per_printer.printer-a]
+normal_exposure_sec = 9.9
+";
+    let (material, issues) = EffectiveMaterial::compose(parse(BASE_TOML), Some(parse(overlapping)));
+    assert_eq!(
+        issues,
+        vec![MaterialExtensionIssue::OverlappingCalibrationPair {
+            printer_id: printer("printer-a"),
+        }],
+    );
+
     let sections = build_profile_view_model(
-        &profile,
-        None,
+        &material,
+        &printers(),
+        Some(&printer("printer-a")),
+        ProfileSource::Bundled,
+    );
+    let printer_a_sections: Vec<&ProfileViewSection> = sections
+        .iter()
+        .filter(|s| s.title.as_str() == "Calibration: Printer A")
+        .collect();
+    assert_eq!(printer_a_sections.len(), 1);
+    // The base's exposure, not the overlapping extension's.
+    assert_eq!(fields(printer_a_sections[0])[0].1, "2.5");
+}
+
+#[test]
+fn unset_optional_fields_render_the_not_set_text() {
+    let material = effective(parse(BASE_TOML), None);
+    let sections = build_profile_view_model(
+        &material,
         &printers(),
         Some(&printer("printer-a")),
         ProfileSource::Bundled,
@@ -234,10 +281,9 @@ fn unset_optional_fields_render_the_not_set_text() {
 
 #[test]
 fn identity_section_carries_the_origin() {
-    let profile = parse(BASE_TOML);
-    let bundled =
-        build_profile_view_model(&profile, None, &printers(), None, ProfileSource::Bundled);
-    let custom = build_profile_view_model(&profile, None, &printers(), None, ProfileSource::User);
+    let material = effective(parse(BASE_TOML), None);
+    let bundled = build_profile_view_model(&material, &printers(), None, ProfileSource::Bundled);
+    let custom = build_profile_view_model(&material, &printers(), None, ProfileSource::User);
     let origin = |sections: &[ProfileViewSection]| -> String {
         fields(&sections[0])
             .into_iter()
@@ -261,10 +307,9 @@ fn identity_section_carries_the_origin() {
 
 #[test]
 fn a_block_for_an_unknown_printer_falls_back_to_its_id() {
-    let profile = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     let sections = build_profile_view_model(
-        &profile,
-        None,
+        &material,
         &[],
         Some(&printer("printer-a")),
         ProfileSource::Bundled,
@@ -281,5 +326,5 @@ fn a_block_for_an_unknown_printer_falls_back_to_its_id() {
 #[test]
 fn display_name_is_brand_plus_name() {
     let profile = parse(BASE_TOML);
-    assert_eq!(profile_display_name(&profile), "Brand Resin");
+    assert_eq!(profile_display_name(&profile.identity), "Brand Resin");
 }

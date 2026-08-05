@@ -5,15 +5,20 @@
 
 //! View model of the read-only resin profile viewer.
 //!
-//! Projects a loaded [`MaterialProfile`] (plus its extension profile,
-//! when one exists) into the section list the profile view dialog
+//! Projects an [`EffectiveMaterial`] (the base profile with whatever
+//! its extension adds) into the section list the profile view dialog
 //! renders: identity, intent, defaults, then one section per
 //! calibration block. Every optional field is rendered explicitly, an
 //! unset one as the translated "not set" text, so a partial profile
 //! reads as partial instead of hiding what is missing.
 
+use std::collections::BTreeMap;
+
 use sc_print_primitives::PrinterId;
-use sc_print_profiles::{MaterialPerPrinter, MaterialProfile};
+use sc_print_profiles::{
+    EffectiveMaterial, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
+    MaterialProfile,
+};
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;
@@ -21,35 +26,28 @@ use crate::profile_catalog::{GENERIC_PRINTER_ID, PrinterCatalogEntry, ProfileSou
 use crate::{ProfileViewField, ProfileViewSection};
 
 /// Headline shown above the sections: brand plus display name.
-pub(crate) fn profile_display_name(profile: &MaterialProfile) -> String {
-    format!(
-        "{} {}",
-        profile.identity.brand.as_str(),
-        profile.identity.name.as_str(),
-    )
+pub(crate) fn profile_display_name(identity: &MaterialIdentity) -> String {
+    format!("{} {}", identity.brand.as_str(), identity.name.as_str())
 }
 
 /// Build the viewer sections: identity, intent, defaults, then the
-/// calibration blocks of the base profile and its extension. The
-/// default printer's own block comes first, the generic block next,
-/// the rest in display-name order; the block the default printer
-/// would actually use (its own, or the generic fallback) is
-/// highlighted.
+/// effective material's calibration blocks. The default printer's own
+/// block comes first, the generic block next, the rest in
+/// display-name order; the block the default printer would actually
+/// use (its own, or the generic fallback) is highlighted.
 pub(crate) fn build_profile_view_model(
-    profile: &MaterialProfile,
-    extension: Option<&MaterialProfile>,
+    material: &EffectiveMaterial,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
     source: ProfileSource,
 ) -> Vec<ProfileViewSection> {
     let mut sections = vec![
-        identity_section(profile, source),
-        intent_section(profile),
-        defaults_section(profile),
+        identity_section(material.identity(), source),
+        intent_section(material.intent()),
+        defaults_section(material.defaults()),
     ];
     sections.extend(calibration_sections(
-        profile,
-        extension,
+        material.per_printer(),
         printers,
         default_printer,
     ));
@@ -91,10 +89,9 @@ fn section(
 }
 
 pub(crate) fn identity_section(
-    profile: &MaterialProfile,
+    identity: &MaterialIdentity,
     source: ProfileSource,
 ) -> ProfileViewSection {
-    let identity = &profile.identity;
     let origin = match source {
         ProfileSource::Bundled => ctr!("ProfileViewDialog", "Bundled"),
         ProfileSource::User => ctr!("ProfileViewDialog", "Custom"),
@@ -124,8 +121,7 @@ pub(crate) fn identity_section(
     )
 }
 
-pub(crate) fn intent_section(profile: &MaterialProfile) -> ProfileViewSection {
-    let intent = &profile.intent;
+pub(crate) fn intent_section(intent: &MaterialIntent) -> ProfileViewSection {
     section(
         ctr!("ProfileViewDialog", "Intent"),
         false,
@@ -142,8 +138,7 @@ pub(crate) fn intent_section(profile: &MaterialProfile) -> ProfileViewSection {
     )
 }
 
-fn defaults_section(profile: &MaterialProfile) -> ProfileViewSection {
-    let defaults = &profile.defaults;
+fn defaults_section(defaults: &MaterialDefaults) -> ProfileViewSection {
     let scale = defaults
         .scale_compensation_pct
         .map(|scale| {
@@ -215,27 +210,12 @@ pub(crate) fn ordered_calibration_targets(
         .collect()
 }
 
-/// One `(printer id, block)` pair per calibration block, from the base
-/// profile and its extension (disjoint by construction: extensions
-/// never override existing blocks).
-fn collect_blocks<'a>(
-    profile: &'a MaterialProfile,
-    extension: Option<&'a MaterialProfile>,
-) -> Vec<(&'a PrinterId, &'a MaterialPerPrinter)> {
-    profile
-        .per_printer
-        .iter()
-        .chain(extension.into_iter().flat_map(|ext| ext.per_printer.iter()))
-        .collect()
-}
-
 fn calibration_sections(
-    profile: &MaterialProfile,
-    extension: Option<&MaterialProfile>,
+    blocks: &BTreeMap<PrinterId, MaterialPerPrinter>,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
 ) -> Vec<ProfileViewSection> {
-    let mut blocks = collect_blocks(profile, extension);
+    let mut blocks: Vec<(&PrinterId, &MaterialPerPrinter)> = blocks.iter().collect();
 
     // The id whose block the default printer would use: its own when
     // present, otherwise the generic fallback.

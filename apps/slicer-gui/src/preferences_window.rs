@@ -17,9 +17,9 @@ use slint::{
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
-    MaterialProfile, load_material_extension_from_library, load_material_profile_by_id,
-    load_material_profile_from_library, material_extension_path_in_library,
-    material_profile_path_in_library, user_library_dir,
+    EffectiveMaterial, MaterialProfile, load_material_extension_from_library,
+    load_material_profile_by_id, load_material_profile_from_library,
+    material_extension_path_in_library, material_profile_path_in_library, user_library_dir,
 };
 
 use crate::aa_level::aa_level_from_combo_index;
@@ -628,12 +628,15 @@ fn open_profile_view_dialog(
     let Some((profile, extension, source)) = load_profile_for_view(&catalog, index) else {
         return;
     };
+    let (material, issues) = EffectiveMaterial::compose(profile, extension);
+    for issue in &issues {
+        eprintln!("warning: {issue}");
+    }
 
     let snapshot = bus.snapshot();
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
     let sections = build_profile_view_model(
-        &profile,
-        extension.as_ref(),
+        &material,
         catalog.printers(),
         default_printer.as_ref(),
         source,
@@ -647,7 +650,7 @@ fn open_profile_view_dialog(
         }
     };
     dialog.set_theme(snapshot.theme);
-    dialog.set_profile_name(profile_display_name(&profile).into());
+    dialog.set_profile_name(profile_display_name(material.identity()).into());
     dialog.set_sections(ModelRc::new(VecModel::from(sections)));
 
     let dialog_weak = dialog.as_weak();
@@ -722,9 +725,9 @@ fn open_profile_editor(
 
     // Read-only context above the edit cards: identity, plus intent
     // for full profiles (an extension's intent is inherited).
-    let mut sections = vec![identity_section(&profile, ProfileSource::User)];
+    let mut sections = vec![identity_section(&profile.identity, ProfileSource::User)];
     if kind == EditedProfileKind::Full {
-        sections.push(intent_section(&profile));
+        sections.push(intent_section(&profile.intent));
     }
 
     let targets =
@@ -739,11 +742,11 @@ fn open_profile_editor(
     };
     dialog.set_theme(snapshot.theme);
     let display_name = match kind {
-        EditedProfileKind::Full => SharedString::from(profile_display_name(&profile)),
+        EditedProfileKind::Full => SharedString::from(profile_display_name(&profile.identity)),
         EditedProfileKind::Extension => ctr!(
             "PreferencesPage",
             "{} (extended)",
-            profile_display_name(&profile)
+            profile_display_name(&profile.identity)
         ),
     };
     dialog.set_profile_name(display_name);
@@ -913,7 +916,7 @@ fn open_fork_dialog(
         }
     };
     dialog.set_theme(snapshot.theme);
-    dialog.set_source_name(profile_display_name(&source).into());
+    dialog.set_source_name(profile_display_name(&source.identity).into());
     dialog.set_fork_name(ctr!(
         "ForkDialog",
         "{} (fork)",
@@ -1074,7 +1077,7 @@ fn open_extend_dialog(
         }
     };
     dialog.set_theme(snapshot.theme);
-    dialog.set_source_name(profile_display_name(&base).into());
+    dialog.set_source_name(profile_display_name(&base.identity).into());
     dialog.set_target_labels(ModelRc::new(VecModel::from(
         targets
             .iter()
