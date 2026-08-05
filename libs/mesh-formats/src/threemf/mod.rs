@@ -64,8 +64,9 @@ impl MeshWriter for ThreeMf {
         progress: F,
     ) -> Result<Vec<FlattenWarning>, WriteSceneError> {
         write_threemf_with_progress(scene, writer, progress).map_err(WriteSceneError::from)?;
-        // Nothing is flattened or dropped: meshes, groups, names and
-        // transforms all survive, so there is never a warning.
+        // Nothing is flattened or dropped: meshes, groups and
+        // transforms all survive (names survive cleaned), so there
+        // is never a warning.
         Ok(Vec::new())
     }
 }

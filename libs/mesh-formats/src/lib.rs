@@ -7,6 +7,7 @@
  */
 
 mod ascii_name;
+mod clean_name;
 pub mod error;
 pub mod filetypes;
 pub mod loader;

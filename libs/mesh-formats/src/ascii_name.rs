@@ -16,6 +16,8 @@
 
 use any_ascii::any_ascii;
 
+use crate::clean_name::CleanName;
+
 /// A mesh name folded for emission into a line-oriented ASCII
 /// format. Invariants, established by [`AsciiName::fold`]:
 ///
@@ -28,30 +30,16 @@ pub(crate) struct AsciiName(String);
 impl AsciiName {
     /// Folds an in-memory mesh name: transliterates non-ASCII
     /// content into ASCII (characters the transliteration tables
-    /// cannot map are dropped), removes non-whitespace control
-    /// characters, and collapses every whitespace run (line breaks
-    /// included) to 1 space, trimmed. Returns `None` when nothing
+    /// cannot map are dropped), then applies the shared clean step
+    /// ([`CleanName`]: control characters removed, whitespace runs
+    /// collapsed to 1 space, trimmed). Returns `None` when nothing
     /// survives; callers emit that as their nameless shape.
     pub(crate) fn fold(name: &str) -> Option<Self> {
-        let transliterated = any_ascii(name);
         // ASCII input passes through the transliteration verbatim,
-        // control characters included, so they are handled here. The
-        // non-whitespace ones are removed before the collapse;
-        // removing them afterwards could leave stray or doubled
-        // spaces behind. The whitespace ones survive this pass and
-        // are collapsed like any other whitespace.
-        let printable: String = transliterated
-            .chars()
-            .filter(|c| !c.is_control() || c.is_whitespace())
-            .collect();
-        let mut folded = String::with_capacity(printable.len());
-        for token in printable.split_whitespace() {
-            if !folded.is_empty() {
-                folded.push(' ');
-            }
-            folded.push_str(token);
-        }
-        (!folded.is_empty()).then_some(Self(folded))
+        // control characters included; the clean step removes them.
+        // Transliteration goes first: its output is ASCII, so the
+        // clean step's invariants bound the final string.
+        CleanName::clean(&any_ascii(name)).map(|cleaned| Self(cleaned.into_string()))
     }
 
     /// The folded name.

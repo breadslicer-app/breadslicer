@@ -28,8 +28,20 @@ use sc_mesh_core::scene::node::{Node, NodeId, NodeKind, SubtreeResourceId};
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, Scene, SceneError};
 
+use crate::clean_name::CleanName;
 use crate::error::WriteThreeMfError;
 use crate::ports::WriteSceneProgress;
+
+/// Object and Title names as emitted into the model XML: cleaned
+/// ([`CleanName`]: control characters and noncharacters removed,
+/// whitespace runs collapsed, trimmed), charset untouched. Beyond
+/// name hygiene this is what keeps the document well-formed: XML
+/// 1.0 forbids most control characters outright, and quick-xml
+/// escapes markup, not illegal characters. A name that cleans to
+/// nothing is emitted as no name at all.
+fn cleaned_name(name: Option<&str>) -> Option<String> {
+    name.and_then(CleanName::clean).map(CleanName::into_string)
+}
 
 // Serialized-byte distance between 2 consecutive serialise-phase
 // reports. Matches the throttle the project-file writer uses for the
@@ -206,10 +218,10 @@ pub fn scene_to_model_document(graph: &Scene) -> Result<ModelDocument, WriteThre
     }
 
     if let Some(meta) = graph.meta() {
-        if let Some(name) = &meta.name {
+        if let Some(name) = meta.name.as_deref().and_then(CleanName::clean) {
             builder.document.metadata.push(Metadata {
                 name: "Title".to_string(),
-                value: name.clone(),
+                value: name.into_string(),
                 preserve: false,
                 value_type: None,
             });
@@ -286,7 +298,7 @@ impl<'graph> DocumentBuilder<'graph> {
                 self.document.objects.push(ObjectResource {
                     id,
                     object_type: ObjectType::Model,
-                    name: mesh.meta().as_ref().and_then(|m| m.name.clone()),
+                    name: cleaned_name(mesh.meta().as_ref().and_then(|m| m.name.as_deref())),
                     partnumber: None,
                     property_ref: None,
                     slice_stack: None,
@@ -310,7 +322,7 @@ impl<'graph> DocumentBuilder<'graph> {
                 self.document.objects.push(ObjectResource {
                     id,
                     object_type: ObjectType::Model,
-                    name: node.meta.as_ref().and_then(|m| m.name.clone()),
+                    name: cleaned_name(node.meta.as_ref().and_then(|m| m.name.as_deref())),
                     partnumber: None,
                     property_ref: None,
                     slice_stack: None,
