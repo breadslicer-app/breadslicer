@@ -26,9 +26,9 @@ use sc_print_glue::{
 };
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
-    LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, MaterialProfile, PrinterProfile,
-    ResolveError, UserLibraryDirError, load_material_profile_by_id, load_printer_profile_by_id,
-    resolve_layer_height, user_library_dir,
+    EffectiveMaterial, LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, MaterialProfile,
+    PrinterProfile, ResolveError, UserLibraryDirError, load_material_profile_by_id,
+    load_printer_profile_by_id, resolve_layer_height, user_library_dir,
 };
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
@@ -163,7 +163,8 @@ pub(crate) fn build_slice_profile(
     aa_level: AaLevel,
     scene: &Scene,
 ) -> Result<SliceProfile, SliceFailure> {
-    let layer_height = resolve_layer_height(printer, resin).map_err(SliceFailure::Resolve)?;
+    let material = EffectiveMaterial::from(resin.clone());
+    let layer_height = resolve_layer_height(printer, &material).map_err(SliceFailure::Resolve)?;
     let first_layer_height = first_layer_height.unwrap_or(layer_height);
     let z_max = scene_top_z(scene)?;
     let total_layers =
@@ -446,7 +447,12 @@ z = 0.0
 
         let (printer, resin) = fixtures();
         assert!(
-            resolve(&printer, &resin, &SceneOverrides::default()).is_err(),
+            resolve(
+                &printer,
+                &EffectiveMaterial::from(resin.clone()),
+                &SceneOverrides::default(),
+            )
+            .is_err(),
             "the fixture pairing must be one a full resolve rejects",
         );
 

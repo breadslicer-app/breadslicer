@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Composition of a printer profile, a material profile, and a set
-//! of per-print scene overrides into a [`ResolvedPrintConfig`].
+//! Composition of a printer profile, an effective material, and a
+//! set of per-print scene overrides into a [`ResolvedPrintConfig`].
 //!
 //! The public entry point is [`resolve`]. The pipeline runs the
 //! following layers:
@@ -44,10 +44,10 @@ use sc_print_primitives::{
     PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
 };
 
+use crate::effective_material::EffectiveMaterial;
 use crate::material_defaults::MaterialDefaults;
 use crate::material_intent::MaterialIntent;
 use crate::material_per_printer::MaterialPerPrinter;
-use crate::material_profile::MaterialProfile;
 use crate::material_resolved::MaterialResolved;
 use crate::override_record::OverrideRecord;
 use crate::policy::{
@@ -76,18 +76,23 @@ pub(crate) struct PickedValues {
 
 pub(crate) fn pick_and_derive_material(
     printer: &PrinterProfile,
-    material: &MaterialProfile,
+    material: &EffectiveMaterial,
 ) -> (PickedValues, Vec<ResolveWarning>, Vec<OverrideRecord>) {
     let mut picked = PickedValues::default();
     let mut warnings = Vec::new();
     let mut records = Vec::new();
 
-    if let Some(per_printer) = material.per_printer.get(&printer.identity.id) {
+    if let Some(per_printer) = material.per_printer().get(&printer.identity.id) {
         apply_per_printer(per_printer, &mut picked, &mut records);
     }
-    apply_defaults(&material.defaults, &mut picked, &mut warnings, &mut records);
+    apply_defaults(
+        material.defaults(),
+        &mut picked,
+        &mut warnings,
+        &mut records,
+    );
     apply_intent_derivation(
-        &material.intent,
+        material.intent(),
         &printer.constraints,
         &mut picked,
         &mut warnings,
@@ -438,7 +443,7 @@ pub(crate) fn apply_scene_overrides(
 
 fn assemble(
     printer: PrinterProfile,
-    material: &MaterialProfile,
+    material: &EffectiveMaterial,
     picked: PickedValues,
     overrides_applied: Vec<OverrideRecord>,
     warnings: Vec<ResolveWarning>,
@@ -492,7 +497,7 @@ fn assemble(
     Ok(ResolvedPrintConfig {
         printer,
         material_resolved: MaterialResolved {
-            identity: material.identity.clone(),
+            identity: material.identity().clone(),
             layer_height_mm,
             normal_exposure_sec,
             bottom_exposure_sec,
@@ -507,7 +512,7 @@ fn assemble(
     })
 }
 
-/// Compose a printer profile, a material profile, and a set of
+/// Compose a printer profile, an effective material, and a set of
 /// per-print scene overrides into a fully-resolved print
 /// configuration.
 ///
@@ -518,7 +523,7 @@ fn assemble(
 /// supplied a required value.
 pub fn resolve(
     printer: &PrinterProfile,
-    material: &MaterialProfile,
+    material: &EffectiveMaterial,
     overrides: &SceneOverrides,
 ) -> Result<ResolvedPrintConfig, ResolveError> {
     let (mut picked, mut warnings, mut records) = pick_and_derive_material(printer, material);
@@ -546,7 +551,7 @@ pub fn resolve(
 /// intent nor a default supplies a layer height.
 pub fn resolve_layer_height(
     printer: &PrinterProfile,
-    material: &MaterialProfile,
+    material: &EffectiveMaterial,
 ) -> Result<PositiveFiniteMm, ResolveError> {
     let (mut picked, mut warnings, _records) = pick_and_derive_material(printer, material);
     apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;

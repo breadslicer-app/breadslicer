@@ -17,6 +17,7 @@
 //! This crate does not depend on the slicer; it owns the printer- and
 //! material-profile bounded context.
 
+pub mod effective_material;
 pub mod library;
 pub mod listing;
 pub mod loader;
@@ -43,6 +44,7 @@ pub mod scene_overrides;
 pub mod value_source;
 pub mod writer;
 
+pub use effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 pub use library::{UserLibraryDirError, user_library_dir};
 pub use listing::{
     ListLibraryError, list_material_extension_ids, list_material_ids, list_printer_ids,
@@ -85,6 +87,8 @@ pub use writer::{
     save_material_profile_to_library, save_material_profile_to_path,
 };
 
+#[cfg(test)]
+mod tests_effective_material;
 #[cfg(test)]
 mod tests_library;
 #[cfg(test)]

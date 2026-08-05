@@ -8,6 +8,7 @@ use sc_print_primitives::{
     ScaleCompensationPercent, SpeedRangeMmPerMin,
 };
 
+use super::effective_material::EffectiveMaterial;
 use super::material_profile::MaterialProfile;
 use super::printer_constraints::PrinterConstraints;
 use super::printer_profile::PrinterProfile;
@@ -106,8 +107,9 @@ fn printer_with_coarse_z_step() -> PrinterProfile {
     toml_edit::de::from_str(PRINTER_WITH_COARSE_Z_STEP).unwrap()
 }
 
-fn material(toml: &str) -> MaterialProfile {
-    toml_edit::de::from_str(toml).unwrap()
+fn material(toml: &str) -> EffectiveMaterial {
+    let profile: MaterialProfile = toml_edit::de::from_str(toml).unwrap();
+    EffectiveMaterial::from(profile)
 }
 
 const GENERIC_MATERIAL: &str = r#"

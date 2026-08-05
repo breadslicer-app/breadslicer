@@ -6,7 +6,9 @@
 use std::num::NonZeroU32;
 
 use sc_print_primitives::PositiveFiniteMm;
-use sc_print_profiles::{MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides};
+use sc_print_profiles::{
+    EffectiveMaterial, MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides,
+};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode};
 
 use super::projection::{project_hardware_to_slice_profile, project_to_slice_profile};
@@ -66,6 +68,7 @@ retract_speed_mm_min = 150.0
 fn resolved_config() -> ResolvedPrintConfig {
     let printer: PrinterProfile = toml_edit::de::from_str(PRINTER_TOML).unwrap();
     let material: MaterialProfile = toml_edit::de::from_str(MATERIAL_TOML).unwrap();
+    let material = EffectiveMaterial::from(material);
     sc_print_profiles::resolve(&printer, &material, &SceneOverrides::default()).unwrap()
 }
 

@@ -30,13 +30,15 @@ print with. `SceneOverrides::default()` means "no per-print adjustments".
 
 ```rust
 use sc_print_profiles::{
-    SceneOverrides, load_material_profile_from_path, load_printer_profile_from_path, resolve,
+    EffectiveMaterial, SceneOverrides, load_material_profile_from_path,
+    load_printer_profile_from_path, resolve,
 };
 
 let printer = load_printer_profile_from_path("elegoo-saturn-4-ultra.toml".as_ref())?;
 let resin = load_material_profile_from_path("sirayatech-blu.toml".as_ref())?;
+let material = EffectiveMaterial::from(resin);
 
-let config = resolve(&printer, &resin, &SceneOverrides::default())?;
+let config = resolve(&printer, &material, &SceneOverrides::default())?;
 
 let values = &config.material_resolved;
 println!(
@@ -73,7 +75,7 @@ let overrides = SceneOverrides {
     ..SceneOverrides::default()
 };
 
-let config = resolve(&printer, &resin, &overrides)?;
+let config = resolve(&printer, &material, &overrides)?;
 
 for record in &config.overrides_applied {
     println!("{record:?}");

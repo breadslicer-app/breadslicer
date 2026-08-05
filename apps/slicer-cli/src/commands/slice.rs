@@ -19,9 +19,9 @@ use sc_mesh_formats::load_mesh_from_path;
 use sc_print_glue::{project_to_slice_profile, total_layers_for_height};
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
-    MaterialProfile, PrinterProfile, SceneOverrides, load_material_profile_by_id,
-    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_path,
-    resolve,
+    EffectiveMaterial, MaterialProfile, PrinterProfile, SceneOverrides,
+    load_material_profile_by_id, load_material_profile_from_path, load_printer_profile_by_id,
+    load_printer_profile_from_path, resolve,
 };
 use sc_sl1cer::contour::merge_stacks;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
@@ -74,6 +74,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     let assets_dir = resolve_assets_profiles_dir();
     let printer = load_printer_profile(&args.printer_profile, &library_dir, &assets_dir)?;
     let material = load_material_profile(&args.material_profile, &library_dir, &assets_dir)?;
+    let material = EffectiveMaterial::from(material);
 
     let overrides = SceneOverrides {
         layer_height_mm: args.layer_height,
