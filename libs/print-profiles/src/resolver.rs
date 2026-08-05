@@ -545,16 +545,35 @@ pub fn resolve(
 /// into geometry with any printer + material pairing, leaving the full
 /// print configuration for the SLA output step.
 ///
+/// A present `requested` value is a per-print choice that replaces
+/// the profile-supplied height and runs the same constraint policy
+/// chain, mirroring the layer-height arm of [`resolve`]'s scene
+/// overrides; with a request present, the profiles do not need to
+/// supply a layer height at all.
+///
 /// Errors with [`ResolveError::RejectedBelowMinimum`] when the layer
 /// height violates a printer constraint, or with
-/// [`ResolveError::MissingRequiredField`] when neither the material's
-/// intent nor a default supplies a layer height.
+/// [`ResolveError::MissingRequiredField`] when `requested` is absent
+/// and neither the material's intent nor a default supplies a layer
+/// height.
 pub fn resolve_layer_height(
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
+    requested: Option<PositiveFiniteMm>,
 ) -> Result<PositiveFiniteMm, ResolveError> {
     let (mut picked, mut warnings, _records) = pick_and_derive_material(printer, material);
     apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;
+    if let Some(value) = requested {
+        let snapped = apply_field_policies(
+            ResolvedField::LayerHeightMm,
+            value.value(),
+            &printer.constraints,
+            &mut warnings,
+        )?;
+        return Ok(
+            PositiveFiniteMm::new(snapped).expect("snapped layer height stays positive-finite")
+        );
+    }
     picked
         .layer_height_mm
         .ok_or(ResolveError::MissingRequiredField {

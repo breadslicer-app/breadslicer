@@ -168,7 +168,7 @@ pub(crate) fn build_slice_profile(
     aa_level: AaLevel,
     scene: &Scene,
 ) -> Result<SliceProfile, SliceFailure> {
-    let layer_height = resolve_layer_height(printer, resin).map_err(SliceFailure::Resolve)?;
+    let layer_height = resolve_layer_height(printer, resin, None).map_err(SliceFailure::Resolve)?;
     slice_profile_for_scene(
         scene,
         &printer.hardware,

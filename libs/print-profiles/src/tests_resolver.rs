@@ -107,6 +107,34 @@ fn printer_with_coarse_z_step() -> PrinterProfile {
     toml_edit::de::from_str(PRINTER_WITH_COARSE_Z_STEP).unwrap()
 }
 
+const PRINTER_WITH_LAYER_HEIGHT_RANGE: &str = r#"
+[identity]
+id = "ranged-printer"
+manufacturer = "Example"
+family = "Ranged"
+name = "Ranged"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+supports_grayscale = true
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+layer_height_range_mm = { min = 0.03, max = 0.1 }
+"#;
+
+fn printer_with_layer_height_range() -> PrinterProfile {
+    toml_edit::de::from_str(PRINTER_WITH_LAYER_HEIGHT_RANGE).unwrap()
+}
+
 fn material(toml: &str) -> EffectiveMaterial {
     let profile: MaterialProfile = toml_edit::de::from_str(toml).unwrap();
     EffectiveMaterial::from(profile)
@@ -149,7 +177,10 @@ fn resolve_layer_height_succeeds_without_exposure_calibration() {
             field: ResolvedField::NormalExposureSec,
         }),
     ));
-    assert_eq!(resolve_layer_height(&printer, &mat).unwrap().value(), 0.05);
+    assert_eq!(
+        resolve_layer_height(&printer, &mat, None).unwrap().value(),
+        0.05,
+    );
 }
 
 #[test]
@@ -194,9 +225,7 @@ retract_speed_mm_min = 160.0
     assert_eq!(values.retract_speed_mm_min.value(), 160.0);
 }
 
-#[test]
-fn resolve_layer_height_errors_when_no_layer_height_is_available() {
-    let toml = r#"
+const MATERIAL_WITHOUT_LAYER_HEIGHT: &str = r#"
 [identity]
 id = "standard-405"
 brand = "Default"
@@ -210,8 +239,15 @@ profile_version = "1.0.0"
 
 [per_printer]
 "#;
+
+#[test]
+fn resolve_layer_height_errors_when_no_layer_height_is_available() {
     assert!(matches!(
-        resolve_layer_height(&printer_without_light_intensity(), &material(toml)),
+        resolve_layer_height(
+            &printer_without_light_intensity(),
+            &material(MATERIAL_WITHOUT_LAYER_HEIGHT),
+            None,
+        ),
         Err(ResolveError::MissingRequiredField {
             field: ResolvedField::LayerHeightMm,
         }),
@@ -238,7 +274,77 @@ target_layer_height_mm = 0.02
 
 [per_printer]
 "#;
-    let resolved = resolve_layer_height(&printer_with_coarse_z_step(), &material(toml)).unwrap();
+    let resolved =
+        resolve_layer_height(&printer_with_coarse_z_step(), &material(toml), None).unwrap();
+    assert_eq!(resolved.value(), 0.05);
+}
+
+fn mm(value: f64) -> PositiveFiniteMm {
+    PositiveFiniteMm::new(value).expect("test lengths are positive finite")
+}
+
+#[test]
+fn a_requested_layer_height_replaces_the_picked_value() {
+    // The material's intent says 0.05; the user asks for 0.03, which
+    // satisfies the 0.01 z step and wins.
+    let resolved = resolve_layer_height(
+        &printer_without_light_intensity(),
+        &material(GENERIC_MATERIAL),
+        Some(mm(0.03)),
+    )
+    .unwrap();
+    assert_eq!(resolved.value(), 0.03);
+}
+
+#[test]
+fn a_requested_layer_height_is_snapped_to_the_z_step() {
+    // 0.08 against a 0.05 z step: 1.6 multiples rounds to 2, so the
+    // requested height snaps to 0.1, through the same policy chain a
+    // profile-supplied value runs.
+    let resolved = resolve_layer_height(
+        &printer_with_coarse_z_step(),
+        &material(GENERIC_MATERIAL),
+        Some(mm(0.08)),
+    )
+    .unwrap();
+    assert_eq!(resolved.value(), 0.1);
+}
+
+#[test]
+fn a_requested_height_below_half_a_step_snaps_up_to_one_step() {
+    // Mirror of the intent-value totality pin: a request rounding to
+    // 0 multiples resolves to the first multiple, never 0.
+    let resolved = resolve_layer_height(
+        &printer_with_coarse_z_step(),
+        &material(GENERIC_MATERIAL),
+        Some(mm(0.02)),
+    )
+    .unwrap();
+    assert_eq!(resolved.value(), 0.05);
+}
+
+#[test]
+fn a_requested_layer_height_is_clamped_into_the_declared_range() {
+    // Range [0.03, 0.1], request 0.2: clamps to the range maximum.
+    let resolved = resolve_layer_height(
+        &printer_with_layer_height_range(),
+        &material(GENERIC_MATERIAL),
+        Some(mm(0.2)),
+    )
+    .unwrap();
+    assert_eq!(resolved.value(), 0.1);
+}
+
+#[test]
+fn a_requested_height_resolves_even_without_a_material_layer_height() {
+    // With a request present the material's missing layer height is
+    // irrelevant, mirroring the full resolver's override arm.
+    let resolved = resolve_layer_height(
+        &printer_without_light_intensity(),
+        &material(MATERIAL_WITHOUT_LAYER_HEIGHT),
+        Some(mm(0.05)),
+    )
+    .unwrap();
     assert_eq!(resolved.value(), 0.05);
 }
 
