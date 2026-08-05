@@ -10,6 +10,7 @@ keywords = ["3d", "mesh", "stl"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [dependencies]
+any_ascii.workspace = true
 float-cmp.workspace = true
 rayon.workspace = true
 sc-3mf.workspace = true

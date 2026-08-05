@@ -6,6 +6,13 @@
  * A "SoulCrafted" library to read, write and manipulate 3d mesh data
  */
 
+// The expectation holds only until the first writer adopts the
+// fold; the compiler then flags it as unfulfilled and it gets
+// removed together with this comment. Scoped to non-test builds:
+// the test targets already use the module through its test
+// modules.
+#[cfg_attr(not(test), expect(dead_code))]
+mod ascii_name;
 pub mod error;
 pub mod filetypes;
 pub mod loader;

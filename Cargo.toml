@@ -43,6 +43,7 @@ sc-project-formats = { path = "libs/project-formats", version = "0.1.0" }
 sc-sl1cer = { path = "libs/sl1cer", version = "0.1.0" }
 sc-sla-formats = { path = "libs/sla-formats", version = "0.1.0" }
 
+any_ascii = "0.3.3"
 anyhow = "1.0.102"
 crc32fast = "1.5.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
