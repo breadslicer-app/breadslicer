@@ -8,9 +8,10 @@
 //! sequence must produce the same outcome through both: same scene
 //! shape, same per-leaf mesh bits (metadata, vertex order and bit
 //! patterns, face normals and index values), same warning list on
-//! success, and the same error value on failure. The one concession is
-//! the invalid-UTF-8 io error, compared by kind and message rather
-//! than by internal representation.
+//! success, and the same error value on failure. Two concessions: the
+//! invalid-UTF-8 io error compares by kind and message only, and the
+//! reference reader gets its input with trailing NULs pre-stripped,
+//! since it has no strip of its own.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Cursor, Read};
@@ -27,7 +28,7 @@ use sc_mesh_core::{
     Vertex,
 };
 
-use super::reader::{Caps, read_obj_with_caps};
+use super::reader::{Caps, read_obj_with_caps, strip_trailing_nuls};
 use crate::error::LoadObjError;
 use crate::messages::LoadObjWarning;
 
@@ -504,14 +505,16 @@ fn scene_bits(scene: &Scene) -> SceneBits {
     (scene.meta().clone(), scene.roots().len(), leaves)
 }
 
-/// Runs both readers over the same bytes and asserts the outcomes
-/// match: scene bits plus warnings on success, error values (via their
+/// Runs both readers and asserts the outcomes match: scene bits plus
+/// warnings on success, error values (via their
 /// Debug form) on failure. Io errors compare by kind and message,
 /// since the internal representation of the invalid-UTF-8 error
 /// differs between `BufRead::lines` and the slice reader's
 /// reconstruction.
 fn assert_equivalent_with_caps(bytes: &[u8], caps: Caps) {
-    let expected = reference_read_obj(&mut Cursor::new(bytes), caps);
+    // The reference reader has no internal NUL strip; pre-strip its
+    // input so both sides parse the same document.
+    let expected = reference_read_obj(&mut Cursor::new(strip_trailing_nuls(bytes)), caps);
     let actual = read_obj_with_caps(&mut Cursor::new(bytes), caps);
     match (&expected, &actual) {
         (Ok((expected_scene, expected_warnings)), Ok((actual_scene, actual_warnings))) => {

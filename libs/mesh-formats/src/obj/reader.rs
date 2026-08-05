@@ -187,6 +187,16 @@ where
     read_obj_slice(&bytes, caps)
 }
 
+/// Drops trailing NULs: ZBrush 2020 ends its OBJ exports with a lone
+/// NUL after the final newline.
+pub(super) fn strip_trailing_nuls(bytes: &[u8]) -> &[u8] {
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == 0 {
+        end -= 1;
+    }
+    &bytes[..end]
+}
+
 /// Reads an OBJ document from an in-memory byte slice.
 ///
 /// UTF-8 validity is only required up to the line the parse stops at:
@@ -194,6 +204,7 @@ where
 /// grammar error in an earlier line still wins over an invalid
 /// sequence further down the file.
 fn read_obj_slice(bytes: &[u8], caps: Caps) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
+    let bytes = strip_trailing_nuls(bytes);
     match str::from_utf8(bytes) {
         Ok(text) => parse_document(text, caps),
         Err(utf8_error) => {
@@ -842,6 +853,13 @@ mod read_obj_tests {
 
     fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadObjWarning>), super::LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
+        read_obj(&mut reader)
+    }
+
+    fn read_obj_from_bytes(
+        bytes: &[u8],
+    ) -> Result<(Scene, Vec<LoadObjWarning>), super::LoadObjError> {
+        let mut reader = Cursor::new(bytes);
         read_obj(&mut reader)
     }
 
@@ -1653,6 +1671,59 @@ f 2 3 1
         // `f 2 3 1` → global indices 1, 2, 0 → local 0, 1, 2
         assert_eq!(mesh.vertices().len(), 3);
         assert_eq!(mesh.faces()[0].vertices.map(u32::from), [0, 1, 2]);
+    }
+
+    // --- Trailing-NUL tolerance (ZBrush-style junk terminator) ---
+
+    #[test]
+    fn trailing_nul_after_final_newline_is_ignored() {
+        let obj = b"v 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n\n\x00";
+        let (graph, warnings) = read_obj_from_bytes(obj).unwrap();
+        let mesh = single_mesh(&graph);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(mesh.vertices().len(), 3);
+        assert_eq!(mesh.faces().len(), 1);
+    }
+
+    #[test]
+    fn multiple_trailing_nuls_are_ignored() {
+        let obj = b"v 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n\x00\x00\x00";
+        let (graph, warnings) = read_obj_from_bytes(obj).unwrap();
+        let mesh = single_mesh(&graph);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(mesh.faces().len(), 1);
+    }
+
+    #[test]
+    fn trailing_nul_glued_to_the_final_token_is_ignored() {
+        let obj = b"v 0.0 0.0 0.0\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\x00";
+        let (graph, warnings) = read_obj_from_bytes(obj).unwrap();
+        let mesh = single_mesh(&graph);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(mesh.faces().len(), 1);
+    }
+
+    #[test]
+    fn nul_only_document_is_empty() {
+        let (graph, warnings) = read_obj_from_bytes(b"\x00").unwrap();
+        assert_eq!(
+            warnings,
+            vec![LoadObjWarning::NoVertices, LoadObjWarning::NoFaces]
+        );
+        assert_eq!(graph.reachable_leaf_count(), 0);
+    }
+
+    #[test]
+    fn nul_line_before_more_content_is_still_an_error() {
+        let obj = b"v 0.0 0.0 0.0\n\x00\nv 1.0 0.0 0.0\nv 0.0 1.0 0.0\nf 1 2 3\n";
+        let err = read_obj_from_bytes(obj).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                LoadObjError::UnrecognizedDirective { line: 2, directive } if directive == "\0",
+            ),
+            "{err:?}"
+        );
     }
 }
 
