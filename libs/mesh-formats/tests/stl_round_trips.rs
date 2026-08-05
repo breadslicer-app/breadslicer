@@ -234,7 +234,6 @@ mod stlb_header_roundtrip_tests {
     use super::*;
 
     use sc_mesh_formats::filetypes::MeshFileType;
-    use sc_mesh_formats::messages::{LoadMeshWarning, LoadStlWarning};
     use sc_mesh_formats::{LoadedMesh, load_mesh_from_reader};
 
     fn stlb_write_then_load(mesh: &IndexedMesh) -> LoadedMesh {
@@ -244,42 +243,66 @@ mod stlb_header_roundtrip_tests {
             .expect("written document loads back")
     }
 
+    fn loaded_name(loaded: &LoadedMesh) -> Option<String> {
+        single_leaf_mesh(&loaded.graph)
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.name.clone())
+    }
+
     #[test]
-    fn unicode_name_round_trips_through_stlb() {
+    fn unicode_name_round_trips_transliterated_through_stlb() {
+        // The writer emits ASCII-only names; the umlaut folds to its
+        // base letter.
         let loaded = stlb_write_then_load(&get_mesh_named("Küche"));
+        assert_eq!(loaded_name(&loaded).as_deref(), Some("Kuche"));
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn overlong_name_folds_to_exactly_80_bytes_and_survives() {
+        // 79 ASCII bytes plus a 2-byte char: folded, the accented
+        // char becomes its base letter and the name fits the 80-byte
+        // header exactly. The raw writer used to cut the char in 2
+        // and produce a non-text header (nameless load + warning).
+        let loaded = stlb_write_then_load(&get_mesh_named(&format!("{}é", "a".repeat(79))));
+        assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
         assert_eq!(
-            single_leaf_mesh(&loaded.graph)
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.name.clone())
-                .as_deref(),
-            Some("Küche"),
+            loaded_name(&loaded).as_deref(),
+            Some(format!("{}e", "a".repeat(79)).as_str()),
         );
         assert!(loaded.warnings.is_empty());
     }
 
     #[test]
-    fn overlong_name_truncation_loads_nameless() {
-        // 79 ASCII bytes plus a 2-byte char: the writer cuts the char
-        // at the fixed 80-byte header width, so the header comes back
-        // as non-text. The document still loads, nameless, with the
-        // header warning.
-        let loaded = stlb_write_then_load(&get_mesh_named(&format!("{}é", "a".repeat(79))));
-        assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
+    fn long_ascii_name_truncates_silently_to_the_80_byte_header() {
+        // The 80-byte cap is the format's; the cut is deliberate and
+        // carries no warning (there is no write-warning channel).
+        let loaded = stlb_write_then_load(&get_mesh_named(&"a".repeat(100)));
         assert_eq!(
-            single_leaf_mesh(&loaded.graph)
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.name.clone()),
-            None,
+            loaded_name(&loaded).as_deref(),
+            Some("a".repeat(80).as_str())
         );
-        assert_eq!(
-            loaded
-                .warnings
-                .iter()
-                .filter(|w| matches!(w, LoadMeshWarning::Stl(LoadStlWarning::HeaderNotText)))
-                .count(),
-            1,
-        );
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn tab_name_round_trips_collapsed() {
+        // Unfolded, the tab is a control character in the header and
+        // the whole name used to come back as a nameless load plus
+        // the header warning; folded, it collapses to a space like
+        // in the ASCII STL writer.
+        let loaded = stlb_write_then_load(&get_mesh_named("a\tb"));
+        assert_eq!(loaded_name(&loaded).as_deref(), Some("a b"));
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn nul_name_round_trips_with_the_nul_removed() {
+        // Unfolded, the NUL used to act as the header terminator and
+        // silently amputate the name to "a".
+        let loaded = stlb_write_then_load(&get_mesh_named("a\0b"));
+        assert_eq!(loaded_name(&loaded).as_deref(), Some("ab"));
+        assert!(loaded.warnings.is_empty());
     }
 }

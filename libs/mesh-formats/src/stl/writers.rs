@@ -5,6 +5,7 @@
 
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 
+use crate::ascii_name::AsciiName;
 use crate::error::WriteStlError;
 use crate::ports::WriteSceneProgress;
 use crate::scene_writer::SerializeTally;
@@ -103,6 +104,12 @@ where
     Ok(())
 }
 
+/// Writes the mesh as binary STL. The mesh name lands in the
+/// 80-byte header folded to printable ASCII ([`AsciiName`]); a
+/// folded name longer than the header is silently truncated to the
+/// first 80 bytes, the cap being the format's own. A name that
+/// folds to nothing leaves the header all zeros, like a nameless
+/// mesh.
 pub fn write_stlb<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
@@ -121,15 +128,17 @@ where
     W: std::io::Write,
     F: FnMut(WriteSceneProgress),
 {
-    // Header: mesh name (zero-padded) in STL_HEADER_BYTES.
+    // Header: the folded mesh name (zero-padded) in
+    // STL_HEADER_BYTES; see the `write_stlb` doc for the folding
+    // and truncation contract.
     let mut header = [0u8; STL_HEADER_BYTES];
     if let Some(MeshMetadata {
         name: Some(name), ..
     }) = &mesh.meta()
+        && let Some(folded) = AsciiName::fold(name)
     {
-        let bytes = name.as_bytes();
-        let len = bytes.len().min(STL_HEADER_BYTES);
-        header[..len].copy_from_slice(&bytes[..len]);
+        let text = folded.truncated_to_bytes(STL_HEADER_BYTES);
+        header[..text.len()].copy_from_slice(text.as_bytes());
     }
     writer.write_all(&header)?;
 
@@ -489,6 +498,19 @@ mod test_write_stlb {
         // Header starts with "my_mesh", rest is zeros
         assert_eq!(&out[..7], b"my_mesh");
         assert!(out[7..STL_HEADER_BYTES].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn han_name_is_transliterated_in_header() {
+        let mesh = make_mesh(Some(MeshMetadata {
+            name: Some("深圳".into()),
+            ..Default::default()
+        }));
+        let mut out: Vec<u8> = vec![];
+        write_stlb(&mesh, &mut out).unwrap();
+
+        assert_eq!(&out[..8], b"ShenZhen");
+        assert!(out[8..STL_HEADER_BYTES].iter().all(|&b| b == 0));
     }
 
     #[test]

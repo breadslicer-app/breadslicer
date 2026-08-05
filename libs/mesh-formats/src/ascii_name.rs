@@ -63,11 +63,6 @@ impl AsciiName {
     /// trailing space the cut exposes trimmed away. Every byte is
     /// ASCII by construction, so the byte cut can never split a
     /// character.
-    // The expectation holds only until the binary STL writer adopts
-    // the truncation; the compiler then flags it as unfulfilled and
-    // it gets removed together with this comment. Scoped to
-    // non-test builds: the test target already uses the method.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn truncated_to_bytes(&self, cap: usize) -> &str {
         self.0[..self.0.len().min(cap)].trim_end()
     }
