@@ -32,7 +32,9 @@ pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
     slice_input_fingerprint, validate_persisted_slices,
 };
-pub use prepare::{UnsliceableScene, slice_profile_for_scene};
+pub use prepare::{
+    UnsliceableScene, UnsliceableSelection, slice_profile_for_scene, slice_profile_for_selection,
+};
 pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,

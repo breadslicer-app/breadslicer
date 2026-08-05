@@ -11,10 +11,15 @@ use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::PositiveFiniteMm;
-use sc_print_profiles::{PrinterHardware, PrinterProfile};
+use sc_print_profiles::{
+    EffectiveMaterial, MaterialProfile, PrinterHardware, PrinterProfile, ResolveError,
+    SceneOverrides, resolve,
+};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
 
-use super::prepare::{UnsliceableScene, slice_profile_for_scene};
+use super::prepare::{
+    UnsliceableScene, UnsliceableSelection, slice_profile_for_scene, slice_profile_for_selection,
+};
 use super::projection::UnschedulableHeight;
 
 const PRINTER_TOML: &str = r#"
@@ -40,10 +45,43 @@ has_camera = false
 [constraints]
 "#;
 
+fn printer() -> PrinterProfile {
+    toml_edit::de::from_str(PRINTER_TOML).expect("printer fixture parses")
+}
+
 fn hardware() -> PrinterHardware {
-    let printer: PrinterProfile =
-        toml_edit::de::from_str(PRINTER_TOML).expect("printer fixture parses");
-    printer.hardware
+    printer().hardware
+}
+
+// A generic material: an intent layer height, no per-printer
+// calibration, so full `resolve` rejects any pairing with it while
+// the layer height alone resolves.
+const GENERIC_MATERIAL_TOML: &str = r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer]
+"#;
+
+fn generic_material() -> EffectiveMaterial {
+    let profile: MaterialProfile =
+        toml_edit::de::from_str(GENERIC_MATERIAL_TOML).expect("material fixture parses");
+    EffectiveMaterial::from(profile)
 }
 
 fn mm(value: f64) -> PositiveFiniteMm {
@@ -270,6 +308,94 @@ fn the_fixture_trio_derives_the_expected_schedules() {
         assert_eq!(first_layer_height, 0.05);
         assert_eq!(total, expected_layers);
     }
+}
+
+#[test]
+fn a_selection_without_print_calibration_still_slices() {
+    // Geometry slicing consumes the layer height only; the exposure
+    // and motion calibration belongs to the printer-file export
+    // step. The fixture pairing is one full `resolve` rejects, yet
+    // the selection entry produces a profile.
+    let (printer, material) = (printer(), generic_material());
+    assert!(
+        resolve(&printer, &material, &SceneOverrides::default()).is_err(),
+        "the fixture pairing must be one a full resolve rejects",
+    );
+
+    let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
+    let profile = slice_profile_for_selection(
+        &scene,
+        &printer,
+        &material,
+        None,
+        None,
+        AaLevel::Off,
+        PackingMode::None,
+    )
+    .expect("a selection without print calibration must still slice");
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.05, 20));
+    assert_eq!(profile.build_volume().x_mm(), 153.36);
+}
+
+#[test]
+fn a_layer_height_request_reaches_the_schedule() {
+    // Request 0.1 over an intent of 0.05: the request wins and the
+    // layer count follows it (z_max 0.97, first layer 0.1 fallback:
+    // beyond = 0.87, ceil(0.87 / 0.1) = 9, total = 10).
+    let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
+    let profile = slice_profile_for_selection(
+        &scene,
+        &printer(),
+        &generic_material(),
+        Some(mm(0.1)),
+        None,
+        AaLevel::Off,
+        PackingMode::None,
+    )
+    .expect("a valid request derives");
+    assert_eq!(uniform_schedule(&profile), (0.1, 0.1, 10));
+}
+
+#[test]
+fn an_unresolvable_layer_height_is_a_selection_failure() {
+    // Strip the intent so nothing supplies a layer height and no
+    // request is made.
+    let material_toml = GENERIC_MATERIAL_TOML.replace("target_layer_height_mm = 0.05", "");
+    let profile: MaterialProfile =
+        toml_edit::de::from_str(&material_toml).expect("material fixture parses");
+    let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
+    let result = slice_profile_for_selection(
+        &scene,
+        &printer(),
+        &EffectiveMaterial::from(profile),
+        None,
+        None,
+        AaLevel::Off,
+        PackingMode::None,
+    );
+    assert!(matches!(
+        result,
+        Err(UnsliceableSelection::LayerHeight(
+            ResolveError::MissingRequiredField { .. }
+        ))
+    ));
+}
+
+#[test]
+fn a_scene_failure_passes_through_the_selection_entry() {
+    let result = slice_profile_for_selection(
+        &Scene::new(),
+        &printer(),
+        &generic_material(),
+        None,
+        None,
+        AaLevel::Off,
+        PackingMode::None,
+    );
+    assert!(matches!(
+        result,
+        Err(UnsliceableSelection::Scene(UnsliceableScene::NoGeometry))
+    ));
 }
 
 #[test]

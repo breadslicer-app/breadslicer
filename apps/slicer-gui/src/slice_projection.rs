@@ -21,13 +21,14 @@ use std::fmt;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
 use sc_print_glue::{
-    SliceInputFingerprintError, UnschedulableHeight, UnsliceableScene, slice_profile_for_scene,
+    SliceInputFingerprintError, UnschedulableHeight, UnsliceableScene, UnsliceableSelection,
+    slice_profile_for_selection,
 };
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
     EffectiveMaterial, LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, PrinterProfile,
     ResolveError, UserLibraryDirError, compose_with_library_extension, load_material_profile_by_id,
-    load_printer_profile_by_id, resolve_layer_height, user_library_dir,
+    load_printer_profile_by_id, user_library_dir,
 };
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
@@ -132,6 +133,15 @@ impl From<UnsliceableScene> for SliceFailure {
     }
 }
 
+impl From<UnsliceableSelection> for SliceFailure {
+    fn from(err: UnsliceableSelection) -> Self {
+        match err {
+            UnsliceableSelection::LayerHeight(err) => Self::Resolve(err),
+            UnsliceableSelection::Scene(err) => err.into(),
+        }
+    }
+}
+
 /// Load the full printer and resin profiles named by their ids, using
 /// the same roots the catalog walks: the user library first, then the
 /// bundled profiles. The resin's same-id extension from the user
@@ -155,12 +165,13 @@ pub(crate) fn load_selected_profiles(
     Ok((printer_profile, material))
 }
 
-/// Build a [`SliceProfile`] for the current scene. Resolves the layer
-/// height (the only material parameter geometry slicing needs; the
-/// exposure and motion parameters belong to the SLA output step) and
-/// delegates the scene measurement, the first-layer fallback, the
-/// layer-count derivation and the hardware projection to
-/// [`slice_profile_for_scene`].
+/// Build a [`SliceProfile`] for the current scene through the shared
+/// selection entry: the layer height is the only material parameter
+/// geometry slicing needs (the exposure and motion parameters belong
+/// to the SLA output step), and the scene measurement, first-layer
+/// fallback, layer-count derivation and hardware projection all live
+/// in [`slice_profile_for_selection`]. No per-print layer-height
+/// request is wired here yet, so `None` is passed.
 pub(crate) fn build_slice_profile(
     printer: &PrinterProfile,
     resin: &EffectiveMaterial,
@@ -168,11 +179,11 @@ pub(crate) fn build_slice_profile(
     aa_level: AaLevel,
     scene: &Scene,
 ) -> Result<SliceProfile, SliceFailure> {
-    let layer_height = resolve_layer_height(printer, resin, None).map_err(SliceFailure::Resolve)?;
-    slice_profile_for_scene(
+    slice_profile_for_selection(
         scene,
-        &printer.hardware,
-        layer_height,
+        printer,
+        resin,
+        None,
         first_layer_height,
         aa_level,
         PackingMode::None,
@@ -241,6 +252,24 @@ mod unsliceable_scene_mapping_tests {
             UnschedulableHeight::NonFiniteHeight { z_max_mm: f64::NAN },
         ));
         assert!(matches!(failure, SliceFailure::Projection(_)));
+    }
+
+    #[test]
+    fn an_unresolvable_layer_height_maps_to_resolve() {
+        use sc_print_profiles::ResolvedField;
+
+        let failure = SliceFailure::from(UnsliceableSelection::LayerHeight(
+            ResolveError::MissingRequiredField {
+                field: ResolvedField::LayerHeightMm,
+            },
+        ));
+        assert!(matches!(failure, SliceFailure::Resolve(_)));
+    }
+
+    #[test]
+    fn a_selection_scene_failure_delegates_to_the_scene_mapping() {
+        let failure = SliceFailure::from(UnsliceableSelection::Scene(UnsliceableScene::NoGeometry));
+        assert!(matches!(failure, SliceFailure::EmptySceneGeometry));
     }
 }
 

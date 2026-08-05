@@ -5,21 +5,26 @@
 
 //! Preparation of a scene's slice profile.
 //!
-//! [`slice_profile_for_scene`] is the derivation both application
-//! frontends share: measure the scene's top, refuse a scene with no
-//! geometry or one whose top is at or below the build plate (z = 0),
-//! fall back to the layer height when no first-layer height is
-//! chosen, derive the layer count that covers the scene, and project
-//! the printer hardware onto the engine's input port. The layer
-//! height is an input here; resolving it against the printer and
-//! material profiles is the caller's step.
+//! [`slice_profile_for_selection`] is the entry both application
+//! frontends share: resolve the layer height for the chosen
+//! printer + material (the only material parameter geometry slicing
+//! consumes) and hand the scene to [`slice_profile_for_scene`],
+//! which measures the scene's top, refuses a scene with no geometry
+//! or one whose top is at or below the build plate (z = 0), falls
+//! back to the layer height when no first-layer height is chosen,
+//! derives the layer count that covers the scene, and projects the
+//! printer hardware onto the engine's input port. The scene-level
+//! entry takes the layer height as an input for callers that
+//! already hold a resolved value.
 
 use std::fmt;
 
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
 use sc_print_primitives::PositiveFiniteMm;
-use sc_print_profiles::PrinterHardware;
+use sc_print_profiles::{
+    EffectiveMaterial, PrinterHardware, PrinterProfile, ResolveError, resolve_layer_height,
+};
 use sc_sl1cer::profile::{AaLevel, PackingMode, SliceProfile};
 
 use crate::projection::{
@@ -69,6 +74,68 @@ impl std::error::Error for UnsliceableScene {
             Self::NoGeometry | Self::TopAtOrBelowPlate { .. } => None,
         }
     }
+}
+
+/// Why a printer + material selection cannot slice a scene.
+#[derive(Debug)]
+pub enum UnsliceableSelection {
+    /// No layer height resolves for the printer + material pairing.
+    LayerHeight(ResolveError),
+    /// The scene cannot yield a slice profile.
+    Scene(UnsliceableScene),
+}
+
+impl fmt::Display for UnsliceableSelection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LayerHeight(err) => write!(
+                f,
+                "no layer height resolves for this printer and material: {err}",
+            ),
+            Self::Scene(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for UnsliceableSelection {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::LayerHeight(err) => Some(err),
+            Self::Scene(err) => Some(err),
+        }
+    }
+}
+
+/// Build a [`SliceProfile`] for `scene` from a chosen printer and
+/// material.
+///
+/// Geometry slicing consumes exactly one material parameter, the
+/// layer height, resolved here through
+/// [`resolve_layer_height`] (with `layer_height_request` as the
+/// per-print choice, constraint-checked by the resolver). The full
+/// print configuration (exposure, motion, bottom layers) is the
+/// input of the printer-file export step and never gates slicing.
+/// The scene derivation itself is [`slice_profile_for_scene`].
+pub fn slice_profile_for_selection(
+    scene: &Scene,
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    layer_height_request: Option<PositiveFiniteMm>,
+    first_layer_height: Option<PositiveFiniteMm>,
+    aa_level: AaLevel,
+    packing_mode: PackingMode,
+) -> Result<SliceProfile, UnsliceableSelection> {
+    let layer_height = resolve_layer_height(printer, material, layer_height_request)
+        .map_err(UnsliceableSelection::LayerHeight)?;
+    slice_profile_for_scene(
+        scene,
+        &printer.hardware,
+        layer_height,
+        first_layer_height,
+        aa_level,
+        packing_mode,
+    )
+    .map_err(UnsliceableSelection::Scene)
 }
 
 /// Build a [`SliceProfile`] for `scene` from the printer hardware
