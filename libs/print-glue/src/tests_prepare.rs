@@ -84,6 +84,37 @@ fn generic_material() -> EffectiveMaterial {
     EffectiveMaterial::from(profile)
 }
 
+// Same hardware, but with a 0.05 mm z step and a declared
+// layer-height range, for the first-layer quantisation pins.
+const CONSTRAINED_PRINTER_TOML: &str = r#"
+[identity]
+id = "constrained-printer"
+manufacturer = "Example"
+family = "Constrained"
+name = "Constrained"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+supports_grayscale = true
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+z_step_mm = 0.05
+layer_height_range_mm = { min = 0.03, max = 0.1 }
+"#;
+
+fn constrained_printer() -> PrinterProfile {
+    toml_edit::de::from_str(CONSTRAINED_PRINTER_TOML).expect("printer fixture parses")
+}
+
 fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
 }
@@ -354,6 +385,46 @@ fn a_layer_height_request_reaches_the_schedule() {
     )
     .expect("a valid request derives");
     assert_eq!(uniform_schedule(&profile), (0.1, 0.1, 10));
+}
+
+#[test]
+fn a_first_layer_off_the_z_step_grid_is_quantised() {
+    // First layer 0.08 on a 0.05 z step snaps to 0.1; the layer
+    // height itself (0.05 from intent) is already on the grid.
+    // z_max 0.97, first 0.1: beyond = 0.87, ceil(0.87 / 0.05) = 18,
+    // total = 19.
+    let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
+    let profile = slice_profile_for_selection(
+        &scene,
+        &constrained_printer(),
+        &generic_material(),
+        None,
+        Some(mm(0.08)),
+        AaLevel::Off,
+        PackingMode::None,
+    )
+    .expect("valid derivation");
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.1, 19));
+}
+
+#[test]
+fn the_layer_height_range_does_not_bind_the_first_layer() {
+    // 0.2 sits outside the declared [0.03, 0.1] range but on the
+    // 0.05 grid: it passes unchanged. First layers legitimately run
+    // thicker than the normal-layer curing range. z_max 0.97, first
+    // 0.2: beyond = 0.77, ceil(0.77 / 0.05) = 16, total = 17.
+    let scene = leaf_scene(cube_mesh([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]));
+    let profile = slice_profile_for_selection(
+        &scene,
+        &constrained_printer(),
+        &generic_material(),
+        None,
+        Some(mm(0.2)),
+        AaLevel::Off,
+        PackingMode::None,
+    )
+    .expect("valid derivation");
+    assert_eq!(uniform_schedule(&profile), (0.05, 0.2, 17));
 }
 
 #[test]

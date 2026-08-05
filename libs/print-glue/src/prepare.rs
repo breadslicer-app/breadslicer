@@ -24,6 +24,7 @@ use sc_mesh_core::scene::error::SceneError;
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     EffectiveMaterial, PrinterHardware, PrinterProfile, ResolveError, resolve_layer_height,
+    snap_to_z_step,
 };
 use sc_sl1cer::profile::{AaLevel, PackingMode, SliceProfile};
 
@@ -116,6 +117,13 @@ impl std::error::Error for UnsliceableSelection {
 /// print configuration (exposure, motion, bottom layers) is the
 /// input of the printer-file export step and never gates slicing.
 /// The scene derivation itself is [`slice_profile_for_scene`].
+///
+/// A chosen first-layer height is quantised onto the printer's
+/// z-step grid ([`snap_to_z_step`]); the declared layer-height range
+/// does not bind it, since first layers legitimately run thicker
+/// than the normal-layer curing range. The fallback (no first-layer
+/// choice) inherits the resolved layer height, which is already on
+/// the grid.
 pub fn slice_profile_for_selection(
     scene: &Scene,
     printer: &PrinterProfile,
@@ -127,6 +135,8 @@ pub fn slice_profile_for_selection(
 ) -> Result<SliceProfile, UnsliceableSelection> {
     let layer_height = resolve_layer_height(printer, material, layer_height_request)
         .map_err(UnsliceableSelection::LayerHeight)?;
+    let first_layer_height =
+        first_layer_height.map(|value| snap_to_z_step(&printer.constraints, value));
     slice_profile_for_scene(
         scene,
         &printer.hardware,
