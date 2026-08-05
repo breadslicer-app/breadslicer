@@ -365,4 +365,39 @@ mod stl_binary_header_tests {
         assert_eq!(loaded_name(&loaded.graph), None);
         assert!(loaded.warnings.is_empty());
     }
+
+    /// Real Magics-convention colour STL vendored from the three.js
+    /// examples: `COLOR=` plus 4 raw RGBA bytes in a space-padded,
+    /// nul-free header, colour data in every facet's attribute
+    /// bytes. The load succeeds, no name is taken, and the header
+    /// warning is emitted, on both the auto-detect and the explicit
+    /// binary route.
+    #[test]
+    fn vendored_magics_color_fixture_loads() {
+        let bytes = include_bytes!("fixtures/official/threejs-stlb-color/colored.stl");
+        for kind in [MeshFileType::Stl, MeshFileType::StlBin] {
+            let loaded = load(kind, bytes);
+            assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 2156);
+            assert_eq!(loaded_name(&loaded.graph), None);
+            assert_eq!(header_not_text_warnings(&loaded), 1);
+        }
+    }
+
+    /// Real Pro/ENGINEER binary export vendored from numpy-stl's
+    /// test data: the header starts with ` solid `, is nul-padded,
+    /// and carries 2 raw bytes after the padding. The exact binary
+    /// layout routes it to the binary parser despite the `solid`
+    /// prefix, the name comes from before the first nul, and the raw
+    /// tail neither fails the load nor pollutes the name.
+    #[test]
+    fn vendored_pro2stl_fixture_loads_with_name() {
+        let bytes = include_bytes!("fixtures/official/numpy-stl-stlb/CubeInvalidUnicode.stl");
+        let loaded = load(MeshFileType::Stl, bytes);
+        assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 12);
+        assert_eq!(
+            loaded_name(&loaded.graph).as_deref(),
+            Some("solid PRO2STL version 1.0"),
+        );
+        assert!(loaded.warnings.is_empty());
+    }
 }
