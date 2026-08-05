@@ -8,10 +8,10 @@
 //!
 //! Two pieces: [`load_selected_profiles`] resolves the printer and
 //! resin ids to full profiles on disk (the only I/O here), and
-//! [`build_slice_profile`] is the pure projection: resolve the layer
-//! height, read the model's height, derive the layer count, and project
-//! the printer hardware onto a [`SliceProfile`]. The GUI slices the live
-//! scene as
+//! [`build_slice_profile`] resolves the layer height and hands the
+//! scene to sc-print-glue's shared derivation, which measures the
+//! model, derives the layer count, and projects the printer hardware
+//! onto a [`SliceProfile`]. The GUI slices the live scene as
 //! arranged; the only placement rule is that a scene with no geometry,
 //! or one whose top is at or below the build plate (z = 0), cannot be
 //! sliced.
@@ -21,8 +21,7 @@ use std::fmt;
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::error::SceneError;
 use sc_print_glue::{
-    SliceInputFingerprintError, UnschedulableHeight, project_hardware_to_slice_profile,
-    total_layers_for_height,
+    SliceInputFingerprintError, UnschedulableHeight, UnsliceableScene, slice_profile_for_scene,
 };
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
@@ -120,6 +119,19 @@ impl std::error::Error for SliceFailure {
     }
 }
 
+impl From<UnsliceableScene> for SliceFailure {
+    fn from(err: UnsliceableScene) -> Self {
+        match err {
+            UnsliceableScene::Aabb(err) => Self::SceneAabb(err),
+            UnsliceableScene::NoGeometry => Self::EmptySceneGeometry,
+            UnsliceableScene::TopAtOrBelowPlate { z_max_mm } => {
+                Self::SceneBelowPlate { z_max: z_max_mm }
+            }
+            UnsliceableScene::Unschedulable(err) => Self::Projection(err),
+        }
+    }
+}
+
 /// Load the full printer and resin profiles named by their ids, using
 /// the same roots the catalog walks: the user library first, then the
 /// bundled profiles. The resin's same-id extension from the user
@@ -143,26 +155,12 @@ pub(crate) fn load_selected_profiles(
     Ok((printer_profile, material))
 }
 
-/// The model's top Z in world millimetres, or a failure when the scene
-/// has no geometry or sits at or below the build plate.
-fn scene_top_z(scene: &Scene) -> Result<f64, SliceFailure> {
-    let aabb = scene
-        .aabb()
-        .map_err(SliceFailure::SceneAabb)?
-        .ok_or(SliceFailure::EmptySceneGeometry)?;
-    let z_max = f64::from(aabb.max().coords()[2]);
-    if z_max <= 0.0 {
-        return Err(SliceFailure::SceneBelowPlate { z_max });
-    }
-    Ok(z_max)
-}
-
 /// Build a [`SliceProfile`] for the current scene. Resolves the layer
 /// height (the only material parameter geometry slicing needs; the
-/// exposure and motion parameters belong to the SLA output step), falls
-/// back to it when no per-print first-layer height is set, derives the
-/// layer count from the model's height, and projects the printer
-/// hardware onto the engine's input port.
+/// exposure and motion parameters belong to the SLA output step) and
+/// delegates the scene measurement, the first-layer fallback, the
+/// layer-count derivation and the hardware projection to
+/// [`slice_profile_for_scene`].
 pub(crate) fn build_slice_profile(
     printer: &PrinterProfile,
     resin: &EffectiveMaterial,
@@ -171,19 +169,15 @@ pub(crate) fn build_slice_profile(
     scene: &Scene,
 ) -> Result<SliceProfile, SliceFailure> {
     let layer_height = resolve_layer_height(printer, resin).map_err(SliceFailure::Resolve)?;
-    let first_layer_height = first_layer_height.unwrap_or(layer_height);
-    let z_max = scene_top_z(scene)?;
-    let total_layers =
-        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value())
-            .map_err(SliceFailure::Projection)?;
-    Ok(project_hardware_to_slice_profile(
+    slice_profile_for_scene(
+        scene,
         &printer.hardware,
         layer_height,
+        first_layer_height,
         aa_level,
         PackingMode::None,
-        first_layer_height,
-        total_layers,
-    ))
+    )
+    .map_err(SliceFailure::from)
 }
 
 /// Resolve the layer schedule for the current scene and selection the
@@ -209,80 +203,44 @@ pub(crate) fn resolve_current_schedule(
 }
 
 #[cfg(test)]
-mod scene_top_z_tests {
+mod unsliceable_scene_mapping_tests {
     use super::*;
 
-    use std::sync::Arc;
-
-    use sc_mesh_core::indexed_mesh::IndexedMesh;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
 
-    /// A cube spanning `min`..`max`, enough vertices for the AABB.
-    fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
-        let v = |x, y, z| Vertex::new([x, y, z]);
-        let vertices = vec![
-            v(min[0], min[1], min[2]),
-            v(max[0], min[1], min[2]),
-            v(max[0], max[1], min[2]),
-            v(min[0], max[1], min[2]),
-            v(min[0], min[1], max[2]),
-            v(max[0], min[1], max[2]),
-            v(max[0], max[1], max[2]),
-            v(min[0], max[1], max[2]),
-        ];
-        let n = Normal::new([0.0, 0.0, 1.0]);
-        let faces = vec![
-            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
-            IndexedTriangle::from_raw_indices(n, [0, 2, 3]),
-        ];
-        IndexedMesh {
-            meta: None,
-            vertices,
-            faces,
-        }
-    }
+    // The scene-derivation rejections themselves (no geometry, at or
+    // below the plate, unschedulable heights) are pinned in
+    // sc-print-glue's own suite; these tests pin the mapping onto the
+    // GUI's failure vocabulary.
 
-    /// One-cube scene under a single Group root.
-    fn cube_scene(min: [f32; 3], max: [f32; 3]) -> Scene {
-        let mut g = Scene::new();
-        let root = g.add_group(None, Transform3D::Identity);
-        g.add_root(root).expect("group as root");
-        let leaf = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(cube_mesh(min, max))),
-            )
-            .expect("add leaf");
-        g.add_child(root, leaf).expect("attach leaf");
-        g
+    #[test]
+    fn aabb_errors_map_to_scene_aabb() {
+        let id = Scene::new().add_group(None, Transform3D::Identity);
+        let failure = SliceFailure::from(UnsliceableScene::Aabb(SceneError::DanglingNodeId { id }));
+        assert!(matches!(failure, SliceFailure::SceneAabb(_)));
     }
 
     #[test]
-    fn an_empty_scene_has_no_geometry() {
-        let scene = Scene::new();
+    fn no_geometry_maps_to_empty_scene_geometry() {
+        let failure = SliceFailure::from(UnsliceableScene::NoGeometry);
+        assert!(matches!(failure, SliceFailure::EmptySceneGeometry));
+    }
+
+    #[test]
+    fn top_at_or_below_plate_maps_to_scene_below_plate_with_the_height() {
+        let failure = SliceFailure::from(UnsliceableScene::TopAtOrBelowPlate { z_max_mm: -1.5 });
         assert!(matches!(
-            scene_top_z(&scene),
-            Err(SliceFailure::EmptySceneGeometry)
+            failure,
+            SliceFailure::SceneBelowPlate { z_max } if z_max == -1.5
         ));
     }
 
     #[test]
-    fn a_model_above_the_plate_reports_its_top_z() {
-        let scene = cube_scene([-1.0, -1.0, 0.0], [1.0, 1.0, 0.97]);
-        let z = scene_top_z(&scene).expect("a model above the plate has a top");
-        assert!((z - 0.97).abs() < 1e-6, "got {z}");
-    }
-
-    #[test]
-    fn a_model_at_or_below_the_plate_is_rejected() {
-        let scene = cube_scene([-1.0, -1.0, -2.0], [1.0, 1.0, -1.0]);
-        assert!(matches!(
-            scene_top_z(&scene),
-            Err(SliceFailure::SceneBelowPlate { .. })
+    fn unschedulable_heights_map_to_projection() {
+        let failure = SliceFailure::from(UnsliceableScene::Unschedulable(
+            UnschedulableHeight::NonFiniteHeight { z_max_mm: f64::NAN },
         ));
+        assert!(matches!(failure, SliceFailure::Projection(_)));
     }
 }
 
@@ -397,28 +355,33 @@ z = 0.0
         PositiveFiniteMm::new(value).expect("valid length")
     }
 
+    // The first-layer fallback and layer-count arithmetic moved to
+    // sc-print-glue with the shared derivation; its suite pins them.
+    // What stays here is the delegation surface: the resolved layer
+    // height feeds the derivation, failures map onto SliceFailure,
+    // and slicing never requires the full print calibration.
+
     #[test]
-    fn absent_first_layer_height_falls_back_to_the_material_layer_height() {
+    fn the_resolved_layer_height_drives_the_derivation() {
+        // Layer height 0.05 comes from the material intent; z_max
+        // 0.97 then yields 20 layers (pinned arithmetic in the glue
+        // suite). This pins that build_slice_profile feeds the
+        // RESOLVED height into the shared derivation.
         let (printer, resin) = fixtures();
-        // z_max 0.97, layer height 0.05, first layer 0.05 (fallback):
-        // beyond = 0.92, ceil(0.92 / 0.05) = 19, total = 20.
         let profile =
             build_slice_profile(&printer, &resin, None, AaLevel::Off, &cube_scene_top(0.97))
                 .expect("valid projection");
         match profile.layer_schedule() {
             LayerSchedule::Uniform(uniform) => {
                 assert_eq!(uniform.layer_height().value(), 0.05);
-                assert_eq!(uniform.first_layer_height().value(), 0.05);
                 assert_eq!(uniform.total_layers().get(), 20);
             }
         }
     }
 
     #[test]
-    fn an_explicit_first_layer_height_overrides_the_fallback() {
+    fn the_first_layer_choice_reaches_the_derivation() {
         let (printer, resin) = fixtures();
-        // z_max 0.97, layer height 0.05, first layer 0.15:
-        // beyond = 0.82, ceil(0.82 / 0.05) = 17, total = 18.
         let profile = build_slice_profile(
             &printer,
             &resin,
@@ -430,7 +393,6 @@ z = 0.0
         match profile.layer_schedule() {
             LayerSchedule::Uniform(uniform) => {
                 assert_eq!(uniform.first_layer_height().value(), 0.15);
-                assert_eq!(uniform.total_layers().get(), 18);
             }
         }
     }
