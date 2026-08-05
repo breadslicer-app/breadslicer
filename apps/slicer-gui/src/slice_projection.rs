@@ -26,8 +26,8 @@ use sc_print_glue::{
 };
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_print_profiles::{
-    EffectiveMaterial, LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, MaterialProfile,
-    PrinterProfile, ResolveError, UserLibraryDirError, load_material_profile_by_id,
+    EffectiveMaterial, LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, PrinterProfile,
+    ResolveError, UserLibraryDirError, compose_with_library_extension, load_material_profile_by_id,
     load_printer_profile_by_id, resolve_layer_height, user_library_dir,
 };
 use sc_sl1cer::error::SliceSceneError;
@@ -122,18 +122,25 @@ impl std::error::Error for SliceFailure {
 
 /// Load the full printer and resin profiles named by their ids, using
 /// the same roots the catalog walks: the user library first, then the
-/// bundled profiles.
+/// bundled profiles. The resin's same-id extension from the user
+/// library (the only root that holds extensions) is composed in;
+/// extension content the composition excludes is reported on stderr
+/// and never fails the load.
 pub(crate) fn load_selected_profiles(
     printer: &PrinterId,
     resin: &MaterialId,
-) -> Result<(PrinterProfile, MaterialProfile), SliceFailure> {
+) -> Result<(PrinterProfile, EffectiveMaterial), SliceFailure> {
     let user_lib = user_library_dir().map_err(SliceFailure::UserLibraryDir)?;
     let bundled = sc_app_paths::bundled_data_dir().join("profiles");
     let printer_profile = load_printer_profile_by_id(printer, None, &user_lib, &bundled)
         .map_err(SliceFailure::PrinterProfile)?;
     let resin_profile = load_material_profile_by_id(resin, None, &user_lib, &bundled)
         .map_err(SliceFailure::MaterialProfile)?;
-    Ok((printer_profile, resin_profile))
+    let (material, issues) = compose_with_library_extension(resin_profile, &user_lib);
+    for issue in &issues {
+        eprintln!("warning: {issue}");
+    }
+    Ok((printer_profile, material))
 }
 
 /// The model's top Z in world millimetres, or a failure when the scene
@@ -158,13 +165,12 @@ fn scene_top_z(scene: &Scene) -> Result<f64, SliceFailure> {
 /// hardware onto the engine's input port.
 pub(crate) fn build_slice_profile(
     printer: &PrinterProfile,
-    resin: &MaterialProfile,
+    resin: &EffectiveMaterial,
     first_layer_height: Option<PositiveFiniteMm>,
     aa_level: AaLevel,
     scene: &Scene,
 ) -> Result<SliceProfile, SliceFailure> {
-    let material = EffectiveMaterial::from(resin.clone());
-    let layer_height = resolve_layer_height(printer, &material).map_err(SliceFailure::Resolve)?;
+    let layer_height = resolve_layer_height(printer, resin).map_err(SliceFailure::Resolve)?;
     let first_layer_height = first_layer_height.unwrap_or(layer_height);
     let z_max = scene_top_z(scene)?;
     let total_layers =
@@ -342,10 +348,12 @@ z = 0.0
 [per_printer]
 "#;
 
-    fn fixtures() -> (PrinterProfile, MaterialProfile) {
+    fn fixtures() -> (PrinterProfile, EffectiveMaterial) {
+        let material: sc_print_profiles::MaterialProfile =
+            toml::from_str(MATERIAL_TOML).expect("material fixture parses");
         (
             toml::from_str(PRINTER_TOML).expect("printer fixture parses"),
-            toml::from_str(MATERIAL_TOML).expect("material fixture parses"),
+            EffectiveMaterial::from(material),
         )
     }
 
@@ -447,12 +455,7 @@ z = 0.0
 
         let (printer, resin) = fixtures();
         assert!(
-            resolve(
-                &printer,
-                &EffectiveMaterial::from(resin.clone()),
-                &SceneOverrides::default(),
-            )
-            .is_err(),
+            resolve(&printer, &resin, &SceneOverrides::default()).is_err(),
             "the fixture pairing must be one a full resolve rejects",
         );
 

@@ -588,3 +588,112 @@ fn incomplete_material_fails_to_resolve() {
             "could not resolve the print configuration",
         ));
 }
+
+/// A temporary user library whose `materials/extensions/` holds the
+/// extendable resin's extension fixture, for `SC_SLICER_LIBRARY_DIR`.
+fn library_with_extendable_extension() -> tempfile::TempDir {
+    let library = tempdir().unwrap();
+    let extensions_dir = library.path().join("materials").join("extensions");
+    fs::create_dir_all(&extensions_dir).unwrap();
+    fs::copy(
+        profile_file("extensions", "slicer-cli-e2e-test-resin-extendable.toml"),
+        extensions_dir.join("slicer-cli-e2e-test-resin-extendable.toml"),
+    )
+    .unwrap();
+    library
+}
+
+/// Slice one fixture with the extendable resin (calibration only in
+/// the user-library extension) and assert the expected layer count.
+fn slice_with_extension_calibration(fixture: &str, expected_layers: u32) {
+    let out = tempdir().unwrap();
+    let library = library_with_extendable_extension();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path(fixture))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin-extendable")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .env("SC_SLICER_LIBRARY_DIR", library.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Sliced 1 model: {expected_layers} layers",
+        )));
+}
+
+#[test]
+fn extension_calibration_completes_the_resolution_for_the_cube() {
+    // The base profile alone cannot resolve (no calibration block);
+    // the same-id extension in the user library must supply it.
+    slice_with_extension_calibration("cube.stl", 5);
+}
+
+#[test]
+fn extension_calibration_completes_the_resolution_for_the_z_tunnel_prism() {
+    slice_with_extension_calibration("prism_z_tunnel.stl", 10);
+}
+
+#[test]
+fn extension_calibration_completes_the_resolution_for_the_y_tunnel_prism() {
+    slice_with_extension_calibration("prism_y_tunnel.stl", 10);
+}
+
+#[test]
+fn an_invalid_extension_is_reported_and_does_not_break_the_slice() {
+    // The base resin is fully calibrated on its own; the file in the
+    // library's extensions slot is not flagged as an extension. The
+    // slice must proceed on the base's values and surface the
+    // exclusion on stderr.
+    let out = tempdir().unwrap();
+    let library = tempdir().unwrap();
+    let extensions_dir = library.path().join("materials").join("extensions");
+    fs::create_dir_all(&extensions_dir).unwrap();
+    fs::write(
+        extensions_dir.join("slicer-cli-e2e-test-resin.toml"),
+        r#"
+[identity]
+id = "slicer-cli-e2e-test-resin"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."some-other-printer"]
+normal_exposure_sec = 9.0
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .env("SC_SLICER_LIBRARY_DIR", library.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 5 layers"))
+        .stderr(predicate::str::contains("not flagged as an extension"));
+}

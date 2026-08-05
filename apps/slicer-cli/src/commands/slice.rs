@@ -20,8 +20,8 @@ use sc_print_glue::{project_to_slice_profile, total_layers_for_height};
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, SceneOverrides,
-    load_material_profile_by_id, load_material_profile_from_path, load_printer_profile_by_id,
-    load_printer_profile_from_path, resolve,
+    compose_with_library_extension, load_material_profile_by_id, load_material_profile_from_path,
+    load_printer_profile_by_id, load_printer_profile_from_path, resolve,
 };
 use sc_sl1cer::contour::merge_stacks;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
@@ -74,7 +74,18 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     let assets_dir = resolve_assets_profiles_dir();
     let printer = load_printer_profile(&args.printer_profile, &library_dir, &assets_dir)?;
     let material = load_material_profile(&args.material_profile, &library_dir, &assets_dir)?;
-    let material = EffectiveMaterial::from(material);
+    // An explicit profile path means exactly that document; only the
+    // by-id route composes the user library's same-id extension in.
+    let material = match &args.material_profile {
+        MaterialProfileRef::Path(_) => EffectiveMaterial::from(material),
+        MaterialProfileRef::Id(_) => {
+            let (material, issues) = compose_with_library_extension(material, &library_dir);
+            for issue in &issues {
+                eprintln!("warning: {issue}");
+            }
+            material
+        }
+    };
 
     let overrides = SceneOverrides {
         layer_height_mm: args.layer_height,

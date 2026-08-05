@@ -1,0 +1,28 @@
+# Extension companion of slicer-cli-e2e-test-resin-extendable: adds
+# the calibration pair for the slicer-cli-e2e-test printer. The e2e
+# tests copy this file into `materials/extensions/` inside a
+# temporary user library; it is not part of the fixture assets
+# layout (bundled asset libraries ship no extensions).
+
+extension = true
+
+[identity]
+id = "slicer-cli-e2e-test-resin-extendable"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Extendable Resin"
+profile_version = "1.0.0"
+
+# Values are inherited from the parent profile.
+[intent]
+
+# Values are inherited from the parent profile.
+[defaults]
+
+[per_printer."slicer-cli-e2e-test"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
