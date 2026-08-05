@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::iter::ParallelIterator;
@@ -13,6 +12,7 @@ use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_f
 
 use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadStlError;
+use crate::messages::LoadStlWarning;
 use crate::stl::{STL_HEADER_BYTES, STL_TRIANGLE_COUNT_BYTES, STL_TRIANGLE_RECORD_BYTES};
 
 type Result<T> = std::result::Result<T, LoadStlError>;
@@ -20,12 +20,12 @@ type Result<T> = std::result::Result<T, LoadStlError>;
 const PREAMBLE_BYTES: usize = STL_HEADER_BYTES + STL_TRIANGLE_COUNT_BYTES;
 
 /// Reads a binary STL document from an in-memory byte slice into a
-/// one-leaf scene.
-pub(crate) fn read_stlb_slice(bytes: &[u8]) -> Result<Scene> {
-    let metadata = extract_metadata(bytes)?;
+/// one-leaf scene, plus any header warning.
+pub(crate) fn read_stlb_slice(bytes: &[u8]) -> Result<(Scene, Vec<LoadStlWarning>)> {
+    let (metadata, header_warning) = extract_metadata(bytes)?;
     let soup = parse_triangle_records(bytes)?;
     let mesh = indexed_mesh_from_soup(Some(metadata), soup, u32::MAX as usize)?;
-    Ok(Scene::from(mesh))
+    Ok((Scene::from(mesh), header_warning.into_iter().collect()))
 }
 
 /// True when the byte length equals the binary layout exactly for the
@@ -47,36 +47,65 @@ pub(crate) fn matches_exact_binary_layout(bytes: &[u8]) -> bool {
         .is_some_and(|total| total == bytes.len())
 }
 
-/// Mesh name from the 80-byte header: the bytes up to the first nul,
-/// trimmed, required to be ASCII. An all-zero or whitespace-only
-/// header yields the default (nameless) metadata.
-pub(crate) fn extract_metadata(bytes: &[u8]) -> Result<MeshMetadata> {
+/// Outcome of decoding the 80-byte header's comment field.
+enum HeaderText {
+    /// Nothing before the first nul, or whitespace only.
+    Empty,
+    /// Printable text, kept as the mesh name.
+    Name(String),
+    /// Not usable text: invalid UTF-8 or control characters. Real
+    /// files carry raw bytes here (colour conventions, codepage
+    /// text, exporter leftovers); the geometry is unaffected.
+    NotText,
+}
+
+/// Decodes the header's comment field: the bytes before the first
+/// nul (all 80 when no nul exists), as UTF-8. Text with control
+/// characters left after trimming is treated the same as
+/// undecodable bytes: the header is a comment with no mandated
+/// charset, so nothing there may fail a load or become a garbled
+/// name.
+fn decode_header_text(header: &[u8]) -> HeaderText {
+    let prefix = match header.iter().position(|&byte| byte == 0) {
+        Some(nul) => &header[..nul],
+        None => header,
+    };
+    let Ok(text) = str::from_utf8(prefix) else {
+        return HeaderText::NotText;
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return HeaderText::Empty;
+    }
+    if trimmed.chars().any(char::is_control) {
+        return HeaderText::NotText;
+    }
+    HeaderText::Name(trimmed.to_string())
+}
+
+/// Mesh metadata from the 80-byte header. The header is a comment
+/// field: when it holds printable text the trimmed text becomes the
+/// mesh name; anything else (all-zero, whitespace-only, raw bytes)
+/// yields the default nameless metadata, with a warning when
+/// non-text content was actually present. Only a document too short
+/// to hold the header errors.
+pub(crate) fn extract_metadata(bytes: &[u8]) -> Result<(MeshMetadata, Option<LoadStlWarning>)> {
     let Some(header) = bytes.get(..STL_HEADER_BYTES) else {
         return Err(LoadStlError::Truncated {
             what: "the 80-byte STL header",
         });
     };
 
-    // 1 byte extra guarantees nul termination for the CStr parse.
-    let mut buf = [0u8; STL_HEADER_BYTES + 1];
-    buf[..STL_HEADER_BYTES].copy_from_slice(header);
-    let mesh_name_cstr =
-        CStr::from_bytes_until_nul(&buf).map_err(|_| LoadStlError::HeaderNotNulTerminated)?;
-    let mesh_name = mesh_name_cstr
-        .to_str()
-        .map_err(LoadStlError::HeaderNotUtf8)?
-        .trim();
-
-    if !mesh_name.is_ascii() {
-        return Err(LoadStlError::HeaderNotAscii);
-    }
-    if mesh_name.is_empty() {
-        return Ok(MeshMetadata::default());
-    }
-
-    Ok(MeshMetadata {
-        name: Some(mesh_name.into()),
-        ..Default::default()
+    Ok(match decode_header_text(header) {
+        HeaderText::Empty => (MeshMetadata::default(), None),
+        HeaderText::Name(name) => (
+            MeshMetadata {
+                name: Some(name),
+                ..Default::default()
+            },
+            None,
+        ),
+        HeaderText::NotText => (MeshMetadata::default(), Some(LoadStlWarning::HeaderNotText)),
     })
 }
 
@@ -346,7 +375,8 @@ mod binary_stl_reader_tests {
         // A header that says "no triangles" must parse cleanly into
         // an empty one-leaf scene.
         let bytes = header_with_declared_count(0);
-        let scene = read_stlb_slice(&bytes).expect("zero-count document parses");
+        let (scene, warnings) = read_stlb_slice(&bytes).expect("zero-count document parses");
+        assert!(warnings.is_empty());
         let leaf = scene.first_leaf_id().expect("one leaf");
         let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
         assert!(mesh.faces().is_empty());
@@ -387,7 +417,8 @@ mod binary_stl_reader_tests {
         // the test pins that behaviour so a future change adding a
         // warning channel updates this expectation deliberately.
         let bytes = single_triangle_with_attribute_bytes(0x8421);
-        let scene = read_stlb_slice(&bytes).expect("document parses cleanly");
+        let (scene, warnings) = read_stlb_slice(&bytes).expect("document parses cleanly");
+        assert!(warnings.is_empty());
         let leaf = scene.first_leaf_id().expect("one leaf");
         let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
         assert_eq!(mesh.faces().len(), 1);
@@ -503,6 +534,92 @@ mod binary_stl_reader_tests {
                 what: "normal.x",
                 ..
             }),
+        ));
+    }
+}
+
+#[cfg(test)]
+mod header_decode_tests {
+    use super::{HeaderText, STL_HEADER_BYTES, decode_header_text};
+
+    fn padded(prefix: &[u8]) -> Vec<u8> {
+        let mut header = vec![0u8; STL_HEADER_BYTES];
+        header[..prefix.len()].copy_from_slice(prefix);
+        header
+    }
+
+    fn as_name(header: &[u8]) -> Option<String> {
+        match decode_header_text(header) {
+            HeaderText::Name(name) => Some(name),
+            HeaderText::Empty | HeaderText::NotText => None,
+        }
+    }
+
+    #[test]
+    fn all_zero_is_empty() {
+        assert!(matches!(
+            decode_header_text(&padded(b"")),
+            HeaderText::Empty
+        ));
+    }
+
+    #[test]
+    fn whitespace_only_is_empty() {
+        assert!(matches!(
+            decode_header_text(&padded(b"  \t ")),
+            HeaderText::Empty,
+        ));
+    }
+
+    #[test]
+    fn ascii_text_is_a_trimmed_name() {
+        assert_eq!(
+            as_name(&padded(b"  Part.001  ")).as_deref(),
+            Some("Part.001")
+        );
+    }
+
+    #[test]
+    fn utf8_text_is_a_name() {
+        assert_eq!(
+            as_name(&padded("Küche".as_bytes())).as_deref(),
+            Some("Küche")
+        );
+    }
+
+    #[test]
+    fn full_width_text_without_nul_is_a_name() {
+        assert_eq!(as_name(&[b'a'; STL_HEADER_BYTES]), Some("a".repeat(80)));
+    }
+
+    #[test]
+    fn text_stops_at_the_first_nul() {
+        let mut header = padded(b"front");
+        header[10..14].copy_from_slice(b"rear");
+        assert_eq!(as_name(&header).as_deref(), Some("front"));
+    }
+
+    #[test]
+    fn invalid_utf8_is_not_text() {
+        assert!(matches!(
+            decode_header_text(&padded(b"K\xFCche")),
+            HeaderText::NotText,
+        ));
+    }
+
+    #[test]
+    fn control_characters_are_not_text() {
+        assert!(matches!(
+            decode_header_text(&padded(b"\x07\x01\x07\x01")),
+            HeaderText::NotText,
+        ));
+    }
+
+    #[test]
+    fn interior_control_character_poisons_the_whole_header() {
+        assert!(matches!(
+            decode_header_text(&padded(b"part\x08one")),
+            HeaderText::NotText,
         ));
     }
 }

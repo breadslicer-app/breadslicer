@@ -16,13 +16,6 @@ fn parse_float_error() -> std::num::ParseFloatError {
     "abc".parse::<f32>().unwrap_err()
 }
 
-fn utf8_error() -> std::str::Utf8Error {
-    // Build at runtime so the `invalid_from_utf8` lint can't see
-    // through the literal.
-    let bytes: Vec<u8> = vec![0xFF, 0xFE];
-    std::str::from_utf8(&bytes).unwrap_err()
-}
-
 #[test]
 fn io_variant_display_and_source() {
     let err = LoadStlError::Io(io::Error::other("read failed"));
@@ -51,30 +44,6 @@ fn declared_triangle_count_exceeds_cap_variant_display_and_source() {
     assert!(s.contains("1000000000"));
     assert!(s.contains("200000000"));
     assert!(err.source().is_none());
-}
-
-#[test]
-fn header_not_ascii_variant_display_and_source() {
-    let err = LoadStlError::HeaderNotAscii;
-    let s = err.to_string();
-    assert!(s.contains("not ASCII"));
-    assert!(err.source().is_none());
-}
-
-#[test]
-fn header_not_nul_terminated_variant_display_and_source() {
-    let err = LoadStlError::HeaderNotNulTerminated;
-    let s = err.to_string();
-    assert!(s.contains("not NUL-terminated"));
-    assert!(err.source().is_none());
-}
-
-#[test]
-fn header_not_utf8_variant_display_and_source() {
-    let err = LoadStlError::HeaderNotUtf8(utf8_error());
-    let s = err.to_string();
-    assert!(s.contains("not valid UTF-8"));
-    assert!(err.source().is_some());
 }
 
 #[test]

@@ -21,7 +21,8 @@ fn round_trip(mesh: &IndexedMesh) -> IndexedMesh {
     let mut buf: Vec<u8> = Vec::new();
     write_stlb(mesh, &mut buf).expect("write_stlb succeeds");
     let mut cursor = Cursor::new(buf);
-    let scene = read_stlb(&mut cursor).expect("read_stlb succeeds");
+    let (scene, warnings) = read_stlb(&mut cursor).expect("read_stlb succeeds");
+    assert!(warnings.is_empty());
     let leaf = scene.first_leaf_id().expect("one leaf");
     scene
         .mesh_at_leaf(leaf)

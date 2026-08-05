@@ -40,8 +40,11 @@ fn crlf(text: &str) -> Vec<u8> {
     text.replace('\n', "\r\n").into_bytes()
 }
 
+/// Reads through the auto-detecting entry, keeping only the scene;
+/// tests that care about warnings go through `load_mesh_from_reader`
+/// in `stl_binary_header_tests` instead.
 fn read_stl_bytes(bytes: &[u8]) -> Result<Scene, LoadStlError> {
-    read_stl(&mut Cursor::new(bytes))
+    read_stl(&mut Cursor::new(bytes)).map(|(scene, _)| scene)
 }
 
 fn read_stla_bytes(bytes: &[u8]) -> Result<Scene, LoadStlError> {
@@ -236,5 +239,130 @@ mod vendored_fixture_tests {
                 .expect("vendored ASCII file");
         let scene = read_stl_bytes(&crlf(&text)).unwrap();
         assert_eq!(single_leaf_mesh(&scene).faces().len(), 3);
+    }
+}
+#[cfg(test)]
+mod stl_binary_header_tests {
+    use super::*;
+
+    use sc_mesh_formats::filetypes::MeshFileType;
+    use sc_mesh_formats::messages::{LoadMeshWarning, LoadStlWarning};
+    use sc_mesh_formats::{LoadedMesh, load_mesh_from_reader};
+
+    /// One 50-byte binary record: +Z normal, unit XY triangle, zero
+    /// attribute bytes.
+    fn triangle_record() -> Vec<u8> {
+        let mut record = Vec::with_capacity(50);
+        for value in [
+            0.0_f32, 0.0, 1.0, // normal
+            0.0, 0.0, 0.0, // v0
+            1.0, 0.0, 0.0, // v1
+            0.0, 1.0, 0.0, // v2
+        ] {
+            record.extend_from_slice(&value.to_le_bytes());
+        }
+        record.extend_from_slice(&0_u16.to_le_bytes());
+        record
+    }
+
+    /// A binary document with the given header bytes (NUL-padded to
+    /// 80) declaring and carrying 1 valid triangle record. Only the
+    /// header varies across these tests.
+    fn binary_doc_with_header(header: &[u8]) -> Vec<u8> {
+        assert!(header.len() <= 80);
+        let mut doc = vec![0_u8; 80];
+        doc[..header.len()].copy_from_slice(header);
+        doc.extend_from_slice(&1_u32.to_le_bytes());
+        doc.extend_from_slice(&triangle_record());
+        doc
+    }
+
+    fn load(kind: MeshFileType, bytes: &[u8]) -> LoadedMesh {
+        load_mesh_from_reader(kind, &mut Cursor::new(bytes)).expect("well-formed geometry loads")
+    }
+
+    fn header_not_text_warnings(loaded: &LoadedMesh) -> usize {
+        loaded
+            .warnings
+            .iter()
+            .filter(|w| matches!(w, LoadMeshWarning::Stl(LoadStlWarning::HeaderNotText)))
+            .count()
+    }
+
+    /// The Materialise Magics colour convention places `COLOR=` plus
+    /// 4 raw RGBA bytes in the header; 0xFF can never appear in valid
+    /// UTF-8, so the header is not text. The geometry must load, with
+    /// no name and exactly one header warning.
+    #[test]
+    fn magics_color_header_loads_geometry() {
+        let mut header = b"COLOR=".to_vec();
+        header.extend_from_slice(&[0xFF, 0x00, 0x00, 0xFF]);
+        for kind in [MeshFileType::Stl, MeshFileType::StlBin] {
+            let loaded = load(kind, &binary_doc_with_header(&header));
+            assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
+            assert_eq!(loaded_name(&loaded.graph), None);
+            assert_eq!(header_not_text_warnings(&loaded), 1);
+        }
+    }
+
+    /// Windows-codepage text (0xFC is u-umlaut in Windows-1252) is
+    /// not valid UTF-8 and is not transcoded: nameless load with a
+    /// header warning.
+    #[test]
+    fn codepage_header_loads_nameless() {
+        let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(b"K\xFCche"));
+        assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
+        assert_eq!(loaded_name(&loaded.graph), None);
+        assert_eq!(header_not_text_warnings(&loaded), 1);
+    }
+
+    /// ASCII control bytes decode as UTF-8 but are not printable
+    /// text; they must not become a mesh name.
+    #[test]
+    fn control_junk_header_loads_nameless() {
+        let junk: Vec<u8> = [0x07_u8, 0x01].iter().copied().cycle().take(20).collect();
+        let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(&junk));
+        assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
+        assert_eq!(loaded_name(&loaded.graph), None);
+        assert_eq!(header_not_text_warnings(&loaded), 1);
+    }
+
+    /// Valid UTF-8 headers are text: the name is taken verbatim,
+    /// non-ASCII included, with no warning.
+    #[test]
+    fn utf8_header_yields_unicode_name() {
+        let loaded = load(
+            MeshFileType::StlBin,
+            &binary_doc_with_header("Küche".as_bytes()),
+        );
+        assert_eq!(loaded_name(&loaded.graph).as_deref(), Some("Küche"));
+        assert!(loaded.warnings.is_empty());
+    }
+
+    /// The 80-byte header needs no NUL terminator: a name filling the
+    /// full width is taken whole.
+    #[test]
+    fn full_width_ascii_name_no_nul() {
+        let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(&[b'a'; 80]));
+        assert_eq!(loaded_name(&loaded.graph), Some("a".repeat(80)));
+        assert!(loaded.warnings.is_empty());
+    }
+
+    /// The common all-zero header is plain namelessness, not a
+    /// warning condition.
+    #[test]
+    fn zero_header_stays_silent() {
+        let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(&[]));
+        assert_eq!(loaded_name(&loaded.graph), None);
+        assert!(loaded.warnings.is_empty());
+    }
+
+    /// Whitespace padding before the NULs trims to no name; benign,
+    /// so no warning either.
+    #[test]
+    fn whitespace_header_stays_silent() {
+        let loaded = load(MeshFileType::StlBin, &binary_doc_with_header(b"    "));
+        assert_eq!(loaded_name(&loaded.graph), None);
+        assert!(loaded.warnings.is_empty());
     }
 }

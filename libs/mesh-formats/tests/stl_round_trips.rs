@@ -183,7 +183,7 @@ mod stlb_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_graph = recovered_mesh.unwrap();
+        let (recovered_graph, _) = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
         // Even if there is no metadata loaded, we still create the Metadata object.
@@ -204,7 +204,7 @@ mod stlb_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_graph = recovered_mesh.unwrap();
+        let (recovered_graph, _) = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
         assert_eq!(recovered_mesh, &mesh_unnamed);
@@ -223,9 +223,63 @@ mod stlb_tests {
         if recovered_mesh.is_err() {
             panic!("Error: {:?}", recovered_mesh.err().unwrap());
         }
-        let recovered_graph = recovered_mesh.unwrap();
+        let (recovered_graph, _) = recovered_mesh.unwrap();
         let recovered_mesh = single_leaf_mesh(&recovered_graph);
 
         assert_eq!(recovered_mesh, &mesh_named);
+    }
+}
+#[cfg(test)]
+mod stlb_header_roundtrip_tests {
+    use super::*;
+
+    use sc_mesh_formats::filetypes::MeshFileType;
+    use sc_mesh_formats::messages::{LoadMeshWarning, LoadStlWarning};
+    use sc_mesh_formats::{LoadedMesh, load_mesh_from_reader};
+
+    fn stlb_write_then_load(mesh: &IndexedMesh) -> LoadedMesh {
+        let mut out: Vec<u8> = vec![];
+        write_stlb(mesh, &mut out).expect("write_stlb succeeds");
+        load_mesh_from_reader(MeshFileType::StlBin, &mut std::io::Cursor::new(out))
+            .expect("written document loads back")
+    }
+
+    #[test]
+    fn unicode_name_round_trips_through_stlb() {
+        let loaded = stlb_write_then_load(&get_mesh_named("Küche"));
+        assert_eq!(
+            single_leaf_mesh(&loaded.graph)
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.name.clone())
+                .as_deref(),
+            Some("Küche"),
+        );
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn overlong_name_truncation_loads_nameless() {
+        // 79 ASCII bytes plus a 2-byte char: the writer cuts the char
+        // at the fixed 80-byte header width, so the header comes back
+        // as non-text. The document still loads, nameless, with the
+        // header warning.
+        let loaded = stlb_write_then_load(&get_mesh_named(&format!("{}é", "a".repeat(79))));
+        assert_eq!(single_leaf_mesh(&loaded.graph).faces().len(), 1);
+        assert_eq!(
+            single_leaf_mesh(&loaded.graph)
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.name.clone()),
+            None,
+        );
+        assert_eq!(
+            loaded
+                .warnings
+                .iter()
+                .filter(|w| matches!(w, LoadMeshWarning::Stl(LoadStlWarning::HeaderNotText)))
+                .count(),
+            1,
+        );
     }
 }

@@ -112,7 +112,7 @@ endsolid foo
 
     #[test]
     fn missing_outer_loop_is_an_error() {
-        // After `facet normal …` the next line must be `outer loop`.
+        // After `facet normal ...` the next line must be `outer loop`.
         let buf = b"\
 solid foo
   facet normal 0 0 1
@@ -348,20 +348,45 @@ mod binary_stl_malformed_tests {
         // erroring on the missing payload.
         let buf = make_binary_stl_with_count(0, &[]);
         let mut reader = Cursor::new(buf);
-        let graph = read_stlb(&mut reader).unwrap();
+        let (graph, _) = read_stlb(&mut reader).unwrap();
         let mesh = unwrap_single_mesh(&graph);
         assert!(mesh.faces().is_empty());
     }
 
     #[test]
-    fn non_ascii_header_is_an_error() {
-        // Place a few non-ASCII bytes inside the 80-byte header. The
-        // metadata extractor errors out before reading any triangles.
+    fn utf8_header_is_a_name() {
+        // Non-ASCII text in the 80-byte header is a name like any
+        // other, as long as it is valid UTF-8.
         let mut buf = vec![0u8; 80];
         buf[0..4].copy_from_slice(&[0xC3, 0xA9, 0xC3, 0xA9]); // "éé" in UTF-8
         buf.extend(&0u32.to_le_bytes());
         let mut reader = Cursor::new(buf);
-        assert!(read_stlb(&mut reader).is_err());
+        let (graph, warnings) = read_stlb(&mut reader).unwrap();
+        assert!(warnings.is_empty());
+        let mesh = unwrap_single_mesh(&graph);
+        assert_eq!(
+            mesh.meta.as_ref().and_then(|meta| meta.name.as_deref()),
+            Some("éé"),
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_header_loads_nameless() {
+        // The header is a comment field; undecodable bytes must never
+        // fail the load or become a name.
+        let mut buf = vec![0u8; 80];
+        buf[0..2].copy_from_slice(&[0xFF, 0xFE]);
+        buf.extend(&0u32.to_le_bytes());
+        let mut reader = Cursor::new(buf);
+        let (graph, warnings) = read_stlb(&mut reader).unwrap();
+        assert_eq!(warnings.len(), 1);
+        let mesh = unwrap_single_mesh(&graph);
+        assert!(
+            mesh.meta
+                .as_ref()
+                .and_then(|meta| meta.name.as_deref())
+                .is_none()
+        );
     }
 
     #[test]
@@ -386,7 +411,7 @@ mod binary_stl_malformed_tests {
 
         let buf = make_binary_stl_with_count(1, &triangle);
         let mut reader = Cursor::new(buf);
-        let graph = read_stlb(&mut reader).unwrap();
+        let (graph, _) = read_stlb(&mut reader).unwrap();
         let mesh = unwrap_single_mesh(&graph);
         let n = mesh.faces()[0].normal;
         assert!((n[0]).abs() < 1e-6);
@@ -423,7 +448,7 @@ mod binary_stl_malformed_tests {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let graph = read_stlb(&mut reader).unwrap();
+        let (graph, _) = read_stlb(&mut reader).unwrap();
         let parsed = unwrap_single_mesh(&graph);
 
         // All three faces survive; only the middle one carries a zero
@@ -488,7 +513,7 @@ mod binary_stl_malformed_tests {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let graph = read_stlb(&mut reader).unwrap();
+        let (graph, _) = read_stlb(&mut reader).unwrap();
         let parsed = unwrap_single_mesh(&graph);
 
         // The zero normal is preserved verbatim.

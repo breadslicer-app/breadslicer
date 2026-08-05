@@ -22,7 +22,6 @@
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
-use std::str::Utf8Error;
 
 use sc_3mf::error::{ModelParseError, ModelWriteError, PackageReadError, PackageWriteError};
 use sc_mesh_core::{IndexedMeshBuildError, NodeId, SceneError};
@@ -240,9 +239,6 @@ pub enum LoadStlError {
         declared: usize,
         cap: usize,
     },
-    HeaderNotAscii,
-    HeaderNotNulTerminated,
-    HeaderNotUtf8(Utf8Error),
     AsciiHeaderMissing,
     AsciiEmptyInput,
     AsciiInvalidFacetHeader {
@@ -281,9 +277,6 @@ impl fmt::Display for LoadStlError {
                 f,
                 "declared triangle count {declared} exceeds the {cap} maximum supported by this reader",
             ),
-            Self::HeaderNotAscii => write!(f, "Mesh name is not ASCII"),
-            Self::HeaderNotNulTerminated => write!(f, "Mesh name is not NUL-terminated"),
-            Self::HeaderNotUtf8(e) => write!(f, "Mesh name is not valid UTF-8: {e}"),
             Self::AsciiHeaderMissing => {
                 write!(f, "Ascii STL does not start with the \"solid\" keyword")
             }
@@ -317,7 +310,6 @@ impl std::error::Error for LoadStlError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::HeaderNotUtf8(e) => Some(e),
             Self::InvalidFloat { source, .. } => Some(source),
             Self::IndexedMeshBuild(e) => Some(e),
             _ => None,

@@ -223,7 +223,7 @@ fn obj_and_stl_write_a_referencing_scene_in_full() {
         vec![FlattenWarning::MultiObjectMerge { object_count: 3 }],
     );
     let mut file = std::fs::File::open(&stl_target).expect("stl target written");
-    let merged = read_stlb(&mut file).expect("written STL parses");
+    let (merged, _) = read_stlb(&mut file).expect("written STL parses");
     let leaf = merged.first_leaf_id().expect("merged scene has a leaf");
     let mesh = merged.mesh_at_leaf(leaf).expect("leaf resolves");
     assert_eq!(mesh.faces().len(), 3);
@@ -277,7 +277,7 @@ fn stl_writes_a_referenced_prism_trio_in_full() {
         vec![FlattenWarning::MultiObjectMerge { object_count: 6 }],
     );
     let mut file = std::fs::File::open(&target).expect("target written");
-    let merged = read_stlb(&mut file).expect("written STL parses");
+    let (merged, _) = read_stlb(&mut file).expect("written STL parses");
     let leaf = merged.first_leaf_id().expect("merged scene has a leaf");
     let mesh = merged.mesh_at_leaf(leaf).expect("leaf resolves");
     assert_eq!(mesh.faces().len(), 2 * trio_faces);

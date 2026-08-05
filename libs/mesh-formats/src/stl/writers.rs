@@ -531,7 +531,9 @@ mod test_write_stlb {
         );
 
         // Reading back must produce an empty mesh.
-        let scene = crate::stl::stlb::read_stlb_slice(&out).expect("empty document parses");
+        let (scene, warnings) =
+            crate::stl::stlb::read_stlb_slice(&out).expect("empty document parses");
+        assert!(warnings.is_empty());
         let leaf = scene.first_leaf_id().expect("one leaf");
         let mesh = scene.mesh_at_leaf(leaf).expect("leaf resolves to a mesh");
         assert!(mesh.faces().is_empty());

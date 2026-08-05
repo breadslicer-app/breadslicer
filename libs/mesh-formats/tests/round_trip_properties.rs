@@ -13,7 +13,7 @@
  * - Vertex coordinates come from a small integer grid so they are
  *   exactly representable in f32 and survive `{:e}` formatting.
  * - Triangles always carry an explicit non-zero normal, so the
- *   readers' "zero-normal → recompute" fallback is not exercised
+ *   readers' "zero-normal -> recompute" fallback is not exercised
  *   here (the malformed-input suite covers that).
  * - PROPTEST_CASES is capped at 32 because writing a Vec<u8>,
  *   parsing it back, and comparing meshes is heavier than a pure
@@ -123,7 +123,7 @@ proptest! {
         write_stlb(&mesh, &mut buf).unwrap();
 
         let mut reader = Cursor::new(buf);
-        let graph = read_stlb(&mut reader).unwrap();
+        let (graph, _) = read_stlb(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&graph);
 
         prop_assert_eq!(recovered.faces().len(), mesh.faces().len());
@@ -156,7 +156,7 @@ proptest! {
         let mut buf: Vec<u8> = Vec::new();
         write_stlb(&mesh, &mut buf).unwrap();
         let mut reader = Cursor::new(buf);
-        let graph = read_stlb(&mut reader).unwrap();
+        let (graph, _) = read_stlb(&mut reader).unwrap();
         let recovered = unwrap_single_mesh(&graph);
 
         for face in recovered.faces() {

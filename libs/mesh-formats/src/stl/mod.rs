@@ -44,7 +44,7 @@ impl MeshReader for StlBin {
     type Warning = LoadStlWarning;
 
     fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
-        read_stlb(reader).map(|scene| (scene, Vec::new()))
+        read_stlb(reader)
     }
 }
 
@@ -111,11 +111,13 @@ impl MeshReader for Stl {
     type Warning = LoadStlWarning;
 
     fn read<R: Read + Seek>(reader: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)> {
-        read_stl(reader).map(|scene| (scene, Vec::new()))
+        read_stl(reader)
     }
 }
 
-pub fn read_stl<R>(read: &mut R) -> Result<Scene>
+/// Auto-detecting STL reader. The binary route can emit header
+/// warnings; the ASCII route has none today.
+pub fn read_stl<R>(read: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)>
 where
     R: std::io::Read + std::io::Seek,
 {
@@ -130,7 +132,7 @@ where
     }
     let mut cursor = Cursor::new(&bytes[..]);
     if stla::probe(&mut cursor)? {
-        stla::read_stla_slice(&bytes)
+        stla::read_stla_slice(&bytes).map(|scene| (scene, Vec::new()))
     } else {
         stlb::read_stlb_slice(&bytes)
     }
@@ -144,7 +146,8 @@ where
     stla::read_stla_slice(&bytes)
 }
 
-pub fn read_stlb<R>(read: &mut R) -> Result<Scene>
+/// Binary STL reader, plus any header warning.
+pub fn read_stlb<R>(read: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)>
 where
     R: std::io::Read + std::io::Seek,
 {
@@ -187,7 +190,8 @@ mod stl_bin_reader_tests {
         bytes.extend_from_slice(&one_triangle_buffer());
         let mut reader = Cursor::new(bytes);
         reader.set_position(7);
-        let scene = super::read_stlb(&mut reader).expect("read_stlb succeeds");
+        let (scene, warnings) = super::read_stlb(&mut reader).expect("read_stlb succeeds");
+        assert!(warnings.is_empty());
         assert_eq!(scene.reachable_leaf_count(), 1);
     }
 

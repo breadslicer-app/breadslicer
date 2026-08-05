@@ -8,16 +8,27 @@
 use std::io::Write;
 
 use sc_mesh_formats::messages::{
-    LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
+    LoadMeshWarning, LoadObjWarning, LoadStlWarning, LoadThreeMfWarning, SceneLoadWarning,
 };
 
 pub(crate) fn display_warnings(warnings: &[LoadMeshWarning], out: &mut dyn Write) {
     for warning in warnings {
         match warning {
             LoadMeshWarning::Obj(w) => display_obj_warning(w, out),
-            LoadMeshWarning::Stl(stl) => match *stl {},
+            LoadMeshWarning::Stl(w) => display_stl_warning(w, out),
             LoadMeshWarning::ThreeMf(w) => display_threemf_warning(w, out),
             LoadMeshWarning::Scene(w) => display_scene_warning(w, out),
+        }
+    }
+}
+
+fn display_stl_warning(warning: &LoadStlWarning, out: &mut dyn Write) {
+    match warning {
+        LoadStlWarning::HeaderNotText => {
+            let _ = writeln!(
+                out,
+                "WARNING: binary STL header is not readable text; no mesh name was taken from it"
+            );
         }
     }
 }

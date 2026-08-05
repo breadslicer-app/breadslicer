@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use sc_mesh_formats::messages::{
-    LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning,
+    LoadMeshWarning, LoadObjWarning, LoadStlWarning, LoadThreeMfWarning, SceneLoadWarning,
 };
 use sc_mesh_spatial::SceneSpatial;
 use sc_project_formats::{ForeignDialect, ProfileRefWarning, ProjectPayload, ReadProjectWarning};
@@ -576,7 +576,7 @@ fn log_load_warnings(path: &Path, prepared: &PreparedScene) {
     for warning in &prepared.warnings {
         let line = match warning {
             LoadMeshWarning::Obj(w) => describe_obj_warning(w),
-            LoadMeshWarning::Stl(stl) => match *stl {},
+            LoadMeshWarning::Stl(w) => describe_stl_warning(w),
             LoadMeshWarning::ThreeMf(w) => describe_threemf_warning(w),
             LoadMeshWarning::Scene(w) => describe_scene_warning(w),
         };
@@ -600,6 +600,14 @@ fn log_load_warnings(path: &Path, prepared: &PreparedScene) {
             path.display(),
             describe_profile_ref_warning(warning),
         );
+    }
+}
+
+pub(crate) fn describe_stl_warning(warning: &LoadStlWarning) -> String {
+    match warning {
+        LoadStlWarning::HeaderNotText => {
+            "binary STL header is not readable text; no mesh name was taken from it".to_string()
+        }
     }
 }
 

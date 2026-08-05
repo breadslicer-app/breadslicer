@@ -57,9 +57,9 @@ fn unsupported_format_variant_display_and_source() {
 
 #[test]
 fn stl_variant_display_and_source() {
-    let err = LoadMeshError::Stl(LoadStlError::HeaderNotAscii);
+    let err = LoadMeshError::Stl(LoadStlError::AsciiHeaderMissing);
     let s = err.to_string();
-    assert!(s.contains("not ASCII"));
+    assert!(s.contains("solid"));
     assert!(err.source().is_some());
 }
 
@@ -88,7 +88,7 @@ fn from_infer_file_type_error_routes_to_infer_type_variant() {
 
 #[test]
 fn from_load_stl_error_routes_to_stl_variant() {
-    let err: LoadMeshError = LoadStlError::HeaderNotAscii.into();
+    let err: LoadMeshError = LoadStlError::AsciiHeaderMissing.into();
     assert!(matches!(err, LoadMeshError::Stl(_)));
 }
 

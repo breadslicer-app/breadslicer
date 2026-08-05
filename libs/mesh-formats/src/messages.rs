@@ -45,15 +45,14 @@ pub enum LoadObjWarning {
 }
 
 /// Warnings emitted by the STL readers (binary and ASCII).
-///
-/// The enum is currently empty: STL parsing produces no advisory
-/// messages. The type exists so the workspace warning channel has a
-/// place for future STL-specific notes (e.g., non-zero attribute
-/// bytes in the binary header, atypical solid-name capitalisation),
-/// and so the dispatcher in `loader.rs` can wrap per-format STL
-/// warnings into `LoadMeshWarning::Stl` once any are added.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LoadStlWarning {}
+pub enum LoadStlWarning {
+    /// The binary reader found content in the 80-byte header that is
+    /// not usable text (not valid UTF-8, or carrying control
+    /// characters). The header is a comment field, so the document
+    /// loads anyway; no mesh name is taken from it.
+    HeaderNotText,
+}
 
 /// Warnings emitted by the 3MF reader for document content that
 /// loads incompletely: the geometry always arrives intact, but a
