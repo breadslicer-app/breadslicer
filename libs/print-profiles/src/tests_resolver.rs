@@ -78,6 +78,34 @@ fn printer_without_light_intensity() -> PrinterProfile {
     toml_edit::de::from_str(PRINTER_WITHOUT_LIGHT_INTENSITY).unwrap()
 }
 
+const PRINTER_WITH_COARSE_Z_STEP: &str = r#"
+[identity]
+id = "coarse-axis-printer"
+manufacturer = "Example"
+family = "Coarse"
+name = "Coarse Axis"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+supports_grayscale = true
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+z_step_mm = 0.05
+"#;
+
+fn printer_with_coarse_z_step() -> PrinterProfile {
+    toml_edit::de::from_str(PRINTER_WITH_COARSE_Z_STEP).unwrap()
+}
+
 fn material(toml: &str) -> MaterialProfile {
     toml_edit::de::from_str(toml).unwrap()
 }
@@ -144,6 +172,30 @@ profile_version = "1.0.0"
             field: ResolvedField::LayerHeightMm,
         }),
     ));
+}
+
+#[test]
+fn resolve_layer_height_snaps_a_below_half_step_intent_up_to_one_step() {
+    // 0.02 mm against a 0.05 mm z step rounds to 0 multiples, which
+    // is not a printable height; the resolved height is the first
+    // multiple, never 0.
+    let toml = r#"
+[identity]
+id = "fine-detail"
+brand = "Default"
+family = "standard"
+name = "Fine Detail"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.02
+
+[defaults]
+
+[per_printer]
+"#;
+    let resolved = resolve_layer_height(&printer_with_coarse_z_step(), &material(toml)).unwrap();
+    assert_eq!(resolved.value(), 0.05);
 }
 
 #[test]
@@ -588,6 +640,73 @@ fn apply_constraints_quantises_silently_below_threshold() {
 }
 
 #[test]
+fn apply_constraints_snaps_a_below_half_step_layer_height_up_to_one_step() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.02).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.05);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::LayerHeightMm,
+            reason: SnapReason::QuantisedToMultiple { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_snaps_below_half_step_even_inside_a_declared_range() {
+    // The range clamp runs before the quantiser, so a value inside
+    // the declared range but below half a step still reaches it; the
+    // declared range is no guard against the snap-up.
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.012).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        layer_height_range_mm: Some(
+            LengthRange::new(
+                PositiveFiniteMm::new(0.01).unwrap(),
+                PositiveFiniteMm::new(0.10).unwrap(),
+            )
+            .unwrap(),
+        ),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.05);
+}
+
+#[test]
+fn apply_constraints_leaves_layer_height_unchanged_under_a_subnormal_step() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(5e-324).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.05);
+    assert!(warnings.is_empty());
+}
+
+#[test]
 fn apply_constraints_clamps_layer_height_into_range_first_then_quantises() {
     let mut picked = PickedValues {
         layer_height_mm: Some(PositiveFiniteMm::new(0.20).unwrap()),
@@ -956,6 +1075,42 @@ fn override_on_layer_height_snaps_range_then_quantises() {
         .find(|r| r.field == ResolvedField::LayerHeightMm)
         .expect("expected override record for layer_height_mm");
     assert_eq!(layer_record.final_value, 0.30);
+}
+
+#[test]
+fn override_on_layer_height_below_half_a_step_snaps_up_to_one_step() {
+    let mut picked = PickedValues {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        ..PickedValues::default()
+    };
+    let overrides = SceneOverrides {
+        layer_height_mm: Some(PositiveFiniteMm::new(0.02).unwrap()),
+        ..SceneOverrides::default()
+    };
+    let constraints = PrinterConstraints {
+        z_step_mm: Some(PositiveFiniteMm::new(0.05).unwrap()),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    let mut records = Vec::new();
+    apply_scene_overrides(
+        &overrides,
+        &mut picked,
+        &constraints,
+        &mut warnings,
+        &mut records,
+    )
+    .unwrap();
+
+    assert_eq!(picked.layer_height_mm.unwrap().value(), 0.05);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::LayerHeightMm,
+            reason: SnapReason::QuantisedToMultiple { .. },
+            ..
+        }
+    )));
 }
 
 const FULLY_CALIBRATED_MATERIAL: &str = r#"

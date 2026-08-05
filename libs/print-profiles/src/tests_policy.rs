@@ -42,6 +42,47 @@ fn snap_to_multiple_leaves_grid_aligned_values_unchanged() {
 }
 
 #[test]
+fn snap_to_multiple_below_half_step_snaps_up_to_one_step() {
+    // 0 multiples is not a printable height; the first multiple is
+    // the nearest printable one.
+    let policy = ConstraintPolicy::SnapToMultiple { step: 0.05 };
+    match policy.apply(0.02) {
+        ApplyResult::Snapped { snapped, reason } => {
+            assert_eq!(snapped, 0.05);
+            assert_eq!(reason, SnapReason::QuantisedToMultiple { step: 0.05 });
+        }
+        other => panic!("expected Snapped, got {other:?}"),
+    }
+}
+
+#[test]
+fn snap_to_multiple_at_exactly_half_a_step_rounds_up() {
+    // f64::round ties away from zero, so half a step lands on the
+    // first multiple, not on 0.
+    let policy = ConstraintPolicy::SnapToMultiple { step: 0.05 };
+    match policy.apply(0.025) {
+        ApplyResult::Snapped { snapped, .. } => assert_eq!(snapped, 0.05),
+        other => panic!("expected Snapped, got {other:?}"),
+    }
+}
+
+#[test]
+fn snap_to_multiple_with_a_subnormal_step_leaves_the_value_unchanged() {
+    // value / step overflows to infinity; the grid is finer than f64
+    // resolution there, so the value already sits on it.
+    let policy = ConstraintPolicy::SnapToMultiple { step: 5e-324 };
+    assert_eq!(policy.apply(0.05), ApplyResult::Unchanged);
+}
+
+#[test]
+fn snap_to_multiple_never_emits_a_non_finite_value() {
+    // Rounding up can overflow the product near the f64 range limit;
+    // the quantiser must pass the value through instead.
+    let policy = ConstraintPolicy::SnapToMultiple { step: 9e307 };
+    assert_eq!(policy.apply(f64::MAX), ApplyResult::Unchanged);
+}
+
+#[test]
 fn snap_into_range_clamps_below_to_min() {
     let policy = ConstraintPolicy::SnapIntoRange {
         min: 0.02,

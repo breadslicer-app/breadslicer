@@ -49,7 +49,33 @@ impl ConstraintPolicy {
     pub fn apply(self, value: f64) -> ApplyResult {
         match self {
             Self::SnapToMultiple { step } => {
-                let snapped = (value / step).round() * step;
+                let multiples = (value / step).round();
+                // A non-finite quotient (subnormal step) means the
+                // grid is finer than f64 resolution at this
+                // magnitude, so the value already sits on it within
+                // representation error.
+                if !multiples.is_finite() {
+                    return ApplyResult::Unchanged;
+                }
+                // 0 multiples is not a printable height: values below
+                // half a step snap UP to the first multiple instead of
+                // quantising to 0. This substitution is survivable by
+                // design for now, even though it can change the height
+                // by a large factor (the Autosnap warning fires above
+                // the threshold). Two pieces are missing before this
+                // can become the rejection it arguably should be:
+                // frontends do not surface resolve warnings yet, and
+                // there is no remediation tooling to fix the offending
+                // profile value in-app, so a hard error today would
+                // strand the user without a recovery path. Once both
+                // exist, reject here and let the user decide.
+                let snapped = multiples.max(1.0) * step;
+                // Near the f64 range limit rounding up can overflow
+                // the product; pass the value through rather than
+                // emit a non-finite height.
+                if !snapped.is_finite() {
+                    return ApplyResult::Unchanged;
+                }
                 if snapped == value {
                     ApplyResult::Unchanged
                 } else {
