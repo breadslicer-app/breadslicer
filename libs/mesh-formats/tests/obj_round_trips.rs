@@ -192,3 +192,64 @@ fn empty_scene_round_trip() {
             .any(|w| matches!(w, LoadObjWarning::NoVertices))
     );
 }
+
+#[test]
+fn newline_name_round_trips_folded() {
+    let mesh = make_triangle_mesh(Some("a\nb"));
+    let graph = make_graph(vec![mesh.clone()]);
+    let (recovered, warnings) = round_trip(&graph);
+
+    assert!(warnings.is_empty());
+    let recovered_mesh = unwrap_single_mesh(&recovered);
+    assert_eq!(
+        recovered_mesh
+            .meta()
+            .as_ref()
+            .and_then(|m| m.name.as_deref()),
+        Some("a b"),
+    );
+    assert_mesh_vertices_eq(&mesh, recovered_mesh);
+    assert_mesh_faces_eq(&mesh, recovered_mesh);
+}
+
+#[test]
+fn directive_injection_name_round_trips_with_identical_geometry() {
+    // A newline inside a name must never become document structure.
+    // Unfolded, this name injects a `v 9 9 9` line whose extra
+    // vertex displaces every face index the writer computed without
+    // it: the file loads back cleanly with the wrong triangle.
+    let mesh = make_triangle_mesh(Some("Injected\nv 9 9 9"));
+    let graph = make_graph(vec![mesh.clone()]);
+    let (recovered, warnings) = round_trip(&graph);
+
+    assert!(warnings.is_empty());
+    let recovered_mesh = unwrap_single_mesh(&recovered);
+    assert_eq!(
+        recovered_mesh
+            .meta()
+            .as_ref()
+            .and_then(|m| m.name.as_deref()),
+        Some("Injected v 9 9 9"),
+    );
+    assert_mesh_vertices_eq(&mesh, recovered_mesh);
+    assert_mesh_faces_eq(&mesh, recovered_mesh);
+}
+
+#[test]
+fn han_name_round_trips_transliterated() {
+    let mesh = make_triangle_mesh(Some("深圳"));
+    let graph = make_graph(vec![mesh.clone()]);
+    let (recovered, warnings) = round_trip(&graph);
+
+    assert!(warnings.is_empty());
+    let recovered_mesh = unwrap_single_mesh(&recovered);
+    assert_eq!(
+        recovered_mesh
+            .meta()
+            .as_ref()
+            .and_then(|m| m.name.as_deref()),
+        Some("ShenZhen"),
+    );
+    assert_mesh_vertices_eq(&mesh, recovered_mesh);
+    assert_mesh_faces_eq(&mesh, recovered_mesh);
+}

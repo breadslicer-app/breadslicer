@@ -5,6 +5,7 @@
 
 use sc_mesh_core::{CsgPolicy, IndexedMesh, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
 
+use crate::ascii_name::AsciiName;
 use crate::error::WriteObjError;
 use crate::ports::WriteSceneProgress;
 use crate::scene_writer::SerializeTally;
@@ -95,13 +96,20 @@ where
     graph.for_each_expanded_leaf(CsgPolicy::Descend, |_, world, mesh| {
         // OBJ has no per-object transform, so each occurrence's
         // composed world transform is baked into its vertices and
-        // face normals. The source mesh's name is preserved via the
-        // `o` marker; the baked mesh drops metadata by design.
-        let name = mesh.meta().as_ref().and_then(|m| m.name.as_deref());
+        // face normals. The source mesh's name reaches the `o`
+        // marker folded to printable ASCII (the marker is
+        // line-oriented, so raw names could terminate their own
+        // line and become document structure); the baked mesh drops
+        // metadata by design.
+        let name = mesh
+            .meta()
+            .as_ref()
+            .and_then(|m| m.name.as_deref())
+            .and_then(AsciiName::fold);
         let baked = bake_mesh_to_world(mesh, world)?;
         write_mesh_section(
             &baked,
-            name,
+            name.as_ref(),
             write_object_markers,
             &mut vertex_offset,
             &mut tally,
@@ -116,7 +124,7 @@ where
 
 fn write_mesh_section<W, F>(
     mesh: &IndexedMesh,
-    obj_name: Option<&str>,
+    obj_name: Option<&AsciiName>,
     write_object_marker: bool,
     vertex_offset: &mut u32,
     tally: &mut SerializeTally,
@@ -133,7 +141,7 @@ where
 
     if write_object_marker || obj_name.is_some() {
         match obj_name {
-            Some(name) => writeln!(writer, "o {name}")?,
+            Some(name) => writeln!(writer, "o {}", name.as_str())?,
             None => writeln!(writer, "o")?,
         }
     }
@@ -460,5 +468,50 @@ mod tests {
         );
         let mut buf: Vec<u8> = Vec::new();
         assert!(write_obj(&graph, &mut buf).is_err());
+    }
+
+    // --- Name folding on the `o` marker ---
+
+    #[test]
+    fn newline_name_is_folded_in_o_marker() {
+        let graph = Scene::from(make_triangle_mesh(Some("a\nb")));
+        let out = write_to_string(&graph);
+        assert_eq!(out, "o a b\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn han_name_is_transliterated_in_o_marker() {
+        let graph = Scene::from(make_triangle_mesh(Some("深圳")));
+        let out = write_to_string(&graph);
+        assert_eq!(out, "o ShenZhen\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn name_surrounding_whitespace_is_trimmed_on_write() {
+        let graph = Scene::from(make_triangle_mesh(Some("  x ")));
+        let out = write_to_string(&graph);
+        assert_eq!(out, "o x\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn name_folding_to_nothing_writes_the_nameless_shape() {
+        // U+FE0F has no ASCII rendering, so the whole name folds
+        // away; a single mesh then needs no `o` marker at all.
+        let graph = Scene::from(make_triangle_mesh(Some("\u{FE0F}")));
+        let out = write_to_string(&graph);
+        assert_eq!(out, "v 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n");
+    }
+
+    #[test]
+    fn name_folding_to_nothing_gets_bare_o_marker_in_multi_object_output() {
+        let graph = multi_mesh_graph(vec![
+            make_triangle_mesh(Some("\u{FE0F}")),
+            make_triangle_mesh(Some("B")),
+        ]);
+        let out = write_to_string(&graph);
+        assert_eq!(
+            out,
+            "o\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\no B\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 4 5 6\n"
+        );
     }
 }
