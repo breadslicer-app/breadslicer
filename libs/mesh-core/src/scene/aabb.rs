@@ -12,7 +12,7 @@ use crate::aabb::Aabb;
 use crate::scene::Scene;
 use crate::scene::error::SceneError;
 use crate::scene::node::{LeafPayload, NodeId, NodeKind};
-use crate::transform::Transform3D;
+use crate::transform::{AffineTransform3D, Transform3D};
 
 impl Scene {
     /// Axis-aligned bounding box over every scene root in world space.
@@ -57,6 +57,33 @@ impl Scene {
             f64::from(target_xy[1] - centre_y),
             f64::from(floor_z - min[2]),
         ]))
+    }
+
+    /// Drop the scene onto the plate: translate every scene root by
+    /// the shared delta from [`Self::translation_to_drop_at`] so the
+    /// world AABB's XY centre lands at `target_xy` and its minimum Z
+    /// at `floor_z`. The translation composes as an outer
+    /// left-multiplication onto each root's local transform, so the
+    /// roots' relative layout is preserved. Returns whether anything
+    /// moved: `false` for an empty scene or one already at the
+    /// target (whose roots keep their exact transforms, including
+    /// `Identity`).
+    pub fn drop_at(&mut self, target_xy: [f32; 2], floor_z: f32) -> Result<bool, SceneError> {
+        let Some(delta) = self.translation_to_drop_at(target_xy, floor_z)? else {
+            return Ok(false);
+        };
+        if delta == [0.0, 0.0, 0.0] {
+            return Ok(false);
+        }
+        let outer = Transform3D::Affine(AffineTransform3D::from_translation(delta));
+        for root_id in self.roots().to_vec() {
+            let current = self
+                .node(root_id)
+                .ok_or(SceneError::DanglingNodeId { id: root_id })?
+                .local_transform;
+            self.set_local_transform(root_id, outer.compose(&current))?;
+        }
+        Ok(true)
     }
 
     fn fold_world_aabb(
@@ -307,5 +334,149 @@ mod scene_aabb_tests {
     fn translation_to_drop_at_on_empty_returns_none() {
         let g = Scene::new();
         assert_eq!(g.translation_to_drop_at([0.0, 0.0], 0.0).unwrap(), None);
+    }
+
+    /// A cuboid spanning `min`..`max`; enough faces for the AABB walk.
+    fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
+        let v = |x, y, z| Vertex::new([x, y, z]);
+        let vertices = vec![
+            v(min[0], min[1], min[2]),
+            v(max[0], min[1], min[2]),
+            v(max[0], max[1], min[2]),
+            v(min[0], max[1], min[2]),
+            v(min[0], min[1], max[2]),
+            v(max[0], min[1], max[2]),
+            v(max[0], max[1], max[2]),
+            v(min[0], max[1], max[2]),
+        ];
+        let n = Normal::new([0.0, 0.0, 1.0]);
+        let faces = vec![
+            IndexedTriangle::from_raw_indices(n, [0, 1, 2]),
+            IndexedTriangle::from_raw_indices(n, [4, 5, 6]),
+        ];
+        IndexedMesh {
+            meta: None,
+            vertices,
+            faces,
+        }
+    }
+
+    /// Group-rooted scene wrapping the supplied leaves under a single
+    /// identity-Group root, the shape file loaders produce.
+    fn group_rooted_scene(leaves: Vec<(IndexedMesh, Transform3D)>) -> Scene {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group as root");
+        for (mesh, transform) in leaves {
+            let leaf = g
+                .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
+                .expect("add leaf");
+            g.add_child(root, leaf).expect("attach leaf under root");
+        }
+        g
+    }
+
+    #[test]
+    fn drop_at_on_empty_is_a_no_op() {
+        let mut g = Scene::new();
+        assert!(!g.drop_at([0.0, 0.0], 0.0).unwrap());
+        assert!(g.aabb().unwrap().is_none());
+    }
+
+    #[test]
+    fn drop_at_centres_an_off_origin_scene_with_its_bottom_on_the_floor() {
+        let mut g = group_rooted_scene(vec![(
+            cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
+            Transform3D::Identity,
+        )]);
+        assert!(g.drop_at([0.0, 0.0], 0.0).unwrap());
+        let world = g.aabb().unwrap().unwrap();
+        assert_aabb_approx(world, ([-5.0, -10.0, 0.0], [5.0, 10.0, 10.0]), 1e-4);
+    }
+
+    #[test]
+    fn drop_at_honours_a_non_origin_target() {
+        let mut g = group_rooted_scene(vec![(
+            cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
+            Transform3D::Identity,
+        )]);
+        assert!(g.drop_at([10.0, -4.0], 2.0).unwrap());
+        let world = g.aabb().unwrap().unwrap();
+        assert_aabb_approx(world, ([5.0, -14.0, 2.0], [15.0, 6.0, 12.0]), 1e-4);
+    }
+
+    #[test]
+    fn drop_at_on_an_already_placed_scene_keeps_the_exact_transforms() {
+        let mut g = group_rooted_scene(vec![(
+            cube_mesh([-5.0, -5.0, 0.0], [5.0, 5.0, 10.0]),
+            Transform3D::Identity,
+        )]);
+        let root_id = g.roots()[0];
+        assert!(!g.drop_at([0.0, 0.0], 0.0).unwrap());
+        assert!(matches!(
+            g.node(root_id).unwrap().local_transform,
+            Transform3D::Identity
+        ));
+    }
+
+    #[test]
+    fn drop_at_preserves_the_relative_layout_of_leaves() {
+        // 2 unit-ish cubes 9 mm apart on X and Y under 1 group root:
+        // the union lands centred with its bottom on the floor and
+        // the cubes stay 9 mm apart (only the root moves).
+        let mut g = group_rooted_scene(vec![
+            (
+                cube_mesh([100.0, 200.0, 50.0], [101.0, 201.0, 51.0]),
+                Transform3D::Identity,
+            ),
+            (
+                cube_mesh([109.0, 209.0, 53.0], [110.0, 210.0, 54.0]),
+                Transform3D::Identity,
+            ),
+        ]);
+        assert!(g.drop_at([0.0, 0.0], 0.0).unwrap());
+        let world = g.aabb().unwrap().unwrap();
+        assert_aabb_approx(world, ([-5.0, -5.0, 0.0], [5.0, 5.0, 4.0]), 1e-4);
+    }
+
+    #[test]
+    fn drop_at_translates_every_root_by_the_shared_delta() {
+        // 2 root leaves 10 mm apart on X: both roots receive the same
+        // outer translation, so the union centres while the roots'
+        // relative offset survives.
+        let mut g = Scene::new();
+        let leaf_a = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(cube_mesh([100.0, 0.0, 5.0], [101.0, 1.0, 6.0]))),
+            )
+            .unwrap();
+        let leaf_b = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(cube_mesh([110.0, 0.0, 5.0], [111.0, 1.0, 6.0]))),
+            )
+            .unwrap();
+        g.add_root(leaf_a).unwrap();
+        g.add_root(leaf_b).unwrap();
+        assert!(g.drop_at([0.0, 0.0], 0.0).unwrap());
+        let world = g.aabb().unwrap().unwrap();
+        assert_aabb_approx(world, ([-5.5, -0.5, 0.0], [5.5, 0.5, 1.0]), 1e-4);
+    }
+
+    #[test]
+    fn drop_at_composes_with_an_existing_leaf_transform() {
+        // The leaf already carries a translation; the placement delta
+        // lands on the root Group, outside it. World AABB after:
+        // [-0.5, -0.5, 0] .. [0.5, 0.5, 1].
+        let mut g = group_rooted_scene(vec![(
+            cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),
+        )]);
+        assert!(g.drop_at([0.0, 0.0], 0.0).unwrap());
+        let world = g.aabb().unwrap().unwrap();
+        assert_aabb_approx(world, ([-0.5, -0.5, 0.0], [0.5, 0.5, 1.0]), 1e-4);
     }
 }
