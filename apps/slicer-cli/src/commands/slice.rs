@@ -16,7 +16,7 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
-use sc_print_glue::{project_to_slice_profile, total_layers_for_height};
+use sc_print_glue::{UnsliceableScene, slice_profile_for_scene};
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, SceneOverrides,
@@ -109,26 +109,15 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     if !args.no_auto_place {
         place_on_build_plate(&mut loaded.graph)?;
     }
-    let z_max = scene_world_z_max(&loaded.graph)?;
-    if z_max <= 0.0 {
-        return Err(anyhow!(
-            "input scene has its top at z = {z_max} mm. The slicer slices upward from the build plate at z = 0; reposition your model(s) above z = 0 before slicing.",
-        ));
-    }
-
-    let layer_height = resolved.material_resolved.layer_height_mm;
-    let first_layer_height = args.first_layer_height.unwrap_or(layer_height);
-    let total_layers =
-        total_layers_for_height(z_max, layer_height.value(), first_layer_height.value())
-            .map_err(|e| anyhow!("cannot derive a layer count for this scene: {e}"))?;
-
-    let profile = project_to_slice_profile(
-        &resolved,
+    let profile = slice_profile_for_scene(
+        &loaded.graph,
+        &resolved.printer.hardware,
+        resolved.material_resolved.layer_height_mm,
+        args.first_layer_height,
         args.aa,
         PackingMode::None,
-        first_layer_height,
-        total_layers,
-    );
+    )
+    .map_err(describe_unsliceable)?;
 
     let leaf_slices = match slice_scene(&loaded.graph, &profile) {
         Ok(slices) => slices,
@@ -248,12 +237,17 @@ fn place_on_build_plate(scene: &mut Scene) -> Result<()> {
     Ok(())
 }
 
-fn scene_world_z_max(scene: &Scene) -> Result<f64> {
-    let aabb = scene
-        .aabb()
-        .map_err(|e| anyhow!("failed to compute mesh bounding box: {e}"))?
-        .ok_or_else(|| anyhow!("input scene contributes no geometry"))?;
-    Ok(f64::from(aabb.max().coords()[2]))
+/// Render a scene-derivation failure for the terminal. The
+/// at-or-below-plate arm keeps its repositioning advice: it is only
+/// reachable with `--no-auto-place`, where repositioning is exactly
+/// the action available to the user.
+fn describe_unsliceable(err: UnsliceableScene) -> anyhow::Error {
+    match err {
+        UnsliceableScene::TopAtOrBelowPlate { z_max_mm } => anyhow!(
+            "input scene has its top at z = {z_max_mm} mm. The slicer slices upward from the build plate at z = 0; reposition your model(s) above z = 0 before slicing.",
+        ),
+        other => anyhow!("cannot slice this scene: {other}"),
+    }
 }
 
 /// `leaf #<id>` or `leaf #<id> ("<name>")`, matching the labels the
