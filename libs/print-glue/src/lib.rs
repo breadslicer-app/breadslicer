@@ -18,17 +18,21 @@
 //! latter, combined with the per-print slicing parameters (the
 //! anti-aliasing level, the packing mode, the first-layer height,
 //! and the layer count derived from the mesh) that are not part of
-//! either profile. Both application frontends (the CLI and the
-//! eventual GUI) depend on this crate so the mapping lives in one
-//! place.
+//! either profile, and the scene-level preparation
+//! ([`prepare::slice_profile_for_scene`]) that derives the layer
+//! count from the scene and assembles the engine's input. Both
+//! application frontends (the CLI and the GUI) depend on this crate
+//! so the mapping lives in one place.
 
 pub mod fingerprint;
+pub mod prepare;
 pub mod projection;
 
 pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
     slice_input_fingerprint, validate_persisted_slices,
 };
+pub use prepare::{UnsliceableScene, slice_profile_for_scene};
 pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,
@@ -36,5 +40,7 @@ pub use projection::{
 
 #[cfg(test)]
 mod tests_fingerprint;
+#[cfg(test)]
+mod tests_prepare;
 #[cfg(test)]
 mod tests_projection;
