@@ -165,6 +165,15 @@ mod stla_tests {
         let name = stla_round_tripped_name(&get_mesh_named("a\nb"));
         assert_eq!(name.as_deref(), Some("a b"));
     }
+
+    #[test]
+    fn unicode_name_round_trips_transliterated() {
+        // The writer emits ASCII-only names; the umlaut folds to its
+        // base letter. The reader itself accepts non-ASCII names
+        // (ingestion stays tolerant), so this pins the writer alone.
+        let name = stla_round_tripped_name(&get_mesh_named("Küche"));
+        assert_eq!(name.as_deref(), Some("Kuche"));
+    }
 }
 
 #[cfg(test)]

@@ -22,23 +22,11 @@ fn encode_triangle_count(count: usize) -> Result<[u8; STL_TRIANGLE_COUNT_BYTES],
         .map_err(|_| WriteStlError::FaceCountExceedsU32 { count })
 }
 
-/// Name as emitted on the `solid` and `endsolid` lines: trimmed, with
-/// every whitespace run (line breaks included) collapsed to a single
-/// space, so the header always stays one line no matter what the
-/// in-memory name contains. A name that normalizes to the empty
-/// string is written like a missing name. The metadata itself is
-/// never modified.
-fn normalized_stla_name(name: &str) -> Option<String> {
-    let mut normalized = String::with_capacity(name.len());
-    for token in name.split_whitespace() {
-        if !normalized.is_empty() {
-            normalized.push(' ');
-        }
-        normalized.push_str(token);
-    }
-    (!normalized.is_empty()).then_some(normalized)
-}
-
+/// Writes the mesh as ASCII STL. The mesh name lands on the `solid`
+/// and `endsolid` lines folded to printable ASCII ([`AsciiName`]),
+/// so the header always stays one line no matter what the in-memory
+/// name contains; a name that folds to nothing is written like a
+/// missing name. The metadata itself is never modified.
 pub fn write_stla<W>(mesh: &IndexedMesh, writer: &mut W) -> Result<(), WriteStlError>
 where
     W: std::io::Write,
@@ -58,14 +46,14 @@ where
     F: FnMut(WriteSceneProgress),
 {
     let mesh_name = match &mesh.meta() {
-        Some(metadata) => metadata.name.as_deref().and_then(normalized_stla_name),
+        Some(metadata) => metadata.name.as_deref().and_then(AsciiName::fold),
         None => None,
     };
 
     // Write "header"
     writer.write_all(b"solid ")?;
     if let Some(name) = &mesh_name {
-        writer.write_all(name.as_bytes())?;
+        writer.write_all(name.as_str().as_bytes())?;
     }
     writer.write_all(b"\n")?;
 
@@ -95,7 +83,7 @@ where
     // Closing mesh
     if let Some(name) = &mesh_name {
         writer.write_all(b"endsolid ")?;
-        writer.write_all(name.as_bytes())?;
+        writer.write_all(name.as_str().as_bytes())?;
     } else {
         writer.write_all(b"endsolid")?;
     }
@@ -373,6 +361,13 @@ endsolid my_mesh",
         let text = written_stla_text("a\u{00A0}b");
         assert_eq!(first_line(&text), "solid a b");
         assert_eq!(last_line(&text), "endsolid a b");
+    }
+
+    #[test]
+    fn han_name_is_transliterated() {
+        let text = written_stla_text("深圳");
+        assert_eq!(first_line(&text), "solid ShenZhen");
+        assert_eq!(last_line(&text), "endsolid ShenZhen");
     }
 
     #[test]
