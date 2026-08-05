@@ -1,8 +1,7 @@
-# Fake material profile with no calibration for the
-# slicer-cli-e2e-test printer and no intent layer height. The
-# resolver cannot supply the required fields, so resolution fails
-# with a missing-required-field error. Used to exercise the CLI's
-# resolve-error path.
+# Fake material profile with no intent layer height (and no
+# calibration). Nothing supplies the one material parameter slicing
+# needs, so the layer-height resolution fails. Used to exercise the
+# CLI's resolution-error path.
 
 [identity]
 id = "slicer-cli-e2e-test-resin-incomplete"

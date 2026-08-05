@@ -16,12 +16,12 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
-use sc_print_glue::{UnsliceableScene, slice_profile_for_scene};
+use sc_print_glue::{UnsliceableScene, UnsliceableSelection, slice_profile_for_selection};
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialProfile, PrinterProfile, SceneOverrides,
-    compose_with_library_extension, load_material_profile_by_id, load_material_profile_from_path,
-    load_printer_profile_by_id, load_printer_profile_from_path, resolve,
+    EffectiveMaterial, MaterialProfile, PrinterProfile, compose_with_library_extension,
+    load_material_profile_by_id, load_material_profile_from_path, load_printer_profile_by_id,
+    load_printer_profile_from_path,
 };
 use sc_sl1cer::contour::merge_stacks;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
@@ -87,13 +87,6 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         }
     };
 
-    let overrides = SceneOverrides {
-        layer_height_mm: args.layer_height,
-        ..SceneOverrides::default()
-    };
-    let resolved = resolve(&printer, &material, &overrides)
-        .map_err(|e| anyhow!("could not resolve the print configuration: {e}"))?;
-
     let mut loaded =
         load_mesh_from_path(&source_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
     display_warnings(&loaded.warnings, &mut std::io::stderr());
@@ -109,10 +102,11 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     if !args.no_auto_place {
         place_on_build_plate(&mut loaded.graph)?;
     }
-    let profile = slice_profile_for_scene(
+    let profile = slice_profile_for_selection(
         &loaded.graph,
-        &resolved.printer.hardware,
-        resolved.material_resolved.layer_height_mm,
+        &printer,
+        &material,
+        args.layer_height,
         args.first_layer_height,
         args.aa,
         PackingMode::None,
@@ -237,16 +231,19 @@ fn place_on_build_plate(scene: &mut Scene) -> Result<()> {
     Ok(())
 }
 
-/// Render a scene-derivation failure for the terminal. The
+/// Render a slice-preparation failure for the terminal. The
 /// at-or-below-plate arm keeps its repositioning advice: it is only
 /// reachable with `--no-auto-place`, where repositioning is exactly
 /// the action available to the user.
-fn describe_unsliceable(err: UnsliceableScene) -> anyhow::Error {
+fn describe_unsliceable(err: UnsliceableSelection) -> anyhow::Error {
     match err {
-        UnsliceableScene::TopAtOrBelowPlate { z_max_mm } => anyhow!(
+        UnsliceableSelection::LayerHeight(err) => {
+            anyhow!("no layer height resolves for this printer and material: {err}",)
+        }
+        UnsliceableSelection::Scene(UnsliceableScene::TopAtOrBelowPlate { z_max_mm }) => anyhow!(
             "input scene has its top at z = {z_max_mm} mm. The slicer slices upward from the build plate at z = 0; reposition your model(s) above z = 0 before slicing.",
         ),
-        other => anyhow!("cannot slice this scene: {other}"),
+        UnsliceableSelection::Scene(other) => anyhow!("cannot slice this scene: {other}"),
     }
 }
 

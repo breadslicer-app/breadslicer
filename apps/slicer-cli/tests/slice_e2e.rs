@@ -566,7 +566,10 @@ fn unknown_material_id_fails_with_not_found() {
 }
 
 #[test]
-fn incomplete_material_fails_to_resolve() {
+fn a_material_without_any_layer_height_fails_to_resolve() {
+    // The incomplete fixture supplies neither an intent layer height
+    // nor calibration: the one material parameter slicing needs is
+    // missing, so the slice refuses.
     let out = tempdir().unwrap();
     Command::cargo_bin("sc-slicer-cli")
         .unwrap()
@@ -585,8 +588,35 @@ fn incomplete_material_fails_to_resolve() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "could not resolve the print configuration",
+            "no layer height resolves for this printer and material",
         ));
+}
+
+#[test]
+fn a_material_without_print_calibration_slices_geometry() {
+    // The extendable resin's base carries an intent layer height
+    // (0.2 mm) and no per-printer calibration, and no extension is
+    // installed here. Geometry slicing consumes the layer height
+    // only; the print calibration belongs to the printer-file export
+    // step, so this pairing slices.
+    let out = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin-extendable")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 5 layers"));
 }
 
 /// A temporary user library whose `materials/extensions/` holds the
@@ -603,8 +633,11 @@ fn library_with_extendable_extension() -> tempfile::TempDir {
     library
 }
 
-/// Slice one fixture with the extendable resin (calibration only in
-/// the user-library extension) and assert the expected layer count.
+/// Slice one fixture with the extendable resin while its same-id
+/// extension is installed in a temporary user library, and assert
+/// the expected layer count. Pins that the by-id route composes the
+/// extension without disturbing the slice (extensions add print
+/// calibration, which geometry slicing does not consume).
 fn slice_with_extension_calibration(fixture: &str, expected_layers: u32) {
     let out = tempdir().unwrap();
     let library = library_with_extendable_extension();
@@ -631,19 +664,17 @@ fn slice_with_extension_calibration(fixture: &str, expected_layers: u32) {
 }
 
 #[test]
-fn extension_calibration_completes_the_resolution_for_the_cube() {
-    // The base profile alone cannot resolve (no calibration block);
-    // the same-id extension in the user library must supply it.
+fn an_installed_extension_does_not_disturb_the_slice_of_the_cube() {
     slice_with_extension_calibration("cube.stl", 5);
 }
 
 #[test]
-fn extension_calibration_completes_the_resolution_for_the_z_tunnel_prism() {
+fn an_installed_extension_does_not_disturb_the_slice_of_the_z_tunnel_prism() {
     slice_with_extension_calibration("prism_z_tunnel.stl", 10);
 }
 
 #[test]
-fn extension_calibration_completes_the_resolution_for_the_y_tunnel_prism() {
+fn an_installed_extension_does_not_disturb_the_slice_of_the_y_tunnel_prism() {
     slice_with_extension_calibration("prism_y_tunnel.stl", 10);
 }
 
