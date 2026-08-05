@@ -15,28 +15,27 @@
 use std::collections::BTreeMap;
 
 use sc_print_primitives::PrinterId;
-use sc_print_profiles::{MaterialDefaults, MaterialIntent, MaterialPerPrinter, MaterialProfile};
+use sc_print_profiles::{
+    EffectiveMaterial, MaterialDefaults, MaterialIntent, MaterialPerPrinter, MaterialProfile,
+};
 use slint::SharedString;
 
 use crate::i18n::ctr;
 use crate::profile_catalog::{GENERIC_PRINTER_ID, PrinterCatalogEntry};
 
-/// The calibration targets not yet covered by the base profile or its
-/// extension: every catalog printer (the generic machine included)
-/// without a block in either file. The extend dialog lists exactly
-/// these, which is the single place the "only uncovered targets" rule
-/// is enforced. Ordered like the editor's picker: the default printer
-/// first, the generic machine next, the rest in catalog order.
+/// The calibration targets the effective material does not cover yet:
+/// every catalog printer (the generic machine included) without a
+/// block in the composed base-plus-extension view. The extend dialog
+/// lists exactly these, which is the single place the "only uncovered
+/// targets" rule is enforced. Ordered like the editor's picker: the
+/// default printer first, the generic machine next, the rest in
+/// catalog order.
 pub(crate) fn uncovered_targets(
-    base: &MaterialProfile,
-    extension: Option<&MaterialProfile>,
+    material: &EffectiveMaterial,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
 ) -> Vec<(PrinterId, SharedString)> {
-    let covered = |id: &PrinterId| {
-        base.per_printer.contains_key(id)
-            || extension.is_some_and(|ext| ext.per_printer.contains_key(id))
-    };
+    let covered = |id: &PrinterId| material.per_printer().contains_key(id);
     let rank = |id: &PrinterId| -> u8 {
         if default_printer == Some(id) {
             0

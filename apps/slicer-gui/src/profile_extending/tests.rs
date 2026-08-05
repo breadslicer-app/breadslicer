@@ -55,6 +55,14 @@ fn parse(toml: &str) -> MaterialProfile {
     load_material_profile_from_path(&path).unwrap()
 }
 
+/// Compose a base and an optional extension, asserting the pair is
+/// clean.
+fn effective(base: MaterialProfile, extension: Option<MaterialProfile>) -> EffectiveMaterial {
+    let (material, issues) = EffectiveMaterial::compose(base, extension);
+    assert!(issues.is_empty(), "issues: {issues:?}");
+    material
+}
+
 fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
     PrinterCatalogEntry {
         id: PrinterId::new(id).unwrap(),
@@ -92,9 +100,8 @@ fn sample_block() -> MaterialPerPrinter {
 
 #[test]
 fn covered_targets_are_excluded_from_the_selectable_list() {
-    let base = parse(BASE_TOML);
-    let extension = parse(EXTENSION_TOML);
-    let targets = uncovered_targets(&base, Some(&extension), &printers(), None);
+    let material = effective(parse(BASE_TOML), Some(parse(EXTENSION_TOML)));
+    let targets = uncovered_targets(&material, &printers(), None);
 
     let ids: Vec<&str> = targets.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["generic-machine", "printer-z"]);
@@ -102,8 +109,8 @@ fn covered_targets_are_excluded_from_the_selectable_list() {
 
 #[test]
 fn without_an_extension_only_the_base_blocks_cover() {
-    let base = parse(BASE_TOML);
-    let targets = uncovered_targets(&base, None, &printers(), None);
+    let material = effective(parse(BASE_TOML), None);
+    let targets = uncovered_targets(&material, &printers(), None);
 
     let ids: Vec<&str> = targets.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["generic-machine", "printer-b", "printer-z"]);
@@ -111,9 +118,9 @@ fn without_an_extension_only_the_base_blocks_cover() {
 
 #[test]
 fn the_default_printer_ranks_before_generic_and_the_rest() {
-    let base = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     let default = printer_id("printer-z");
-    let targets = uncovered_targets(&base, None, &printers(), Some(&default));
+    let targets = uncovered_targets(&material, &printers(), Some(&default));
 
     let ids: Vec<&str> = targets.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["printer-z", "generic-machine", "printer-b"]);
@@ -121,8 +128,8 @@ fn the_default_printer_ranks_before_generic_and_the_rest() {
 
 #[test]
 fn the_generic_target_gets_the_translated_label() {
-    let base = parse(BASE_TOML);
-    let targets = uncovered_targets(&base, None, &printers(), None);
+    let material = effective(parse(BASE_TOML), None);
+    let targets = uncovered_targets(&material, &printers(), None);
 
     let generic = targets
         .iter()
@@ -138,9 +145,9 @@ fn the_generic_target_gets_the_translated_label() {
 
 #[test]
 fn full_coverage_leaves_nothing_to_extend() {
-    let base = parse(BASE_TOML);
+    let material = effective(parse(BASE_TOML), None);
     let subset = vec![printer_entry("printer-a", "Printer A")];
-    assert!(uncovered_targets(&base, None, &subset, None).is_empty());
+    assert!(uncovered_targets(&material, &subset, None).is_empty());
 }
 
 #[test]

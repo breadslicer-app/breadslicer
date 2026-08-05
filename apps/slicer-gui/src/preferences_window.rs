@@ -1059,12 +1059,13 @@ fn open_extend_dialog(
 
     let snapshot = bus.snapshot();
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
-    let targets = uncovered_targets(
-        &base,
-        extension.as_ref(),
-        catalog.printers(),
-        default_printer.as_ref(),
-    );
+    // The dialog writes to the raw files, so `base` and `extension`
+    // stay around; the composed view only feeds the target complement.
+    let (material, issues) = EffectiveMaterial::compose(base.clone(), extension.clone());
+    for issue in &issues {
+        eprintln!("warning: {issue}");
+    }
+    let targets = uncovered_targets(&material, catalog.printers(), default_printer.as_ref());
     if targets.is_empty() {
         return;
     }
