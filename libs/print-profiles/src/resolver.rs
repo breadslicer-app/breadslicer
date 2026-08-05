@@ -51,7 +51,7 @@ use crate::material_per_printer::MaterialPerPrinter;
 use crate::material_resolved::MaterialResolved;
 use crate::override_record::OverrideRecord;
 use crate::policy::{
-    AUTOSNAP_WARNING_THRESHOLD, ApplyResult, policies_for, relative_delta_exceeds,
+    AUTOSNAP_WARNING_THRESHOLD, ApplyResult, ConstraintPolicy, policies_for, relative_delta_exceeds,
 };
 use crate::printer_constraints::PrinterConstraints;
 use crate::printer_profile::PrinterProfile;
@@ -579,4 +579,34 @@ pub fn resolve_layer_height(
         .ok_or(ResolveError::MissingRequiredField {
             field: ResolvedField::LayerHeightMm,
         })
+}
+
+/// Quantise `value` onto the printer's z-step grid, when the printer
+/// declares one. Total: without a declared z step the value passes
+/// through unchanged, and a value below half a step snaps up to one
+/// step, the same policy the layer-height resolution applies.
+///
+/// This is for per-print heights that must land on the motion grid
+/// WITHOUT running the full layer-height constraint chain. The
+/// first-layer height is the deliberate case: the declared
+/// layer-height range describes normal-layer curing and does not
+/// bind a first layer, which legitimately runs thicker under its
+/// longer exposure, while the z-step grid is a property of the
+/// motion system and binds every layer boundary.
+pub fn snap_to_z_step(
+    constraints: &PrinterConstraints,
+    value: PositiveFiniteMm,
+) -> PositiveFiniteMm {
+    let Some(step) = constraints.z_step_mm else {
+        return value;
+    };
+    let policy = ConstraintPolicy::SnapToMultiple { step: step.value() };
+    match policy.apply(value.value()) {
+        ApplyResult::Snapped { snapped, .. } => {
+            PositiveFiniteMm::new(snapped).expect("snapped height stays positive-finite")
+        }
+        // SnapToMultiple never rejects; both remaining arms keep the
+        // input, which is the policy's totality contract.
+        ApplyResult::Unchanged | ApplyResult::RejectedBelow { .. } => value,
+    }
 }

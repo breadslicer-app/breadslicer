@@ -79,7 +79,7 @@ pub use resolve_error::ResolveError;
 pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 pub use resolved_field::ResolvedField;
 pub use resolved_print_config::ResolvedPrintConfig;
-pub use resolver::{resolve, resolve_layer_height};
+pub use resolver::{resolve, resolve_layer_height, snap_to_z_step};
 pub use scene_overrides::SceneOverrides;
 pub use value_source::ValueSource;
 pub use writer::{

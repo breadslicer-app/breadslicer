@@ -17,7 +17,7 @@ use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
 use super::resolver::{
     PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material, resolve,
-    resolve_layer_height,
+    resolve_layer_height, snap_to_z_step,
 };
 use super::scene_overrides::SceneOverrides;
 use super::value_source::ValueSource;
@@ -281,6 +281,43 @@ target_layer_height_mm = 0.02
 
 fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test lengths are positive finite")
+}
+
+#[test]
+fn snap_to_z_step_quantises_onto_the_grid() {
+    // 0.08 against a 0.05 step: 1.6 multiples rounds to 2, giving 0.1.
+    let constraints = printer_with_coarse_z_step().constraints;
+    assert_eq!(snap_to_z_step(&constraints, mm(0.08)).value(), 0.1);
+}
+
+#[test]
+fn snap_to_z_step_keeps_an_on_grid_value_unchanged() {
+    let constraints = printer_with_coarse_z_step().constraints;
+    assert_eq!(snap_to_z_step(&constraints, mm(0.1)).value(), 0.1);
+}
+
+#[test]
+fn snap_to_z_step_snaps_below_half_a_step_up_to_one_step() {
+    // Same totality as the layer-height chain: 0 multiples is not a
+    // printable height, so 0.02 snaps up to 0.05, never to 0.
+    let constraints = printer_with_coarse_z_step().constraints;
+    assert_eq!(snap_to_z_step(&constraints, mm(0.02)).value(), 0.05);
+}
+
+#[test]
+fn snap_to_z_step_without_a_declared_step_is_identity() {
+    // The ranged printer declares no z step; the helper passes the
+    // value through.
+    let constraints = printer_with_layer_height_range().constraints;
+    assert_eq!(snap_to_z_step(&constraints, mm(0.037)).value(), 0.037);
+}
+
+#[test]
+fn snap_to_z_step_ignores_the_layer_height_range() {
+    // 0.2 sits far outside the declared [0.03, 0.1] range; the helper
+    // quantises only, it never clamps into the range.
+    let constraints = printer_with_layer_height_range().constraints;
+    assert_eq!(snap_to_z_step(&constraints, mm(0.2)).value(), 0.2);
 }
 
 #[test]
