@@ -9,12 +9,15 @@ use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
+use super::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 use super::loader::{
     LoadMaterialExtensionError, LoadMaterialProfileByIdError, LoadMaterialProfileError,
     LoadMaterialProfileErrorKind, LoadPrinterProfileByIdError, LoadPrinterProfileError,
-    LoadPrinterProfileErrorKind, load_material_extension_from_library, load_material_profile_by_id,
-    load_material_profile_from_library, load_material_profile_from_path,
-    load_printer_profile_by_id, load_printer_profile_from_library, load_printer_profile_from_path,
+    LoadPrinterProfileErrorKind, compose_with_library_extension,
+    load_material_extension_from_library, load_material_extension_if_present,
+    load_material_profile_by_id, load_material_profile_from_library,
+    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_library,
+    load_printer_profile_from_path,
 };
 
 const VALID_PRINTER_TOML: &str = r#"
@@ -564,4 +567,183 @@ fn load_material_extension_does_not_resolve_plain_material_files() {
     let id = MaterialId::new("sirayatech-blu").unwrap();
     let err = load_material_extension_from_library(dir.path(), &id).unwrap_err();
     assert!(matches!(err, LoadMaterialExtensionError::Profile(_)));
+}
+
+const COMPOSABLE_BASE_TOML: &str = r#"
+[identity]
+id = "compose-resin"
+brand = "Test"
+family = "standard"
+name = "Compose Resin"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[per_printer."printer-a"]
+normal_exposure_sec = 2.5
+"#;
+
+const COMPOSABLE_EXTENSION_TOML: &str = r#"
+extension = true
+
+[identity]
+id = "compose-resin"
+brand = "Test"
+family = "standard"
+name = "Compose Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."printer-b"]
+normal_exposure_sec = 3.5
+"#;
+
+fn composable_base() -> super::material_profile::MaterialProfile {
+    toml_edit::de::from_str(COMPOSABLE_BASE_TOML).unwrap()
+}
+
+#[test]
+fn extension_if_present_returns_none_when_the_file_is_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = MaterialId::new("compose-resin").unwrap();
+    assert_eq!(
+        load_material_extension_if_present(dir.path(), &id).unwrap(),
+        None,
+    );
+}
+
+#[test]
+fn extension_if_present_returns_the_document_without_flag_validation() {
+    // Flag semantics belong to composition, which reports instead of
+    // erroring; this loader hands the document over as parsed.
+    let dir = tempfile::tempdir().unwrap();
+    write_extension_file(dir.path(), "sirayatech-blu", VALID_MATERIAL_TOML);
+
+    let id = MaterialId::new("sirayatech-blu").unwrap();
+    let document = load_material_extension_if_present(dir.path(), &id)
+        .unwrap()
+        .expect("the document is present");
+    assert!(!document.extension);
+}
+
+#[test]
+fn extension_if_present_propagates_a_parse_error() {
+    let dir = tempfile::tempdir().unwrap();
+    write_extension_file(dir.path(), "compose-resin", "not valid toml [");
+
+    let id = MaterialId::new("compose-resin").unwrap();
+    let err = load_material_extension_if_present(dir.path(), &id).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        LoadMaterialProfileErrorKind::TomlParse(_)
+    ));
+}
+
+#[test]
+fn compose_with_library_extension_without_a_file_yields_the_base_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let (effective, issues) = compose_with_library_extension(composable_base(), dir.path());
+
+    assert!(issues.is_empty());
+    assert_eq!(effective, EffectiveMaterial::from(composable_base()));
+}
+
+#[test]
+fn compose_with_library_extension_folds_a_valid_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    write_extension_file(dir.path(), "compose-resin", COMPOSABLE_EXTENSION_TOML);
+
+    let (effective, issues) = compose_with_library_extension(composable_base(), dir.path());
+
+    assert!(issues.is_empty());
+    let printer_b = PrinterId::new("printer-b").unwrap();
+    assert_eq!(
+        effective.per_printer()[&printer_b]
+            .normal_exposure_sec
+            .unwrap()
+            .value(),
+        3.5,
+    );
+}
+
+#[test]
+fn compose_with_library_extension_reports_an_unreadable_file_and_degrades() {
+    let dir = tempfile::tempdir().unwrap();
+    write_extension_file(dir.path(), "compose-resin", "not valid toml [");
+
+    let (effective, issues) = compose_with_library_extension(composable_base(), dir.path());
+
+    assert_eq!(effective, EffectiveMaterial::from(composable_base()));
+    assert_eq!(issues.len(), 1, "issues: {issues:?}");
+    match &issues[0] {
+        MaterialExtensionIssue::ExtensionUnreadable { path, cause } => {
+            assert!(path.ends_with("materials/extensions/compose-resin.toml"));
+            assert!(!cause.is_empty());
+        }
+        other => panic!("expected ExtensionUnreadable, got {other:?}"),
+    }
+    let rendered = issues[0].to_string();
+    assert!(
+        rendered.contains("could not be loaded and was ignored"),
+        "rendered: {rendered}",
+    );
+}
+
+#[test]
+fn compose_with_library_extension_salvages_valid_pairs_next_to_an_overlap() {
+    let mixed_extension = r#"
+extension = true
+
+[identity]
+id = "compose-resin"
+brand = "Test"
+family = "standard"
+name = "Compose Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."printer-a"]
+normal_exposure_sec = 9.0
+
+[per_printer."printer-b"]
+normal_exposure_sec = 3.5
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    write_extension_file(dir.path(), "compose-resin", mixed_extension);
+
+    let (effective, issues) = compose_with_library_extension(composable_base(), dir.path());
+
+    let printer_a = PrinterId::new("printer-a").unwrap();
+    let printer_b = PrinterId::new("printer-b").unwrap();
+    assert_eq!(
+        issues,
+        vec![MaterialExtensionIssue::OverlappingCalibrationPair {
+            printer_id: printer_a.clone(),
+        }],
+    );
+    // The overlapped pair keeps the base's value; the new pair lands.
+    assert_eq!(
+        effective.per_printer()[&printer_a]
+            .normal_exposure_sec
+            .unwrap()
+            .value(),
+        2.5,
+    );
+    assert_eq!(
+        effective.per_printer()[&printer_b]
+            .normal_exposure_sec
+            .unwrap()
+            .value(),
+        3.5,
+    );
 }

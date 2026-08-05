@@ -153,6 +153,48 @@ fn resolve_layer_height_succeeds_without_exposure_calibration() {
 }
 
 #[test]
+fn resolution_honours_extension_installed_calibration() {
+    // The same pairing that fails base-only in the previous test
+    // resolves once the extension's calibration pair is composed in.
+    let extension_toml = r#"
+extension = true
+
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.75
+bottom_exposure_sec = 35.0
+bottom_layer_count = 7
+lift_distance_mm = 6.5
+lift_speed_mm_min = 70.0
+retract_speed_mm_min = 160.0
+"#;
+    let base: MaterialProfile = toml_edit::de::from_str(GENERIC_MATERIAL).unwrap();
+    let extension: MaterialProfile = toml_edit::de::from_str(extension_toml).unwrap();
+    let (effective, issues) = EffectiveMaterial::compose(base, Some(extension));
+    assert!(issues.is_empty(), "issues: {issues:?}");
+
+    let printer = printer_without_light_intensity();
+    let resolved = resolve(&printer, &effective, &SceneOverrides::default()).unwrap();
+    let values = &resolved.material_resolved;
+    assert_eq!(values.normal_exposure_sec.value(), 2.75);
+    assert_eq!(values.bottom_exposure_sec.value(), 35.0);
+    assert_eq!(values.bottom_layer_count, 7);
+    assert_eq!(values.lift_distance_mm.value(), 6.5);
+    assert_eq!(values.lift_speed_mm_min.value(), 70.0);
+    assert_eq!(values.retract_speed_mm_min.value(), 160.0);
+}
+
+#[test]
 fn resolve_layer_height_errors_when_no_layer_height_is_available() {
     let toml = r#"
 [identity]

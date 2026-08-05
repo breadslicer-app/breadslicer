@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
+use crate::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
 
@@ -268,6 +269,59 @@ pub fn load_material_extension_from_library(
         return Err(LoadMaterialExtensionError::NotAnExtension { path });
     }
     Ok(profile)
+}
+
+/// Load the document in a library's extensions slot for this id, if
+/// one is there: `Ok(None)` when the file does not exist, so callers
+/// never match on [`io::ErrorKind`] themselves. The `extension` flag
+/// is deliberately NOT validated here; the semantic checks belong to
+/// [`EffectiveMaterial::compose`], which reports a flag or identity
+/// problem as an issue instead of an error.
+pub fn load_material_extension_if_present(
+    library_dir: &Path,
+    id: &MaterialId,
+) -> Result<Option<MaterialProfile>, LoadMaterialProfileError> {
+    let path = material_extension_path_in_library(library_dir, id);
+    match load_material_profile_from_path(&path) {
+        Ok(profile) => Ok(Some(profile)),
+        Err(err) => {
+            if matches!(
+                &err.kind,
+                LoadMaterialProfileErrorKind::Io(io_err) if io_err.kind() == io::ErrorKind::NotFound,
+            ) {
+                Ok(None)
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+/// The effective material for `base`, with whatever the library's
+/// extensions slot contributes: the one funnel every resolution and
+/// display consumer goes through, so the degrade behaviour is
+/// identical everywhere.
+///
+/// Total and never workflow-breaking: a missing extension file is
+/// the normal case (base only, no issues); an unreadable one is
+/// excluded whole with [`MaterialExtensionIssue::ExtensionUnreadable`];
+/// everything else is [`EffectiveMaterial::compose`]'s contract.
+/// Extensions live in the user library only, so pass the user
+/// library directory, not a bundled assets root.
+pub fn compose_with_library_extension(
+    base: MaterialProfile,
+    library_dir: &Path,
+) -> (EffectiveMaterial, Vec<MaterialExtensionIssue>) {
+    match load_material_extension_if_present(library_dir, &base.identity.id) {
+        Ok(extension) => EffectiveMaterial::compose(base, extension),
+        Err(err) => {
+            let issue = MaterialExtensionIssue::ExtensionUnreadable {
+                path: err.path.clone(),
+                cause: err.kind.to_string(),
+            };
+            (EffectiveMaterial::from(base), vec![issue])
+        }
+    }
 }
 
 /// Returned by [`load_printer_profile_by_id`] when no source had

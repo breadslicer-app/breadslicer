@@ -162,6 +162,16 @@ A resin profile marked `extension = true` adds `per_printer` blocks to the
 base profile of the same id instead of replacing it. That is how calibration
 for a machine gets added to a resin someone else published.
 
+At resolution time the base and its extension are composed into one
+effective material (`EffectiveMaterial`), and `resolve` reads that composed
+view. An extension may only add calibration pairs for printers the base does
+not cover; everything else it might carry is excluded and reported as issue
+values rather than errors: a file that is not flagged or that names a
+different resin is ignored whole, a pair the base already covers is ignored
+on its own (the extension's other pairs still apply), and values in the
+inherited `[intent]` and `[defaults]` sections are ignored. An invalid
+extension therefore never makes a valid printer and resin pairing unusable.
+
 Some section names are reserved for planned features and are rejected at
 parse time: `[instance]` on printers, and `[per_environment]`,
 `[per_session_state]` and `[per_printer."<id>".constraints]` on resins.
@@ -170,7 +180,8 @@ parse time: `[instance]` on printers, and `[per_environment]`,
 
 Each value is taken from the first source that has it:
 
-1. The resin's `per_printer` block matching the printer's id.
+1. The effective material's `per_printer` block matching the printer's id
+   (the base profile's own pairs plus those its extension adds).
 2. The resin's `defaults`.
 3. The resin's `intent`, where the value can be derived from it. The layer
    height comes from the target layer height; the normal exposure comes from

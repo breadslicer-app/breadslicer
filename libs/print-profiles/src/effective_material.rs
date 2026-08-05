@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::fmt;
+use std::path::PathBuf;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
@@ -151,6 +152,12 @@ impl From<MaterialProfile> for EffectiveMaterial {
 /// [`EffectiveMaterial`], and callers surface these to the user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MaterialExtensionIssue {
+    /// The extension file exists but could not be read or parsed; the
+    /// whole document was excluded. `cause` carries the rendered load
+    /// error. Emitted by
+    /// [`crate::loader::compose_with_library_extension`], never by
+    /// [`EffectiveMaterial::compose`] itself.
+    ExtensionUnreadable { path: PathBuf, cause: String },
     /// The extension file's `extension` flag is missing or false; the
     /// whole document was excluded.
     ExtensionNotFlagged,
@@ -175,6 +182,12 @@ pub enum MaterialExtensionIssue {
 impl fmt::Display for MaterialExtensionIssue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ExtensionUnreadable { path, cause } => write!(
+                f,
+                "the extension file {} could not be loaded and was ignored: {}",
+                path.display(),
+                cause,
+            ),
             Self::ExtensionNotFlagged => write!(
                 f,
                 "the extension file is not flagged as an extension and was ignored",
