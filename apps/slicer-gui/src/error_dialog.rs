@@ -141,7 +141,6 @@ impl DialogManager {
     /// lifecycle as [`Self::show_error`] (owned by the manager until
     /// dismissed), without the error styling or the stderr log line.
     /// Must run on the Slint UI thread.
-    #[allow(dead_code)]
     pub fn show_info(self: &Rc<Self>, heading: &str, message: String, details: String) {
         let dialog = match InfoDialog::new() {
             Ok(d) => d,

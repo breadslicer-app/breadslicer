@@ -184,6 +184,11 @@ export component MainWindow inherits Window {
     // input-capturing progress modal. `slicing-in-progress` is set by the
     // Rust driver when a slice starts and cleared on every exit path.
     in-out property <bool> slicing-in-progress: false;
+    // Repair run state: set by the Rust driver when a repair starts
+    // and cleared on every exit path. Gates the Repair button and
+    // undo/redo (an undo landing mid-run would invalidate the
+    // worker's result).
+    in-out property <bool> repairing-in-progress: false;
     in property <int> slice-completed: 0;
     in property <int> slice-total: 0;
     in property <float> slice-progress: 0.0;
@@ -297,6 +302,8 @@ export component MainWindow inherits Window {
     callback selection-cleared();
     callback undo-requested();
     callback redo-requested();
+    callback repair-requested();
+    callback repair-finished();
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
@@ -415,6 +422,7 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Undo");
                 shortcut: @keys(Control + Z);
                 enabled: root.has-scene && !root.loading && root.can-undo
+                    && !root.repairing-in-progress
                     && root.workspace-section != WorkspaceSection.Slice;
                 activated => {
                     root.undo-requested();
@@ -425,6 +433,7 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Redo");
                 shortcut: @keys(Control + Shift + Z);
                 enabled: root.has-scene && !root.loading && root.can-redo
+                    && !root.repairing-in-progress
                     && root.workspace-section != WorkspaceSection.Slice;
                 activated => {
                     root.redo-requested();
@@ -934,6 +943,7 @@ export component MainWindow inherits Window {
                 MenuItem {
                     title: @tr("MenuBar" => "Undo");
                     enabled: root.has-scene && !root.loading && root.can-undo
+                    && !root.repairing-in-progress
                     && root.workspace-section != WorkspaceSection.Slice;
                     activated => {
                         root.undo-requested();
@@ -943,6 +953,7 @@ export component MainWindow inherits Window {
                 MenuItem {
                     title: @tr("MenuBar" => "Redo");
                     enabled: root.has-scene && !root.loading && root.can-redo
+                    && !root.repairing-in-progress
                     && root.workspace-section != WorkspaceSection.Slice;
                     activated => {
                         root.redo-requested();

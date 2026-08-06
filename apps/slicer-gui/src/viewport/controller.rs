@@ -730,7 +730,7 @@ impl ViewportController {
     /// shortcut can race a freshly-emptied stack, the document's
     /// own check is the source of truth).
     pub fn on_undo_requested(&self) {
-        if !self.allows_undo_redo() {
+        if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
         self.session.document().undo();
@@ -738,10 +738,21 @@ impl ViewportController {
 
     /// Edit -> Redo handler.
     pub fn on_redo_requested(&self) {
-        if !self.allows_undo_redo() {
+        if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
         self.session.document().redo();
+    }
+
+    /// Whether a repair worker is running. Undo/redo is silenced for
+    /// the duration: an edit landing mid-run would invalidate the
+    /// result the worker is computing (its revision guard would then
+    /// discard it, but the user's keystroke should not be the thing
+    /// that wastes the run).
+    fn repair_in_flight(&self) -> bool {
+        self.ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_repairing_in_progress())
     }
 
     /// Delete handler shared by the viewport Delete key, the

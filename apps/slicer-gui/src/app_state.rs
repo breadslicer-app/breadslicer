@@ -28,6 +28,7 @@ use crate::preferences_bus::{
 };
 use crate::preferences_window::{WiredPreferencesWindow, build_preferences_window};
 use crate::profile_catalog::ProfileCatalog;
+use crate::repair_run::RepairRun;
 use crate::scene_document::SceneDocument;
 use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
@@ -165,6 +166,9 @@ struct WiredMainWindow {
     /// The Slice action driver. Held so its Slint callbacks and progress
     /// timer live as long as the window.
     _slice_run: Rc<SliceRun>,
+    /// The Repair action driver. Held so its Slint callbacks live as
+    /// long as the window.
+    _repair_run: Rc<RepairRun>,
 }
 
 /// Owns every piece of state that is app-wide (not tied to a single
@@ -495,6 +499,7 @@ impl AppState {
             ctrl.document(),
         );
         let slice_run = SliceRun::install(&ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
+        let repair_run = RepairRun::install(&ui, ctrl.document(), ctrl.dialogs());
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
@@ -634,6 +639,7 @@ impl AppState {
                 _subscription: subscription,
                 _slice_panel: slice_panel,
                 _slice_run: slice_run,
+                _repair_run: repair_run,
             },
         );
         Ok(id)

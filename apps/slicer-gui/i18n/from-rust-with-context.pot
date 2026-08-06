@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-01 10:44+0200\n"
+"POT-Creation-Date: 2026-08-06 14:32+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -32,72 +32,72 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:555 src/preferences_window.rs:1220
+#: src/preferences_window.rs:555 src/preferences_window.rs:1224
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:745 src/preferences_window.rs:1615
+#: src/preferences_window.rs:748 src/preferences_window.rs:1619
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:919
+#: src/preferences_window.rs:922
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1018
+#: src/preferences_window.rs:1021
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1198
+#: src/preferences_window.rs:1202
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1208
+#: src/preferences_window.rs:1212
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1214
+#: src/preferences_window.rs:1218
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1216
+#: src/preferences_window.rs:1220
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1408
+#: src/preferences_window.rs:1412
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1763
+#: src/preferences_window.rs:1767
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1789
+#: src/preferences_window.rs:1793
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: src/viewport/controller.rs:1326
+#: src/viewport/controller.rs:1359
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1330
+#: src/viewport/controller.rs:1363
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -108,54 +108,54 @@ msgctxt "ObjectList"
 msgid "Object {}"
 msgstr ""
 
-#: src/wiring.rs:348
+#: src/wiring.rs:349
 msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:351 src/wiring.rs:566 src/wiring.rs:675
+#: src/wiring.rs:352 src/wiring.rs:567 src/wiring.rs:726
 msgctxt "FileDialog"
 msgid "3MF files"
 msgstr ""
 
-#: src/wiring.rs:352 src/wiring.rs:671
+#: src/wiring.rs:353 src/wiring.rs:722
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
 
-#: src/wiring.rs:354
+#: src/wiring.rs:355
 msgctxt "FileDialog"
 msgid "STL files"
 msgstr ""
 
-#: src/wiring.rs:357
+#: src/wiring.rs:358
 msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:575
+#: src/wiring.rs:576
 msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:576 src/wiring.rs:626 src/wiring.rs:643
-#: src/scene_loader.rs:523 src/app_state.rs:680
+#: src/wiring.rs:577 src/wiring.rs:699 src/scene_loader.rs:523
+#: src/app_state.rs:686
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:625 src/wiring.rs:642
+#: src/wiring.rs:698
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:663
+#: src/wiring.rs:714
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:667
+#: src/wiring.rs:718
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
@@ -175,118 +175,118 @@ msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
 
-#: src/profile_view.rs:64
+#: src/profile_view.rs:62
 msgctxt "ProfileViewDialog"
 msgid "not set"
 msgstr ""
 
-#: src/profile_view.rs:99
+#: src/profile_view.rs:96
 msgctxt "ProfileViewDialog"
 msgid "Bundled"
 msgstr ""
 
-#: src/profile_view.rs:100
+#: src/profile_view.rs:97
 msgctxt "ProfileViewDialog"
 msgid "Custom"
 msgstr ""
 
-#: src/profile_view.rs:103
+#: src/profile_view.rs:100
 msgctxt "ProfileViewDialog"
 msgid "Identity"
 msgstr ""
 
-#: src/profile_view.rs:107
+#: src/profile_view.rs:104
 msgctxt "ProfileViewDialog"
 msgid "Brand"
 msgstr ""
 
-#: src/profile_view.rs:111
+#: src/profile_view.rs:108
 msgctxt "ProfileViewDialog"
 msgid "Name"
 msgstr ""
 
-#: src/profile_view.rs:115
+#: src/profile_view.rs:112
 msgctxt "ProfileViewDialog"
 msgid "Family"
 msgstr ""
 
-#: src/profile_view.rs:119
+#: src/profile_view.rs:116
 msgctxt "ProfileViewDialog"
 msgid "Profile version"
 msgstr ""
 
-#: src/profile_view.rs:122
+#: src/profile_view.rs:119
 msgctxt "ProfileViewDialog"
 msgid "Origin"
 msgstr ""
 
-#: src/profile_view.rs:130
+#: src/profile_view.rs:126
 msgctxt "ProfileViewDialog"
 msgid "Intent"
 msgstr ""
 
-#: src/profile_view.rs:134
+#: src/profile_view.rs:130
 msgctxt "ProfileViewDialog"
 msgid "Target energy density (mJ/cm2)"
 msgstr ""
 
-#: src/profile_view.rs:138
+#: src/profile_view.rs:134
 msgctxt "ProfileViewDialog"
 msgid "Target layer height (mm)"
 msgstr ""
 
-#: src/profile_view.rs:159
+#: src/profile_view.rs:154
 msgctxt "ProfileViewDialog"
 msgid "Defaults"
 msgstr ""
 
-#: src/profile_view.rs:163
+#: src/profile_view.rs:158
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation (x/y/z)"
 msgstr ""
 
-#: src/profile_view.rs:167 src/profile_view.rs:308
+#: src/profile_view.rs:162 src/profile_view.rs:288
 msgctxt "ProfileViewDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: src/profile_view.rs:209
+#: src/profile_view.rs:204
 msgctxt "ProfileViewDialog"
 msgid "Generic"
 msgstr ""
 
-#: src/profile_view.rs:284
+#: src/profile_view.rs:264
 msgctxt "ProfileViewDialog"
 msgid "Generic calibration"
 msgstr ""
 
-#: src/profile_view.rs:286
+#: src/profile_view.rs:266
 #, rust-format
 msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr ""
 
-#: src/profile_view.rs:300
+#: src/profile_view.rs:280
 msgctxt "ProfileViewDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: src/profile_view.rs:304
+#: src/profile_view.rs:284
 msgctxt "ProfileViewDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: src/profile_view.rs:312
+#: src/profile_view.rs:292
 msgctxt "ProfileViewDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: src/profile_view.rs:316
+#: src/profile_view.rs:296
 msgctxt "ProfileViewDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: src/profile_view.rs:320
+#: src/profile_view.rs:300
 msgctxt "ProfileViewDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
@@ -358,15 +358,98 @@ msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""
 
-#: src/app_state.rs:679
+#: src/app_state.rs:685
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:683
+#: src/app_state.rs:689
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
+msgstr ""
+
+#: src/repair_run.rs:177
+msgctxt "RepairDialog"
+msgid "Repair failed"
+msgstr ""
+
+#: src/repair_run.rs:179
+msgctxt "RepairDialog"
+msgid "The repair worker crashed."
+msgstr ""
+
+#: src/repair_run.rs:188
+msgctxt "RepairDialog"
+msgid "Repair discarded"
+msgstr ""
+
+#: src/repair_run.rs:191
+msgctxt "RepairDialog"
+msgid "The scene changed while repairing; nothing was applied."
+msgstr ""
+
+#: src/repair_run.rs:204
+msgctxt "RepairDialog"
+msgid "Mesh repair"
+msgstr ""
+
+#: src/repair_run.rs:291
+msgctxt "RepairDialog"
+msgid "No problems found."
+msgstr ""
+
+#: src/repair_run.rs:295
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{} mesh(es) repaired"
+msgstr ""
+
+#: src/repair_run.rs:301
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{} mesh(es) could not be fully repaired"
+msgstr ""
+
+#: src/repair_run.rs:311
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{} mesh(es) still not edge-manifold"
+msgstr ""
+
+#: src/repair_run.rs:341
+#, rust-format
+msgctxt "RepairDialog"
+msgid "removed {} degenerate face(s)"
+msgstr ""
+
+#: src/repair_run.rs:345
+#, rust-format
+msgctxt "RepairDialog"
+msgid "reoriented {} face(s)"
+msgstr ""
+
+#: src/repair_run.rs:348
+#, rust-format
+msgctxt "RepairDialog"
+msgid "recomputed {} normal(s)"
+msgstr ""
+
+#: src/repair_run.rs:352
+#, rust-format
+msgctxt "RepairDialog"
+msgid "could not be fully repaired: {}"
+msgstr ""
+
+#: src/repair_run.rs:356
+msgctxt "RepairDialog"
+msgid "still not edge-manifold"
+msgstr ""
+
+#: src/repair_run.rs:387
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Mesh {}"
 msgstr ""
 
 #: src/profile_forking.rs:50
@@ -397,13 +480,13 @@ msgid ""
 "build cannot use for 3D."
 msgstr ""
 
-#: src/mesh_loader.rs:96
+#: src/mesh_loader.rs:93
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/profile_extending.rs:58
+#: src/profile_extending.rs:57
 msgctxt "ExtendDialog"
 msgid "Generic"
 msgstr ""

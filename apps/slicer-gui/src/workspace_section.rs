@@ -35,7 +35,6 @@ pub(crate) fn allows_undo_redo(section: WorkspaceSection) -> bool {
 /// Whether the mesh repair action is permitted in `section`. Prepare
 /// only: repair addresses the mesh problems the Prepare section
 /// surfaces, before layout begins.
-#[allow(dead_code)]
 pub(crate) fn allows_repair(section: WorkspaceSection) -> bool {
     matches!(section, WorkspaceSection::Prepare)
 }
