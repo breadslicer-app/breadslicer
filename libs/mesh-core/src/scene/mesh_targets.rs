@@ -96,6 +96,19 @@ impl Scene {
             },
         }
     }
+
+    /// Mutable borrow of the mesh stored at `target`, with the
+    /// [`std::sync::Arc::make_mut`] semantics of `mesh_resource_mut` /
+    /// `inline_mesh_mut`: shared storage is forked on the first
+    /// mutable access. Callers that only need to know whether work
+    /// exists must decide through [`Scene::target_mesh`] first, since
+    /// taking this borrow is what forks.
+    pub fn target_mesh_mut(&mut self, target: MeshTarget) -> Option<&mut IndexedMesh> {
+        match target {
+            MeshTarget::Resource(rid) => self.mesh_resource_mut(rid),
+            MeshTarget::InlineLeaf(id) => self.inline_mesh_mut(id),
+        }
+    }
 }
 
 #[cfg(test)]

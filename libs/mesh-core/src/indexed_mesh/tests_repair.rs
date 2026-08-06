@@ -10,6 +10,7 @@
 
 use crate::geometry::compute_normal_from_triangle_vertices;
 use crate::indexed_mesh::fix::MeshFixError;
+use crate::indexed_mesh::repair::{RepairAssessment, assess_repair};
 use crate::indexed_mesh::validate::MeshFaceError;
 use crate::indexed_mesh::{IndexedMesh, MeshFix, RepairPasses, RepairRefusal};
 use crate::primitives::{FaceIndex, IndexedTriangle, Normal, Vertex};
@@ -298,4 +299,113 @@ fn a_hole_is_reported_by_the_verdict_not_a_refusal() {
     assert_eq!(report.refusal, None);
     assert!(!report.edge_manifold_after);
     assert_eq!(mesh, original);
+}
+
+/// The shared-borrow assessment and the mutating run can never
+/// disagree: for every fixture class, `assess_repair` predicts
+/// exactly what `repair` reports on a clone of the same mesh.
+#[test]
+fn assessment_matches_the_repair_report_for_every_fixture_class() {
+    let flipped = {
+        let mut mesh = tetrahedron();
+        mesh.faces[0].vertices.reverse();
+        mesh
+    };
+    let with_zle = {
+        let mut mesh = tetrahedron();
+        append_zero_length_edge_face(&mut mesh);
+        mesh
+    };
+    let mixed = {
+        let mut mesh = tetrahedron();
+        append_zero_length_edge_face(&mut mesh);
+        mesh.faces.push(IndexedTriangle::from_raw_indices(
+            Normal::new([0.0, 0.0, 1.0]),
+            [0, 1, 99],
+        ));
+        mesh
+    };
+    let nan = {
+        let mut mesh = tetrahedron();
+        mesh.vertices[0] = Vertex::new([f32::NAN, 1.0, 1.0]);
+        mesh
+    };
+    // A lone open triangle trips the flip pass's zero threshold
+    // (faces / 2 = 0), a pre-existing primitive quirk; the pin here
+    // is only that assessment and run agree about it.
+    let lone_triangle = {
+        let mut mesh = open_strip();
+        mesh.faces.truncate(1);
+        mesh
+    };
+
+    let cases: Vec<(&str, IndexedMesh)> = vec![
+        ("clean", tetrahedron()),
+        ("flipped", flipped),
+        ("zle", with_zle),
+        ("mixed", mixed),
+        ("nan", nan),
+        ("lone-triangle", lone_triangle),
+        ("open-strip", open_strip()),
+    ];
+    for (name, mesh) in cases {
+        let assessment = assess_repair(&mesh, RepairPasses::default_repair());
+        let mut clone = mesh.clone();
+        let report = clone.repair(RepairPasses::default_repair());
+        match assessment {
+            RepairAssessment::Clean => {
+                assert!(report.fixes.is_empty(), "{name}: Clean predicts no fixes");
+                assert_eq!(report.refusal, None, "{name}: Clean predicts no refusal");
+            }
+            RepairAssessment::Refused(refusal) => {
+                assert!(report.fixes.is_empty(), "{name}: Refused predicts no fixes");
+                assert_eq!(
+                    report.refusal,
+                    Some(refusal),
+                    "{name}: the refusal must match"
+                );
+            }
+            RepairAssessment::Work => {
+                assert!(
+                    !report.fixes.is_empty(),
+                    "{name}: Work predicts applied fixes"
+                );
+            }
+        }
+    }
+    // The matrix covers all 3 assessment kinds; pin the per-case
+    // kinds so a fixture drifting into another class is caught.
+    let passes = RepairPasses::default_repair();
+    assert_eq!(
+        assess_repair(&tetrahedron(), passes),
+        RepairAssessment::Clean
+    );
+    assert_eq!(
+        assess_repair(&open_strip(), passes),
+        RepairAssessment::Clean
+    );
+    assert!(matches!(
+        assess_repair(
+            &{
+                let mut m = tetrahedron();
+                m.faces[0].vertices.reverse();
+                m
+            },
+            passes
+        ),
+        RepairAssessment::Work
+    ));
+    assert!(matches!(
+        assess_repair(
+            &{
+                let mut m = open_strip();
+                m.faces.truncate(1);
+                m
+            },
+            passes
+        ),
+        RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(
+            MeshFixError::TooManyFlippedFaces
+        ))
+    ));
 }

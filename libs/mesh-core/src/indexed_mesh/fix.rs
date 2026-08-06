@@ -80,7 +80,7 @@ impl From<GeometryError> for MeshFixError {
 /// One planned mutation of a face. The fix routine builds a `Vec` of
 /// these and only applies them once every fallible step has succeeded,
 /// so a mid-loop `Err` never leaves the mesh half-mutated.
-struct PlannedFaceFix {
+pub(super) struct PlannedFaceFix {
     face_idx: FaceIndex,
     /// `Some` if the face's winding should be reversed.
     new_vertices: Option<[VertexIndex; 3]>,
@@ -98,18 +98,30 @@ struct PlannedFaceFix {
 }
 
 /// Body of `fix_faces_orientation`, factored out so
-/// `ValidatedFacesMut::fix_faces_orientation` can call it. The
-/// in-range invariant on `mesh.faces[*].vertices` is what makes the
-/// unguarded `mesh.vertices[i]` indexing inside this routine safe;
-/// the only caller takes that invariant as its precondition.
+/// `ValidatedFacesMut::fix_faces_orientation` can call it: the
+/// read-only planning half followed by the commit of the plan.
 pub(super) fn fix_faces_orientation_impl(
     mesh: &mut IndexedMesh,
     manifold_errors: &[MeshEdgeManifoldError],
     normal_vector_errors: &[MeshNormalVectorError],
     options: FixFacesOptions,
 ) -> Result<Vec<MeshFix>, MeshFixError> {
-    let mut fixes: Vec<MeshFix> = Vec::new();
+    let plan = plan_faces_orientation_impl(mesh, manifold_errors, normal_vector_errors, options)?;
+    Ok(apply_orientation_plan(mesh, plan))
+}
 
+/// Read-only planning half of the orientation fix: decides, on a
+/// shared borrow, exactly which faces the pass would mutate. `Err`
+/// means the pass would refuse; an empty plan means it would be a
+/// no-op. The in-range invariant on `mesh.faces[*].vertices` is what
+/// makes the unguarded `mesh.vertices[i]` indexing inside this
+/// routine safe; callers take that invariant as their precondition.
+pub(super) fn plan_faces_orientation_impl(
+    mesh: &IndexedMesh,
+    manifold_errors: &[MeshEdgeManifoldError],
+    normal_vector_errors: &[MeshNormalVectorError],
+    options: FixFacesOptions,
+) -> Result<Vec<PlannedFaceFix>, MeshFixError> {
     let mut possibly_flipped_faces: HashMap<FaceIndex, u8> = HashMap::new();
 
     if options.flipped {
@@ -222,7 +234,14 @@ pub(super) fn fix_faces_orientation_impl(
         }
     }
 
-    // Every fallible step has succeeded; commit the plan.
+    Ok(plan)
+}
+
+/// Commit half of the orientation fix: applies a plan whose every
+/// fallible step already succeeded, so this cannot fail and the mesh
+/// never holds a partial pass.
+fn apply_orientation_plan(mesh: &mut IndexedMesh, plan: Vec<PlannedFaceFix>) -> Vec<MeshFix> {
+    let mut fixes: Vec<MeshFix> = Vec::new();
     for entry in plan {
         let face = &mut mesh.faces[entry.face_idx.get()];
         if let Some(verts) = entry.new_vertices {
@@ -244,8 +263,7 @@ pub(super) fn fix_faces_orientation_impl(
             });
         }
     }
-
-    Ok(fixes)
+    fixes
 }
 
 /// Body of `fix_zero_length_edges`. Removes from `mesh.faces` every
@@ -506,7 +524,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     fn does_not_modify_correct_faces() {
         let mut mesh = tetrahedron();
 
-        // Flip only face 0's winding (keep original normal → mismatched)
+        // Flip only face 0's winding (keep original normal -> mismatched)
         mesh.faces[0].vertices.reverse();
 
         let expected = tetrahedron();
@@ -824,7 +842,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
     fn mesh_is_valid_after_fixing_flipped_face() {
         let mut mesh = tetrahedron();
 
-        // Flip face 0's winding (keep original normal → mismatched)
+        // Flip face 0's winding (keep original normal -> mismatched)
         mesh.faces[0].vertices.reverse();
 
         let manifold_errors = mesh
@@ -924,7 +942,7 @@ mod indexed_mesh_fix_faces_orientation_tests {
 
         let original = mesh.clone();
 
-        // 2 errors mention face 0 → it crosses the n_errors >= 2
+        // 2 errors mention face 0 -> it crosses the n_errors >= 2
         // threshold and enters the flip branch.
         let manifold_errors = vec![
             MeshEdgeManifoldError::InconsistentWindingOrder {

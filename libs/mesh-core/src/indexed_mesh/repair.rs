@@ -111,6 +111,68 @@ pub struct MeshRepairReport {
     pub edge_manifold_after: bool,
 }
 
+/// What a repair run would do to a mesh, decided on a shared borrow
+/// (see [`assess_repair`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RepairAssessment {
+    /// Every enabled pass would find nothing to do.
+    Clean,
+    /// The run would be refused; the mesh would not change.
+    Refused(RepairRefusal),
+    /// At least one enabled pass would mutate the mesh.
+    Work,
+}
+
+/// Decide, without mutating anything, what [`IndexedMesh::repair`]
+/// would do to `mesh` under `passes`. Callers that manage shared
+/// storage (the scene driver) use this to fork only meshes that will
+/// actually change. The gates mirror `run_repair_passes` exactly,
+/// orientation planning included, so the assessment and the report
+/// can never disagree; the assessment-equivalence pins keep the pair
+/// in lockstep.
+pub(crate) fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessment {
+    if let Err(errors) = mesh.validate_vertices() {
+        return RepairAssessment::Refused(RepairRefusal::InvalidVertices(errors));
+    }
+    let witness = match mesh.validated_faces() {
+        Ok(witness) => witness,
+        Err(face_errors) => {
+            if !passes.zero_length_edges {
+                return RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(face_errors));
+            }
+            let residue: Vec<MeshFaceError> = face_errors
+                .iter()
+                .filter(|e| !matches!(e, MeshFaceError::ZeroLengthEdge { .. }))
+                .cloned()
+                .collect();
+            if !residue.is_empty() {
+                return RepairAssessment::Refused(RepairRefusal::UnfixableFaceErrors(residue));
+            }
+            // Every face error is a zero-length edge and the pass is
+            // enabled: faces will be removed.
+            return RepairAssessment::Work;
+        }
+    };
+    let normal_vector_errors = witness.validate_normal_vectors().err().unwrap_or_default();
+    let manifold_errors = witness.validate_edge_manifold().err().unwrap_or_default();
+    if normal_vector_errors.is_empty() && manifold_errors.is_empty() {
+        return RepairAssessment::Clean;
+    }
+    match super::fix::plan_faces_orientation_impl(
+        mesh,
+        &manifold_errors,
+        &normal_vector_errors,
+        FixFacesOptions {
+            flipped: passes.flipped_faces,
+            normals: passes.face_normals,
+        },
+    ) {
+        Err(err) => RepairAssessment::Refused(RepairRefusal::OrientationFixFailed(err)),
+        Ok(plan) if plan.is_empty() => RepairAssessment::Clean,
+        Ok(_) => RepairAssessment::Work,
+    }
+}
+
 impl IndexedMesh {
     /// Run the enabled repair passes over this mesh and report what
     /// happened.
