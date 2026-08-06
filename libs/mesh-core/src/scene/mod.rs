@@ -460,6 +460,60 @@ impl Scene {
         Ok(arc)
     }
 
+    /// Swap the mesh stored at the live resource slot `rid` for
+    /// `mesh`, returning the `Arc` that lived there so a typed edit
+    /// can snapshot it for undo.
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingMeshResource`] if no live resource
+    ///   lives at `rid`.
+    ///
+    /// On error the scene is unchanged.
+    pub fn replace_mesh_resource(
+        &mut self,
+        rid: MeshResourceId,
+        mesh: Arc<IndexedMesh>,
+    ) -> Result<Arc<IndexedMesh>, SceneError> {
+        let Some(slot) = self
+            .mesh_resources
+            .get_mut(rid.index())
+            .and_then(Option::as_mut)
+        else {
+            return Err(SceneError::DanglingMeshResource { id: rid });
+        };
+        Ok(std::mem::replace(slot, mesh))
+    }
+
+    /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `id` for
+    /// `mesh`, returning the `Arc` that lived there so a typed edit
+    /// can snapshot it for undo.
+    ///
+    /// Errors:
+    /// - [`SceneError::DanglingNodeId`] if no live node lives at `id`.
+    /// - [`SceneError::NotALeaf`] for Group, Csg, and Reference nodes.
+    /// - [`SceneError::NotAnInlineMeshLeaf`] for a leaf that stores
+    ///   its mesh by resource id.
+    ///
+    /// On error the scene is unchanged.
+    pub fn replace_inline_leaf_mesh(
+        &mut self,
+        id: NodeId,
+        mesh: Arc<IndexedMesh>,
+    ) -> Result<Arc<IndexedMesh>, SceneError> {
+        let Some(node) = self.nodes.get_mut(id.index()).and_then(Option::as_mut) else {
+            return Err(SceneError::DanglingNodeId { id });
+        };
+        match &mut node.kind {
+            NodeKind::Leaf(LeafPayload::Mesh(arc)) => Ok(std::mem::replace(arc, mesh)),
+            NodeKind::Leaf(LeafPayload::MeshResource(_)) => {
+                Err(SceneError::NotAnInlineMeshLeaf { node_id: id })
+            }
+            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => {
+                Err(SceneError::NotALeaf { node_id: id })
+            }
+        }
+    }
+
     fn any_live_leaf_references(&self, rid: MeshResourceId) -> bool {
         self.live_leaf_references_resource_excluding(rid, None)
     }
@@ -1888,6 +1942,72 @@ mod scene_construction_tests {
             Err(SceneError::MeshResourceInUse { id: rid })
         );
         assert!(g.mesh_resource(rid).is_some());
+    }
+
+    #[test]
+    fn replace_mesh_resource_swaps_the_arc_and_returns_the_previous_one() {
+        let mut g = Scene::new();
+        let before = Arc::new(unit_triangle());
+        let rid = g.add_mesh_resource_arc(Arc::clone(&before));
+        let after = Arc::new(unit_triangle());
+        let returned = g.replace_mesh_resource(rid, Arc::clone(&after)).unwrap();
+        assert!(Arc::ptr_eq(&returned, &before));
+        assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &after));
+    }
+
+    #[test]
+    fn replace_mesh_resource_on_dangling_id_errors() {
+        let mut g = Scene::new();
+        let bogus = MeshResourceId(NonZeroU32::new(99).unwrap());
+        assert_eq!(
+            g.replace_mesh_resource(bogus, Arc::new(unit_triangle())),
+            Err(SceneError::DanglingMeshResource { id: bogus })
+        );
+    }
+
+    #[test]
+    fn replace_inline_leaf_mesh_swaps_the_arc_and_returns_the_previous_one() {
+        let mut g = Scene::new();
+        let before = Arc::new(unit_triangle());
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::clone(&before)),
+            )
+            .unwrap();
+        let after = Arc::new(unit_triangle());
+        let returned = g
+            .replace_inline_leaf_mesh(leaf, Arc::clone(&after))
+            .unwrap();
+        assert!(Arc::ptr_eq(&returned, &before));
+        assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &after));
+    }
+
+    #[test]
+    fn replace_inline_leaf_mesh_rejects_every_non_inline_target_unchanged() {
+        let mut g = Scene::new();
+        let dangling = NodeId(NonZeroU32::new(99).unwrap());
+        assert_eq!(
+            g.replace_inline_leaf_mesh(dangling, Arc::new(unit_triangle())),
+            Err(SceneError::DanglingNodeId { id: dangling })
+        );
+        let group = g.add_group(None, Transform3D::Identity);
+        assert_eq!(
+            g.replace_inline_leaf_mesh(group, Arc::new(unit_triangle())),
+            Err(SceneError::NotALeaf { node_id: group })
+        );
+        let shared = Arc::new(unit_triangle());
+        let rid = g.add_mesh_resource_arc(Arc::clone(&shared));
+        let backed = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        assert_eq!(
+            g.replace_inline_leaf_mesh(backed, Arc::new(unit_triangle())),
+            Err(SceneError::NotAnInlineMeshLeaf { node_id: backed })
+        );
+        // The refusals left the resource-backed storage untouched.
+        assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &shared));
     }
 
     #[test]

@@ -59,6 +59,9 @@ pub enum SceneError {
     /// A mutator that expects a `Leaf(MeshResource(_))` was given a
     /// leaf carrying an inline mesh instead.
     NotAMeshResourceLeaf { node_id: NodeId },
+    /// A mutator that expects a `Leaf(Mesh(_))` was given a leaf
+    /// carrying its mesh by resource id instead.
+    NotAnInlineMeshLeaf { node_id: NodeId },
     /// A mutator that expects to fill an empty mesh-resource slot
     /// found it already populated.
     MeshResourceSlotOccupied { id: MeshResourceId },
@@ -136,6 +139,11 @@ impl fmt::Display for SceneError {
             Self::NotAMeshResourceLeaf { node_id } => write!(
                 f,
                 "node {} is a leaf but not a mesh-resource leaf",
+                node_id.get()
+            ),
+            Self::NotAnInlineMeshLeaf { node_id } => write!(
+                f,
+                "node {} is a leaf but not an inline-mesh leaf",
                 node_id.get()
             ),
             Self::MeshResourceSlotOccupied { id } => {
