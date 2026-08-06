@@ -2013,6 +2013,186 @@ mod slice_repair_tests {
 }
 
 #[cfg(test)]
+mod repair_pipeline_trio_tests {
+    //! Cross-frontend repair pipeline, CLI half: the broken cube +
+    //! Z-tunnel + Y-tunnel trio goes through `fix`, reads clean under
+    //! `diagnose`, and slices identically to the pristine trio. The
+    //! GUI half repairs the same fixtures through its own runner.
+
+    use sc_mesh_fixtures::{
+        cuboid_with_y_tunnel, cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel,
+        cuboid_with_z_tunnel_and_flipped_faces, unit_cube_mesh, unit_cube_with_flipped_faces,
+    };
+
+    use super::*;
+
+    fn named(mut mesh: IndexedMesh, name: &str) -> IndexedMesh {
+        mesh.meta = Some(MeshMetadata {
+            name: Some(name.to_string()),
+            ..Default::default()
+        });
+        mesh
+    }
+
+    /// Raises `mesh` by `dz`. The trio is pre-placed (cube raised
+    /// onto the platform) and sliced with --no-auto-place: the
+    /// auto-place shift of -0.5 (the cube's floor) would land the
+    /// Y-tunnel's horizontal tunnel-bottom face exactly on a slicing
+    /// plane, which the engine's stitcher rejects as non-manifold
+    /// (a coplanar-face limitation independent of this suite).
+    fn raised(mut mesh: IndexedMesh, dz: f32) -> IndexedMesh {
+        for vertex in &mut mesh.vertices {
+            let [x, y, z] = vertex.coords();
+            *vertex = Vertex::new([x, y, z + dz]);
+        }
+        mesh
+    }
+
+    fn write_trio_obj(path: &Path, meshes: [IndexedMesh; 3]) {
+        let mut graph = Scene::new();
+        for mesh in meshes {
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(mesh)),
+                )
+                .expect("add leaf");
+            graph.add_root(leaf).expect("add root");
+        }
+        let file = fs::File::create(path).expect("create obj");
+        let mut writer = std::io::BufWriter::new(file);
+        sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
+    }
+
+    fn pristine_trio() -> [IndexedMesh; 3] {
+        [
+            named(raised(unit_cube_mesh(), 0.5), "cube"),
+            named(cuboid_with_z_tunnel(), "z-tunnel"),
+            named(cuboid_with_y_tunnel(), "y-tunnel"),
+        ]
+    }
+
+    fn broken_trio() -> [IndexedMesh; 3] {
+        [
+            named(raised(unit_cube_with_flipped_faces(), 0.5), "cube"),
+            named(cuboid_with_z_tunnel_and_flipped_faces(), "z-tunnel"),
+            named(cuboid_with_y_tunnel_and_flipped_faces(), "y-tunnel"),
+        ]
+    }
+
+    /// Runs `slice` and returns its "Sliced N models: ..." summary
+    /// line, panicking when the run fails or the line is missing.
+    fn slice_summary(source: &Path, output_dir: &Path) -> String {
+        fs::create_dir(output_dir).unwrap();
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            output_dir.to_str().unwrap(),
+            "--target-format",
+            "svg-per-layer",
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
+            "--no-auto-place",
+        ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "slice on {source:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let summary = stdout
+            .lines()
+            .find(|line| line.starts_with("Sliced "))
+            .unwrap_or_else(|| panic!("no slice summary in stdout: {stdout}"));
+        // The tail names the run-specific output directory; the
+        // model/layer/polygon counts before it are the comparison.
+        summary
+            .split(" to ")
+            .next()
+            .expect("split always yields a first chunk")
+            .to_string()
+    }
+
+    #[test]
+    fn fix_repairs_the_broken_trio_and_diagnose_reads_clean() {
+        let tmp = TempDir::new().unwrap();
+        let broken = tmp.path().join("broken-trio.obj");
+        let fixed = tmp.path().join("fixed-trio.obj");
+        write_trio_obj(&broken, broken_trio());
+
+        // The defects survive the OBJ round trip: diagnose flags them.
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", broken.to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("windings disagree"));
+
+        // 2 cube + 3 Z-tunnel + 3 Y-tunnel inside-out faces.
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                broken.to_str().unwrap(),
+                "-t",
+                fixed.to_str().unwrap(),
+            ])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("Applied fixes (8):"))
+            .stderr(predicate::str::contains("Flipped orientation"));
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", fixed.to_str().unwrap()])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn repaired_trio_slices_identically_to_the_pristine_trio() {
+        let tmp = TempDir::new().unwrap();
+        let pristine = tmp.path().join("pristine-trio.obj");
+        let broken = tmp.path().join("broken-trio.obj");
+        let fixed = tmp.path().join("fixed-trio.obj");
+        write_trio_obj(&pristine, pristine_trio());
+        write_trio_obj(&broken, broken_trio());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                broken.to_str().unwrap(),
+                "-t",
+                fixed.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+
+        let pristine_summary = slice_summary(&pristine, &tmp.path().join("pristine-layers"));
+        let fixed_summary = slice_summary(&fixed, &tmp.path().join("fixed-layers"));
+        assert!(
+            pristine_summary.contains("3 models"),
+            "trio summary names 3 models: {pristine_summary}"
+        );
+        assert_eq!(
+            fixed_summary, pristine_summary,
+            "the repaired trio must slice to the same layer and polygon counts"
+        );
+    }
+}
+
+#[cfg(test)]
 mod slice_leaf_selection_tests {
     use super::*;
 
