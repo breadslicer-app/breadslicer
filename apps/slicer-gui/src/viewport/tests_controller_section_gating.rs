@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Section gating: scene-mutating operations are silenced outside the
-//! Transform section, while selection stays live everywhere.
+//! Section gating: layout tools are silenced outside the Transform
+//! section, undo/redo is silenced only in Slice, and selection stays
+//! live everywhere.
 //!
 //! These drive the controller with a light single-leaf fixture. The
 //! pointer-drag gate (which needs a camera, a viewport, and gizmo
@@ -112,7 +113,7 @@ fn leaving_transform_drops_keyboard_focus() {
 }
 
 #[test]
-fn undo_is_silenced_outside_transform() {
+fn undo_runs_in_prepare() {
     let ctrl = controller_in(WorkspaceSection::Transform);
     ctrl.on_delete_requested();
     assert_eq!(ctrl.reachable_leaf_count_for_test(), 0);
@@ -120,8 +121,22 @@ fn undo_is_silenced_outside_transform() {
     ctrl.on_undo_requested();
     assert_eq!(
         ctrl.reachable_leaf_count_for_test(),
+        1,
+        "undo in Prepare restores the deleted leaf; history is reachable outside Slice"
+    );
+}
+
+#[test]
+fn undo_is_silenced_in_slice() {
+    let ctrl = controller_in(WorkspaceSection::Transform);
+    ctrl.on_delete_requested();
+    assert_eq!(ctrl.reachable_leaf_count_for_test(), 0);
+    ctrl.set_section(WorkspaceSection::Slice);
+    ctrl.on_undo_requested();
+    assert_eq!(
+        ctrl.reachable_leaf_count_for_test(),
         0,
-        "undo must be a no-op outside the Transform section"
+        "undo must be a no-op in the Slice section"
     );
 }
 

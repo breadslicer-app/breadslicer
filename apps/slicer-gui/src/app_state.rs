@@ -183,7 +183,7 @@ struct WiredMainWindow {
 /// dialogs) stays inside `ViewportController`, one instance per
 /// `MainWindow`. Closures installed on a `MainWindow` that need to
 /// reach `AppState` hold a `Weak<AppState>` so the
-/// window→closure→AppState→window graph doesn't form a strong-
+/// window->closure->AppState->window graph doesn't form a strong-
 /// reference cycle.
 pub(crate) struct AppState {
     about_window: RefCell<Option<WiredAboutWindow>>,
@@ -744,7 +744,7 @@ impl AppState {
         };
         // Copy is a Transform-section tool (it seeds a paste, which
         // mutates the scene); it stays inert in Prepare and Slice.
-        if !controller.allows_transforms() {
+        if !controller.allows_layout_tools() {
             return;
         }
         let doc = controller.document();
@@ -798,7 +798,7 @@ impl AppState {
         // show, so a right-click there opens no menu (camera orbit on
         // the right button still works, it runs through a separate
         // gesture path).
-        if !wired.controller.allows_transforms() {
+        if !wired.controller.allows_layout_tools() {
             return;
         }
         let hit = wired.controller.pick_node_at(x, y);
@@ -966,8 +966,8 @@ impl AppState {
     }
 
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow) {
-        // Closures hold `Weak<AppState>` so the MainWindow → closure
-        // → AppState → main_windows(MainWindow) chain isn't a strong
+        // Closures hold `Weak<AppState>` so the MainWindow -> closure
+        // -> AppState -> main_windows(MainWindow) chain isn't a strong
         // cycle.
         {
             let app = Rc::downgrade(self);

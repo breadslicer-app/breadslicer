@@ -454,7 +454,7 @@ impl ViewportController {
         if !self.session.set_section(section) {
             return;
         }
-        if !self.allows_transforms() {
+        if !self.allows_layout_tools() {
             self.cancel_transform_gestures();
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -463,11 +463,18 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    /// Whether the active section permits scene-mutating tools. The
-    /// gating across the input paths reads this; selection and camera
-    /// navigation ignore it.
-    pub fn allows_transforms(&self) -> bool {
-        crate::workspace_section::allows_transforms(self.session.section())
+    /// Whether the active section permits the layout tools (gizmo,
+    /// delete, copy, paste). The gating across the input paths reads
+    /// this; selection and camera navigation ignore it.
+    pub fn allows_layout_tools(&self) -> bool {
+        crate::workspace_section::allows_layout_tools(self.session.section())
+    }
+
+    /// Whether the active section permits undo/redo. Wider than the
+    /// layout gate: history stays reachable in Prepare (mesh repair
+    /// is undoable there) and is blocked only in Slice.
+    pub fn allows_undo_redo(&self) -> bool {
+        crate::workspace_section::allows_undo_redo(self.session.section())
     }
 
     /// Reverts an in-progress gizmo drag and drops keyboard gizmo
@@ -708,30 +715,30 @@ impl ViewportController {
     /// Esc / "click on empty space" path. Cascades through the
     /// gesture stack one level per call:
     ///
-    /// 1. If a gizmo drag is in progress → abort it (transform reverts
+    /// 1. If a gizmo drag is in progress -> abort it (transform reverts
     ///    to the captured original), keep selection / focus.
-    /// 2. Else if keyboard gizmo focus is active → drop focus only,
+    /// 2. Else if keyboard gizmo focus is active -> drop focus only,
     ///    keep selection.
-    /// 3. Else → clear the selection.
+    /// 3. Else -> clear the selection.
     ///
     /// "Click on empty space" enters at level 3 (the picker has
     /// already dispatched here from `on_pointer_up` after determining
     /// no object was hit); Esc enters at level 1 and naturally
     /// cascades through repeated presses.
-    /// Edit → Undo handler. Bounced if no edit is on the stack
+    /// Edit -> Undo handler. Bounced if no edit is on the stack
     /// (which is what `can-undo` already gates in the menu, but the
     /// shortcut can race a freshly-emptied stack, the document's
     /// own check is the source of truth).
     pub fn on_undo_requested(&self) {
-        if !self.allows_transforms() {
+        if !self.allows_undo_redo() {
             return;
         }
         self.session.document().undo();
     }
 
-    /// Edit → Redo handler.
+    /// Edit -> Redo handler.
     pub fn on_redo_requested(&self) {
-        if !self.allows_transforms() {
+        if !self.allows_undo_redo() {
             return;
         }
         self.session.document().redo();
@@ -742,7 +749,7 @@ impl ViewportController {
     /// No-op when no scene is loaded, nothing is selected, or the
     /// selection is not a leaf.
     pub fn on_delete_requested(&self) {
-        if !self.allows_transforms() {
+        if !self.allows_layout_tools() {
             return;
         }
         self.session.document().delete_selected_leaf();
@@ -795,7 +802,7 @@ impl ViewportController {
         // Arming a focus (Translate / Rotate / Scale) is a transform
         // tool and is gated to the Transform section; dropping focus
         // (`None`) must always work so leaving Transform can clear it.
-        if focus != KbdFocus::None && !self.allows_transforms() {
+        if focus != KbdFocus::None && !self.allows_layout_tools() {
             return;
         }
         let Some(new_focus) = self
@@ -835,7 +842,7 @@ impl ViewportController {
             self.render.viewport(),
             cursor,
             modifiers,
-            self.allows_transforms(),
+            self.allows_layout_tools(),
         );
     }
 
@@ -843,7 +850,7 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on
         // it; the gizmo drag / hover only runs in the Transform section.
         self.input.note_hover_cursor(cursor);
-        if !self.allows_transforms() {
+        if !self.allows_layout_tools() {
             return;
         }
         if self.input.on_pointer_move(
@@ -978,7 +985,7 @@ impl ViewportController {
         anchor: ScreenPoint,
         viewport: super::types::ViewportSize,
     ) -> bool {
-        if !self.allows_transforms() {
+        if !self.allows_layout_tools() {
             return false;
         }
         let camera_slot = self.camera.camera_cell().borrow();
@@ -1082,7 +1089,7 @@ impl ViewportController {
         // queued before this point (argv at startup, etc.).
         // `begin_load` returning `None` means a load is somehow already
         // in flight on this fresh setup, extremely unusual but
-        // possible after a teardown→setup cycle that races a click on
+        // possible after a teardown->setup cycle that races a click on
         // Open; in that case the queued path is dropped, matching the
         // "drop while busy" decision for drag-and-drop.
         if let Some(path) = self.session.pending_load().take()
@@ -1303,7 +1310,7 @@ impl ViewportController {
                 // transform tool, so its handles only compose in the
                 // Transform section: gate the selection handed to the
                 // composer, not the one that drives the object tint.
-                let gizmo_selection = if self.allows_transforms() {
+                let gizmo_selection = if self.allows_layout_tools() {
                     selection_node_id
                 } else {
                     None
@@ -1583,7 +1590,7 @@ mod selection_tests {
 
     #[test]
     fn cycle_with_single_object_stays_on_it() {
-        // One-object scene → cycling either direction lands on
+        // One-object scene -> cycling either direction lands on
         // index 0 every time. Mod-N arithmetic with N=1 collapses
         // to 0 cleanly.
         let ctrl = ViewportController::new_for_test();
@@ -1607,7 +1614,7 @@ mod selection_tests {
         ctrl.on_selection_cycle(99);
         assert_eq!(ctrl.selection(), Some(1));
         ctrl.on_selection_cycle(0);
-        // delta == 0 → step is 0; selection is unchanged.
+        // delta == 0 -> step is 0; selection is unchanged.
         assert_eq!(ctrl.selection(), Some(1));
         ctrl.on_selection_cycle(-99);
         assert_eq!(ctrl.selection(), Some(0));
@@ -1739,7 +1746,7 @@ mod viewport_click_tests {
 
     #[test]
     fn drag_does_not_run_the_picker() {
-        // A press → release with movement larger than the click
+        // A press -> release with movement larger than the click
         // threshold is a drag, which is currently dropped on the
         // floor (the gizmo FSM will consume it once wired). It must
         // not hand off to the picker, that would let large pointer
@@ -1752,7 +1759,7 @@ mod viewport_click_tests {
             Some(camera_looking_down_minus_z_at(Vec3::ZERO, 1.0));
         ctrl.set_viewport_for_test(200.0, 100.0);
 
-        // Press over the triangle, release 50 px away → drag.
+        // Press over the triangle, release 50 px away -> drag.
         ctrl.on_pointer_down(ScreenPoint::new(100.0, 50.0), no_mods());
         ctrl.on_pointer_up(ScreenPoint::new(150.0, 50.0), no_mods());
         assert_eq!(ctrl.selection(), None);
@@ -2007,7 +2014,7 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_up_after_drag_pushes_one_undo_entry() {
-        // A complete press → move → release gesture lands as one
+        // A complete press -> move -> release gesture lands as one
         // entry on the document's undo stack, with the pre-press
         // transform as the `before`. A subsequent undo restores it.
         let ctrl = ViewportController::new_for_test();
@@ -2042,7 +2049,7 @@ mod viewport_click_tests {
 
     #[test]
     fn pointer_up_with_no_movement_pushes_no_undo_entry() {
-        // Press → release without a move tick: the transform is
+        // Press -> release without a move tick: the transform is
         // unchanged, `push_edit` filters the no-op, the stack stays
         // empty.
         let ctrl = ViewportController::new_for_test();
@@ -2131,7 +2138,7 @@ mod viewport_click_tests {
 
     #[test]
     fn jitter_within_threshold_still_counts_as_a_click() {
-        // A press → release that moves only a few subpixels
+        // A press -> release that moves only a few subpixels
         // (trackpad jitter, debounced finger lift) must still be
         // treated as a click. Threshold is 4 logical pixels.
         let ctrl = ViewportController::new_for_test();
@@ -2175,7 +2182,7 @@ mod viewport_click_tests {
 
     #[test]
     fn pressing_axis_cube_without_shift_starts_per_axis_drag() {
-        // Sanity check the inverse: no Shift → per-axis (proportional
+        // Sanity check the inverse: no Shift -> per-axis (proportional
         // = false). Pins the default so a future regression that
         // captures stale modifier state surfaces here.
         let ctrl = ViewportController::new_for_test();
@@ -2188,7 +2195,7 @@ mod viewport_click_tests {
                 ..
             } => assert!(
                 !proportional,
-                "no Shift at press → proportional must be false"
+                "no Shift at press -> proportional must be false"
             ),
             other => panic!("expected Drag(ScaleAxis, .., proportional=false), got {other:?}"),
         }
@@ -2196,7 +2203,7 @@ mod viewport_click_tests {
 
     #[test]
     fn shift_toggle_during_axis_scale_flips_to_uniform_formula() {
-        // Press without Shift → per-axis drag, move to grow X. Then
+        // Press without Shift -> per-axis drag, move to grow X. Then
         // press Shift on a subsequent move: re-anchor (running
         // transform preserved). A *further* move with Shift held
         // exercises the uniform formula, its `diag(f, f, f)`
@@ -2234,7 +2241,7 @@ mod viewport_click_tests {
         ctrl.on_pointer_move(ScreenPoint::new(further.0, further.1), shift_held());
         let m_uniform = read_linear(&ctrl);
 
-        // Uniform formula → Y and Z scale by the same factor.
+        // Uniform formula -> Y and Z scale by the same factor.
         assert_approx_eq!(f64, m_uniform[1][1], m_uniform[2][2], epsilon = 1e-4);
         // Both moved away from 1.0 (the formula did something).
         assert!(
@@ -2302,8 +2309,8 @@ mod viewport_click_tests {
 
     #[test]
     fn shift_toggle_off_returns_to_per_axis_formula() {
-        // Press with Shift held → uniform. Move once. Release Shift on
-        // the next move (re-anchor again) → per-axis formula should
+        // Press with Shift held -> uniform. Move once. Release Shift on
+        // the next move (re-anchor again) -> per-axis formula should
         // resume on subsequent moves: only X scales relative to the
         // new anchor, while Y and Z stay at the value frozen at the
         // toggle.
@@ -2543,7 +2550,7 @@ mod keyboard_focus_tests {
 
     #[test]
     fn focus_requires_an_existing_selection() {
-        // No selection → T is a no-op. Pinning this matters because
+        // No selection -> T is a no-op. Pinning this matters because
         // the integrator dereferences `selection`; a focus without a
         // selection would crash.
         let ctrl = ViewportController::new_for_test();
@@ -2657,7 +2664,7 @@ mod keyboard_focus_tests {
 
     #[test]
     fn keyboard_burst_with_no_motion_pushes_no_entry() {
-        // Press → release without any integration tick: scene
+        // Press -> release without any integration tick: scene
         // transform never changed, push_edit's no-op filter drops
         // the entry.
         let ctrl = ViewportController::new_for_test();
@@ -2783,18 +2790,18 @@ mod keyboard_focus_tests {
             node_id,
         });
 
-        // Level 1 → drag aborts; focus and selection survive.
+        // Level 1 -> drag aborts; focus and selection survive.
         ctrl.on_clear_selection();
         assert!(matches!(ctrl.input.gizmo_fsm().current(), GizmoState::Idle));
         assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::Translate);
         assert_eq!(ctrl.selection(), Some(0));
 
-        // Level 2 → focus drops; selection survives.
+        // Level 2 -> focus drops; selection survives.
         ctrl.on_clear_selection();
         assert_eq!(ctrl.input.kbd_drive().current_focus(), KbdFocus::None);
         assert_eq!(ctrl.selection(), Some(0));
 
-        // Level 3 → selection clears.
+        // Level 3 -> selection clears.
         ctrl.on_clear_selection();
         assert_eq!(ctrl.selection(), None);
     }

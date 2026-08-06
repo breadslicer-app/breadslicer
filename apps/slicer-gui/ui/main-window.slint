@@ -414,7 +414,7 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Undo");
                 shortcut: @keys(Control + Z);
                 enabled: root.has-scene && !root.loading && root.can-undo
-                    && root.workspace-section == WorkspaceSection.Transform;
+                    && root.workspace-section != WorkspaceSection.Slice;
                 activated => {
                     root.undo-requested();
                 }
@@ -424,7 +424,7 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Redo");
                 shortcut: @keys(Control + Shift + Z);
                 enabled: root.has-scene && !root.loading && root.can-redo
-                    && root.workspace-section == WorkspaceSection.Transform;
+                    && root.workspace-section != WorkspaceSection.Slice;
                 activated => {
                     root.redo-requested();
                 }
@@ -933,7 +933,7 @@ export component MainWindow inherits Window {
                 MenuItem {
                     title: @tr("MenuBar" => "Undo");
                     enabled: root.has-scene && !root.loading && root.can-undo
-                    && root.workspace-section == WorkspaceSection.Transform;
+                    && root.workspace-section != WorkspaceSection.Slice;
                     activated => {
                         root.undo-requested();
                     }
@@ -942,7 +942,7 @@ export component MainWindow inherits Window {
                 MenuItem {
                     title: @tr("MenuBar" => "Redo");
                     enabled: root.has-scene && !root.loading && root.can-redo
-                    && root.workspace-section == WorkspaceSection.Transform;
+                    && root.workspace-section != WorkspaceSection.Slice;
                     activated => {
                         root.redo-requested();
                     }
