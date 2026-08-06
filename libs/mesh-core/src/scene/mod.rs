@@ -14,6 +14,7 @@ pub mod error;
 pub mod expand;
 pub mod fragment;
 pub mod mesh_health;
+pub mod mesh_targets;
 pub mod node;
 pub mod shared_vertices;
 pub mod validate;

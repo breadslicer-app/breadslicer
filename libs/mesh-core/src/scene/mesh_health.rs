@@ -8,10 +8,12 @@
 //! loaded scene is safe to edit and slice, and to point future repair
 //! tooling at the leaves that need attention.
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 use crate::scene::Scene;
-use crate::scene::node::{LeafPayload, NodeId, NodeKind};
+use crate::scene::mesh_targets::MeshTarget;
+use crate::scene::node::{NodeId, NodeKind};
 
 impl Scene {
     /// Returns the ids of every leaf whose mesh is not closed and
@@ -24,39 +26,48 @@ impl Scene {
     /// solid and slices fine. Face-invalid meshes are included
     /// because a mesh with invalid faces cannot be edge-manifold.
     ///
-    /// Both inline-mesh leaves and mesh-resource leaves are walked;
-    /// mesh-resource leaves referencing a dangling slot are skipped
-    /// (the structural validator covers that variant). A resource mesh
-    /// shared by several leaves is validated once per referencing leaf.
-    /// The result is sorted by id and contains no duplicates (leaf ids
-    /// are unique per slot).
+    /// The sweep runs over [`Scene::mesh_targets`], so its scope is
+    /// the same as the repair and diagnosis drivers': every stored
+    /// mesh, arena-wide. Each target is validated once and its
+    /// verdict shared by every referencing leaf; mesh-resource leaves
+    /// referencing a dangling slot are skipped (the structural
+    /// validator covers that variant). The result is sorted by id and
+    /// contains no duplicates (leaf ids are unique per slot).
     ///
-    /// Complexity: O(total face count) time; each mesh is a single
-    /// half-edge pass.
+    /// Complexity: O(total face count) time; each stored mesh is a
+    /// single half-edge pass.
     pub fn non_edge_manifold_leaves(&self) -> Vec<NodeId> {
+        // A target is sound iff the edge-manifold witness can be
+        // minted: in-range faces first, then the edge-manifold
+        // upgrade. The two validators carry different error types,
+        // so this is an `is_ok_and` rather than a `?`/`and_then`
+        // chain.
+        let verdicts: HashMap<MeshTarget, bool> = self
+            .mesh_targets()
+            .into_iter()
+            .map(|target| {
+                let is_edge_manifold = self.target_mesh(target).is_some_and(|mesh| {
+                    mesh.validated_faces()
+                        .is_ok_and(|faces| faces.validated_edge_manifold().is_ok())
+                });
+                (target, is_edge_manifold)
+            })
+            .collect();
+
         let mut out = Vec::new();
         for (slot_idx, slot) in self.nodes.iter().enumerate() {
             let Some(node) = slot else { continue };
-            let NodeKind::Leaf(payload) = &node.kind else {
+            if !matches!(&node.kind, NodeKind::Leaf(_)) {
+                continue;
+            }
+            let id = leaf_id_at(slot_idx);
+            let Some(target) = self.leaf_mesh_target(id) else {
                 continue;
             };
-            let mesh = match payload {
-                LeafPayload::Mesh(arc) => arc.as_ref(),
-                LeafPayload::MeshResource(rid) => match self.mesh_resource(*rid) {
-                    Some(mesh) => mesh,
-                    None => continue,
-                },
-            };
-            // A leaf is sound iff the edge-manifold witness can be
-            // minted: in-range faces first, then the edge-manifold
-            // upgrade. The two validators carry different error types,
-            // so this is an `is_ok_and` rather than a `?`/`and_then`
-            // chain.
-            let is_edge_manifold = mesh
-                .validated_faces()
-                .is_ok_and(|faces| faces.validated_edge_manifold().is_ok());
-            if !is_edge_manifold {
-                out.push(leaf_id_at(slot_idx));
+            // A dangling resource target never entered the verdict
+            // map; the leaf is skipped, as before.
+            if verdicts.get(&target) == Some(&false) {
+                out.push(id);
             }
         }
         out
@@ -75,6 +86,7 @@ mod mesh_health_tests {
     use super::*;
     use crate::indexed_mesh::IndexedMesh;
     use crate::primitives::{IndexedTriangle, Normal, Vertex};
+    use crate::scene::node::LeafPayload;
     use crate::transform::Transform3D;
 
     /// A closed, consistently wound tetrahedron: a valid manifold. The
@@ -170,5 +182,34 @@ mod mesh_health_tests {
             .unwrap();
         graph.add_child(root, leaf).unwrap();
         assert_eq!(graph.non_edge_manifold_leaves(), vec![leaf]);
+    }
+
+    /// The sweep is arena-wide: a defective inline leaf inside a
+    /// registered subtree (detached from the scene roots by
+    /// construction) is flagged like any other leaf.
+    #[test]
+    fn a_registered_subtree_leaf_is_flagged() {
+        let mut graph = Scene::new();
+        let sub_root = graph.add_group(None, Transform3D::Identity);
+        let leaf = add_inline_leaf(&mut graph, sub_root, open_triangle_mesh());
+        graph.register_subtree_resource(sub_root).unwrap();
+        assert_eq!(graph.non_edge_manifold_leaves(), vec![leaf]);
+    }
+
+    /// A defective resource shared by 2 leaves flags both of them, in
+    /// node-arena slot order.
+    #[test]
+    fn a_shared_defective_resource_flags_every_referencing_leaf() {
+        let (mut graph, root) = scene_with_root();
+        let rid = graph.add_mesh_resource(open_triangle_mesh());
+        let first = graph
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        graph.add_child(root, first).unwrap();
+        let second = graph
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        graph.add_child(root, second).unwrap();
+        assert_eq!(graph.non_edge_manifold_leaves(), vec![first, second]);
     }
 }

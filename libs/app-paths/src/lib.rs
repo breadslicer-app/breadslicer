@@ -6,7 +6,7 @@
 //! Application identity and on-disk path resolution.
 //!
 //! Single owner of the SoulCrafted Slicer's identity (reverse-DNS
-//! `it.soulcrafted.Slicer`; the `directories` qualifier / organization
+//! `it.soulcrafted.slicer`; the `directories` qualifier / organization
 //! / application triple) and of the directories derived from it: the
 //! per-user platform directories and the installed read-only data root
 //! that packaged builds ship.
