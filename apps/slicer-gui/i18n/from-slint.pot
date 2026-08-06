@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-07-29 14:44+0000\n"
+"POT-Creation-Date: 2026-08-06 12:20+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -353,6 +353,28 @@ msgctxt "AppearancePreferences"
 msgid "Language"
 msgstr ""
 
+#: ui/info-dialog.slint:9 ui/info-dialog.slint:13 ui/info-dialog.slint:73
+msgctxt "InfoDialog"
+msgid "Information"
+msgstr ""
+
+#. can't accidentally drop or replace it.
+#: ui/info-dialog.slint:101
+msgctxt "InfoDialog"
+msgid "Hide details"
+msgstr ""
+
+#. can't accidentally drop or replace it.
+#: ui/info-dialog.slint:101
+msgctxt "InfoDialog"
+msgid "Show details"
+msgstr ""
+
+#: ui/info-dialog.slint:128
+msgctxt "InfoDialog"
+msgid "Close"
+msgstr ""
+
 #: ui/profile-view-dialog.slint:60
 msgctxt "ProfileViewDialog"
 msgid "Resin profile"
@@ -465,217 +487,217 @@ msgctxt "ObjectList"
 msgid "Scene Objects"
 msgstr ""
 
-#: ui/main-window.slint:91
+#: ui/main-window.slint:96
 msgctxt "MainWindow"
 msgid "SoulCrafted Slicer"
 msgstr ""
 
-#: ui/main-window.slint:345 ui/main-window.slint:870
+#: ui/main-window.slint:350 ui/main-window.slint:875
 msgctxt "MenuBar"
 msgid "File"
 msgstr ""
 
-#: ui/main-window.slint:348 ui/main-window.slint:873
+#: ui/main-window.slint:353 ui/main-window.slint:878
 msgctxt "MenuBar"
 msgid "New Window"
 msgstr ""
 
-#: ui/main-window.slint:358 ui/main-window.slint:882
+#: ui/main-window.slint:363 ui/main-window.slint:887
 msgctxt "MenuBar"
 msgid "Open…"
 msgstr ""
 
-#: ui/main-window.slint:367 ui/main-window.slint:890
+#: ui/main-window.slint:372 ui/main-window.slint:895
 msgctxt "MenuBar"
 msgid "Close"
 msgstr ""
 
-#: ui/main-window.slint:378 ui/main-window.slint:900
+#: ui/main-window.slint:383 ui/main-window.slint:905
 msgctxt "MenuBar"
 msgid "Save"
 msgstr ""
 
-#: ui/main-window.slint:387 ui/main-window.slint:908
+#: ui/main-window.slint:392 ui/main-window.slint:913
 msgctxt "MenuBar"
 msgid "Save As…"
 msgstr ""
 
-#: ui/main-window.slint:398 ui/main-window.slint:918
+#: ui/main-window.slint:403 ui/main-window.slint:923
 msgctxt "MenuBar"
 msgid "Export As…"
 msgstr ""
 
-#: ui/main-window.slint:408 ui/main-window.slint:927
+#: ui/main-window.slint:413 ui/main-window.slint:932
 msgctxt "MenuBar"
 msgid "Edit"
 msgstr ""
 
-#: ui/main-window.slint:410 ui/main-window.slint:930
+#: ui/main-window.slint:415 ui/main-window.slint:935
 msgctxt "MenuBar"
 msgid "Undo"
 msgstr ""
 
-#: ui/main-window.slint:420 ui/main-window.slint:939
+#: ui/main-window.slint:425 ui/main-window.slint:944
 msgctxt "MenuBar"
 msgid "Redo"
 msgstr ""
 
-#: ui/main-window.slint:432 ui/main-window.slint:950
+#: ui/main-window.slint:437 ui/main-window.slint:955
 msgctxt "MenuBar"
 msgid "Delete"
 msgstr ""
 
-#: ui/main-window.slint:443 ui/main-window.slint:961
+#: ui/main-window.slint:448 ui/main-window.slint:966
 msgctxt "MenuBar"
 msgid "Preferences"
 msgstr ""
 
-#: ui/main-window.slint:452 ui/main-window.slint:969
+#: ui/main-window.slint:457 ui/main-window.slint:974
 msgctxt "MenuBar"
 msgid "View"
 msgstr ""
 
-#: ui/main-window.slint:456 ui/main-window.slint:973
+#: ui/main-window.slint:461 ui/main-window.slint:978
 msgctxt "MenuBar"
 msgid "Hide Object List"
 msgstr ""
 
-#: ui/main-window.slint:457 ui/main-window.slint:974
+#: ui/main-window.slint:462 ui/main-window.slint:979
 msgctxt "MenuBar"
 msgid "Show Object List"
 msgstr ""
 
-#: ui/main-window.slint:468 ui/main-window.slint:984
+#: ui/main-window.slint:473 ui/main-window.slint:989
 msgctxt "MenuBar"
 msgid "Hide Slice View"
 msgstr ""
 
-#: ui/main-window.slint:469 ui/main-window.slint:985
+#: ui/main-window.slint:474 ui/main-window.slint:990
 msgctxt "MenuBar"
 msgid "Show Slice View"
 msgstr ""
 
-#: ui/main-window.slint:482 ui/main-window.slint:995
+#: ui/main-window.slint:487 ui/main-window.slint:1000
 msgctxt "MenuBar"
 msgid "Show Menu Bar"
 msgstr ""
 
-#: ui/main-window.slint:483 ui/main-window.slint:996
+#: ui/main-window.slint:488 ui/main-window.slint:1001
 msgctxt "MenuBar"
 msgid "Hide Menu Bar"
 msgstr ""
 
-#: ui/main-window.slint:501 ui/main-window.slint:1009
+#: ui/main-window.slint:506 ui/main-window.slint:1014
 msgctxt "MenuBar"
 msgid "Fullscreen"
 msgstr ""
 
-#: ui/main-window.slint:511 ui/main-window.slint:1016
+#: ui/main-window.slint:516 ui/main-window.slint:1021
 msgctxt "MenuBar"
 msgid "Help"
 msgstr ""
 
-#: ui/main-window.slint:513 ui/main-window.slint:1019
+#: ui/main-window.slint:518 ui/main-window.slint:1024
 msgctxt "MenuBar"
 msgid "Documentation"
 msgstr ""
 
-#: ui/main-window.slint:518 ui/main-window.slint:1024
+#: ui/main-window.slint:523 ui/main-window.slint:1029
 msgctxt "MenuBar"
 msgid "Show Release Notes"
 msgstr ""
 
-#: ui/main-window.slint:525 ui/main-window.slint:1031
+#: ui/main-window.slint:530 ui/main-window.slint:1036
 msgctxt "MenuBar"
 msgid "Report Issue"
 msgstr ""
 
-#: ui/main-window.slint:532 ui/main-window.slint:1038
+#: ui/main-window.slint:537 ui/main-window.slint:1043
 msgctxt "MenuBar"
 msgid "Check for Updates…"
 msgstr ""
 
-#: ui/main-window.slint:539 ui/main-window.slint:1045
+#: ui/main-window.slint:544 ui/main-window.slint:1050
 msgctxt "MenuBar"
 msgid "About"
 msgstr ""
 
-#: ui/main-window.slint:546 ui/main-window.slint:1052
+#: ui/main-window.slint:551 ui/main-window.slint:1057
 msgctxt "MenuBar"
 msgid "View License"
 msgstr ""
 
-#: ui/main-window.slint:558
+#: ui/main-window.slint:563
 msgctxt "MainWindow"
 msgid "Open a 3D model to visualize it here"
 msgstr ""
 
-#: ui/main-window.slint:794
+#: ui/main-window.slint:799
 msgctxt "Workspace"
 msgid "Prepare"
 msgstr ""
 
-#: ui/main-window.slint:807
+#: ui/main-window.slint:812
 msgctxt "Workspace"
 msgid "Transform"
 msgstr ""
 
-#: ui/main-window.slint:820
+#: ui/main-window.slint:825
 msgctxt "Workspace"
 msgid "Slice"
 msgstr ""
 
-#: ui/main-window.slint:1092
+#: ui/main-window.slint:1097
 msgctxt "MainWindow"
 msgid "Drop to open"
 msgstr ""
 
-#: ui/main-window.slint:1121
+#: ui/main-window.slint:1126
 msgctxt "MainWindow"
 msgid "Reading file…"
 msgstr ""
 
-#: ui/main-window.slint:1123
+#: ui/main-window.slint:1128 ui/main-window.slint:1159
 msgctxt "MainWindow"
 msgid "Preparing geometry…"
 msgstr ""
 
-#: ui/main-window.slint:1124
+#: ui/main-window.slint:1129
 msgctxt "MainWindow"
 msgid "Uploading to GPU…"
 msgstr ""
 
-#: ui/main-window.slint:1154
+#: ui/main-window.slint:1161
 msgctxt "MainWindow"
 msgid "Serializing model…"
 msgstr ""
 
-#: ui/main-window.slint:1156
+#: ui/main-window.slint:1163
 msgctxt "MainWindow"
 msgid "Compressing…"
 msgstr ""
 
-#: ui/main-window.slint:1157
+#: ui/main-window.slint:1164
 msgctxt "MainWindow"
 msgid "Writing file…"
 msgstr ""
 
-#: ui/main-window.slint:1207
+#: ui/main-window.slint:1214
 msgctxt "SlicePanel"
 msgid "Slicing..."
 msgstr ""
 
-#: ui/main-window.slint:1214
+#: ui/main-window.slint:1221
 msgctxt "SlicePanel"
 msgid "{} / {} layers"
 msgstr ""
 
-#: ui/main-window.slint:1215
+#: ui/main-window.slint:1222
 msgctxt "SlicePanel"
 msgid "Preparing..."
 msgstr ""
 
-#: ui/main-window.slint:1225
+#: ui/main-window.slint:1232
 msgctxt "SlicePanel"
 msgid "Cancel"
 msgstr ""

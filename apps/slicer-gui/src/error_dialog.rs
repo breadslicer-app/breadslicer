@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
-use crate::{ErrorDialog, ReplaceSceneDialog, SliceOverwriteDialog};
+use crate::{ErrorDialog, InfoDialog, ReplaceSceneDialog, SliceOverwriteDialog};
 
 /// User's exit from the "replace current scene?" dialog. Four
 /// outcomes; the caller decides what each means in context (typically
@@ -76,6 +76,7 @@ type ConfirmSink = Rc<Cell<Option<Box<dyn FnOnce()>>>>;
 /// counter feeds both maps so ids never collide across dialog kinds.
 pub(crate) struct DialogManager {
     dialogs: RefCell<HashMap<u64, ErrorDialog>>,
+    info_dialogs: RefCell<HashMap<u64, InfoDialog>>,
     replace_dialogs: RefCell<HashMap<u64, ReplaceSceneDialog>>,
     slice_overwrite_dialogs: RefCell<HashMap<u64, SliceOverwriteDialog>>,
     next_id: Cell<u64>,
@@ -85,6 +86,7 @@ impl DialogManager {
     pub fn new() -> Rc<Self> {
         Rc::new(Self {
             dialogs: RefCell::new(HashMap::new()),
+            info_dialogs: RefCell::new(HashMap::new()),
             replace_dialogs: RefCell::new(HashMap::new()),
             slice_overwrite_dialogs: RefCell::new(HashMap::new()),
             next_id: Cell::new(0),
@@ -133,6 +135,44 @@ impl DialogManager {
             return;
         }
         self.dialogs.borrow_mut().insert(id, dialog);
+    }
+
+    /// Shows a neutral information dialog immediately. Same window
+    /// lifecycle as [`Self::show_error`] (owned by the manager until
+    /// dismissed), without the error styling or the stderr log line.
+    /// Must run on the Slint UI thread.
+    #[allow(dead_code)]
+    pub fn show_info(self: &Rc<Self>, heading: &str, message: String, details: String) {
+        let dialog = match InfoDialog::new() {
+            Ok(d) => d,
+            Err(err) => {
+                eprintln!("Failed to create info dialog: {err}");
+                return;
+            }
+        };
+        dialog.set_heading(heading.into());
+        dialog.set_message(message.into());
+        dialog.set_details(details.into());
+
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+
+        let dialog_weak = dialog.as_weak();
+        let mgr_weak = Rc::downgrade(self);
+        dialog.on_close_requested(move || {
+            if let Some(d) = dialog_weak.upgrade() {
+                let _ = d.hide();
+            }
+            if let Some(mgr) = mgr_weak.upgrade() {
+                mgr.info_dialogs.borrow_mut().remove(&id);
+            }
+        });
+
+        if let Err(err) = dialog.show() {
+            eprintln!("Failed to show info dialog: {err}");
+            return;
+        }
+        self.info_dialogs.borrow_mut().insert(id, dialog);
     }
 
     /// Queues `show_error` on the next iteration of the Slint event loop.
