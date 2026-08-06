@@ -21,9 +21,6 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::error::SceneError;
-use sc_mesh_core::transform::AffineTransform3D;
-use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::error::LoadMeshError;
@@ -171,36 +168,16 @@ pub(crate) fn start_load_with_ticket(
     spawn_load(ticket, path, device, device_token, build_volume, sink);
 }
 
-/// Translates every scene root in `graph` by a single shared delta so
-/// the graph's world AABB lands centred on the envelope's XY centre
-/// with its bottom resting on the envelope's Z floor. A graph with no
-/// geometry, or one already at the target, is a no-op.
-///
-/// The translation is composed as an outer left-multiplication onto
-/// each root's existing local transform, so the per-leaf relative
-/// layout the file author chose is preserved (multi-object OBJ groups
-/// stay in formation). The loader produces single-root graphs today,
-/// so the loop iterates once in practice; the multi-root path keeps
-/// the semantics well-defined for future graph shapes.
+/// Drops the graph onto the plate at the envelope's XY centre with
+/// its bottom resting on the envelope's Z floor, via
+/// [`Scene::drop_at`] (which preserves the roots' relative layout
+/// and no-ops on empty or already-placed graphs).
 pub(crate) fn place_on_plate(graph: &mut Scene, build_volume: BuildVolume) -> anyhow::Result<()> {
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let target_xy = [0.5 * (env_min.x + env_max.x), 0.5 * (env_min.y + env_max.y)];
     let floor_z = env_min.z;
-    let Some(delta) = graph.translation_to_drop_at(target_xy, floor_z)? else {
-        return Ok(());
-    };
-    if delta == [0.0, 0.0, 0.0] {
-        return Ok(());
-    }
-    let outer = Transform3D::Affine(AffineTransform3D::from_translation(delta));
-    for root_id in graph.roots().to_vec() {
-        let current = graph
-            .node(root_id)
-            .ok_or(SceneError::DanglingNodeId { id: root_id })?
-            .local_transform;
-        graph.set_local_transform(root_id, outer.compose(&current))?;
-    }
+    graph.drop_at(target_xy, floor_z)?;
     Ok(())
 }
 
@@ -537,7 +514,7 @@ mod place_on_plate_tests {
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
+    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
 
     fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
@@ -588,19 +565,18 @@ mod place_on_plate_tests {
         BuildVolume::new(100.0, 80.0, 200.0)
     }
 
-    #[test]
-    fn empty_graph_is_a_no_op() {
-        let mut graph = Scene::new();
-        place_on_plate(&mut graph, small_envelope()).unwrap();
-        assert!(graph.aabb().unwrap().is_none());
-    }
+    // The translation mechanics (no-op cases, formation preservation,
+    // composition with existing transforms, multi-root scenes) are
+    // pinned by Scene::drop_at's own suite in sc-mesh-core; what
+    // stays here is the envelope-to-target derivation.
 
     #[test]
     fn off_origin_single_object_gets_centred_with_bottom_on_plate() {
         // Local cube [100, 200, 50] -> [110, 220, 60], identity
-        // transform. After placement the world AABB must be centred on
-        // (0, 0) in XY and resting on Z=0: world min should be
-        // (-5, -10, 0).
+        // transform. The envelope is centred on the origin with its
+        // floor at Z=0, so after placement the world AABB must be
+        // centred on (0, 0) in XY and resting on Z=0: world min
+        // should be (-5, -10, 0).
         let mut graph = group_rooted_graph(vec![(
             cube_mesh([100.0, 200.0, 50.0], [110.0, 220.0, 60.0]),
             Transform3D::Identity,
@@ -609,91 +585,5 @@ mod place_on_plate_tests {
         let world_aabb = graph.aabb().unwrap().unwrap();
         assert_eq!(world_aabb.min().coords(), [-5.0, -10.0, 0.0]);
         assert_eq!(world_aabb.max().coords(), [5.0, 10.0, 10.0]);
-    }
-
-    #[test]
-    fn already_placed_graph_is_a_no_op() {
-        // Cube already centred on origin with bottom at Z=0. Placement
-        // computes a zero translation and leaves the root's local
-        // transform untouched (still Identity, not Affine(zero)).
-        let mut graph = group_rooted_graph(vec![(
-            cube_mesh([-5.0, -5.0, 0.0], [5.0, 5.0, 10.0]),
-            Transform3D::Identity,
-        )]);
-        let root_id = graph.roots()[0];
-        place_on_plate(&mut graph, small_envelope()).unwrap();
-        assert!(matches!(
-            graph.node(root_id).unwrap().local_transform,
-            Transform3D::Identity
-        ));
-    }
-
-    #[test]
-    fn multi_object_graph_keeps_relative_layout() {
-        // Two cubes 9 mm apart in X and Y. After placement, the union
-        // AABB lands centred on origin with bottom on Z=0; the
-        // individual cubes' relative offset is unchanged (still 9 mm
-        // apart on X and Y) because the placement translates the root
-        // Group only, never the leaves.
-        let mut graph = group_rooted_graph(vec![
-            (
-                cube_mesh([100.0, 200.0, 50.0], [101.0, 201.0, 51.0]),
-                Transform3D::Identity,
-            ),
-            (
-                cube_mesh([109.0, 209.0, 53.0], [110.0, 210.0, 54.0]),
-                Transform3D::Identity,
-            ),
-        ]);
-        place_on_plate(&mut graph, small_envelope()).unwrap();
-        let world = graph.aabb().unwrap().unwrap();
-        assert_eq!(world.min().coords()[2], 0.0, "union bottom rests on Z=0");
-        // Union XY extent is 10 x 10 mm; centred on origin gives
-        // [-5, 5] on both X and Y.
-        assert_eq!(world.min().coords()[0], -5.0);
-        assert_eq!(world.min().coords()[1], -5.0);
-        assert_eq!(world.max().coords()[0], 5.0);
-        assert_eq!(world.max().coords()[1], 5.0);
-        // Sanity: the leaves' local AABBs were not mutated; only the
-        // root's local transform moved.
-        let root_id = graph.roots()[0];
-        let children = match &graph.node(root_id).unwrap().kind {
-            NodeKind::Group { children } => children.clone(),
-            _ => unreachable!("group_rooted_graph builds a Group root"),
-        };
-        let mesh_for = |child_idx: usize| -> &IndexedMesh {
-            match &graph.node(children[child_idx]).unwrap().kind {
-                NodeKind::Leaf(LeafPayload::Mesh(m)) => m.as_ref(),
-                _ => unreachable!("group_rooted_graph attaches inline-mesh leaves"),
-            }
-        };
-        assert_eq!(
-            mesh_for(0).local_aabb().unwrap().min().coords(),
-            [100.0, 200.0, 50.0]
-        );
-        assert_eq!(
-            mesh_for(1).local_aabb().unwrap().min().coords(),
-            [109.0, 209.0, 53.0]
-        );
-    }
-
-    #[test]
-    fn composes_with_existing_leaf_transform() {
-        // The parsed object already carries a non-identity transform
-        // (synthetic: STL/OBJ readers don't produce these today, but
-        // the helper must be correct under composition). Local cube
-        // [0, 0, 0] -> [1, 1, 1] under leaf translation (10, 20, 5):
-        // world AABB [10, 20, 5] -> [11, 21, 6]; placement delta
-        // (-10.5, -20.5, -5) is applied to the root Group's local
-        // transform. After placement the world AABB sits on
-        // [-0.5, -0.5, 0] -> [0.5, 0.5, 1].
-        let mut graph = group_rooted_graph(vec![(
-            cube_mesh([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
-            Transform3D::Affine(AffineTransform3D::from_translation([10.0, 20.0, 5.0])),
-        )]);
-        place_on_plate(&mut graph, small_envelope()).unwrap();
-        let world = graph.aabb().unwrap().unwrap();
-        assert_eq!(world.min().coords(), [-0.5, -0.5, 0.0]);
-        assert_eq!(world.max().coords(), [0.5, 0.5, 1.0]);
     }
 }
