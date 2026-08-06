@@ -136,7 +136,7 @@ pub(crate) struct SceneDocument {
     /// so a listener can re-enter `subscribe` without re-borrowing.
     listeners: RefCell<Vec<(u64, Listener)>>,
     next_listener_id: Cell<u64>,
-    /// Reversible edits the user can roll back via Edit → Undo. Most
+    /// Reversible edits the user can roll back via Edit -> Undo. Most
     /// recent edit at the back; capped at `UNDO_STACK_CAP`.
     undo_stack: RefCell<VecDeque<HistoryEntry>>,
     /// Edits that were rolled back by `undo` and can be replayed by
@@ -1099,7 +1099,9 @@ fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> b
             | SceneEdit::AddRootLeaf { .. }
             | SceneEdit::AddLeaf { .. }
             | SceneEdit::AddMeshResource { .. }
-            | SceneEdit::RemoveMeshResource { .. } => false,
+            | SceneEdit::RemoveMeshResource { .. }
+            | SceneEdit::ReplaceMeshResource { .. }
+            | SceneEdit::ReplaceLeafMesh { .. } => false,
         }
     }
     touches(edit, selected)
@@ -1478,6 +1480,37 @@ mod scene_document_tests {
     }
 
     #[test]
+    fn replace_edit_bumps_the_revision_and_undo_restores_arc_identity() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
+        let before = doc
+            .with_scene(|s| Arc::clone(s.graph().leaf_mesh_arc(node_id).unwrap()))
+            .unwrap();
+        let after = Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()));
+        let captured = doc.scene_revision();
+        let edit = SceneEdit::ReplaceLeafMesh {
+            node_id,
+            before: Arc::clone(&before),
+            after: Arc::clone(&after),
+        };
+        doc.apply_edit(edit.clone());
+        doc.push_edit(edit);
+        // The push moved the revision: a slice captured before this
+        // mesh-content replacement must read as stale.
+        assert!(doc.slice_geometry_changed(captured));
+        assert!(
+            doc.with_scene(|s| Arc::ptr_eq(s.graph().leaf_mesh_arc(node_id).unwrap(), &after))
+                .unwrap()
+        );
+        assert!(doc.undo());
+        assert!(
+            doc.with_scene(|s| Arc::ptr_eq(s.graph().leaf_mesh_arc(node_id).unwrap(), &before))
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn redo_replays_after_and_re_enables_undo() {
         let doc = SceneDocument::new();
         doc.install_graph(graph_with_one_object(), fixture_path());
@@ -1666,7 +1699,7 @@ mod scene_document_tests {
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
-        // Empty → empty: only `Installed`.
+        // Empty -> empty: only `Installed`.
         doc.install_graph(graph_with_one_object(), fixture_path());
         assert_eq!(*log.borrow(), vec![SceneEvent::Installed]);
 

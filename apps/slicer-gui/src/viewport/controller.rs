@@ -160,7 +160,7 @@ impl ViewportController {
     pub(crate) fn install_graph_for_test(&self, graph: sc_mesh_core::Scene) {
         // Tests don't care about the source path; populate the slot
         // with a sentinel so the document's invariant ("scene present
-        // ⇔ path present") holds and any future test assertion on
+        // <=> path present") holds and any future test assertion on
         // `source_path` is explicit about its synthetic origin.
         self.session
             .document()
@@ -290,8 +290,8 @@ impl ViewportController {
             }
             SceneEvent::Restructured => {
                 // A structural edit (leaf added or removed, mesh
-                // resource added or removed) just landed. The
-                // renderer's GpuScene mirrors the arena one-to-one,
+                // resource added, removed, or replaced) just landed.
+                // The renderer's GpuScene mirrors the arena one-to-one,
                 // so it needs a fresh upload before the next draw
                 // or the leaf-count assertion at the top of `render`
                 // will trip. The object-list side panel also mirrors

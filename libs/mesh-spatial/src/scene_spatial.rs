@@ -223,6 +223,14 @@ impl SceneSpatial {
             SceneEdit::RemoveMeshResource { rid, .. } => {
                 let _ = self.graph.remove_mesh_resource(rid);
             }
+            SceneEdit::ReplaceMeshResource { rid, after, .. } => {
+                let _ = self.graph.replace_mesh_resource(rid, after);
+                self.invalidate_mesh_resource(rid);
+            }
+            SceneEdit::ReplaceLeafMesh { node_id, after, .. } => {
+                let _ = self.graph.replace_inline_leaf_mesh(node_id, after);
+                self.invalidate_leaf(node_id);
+            }
             SceneEdit::Compound(edits) => {
                 for edit in edits {
                     self.apply_edit(edit);

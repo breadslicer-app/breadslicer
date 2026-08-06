@@ -99,6 +99,24 @@ pub enum SceneEdit {
         rid: MeshResourceId,
         mesh: Arc<IndexedMesh>,
     },
+    /// Swap the mesh stored at the live resource slot `rid` from
+    /// `before` to `after`. Both `Arc`s are snapshotted, so the
+    /// inverse swap restores the exact previous storage, pointer
+    /// identity included.
+    ReplaceMeshResource {
+        rid: MeshResourceId,
+        before: Arc<IndexedMesh>,
+        after: Arc<IndexedMesh>,
+    },
+    /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `node_id`
+    /// from `before` to `after`. Both `Arc`s are snapshotted, so the
+    /// inverse swap restores the exact previous storage, pointer
+    /// identity included.
+    ReplaceLeafMesh {
+        node_id: NodeId,
+        before: Arc<IndexedMesh>,
+        after: Arc<IndexedMesh>,
+    },
     /// Apply a sequence of edits as a single undo / redo unit. The
     /// inverse is the reversed sequence of inverses, so e.g. a paste
     /// that emits `Compound([AddMeshResource, AddRootLeaf])` undoes
@@ -114,6 +132,12 @@ impl SceneEdit {
     pub fn is_noop(&self) -> bool {
         match self {
             Self::SetLocalTransform { before, after, .. } => before == after,
+            // Pointer identity, not content equality: the stored
+            // `Arc` is observable state (`find_mesh_resource_by_arc`,
+            // cache keys), so swapping in a content-equal but
+            // distinct `Arc` IS a change.
+            Self::ReplaceMeshResource { before, after, .. }
+            | Self::ReplaceLeafMesh { before, after, .. } => Arc::ptr_eq(before, after),
             Self::AddRootLeaf { .. }
             | Self::RemoveRootLeaf { .. }
             | Self::AddLeaf { .. }
@@ -126,9 +150,11 @@ impl SceneEdit {
 
     /// True when applying this edit changes the node or
     /// mesh-resource arena membership (a leaf appears or
-    /// disappears, or a mesh resource is registered or removed).
-    /// `SetLocalTransform` is non-structural: it perturbs an
-    /// existing leaf's transform without touching arena slots.
+    /// disappears, or a mesh resource is registered or removed) or
+    /// swaps the mesh stored at an existing slot (the vertex data
+    /// behind the slot changes). `SetLocalTransform` is
+    /// non-structural: it perturbs an existing leaf's transform
+    /// without touching arena slots or their meshes.
     ///
     /// Downstream caches that mirror the arena (the GPU scene's
     /// per-leaf model buffer, the spatial caches' parallel vecs)
@@ -142,7 +168,9 @@ impl SceneEdit {
             | Self::AddLeaf { .. }
             | Self::RemoveLeaf { .. }
             | Self::AddMeshResource { .. }
-            | Self::RemoveMeshResource { .. } => true,
+            | Self::RemoveMeshResource { .. }
+            | Self::ReplaceMeshResource { .. }
+            | Self::ReplaceLeafMesh { .. } => true,
             Self::Compound(edits) => edits.iter().any(Self::is_structural),
         }
     }
@@ -208,6 +236,20 @@ impl SceneEdit {
                 rid: *rid,
                 mesh: Arc::clone(mesh),
             },
+            Self::ReplaceMeshResource { rid, before, after } => Self::ReplaceMeshResource {
+                rid: *rid,
+                before: Arc::clone(after),
+                after: Arc::clone(before),
+            },
+            Self::ReplaceLeafMesh {
+                node_id,
+                before,
+                after,
+            } => Self::ReplaceLeafMesh {
+                node_id: *node_id,
+                before: Arc::clone(after),
+                after: Arc::clone(before),
+            },
             Self::Compound(edits) => {
                 Self::Compound(edits.iter().rev().map(Self::inverse).collect())
             }
@@ -252,6 +294,12 @@ impl SceneEdit {
             }
             Self::RemoveMeshResource { rid, .. } => {
                 let _ = graph.remove_mesh_resource(*rid);
+            }
+            Self::ReplaceMeshResource { rid, after, .. } => {
+                let _ = graph.replace_mesh_resource(*rid, Arc::clone(after));
+            }
+            Self::ReplaceLeafMesh { node_id, after, .. } => {
+                let _ = graph.replace_inline_leaf_mesh(*node_id, Arc::clone(after));
             }
             Self::Compound(edits) => {
                 for edit in edits {
@@ -635,11 +683,168 @@ mod scene_edit_tests {
         assert_eq!(g, snapshot_before);
     }
 
+    fn triangle_mesh_arc() -> Arc<IndexedMesh> {
+        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        Arc::new(IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        })
+    }
+
+    /// A live resource slot and a live inline-mesh leaf, each holding
+    /// its own `Arc`: the 2 storage shapes the Replace* edits target.
+    fn scene_with_replaceable_targets() -> (
+        Scene,
+        MeshResourceId,
+        Arc<IndexedMesh>,
+        NodeId,
+        Arc<IndexedMesh>,
+    ) {
+        let mut g = Scene::new();
+        let resource_mesh = triangle_mesh_arc();
+        let rid = g.add_mesh_resource_arc(Arc::clone(&resource_mesh));
+        let leaf_mesh = triangle_mesh_arc();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::clone(&leaf_mesh)),
+            )
+            .unwrap();
+        (g, rid, resource_mesh, leaf, leaf_mesh)
+    }
+
+    #[test]
+    fn replace_edits_are_noop_only_on_pointer_identical_arcs() {
+        let (_, rid, resource_mesh, leaf, leaf_mesh) = scene_with_replaceable_targets();
+        let same_arc = SceneEdit::ReplaceMeshResource {
+            rid,
+            before: Arc::clone(&resource_mesh),
+            after: Arc::clone(&resource_mesh),
+        };
+        assert!(same_arc.is_noop());
+        // Content-equal but pointer-distinct is a real change: the
+        // stored Arc's identity is observable state.
+        let content_equal = Arc::new((*resource_mesh).clone());
+        let distinct = SceneEdit::ReplaceMeshResource {
+            rid,
+            before: Arc::clone(&resource_mesh),
+            after: content_equal,
+        };
+        assert!(!distinct.is_noop());
+        let same_leaf_arc = SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: Arc::clone(&leaf_mesh),
+            after: Arc::clone(&leaf_mesh),
+        };
+        assert!(same_leaf_arc.is_noop());
+        let distinct_leaf = SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: Arc::clone(&leaf_mesh),
+            after: Arc::new((*leaf_mesh).clone()),
+        };
+        assert!(!distinct_leaf.is_noop());
+    }
+
+    #[test]
+    fn replace_edits_are_structural() {
+        let (_, rid, resource_mesh, leaf, leaf_mesh) = scene_with_replaceable_targets();
+        let resource_edit = SceneEdit::ReplaceMeshResource {
+            rid,
+            before: resource_mesh,
+            after: triangle_mesh_arc(),
+        };
+        assert!(resource_edit.is_structural());
+        let leaf_edit = SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: leaf_mesh,
+            after: triangle_mesh_arc(),
+        };
+        assert!(leaf_edit.is_structural());
+    }
+
+    #[test]
+    fn replace_inverse_swaps_before_and_after_preserving_arc_identity() {
+        let (_, rid, before, leaf, leaf_before) = scene_with_replaceable_targets();
+        let after = triangle_mesh_arc();
+        let SceneEdit::ReplaceMeshResource {
+            rid: out_rid,
+            before: out_before,
+            after: out_after,
+        } = SceneEdit::ReplaceMeshResource {
+            rid,
+            before: Arc::clone(&before),
+            after: Arc::clone(&after),
+        }
+        .inverse()
+        else {
+            panic!("inverse of ReplaceMeshResource must be ReplaceMeshResource");
+        };
+        assert_eq!(out_rid, rid);
+        assert!(Arc::ptr_eq(&out_before, &after));
+        assert!(Arc::ptr_eq(&out_after, &before));
+        let leaf_after = triangle_mesh_arc();
+        let SceneEdit::ReplaceLeafMesh {
+            node_id: out_id,
+            before: out_before,
+            after: out_after,
+        } = SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: Arc::clone(&leaf_before),
+            after: Arc::clone(&leaf_after),
+        }
+        .inverse()
+        else {
+            panic!("inverse of ReplaceLeafMesh must be ReplaceLeafMesh");
+        };
+        assert_eq!(out_id, leaf);
+        assert!(Arc::ptr_eq(&out_before, &leaf_after));
+        assert!(Arc::ptr_eq(&out_after, &leaf_before));
+    }
+
+    #[test]
+    fn apply_replace_mesh_resource_then_inverse_restores_arc_identity() {
+        let (mut g, rid, before, _, _) = scene_with_replaceable_targets();
+        let after = triangle_mesh_arc();
+        let edit = SceneEdit::ReplaceMeshResource {
+            rid,
+            before: Arc::clone(&before),
+            after: Arc::clone(&after),
+        };
+        edit.apply_to_scene(&mut g);
+        assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &after));
+        edit.inverse().apply_to_scene(&mut g);
+        assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &before));
+    }
+
+    #[test]
+    fn apply_replace_leaf_mesh_then_inverse_restores_arc_identity() {
+        let (mut g, _, _, leaf, before) = scene_with_replaceable_targets();
+        let after = triangle_mesh_arc();
+        let edit = SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: Arc::clone(&before),
+            after: Arc::clone(&after),
+        };
+        edit.apply_to_scene(&mut g);
+        assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &after));
+        edit.inverse().apply_to_scene(&mut g);
+        assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &before));
+    }
+
     #[test]
     fn compound_is_noop_iff_all_inner_are_noop() {
-        // Identity-only SetLocalTransform is the only noop variant
-        // in the enum's vocabulary; everything else is unconditionally
-        // mutating.
+        // Identity-only SetLocalTransform and same-Arc Replace*
+        // edits are the only noop shapes in the enum's vocabulary;
+        // everything else is unconditionally mutating.
         use crate::primitives::{IndexedTriangle, Normal, Vertex};
         let mut g = Scene::new();
         let nid = g.add_group(None, Transform3D::Identity);

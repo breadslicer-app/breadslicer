@@ -565,6 +565,65 @@ mod invalidation_discipline {
     }
 
     #[test]
+    fn replace_mesh_resource_edit_refreshes_the_cached_aabb() {
+        let (mut graph, root) = graph_with_group_root();
+        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let leaf_id = first_leaf(&spatial);
+        // Prime the per-resource cache with the small mesh's AABB.
+        let stale = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
+        let before = Arc::clone(spatial.graph().mesh_resource_arc(rid).unwrap());
+        let after = Arc::new(triangle_mesh(3.0));
+        spatial.apply_edit(SceneEdit::ReplaceMeshResource {
+            rid,
+            before,
+            after: Arc::clone(&after),
+        });
+        assert!(Arc::ptr_eq(
+            spatial.graph().mesh_resource_arc(rid).unwrap(),
+            &after
+        ));
+        // The edit must discard the primed cache: the re-queried
+        // AABB reflects the larger mesh, matching a fresh build.
+        let refreshed = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
+        let expected = SceneSpatial::from_graph(spatial.graph().clone())
+            .leaf(leaf_id)
+            .unwrap()
+            .local_aabb()
+            .unwrap();
+        assert_ne!(stale, refreshed);
+        assert_eq!(refreshed, expected);
+    }
+
+    #[test]
+    fn replace_leaf_mesh_edit_refreshes_the_cached_aabb() {
+        let (mut graph, root) = graph_with_group_root();
+        let leaf = add_inline_leaf(&mut graph, root, triangle_mesh(1.0), Transform3D::Identity);
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let stale = spatial.leaf(leaf).unwrap().local_aabb().unwrap();
+        let before = Arc::clone(spatial.graph().leaf_mesh_arc(leaf).unwrap());
+        let after = Arc::new(triangle_mesh(3.0));
+        spatial.apply_edit(SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before,
+            after: Arc::clone(&after),
+        });
+        assert!(Arc::ptr_eq(
+            spatial.graph().leaf_mesh_arc(leaf).unwrap(),
+            &after
+        ));
+        let refreshed = spatial.leaf(leaf).unwrap().local_aabb().unwrap();
+        let expected = SceneSpatial::from_graph(spatial.graph().clone())
+            .leaf(leaf)
+            .unwrap()
+            .local_aabb()
+            .unwrap();
+        assert_ne!(stale, refreshed);
+        assert_eq!(refreshed, expected);
+    }
+
+    #[test]
     fn allocate_unbound_node_id_keeps_leaves_cache_in_sync() {
         let (mut graph, _root) = graph_with_group_root();
         let _rid = graph.add_mesh_resource(triangle_mesh(1.0));
