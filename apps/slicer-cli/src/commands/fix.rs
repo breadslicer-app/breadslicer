@@ -10,10 +10,8 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses, RepairRefusal};
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::scene::repair::SceneRepairOutcome;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
@@ -52,97 +50,71 @@ pub(crate) fn fix(
     display_warnings(&loaded.warnings, out);
     let mut graph = loaded.graph;
 
-    let all_fixes = repair_scene_meshes(&mut graph, passes, out)?;
+    let outcomes = graph.repair_meshes(passes);
+    let refused = show_refusal_warnings(&outcomes, out);
 
+    let all_fixes: Vec<MeshFix> = outcomes
+        .iter()
+        .flat_map(|outcome| outcome.fixes.iter().cloned())
+        .collect();
     if all_fixes.is_empty() {
         let _ = writeln!(out, "No fixes were applied.");
     } else {
         show_applied_fixes(&all_fixes, out);
     }
 
-    write_scene(&graph, &target_path, target_format)
+    // The unconditional write leans on the repair driver's
+    // never-worse guarantee: refused meshes are byte-identical to
+    // their input and applied passes only shrink a mesh's problem
+    // set, so the file written below is always at least as valid as
+    // the source. If a future pass broke that guarantee, this write
+    // would have to become conditional.
+    write_scene(&graph, &target_path, target_format)?;
+
+    if refused > 0 {
+        return Err(anyhow!(
+            "{refused} of {} meshes could not be fully repaired",
+            outcomes.len()
+        ));
+    }
+    Ok(())
 }
 
-/// Apply [`IndexedMesh::repair`] to every reachable mesh in `graph`
-/// (both resource-backed meshes and inline-mesh leaves) and return
-/// the concatenated list of fixes that were actually applied. Shared
-/// between the `fix` subcommand and the `slice --repair` path.
-/// An empty return value means no fix was applied; it does NOT
-/// imply the mesh was free of diagnosed problems (problems whose
-/// corresponding pass is off in `passes` go untouched).
-pub(crate) fn repair_scene_meshes(
-    graph: &mut Scene,
-    passes: RepairPasses,
-    out: &mut dyn Write,
-) -> Result<Vec<MeshFix>> {
-    let mut all_fixes: Vec<MeshFix> = Vec::new();
-
-    for (_id, mesh) in graph.mesh_resources_iter_mut() {
-        all_fixes.extend(repair_or_render_refusal(mesh, passes, out)?);
-    }
-
-    // Two-phase walk: collect inline-mesh leaf ids while the borrow
-    // is shared, then mutate one at a time so each `inline_mesh_mut`
-    // call gets exclusive access.
-    let inline_leaf_ids = collect_inline_leaf_ids(graph);
-    for id in inline_leaf_ids {
-        let mesh = graph
-            .inline_mesh_mut(id)
-            .expect("inline-mesh leaf was alive at enumeration time");
-        all_fixes.extend(repair_or_render_refusal(mesh, passes, out)?);
-    }
-
-    Ok(all_fixes)
-}
-
-/// Collect every reachable inline-mesh leaf's [`NodeId`] in pre-order
-/// traversal of `graph.roots()`. Resource-backed leaves are skipped;
-/// their meshes live in the resource arena and are fixed through
-/// `mesh_resources_iter_mut`.
-fn collect_inline_leaf_ids(graph: &Scene) -> Vec<NodeId> {
-    let mut ids: Vec<NodeId> = Vec::new();
-    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(node) = graph.node(id) else {
+/// Render one warning line per refused target of a
+/// [`Scene::repair_meshes`](sc_mesh_core::scene::Scene::repair_meshes)
+/// run, keeping the historical per-refusal wording, and return how
+/// many targets were refused. Vertex errors are listed before their
+/// warning, as the abort path used to do. When the scene stores more
+/// than 1 mesh the warning names the target by its 1-based position
+/// in the outcome order. Shared between the `fix` subcommand and the
+/// `slice --repair` path.
+pub(crate) fn show_refusal_warnings(outcomes: &[SceneRepairOutcome], out: &mut dyn Write) -> usize {
+    let total = outcomes.len();
+    let mut refused = 0usize;
+    for (idx, outcome) in outcomes.iter().enumerate() {
+        let Some(refusal) = &outcome.refusal else {
             continue;
         };
-        match &node.kind {
-            NodeKind::Leaf(LeafPayload::Mesh(_)) => ids.push(id),
-            NodeKind::Leaf(LeafPayload::MeshResource(_)) => {}
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
+        refused += 1;
+        if let RepairRefusal::InvalidVertices(errors) = refusal {
+            show_vertex_errors(errors, out);
+        }
+        let message = match refusal {
+            RepairRefusal::InvalidVertices(_) => {
+                "Unable to fix mesh, there are invalid vertices.".to_string()
             }
-            NodeKind::Reference { .. } => {}
+            RepairRefusal::UnfixableFaceErrors(_) => {
+                "Unable to fix mesh. Face errors correction is not implemented (yet).".to_string()
+            }
+            RepairRefusal::OrientationFixFailed(err) => format!("Unable to fix mesh: {err}"),
+        };
+        if total > 1 {
+            let _ = writeln!(out, "warning (mesh {} of {total}): {message}", idx + 1);
+        } else {
+            let _ = writeln!(out, "warning: {message}");
         }
     }
-    ids
-}
-
-/// Run the repair policy on one mesh and translate a refusal into
-/// this command's error contract: vertex errors are listed on `out`
-/// before the failure, unaddressable face errors keep the historical
-/// wording, and an orientation failure surfaces the typed error's own
-/// message. On refusal the report's partial fixes are dropped, since
-/// the command aborts before reporting or writing anything.
-fn repair_or_render_refusal(
-    mesh: &mut IndexedMesh,
-    passes: RepairPasses,
-    out: &mut dyn Write,
-) -> Result<Vec<MeshFix>> {
-    let report = mesh.repair(passes);
-    match report.refusal {
-        None => Ok(report.fixes),
-        Some(RepairRefusal::InvalidVertices(errors)) => {
-            show_vertex_errors(&errors, out);
-            Err(anyhow!("Unable to fix mesh, there are invalid vertices."))
-        }
-        Some(RepairRefusal::UnfixableFaceErrors(_)) => Err(anyhow!(
-            "Unable to fix mesh. Face errors correction is not implemented (yet)."
-        )),
-        Some(RepairRefusal::OrientationFixFailed(err)) => Err(anyhow::Error::new(err)),
-    }
+    refused
 }
 
 pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {

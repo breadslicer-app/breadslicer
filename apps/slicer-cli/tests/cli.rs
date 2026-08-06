@@ -169,6 +169,18 @@ fn flipped_winding_tetrahedron_mesh() -> IndexedMesh {
     mesh
 }
 
+/// Tetrahedron with the winding of faces 0 AND 1 reversed. Half the
+/// faces then disagree with the other half, every face collects 2
+/// winding complaints, and the flip pass refuses with
+/// `TooManyFlippedFaces` rather than guess which half is right: the
+/// loader-representable "unrepairable" input.
+fn two_flipped_faces_tetrahedron_mesh() -> IndexedMesh {
+    let mut mesh = tetrahedron_mesh(None);
+    mesh.faces[0].vertices.reverse();
+    mesh.faces[1].vertices.reverse();
+    mesh
+}
+
 /// Tetrahedron whose face 1 carries a non-unit-magnitude normal
 /// (scaled by 2). `validate_normal_vectors` flags `NonUnitNorm`. All
 /// vertex indices remain in range.
@@ -271,7 +283,7 @@ fn three_triangles_sharing_edge_mesh() -> IndexedMesh {
 
 /// `assert_cmd` predicate that fails if stderr contains the textual
 /// signature of a Rust panic. A Rust panic in a `#[panic = "unwind"]`
-/// build prints `thread '…' panicked at …` and exits with code 101 by
+/// build prints `thread '...' panicked at ...` and exits with code 101 by
 /// default; in `#[panic = "abort"]` builds it still emits the same
 /// header before aborting. Either way, the substring is reliable.
 ///
@@ -1506,6 +1518,131 @@ mod fix_no_panic_contract_tests {
 }
 
 #[cfg(test)]
+mod fix_partial_repair_tests {
+    use super::*;
+
+    use sc_mesh_formats::load_mesh_from_path;
+
+    /// True iff `mesh` is edge-manifold (the witness-mint attempt).
+    fn is_edge_manifold(mesh: &IndexedMesh) -> bool {
+        mesh.validated_faces()
+            .is_ok_and(|faces| faces.validated_edge_manifold().is_ok())
+    }
+
+    /// 2 tetrahedra in 1 OBJ: object "repairable" has 1 flipped face
+    /// (the flip pass corrects it), object "unrepairable" has 2 (the
+    /// flip pass refuses with `TooManyFlippedFaces`). OBJ vertex
+    /// numbering is global and 1-based, so the 2nd object's faces
+    /// index vertices 5 to 8.
+    fn write_two_object_obj(path: &Path) {
+        let mut text = String::new();
+        let verts = "v 1 1 1\nv 1 -1 -1\nv -1 1 -1\nv -1 -1 1\n";
+        text.push_str("o repairable\n");
+        text.push_str(verts);
+        text.push_str("f 3 2 1\nf 1 4 2\nf 1 3 4\nf 2 4 3\n");
+        text.push_str("o unrepairable\n");
+        text.push_str(verts);
+        text.push_str("f 7 6 5\nf 6 8 5\nf 5 7 8\nf 6 8 7\n");
+        fs::write(path, text).expect("write fixture obj");
+    }
+
+    /// A refused mesh no longer aborts the command: the repairable
+    /// object is fixed, the refusal becomes a per-mesh warning, the
+    /// target is written anyway (never worse than the input), and the
+    /// exit code still reports the partial result.
+    #[test]
+    fn fix_multi_mesh_repairs_what_it_can_and_writes_with_a_warning() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two.obj");
+        let target = tmp.path().join("fixed.obj");
+        write_two_object_obj(&source);
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Applied fixes"))
+            .stderr(predicate::str::contains("Flipped orientation"))
+            .stderr(predicate::str::contains(
+                "warning (mesh 2 of 2): Unable to fix mesh: too many flipped faces",
+            ))
+            .stderr(predicate::str::contains(
+                "1 of 2 meshes could not be fully repaired",
+            ));
+
+        assert!(target.exists(), "the partial result must be written");
+        let reloaded = load_mesh_from_path(&target, None, None).expect("re-read fixed.obj");
+        let targets = reloaded.graph.mesh_targets();
+        assert_eq!(targets.len(), 2, "per-object identity survives the fix");
+        let meshes: Vec<_> = targets
+            .iter()
+            .map(|t| reloaded.graph.target_mesh(*t).expect("live target"))
+            .collect();
+        assert_eq!(
+            meshes.iter().filter(|m| is_edge_manifold(m)).count(),
+            1,
+            "exactly the repairable object became edge-manifold"
+        );
+        // The refused object reaches the output geometrically intact:
+        // still a full tetrahedron, just with its input winding.
+        let refused = meshes
+            .iter()
+            .find(|m| !is_edge_manifold(m))
+            .expect("refused object present");
+        assert_eq!(refused.faces.len(), 4);
+        assert_eq!(refused.vertices.len(), 4);
+    }
+
+    /// The single-mesh contract under partial repair: a refusal warns
+    /// and exits non-zero, but the target is still written, equal to
+    /// the input.
+    #[test]
+    fn fix_single_mesh_refusal_still_writes_the_target() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("insideout.stla");
+        let target = tmp.path().join("fixed.stla");
+        write_stla_to(&source, &two_flipped_faces_tetrahedron_mesh());
+
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args([
+                "fix",
+                "-s",
+                source.to_str().unwrap(),
+                "-t",
+                target.to_str().unwrap(),
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "warning: Unable to fix mesh: too many flipped faces",
+            ))
+            .stderr(predicate::str::contains("No fixes were applied."))
+            .stderr(predicate::str::contains(
+                "1 of 1 meshes could not be fully repaired",
+            ));
+
+        assert!(target.exists(), "the untouched result must be written");
+        let reloaded = load_mesh_from_path(&target, None, None).expect("re-read fixed.stla");
+        let targets = reloaded.graph.mesh_targets();
+        assert_eq!(targets.len(), 1);
+        let mesh = reloaded.graph.target_mesh(targets[0]).expect("live target");
+        assert!(
+            !is_edge_manifold(mesh),
+            "geometry preserved, not half-fixed"
+        );
+        assert_eq!(mesh.faces.len(), 4);
+    }
+}
+
+#[cfg(test)]
 mod argument_parsing_tests {
     use super::*;
 
@@ -1787,6 +1924,29 @@ mod slice_repair_tests {
             .success()
             .stderr(predicate::str::contains("Applied fixes"))
             .stderr(predicate::str::contains("Flipped orientation"));
+    }
+
+    /// A repair refusal no longer aborts the slice: it becomes a
+    /// warning, slicing proceeds, and the engine's validation gate
+    /// stays the authority (its report and fix hint are what the
+    /// user sees).
+    #[test]
+    fn slice_with_repair_proceeds_past_a_refused_mesh_to_the_validation_gate() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("insideout.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_stla_to(&source, &two_flipped_faces_tetrahedron_mesh());
+
+        run_slice(&source, &output, &["--repair"])
+            .failure()
+            .stderr(predicate::str::contains(
+                "warning: Unable to fix mesh: too many flipped faces",
+            ))
+            .stderr(predicate::str::contains("mesh validation failed"))
+            .stderr(predicate::str::contains(
+                "Run `sc-slicer-cli fix` to repair the mesh",
+            ));
     }
 }
 

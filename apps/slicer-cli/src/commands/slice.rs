@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
-use sc_mesh_core::indexed_mesh::{MeshErrorReport, RepairPasses, group_errors_by_variant};
+use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
 use sc_print_glue::{UnsliceableScene, UnsliceableSelection, slice_profile_for_selection};
@@ -29,7 +29,7 @@ use sc_sl1cer::{LeafSlices, VERSION, slice_scene};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::fix::{repair_scene_meshes, show_applied_fixes};
+use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
 use crate::commands::mesh_loader::display_warnings;
 use crate::config::assets_dir::resolve_assets_profiles_dir;
 use crate::config::library_dir::resolve_user_library_dir;
@@ -92,10 +92,17 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
 
     if args.repair {
         let stderr = &mut std::io::stderr();
-        let fixes = repair_scene_meshes(&mut loaded.graph, RepairPasses::default_repair(), stderr)?;
+        let outcomes = loaded.graph.repair_meshes(RepairPasses::default_repair());
+        let fixes: Vec<MeshFix> = outcomes
+            .iter()
+            .flat_map(|outcome| outcome.fixes.iter().cloned())
+            .collect();
         if !fixes.is_empty() {
             show_applied_fixes(&fixes, stderr);
         }
+        // Refusals warn but do not abort: the engine's validation
+        // gate below remains the authority on what can be sliced.
+        show_refusal_warnings(&outcomes, stderr);
     }
 
     if !args.no_auto_place {
