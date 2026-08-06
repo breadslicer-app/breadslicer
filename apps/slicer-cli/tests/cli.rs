@@ -1957,6 +1957,163 @@ mod slice_multi_mesh_tests {
 }
 
 #[cfg(test)]
+mod slice_schedule_flag_tests {
+    use super::*;
+
+    use std::fs::File;
+    use std::io::BufReader;
+
+    /// The centred tetrahedron auto-places to z in [0, 2] (see
+    /// `slice_auto_place_tests`), so the resin's 0.2 mm intent gives
+    /// 10 layers when no flag interferes.
+    fn write_tetrahedron(path: &Path) {
+        write_stla_to(path, &tetrahedron_mesh(None));
+    }
+
+    fn run_slice(
+        source: &Path,
+        output_dir: &Path,
+        format: &str,
+        extra_args: &[&str],
+    ) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.args([
+            "slice",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            output_dir.to_str().unwrap(),
+            "--target-format",
+            format,
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
+        ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
+        cmd.args(extra_args);
+        cmd.assert()
+    }
+
+    #[test]
+    fn layer_height_flag_drives_the_schedule() {
+        // 0.1 mm instead of the resin's 0.2 mm intent doubles the
+        // count: 20 layers over z in [0, 2]. The e2e printer declares
+        // no constraints, so the request passes through unquantised
+        // (the constraint chain on requests is pinned at the
+        // resolver).
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_tetrahedron(&source);
+
+        run_slice(
+            &source,
+            &output,
+            "svg-per-layer",
+            &["--layer-height", "0.1"],
+        )
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 20 layers"));
+    }
+
+    #[test]
+    fn first_layer_height_flag_drives_the_schedule() {
+        // First layer 0.6 mm, then 0.2 mm layers over z in [0, 2]:
+        // beyond = 1.4, ceil(1.4 / 0.2) = 7, total = 8.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_tetrahedron(&source);
+
+        run_slice(
+            &source,
+            &output,
+            "svg-per-layer",
+            &["--first-layer-height", "0.6"],
+        )
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 8 layers"));
+    }
+
+    /// Decode an 8-bit grayscale PNG into its pixel buffer.
+    fn grayscale_pixels(path: &Path) -> Vec<u8> {
+        let decoder = png::Decoder::new(BufReader::new(File::open(path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buffer = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buffer).unwrap();
+        assert_eq!(info.color_type, png::ColorType::Grayscale);
+        assert_eq!(info.bit_depth, png::BitDepth::Eight);
+        buffer
+    }
+
+    fn sorted_png_layers(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut paths: Vec<std::path::PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "png"))
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn aa_off_rasterises_binary_coverage() {
+        // Without anti-aliasing every pixel is a hard in/out
+        // decision, even on the tetrahedron's sloped contours: only
+        // 0 and 255 may appear, and the solid interior guarantees
+        // some 255.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_tetrahedron(&source);
+
+        run_slice(&source, &output, "png-per-layer", &[]).success();
+        let layers = sorted_png_layers(&output);
+        assert_eq!(layers.len(), 10, "one PNG per layer");
+        let mut saw_solid = false;
+        for layer in &layers {
+            for value in grayscale_pixels(layer) {
+                assert!(
+                    value == 0 || value == 255,
+                    "AA off must rasterise binary coverage, got {value}",
+                );
+                saw_solid |= value == 255;
+            }
+        }
+        assert!(saw_solid, "the tetrahedron must fill some pixels");
+    }
+
+    #[test]
+    fn aa_x4_rasterises_partial_coverage_on_sloped_contours() {
+        // With 4x anti-aliasing the tetrahedron's diagonal contour
+        // edges cross pixels partially, so some intermediate grey
+        // value must appear across the stack.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        fs::create_dir(&output).unwrap();
+        write_tetrahedron(&source);
+
+        run_slice(&source, &output, "png-per-layer", &["--aa", "x4"]).success();
+        let layers = sorted_png_layers(&output);
+        assert_eq!(layers.len(), 10, "one PNG per layer");
+        let saw_partial = layers
+            .iter()
+            .flat_map(|layer| grayscale_pixels(layer))
+            .any(|value| value != 0 && value != 255);
+        assert!(
+            saw_partial,
+            "4x AA over sloped contours must produce intermediate coverage",
+        );
+    }
+}
+
+#[cfg(test)]
 mod slice_threemf_tests {
     use super::*;
 
