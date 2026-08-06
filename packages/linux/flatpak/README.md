@@ -4,7 +4,7 @@ Flatpak package of the SoulCrafted Slicer.
 
 ## Files
 
-- `it.soulcrafted.Slicer.yml` is the application manifest.
+- `it.soulcrafted.slicer.yml` is the application manifest.
 - `cargo-sources.json` and `skia-binaries.source.json` are the offline build
   inputs: every crate the workspace pulls, and the prebuilt Skia archive that
   `skia-bindings` links. Flatpak builds run with no network access, so both are
@@ -33,14 +33,14 @@ the result under `.cache/build/`. An unchanged source reuses the cached build:
 The command-line tool ships in the same package:
 
 ```
-flatpak run --command=sc-slicer-cli it.soulcrafted.Slicer --help
+flatpak run --command=sc-slicer-cli it.soulcrafted.slicer --help
 ```
 
 It reads and writes files through the sandbox, so grant it a path when needed,
 for example:
 
 ```
-flatpak run --filesystem=home --command=sc-slicer-cli it.soulcrafted.Slicer ...
+flatpak run --filesystem=home --command=sc-slicer-cli it.soulcrafted.slicer ...
 ```
 
 ## Regenerating the offline sources

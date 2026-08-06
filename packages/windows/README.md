@@ -5,7 +5,7 @@ with Inno Setup that ships both binaries.
 
 ## Files
 
-- `it.soulcrafted.Slicer.iss` is the Inno Setup script. It packs a staging
+- `it.soulcrafted.slicer.iss` is the Inno Setup script. It packs a staging
   directory, lets the user choose a per-machine or per-user install, adds the
   command-line tool to the PATH (optional, removed on uninstall), and installs
   a Start Menu shortcut for the GUI.
@@ -47,7 +47,7 @@ after staging and prints where to get it.
 ## Regenerating the icon
 
 The installer and the GUI executable both use
-`apps\slicer-gui\assets\icons\it.soulcrafted.Slicer.ico`, generated from the
+`apps\slicer-gui\assets\icons\it.soulcrafted.slicer.ico`, generated from the
 shared SVG logo. Regenerate it after the logo changes:
 
 ```

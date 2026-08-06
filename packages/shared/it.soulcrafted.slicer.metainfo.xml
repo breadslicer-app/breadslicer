@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>it.soulcrafted.Slicer</id>
+  <id>it.soulcrafted.slicer</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-only</project_license>
   <name>SoulCrafted Slicer</name>
@@ -12,7 +12,7 @@
       plate, and produces the per-layer data that resin printers consume.
     </p>
   </description>
-  <launchable type="desktop-id">it.soulcrafted.Slicer.desktop</launchable>
+  <launchable type="desktop-id">it.soulcrafted.slicer.desktop</launchable>
   <provides>
     <mediatype>model/stl</mediatype>
     <mediatype>model/obj</mediatype>

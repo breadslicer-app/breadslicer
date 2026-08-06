@@ -32,7 +32,7 @@
 #define ProgId3mf "SoulCrafted.Slicer.3mf"
 
 [Setup]
-AppId=it.soulcrafted.Slicer
+AppId=it.soulcrafted.slicer
 AppName={#AppName}
 AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
@@ -43,7 +43,7 @@ DefaultGroupName={#AppName}
 OutputDir={#OutputDir}
 OutputBaseFilename=sc-slicer-setup-{#AppVersion}-x64
 LicenseFile=..\..\LICENSE.md
-SetupIconFile=..\..\apps\slicer-gui\assets\icons\it.soulcrafted.Slicer.ico
+SetupIconFile=..\..\apps\slicer-gui\assets\icons\it.soulcrafted.slicer.ico
 UninstallDisplayIcon={app}\{#GuiExe}
 UninstallDisplayName={#AppName}
 WizardStyle=modern

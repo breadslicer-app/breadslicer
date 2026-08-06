@@ -21,7 +21,7 @@ $Cache = Join-Path $ScriptDir '.cache'
 $Stage = Join-Path $Cache 'stage'
 $Target = 'x86_64-pc-windows-msvc'
 $ReleaseDir = Join-Path $RepoRoot "target\$Target\release"
-$Iss = Join-Path $ScriptDir 'it.soulcrafted.Slicer.iss'
+$Iss = Join-Path $ScriptDir 'it.soulcrafted.slicer.iss'
 
 # The three CRT DLLs shipped beside the executables. The Universal CRT
 # (ucrtbase.dll, api-ms-win-*) is part of Windows 10/11 and is not bundled.
@@ -92,8 +92,8 @@ function Test-Modified([string]$Path) {
 }
 
 function Assert-IconCurrent {
-    $svg = 'packages/shared/it.soulcrafted.Slicer.svg'
-    $ico = 'apps/slicer-gui/assets/icons/it.soulcrafted.Slicer.ico'
+    $svg = 'packages/shared/it.soulcrafted.slicer.svg'
+    $ico = 'apps/slicer-gui/assets/icons/it.soulcrafted.slicer.ico'
     foreach ($file in @($svg, $ico)) {
         if (-not (Test-Path (Join-Path $RepoRoot $file))) {
             throw "Expected icon file not found: $file"

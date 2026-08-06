@@ -20,14 +20,14 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
-MANIFEST="$SCRIPT_DIR/it.soulcrafted.Slicer.yml"
+MANIFEST="$SCRIPT_DIR/it.soulcrafted.slicer.yml"
 CACHE_NAME=.cache
 CACHE="$SCRIPT_DIR/$CACHE_NAME"
 SRC_DIR="$CACHE/src"
 TARBALL_RELPATH="$CACHE_NAME/source.tar"
 TARBALL="$SCRIPT_DIR/$TARBALL_RELPATH"
 SOURCE_LIST="$CACHE/source.source.json"
-APP_ID=it.soulcrafted.Slicer
+APP_ID=it.soulcrafted.slicer
 REPO="$CACHE/repo"
 BUNDLE="$CACHE/$APP_ID.flatpak"
 

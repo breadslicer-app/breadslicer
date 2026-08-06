@@ -13,8 +13,8 @@ use resvg::tiny_skia;
 use resvg::usvg;
 
 const SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
-const SVG_RELATIVE: &str = "packages/shared/it.soulcrafted.Slicer.svg";
-const ICO_RELATIVE: &str = "apps/slicer-gui/assets/icons/it.soulcrafted.Slicer.ico";
+const SVG_RELATIVE: &str = "packages/shared/it.soulcrafted.slicer.svg";
+const ICO_RELATIVE: &str = "apps/slicer-gui/assets/icons/it.soulcrafted.slicer.ico";
 
 fn main() {
     if let Err(err) = run() {

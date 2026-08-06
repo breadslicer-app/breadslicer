@@ -17,7 +17,7 @@ instructions, so building one format does not depend on the others.
 
 ## Conventions
 
-- The application is identified everywhere as `it.soulcrafted.Slicer`: the
+- The application is identified everywhere as `it.soulcrafted.slicer`: the
   Flatpak app id, the macOS bundle id, and the Windows product identity all use
   it. It is the same identity the binaries use at runtime to locate user data,
   so an installed package and a running binary agree on where that data lives.
