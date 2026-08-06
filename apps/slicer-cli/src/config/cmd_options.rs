@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::str::FromStr;
 
 use bpaf::{OptionParser, Parser, construct, long, positional, short};
+use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_sl1cer::profile::{AaLevel, PositiveFiniteMm};
 use sc_sla_formats::Format;
@@ -152,23 +153,26 @@ fn get_fix_options() -> impl Parser<CmdOptions> {
         .argument::<MeshFileType>("TARGET_FORMAT")
         .optional();
 
+    // Flag fallbacks come from the shared default pass set, so the
+    // `fix` defaults, `slice --repair`, and any other frontend cannot
+    // drift apart.
     let fix_zero_length_edges = long("fix-zero-length-edges")
         .help("Removes faces with zero-length edges")
         .argument::<bool>("FIX_ZERO_LENGTH_EDGES")
         .adjacent()
-        .fallback(true);
+        .fallback(RepairPasses::default_repair().zero_length_edges);
 
     let fix_flipped_faces = long("fix-flipped-faces")
         .help("Flips faces pointing to the wrong direction")
         .argument::<bool>("FIX_FLIPPED_FACES")
         .adjacent()
-        .fallback(true);
+        .fallback(RepairPasses::default_repair().flipped_faces);
 
     let fix_face_normals = long("fix-face-normals")
         .help("Fixes face normal vectors")
         .argument::<bool>("FIX_FACE_NORMALS")
         .adjacent()
-        .fallback(false);
+        .fallback(RepairPasses::default_repair().face_normals);
 
     construct!(CmdOptions::Fix {
         source,

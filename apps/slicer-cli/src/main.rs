@@ -10,10 +10,11 @@ mod config;
 mod filesystem;
 
 use anyhow::Result;
+use sc_mesh_core::indexed_mesh::RepairPasses;
 
 use crate::commands::convert::convert;
 use crate::commands::diagnose::diagnose;
-use crate::commands::fix::{FixOptions, fix};
+use crate::commands::fix::fix;
 use crate::commands::profiles::{
     export as profiles_export, import as profiles_import, list as profiles_list,
 };
@@ -47,7 +48,7 @@ fn main() -> Result<()> {
             source_format,
             target,
             target_format,
-            FixOptions {
+            RepairPasses {
                 zero_length_edges: fix_zero_length_edges,
                 flipped_faces: fix_flipped_faces,
                 face_normals: fix_face_normals,

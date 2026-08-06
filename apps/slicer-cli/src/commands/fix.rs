@@ -10,7 +10,8 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::indexed_mesh::{FixFacesOptions, MeshFix};
+use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses, RepairRefusal};
 use sc_mesh_core::scene::Scene;
 use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
@@ -26,22 +27,12 @@ use crate::filesystem::{
     ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
 };
 
-/// Repairs the user requested when running `fix`. Each flag enables an
-/// independent pass over the mesh; passes that find nothing to repair
-/// are no-ops.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FixOptions {
-    pub zero_length_edges: bool,
-    pub flipped_faces: bool,
-    pub face_normals: bool,
-}
-
 pub(crate) fn fix(
     source: OsString,
     source_format: Option<MeshFileType>,
     target: OsString,
     target_format: Option<MeshFileType>,
-    options: FixOptions,
+    passes: RepairPasses,
     out: &mut dyn Write,
 ) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(source))?;
@@ -61,7 +52,7 @@ pub(crate) fn fix(
     display_warnings(&loaded.warnings, out);
     let mut graph = loaded.graph;
 
-    let all_fixes = repair_scene_meshes(&mut graph, options, out)?;
+    let all_fixes = repair_scene_meshes(&mut graph, passes, out)?;
 
     if all_fixes.is_empty() {
         let _ = writeln!(out, "No fixes were applied.");
@@ -72,22 +63,22 @@ pub(crate) fn fix(
     write_scene(&graph, &target_path, target_format)
 }
 
-/// Apply [`fix_mesh`] to every reachable mesh in `graph` (both
-/// resource-backed meshes and inline-mesh leaves) and return the
-/// concatenated list of fixes that were actually applied. Shared
+/// Apply [`IndexedMesh::repair`] to every reachable mesh in `graph`
+/// (both resource-backed meshes and inline-mesh leaves) and return
+/// the concatenated list of fixes that were actually applied. Shared
 /// between the `fix` subcommand and the `slice --repair` path.
 /// An empty return value means no fix was applied; it does NOT
 /// imply the mesh was free of diagnosed problems (problems whose
-/// corresponding fix flag is off in `options` go untouched).
+/// corresponding pass is off in `passes` go untouched).
 pub(crate) fn repair_scene_meshes(
     graph: &mut Scene,
-    options: FixOptions,
+    passes: RepairPasses,
     out: &mut dyn Write,
 ) -> Result<Vec<MeshFix>> {
     let mut all_fixes: Vec<MeshFix> = Vec::new();
 
     for (_id, mesh) in graph.mesh_resources_iter_mut() {
-        all_fixes.extend(fix_mesh(mesh, options, out)?);
+        all_fixes.extend(repair_or_render_refusal(mesh, passes, out)?);
     }
 
     // Two-phase walk: collect inline-mesh leaf ids while the borrow
@@ -98,7 +89,7 @@ pub(crate) fn repair_scene_meshes(
         let mesh = graph
             .inline_mesh_mut(id)
             .expect("inline-mesh leaf was alive at enumeration time");
-        all_fixes.extend(fix_mesh(mesh, options, out)?);
+        all_fixes.extend(repair_or_render_refusal(mesh, passes, out)?);
     }
 
     Ok(all_fixes)
@@ -129,66 +120,29 @@ fn collect_inline_leaf_ids(graph: &Scene) -> Vec<NodeId> {
     ids
 }
 
-fn fix_mesh(
-    mesh: &mut sc_mesh_core::IndexedMesh,
-    options: FixOptions,
+/// Run the repair policy on one mesh and translate a refusal into
+/// this command's error contract: vertex errors are listed on `out`
+/// before the failure, unaddressable face errors keep the historical
+/// wording, and an orientation failure surfaces the typed error's own
+/// message. On refusal the report's partial fixes are dropped, since
+/// the command aborts before reporting or writing anything.
+fn repair_or_render_refusal(
+    mesh: &mut IndexedMesh,
+    passes: RepairPasses,
     out: &mut dyn Write,
 ) -> Result<Vec<MeshFix>> {
-    if let Err(errors) = mesh.validate_vertices() {
-        show_vertex_errors(&errors, out);
-        return Err(anyhow!("Unable to fix mesh, there are invalid vertices."));
-    }
-
-    let mut fixes: Vec<MeshFix> = Vec::new();
-
-    // Try to obtain the witness directly. If the mesh's faces
-    // already validate, no further face-level repair is necessary
-    // and we move straight on to normal/winding fixes, paying for
-    // `validate_faces` exactly once. Otherwise, fall back to
-    // repairing the zero-length-edge cases (when enabled) and then
-    // re-mint the witness from the post-removal mesh; the helper
-    // skips a second `validate_faces` whenever the only input
-    // errors were `ZeroLengthEdge`.
-    let mut validated = match mesh.validated_faces_mut() {
-        Ok(v) => v,
-        Err(face_errors) => {
-            if !options.zero_length_edges {
-                return Err(anyhow!(
-                    "Unable to fix mesh. Face errors correction is not implemented (yet)."
-                ));
-            }
-            let (edge_fixes, witness) = mesh.fix_zero_length_edges_into_validated(&face_errors);
-            // TODO: Fix other cases
-            if edge_fixes.len() < face_errors.len() {
-                return Err(anyhow!(
-                    "Unable to fix mesh. Face errors correction is not implemented (yet)."
-                ));
-            }
-            fixes.extend(edge_fixes);
-            witness.map_err(|_| {
-                anyhow!("Unable to fix mesh. Face errors correction is not implemented (yet).")
-            })?
+    let report = mesh.repair(passes);
+    match report.refusal {
+        None => Ok(report.fixes),
+        Some(RepairRefusal::InvalidVertices(errors)) => {
+            show_vertex_errors(&errors, out);
+            Err(anyhow!("Unable to fix mesh, there are invalid vertices."))
         }
-    };
-
-    let normal_vector_errors = validated
-        .validate_normal_vectors()
-        .err()
-        .unwrap_or_default();
-    let manifold_errors = validated.validate_edge_manifold().err().unwrap_or_default();
-
-    if !normal_vector_errors.is_empty() || !manifold_errors.is_empty() {
-        fixes.extend(validated.fix_faces_orientation(
-            &manifold_errors,
-            &normal_vector_errors,
-            FixFacesOptions {
-                flipped: options.flipped_faces,
-                normals: options.face_normals,
-            },
-        )?);
+        Some(RepairRefusal::UnfixableFaceErrors(_)) => Err(anyhow!(
+            "Unable to fix mesh. Face errors correction is not implemented (yet)."
+        )),
+        Some(RepairRefusal::OrientationFixFailed(err)) => Err(anyhow::Error::new(err)),
     }
-
-    Ok(fixes)
 }
 
 pub(crate) fn show_applied_fixes(fixes: &[MeshFix], out: &mut dyn Write) {

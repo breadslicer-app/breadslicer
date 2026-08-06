@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
-use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
+use sc_mesh_core::indexed_mesh::{MeshErrorReport, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
 use sc_print_glue::{UnsliceableScene, UnsliceableSelection, slice_profile_for_selection};
@@ -29,7 +29,7 @@ use sc_sl1cer::{LeafSlices, VERSION, slice_scene};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::fix::{FixOptions, repair_scene_meshes, show_applied_fixes};
+use crate::commands::fix::{repair_scene_meshes, show_applied_fixes};
 use crate::commands::mesh_loader::display_warnings;
 use crate::config::assets_dir::resolve_assets_profiles_dir;
 use crate::config::library_dir::resolve_user_library_dir;
@@ -92,7 +92,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
 
     if args.repair {
         let stderr = &mut std::io::stderr();
-        let fixes = repair_scene_meshes(&mut loaded.graph, default_repair_options(), stderr)?;
+        let fixes = repair_scene_meshes(&mut loaded.graph, RepairPasses::default_repair(), stderr)?;
         if !fixes.is_empty() {
             show_applied_fixes(&fixes, stderr);
         }
@@ -191,18 +191,6 @@ fn load_material_profile(
             load_material_profile_by_id(id, None, library_dir, assets_dir)
                 .map_err(|e| anyhow!("could not load the material profile: {e}"))
         }
-    }
-}
-
-/// The fix-pass defaults the `slice --repair` path applies: remove
-/// zero-length-edge faces and correct flipped face orientations.
-/// Normal recomputation stays off (matches the `fix` subcommand's
-/// own `--fix-face-normals` default).
-fn default_repair_options() -> FixOptions {
-    FixOptions {
-        zero_length_edges: true,
-        flipped_faces: true,
-        face_normals: false,
     }
 }
 
