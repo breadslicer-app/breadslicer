@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+pub mod diagnose;
 pub mod error_summary;
 pub mod fix;
 mod half_edges;
@@ -12,8 +13,11 @@ pub mod validate;
 pub mod validated;
 
 #[cfg(test)]
+mod tests_diagnose;
+#[cfg(test)]
 mod tests_repair;
 
+pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fix::{MeshFix, MeshFixError};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};

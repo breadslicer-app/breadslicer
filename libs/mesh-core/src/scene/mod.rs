@@ -9,6 +9,7 @@
 
 pub mod aabb;
 pub mod bake;
+pub mod diagnose;
 pub mod edit;
 pub mod error;
 pub mod expand;

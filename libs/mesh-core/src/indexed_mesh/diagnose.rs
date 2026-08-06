@@ -1,0 +1,85 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Per-mesh diagnosis policy: which validators run, in which order,
+//! and what happens when the face gate fails. The validators
+//! themselves live in [`super::validate`] and [`super::validated`];
+//! this module owns the read-side decisions around them so every
+//! frontend diagnoses meshes the same way.
+
+use super::IndexedMesh;
+use super::validate::{MeshFaceError, MeshVertexError};
+use super::validated::{MeshEdgeManifoldError, MeshNormalVectorError};
+
+/// The face gate's result. The normal-vector and edge-manifold
+/// validators run on the witness face validation mints, so when the
+/// gate fails their findings do not exist for this mesh: absent by
+/// construction, not empty.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FaceDiagnosis {
+    /// Face validation failed; the witness-gated validators could
+    /// not run.
+    Invalid(Vec<MeshFaceError>),
+    /// Face validation passed; both witness-gated validators ran
+    /// (they are independent of each other).
+    Valid {
+        /// Stored normal vectors that disagree with the geometry.
+        normal_vector_errors: Vec<MeshNormalVectorError>,
+        /// Edges breaking the 2-faces-per-edge or consistent-winding
+        /// rules.
+        edge_manifold_errors: Vec<MeshEdgeManifoldError>,
+    },
+}
+
+/// Everything one diagnosis found in one mesh. Produced by
+/// [`IndexedMesh::diagnose`]; diagnosing never mutates the mesh.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshDiagnosis {
+    /// Non-finite vertex coordinates.
+    pub vertex_errors: Vec<MeshVertexError>,
+    /// The face gate's result, carrying the witness-gated
+    /// validators' findings when the gate passed.
+    pub faces: FaceDiagnosis,
+}
+
+impl MeshDiagnosis {
+    /// Whether the diagnosis found anything at all.
+    pub fn has_problems(&self) -> bool {
+        if !self.vertex_errors.is_empty() {
+            return true;
+        }
+        match &self.faces {
+            FaceDiagnosis::Invalid(_) => true,
+            FaceDiagnosis::Valid {
+                normal_vector_errors,
+                edge_manifold_errors,
+            } => !normal_vector_errors.is_empty() || !edge_manifold_errors.is_empty(),
+        }
+    }
+}
+
+impl IndexedMesh {
+    /// Run every validator over this mesh in the order the frontends
+    /// present them: vertices first (they never gate the rest), then
+    /// the face gate; when the gate passes, the normal-vector and
+    /// edge-manifold validators both run.
+    pub fn diagnose(&self) -> MeshDiagnosis {
+        let vertex_errors = self.validate_vertices().err().unwrap_or_default();
+        let faces = match self.validated_faces() {
+            Err(face_errors) => FaceDiagnosis::Invalid(face_errors),
+            Ok(validated) => FaceDiagnosis::Valid {
+                normal_vector_errors: validated
+                    .validate_normal_vectors()
+                    .err()
+                    .unwrap_or_default(),
+                edge_manifold_errors: validated.validate_edge_manifold().err().unwrap_or_default(),
+            },
+        };
+        MeshDiagnosis {
+            vertex_errors,
+            faces,
+        }
+    }
+}
