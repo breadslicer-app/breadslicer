@@ -6,12 +6,17 @@
 pub mod error_summary;
 pub mod fix;
 mod half_edges;
+pub mod repair;
 pub mod topology;
 pub mod validate;
 pub mod validated;
 
+#[cfg(test)]
+mod tests_repair;
+
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};
 pub use fix::{MeshFix, MeshFixError};
+pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use topology::{EdgeKey, MeshTopology, edge_key};
 pub use validate::{MeshFaceError, MeshVertexError};
 pub use validated::{
@@ -47,7 +52,7 @@ pub struct FixFacesOptions {
 /// Indexed triangle mesh. Pure data: no derived state, no caches.
 ///
 /// Spatial-query acceleration (object-space AABB, triangle clusters,
-/// future BVH / half-edge / …) lives in the `sc-mesh-spatial` crate
+/// future BVH / half-edge / ...) lives in the `sc-mesh-spatial` crate
 /// alongside the consumer that owns the cache lifecycle.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
