@@ -10,12 +10,10 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{
-    MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError, MeshVertexError,
+    FaceDiagnosis, MeshDiagnosis, MeshEdgeManifoldError, MeshFaceError, MeshNormalVectorError,
+    MeshVertexError,
 };
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_path;
@@ -37,14 +35,10 @@ pub(crate) fn diagnose(
     display_warnings(&loaded.warnings, out);
 
     let mut detected_problems = false;
-
-    for (_id, mesh) in loaded.graph.mesh_resources_iter() {
-        detected_problems |= diagnose_mesh(mesh, out);
+    for (_target, diagnosis) in loaded.graph.diagnose_meshes() {
+        show_diagnosis(&diagnosis, out);
+        detected_problems |= diagnosis.has_problems();
     }
-
-    for_each_inline_leaf_mesh(&loaded.graph, |mesh| {
-        detected_problems |= diagnose_mesh(mesh, out);
-    });
 
     if detected_problems {
         return Err(anyhow!("Found problems in diagnosed mesh"));
@@ -53,63 +47,28 @@ pub(crate) fn diagnose(
     Ok(())
 }
 
-/// Walk every reachable inline-mesh leaf under `graph.roots()` in
-/// pre-order and invoke `f` with the leaf's mesh.
-/// Resource-backed leaves are skipped: their meshes live in the
-/// resource arena and are iterated through `mesh_resources_iter`.
-fn for_each_inline_leaf_mesh<F: FnMut(&IndexedMesh)>(graph: &Scene, mut f: F) {
-    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(node) = graph.node(id) else {
-            continue;
-        };
-        match &node.kind {
-            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => f(mesh),
-            NodeKind::Leaf(LeafPayload::MeshResource(_)) => {}
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
+/// Renders one mesh's diagnosis with the historical block layout:
+/// vertex errors, then either the face errors (whose gate failure
+/// left the witness-gated findings absent) or the normal-vector and
+/// edge-manifold blocks. Blocks without findings are omitted.
+fn show_diagnosis(diagnosis: &MeshDiagnosis, out: &mut dyn Write) {
+    if !diagnosis.vertex_errors.is_empty() {
+        show_vertex_errors(&diagnosis.vertex_errors, out);
+    }
+    match &diagnosis.faces {
+        FaceDiagnosis::Invalid(face_errors) => show_face_errors(face_errors, out),
+        FaceDiagnosis::Valid {
+            normal_vector_errors,
+            edge_manifold_errors,
+        } => {
+            if !normal_vector_errors.is_empty() {
+                show_normal_vector_errors(normal_vector_errors, out);
             }
-            NodeKind::Reference { .. } => {}
+            if !edge_manifold_errors.is_empty() {
+                show_manifold_errors(edge_manifold_errors, out);
+            }
         }
     }
-}
-
-/// Returns `true` if any problems were detected.
-fn diagnose_mesh(mesh: &IndexedMesh, out: &mut dyn Write) -> bool {
-    let mut detected_problems = false;
-
-    if let Err(vertex_errors) = mesh.validate_vertices() {
-        detected_problems = true;
-        show_vertex_errors(&vertex_errors, out);
-    }
-
-    // `validated_faces` is the gate that produces the witness needed
-    // by `validate_normal_vectors` and `validate_edge_manifold`. If it
-    // fails, vertex indices are out of range or edges are
-    // collapsed; neither downstream check is meaningful in that
-    // state, so the function returns early after surfacing the
-    // face errors.
-    let validated = match mesh.validated_faces() {
-        Ok(v) => v,
-        Err(face_errors) => {
-            show_face_errors(&face_errors, out);
-            return true;
-        }
-    };
-
-    if let Err(vector_errors) = validated.validate_normal_vectors() {
-        detected_problems = true;
-        show_normal_vector_errors(&vector_errors, out);
-    }
-
-    if let Err(manifold_errors) = validated.validate_edge_manifold() {
-        detected_problems = true;
-        show_manifold_errors(&manifold_errors, out);
-    }
-
-    detected_problems
 }
 
 pub(crate) fn show_vertex_errors(vertex_errors: &[MeshVertexError], out: &mut dyn Write) {

@@ -363,6 +363,38 @@ fn write_obj_with_broken_object(path: &Path) {
     sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
 }
 
+/// Writes an OBJ with 2 defective objects whose findings are
+/// distinguishable: "fin" is a single open triangle (3 boundary
+/// edges), "flipped" is a tetrahedron with 2 reversed faces (4
+/// inconsistently wound edges). Drives the per-mesh reporting of the
+/// diagnose subcommand: 2 blocks, in object order.
+fn write_obj_with_two_broken_objects(path: &Path) {
+    let mut graph = Scene::new();
+    let mut fin = single_triangle_mesh();
+    fin.meta = Some(MeshMetadata {
+        name: Some("fin".to_string()),
+        ..Default::default()
+    });
+    let mut flipped = two_flipped_faces_tetrahedron_mesh();
+    flipped.meta = Some(MeshMetadata {
+        name: Some("flipped".to_string()),
+        ..Default::default()
+    });
+    for mesh in [fin, flipped] {
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .expect("add leaf");
+        graph.add_root(leaf).expect("add root");
+    }
+    let file = fs::File::create(path).expect("create obj");
+    let mut writer = std::io::BufWriter::new(file);
+    sc_mesh_formats::obj::write_obj(&graph, &mut writer).expect("write_obj");
+}
+
 #[cfg(test)]
 mod version_tests {
     use super::*;
@@ -1184,6 +1216,36 @@ mod diagnose_tests {
             .assert()
             .failure()
             .stderr(predicate::str::contains("windings disagree"));
+    }
+
+    #[test]
+    fn diagnose_reports_every_mesh_of_a_multi_object_file_in_load_order() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("two-broken.obj");
+        write_obj_with_two_broken_objects(&source);
+
+        let output = Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", source.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // One block per mesh: the open triangle's 3 boundary edges,
+        // then the flipped tetrahedron's 4 winding disagreements.
+        // The counts differ, so the blocks' relative position pins
+        // the per-mesh concatenation in object order.
+        let fin_block = stderr
+            .find("Manifold errors (3):")
+            .unwrap_or_else(|| panic!("missing the open triangle's block; stderr: {stderr}"));
+        let flipped_block = stderr
+            .find("Manifold errors (4):")
+            .unwrap_or_else(|| panic!("missing the flipped tetrahedron's block; stderr: {stderr}"));
+        assert!(
+            fin_block < flipped_block,
+            "per-mesh blocks must follow object order; stderr: {stderr}"
+        );
+        assert!(stderr.contains("Found problems in diagnosed mesh"));
     }
 }
 
