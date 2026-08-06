@@ -30,6 +30,8 @@
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 
 #[cfg(test)]
+mod tests_flipped;
+#[cfg(test)]
 mod tests_pinch;
 
 /// Closed unit cube centred at the origin (side 1). Manifold by
@@ -345,6 +347,65 @@ pub fn cuboid_with_pinched_z_tunnel() -> IndexedMesh {
         f([12, 16, 15]),
     ]);
     mesh
+}
+
+/// Turns the faces at `indices` inside out: vertex order reversed
+/// AND stored normal negated, the state a genuinely inverted face
+/// arrives in. The shared implementation behind the
+/// `*_with_flipped_faces` variants. The orientation repair pass
+/// reverses both again, restoring the donor fixture byte for byte.
+///
+/// The chosen faces must have pairwise disjoint edge-neighbourhoods:
+/// a face adjacent to 2 inside-out faces would itself accumulate 2
+/// winding disagreements and be misread as flipped by the repair
+/// planner.
+fn with_flipped_faces(mut mesh: IndexedMesh, indices: &[usize]) -> IndexedMesh {
+    for &idx in indices {
+        let face = &mut mesh.faces[idx];
+        face.vertices.reverse();
+        face.normal = face.normal.negate();
+    }
+    mesh
+}
+
+/// Faces turned inside out by [`unit_cube_with_flipped_faces`]: one
+/// bottom and one top face, whose edge-neighbourhoods are disjoint.
+pub const UNIT_CUBE_FLIPPED_FACES: [usize; 2] = [0, 2];
+
+/// [`unit_cube_mesh`] with 2 of its 12 faces deliberately turned
+/// inside out: repairable-by-construction (2 is below the
+/// orientation pass's inside-out threshold of faces / 2), and
+/// repairing restores the pristine cube byte for byte. Shared by
+/// the frontends' repair pipelines' tests so they exercise the same
+/// defect.
+pub fn unit_cube_with_flipped_faces() -> IndexedMesh {
+    with_flipped_faces(unit_cube_mesh(), &UNIT_CUBE_FLIPPED_FACES)
+}
+
+/// Faces turned inside out by
+/// [`cuboid_with_z_tunnel_and_flipped_faces`]: one bottom-annulus,
+/// one top-annulus, and one tunnel-wall face, with pairwise disjoint
+/// edge-neighbourhoods.
+pub const Z_TUNNEL_FLIPPED_FACES: [usize; 3] = [0, 12, 26];
+
+/// [`cuboid_with_z_tunnel`] with 3 of its 32 faces deliberately
+/// turned inside out: repairable-by-construction, and repairing
+/// restores the pristine prism byte for byte.
+pub fn cuboid_with_z_tunnel_and_flipped_faces() -> IndexedMesh {
+    with_flipped_faces(cuboid_with_z_tunnel(), &Z_TUNNEL_FLIPPED_FACES)
+}
+
+/// Faces turned inside out by
+/// [`cuboid_with_y_tunnel_and_flipped_faces`]: the first solid-bottom
+/// face, one front-annulus face, and one tunnel-wall face, with
+/// pairwise disjoint edge-neighbourhoods.
+pub const Y_TUNNEL_FLIPPED_FACES: [usize; 3] = [0, 10, 24];
+
+/// [`cuboid_with_y_tunnel`] with 3 of its 32 faces deliberately
+/// turned inside out: repairable-by-construction, and repairing
+/// restores the pristine prism byte for byte.
+pub fn cuboid_with_y_tunnel_and_flipped_faces() -> IndexedMesh {
+    with_flipped_faces(cuboid_with_y_tunnel(), &Y_TUNNEL_FLIPPED_FACES)
 }
 
 /// Tetrahedron whose vertices V0 and V1 sit exactly on the plane
