@@ -13,11 +13,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, group_errors_by_variant};
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
 use sc_print_glue::{UnsliceableScene, UnsliceableSelection, slice_profile_for_selection};
-use sc_print_primitives::PositiveFiniteMm;
+use sc_print_primitives::{BuildVolume, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, compose_with_library_extension,
     load_material_profile_by_id, load_material_profile_from_path, load_printer_profile_by_id,
@@ -100,7 +99,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     }
 
     if !args.no_auto_place {
-        place_on_build_plate(&mut loaded.graph)?;
+        place_on_build_plate(&mut loaded.graph, &printer.hardware.build_volume())?;
     }
     let profile = slice_profile_for_selection(
         &loaded.graph,
@@ -207,27 +206,21 @@ fn default_repair_options() -> FixOptions {
     }
 }
 
-/// Drop the scene so its world AABB sits centred on the build-plate
-/// envelope's XY centre with its lowest point at z = 0. The slicer's
-/// `BuildVolume` is centred on the origin, so the target XY centre
-/// is `(0, 0)` and the floor is `z = 0`. Each root's existing local
-/// transform is preserved as an inner factor; the placement
-/// translation is composed on the outside.
-fn place_on_build_plate(scene: &mut Scene) -> Result<()> {
-    let Some(delta) = scene.translation_to_drop_at([0.0, 0.0], 0.0)? else {
-        return Ok(());
-    };
-    if delta == [0.0, 0.0, 0.0] {
-        return Ok(());
-    }
-    let outer = Transform3D::Affine(AffineTransform3D::from_translation(delta));
-    for root_id in scene.roots().to_vec() {
-        let current = scene
-            .node(root_id)
-            .ok_or_else(|| anyhow!("dangling scene root id during auto-placement"))?
-            .local_transform;
-        scene.set_local_transform(root_id, outer.compose(&current))?;
-    }
+/// Drop the scene onto the build plate at the printer envelope's XY
+/// centre with its lowest point on the envelope floor, via
+/// [`Scene::drop_at`] (which preserves the roots' relative layout
+/// and no-ops on empty or already-placed scenes). The target is
+/// derived from the loaded printer's envelope rather than restated
+/// as constants.
+fn place_on_build_plate(scene: &mut Scene, build_volume: &BuildVolume) -> Result<()> {
+    let env_min = build_volume.envelope_min_mm();
+    let env_max = build_volume.envelope_max_mm();
+    let target_xy = [
+        (0.5 * (env_min[0] + env_max[0])) as f32,
+        (0.5 * (env_min[1] + env_max[1])) as f32,
+    ];
+    let floor_z = env_min[2] as f32;
+    scene.drop_at(target_xy, floor_z)?;
     Ok(())
 }
 
