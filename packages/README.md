@@ -24,7 +24,9 @@ instructions, so building one format does not depend on the others.
 - The Slicer is licensed under AGPL-3.0-only, declared in each package's
   metadata.
 - The GUI (`sc-slicer-gui`) and CLI (`sc-slicer-cli`) are distributed together;
-  every package contains both.
+  every package contains both. Flatpak additionally ships the CLI on its own,
+  under `it.soulcrafted.slicer.cli`, because Flatpak exports a single command
+  per application id and the GUI's id already spends it on the GUI.
 
 ## Building
 

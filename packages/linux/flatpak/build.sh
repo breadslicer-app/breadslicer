@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Build the SoulCrafted Slicer Flatpak.
+# Build the SoulCrafted Slicer Flatpak packages: the GUI and the CLI.
 #
 # flatpak-builder never caches a `dir` source, so an unchanged rebuild would
 # repeat the whole compile. Instead this packs the working tree (without
@@ -12,24 +12,26 @@
 # cached under .cache/ too, so only the first build of a given source pays the
 # cost.
 #
-# The build goes into a local OSTree repo under .cache/repo, which is then
-# exported to a single-file .flatpak bundle under .cache/. This does not install
-# anything; install the bundle with `flatpak install --user <path>`.
+# The builds go into a local OSTree repo under .cache/repo, which is then
+# exported to single-file .flatpak bundles under .cache/. This does not install
+# anything; install a bundle with `flatpak install --user <path>`.
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
-MANIFEST="$SCRIPT_DIR/it.soulcrafted.slicer.yml"
 CACHE_NAME=.cache
 CACHE="$SCRIPT_DIR/$CACHE_NAME"
 SRC_DIR="$CACHE/src"
 TARBALL_RELPATH="$CACHE_NAME/source.tar"
 TARBALL="$SCRIPT_DIR/$TARBALL_RELPATH"
 SOURCE_LIST="$CACHE/source.source.json"
-APP_ID=it.soulcrafted.slicer
 REPO="$CACHE/repo"
-BUNDLE="$CACHE/$APP_ID.flatpak"
+# Both packages are built from the same tarball, each from the manifest named
+# after it. Flatpak exports a single command per application id, named after
+# that id, so the command-line tool needs an id of its own to reach the host
+# PATH; it cannot share the GUI's.
+APP_IDS='it.soulcrafted.slicer it.soulcrafted.slicer.cli'
 
 echo "Refreshing a clean source copy (without target/) ..."
 mkdir -p "$SRC_DIR"
@@ -62,16 +64,22 @@ cat > "$SOURCE_LIST" <<EOF
 ]
 EOF
 
-echo "Building ..."
-flatpak-builder --user --force-clean \
-    --state-dir="$CACHE/flatpak-builder" \
-    --repo="$REPO" \
-    "$CACHE/build" \
-    "$MANIFEST"
+for APP_ID in $APP_IDS; do
+    echo "Building $APP_ID ..."
+    flatpak-builder --user --force-clean \
+        --state-dir="$CACHE/flatpak-builder" \
+        --repo="$REPO" \
+        "$CACHE/build/$APP_ID" \
+        "$SCRIPT_DIR/$APP_ID.yml"
+done
 
-echo "Exporting the bundle ..."
-flatpak build-bundle "$REPO" "$BUNDLE" "$APP_ID"
+echo "Exporting the bundles ..."
+for APP_ID in $APP_IDS; do
+    flatpak build-bundle "$REPO" "$CACHE/$APP_ID.flatpak" "$APP_ID"
+done
 
 echo
-echo "Built: $BUNDLE"
-echo "Install it with: flatpak install --user \"$BUNDLE\""
+for APP_ID in $APP_IDS; do
+    echo "Built: $CACHE/$APP_ID.flatpak"
+done
+echo "Install each with: flatpak install --user <path>"
