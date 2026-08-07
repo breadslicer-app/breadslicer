@@ -40,8 +40,6 @@ modules:
       - cp -r assets/profiles /app/share/soulcrafted-slicer/profiles
       - install -Dm644 packages/shared/it.soulcrafted.slicer.desktop
         /app/share/applications/it.soulcrafted.slicer.desktop
-      - install -Dm644 packages/shared/it.soulcrafted.slicer.metainfo.xml
-        /app/share/metainfo/it.soulcrafted.slicer.metainfo.xml
       - install -Dm644 packages/shared/it.soulcrafted.slicer.svg
         /app/share/icons/hicolor/scalable/apps/it.soulcrafted.slicer.svg
     sources:
@@ -56,3 +54,15 @@ modules:
       - .cache/source.source.json
       - cargo-sources.json
       - skia-binaries.source.json
+
+  - name: metainfo
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 it.soulcrafted.slicer.metainfo.xml
+        /app/share/metainfo/it.soulcrafted.slicer.metainfo.xml
+    sources:
+      # Rendered by build.sh from the template under packages/shared, naming
+      # the version being built and the date of the build. It sits in a module
+      # of its own because flatpak-builder restarts at the first module whose
+      # inputs changed: a new date rebuilds only this one, never the compile.
+      - .cache/metainfo.source.json
