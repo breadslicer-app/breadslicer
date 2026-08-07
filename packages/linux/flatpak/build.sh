@@ -28,23 +28,11 @@ TARBALL="$SCRIPT_DIR/$TARBALL_RELPATH"
 SOURCE_LIST="$CACHE/source.source.json"
 METAINFO_NAME=it.soulcrafted.slicer.metainfo.xml
 REPO="$CACHE/repo"
-# Both packages are built from the same tarball, each from the manifest named
-# after it. Flatpak exports a single command per application id, named after
-# that id, so the command-line tool needs an id of its own to reach the host
-# PATH; it cannot share the GUI's.
 APP_IDS='it.soulcrafted.slicer it.soulcrafted.slicer.cli'
 
-# The vendored declarations are what the sandbox builds from, so a stale one
-# fails deep inside the compile with no network to recover from. Both are
-# derived from Cargo.lock, so this decides it up front, before any work.
 echo "Checking the vendored sources ..."
 sh "$SCRIPT_DIR/check-vendored-sources.sh"
 
-# The metainfo names the version being built and the date of the build, so it
-# is rendered from the template rather than kept up to date by hand. It is
-# declared as a source of its own, and installed by a module of its own, so
-# that a new date invalidates only that module and leaves the cached compile
-# alone.
 echo "Rendering the metainfo ..."
 mkdir -p "$CACHE"
 sh "$REPO_ROOT/scripts/render-metainfo.sh" \
@@ -62,15 +50,27 @@ cat > "$CACHE/metainfo.source.json" <<EOF
 ]
 EOF
 
-echo "Refreshing a clean source copy (without target/) ..."
+echo "Refreshing a clean source copy ..."
 mkdir -p "$SRC_DIR"
-# Leave out target/, every top-level dot directory (.git and the like), and
-# the build caches; none of them belong in the build.
-rsync -a --checksum --delete \
+# Only what the compile reads, so an unrelated edit does not change the
+# tarball and rebuild everything. Excluding tests/ holds while the src-side
+# modules including fixtures from ../tests/ stay behind #[cfg(test)]: an
+# ungated one breaks this build and no other.
+#
+# --delete alone protects already-copied excluded files, so newly excluded ones
+# would survive from an earlier run.
+rsync -a --checksum --delete --delete-excluded \
     --exclude='/target' \
     --exclude='/.*' \
     --exclude='.cache' \
     --exclude='.flatpak-builder' \
+    --exclude='*.md' \
+    --exclude='/tarpaulin.toml' \
+    --exclude='/scripts' \
+    --exclude='/packages/linux' \
+    --exclude='/packages/macos' \
+    --exclude='/packages/windows' \
+    --exclude='tests/' \
     "$REPO_ROOT"/ "$SRC_DIR"/
 
 echo "Packing it deterministically (so an unchanged source reuses the cache) ..."
