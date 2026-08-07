@@ -288,6 +288,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/any_ascii/any_ascii-0.3.3.crate",
+        "sha256": "90c6333e01ba7235575b6ab53e5af10f1c327927fd97c36462917e289557ea64",
+        "dest": "cargo/vendor/any_ascii-0.3.3"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"90c6333e01ba7235575b6ab53e5af10f1c327927fd97c36462917e289557ea64\", \"files\": {}}",
+        "dest": "cargo/vendor/any_ascii-0.3.3",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/anyhow/anyhow-1.0.104.crate",
         "sha256": "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470",
         "dest": "cargo/vendor/anyhow-1.0.104"

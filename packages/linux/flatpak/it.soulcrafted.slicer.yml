@@ -38,12 +38,12 @@ modules:
       # for the soulcrafted-slicer directory.
       - install -d /app/share/soulcrafted-slicer
       - cp -r assets/profiles /app/share/soulcrafted-slicer/profiles
-      - install -Dm644 packages/shared/it.soulcrafted.Slicer.desktop
-        /app/share/applications/it.soulcrafted.Slicer.desktop
-      - install -Dm644 packages/shared/it.soulcrafted.Slicer.metainfo.xml
-        /app/share/metainfo/it.soulcrafted.Slicer.metainfo.xml
-      - install -Dm644 packages/shared/it.soulcrafted.Slicer.svg
-        /app/share/icons/hicolor/scalable/apps/it.soulcrafted.Slicer.svg
+      - install -Dm644 packages/shared/it.soulcrafted.slicer.desktop
+        /app/share/applications/it.soulcrafted.slicer.desktop
+      - install -Dm644 packages/shared/it.soulcrafted.slicer.metainfo.xml
+        /app/share/metainfo/it.soulcrafted.slicer.metainfo.xml
+      - install -Dm644 packages/shared/it.soulcrafted.slicer.svg
+        /app/share/icons/hicolor/scalable/apps/it.soulcrafted.slicer.svg
     sources:
       # A deterministic tarball of the working tree (without target/), packed
       # by build.sh, which also generates this source list carrying the
