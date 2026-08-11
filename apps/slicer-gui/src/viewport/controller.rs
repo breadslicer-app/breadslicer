@@ -1135,10 +1135,10 @@ impl ViewportController {
     /// [`Self::handle_before_rendering`] so the paint reads a
     /// consistent view of the scene.
     ///
-    /// Returns `false` when paint should be skipped: either the
-    /// renderer is absent (the device is gone), or a pending GPU
-    /// upload failed and the renderer's scene state is in an
-    /// indeterminate shape that should not be drawn from.
+    /// Returns `false` when paint should be skipped, which is only the
+    /// case when the renderer is absent (the device is gone). A failed
+    /// upload does not skip the paint: it drops the renderer's scene
+    /// and lets the frame fall back to the plate.
     fn on_scene_change(&self) -> bool {
         // Step the keyboard-focus integrator first, the integrator
         // mutates the scene's transform and marks dirty, which is
@@ -1167,13 +1167,25 @@ impl ViewportController {
                     self.session.loader().note_upload_success();
                 }
                 Some(Err(err)) => {
-                    // Leave the upload flag set so it continues to
-                    // represent "upload owed", a subsequent renderer
-                    // setup or scene reload (both of which reset the
-                    // loader's failure counter) will drive a retry
-                    // without relying on coincidental side effects.
+                    // The upload failed, so whatever scene the renderer
+                    // still holds no longer mirrors the live graph.
+                    // Drop it and carry on with the frame: the paint
+                    // falls back to the bare plate, which keeps the
+                    // camera and the rest of the window responsive
+                    // instead of freezing the viewport on its last
+                    // texture until a reload or a device cycle.
+                    renderer.clear_scene();
+                    // Clearing the flag rather than leaving it set:
+                    // with the frame no longer abandoned, a standing
+                    // flag would re-run the failing build and this
+                    // scene drop on every later dirty event, churning
+                    // the render-target allocations for as long as the
+                    // failure lasts. Nothing is lost, because every
+                    // path that changes what needs uploading sets the
+                    // flag itself: `post_renderer_install`, the
+                    // scene-install fallback, and each structural edit.
+                    self.render.update_frame(FrameState::upload_cleared);
                     self.session.loader().note_upload_failure(&err);
-                    return false;
                 }
                 None => {
                     // Flag set but the scene was cleared before we got to it.

@@ -14,7 +14,13 @@
 //! render call, texture handoff) need a real Slint `MainWindow` and
 //! land under the software-wgpu integration vehicle (Phase 1.F).
 
+use std::rc::Rc;
+use std::sync::Arc;
+
+use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::scene::Scene;
+use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::{IndexedMesh, LeafPayload};
 
 use super::controller::ViewportController;
 use super::types::FrameState;
@@ -30,6 +36,44 @@ fn fixture() -> (
     let state = MockRendererState::new_shared();
     ctrl.set_renderer_for_test(Box::new(MockRenderer::new(state.clone())));
     (ctrl, state)
+}
+
+/// [`fixture`] behind an `Rc` with the document listener subscribed, so
+/// a document edit drives the same frame-state cascade it drives in
+/// production instead of the test setting the flags by hand.
+fn subscribed_fixture() -> (
+    Rc<ViewportController>,
+    std::rc::Rc<std::cell::RefCell<MockRendererState>>,
+) {
+    let ctrl = Rc::new(ViewportController::new_for_test());
+    let state = MockRendererState::new_shared();
+    ctrl.set_renderer_for_test(Box::new(MockRenderer::new(state.clone())));
+    ctrl.register_document_listener();
+    (ctrl, state)
+}
+
+fn empty_leaf_mesh() -> IndexedMesh {
+    IndexedMesh {
+        meta: None,
+        vertices: vec![Vertex::new([0.0, 0.0, 0.0])],
+        faces: vec![],
+    }
+}
+
+/// Loader-faithful single-leaf graph under one identity-Group root.
+fn graph_with_one_leaf() -> Scene {
+    let mut g = Scene::new();
+    let root = g.add_group(None, Transform3D::Identity);
+    g.add_root(root).expect("group root");
+    let leaf = g
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(empty_leaf_mesh())),
+        )
+        .expect("add leaf");
+    g.add_child(root, leaf).expect("attach leaf");
+    g
 }
 
 #[test]
@@ -72,7 +116,7 @@ fn upload_owed_success_resets_the_loader_failure_counter() {
 }
 
 #[test]
-fn upload_owed_failure_notes_the_loader_failure_and_keeps_the_flag_set() {
+fn upload_owed_failure_notes_the_loader_failure_and_clears_the_flag() {
     let (ctrl, state) = fixture();
     state
         .borrow_mut()
@@ -85,9 +129,53 @@ fn upload_owed_failure_notes_the_loader_failure_and_keeps_the_flag_set() {
     assert_eq!(s.upload_calls.len(), 1);
     // Loader observed the failure (counter incremented).
     assert_eq!(ctrl.loader().upload_failures_for_test(), 1);
-    // upload_owed stays set so the next setup/reload triggers a retry.
+    // The flag is cleared rather than left standing: with paint
+    // continuing past a failure, a still-set flag would re-run the
+    // failing build and the scene drop on every later dirty event,
+    // churning the render-target allocations for as long as the
+    // failure lasts. Every path that changes what needs uploading
+    // sets the flag itself (`RenderingSetup`, scene install, and each
+    // structural edit), so a retry still arrives when there is
+    // something new to upload.
     let frame = ctrl.frame_state_for_test();
-    assert!(frame.upload_owed());
+    assert!(!frame.upload_owed());
+}
+
+#[test]
+fn upload_owed_failure_drops_the_renderer_scene() {
+    // A failed upload leaves the installed GpuScene disagreeing with
+    // the live graph. Dropping it is what makes painting on safe: the
+    // frame falls back to the bare plate instead of drawing against a
+    // mirror that no longer matches.
+    let (ctrl, state) = fixture();
+    state
+        .borrow_mut()
+        .next_upload_results
+        .push_back(Err(anyhow::anyhow!("scripted upload failure")));
+    ctrl.install_graph_for_test(Scene::new());
+    ctrl.set_frame_state_for_test(FrameState::default().with_upload_owed());
+    ctrl.handle_before_rendering();
+    assert_eq!(state.borrow().clear_scene_calls, 1);
+}
+
+#[test]
+fn upload_owed_failure_does_not_skip_the_rest_of_the_frame() {
+    // The reported lock-up: a failed upload used to abandon the frame
+    // before the paint work, leaving the viewport frozen on its last
+    // texture with no camera or gizmo response. The camera-init phase
+    // sits after the upload phase and before the UI-upgrade gate, so
+    // its firing is the signal available through this fixture that the
+    // frame was carried on with rather than abandoned.
+    let (ctrl, state) = fixture();
+    state
+        .borrow_mut()
+        .next_upload_results
+        .push_back(Err(anyhow::anyhow!("scripted upload failure")));
+    ctrl.install_graph_for_test(Scene::new());
+    ctrl.set_frame_state_for_test(FrameState::default().with_upload_owed());
+    assert!(!ctrl.camera_is_initialised_for_test());
+    ctrl.handle_before_rendering();
+    assert!(ctrl.camera_is_initialised_for_test());
 }
 
 #[test]
@@ -102,6 +190,29 @@ fn upload_owed_with_no_scene_transitions_to_upload_cleared() {
     let frame = ctrl.frame_state_for_test();
     assert!(!frame.upload_owed());
     assert!(!frame.redraw_owed());
+}
+
+#[test]
+fn deleting_the_only_object_leaves_the_frame_clean() {
+    // The reported gesture, driven through the production cascade:
+    // the structural edit flags an upload, and the frame that follows
+    // completes it without a failure and without leaving work owed.
+    let (ctrl, state) = subscribed_fixture();
+    ctrl.install_graph_for_test(graph_with_one_leaf());
+    ctrl.on_select_by_index(0);
+    ctrl.clear_frame_state_for_test();
+
+    ctrl.on_delete_requested();
+    assert_eq!(ctrl.reachable_leaf_count_for_test(), 0);
+    assert!(
+        ctrl.frame_state_for_test().upload_owed(),
+        "the structural edit should flag the GPU mirror as stale"
+    );
+
+    ctrl.handle_before_rendering();
+    assert_eq!(state.borrow().upload_calls.len(), 1);
+    assert!(!ctrl.frame_state_for_test().upload_owed());
+    assert_eq!(ctrl.loader().upload_failures_for_test(), 0);
 }
 
 #[test]
