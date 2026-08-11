@@ -344,6 +344,22 @@ pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolu
     Ok(mask)
 }
 
+/// How many leaves are reachable from `graph.roots()`. Counts the same
+/// population [`build_gpu_scene_data`] would turn into draws, so a zero
+/// answer means there is nothing for the GPU to mirror.
+///
+/// Walks through [`for_each_leaf`], so a dangling node id or dangling
+/// subtree-resource id surfaces as an error instead of being flattened
+/// into a count of zero.
+pub(super) fn renderable_leaf_count(graph: &Scene) -> Result<usize> {
+    let mut count = 0usize;
+    for_each_leaf(graph, |_node_id, _world_transform, _mesh| {
+        count += 1;
+        Ok(())
+    })?;
+    Ok(count)
+}
+
 /// Pre-order traversal of every leaf reachable from `graph.roots()`,
 /// resolving `MeshResource` payloads and composing each leaf's world
 /// transform from the ancestor chain. The closure receives the leaf's
@@ -1152,5 +1168,136 @@ mod for_each_leaf_tests {
         });
         assert!(result.is_err());
         assert_eq!(visited, 1);
+    }
+}
+
+/// The walk-error arm of `renderable_leaf_count` is not covered here:
+/// `Scene::add_leaf` rejects an unbound `MeshResourceId` and
+/// `Scene::remove_mesh_resource` rejects a still-referenced one, so a
+/// graph with a dangling id cannot be built through the public API.
+/// `for_each_leaf_tests` covers the propagation itself.
+#[cfg(test)]
+mod renderable_leaf_count_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+
+    fn unit_triangle() -> IndexedMesh {
+        IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        }
+    }
+
+    /// Loader-faithful empty graph: identity-Group root, no leaves yet.
+    fn graph_with_group_root() -> (Scene, NodeId) {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        (g, root)
+    }
+
+    fn add_inline_leaf(g: &mut Scene, parent: NodeId) -> NodeId {
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("add inline leaf");
+        g.add_child(parent, leaf).expect("attach inline leaf");
+        leaf
+    }
+
+    #[test]
+    fn graph_without_roots_has_no_leaves() {
+        assert_eq!(renderable_leaf_count(&Scene::new()).expect("clean walk"), 0);
+    }
+
+    #[test]
+    fn group_root_without_children_has_no_leaves() {
+        let (graph, _root) = graph_with_group_root();
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 0);
+    }
+
+    #[test]
+    fn one_leaf_under_the_root_counts_once() {
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root);
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 1);
+    }
+
+    #[test]
+    fn two_leaves_under_the_root_count_twice() {
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root);
+        add_inline_leaf(&mut graph, root);
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 2);
+    }
+
+    #[test]
+    fn leaves_under_a_nested_group_are_counted() {
+        // The count must follow the whole subtree, not just the roots'
+        // direct children: one leaf sits under the root, the other two
+        // under a Group nested inside it.
+        let (mut graph, root) = graph_with_group_root();
+        add_inline_leaf(&mut graph, root);
+        let nested = graph.add_group(None, Transform3D::Identity);
+        graph.add_child(root, nested).expect("attach nested group");
+        add_inline_leaf(&mut graph, nested);
+        add_inline_leaf(&mut graph, nested);
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 3);
+    }
+
+    #[test]
+    fn root_leaf_counts_without_a_group_above_it() {
+        // The STL-loaded shape: the leaf is a scene root itself rather
+        // than a child of an identity Group.
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("add inline leaf");
+        graph.add_root(leaf).expect("leaf root");
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 1);
+    }
+
+    #[test]
+    fn removing_the_only_leaf_drops_the_count_to_zero() {
+        // The shape the scene lands in when the user deletes the last
+        // object: a live graph whose leaf population is empty.
+        let (mut graph, root) = graph_with_group_root();
+        let leaf = add_inline_leaf(&mut graph, root);
+        graph.remove_leaf(leaf).expect("remove the only leaf");
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 0);
+    }
+
+    #[test]
+    fn removing_the_only_root_leaf_drops_the_count_to_zero() {
+        // Same, for the STL shape: removing a root leaf leaves a graph
+        // with no roots at all.
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .expect("add inline leaf");
+        graph.add_root(leaf).expect("leaf root");
+        graph.remove_leaf(leaf).expect("remove the only root leaf");
+        assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 0);
     }
 }

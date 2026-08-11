@@ -41,7 +41,9 @@ use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
 pub(crate) use renderer_trait::MeshRenderer;
 pub(crate) use scene_upload::GpuScene;
-use scene_upload::{MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries};
+use scene_upload::{
+    MODEL_ENTRY_SIZE, build_envelope_warning_mask, build_model_entries, renderable_leaf_count,
+};
 use targets::{MsaaTargets, TargetPool};
 
 /// Scene-dependent inputs to [`Renderer::render`]. The selection
@@ -253,7 +255,20 @@ impl Renderer {
     /// `Renderer` and a worker-built `GpuScene` from the previous device
     /// would be unusable. New scene loads go through the worker via
     /// [`GpuScene::build`] + [`Renderer::install_scene`] instead.
+    ///
+    /// A graph with no reachable leaves (every object deleted) has
+    /// nothing to mirror: a `GpuScene` for it would carry a model
+    /// uniform buffer of zero slots, and the bind group's fixed
+    /// `MODEL_ENTRY_SIZE` window into it would fail validation. Such a
+    /// graph drops the installed scene instead, which leaves [`render`]
+    /// drawing the plate alone.
+    ///
+    /// [`render`]: Self::render
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
+        if renderable_leaf_count(graph)? == 0 {
+            self.clear_scene();
+            return Ok(());
+        }
         let gpu = GpuScene::build(&self.core.device, self.core.device_token, graph)?;
         self.attach_scene(gpu);
         Ok(())
@@ -2111,6 +2126,102 @@ mod gpu_integration_tests {
         assert!(renderer.scene_bounds().is_some());
         renderer.clear_scene();
         assert!(renderer.scene_bounds().is_none());
+    }
+
+    /// A graph whose last leaf was deleted must upload cleanly. There
+    /// is nothing to mirror, so the renderer ends up holding no scene
+    /// rather than reporting a failure the viewport would have to
+    /// recover from.
+    #[test]
+    fn upload_scene_on_a_leafless_graph_succeeds_and_installs_nothing() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let (graph, _root) = graph_with_group_root();
+        renderer
+            .upload_scene(&graph)
+            .expect("a leafless graph uploads as an empty mirror");
+        assert!(renderer.scene_bounds().is_none());
+    }
+
+    /// The reported scenario end to end: a one-object scene, the
+    /// object deleted, then the upload the deletion triggers. The
+    /// render that follows must still produce a texture, which is what
+    /// proves the empty case raises no wgpu validation error and that
+    /// the viewport keeps painting the plate.
+    #[test]
+    fn render_after_deleting_the_last_leaf_still_produces_a_texture() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        renderer
+            .upload_scene(&graph)
+            .expect("upload one-leaf graph");
+        let bounds = renderer.scene_bounds().expect("scene bounds populated");
+        let center = (bounds.0 + bounds.1) * 0.5;
+        let radius = ((bounds.1 - bounds.0).length() * 0.5).max(1e-3);
+        let camera = OrbitCamera::new(center, radius);
+
+        let leaf = first_leaf(&graph);
+        graph.remove_leaf(leaf).expect("delete the only object");
+        renderer
+            .upload_scene(&graph)
+            .expect("the post-delete upload succeeds");
+        assert!(renderer.scene_bounds().is_none());
+
+        let texture = renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph,
+                    selection: None,
+                    gizmo: None,
+                    clip_z: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
+            .expect("render after the delete still produces a texture");
+        assert_eq!(texture.size().width, 64);
+        assert_eq!(texture.size().height, 64);
+    }
+
+    /// Re-uploading a leaf again after the scene went empty installs a
+    /// fresh mirror, so the empty case is a transition the renderer can
+    /// come back from rather than a terminal state.
+    #[test]
+    fn upload_after_an_empty_upload_installs_a_scene_again() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let (mut graph, root) = graph_with_group_root();
+        renderer.upload_scene(&graph).expect("empty upload");
+        assert!(renderer.scene_bounds().is_none());
+
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: vec![IndexedTriangle::from_raw_indices(
+                Normal::new([0.0, 0.0, 1.0]),
+                [0, 1, 2],
+            )],
+        };
+        add_inline_leaf(&mut graph, root, mesh, Transform3D::Identity);
+        renderer.upload_scene(&graph).expect("upload after refill");
+        assert!(renderer.scene_bounds().is_some());
     }
 
     /// `invalidate_sizing` drops only the viewport-sized allocations;
