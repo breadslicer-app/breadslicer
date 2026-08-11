@@ -916,12 +916,12 @@ msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/viewport/controller.rs:1359
+#: src/viewport/controller.rs:1371
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1363
+#: src/viewport/controller.rs:1375
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -986,12 +986,14 @@ msgstr ""
 
 #: src/scene_loader.rs:488
 msgctxt "ErrorDialog"
-msgid "Failed to load the 3D model"
+msgid "Failed to prepare the 3D view"
 msgstr ""
 
 #: src/scene_loader.rs:492
 msgctxt "ErrorDialog"
-msgid "The mesh could not be prepared for rendering."
+msgid ""
+"The scene could not be handed to the graphics device. The 3D view shows the "
+"build plate alone until the next successful update."
 msgstr ""
 
 #: src/scene_loader.rs:522

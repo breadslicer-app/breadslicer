@@ -479,17 +479,17 @@ impl SceneLoader {
     /// A scene upload just failed. Increments the counter and, on the
     /// 0 -> 1 transition, surfaces the error dialog. Subsequent
     /// failures for the same scene are swallowed until a reset; this
-    /// prevents dialog spam if the renderer retries every frame.
+    /// keeps a scene that fails on every attempt to one dialog.
     pub fn note_upload_failure(&self, err: &anyhow::Error) {
         let prior = self.upload_failures.get();
         self.upload_failures.set(prior.saturating_add(1));
         if prior == 0 {
             self.dialogs.show_error_deferred(
-                ctr!("ErrorDialog", "Failed to load the 3D model").to_string(),
+                ctr!("ErrorDialog", "Failed to prepare the 3D view").to_string(),
                 Some(
                     ctr!(
                         "ErrorDialog",
-                        "The mesh could not be prepared for rendering."
+                        "The scene could not be handed to the graphics device. The 3D view shows the build plate alone until the next successful update."
                     )
                     .to_string(),
                 ),
