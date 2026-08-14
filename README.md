@@ -6,7 +6,7 @@ The SoulCrafted Slicer is a community-oriented open source slicer for resin 3d
 printers, backed by
 [crowdfunding](https://www.myminifactory.com/frontier/soulcrafted-slicer-5006)
 and brought to life by [MyMiniFactory](https://www.myminifactory.com/), with
-the collaboration of [CTRLback](https://ctrtlback.coop).
+the collaboration of [CTRLback](https://ctrlback.coop).
 
 ## The Software
 
