@@ -182,7 +182,15 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // See https://github.com/gfx-rs/wgpu/issues/8259.
     let _ = device.poll(wgpu::PollType::Poll);
 
+    if let Some(value) = std::env::var_os("SLINT_BACKEND") {
+        eprintln!(
+            "SLINT_BACKEND is set to {value:?}, but sc-slicer-gui always uses the winit backend \
+             with the Skia renderer; the variable is ignored."
+        );
+    }
     slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name("skia".into())
         .require_wgpu_29(slint::wgpu_29::WGPUConfiguration::Manual {
             instance,
             adapter,
