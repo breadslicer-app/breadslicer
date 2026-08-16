@@ -84,8 +84,9 @@ pub use scene_overrides::SceneOverrides;
 pub use value_source::ValueSource;
 pub use writer::{
     SaveMaterialExtensionError, SaveMaterialExtensionErrorKind, SaveMaterialProfileError,
-    SaveMaterialProfileErrorKind, save_material_extension_to_library,
-    save_material_profile_to_library, save_material_profile_to_path,
+    SaveMaterialProfileErrorKind, SavePrinterProfileError, SavePrinterProfileErrorKind,
+    save_material_extension_to_library, save_material_profile_to_library,
+    save_material_profile_to_path, save_printer_profile_to_library, save_printer_profile_to_path,
 };
 
 #[cfg(test)]

@@ -3,14 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Disk writing for material-profile TOML files.
+//! Disk writing for printer- and material-profile TOML files.
 //!
-//! [`save_material_profile_to_path`] serialises a [`MaterialProfile`]
-//! to the given TOML file, creating the parent directory when missing.
-//! [`save_material_profile_to_library`] derives the destination from a
-//! library directory instead: `<library_dir>/materials/<id>.toml`.
-//! Written files lay every nested struct out as a `[section]` table
-//! and load back equal through the loaders in [`crate::loader`].
+//! [`save_printer_profile_to_path`] and
+//! [`save_material_profile_to_path`] serialise a [`PrinterProfile`] or
+//! [`MaterialProfile`] to the given TOML file, creating the parent
+//! directory when missing. [`save_printer_profile_to_library`] and
+//! [`save_material_profile_to_library`] derive the destination from a
+//! library directory instead: `<library_dir>/printers/<id>.toml` or
+//! `<library_dir>/materials/<id>.toml`. Written files lay every nested
+//! struct out as a `[section]` table and load back equal through the
+//! loaders in [`crate::loader`].
 //!
 //! [`save_material_extension_to_library`] places extension-flagged
 //! profiles at `<library_dir>/materials/extensions/<id>.toml` and
@@ -22,8 +25,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::loader::{material_extension_path_in_library, material_profile_path_in_library};
+use crate::loader::{
+    material_extension_path_in_library, material_profile_path_in_library,
+    printer_profile_path_in_library,
+};
 use crate::material_profile::MaterialProfile;
+use crate::printer_profile::PrinterProfile;
 
 /// Returned by the material-profile writers when serialisation or the
 /// write fails. The path field names the file that was being written;
@@ -108,6 +115,86 @@ pub fn save_material_profile_to_library(
 ) -> Result<(), SaveMaterialProfileError> {
     let path = material_profile_path_in_library(library_dir, &profile.identity.id);
     save_material_profile_to_path(&path, profile)
+}
+
+/// Returned by the printer-profile writers when serialisation or the
+/// write fails.
+#[derive(Debug)]
+pub struct SavePrinterProfileError {
+    /// Names the file that was being written
+    pub path: PathBuf,
+    /// Carries the underlying cause
+    pub kind: SavePrinterProfileErrorKind,
+}
+
+#[derive(Debug)]
+pub enum SavePrinterProfileErrorKind {
+    Io(io::Error),
+    TomlSerialize(toml_edit::ser::Error),
+}
+
+impl fmt::Display for SavePrinterProfileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to save printer profile to {}: {}",
+            self.path.display(),
+            self.kind,
+        )
+    }
+}
+
+impl fmt::Display for SavePrinterProfileErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "{err}"),
+            Self::TomlSerialize(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for SavePrinterProfileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            SavePrinterProfileErrorKind::Io(err) => Some(err),
+            SavePrinterProfileErrorKind::TomlSerialize(err) => Some(err),
+        }
+    }
+}
+
+/// Serialise `profile` to TOML and write it to `path`, creating the
+/// parent directory when it does not exist. Returns
+/// [`SavePrinterProfileError`] when serialisation or the write fails.
+pub fn save_printer_profile_to_path(
+    path: &Path,
+    profile: &PrinterProfile,
+) -> Result<(), SavePrinterProfileError> {
+    let contents = sectioned_toml(profile).map_err(|err| SavePrinterProfileError {
+        path: path.to_owned(),
+        kind: SavePrinterProfileErrorKind::TomlSerialize(err),
+    })?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| SavePrinterProfileError {
+            path: parent.to_owned(),
+            kind: SavePrinterProfileErrorKind::Io(err),
+        })?;
+    }
+    fs::write(path, contents).map_err(|err| SavePrinterProfileError {
+        path: path.to_owned(),
+        kind: SavePrinterProfileErrorKind::Io(err),
+    })
+}
+
+/// Write `profile` into a library directory at
+/// `<library_dir>/printers/<id>.toml`, creating the `printers/`
+/// subdirectory when absent. Delegates to
+/// [`save_printer_profile_to_path`].
+pub fn save_printer_profile_to_library(
+    library_dir: &Path,
+    profile: &PrinterProfile,
+) -> Result<(), SavePrinterProfileError> {
+    let path = printer_profile_path_in_library(library_dir, &profile.identity.id);
+    save_printer_profile_to_path(&path, profile)
 }
 
 /// Returned by [`save_material_extension_to_library`] when the profile

@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Tests for the material-profile writers: a written file loads back
-//! equal, and the library writer creates the `materials/` subdirectory
-//! when absent.
-
 use sc_print_primitives::MaterialId;
 
-use crate::loader::{load_material_extension_from_library, load_material_profile_from_path};
+use crate::loader::{
+    load_material_extension_from_library, load_material_profile_from_path,
+    load_printer_profile_from_path,
+};
 use crate::material_profile::MaterialProfile;
+use crate::printer_profile::PrinterProfile;
 use crate::writer::{
     SaveMaterialExtensionErrorKind, save_material_extension_to_library,
     save_material_profile_to_library, save_material_profile_to_path,
+    save_printer_profile_to_library, save_printer_profile_to_path,
 };
 
 const MINIMAL_TOML: &str = "\
@@ -133,6 +134,95 @@ fn save_to_library_creates_the_materials_subdir_and_places_the_file_by_id() {
     let expected = dir.path().join("materials").join("brand-resin.toml");
     assert!(expected.is_file());
     let loaded = load_material_profile_from_path(&expected).unwrap();
+    assert_eq!(loaded, original);
+}
+
+const PRINTER_TOML: &str = "\
+[identity]
+id = \"brand-printer\"
+manufacturer = \"Brand\"
+family = \"Series\"
+name = \"Printer\"
+profile_version = \"1.0.0\"
+
+[hardware]
+build_volume = { x_mm = 100.0, y_mm = 60.0, z_mm = 150.0 }
+pixel_resolution = { x = 1000, y = 600 }
+pixel_size_microns = { x = 100.0, y = 100.0 }
+mirror = { x = false, y = false }
+
+[capabilities]
+output_formats = [{ format = \"png_per_layer\" }]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[constraints]
+";
+
+fn parse_printer(toml: &str) -> PrinterProfile {
+    toml_edit::de::from_str(toml).unwrap()
+}
+
+#[test]
+fn save_printer_to_path_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let original = parse_printer(PRINTER_TOML);
+
+    save_printer_profile_to_path(&path, &original).unwrap();
+    let loaded = load_printer_profile_from_path(&path).unwrap();
+    assert_eq!(loaded, original);
+}
+
+#[test]
+fn save_printer_to_path_writes_sectioned_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let original = parse_printer(PRINTER_TOML);
+
+    save_printer_profile_to_path(&path, &original).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("[identity]"), "written file:\n{written}");
+    assert!(
+        written.contains("[hardware.build_volume]"),
+        "written file:\n{written}"
+    );
+    assert!(
+        written.contains("[capabilities]"),
+        "written file:\n{written}"
+    );
+    assert!(
+        !written.contains("identity = {"),
+        "top-level structs must not be inline:\n{written}"
+    );
+    assert!(
+        !written.contains("hardware = {"),
+        "top-level structs must not be inline:\n{written}"
+    );
+}
+
+#[test]
+fn save_printer_to_path_creates_missing_parent_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested/deeper/out.toml");
+    let original = parse_printer(PRINTER_TOML);
+
+    save_printer_profile_to_path(&path, &original).unwrap();
+    assert!(path.is_file());
+}
+
+#[test]
+fn save_printer_to_library_creates_the_printers_subdir_and_places_the_file_by_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = parse_printer(PRINTER_TOML);
+
+    save_printer_profile_to_library(dir.path(), &original).unwrap();
+
+    let expected = dir.path().join("printers").join("brand-printer.toml");
+    assert!(expected.is_file());
+    let loaded = load_printer_profile_from_path(&expected).unwrap();
     assert_eq!(loaded, original);
 }
 
