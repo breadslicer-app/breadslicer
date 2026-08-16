@@ -18,6 +18,7 @@
 //! material-profile bounded context.
 
 pub mod effective_material;
+pub mod image_asset_ref;
 pub mod library;
 pub mod listing;
 pub mod loader;
@@ -45,6 +46,7 @@ pub mod value_source;
 pub mod writer;
 
 pub use effective_material::{EffectiveMaterial, MaterialExtensionIssue};
+pub use image_asset_ref::{ImageAssetRef, NonLibraryRelativeImageRefError};
 pub use library::{UserLibraryDirError, user_library_dir};
 pub use listing::{
     ListLibraryError, list_material_extension_ids, list_material_ids, list_printer_ids,
@@ -84,13 +86,16 @@ pub use scene_overrides::SceneOverrides;
 pub use value_source::ValueSource;
 pub use writer::{
     SaveMaterialExtensionError, SaveMaterialExtensionErrorKind, SaveMaterialProfileError,
-    SaveMaterialProfileErrorKind, SavePrinterProfileError, SavePrinterProfileErrorKind,
-    save_material_extension_to_library, save_material_profile_to_library,
-    save_material_profile_to_path, save_printer_profile_to_library, save_printer_profile_to_path,
+    SaveMaterialProfileErrorKind, SavePrinterImageError, SavePrinterImageErrorKind,
+    SavePrinterProfileError, SavePrinterProfileErrorKind, save_material_extension_to_library,
+    save_material_profile_to_library, save_material_profile_to_path, save_printer_image_to_library,
+    save_printer_profile_to_library, save_printer_profile_to_path,
 };
 
 #[cfg(test)]
 mod tests_effective_material;
+#[cfg(test)]
+mod tests_image_asset_ref;
 #[cfg(test)]
 mod tests_library;
 #[cfg(test)]

@@ -36,6 +36,7 @@ use crate::printer_profile::PrinterProfile;
 pub(crate) const PRINTERS_SUBDIR: &str = "printers";
 pub(crate) const MATERIALS_SUBDIR: &str = "materials";
 pub(crate) const MATERIAL_EXTENSIONS_SUBDIR: &str = "extensions";
+pub(crate) const IMAGES_SUBDIR: &str = "images";
 
 /// Directory holding material extension profiles:
 /// `<library_dir>/materials/extensions/`. Extensions live apart from

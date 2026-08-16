@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_print_primitives::MaterialId;
+use sc_print_primitives::{MaterialId, PrinterId};
 
 use crate::loader::{
     load_material_extension_from_library, load_material_profile_from_path,
@@ -12,8 +12,8 @@ use crate::loader::{
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
 use crate::writer::{
-    SaveMaterialExtensionErrorKind, save_material_extension_to_library,
-    save_material_profile_to_library, save_material_profile_to_path,
+    SaveMaterialExtensionErrorKind, SavePrinterImageErrorKind, save_material_extension_to_library,
+    save_material_profile_to_library, save_material_profile_to_path, save_printer_image_to_library,
     save_printer_profile_to_library, save_printer_profile_to_path,
 };
 
@@ -224,6 +224,70 @@ fn save_printer_to_library_creates_the_printers_subdir_and_places_the_file_by_id
     assert!(expected.is_file());
     let loaded = load_printer_profile_from_path(&expected).unwrap();
     assert_eq!(loaded, original);
+}
+
+#[test]
+fn save_printer_image_copies_the_file_and_returns_a_resolving_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.png");
+    std::fs::write(&source, b"fake-png-bytes").unwrap();
+    let library = dir.path().join("library");
+    let id = PrinterId::new("brand-printer").unwrap();
+
+    let reference = save_printer_image_to_library(&library, &id, &source).unwrap();
+
+    assert_eq!(reference.as_str(), "images/brand-printer.png");
+    let stored = library.join("images").join("brand-printer.png");
+    assert_eq!(std::fs::read(&stored).unwrap(), b"fake-png-bytes");
+    assert_eq!(reference.resolve_in(&library), stored);
+}
+
+#[test]
+fn save_printer_image_lowercases_the_source_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("SOURCE.JPG");
+    std::fs::write(&source, b"jpg").unwrap();
+    let id = PrinterId::new("brand-printer").unwrap();
+
+    let reference = save_printer_image_to_library(dir.path(), &id, &source).unwrap();
+
+    assert_eq!(reference.as_str(), "images/brand-printer.jpg");
+    assert!(
+        dir.path()
+            .join("images")
+            .join("brand-printer.jpg")
+            .is_file()
+    );
+}
+
+#[test]
+fn save_printer_image_defaults_to_png_without_a_source_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::write(&source, b"bytes").unwrap();
+    let id = PrinterId::new("brand-printer").unwrap();
+
+    let reference = save_printer_image_to_library(dir.path(), &id, &source).unwrap();
+
+    assert_eq!(reference.as_str(), "images/brand-printer.png");
+}
+
+#[test]
+fn save_printer_image_reports_a_missing_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("does-not-exist.png");
+    let id = PrinterId::new("brand-printer").unwrap();
+
+    let err = save_printer_image_to_library(dir.path(), &id, &missing).unwrap_err();
+
+    assert!(matches!(
+        &err.kind,
+        SavePrinterImageErrorKind::Copy { from, .. } if from == &missing
+    ));
+    assert_eq!(
+        err.path,
+        dir.path().join("images").join("brand-printer.png")
+    );
 }
 
 /// An extension with empty `[intent]` / `[defaults]` sections and one

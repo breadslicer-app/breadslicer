@@ -19,14 +19,21 @@
 //! profiles at `<library_dir>/materials/extensions/<id>.toml` and
 //! annotates their empty `[intent]` / `[defaults]` sections with a
 //! comment explaining that the values come from the parent profile.
+//!
+//! [`save_printer_image_to_library`] copies a printer's preview image
+//! to `<library_dir>/images/<id>.<ext>` and returns the
+//! [`ImageAssetRef`] to store in the profile's `image_asset_path`.
 
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use sc_print_primitives::PrinterId;
+
+use crate::image_asset_ref::ImageAssetRef;
 use crate::loader::{
-    material_extension_path_in_library, material_profile_path_in_library,
+    IMAGES_SUBDIR, material_extension_path_in_library, material_profile_path_in_library,
     printer_profile_path_in_library,
 };
 use crate::material_profile::MaterialProfile;
@@ -195,6 +202,90 @@ pub fn save_printer_profile_to_library(
 ) -> Result<(), SavePrinterProfileError> {
     let path = printer_profile_path_in_library(library_dir, &profile.identity.id);
     save_printer_profile_to_path(&path, profile)
+}
+
+/// Returned by [`save_printer_image_to_library`] when the images
+/// directory cannot be created or the source cannot be copied.
+#[derive(Debug)]
+pub struct SavePrinterImageError {
+    /// Names the destination that was being written
+    pub path: PathBuf,
+    /// Carries the underlying cause
+    pub kind: SavePrinterImageErrorKind,
+}
+
+#[derive(Debug)]
+pub enum SavePrinterImageErrorKind {
+    CreateDir(io::Error),
+    /// Copying from the named source failed (missing or unreadable
+    /// source, or unwritable destination).
+    Copy {
+        from: PathBuf,
+        source: io::Error,
+    },
+}
+
+impl fmt::Display for SavePrinterImageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to save printer image to {}: {}",
+            self.path.display(),
+            self.kind,
+        )
+    }
+}
+
+impl fmt::Display for SavePrinterImageErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CreateDir(err) => write!(f, "cannot create the images directory: {err}"),
+            Self::Copy { from, source } => {
+                write!(f, "cannot copy {}: {source}", from.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for SavePrinterImageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            SavePrinterImageErrorKind::CreateDir(err) => Some(err),
+            SavePrinterImageErrorKind::Copy { source, .. } => Some(source),
+        }
+    }
+}
+
+/// Copy the image at `source` into a library directory as
+/// `<library_dir>/images/<id>.<ext>`, creating the `images/`
+/// subdirectory when absent, and return the reference to store in the
+/// printer's `image_asset_path`. The extension is the source's,
+/// lowercased; a source without one is stored as `.png`.
+pub fn save_printer_image_to_library(
+    library_dir: &Path,
+    id: &PrinterId,
+    source: &Path,
+) -> Result<ImageAssetRef, SavePrinterImageError> {
+    let ext = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "png".to_owned());
+    let file_name = format!("{}.{ext}", id.as_str());
+    let dir = library_dir.join(IMAGES_SUBDIR);
+    let dest = dir.join(&file_name);
+    fs::create_dir_all(&dir).map_err(|err| SavePrinterImageError {
+        path: dest.clone(),
+        kind: SavePrinterImageErrorKind::CreateDir(err),
+    })?;
+    fs::copy(source, &dest).map_err(|err| SavePrinterImageError {
+        path: dest.clone(),
+        kind: SavePrinterImageErrorKind::Copy {
+            from: source.to_owned(),
+            source: err,
+        },
+    })?;
+    Ok(ImageAssetRef::under_subdir(IMAGES_SUBDIR, &file_name))
 }
 
 /// Returned by [`save_material_extension_to_library`] when the profile
