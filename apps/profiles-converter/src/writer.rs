@@ -5,30 +5,24 @@
 
 //! The format-agnostic core writer.
 //!
-//! [`write_profiles`] lays a set of [`ConvertedProfile`] values out
-//! under a destination library root: printers at `printers/<id>.toml`
-//! and materials at `materials/<id>.toml`, serialised with `toml_edit`
-//! and laid out with each nested struct promoted to its own `[section]`
-//! header so the committed files diff cleanly per field.
-//! When `copy_images` is on, a printer's source image is copied to
-//! `images/<id>.<ext>` and the profile's `image_asset_path` is set to
-//! that path, relative to the library root. The writer knows nothing
-//! about where the profiles came from.
+//! [`write_profiles`] installs a set of [`ConvertedProfile`] values
+//! into a destination library root through the `sc_print_profiles`
+//! save operations.
+//! When `copy_images` is on, a printer's source image is installed
+//! beside the profile and the profile's `image_asset_path` is set to
+//! the returned reference.
 
 use std::borrow::Cow;
 use std::fmt;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use sc_print_profiles::{
+    SaveMaterialProfileError, SavePrinterImageError, SavePrinterProfileError,
+    save_material_profile_to_library, save_printer_image_to_library,
+    save_printer_profile_to_library,
+};
 
 use crate::profile::ConvertedProfile;
-
-/// Subdirectory of the library root that holds printer profiles.
-const PRINTERS_SUBDIR: &str = "printers";
-/// Subdirectory of the library root that holds material profiles.
-const MATERIALS_SUBDIR: &str = "materials";
-/// Subdirectory of the library root that holds preview images.
-const IMAGES_SUBDIR: &str = "images";
 
 /// How many profiles of each kind a [`write_profiles`] call wrote.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,47 +32,21 @@ pub struct WriteReport {
     pub images: usize,
 }
 
-/// Returned by [`write_profiles`] when a profile cannot be serialised,
-/// an image cannot be copied, or a file cannot be written.
+/// Returned by [`write_profiles`] when one of the library save
+/// operations fails; each variant wraps that operation's error.
 #[derive(Debug)]
 pub enum WriteError {
-    /// A profile could not be serialised to TOML.
-    Serialize {
-        id: String,
-        source: toml_edit::ser::Error,
-    },
-    /// A destination subdirectory could not be created.
-    CreateDir { path: PathBuf, source: io::Error },
-    /// A profile file could not be written.
-    WriteFile { path: PathBuf, source: io::Error },
-    /// A source image could not be copied into the library.
-    CopyImage {
-        from: PathBuf,
-        to: PathBuf,
-        source: io::Error,
-    },
+    Printer(SavePrinterProfileError),
+    Material(SaveMaterialProfileError),
+    Image(SavePrinterImageError),
 }
 
 impl fmt::Display for WriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Serialize { id, source } => {
-                write!(f, "failed to serialise profile {id:?}: {source}")
-            }
-            Self::CreateDir { path, source } => write!(
-                f,
-                "failed to create the destination directory {}: {source}",
-                path.display(),
-            ),
-            Self::WriteFile { path, source } => {
-                write!(f, "failed to write profile {}: {source}", path.display())
-            }
-            Self::CopyImage { from, to, source } => write!(
-                f,
-                "failed to copy image {} to {}: {source}",
-                from.display(),
-                to.display(),
-            ),
+            Self::Printer(err) => err.fmt(f),
+            Self::Material(err) => err.fmt(f),
+            Self::Image(err) => err.fmt(f),
         }
     }
 }
@@ -86,17 +54,15 @@ impl fmt::Display for WriteError {
 impl std::error::Error for WriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Serialize { source, .. } => Some(source),
-            Self::CreateDir { source, .. } => Some(source),
-            Self::WriteFile { source, .. } => Some(source),
-            Self::CopyImage { source, .. } => Some(source),
+            Self::Printer(err) => Some(err),
+            Self::Material(err) => Some(err),
+            Self::Image(err) => Some(err),
         }
     }
 }
 
-/// Write every profile into `out_dir`, creating the `printers/`,
-/// `materials/`, and (when images are copied) `images/` subdirectories
-/// as needed. Returns the per-kind counts.
+/// Write every profile into the library rooted at `out_dir`, creating
+/// its subdirectories as needed. Returns the per-kind counts.
 pub fn write_profiles(
     profiles: &[ConvertedProfile],
     out_dir: &Path,
@@ -106,34 +72,28 @@ pub fn write_profiles(
     for profile in profiles {
         match profile {
             ConvertedProfile::Printer(printer) => {
-                let id = printer.profile.identity.id.as_str();
                 let domain = match (copy_images, &printer.image_source) {
                     (true, Some(source)) => {
-                        let file_name = image_file_name(id, source);
-                        copy_image(out_dir, source, &file_name)?;
+                        let reference = save_printer_image_to_library(
+                            out_dir,
+                            &printer.profile.identity.id,
+                            source,
+                        )
+                        .map_err(WriteError::Image)?;
                         report.images += 1;
                         let mut with_image = printer.profile.clone();
-                        with_image.identity.image_asset_path =
-                            Some(format!("{IMAGES_SUBDIR}/{file_name}"));
+                        with_image.identity.image_asset_path = Some(reference.as_str().to_owned());
                         Cow::Owned(with_image)
                     }
                     _ => Cow::Borrowed(&printer.profile),
                 };
-                let toml =
-                    to_sectioned_toml(domain.as_ref()).map_err(|source| WriteError::Serialize {
-                        id: id.to_owned(),
-                        source,
-                    })?;
-                write_one(out_dir, PRINTERS_SUBDIR, id, &toml)?;
+                save_printer_profile_to_library(out_dir, domain.as_ref())
+                    .map_err(WriteError::Printer)?;
                 report.printers += 1;
             }
             ConvertedProfile::Material(material) => {
-                let id = material.identity.id.as_str();
-                let toml = to_sectioned_toml(material).map_err(|source| WriteError::Serialize {
-                    id: id.to_owned(),
-                    source,
-                })?;
-                write_one(out_dir, MATERIALS_SUBDIR, id, &toml)?;
+                save_material_profile_to_library(out_dir, material)
+                    .map_err(WriteError::Material)?;
                 report.materials += 1;
             }
         }
@@ -141,73 +101,16 @@ pub fn write_profiles(
     Ok(report)
 }
 
-/// Serialise a value to TOML with every nested struct promoted to its
-/// own `[section]` header. `toml_edit`'s serialiser emits nested structs
-/// as inline tables (one long `identity = { .. }` line); expanding them
-/// into explicit tables keeps per-field git diffs readable.
-fn to_sectioned_toml<T: serde::Serialize>(value: &T) -> Result<String, toml_edit::ser::Error> {
-    let mut doc = toml_edit::ser::to_document(value)?;
-    expand_inline_tables(doc.as_table_mut());
-    Ok(doc.to_string())
-}
-
-/// Recursively replace a table's inline-table values with explicit
-/// sub-tables, resetting each key's formatting so the rendered header is
-/// `[name]` rather than `[name ]`.
-fn expand_inline_tables(table: &mut toml_edit::Table) {
-    for (mut key, item) in table.iter_mut() {
-        key.fmt();
-        if let toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)) = item {
-            let mut sub = std::mem::take(inline).into_table();
-            expand_inline_tables(&mut sub);
-            *item = toml_edit::Item::Table(sub);
-        }
-    }
-}
-
-/// The destination file name for a printer's image: `<id>.<ext>`, where
-/// the extension is taken from the source (defaulting to `png`).
-fn image_file_name(id: &str, source: &Path) -> String {
-    let ext = source
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_else(|| "png".to_owned());
-    format!("{id}.{ext}")
-}
-
-/// Copy `source` into `<out_dir>/images/<file_name>`.
-fn copy_image(out_dir: &Path, source: &Path, file_name: &str) -> Result<(), WriteError> {
-    let dir = out_dir.join(IMAGES_SUBDIR);
-    fs::create_dir_all(&dir).map_err(|err| WriteError::CreateDir {
-        path: dir.clone(),
-        source: err,
-    })?;
-    let dest = dir.join(file_name);
-    fs::copy(source, &dest).map_err(|err| WriteError::CopyImage {
-        from: source.to_owned(),
-        to: dest,
-        source: err,
-    })?;
-    Ok(())
-}
-
-/// Write one profile's TOML to `<out_dir>/<subdir>/<id>.toml`.
-fn write_one(out_dir: &Path, subdir: &str, id: &str, toml: &str) -> Result<(), WriteError> {
-    let dir = out_dir.join(subdir);
-    fs::create_dir_all(&dir).map_err(|source| WriteError::CreateDir {
-        path: dir.clone(),
-        source,
-    })?;
-    let path = dir.join(format!("{id}.toml"));
-    fs::write(&path, toml).map_err(|source| WriteError::WriteFile { path, source })
-}
-
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
+    use std::fs;
+    use std::path::PathBuf;
 
-    use sc_print_profiles::{MaterialProfile, PrinterProfile};
+    use sc_print_profiles::{
+        MaterialProfile, PrinterProfile, load_material_profile_from_path,
+        load_printer_profile_from_path,
+    };
     use tempfile::tempdir;
 
     use super::*;
@@ -290,29 +193,31 @@ retract_speed_mm_min = 150.0
         );
 
         let path = dir.path().join("printers").join("test-printer.toml");
-        let reloaded: PrinterProfile =
-            toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let reloaded: PrinterProfile = load_printer_profile_from_path(&path).unwrap();
         assert_eq!(reloaded, profile);
     }
 
     #[test]
-    fn a_printer_is_written_with_sectioned_headers() {
+    fn a_printer_is_written_in_the_library_dialect() {
         let dir = tempdir().unwrap();
         write_profiles(&[printer(sample_printer(), None)], dir.path(), false).unwrap();
 
         let toml =
             fs::read_to_string(dir.path().join("printers").join("test-printer.toml")).unwrap();
         assert!(toml.contains("[identity]"), "{toml}");
-        assert!(toml.contains("[hardware]"), "{toml}");
         assert!(toml.contains("[hardware.build_volume]"), "{toml}");
         assert!(toml.contains("[capabilities]"), "{toml}");
         assert!(
-            !toml.contains("identity = {"),
-            "top-level structs must not be inline: {toml}",
+            toml.contains("[[capabilities.output_formats]]"),
+            "output formats are an array of tables: {toml}",
         );
         assert!(
-            !toml.contains("[identity ]"),
-            "section headers must not carry stray whitespace: {toml}",
+            !toml.contains("[hardware]\n"),
+            "no empty parent header before its sub-tables: {toml}",
+        );
+        assert!(
+            !toml.contains("identity = {"),
+            "top-level structs must not be inline: {toml}",
         );
     }
 
@@ -348,8 +253,7 @@ retract_speed_mm_min = 150.0
         assert_eq!(report.materials, 1);
 
         let path = dir.path().join("materials").join("test-resin.toml");
-        let reloaded: MaterialProfile =
-            toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let reloaded: MaterialProfile = load_material_profile_from_path(&path).unwrap();
         assert_eq!(reloaded, material);
     }
 
@@ -407,8 +311,7 @@ retract_speed_mm_min = 150.0
         assert_eq!(fs::read(&image).unwrap(), b"fake-png-bytes");
 
         let path = dir.path().join("printers").join("test-printer.toml");
-        let reloaded: PrinterProfile =
-            toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let reloaded: PrinterProfile = load_printer_profile_from_path(&path).unwrap();
         assert_eq!(
             reloaded.identity.image_asset_path.as_deref(),
             Some("images/test-printer.png"),
@@ -431,8 +334,7 @@ retract_speed_mm_min = 150.0
         assert!(!dir.path().join("images").exists());
 
         let path = dir.path().join("printers").join("test-printer.toml");
-        let reloaded: PrinterProfile =
-            toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let reloaded: PrinterProfile = load_printer_profile_from_path(&path).unwrap();
         assert_eq!(reloaded.identity.image_asset_path, None);
     }
 
@@ -447,7 +349,7 @@ retract_speed_mm_min = 150.0
             true,
         )
         .unwrap_err();
-        assert!(matches!(err, WriteError::CopyImage { .. }));
+        assert!(matches!(err, WriteError::Image(_)));
     }
 
     /// A trivial reader that hands back a fixed set, used to check that
