@@ -6,8 +6,6 @@ name = "Photon Mono M5s"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-m5s-pm5s.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 218.88
 y_mm = 122.88
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pm5s" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pm5s"
 
 [constraints]

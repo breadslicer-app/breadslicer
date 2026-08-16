@@ -6,8 +6,6 @@ name = "Saturn 2"
 profile_version = "1.0.0"
 image_asset_path = "images/elegoo-saturn-2-ctb.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 218.88
 y_mm = 123.12
@@ -26,9 +24,12 @@ x = true
 y = false
 
 [capabilities]
-output_formats = [{ format = "ctb", version = "v5enc" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
 
 [constraints]

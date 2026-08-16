@@ -6,8 +6,6 @@ name = "Photon Mono M7 Max"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-m7-max-pm7m.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 297.5
 y_mm = 164.0
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "azf", version = "pm7m" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "azf"
+version = "pm7m"
 
 [constraints]

@@ -6,8 +6,6 @@ name = "Photon Mono M5s Pro"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-m5s-pro-m5sp.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 223.6416
 y_mm = 126.976
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "m5sp" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "m5sp"
 
 [constraints]

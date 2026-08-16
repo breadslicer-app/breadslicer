@@ -6,8 +6,6 @@ name = "Mars 3 Pro"
 profile_version = "1.0.0"
 image_asset_path = "images/elegoo-mars-3-pro-ctb.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 143.43
 y_mm = 89.6
@@ -26,9 +24,12 @@ x = true
 y = false
 
 [capabilities]
-output_formats = [{ format = "ctb", version = "v5enc" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
 
 [constraints]

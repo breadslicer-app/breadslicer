@@ -6,8 +6,6 @@ name = "Photon P1"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-p1-pp1.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 223.6416
 y_mm = 126.976
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "azf", version = "pp1" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "azf"
+version = "pp1"
 
 [constraints]

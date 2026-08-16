@@ -6,8 +6,6 @@ name = "Photon M3 Premium"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-m3-premium-pm3r.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 218.88
 y_mm = 123.12
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pm3r" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pm3r"
 
 [constraints]

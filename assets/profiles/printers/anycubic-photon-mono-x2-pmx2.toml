@@ -6,8 +6,6 @@ name = "Photon Mono X2"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-x2-pmx2.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 196.61
 y_mm = 122.88
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pmx2" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pmx2"
 
 [constraints]

@@ -6,8 +6,6 @@ name = "Photon Mono 4K"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-4k-pwma.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 134.4
 y_mm = 84.0
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pwma" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pwma"
 
 [constraints]

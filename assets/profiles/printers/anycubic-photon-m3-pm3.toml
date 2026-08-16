@@ -6,8 +6,6 @@ name = "Photon M3"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-m3-pm3.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 163.84
 y_mm = 102.4
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pm3" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pm3"
 
 [constraints]

@@ -5,8 +5,6 @@ family = "Generic Machine"
 name = "Generic Machine"
 profile_version = "1.0.0"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 143.0
 y_mm = 89.0
@@ -25,9 +23,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "lumen", version = "v1" }]
 supports_grayscale = false
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "lumen"
+version = "v1"
 
 [constraints]

@@ -6,8 +6,6 @@ name = "Photon Mono X 6K / M3 Plus"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-x-6k-m3-plus-pwmb.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 198.15
 y_mm = 123.84
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pwmb" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pwmb"
 
 [constraints]

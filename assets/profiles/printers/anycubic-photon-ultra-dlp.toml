@@ -6,8 +6,6 @@ name = "Photon Ultra"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-ultra-dlp.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 102.4
 y_mm = 57.6
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "dlp" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "dlp"
 
 [constraints]

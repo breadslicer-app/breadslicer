@@ -6,8 +6,6 @@ name = "Photon Zero"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-zero-pw0.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 98.637
 y_mm = 55.44
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pw0" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pw0"
 
 [constraints]

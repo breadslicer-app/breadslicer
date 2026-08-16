@@ -6,8 +6,6 @@ name = "Photon Mono"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-mono-pwmo.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 130.56
 y_mm = 82.62
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "pwmo" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "pwmo"
 
 [constraints]

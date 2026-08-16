@@ -6,8 +6,6 @@ name = "Saturn 4 Ultra"
 profile_version = "3.0.0"
 image_asset_path = "images/elegoo-saturn-4-ultra-ctb.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 218.88
 y_mm = 122.88
@@ -26,10 +24,13 @@ x = true
 y = false
 
 [capabilities]
-output_formats = [{ format = "ctb", version = "v5enc" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = true
 network_protocol = "sdcp"
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
 
 [constraints]

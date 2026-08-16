@@ -6,8 +6,6 @@ name = "Photon D2"
 profile_version = "1.0.0"
 image_asset_path = "images/anycubic-photon-d2-dl2p.png"
 
-[hardware]
-
 [hardware.build_volume]
 x_mm = 130.56
 y_mm = 73.44
@@ -26,9 +24,12 @@ x = false
 y = false
 
 [capabilities]
-output_formats = [{ format = "aff", version = "dl2p" }]
 supports_grayscale = true
 two_stage_lift = false
 has_camera = false
+
+[[capabilities.output_formats]]
+format = "aff"
+version = "dl2p"
 
 [constraints]
