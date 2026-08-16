@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use super::image_asset_ref::ImageAssetRef;
 use super::printer_identity::PrinterIdentity;
 use sc_print_primitives::{NonEmptyString, PrinterId};
 use semver::Version;
@@ -34,8 +35,23 @@ fn deserialise_parses_all_fields() {
     assert_eq!(parsed.profile_version, Version::new(1, 0, 0));
     assert_eq!(
         parsed.image_asset_path,
-        Some("assets/elegoo-mars-3-pro.png".to_owned())
+        Some(ImageAssetRef::new("assets/elegoo-mars-3-pro.png").unwrap())
     );
+}
+
+#[test]
+fn deserialise_rejects_an_image_asset_path_that_escapes_the_library() {
+    for reference in ["../secret.png", "/abs/model.png", "images/../model.png", ""] {
+        let toml = format!(
+            "id = \"elegoo-mars-3-pro\"\nmanufacturer = \"Elegoo\"\nfamily = \"Mars 3\"\n\
+             name = \"Mars 3 Pro\"\nprofile_version = \"1.0.0\"\n\
+             image_asset_path = \"{reference}\"\n"
+        );
+        assert!(
+            toml_edit::de::from_str::<PrinterIdentity>(&toml).is_err(),
+            "{reference:?} must be refused"
+        );
+    }
 }
 
 #[test]

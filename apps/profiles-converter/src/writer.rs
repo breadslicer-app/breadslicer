@@ -82,7 +82,7 @@ pub fn write_profiles(
                         .map_err(WriteError::Image)?;
                         report.images += 1;
                         let mut with_image = printer.profile.clone();
-                        with_image.identity.image_asset_path = Some(reference.as_str().to_owned());
+                        with_image.identity.image_asset_path = Some(reference);
                         Cow::Owned(with_image)
                     }
                     _ => Cow::Borrowed(&printer.profile),
@@ -108,7 +108,7 @@ mod tests {
     use std::path::PathBuf;
 
     use sc_print_profiles::{
-        MaterialProfile, PrinterProfile, load_material_profile_from_path,
+        ImageAssetRef, MaterialProfile, PrinterProfile, load_material_profile_from_path,
         load_printer_profile_from_path,
     };
     use tempfile::tempdir;
@@ -313,8 +313,8 @@ retract_speed_mm_min = 150.0
         let path = dir.path().join("printers").join("test-printer.toml");
         let reloaded: PrinterProfile = load_printer_profile_from_path(&path).unwrap();
         assert_eq!(
-            reloaded.identity.image_asset_path.as_deref(),
-            Some("images/test-printer.png"),
+            reloaded.identity.image_asset_path,
+            Some(ImageAssetRef::new("images/test-printer.png").unwrap()),
         );
     }
 

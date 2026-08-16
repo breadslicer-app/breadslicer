@@ -416,10 +416,9 @@ fn printer_entry(
 ) -> PrinterCatalogEntry {
     let build_volume = profile.hardware.build_volume();
     let identity = profile.identity;
-    // `image_asset_path` is relative to the library root the id
-    // resolved from. Keep the path only when the file is really there.
-    let image_path = identity.image_asset_path.as_deref().and_then(|rel| {
-        let path = root.join(rel);
+    // Keep the image path only when the file is really there.
+    let image_path = identity.image_asset_path.as_ref().and_then(|reference| {
+        let path = reference.resolve_in(root);
         path.is_file().then_some(path)
     });
 
