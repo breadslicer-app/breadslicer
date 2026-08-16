@@ -5,18 +5,17 @@
 
 //! Disk writing for material-profile TOML files.
 //!
-//! Symmetric with the material loaders in [`crate::loader`]: the
-//! path-based writer serialises a [`MaterialProfile`] to a TOML file,
-//! creating the parent directory when missing; the library-based
-//! writer places it at `<library_dir>/materials/<id>.toml`. Both keep
-//! the profile-TOML shape owned by this crate rather than hand-rolled
-//! by callers. Serialisation uses the same `toml_edit` path the
-//! round-trip tests exercise, so a written file loads back equal.
+//! [`save_material_profile_to_path`] serialises a [`MaterialProfile`]
+//! to the given TOML file, creating the parent directory when missing.
+//! [`save_material_profile_to_library`] derives the destination from a
+//! library directory instead: `<library_dir>/materials/<id>.toml`.
+//! Written files lay every nested struct out as a `[section]` table
+//! and load back equal through the loaders in [`crate::loader`].
 //!
-//! The extension writer places extension-flagged profiles at
-//! `<library_dir>/materials/extensions/<id>.toml` and annotates their
-//! empty `[intent]` / `[defaults]` sections with a comment explaining
-//! that the values come from the parent profile.
+//! [`save_material_extension_to_library`] places extension-flagged
+//! profiles at `<library_dir>/materials/extensions/<id>.toml` and
+//! annotates their empty `[intent]` / `[defaults]` sections with a
+//! comment explaining that the values come from the parent profile.
 
 use std::fmt;
 use std::fs;
@@ -70,6 +69,12 @@ impl std::error::Error for SaveMaterialProfileError {
     }
 }
 
+/// Serialise a value to the on-disk profile dialect: every nested
+/// struct as a `[section]` table.
+fn sectioned_toml<T: serde::Serialize>(value: &T) -> Result<String, toml_edit::ser::Error> {
+    toml_edit::ser::to_string_pretty(value)
+}
+
 /// Serialise `profile` to TOML and write it to `path`, creating the
 /// parent directory when it does not exist. Returns
 /// [`SaveMaterialProfileError`] when serialisation or the write fails.
@@ -77,7 +82,7 @@ pub fn save_material_profile_to_path(
     path: &Path,
     profile: &MaterialProfile,
 ) -> Result<(), SaveMaterialProfileError> {
-    let contents = toml_edit::ser::to_string(profile).map_err(|err| SaveMaterialProfileError {
+    let contents = sectioned_toml(profile).map_err(|err| SaveMaterialProfileError {
         path: path.to_owned(),
         kind: SaveMaterialProfileErrorKind::TomlSerialize(err),
     })?;
@@ -182,14 +187,13 @@ pub fn save_material_extension_to_library(
             kind: SaveMaterialExtensionErrorKind::NotAnExtension,
         });
     }
-    // The pretty serialiser renders standard `[section]` tables (the
-    // plain one emits inline tables), which the inherited-values
-    // comments need as anchors.
-    let serialised =
-        toml_edit::ser::to_string_pretty(profile).map_err(|err| SaveMaterialExtensionError {
-            path: path.clone(),
-            kind: SaveMaterialExtensionErrorKind::TomlSerialize(err),
-        })?;
+    // Attaching comments needs an editable document. ser::to_document yields
+    // one directly but in the inline-table shape; only to_string_pretty emits
+    // sections, hence serialise-then-reparse.
+    let serialised = sectioned_toml(profile).map_err(|err| SaveMaterialExtensionError {
+        path: path.clone(),
+        kind: SaveMaterialExtensionErrorKind::TomlSerialize(err),
+    })?;
     let mut doc: toml_edit::DocumentMut =
         serialised
             .parse()

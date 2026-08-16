@@ -93,6 +93,27 @@ fn save_to_path_round_trips_per_printer_entries() {
 }
 
 #[test]
+fn save_to_path_writes_sectioned_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let original = parse(WITH_PER_PRINTER_TOML);
+
+    save_material_profile_to_path(&path, &original).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("[identity]"), "written file:\n{written}");
+    assert!(written.contains("[intent]"), "written file:\n{written}");
+    assert!(
+        written.contains("[per_printer.elegoo-saturn-4-ctb]"),
+        "written file:\n{written}"
+    );
+    assert!(
+        !written.contains("identity = {"),
+        "top-level structs must not be inline:\n{written}"
+    );
+}
+
+#[test]
 fn save_to_path_creates_missing_parent_directories() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nested/deeper/out.toml");
