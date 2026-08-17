@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "sc-print-profiles"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nonempty-collections",
  "sc-app-paths",

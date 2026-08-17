@@ -18,6 +18,8 @@ Written for the
 - Get back, alongside the values, a record of which fell back to the resin's
   defaults, which were derived from its intent, which a printer constraint
   moved, and which an override replaced.
+- Save a printer or resin profile into the library, together with a
+  printer's preview image, and delete resin profiles from it.
 - List the profiles in a library, and move them between machines as zip
   archives.
 
@@ -208,6 +210,13 @@ Profiles live under a per-platform user data directory, as
 `materials/extensions/<id>.toml`. Loading by id tries an explicit path, then
 the user library, then the installation's own profiles, and reports every
 path it tried when none has the profile.
+
+`save_printer_profile_to_library` and `save_material_profile_to_library`
+write a profile into that layout by its id; `save_printer_image_to_library`
+copies a preview image to `images/<id>.<ext>` and returns the reference to
+store in the printer's `image_asset_path`; `delete_material_profile_from_library`
+and `delete_material_extension_from_library` remove a resin profile or its
+extension.
 
 `export_package` writes a selection into a zip archive mirroring that layout,
 and `import_package` installs one, reporting which profiles collide with
