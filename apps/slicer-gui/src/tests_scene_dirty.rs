@@ -380,6 +380,7 @@ mod dirty_changed_event_tests {
 mod unsaved_project_state_tests {
     use super::*;
     use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
+    use sc_project_formats::ProjectPayload;
 
     fn printer(id: &str) -> PrinterId {
         PrinterId::new(id).expect("valid printer id")
@@ -495,16 +496,31 @@ mod unsaved_project_state_tests {
     }
 
     #[test]
-    fn choosing_a_selection_creates_a_payload_and_makes_it_a_project() {
+    fn choosing_a_selection_creates_a_payload_but_does_not_make_it_a_project() {
         let (doc, _) = loaded_document();
         assert!(!doc.is_project());
         doc.set_selected_printer(Some(printer("anycubic-photon")));
 
-        assert!(doc.is_project());
+        // The document's kind is what its file is (a plain mesh here),
+        // not whether it holds project data.
+        assert!(!doc.is_project());
         let payload = doc.project_payload().expect("payload created");
         assert_eq!(payload.printer, Some(printer("anycubic-photon")));
         assert_eq!(payload.resin, None);
         assert!(payload.embedded.is_empty());
+    }
+
+    #[test]
+    fn a_document_opened_from_a_project_stays_a_project_across_picks() {
+        let doc = SceneDocument::new();
+        doc.install_project_graph(
+            graph_with_one_object(),
+            PathBuf::from("/tmp/plate.3mf"),
+            ProjectPayload::default(),
+        );
+        assert!(doc.is_project());
+        assert!(doc.set_selected_printer(Some(printer("anycubic-photon"))));
+        assert!(doc.is_project());
     }
 
     #[test]

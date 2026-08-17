@@ -113,6 +113,15 @@ struct HistoryEntry {
     edit: SceneEdit,
 }
 
+/// As "what" the document was loaded, as a project or as a mesh. Used
+/// to decide whether "Save" may overwrite that file in place (a
+/// project) or must go through "Save As".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DocumentOrigin {
+    PlainMesh,
+    Project,
+}
+
 pub(crate) struct SceneDocument {
     spatial: RefCell<Option<SceneSpatial>>,
     /// Filesystem path the loaded scene came from, updated by a
@@ -120,13 +129,13 @@ pub(crate) struct SceneDocument {
     /// filenames and as the "Save" overwrite target. Cleared in
     /// lockstep with `spatial`.
     source_path: RefCell<Option<PathBuf>>,
+    /// Kind of the file at `source_path`: set on install from whether
+    /// the file carried project data, and flipped to `Project` by
+    /// [`Self::record_project_save`].
+    origin: Cell<DocumentOrigin>,
     /// Project data carried by the source file (profile references
     /// plus embedded profile documents), or the payload written by
-    /// the latest save. `None` for scenes from plain mesh files;
-    /// `Some` marks the document as a project, which is what lets
-    /// "Save" overwrite `source_path` in place. Held opaquely: the
-    /// GUI applies nothing from it, it only travels back out on the
-    /// next save.
+    /// the latest save.
     project_payload: RefCell<Option<ProjectPayload>>,
     /// Currently-selected object. Reset to `Selection::None` whenever
     /// the scene is installed or cleared: a new scene has its own
@@ -192,6 +201,7 @@ impl SceneDocument {
         Rc::new(Self {
             spatial: RefCell::new(None),
             source_path: RefCell::new(None),
+            origin: Cell::new(DocumentOrigin::PlainMesh),
             project_payload: RefCell::new(None),
             selection: SelectionState::new(),
             listeners: RefCell::new(Vec::new()),
@@ -208,13 +218,24 @@ impl SceneDocument {
         })
     }
 
-    /// Wrap a [`Scene`] in a fresh (lazy) [`SceneSpatial`] and
-    /// install it. Test convenience; production code paths call
-    /// [`Self::install_spatial`] with a `SceneSpatial::primed_graph(...)`
-    /// built off the UI thread by the mesh-loader pipeline.
+    /// Test utility: Wrap a [`Scene`] in a fresh (lazy)
+    /// [`SceneSpatial`] and install it.
     #[cfg(test)]
     pub fn install_graph(&self, graph: Scene, source_path: PathBuf) {
         self.install_spatial(SceneSpatial::from_graph(graph), source_path, None);
+    }
+
+    /// Test utility for a scene opened from a project file: like
+    /// [`Self::install_graph`] but with the project data the file
+    /// carried.
+    #[cfg(test)]
+    pub fn install_project_graph(
+        &self,
+        graph: Scene,
+        source_path: PathBuf,
+        payload: ProjectPayload,
+    ) {
+        self.install_spatial(SceneSpatial::from_graph(graph), source_path, Some(payload));
     }
 
     /// Install a [`SceneSpatial`] (typically pre-primed by the load
@@ -230,6 +251,11 @@ impl SceneDocument {
         let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
+        self.origin.set(if project_payload.is_some() {
+            DocumentOrigin::Project
+        } else {
+            DocumentOrigin::PlainMesh
+        });
         *self.project_payload.borrow_mut() = project_payload;
         self.selection.set(Selection::None);
         // Object indices in the new scene have no relationship to the
@@ -254,6 +280,7 @@ impl SceneDocument {
         let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
+        self.origin.set(DocumentOrigin::PlainMesh);
         *self.project_payload.borrow_mut() = None;
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
@@ -320,24 +347,20 @@ impl SceneDocument {
     }
 
     /// Whether this document is a project: it was opened from a
-    /// project file or has been saved as one. Gates the in-place
-    /// "Save" overwrite; everything else falls back to "Save As".
+    /// project file or has been saved as one.
     pub fn is_project(&self) -> bool {
-        self.project_payload.borrow().is_some()
+        self.is_loaded() && self.origin.get() == DocumentOrigin::Project
     }
 
-    /// Replaces the held project data. Called by the save flow with
-    /// the payload that was actually written, so the next save
-    /// carries the same values.
-    pub fn set_project_payload(&self, payload: ProjectPayload) {
+    /// Records that the document was written as a project to `target`:
+    /// the held payload becomes the one actually written, `target` is
+    /// the file "Save" overwrites from now on, the document is a
+    /// project whatever its origin was, and the dirty marker clears.
+    pub fn record_project_save(&self, payload: ProjectPayload, target: PathBuf) {
         *self.project_payload.borrow_mut() = Some(payload);
-    }
-
-    /// Points the document at a new on-disk location. Called by
-    /// "Save As" after a successful write; from then on "Save"
-    /// overwrites the new path and default filenames derive from it.
-    pub fn set_source_path(&self, path: PathBuf) {
-        *self.source_path.borrow_mut() = Some(path);
+        *self.source_path.borrow_mut() = Some(target);
+        self.origin.set(DocumentOrigin::Project);
+        self.mark_saved();
     }
 
     /// The scene's chosen printer, read from the project payload.
@@ -1258,7 +1281,7 @@ mod scene_document_tests {
     fn source_file_name_follows_a_save_as_relocation() {
         let doc = SceneDocument::new();
         doc.install_graph(empty_graph(), fixture_path());
-        doc.set_source_path(PathBuf::from("/tmp/project.3mf"));
+        doc.record_project_save(ProjectPayload::default(), PathBuf::from("/tmp/project.3mf"));
         assert_eq!(doc.source_file_name().as_deref(), Some("project.3mf"));
     }
 

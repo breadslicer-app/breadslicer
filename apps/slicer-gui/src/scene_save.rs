@@ -217,15 +217,13 @@ pub(crate) fn save_project_to(
         prepare_save_for_target(doc, target.to_path_buf(), default_printer, default_resin)
             .ok_or_else(|| anyhow::anyhow!("No scene loaded"))?;
     write_bundle(&bundle, |_, _, _| {})?;
-    record_save(doc, payload, target);
+    doc.record_project_save(payload, target.to_path_buf());
     Ok(())
 }
 
 /// Builds the save payload and snapshots the scene into a `Send`
-/// [`SaveBundle`] for `target`, on the UI thread. Returns the bundle to
-/// hand a worker together with the payload to record once the write
-/// succeeds; `None` when no scene is loaded. The async save flow moves
-/// the bundle off-thread and keeps the payload for [`record_save`].
+/// [`SaveBundle`] for `target`. Returns the bundle together with the
+/// payload it carries; `None` when no scene is loaded.
 pub(crate) fn prepare_save_for_target(
     doc: &SceneDocument,
     target: PathBuf,
@@ -240,16 +238,6 @@ pub(crate) fn prepare_save_for_target(
     );
     let bundle = prepare_save(doc, payload.clone(), target)?;
     Some((bundle, payload))
-}
-
-/// Updates the document once a write has landed on disk: the held
-/// payload matches the file, "Save" overwrites `target` from now on, and
-/// the dirty marker clears. Runs on the UI thread, whether the write was
-/// synchronous or on a worker.
-pub(crate) fn record_save(doc: &SceneDocument, payload: ProjectPayload, target: &Path) {
-    doc.set_project_payload(payload);
-    doc.set_source_path(target.to_path_buf());
-    doc.mark_saved();
 }
 
 #[cfg(test)]
@@ -351,8 +339,11 @@ mod scene_save_tests {
         #[test]
         fn a_dirty_project_document_overwrites_its_source_path() {
             let doc = SceneDocument::new();
-            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/plate.3mf"));
-            doc.set_project_payload(ProjectPayload::default());
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/tmp/plate.3mf"),
+                ProjectPayload::default(),
+            );
             make_dirty(&doc);
             assert_eq!(
                 decide_save_dispatch(&doc),
@@ -363,8 +354,11 @@ mod scene_save_tests {
         #[test]
         fn a_clean_project_document_writes_nothing() {
             let doc = SceneDocument::new();
-            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/plate.3mf"));
-            doc.set_project_payload(ProjectPayload::default());
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/tmp/plate.3mf"),
+                ProjectPayload::default(),
+            );
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::AlreadySaved);
         }
 
@@ -376,6 +370,38 @@ mod scene_save_tests {
             let doc = SceneDocument::new();
             doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
             assert!(!doc.is_dirty());
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
+        }
+
+        // A printer / resin / first-layer pick makes the document dirty
+        // but does not turn a plain mesh file into a project: "Save"
+        // must still go through the dialog instead of overwriting the
+        // mesh file with a 3MF.
+        #[test]
+        fn a_plain_mesh_source_with_a_picked_printer_still_routes_to_save_as() {
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            assert!(doc.set_selected_printer(Some(printer_id("picked-printer"))));
+            assert!(doc.is_dirty());
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
+        }
+
+        #[test]
+        fn a_plain_mesh_source_with_a_picked_resin_still_routes_to_save_as() {
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            assert!(doc.set_selected_resin(Some(material_id("picked-resin"))));
+            assert!(doc.is_dirty());
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
+        }
+
+        #[test]
+        fn a_plain_mesh_source_with_a_first_layer_height_still_routes_to_save_as() {
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            let height = sc_print_primitives::PositiveFiniteMm::new(0.1).expect("valid length");
+            assert!(doc.set_selected_first_layer_height(Some(height)));
+            assert!(doc.is_dirty());
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
         }
     }
@@ -429,8 +455,11 @@ mod scene_save_tests {
         #[test]
         fn a_held_payload_wins_over_the_globals() {
             let doc = SceneDocument::new();
-            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/plate.3mf"));
-            doc.set_project_payload(held_payload());
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/tmp/plate.3mf"),
+                held_payload(),
+            );
             let payload = payload_for_save(
                 &doc,
                 Some(printer_id("global-printer")),
@@ -515,8 +544,11 @@ mod scene_save_tests {
             .expect("printer file");
 
             let doc = SceneDocument::new();
-            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/plate.3mf"));
-            doc.set_project_payload(held_payload());
+            doc.install_project_graph(
+                one_object_graph(),
+                PathBuf::from("/tmp/plate.3mf"),
+                held_payload(),
+            );
             let payload = payload_for_save(&doc, None, None, &[root.path().to_path_buf()]);
             let printer_bytes: Vec<&[u8]> = payload
                 .embedded
@@ -549,8 +581,7 @@ mod scene_save_tests {
             let target = dir.path().join("widget.3mf");
 
             let doc = SceneDocument::new();
-            doc.install_graph(one_object_graph(), source);
-            doc.set_project_payload(held_payload());
+            doc.install_project_graph(one_object_graph(), source, held_payload());
 
             save_project_to(&doc, &target, None, None).expect("the save succeeds");
 
@@ -571,13 +602,46 @@ mod scene_save_tests {
         }
 
         #[test]
+        fn a_save_as_of_a_picked_plain_mesh_leaves_the_mesh_file_untouched_and_relocates_the_document()
+         {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let source = dir.path().join("widget.stl");
+            let target = dir.path().join("widget.3mf");
+            let stl_bytes = b"solid widget\nendsolid widget\n".to_vec();
+            fs::write(&source, &stl_bytes).expect("the mesh file is written");
+
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), source.clone());
+            assert!(doc.set_selected_printer(Some(printer_id("picked-printer"))));
+            // The pick alone must not route "Save" onto the mesh file.
+            assert_eq!(decide_save_dispatch(&doc), SaveDispatch::NeedsSaveAs);
+
+            save_project_to(&doc, &target, None, None).expect("the save succeeds");
+
+            assert_eq!(fs::read(&source).expect("the mesh file exists"), stl_bytes);
+            assert!(target.exists());
+            assert!(doc.is_project());
+            assert_eq!(doc.source_path(), Some(target.clone()));
+            assert!(!doc.is_dirty());
+            // From now on "Save" overwrites the project file in place.
+            make_dirty(&doc);
+            assert_eq!(
+                decide_save_dispatch(&doc),
+                SaveDispatch::OverwriteProject(target),
+            );
+        }
+
+        #[test]
         fn a_second_save_overwrites_the_same_file() {
             let dir = tempfile::tempdir().expect("temp dir");
             let target = dir.path().join("plate.3mf");
 
             let doc = SceneDocument::new();
-            doc.install_graph(one_object_graph(), target.clone());
-            doc.set_project_payload(ProjectPayload::default());
+            doc.install_project_graph(
+                one_object_graph(),
+                target.clone(),
+                ProjectPayload::default(),
+            );
 
             save_project_to(&doc, &target, None, None).expect("first save");
             let first = fs::read(&target).expect("first bytes");
@@ -636,7 +700,7 @@ mod scene_save_tests {
             let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
 
             let doc = SceneDocument::new();
-            // No `set_project_payload`: `selected_printer` stays `None`,
+            // No project data: `selected_printer` stays `None`,
             // exactly the state right after a plain mesh load.
             doc.install_graph(one_object_graph(), source);
             let scene = doc

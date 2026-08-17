@@ -477,7 +477,7 @@ async fn save_to_target(
     save_progress.end();
     match outcome {
         Ok(Ok(())) => {
-            scene_save::record_save(doc, payload, target);
+            doc.record_project_save(payload, target.to_path_buf());
             true
         }
         Ok(Err(err)) => {
