@@ -32,7 +32,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
-use sc_project_formats::{PlateSlices, ProjectPayload};
+use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::profile::LayerSchedule;
 
@@ -122,6 +122,36 @@ pub(crate) enum DocumentOrigin {
     Project,
 }
 
+/// The scene's own print choices, as opposed to the app-wide defaults.
+/// A `None` field means the scene has no choice of its own for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PrintSelection {
+    printer: Option<PrinterId>,
+    resin: Option<MaterialId>,
+    first_layer_height: Option<PositiveFiniteMm>,
+}
+
+impl PrintSelection {
+    /// Splits a project payload into the scene's choices and the
+    /// embedded profile documents it carries.
+    fn from_payload(payload: ProjectPayload) -> (Self, Vec<EmbeddedProfile>) {
+        let ProjectPayload {
+            printer,
+            resin,
+            first_layer_height,
+            embedded,
+        } = payload;
+        (
+            Self {
+                printer,
+                resin,
+                first_layer_height,
+            },
+            embedded,
+        )
+    }
+}
+
 pub(crate) struct SceneDocument {
     spatial: RefCell<Option<SceneSpatial>>,
     /// Filesystem path the loaded scene came from, updated by a
@@ -133,10 +163,11 @@ pub(crate) struct SceneDocument {
     /// the file carried project data, and flipped to `Project` by
     /// [`Self::record_project_save`].
     origin: Cell<DocumentOrigin>,
-    /// Project data carried by the source file (profile references
-    /// plus embedded profile documents), or the payload written by
-    /// the latest save.
-    project_payload: RefCell<Option<ProjectPayload>>,
+    /// The scene's own printer / resin / first-layer choices.
+    print_selection: RefCell<PrintSelection>,
+    /// Embedded profile documents carried by the source file or by the
+    /// latest save. Held opaquely.
+    embedded_profiles: RefCell<Vec<EmbeddedProfile>>,
     /// Currently-selected object. Reset to `Selection::None` whenever
     /// the scene is installed or cleared: a new scene has its own
     /// object indices, so a prior selection is no longer meaningful.
@@ -202,7 +233,8 @@ impl SceneDocument {
             spatial: RefCell::new(None),
             source_path: RefCell::new(None),
             origin: Cell::new(DocumentOrigin::PlainMesh),
-            project_payload: RefCell::new(None),
+            print_selection: RefCell::new(PrintSelection::default()),
+            embedded_profiles: RefCell::new(Vec::new()),
             selection: SelectionState::new(),
             listeners: RefCell::new(Vec::new()),
             next_listener_id: Cell::new(0),
@@ -251,12 +283,18 @@ impl SceneDocument {
         let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
-        self.origin.set(if project_payload.is_some() {
-            DocumentOrigin::Project
-        } else {
-            DocumentOrigin::PlainMesh
-        });
-        *self.project_payload.borrow_mut() = project_payload;
+        let (selection, embedded) = match project_payload {
+            Some(payload) => {
+                self.origin.set(DocumentOrigin::Project);
+                PrintSelection::from_payload(payload)
+            }
+            None => {
+                self.origin.set(DocumentOrigin::PlainMesh);
+                (PrintSelection::default(), Vec::new())
+            }
+        };
+        *self.print_selection.borrow_mut() = selection;
+        *self.embedded_profiles.borrow_mut() = embedded;
         self.selection.set(Selection::None);
         // Object indices in the new scene have no relationship to the
         // outgoing one's, so any pending edits would target the wrong
@@ -281,7 +319,8 @@ impl SceneDocument {
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
         self.origin.set(DocumentOrigin::PlainMesh);
-        *self.project_payload.borrow_mut() = None;
+        *self.print_selection.borrow_mut() = PrintSelection::default();
+        self.embedded_profiles.borrow_mut().clear();
         self.selection.set(Selection::None);
         let stacks_changed = self.clear_history();
         self.save_point.set(None);
@@ -339,11 +378,21 @@ impl SceneDocument {
         self.notify_dirty_change(was_dirty);
     }
 
-    /// The project data held for this document, cloned out. `None`
-    /// for scenes loaded from plain mesh files that have not been
-    /// saved as a project yet.
-    pub fn project_payload(&self) -> Option<ProjectPayload> {
-        self.project_payload.borrow().clone()
+    /// The project payload for a save: the scene's own choices, with a
+    /// missing printer or resin filled from the given app-wide default,
+    /// plus the held embedded profile documents.
+    pub fn compose_project_payload(
+        &self,
+        default_printer: Option<PrinterId>,
+        default_resin: Option<MaterialId>,
+    ) -> ProjectPayload {
+        let selection = self.print_selection.borrow();
+        ProjectPayload {
+            printer: selection.printer.clone().or(default_printer),
+            resin: selection.resin.clone().or(default_resin),
+            first_layer_height: selection.first_layer_height,
+            embedded: self.embedded_profiles.borrow().clone(),
+        }
     }
 
     /// Whether this document is a project: it was opened from a
@@ -353,123 +402,70 @@ impl SceneDocument {
     }
 
     /// Records that the document was written as a project to `target`:
-    /// the held payload becomes the one actually written, `target` is
-    /// the file "Save" overwrites from now on, the document is a
-    /// project whatever its origin was, and the dirty marker clears.
+    /// the scene's choices and embedded documents become those actually
+    /// written, `target` is the file "Save" overwrites from now on, the
+    /// document is a project whatever its origin was, and the dirty
+    /// marker clears.
     pub fn record_project_save(&self, payload: ProjectPayload, target: PathBuf) {
-        *self.project_payload.borrow_mut() = Some(payload);
+        let (selection, embedded) = PrintSelection::from_payload(payload);
+        *self.print_selection.borrow_mut() = selection;
+        *self.embedded_profiles.borrow_mut() = embedded;
         *self.source_path.borrow_mut() = Some(target);
         self.origin.set(DocumentOrigin::Project);
         self.mark_saved();
     }
 
-    /// The scene's chosen printer, read from the project payload.
-    /// `None` when no printer has been chosen or no payload exists yet.
+    /// The scene's own printer choice.
     pub fn selected_printer(&self) -> Option<PrinterId> {
-        self.project_payload
-            .borrow()
-            .as_ref()
-            .and_then(|payload| payload.printer.clone())
+        self.print_selection.borrow().printer.clone()
     }
 
-    /// The scene's chosen resin, read from the project payload. `None`
-    /// when no resin has been chosen or no payload exists yet.
+    /// The scene's own resin choice.
     pub fn selected_resin(&self) -> Option<MaterialId> {
-        self.project_payload
-            .borrow()
-            .as_ref()
-            .and_then(|payload| payload.resin.clone())
+        self.print_selection.borrow().resin.clone()
     }
 
-    /// The scene's chosen first-layer height, read from the project
-    /// payload. `None` when none has been set or no payload exists yet;
-    /// the slicing flow falls back to the material profile's value.
+    /// The scene's own first-layer height.
     pub fn selected_first_layer_height(&self) -> Option<PositiveFiniteMm> {
-        self.project_payload
-            .borrow()
-            .as_ref()
-            .and_then(|payload| payload.first_layer_height)
+        self.print_selection.borrow().first_layer_height
     }
 
-    /// Sets the scene's chosen printer on the project payload,
-    /// creating a payload when none exists yet. Marks the document
-    /// save-dirty (via [`Self::mark_project_state_unsaved`]) only when
-    /// the value actually changes. Returns whether it changed.
+    /// Sets the scene's own printer choice. Marks the document
+    /// save-dirty only when the value actually changes. Returns whether
+    /// it changed.
     pub fn set_selected_printer(&self, printer: Option<PrinterId>) -> bool {
-        let changed = {
-            let mut slot = self.project_payload.borrow_mut();
-            match slot.as_mut() {
-                Some(payload) if payload.printer == printer => false,
-                Some(payload) => {
-                    payload.printer = printer;
-                    true
-                }
-                None if printer.is_none() => false,
-                None => {
-                    *slot = Some(ProjectPayload {
-                        printer,
-                        ..ProjectPayload::default()
-                    });
-                    true
-                }
-            }
-        };
-        if changed {
-            self.mark_project_state_unsaved();
-        }
-        changed
+        self.set_selection_field(|selection| &mut selection.printer, printer)
     }
 
-    /// Sets the scene's chosen resin on the project payload, creating
-    /// a payload when none exists yet. Marks the document save-dirty
-    /// only when the value actually changes. Returns whether it
-    /// changed.
+    /// Sets the scene's own resin choice. Marks the document save-dirty
+    /// only when the value actually changes. Returns whether it changed.
     pub fn set_selected_resin(&self, resin: Option<MaterialId>) -> bool {
-        let changed = {
-            let mut slot = self.project_payload.borrow_mut();
-            match slot.as_mut() {
-                Some(payload) if payload.resin == resin => false,
-                Some(payload) => {
-                    payload.resin = resin;
-                    true
-                }
-                None if resin.is_none() => false,
-                None => {
-                    *slot = Some(ProjectPayload {
-                        resin,
-                        ..ProjectPayload::default()
-                    });
-                    true
-                }
-            }
-        };
-        if changed {
-            self.mark_project_state_unsaved();
-        }
-        changed
+        self.set_selection_field(|selection| &mut selection.resin, resin)
     }
 
-    /// Sets the scene's chosen first-layer height on the project
-    /// payload, creating a payload when none exists yet. Marks the
-    /// document save-dirty only when the value actually changes.
-    /// Returns whether it changed.
+    /// Sets the scene's own first-layer height. Marks the document
+    /// save-dirty only when the value actually changes. Returns whether
+    /// it changed.
     pub fn set_selected_first_layer_height(&self, height: Option<PositiveFiniteMm>) -> bool {
+        self.set_selection_field(|selection| &mut selection.first_layer_height, height)
+    }
+
+    /// Writes one field of the print selection, marking the document
+    /// save-dirty only when the value actually changes. Returns whether
+    /// it changed.
+    fn set_selection_field<T: PartialEq>(
+        &self,
+        field: impl FnOnce(&mut PrintSelection) -> &mut Option<T>,
+        value: Option<T>,
+    ) -> bool {
         let changed = {
-            let mut slot = self.project_payload.borrow_mut();
-            match slot.as_mut() {
-                Some(payload) if payload.first_layer_height == height => false,
-                Some(payload) => {
-                    payload.first_layer_height = height;
-                    true
-                }
-                None if height.is_none() => false,
-                None => {
-                    *slot = Some(ProjectPayload {
-                        first_layer_height: height,
-                        ..ProjectPayload::default()
-                    });
-                    true
-                }
+            let mut selection = self.print_selection.borrow_mut();
+            let slot = field(&mut selection);
+            if *slot == value {
+                false
+            } else {
+                *slot = value;
+                true
             }
         };
         if changed {

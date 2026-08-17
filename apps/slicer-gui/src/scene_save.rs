@@ -8,12 +8,11 @@
 //! the file dialog, then calls in here to produce the file.
 //!
 //! A save always writes a 3MF project: the scene plus the project
-//! payload. The payload is the held one when the document has any
-//! (a project that was opened keeps the values and embedded
-//! documents it arrived with), otherwise a snapshot of the app-wide
-//! default profiles taken at save time. Referenced profiles without
-//! a held document get embedded copies resolved from the local
-//! libraries; v1 always embeds.
+//! payload. The payload holds the scene's own printer / resin /
+//! first-layer choices, with a missing printer or resin filled from
+//! the app-wide default at save time, and the embedded profile
+//! documents the document holds. Referenced profiles without a held
+//! document get embedded copies resolved from the local libraries.
 
 use std::path::{Path, PathBuf};
 
@@ -91,23 +90,16 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
     }
 }
 
-/// The payload a save writes: the document's held project data, with
-/// a missing printer or resin filled from the app-wide default.
-/// Referenced profiles without a held embedded document get copies
-/// resolved from `roots`.
+/// The payload a save writes: the document's composed project payload,
+/// with referenced profiles that lack a held embedded document given
+/// copies resolved from `roots`.
 pub(crate) fn payload_for_save(
     doc: &SceneDocument,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
     roots: &[PathBuf],
 ) -> ProjectPayload {
-    let held = doc.project_payload().unwrap_or_default();
-    let mut payload = ProjectPayload {
-        printer: held.printer.or(default_printer),
-        resin: held.resin.or(default_resin),
-        first_layer_height: held.first_layer_height,
-        embedded: held.embedded,
-    };
+    let mut payload = doc.compose_project_payload(default_printer, default_resin);
     complete_embedded_documents(&mut payload, roots);
     payload
 }
@@ -711,6 +703,12 @@ mod scene_save_tests {
             assert_eq!(payload.resin, Some(material_id("nonexistent-resin")));
             // The ids resolve nowhere, so nothing was embedded.
             assert!(payload.embedded.is_empty());
+            // The written values become the scene's own choices.
+            assert_eq!(
+                doc.selected_printer(),
+                Some(printer_id("nonexistent-printer"))
+            );
+            assert_eq!(doc.selected_resin(), Some(material_id("nonexistent-resin")));
         }
 
         #[test]

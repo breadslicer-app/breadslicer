@@ -496,18 +496,25 @@ mod unsaved_project_state_tests {
     }
 
     #[test]
-    fn choosing_a_selection_creates_a_payload_but_does_not_make_it_a_project() {
+    fn choosing_a_selection_records_it_without_making_the_document_a_project() {
         let (doc, _) = loaded_document();
         assert!(!doc.is_project());
         doc.set_selected_printer(Some(printer("anycubic-photon")));
 
         // The document's kind is what its file is (a plain mesh here),
-        // not whether it holds project data.
+        // not whether it holds print choices.
         assert!(!doc.is_project());
-        let payload = doc.project_payload().expect("payload created");
-        assert_eq!(payload.printer, Some(printer("anycubic-photon")));
-        assert_eq!(payload.resin, None);
-        assert!(payload.embedded.is_empty());
+        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
+        assert_eq!(doc.selected_resin(), None);
+        assert_eq!(
+            doc.compose_project_payload(None, None),
+            ProjectPayload {
+                printer: Some(printer("anycubic-photon")),
+                resin: None,
+                first_layer_height: None,
+                embedded: Vec::new(),
+            }
+        );
     }
 
     #[test]
@@ -524,7 +531,44 @@ mod unsaved_project_state_tests {
     }
 
     #[test]
-    fn printer_and_resin_choices_coexist_on_one_payload() {
+    fn a_loaded_payload_becomes_the_selection_and_the_held_embedded_documents() {
+        use sc_project_formats::EmbeddedProfile;
+
+        let loaded = ProjectPayload {
+            printer: Some(printer("anycubic-photon")),
+            resin: None,
+            first_layer_height: Some(mm(0.1)),
+            embedded: vec![EmbeddedProfile::Printer {
+                id: printer("anycubic-photon"),
+                bytes: b"kind = \"printer\"".to_vec(),
+            }],
+        };
+        let doc = SceneDocument::new();
+        doc.install_project_graph(
+            graph_with_one_object(),
+            PathBuf::from("/tmp/plate.3mf"),
+            loaded.clone(),
+        );
+
+        assert_eq!(doc.selected_printer(), Some(printer("anycubic-photon")));
+        assert_eq!(doc.selected_resin(), None);
+        assert_eq!(doc.selected_first_layer_height(), Some(mm(0.1)));
+        // Composing with defaults fills only the missing field.
+        let composed = doc
+            .compose_project_payload(Some(printer("global-printer")), Some(resin("global-resin")));
+        assert_eq!(composed.printer, Some(printer("anycubic-photon")));
+        assert_eq!(composed.resin, Some(resin("global-resin")));
+        assert_eq!(composed.first_layer_height, Some(mm(0.1)));
+        assert_eq!(composed.embedded, loaded.embedded);
+
+        // Clearing the scene drops the choices and the embedded documents.
+        doc.clear_scene();
+        assert_eq!(doc.selected_printer(), None);
+        assert_eq!(doc.selected_first_layer_height(), None);
+    }
+
+    #[test]
+    fn printer_and_resin_choices_coexist_on_the_selection() {
         let (doc, _) = loaded_document();
         doc.set_selected_printer(Some(printer("anycubic-photon")));
         doc.set_selected_resin(Some(resin("generic-grey")));
