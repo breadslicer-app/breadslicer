@@ -12,9 +12,11 @@ use crate::loader::{
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
 use crate::writer::{
-    SaveMaterialExtensionErrorKind, SavePrinterImageErrorKind, save_material_extension_to_library,
-    save_material_profile_to_library, save_material_profile_to_path, save_printer_image_to_library,
-    save_printer_profile_to_library, save_printer_profile_to_path,
+    SaveMaterialExtensionErrorKind, SavePrinterImageErrorKind,
+    delete_material_extension_from_library, delete_material_profile_from_library,
+    save_material_extension_to_library, save_material_profile_to_library,
+    save_material_profile_to_path, save_printer_image_to_library, save_printer_profile_to_library,
+    save_printer_profile_to_path,
 };
 
 const MINIMAL_TOML: &str = "\
@@ -397,4 +399,90 @@ fn save_extension_does_not_annotate_populated_sections() {
         !written.contains("inherited from the parent profile"),
         "written file:\n{written}"
     );
+}
+
+#[test]
+fn delete_material_removes_exactly_the_full_profile_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = parse(MINIMAL_TOML);
+    let extension = parse(EXTENSION_TOML);
+    save_material_profile_to_library(dir.path(), &full).unwrap();
+    save_material_extension_to_library(dir.path(), &extension).unwrap();
+    let id = MaterialId::new("brand-resin").unwrap();
+
+    delete_material_profile_from_library(dir.path(), &id).unwrap();
+
+    assert!(
+        !dir.path()
+            .join("materials")
+            .join("brand-resin.toml")
+            .exists()
+    );
+    assert!(
+        dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("brand-resin.toml")
+            .is_file(),
+        "the extension must survive a full-profile delete"
+    );
+}
+
+#[test]
+fn delete_extension_removes_exactly_the_extension_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = parse(MINIMAL_TOML);
+    let extension = parse(EXTENSION_TOML);
+    save_material_profile_to_library(dir.path(), &full).unwrap();
+    save_material_extension_to_library(dir.path(), &extension).unwrap();
+    let id = MaterialId::new("brand-resin").unwrap();
+
+    delete_material_extension_from_library(dir.path(), &id).unwrap();
+
+    assert!(
+        !dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("brand-resin.toml")
+            .exists()
+    );
+    assert!(
+        dir.path()
+            .join("materials")
+            .join("brand-resin.toml")
+            .is_file(),
+        "the full profile must survive an extension delete"
+    );
+}
+
+#[test]
+fn delete_of_a_missing_material_reports_not_found_with_the_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = MaterialId::new("brand-resin").unwrap();
+
+    let err = delete_material_profile_from_library(dir.path(), &id).unwrap_err();
+
+    assert_eq!(
+        err.path,
+        dir.path().join("materials").join("brand-resin.toml")
+    );
+    assert_eq!(err.source.kind(), std::io::ErrorKind::NotFound);
+    assert!(err.to_string().contains("brand-resin.toml"), "{err}");
+}
+
+#[test]
+fn delete_of_a_missing_extension_reports_not_found_with_the_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = MaterialId::new("brand-resin").unwrap();
+
+    let err = delete_material_extension_from_library(dir.path(), &id).unwrap_err();
+
+    assert_eq!(
+        err.path,
+        dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("brand-resin.toml")
+    );
+    assert_eq!(err.source.kind(), std::io::ErrorKind::NotFound);
 }

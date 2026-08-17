@@ -3,19 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Printer and material profile types for the resin-printing pipeline.
+//! Printer and material profiles for resin 3D printing.
+//! - Strongly typed value objects
+//! - An associated TOML file format
+//! - Profiles resolution mechanisms
 //!
-//! This crate is the home of typed printer and material profile types
-//! (mirroring the on-disk TOML profile files), the loading API that
-//! reads them from explicit paths or from a configured library
-//! directory, and the resolver that composes a chosen
-//! (printer, material) pair plus per-print overrides into a
-//! ready-to-consume resolved configuration.
+//! [`PrinterProfile`] and [`MaterialProfile`] are used to represent
+//! the 2 profile types. [`loader`] reads them from a path or by id
+//! from a library directory (the user's library, see
+//! [`user_library_dir`], with a fallback to a bundled directory);
+//! [`listing`] enumerates the ids a library holds; [`writer`] saves
+//! and deletes profiles and preview images inside a library, laying
+//! the files out where the loaders find them again; [`package`] moves
+//! a selection of profiles between machines as a zip archive.
 //!
-//! Consumers (the slicer crate, the slicer CLI, the eventual GUI) take
-//! the resolved configuration and project it to their own input ports.
-//! This crate does not depend on the slicer; it owns the printer- and
-//! material-profile bounded context.
+//! [`resolve`] takes a [`PrinterProfile`], an [`EffectiveMaterial`]
+//! (a material composed with any extension the library holds for it)
+//! and [`SceneOverrides`] (per-print adjustments), and returns a
+//! [`ResolvedPrintConfig`]: the printer profile, the
+//! [`MaterialResolved`] values chosen for that pairing (layer height,
+//! normal and bottom exposure, bottom layer count, lift distance and
+//! speed, retract speed, scale compensation), one [`OverrideRecord`]
+//! per value naming its source, and any [`ResolveWarning`]s. This
+//! crate has no dependency on a slicer or on printer hardware.
 
 pub mod effective_material;
 pub mod image_asset_ref;
@@ -85,11 +95,13 @@ pub use resolver::{resolve, resolve_layer_height, snap_to_z_step};
 pub use scene_overrides::SceneOverrides;
 pub use value_source::ValueSource;
 pub use writer::{
-    SaveMaterialExtensionError, SaveMaterialExtensionErrorKind, SaveMaterialProfileError,
-    SaveMaterialProfileErrorKind, SavePrinterImageError, SavePrinterImageErrorKind,
-    SavePrinterProfileError, SavePrinterProfileErrorKind, save_material_extension_to_library,
-    save_material_profile_to_library, save_material_profile_to_path, save_printer_image_to_library,
-    save_printer_profile_to_library, save_printer_profile_to_path,
+    DeleteMaterialFileError, SaveMaterialExtensionError, SaveMaterialExtensionErrorKind,
+    SaveMaterialProfileError, SaveMaterialProfileErrorKind, SavePrinterImageError,
+    SavePrinterImageErrorKind, SavePrinterProfileError, SavePrinterProfileErrorKind,
+    delete_material_extension_from_library, delete_material_profile_from_library,
+    save_material_extension_to_library, save_material_profile_to_library,
+    save_material_profile_to_path, save_printer_image_to_library, save_printer_profile_to_library,
+    save_printer_profile_to_path,
 };
 
 #[cfg(test)]

@@ -17,9 +17,9 @@ use slint::{
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialProfile, load_material_extension_from_library,
-    load_material_profile_by_id, load_material_profile_from_library,
-    material_extension_path_in_library, material_profile_path_in_library, user_library_dir,
+    EffectiveMaterial, MaterialProfile, delete_material_extension_from_library,
+    delete_material_profile_from_library, load_material_extension_from_library,
+    load_material_profile_by_id, load_material_profile_from_library, user_library_dir,
 };
 
 use crate::aa_level::aa_level_from_combo_index;
@@ -1194,26 +1194,20 @@ fn spawn_delete_flow(
             eprintln!("cannot resolve the user profile library directory");
             return;
         };
-        let (path, description) = if is_extension {
-            (
-                material_extension_path_in_library(&user_lib, &id),
-                ctr!(
-                    "PreferencesPage",
-                    "Deleting the extension of {} removes every calibration pair it adds.",
-                    display_name,
-                )
-                .to_string(),
+        let description = if is_extension {
+            ctr!(
+                "PreferencesPage",
+                "Deleting the extension of {} removes every calibration pair it adds.",
+                display_name,
             )
+            .to_string()
         } else {
-            (
-                material_profile_path_in_library(&user_lib, &id),
-                ctr!(
-                    "PreferencesPage",
-                    "Deleting {} removes the custom profile file.",
-                    display_name,
-                )
-                .to_string(),
+            ctr!(
+                "PreferencesPage",
+                "Deleting {} removes the custom profile file.",
+                display_name,
             )
+            .to_string()
         };
         let delete_label = ctr!("PreferencesPage", "Delete").to_string();
         let result = rfd::AsyncMessageDialog::new()
@@ -1228,8 +1222,13 @@ fn spawn_delete_flow(
         if !overwrite_confirmed(&result, &delete_label) {
             return;
         }
-        if let Err(err) = std::fs::remove_file(&path) {
-            eprintln!("failed to delete {}: {err}", path.display());
+        let deleted = if is_extension {
+            delete_material_extension_from_library(&user_lib, &id)
+        } else {
+            delete_material_profile_from_library(&user_lib, &id)
+        };
+        if let Err(err) = deleted {
+            eprintln!("{err}");
             return;
         }
         refresh_catalog(&catalog_handle);

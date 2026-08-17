@@ -23,13 +23,18 @@
 //! [`save_printer_image_to_library`] copies a printer's preview image
 //! to `<library_dir>/images/<id>.<ext>` and returns the
 //! [`ImageAssetRef`] to store in the profile's `image_asset_path`.
+//!
+//! [`delete_material_profile_from_library`] and
+//! [`delete_material_extension_from_library`] remove one material
+//! file or one extension file by id. A missing file is reported as
+//! a `NotFound` I/O error.
 
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use sc_print_primitives::PrinterId;
+use sc_print_primitives::{MaterialId, PrinterId};
 
 use crate::image_asset_ref::ImageAssetRef;
 use crate::loader::{
@@ -410,4 +415,52 @@ fn annotate_inherited_section(doc: &mut toml_edit::DocumentMut, key: &str) {
             .decor_mut()
             .set_prefix(format!("{existing}{INHERITED_SECTION_COMMENT}\n"));
     }
+}
+
+/// Returned by the delete operations when the file at `path` could not
+/// be removed, including when it does not exist.
+#[derive(Debug)]
+pub struct DeleteMaterialFileError {
+    /// Names the file that was being removed
+    pub path: PathBuf,
+    /// Carries the underlying cause
+    pub source: io::Error,
+}
+
+impl fmt::Display for DeleteMaterialFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to delete {}: {}",
+            self.path.display(),
+            self.source,
+        )
+    }
+}
+
+impl std::error::Error for DeleteMaterialFileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Remove the full material profile `<library_dir>/materials/<id>.toml`.
+/// Leaves any extension of the same id in place.
+pub fn delete_material_profile_from_library(
+    library_dir: &Path,
+    id: &MaterialId,
+) -> Result<(), DeleteMaterialFileError> {
+    let path = material_profile_path_in_library(library_dir, id);
+    fs::remove_file(&path).map_err(|source| DeleteMaterialFileError { path, source })
+}
+
+/// Remove the material extension
+/// `<library_dir>/materials/extensions/<id>.toml`. Leaves the full
+/// profile of the same id in place.
+pub fn delete_material_extension_from_library(
+    library_dir: &Path,
+    id: &MaterialId,
+) -> Result<(), DeleteMaterialFileError> {
+    let path = material_extension_path_in_library(library_dir, id);
+    fs::remove_file(&path).map_err(|source| DeleteMaterialFileError { path, source })
 }

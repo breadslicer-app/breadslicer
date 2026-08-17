@@ -204,10 +204,7 @@ pub fn load_printer_profile_from_library(
     library_dir: &Path,
     id: &PrinterId,
 ) -> Result<PrinterProfile, LoadPrinterProfileError> {
-    let path = library_dir
-        .join(PRINTERS_SUBDIR)
-        .join(format!("{}.toml", id.as_str()));
-    load_printer_profile_from_path(&path)
+    load_printer_profile_from_path(&printer_profile_path_in_library(library_dir, id))
 }
 
 /// Load a material profile from a library directory by id. Resolves
@@ -419,9 +416,7 @@ pub fn load_printer_profile_by_id(
 
     let mut attempted = Vec::with_capacity(2);
     for base in [library_dir, assets_dir] {
-        let path = base
-            .join(PRINTERS_SUBDIR)
-            .join(format!("{}.toml", id.as_str()));
+        let path = printer_profile_path_in_library(base, id);
         match load_printer_profile_from_path(&path) {
             Ok(profile) => return Ok(profile),
             Err(err) => {
@@ -454,9 +449,7 @@ pub fn load_material_profile_by_id(
 
     let mut attempted = Vec::with_capacity(2);
     for base in [library_dir, assets_dir] {
-        let path = base
-            .join(MATERIALS_SUBDIR)
-            .join(format!("{}.toml", id.as_str()));
+        let path = material_profile_path_in_library(base, id);
         match load_material_profile_from_path(&path) {
             Ok(profile) => return Ok(profile),
             Err(err) => {
