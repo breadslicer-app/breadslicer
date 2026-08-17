@@ -91,22 +91,23 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
     }
 }
 
-/// The payload a save writes: the held project data when the
-/// document has any, otherwise a fresh snapshot of the app-wide
-/// default profiles. Either way, referenced profiles without a held
-/// embedded document get copies resolved from `roots`.
+/// The payload a save writes: the document's held project data, with
+/// a missing printer or resin filled from the app-wide default.
+/// Referenced profiles without a held embedded document get copies
+/// resolved from `roots`.
 pub(crate) fn payload_for_save(
     doc: &SceneDocument,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
     roots: &[PathBuf],
 ) -> ProjectPayload {
-    let mut payload = doc.project_payload().unwrap_or(ProjectPayload {
-        printer: default_printer,
-        resin: default_resin,
-        first_layer_height: None,
-        embedded: Vec::new(),
-    });
+    let held = doc.project_payload().unwrap_or_default();
+    let mut payload = ProjectPayload {
+        printer: held.printer.or(default_printer),
+        resin: held.resin.or(default_resin),
+        first_layer_height: held.first_layer_height,
+        embedded: held.embedded,
+    };
     complete_embedded_documents(&mut payload, roots);
     payload
 }
@@ -179,14 +180,10 @@ pub(crate) fn write_bundle(
 }
 
 /// The held slices to persist with the project, or `None` when the scene
-/// has no in-sync slice result to write. The printer and resin come from
-/// `payload`, which already carries the app-default fallback the panel
-/// shows and slicing runs on; reading `doc.selected_*` here instead would
-/// see `None` for a freshly loaded mesh and drop the slices even though
-/// they were sliced on that default. The current layer schedule is then
-/// re-resolved and the in-sync decision deferred to the document's write
-/// guard; a resolution failure (for example an uninstalled profile)
-/// conservatively persists nothing.
+/// has no in-sync slice result to write. Resolves the current layer
+/// schedule from `payload`'s printer and resin and defers the in-sync
+/// decision to the document's write guard; a missing profile or a
+/// resolution failure persists nothing.
 fn persist_slices(
     doc: &SceneDocument,
     payload: &ProjectPayload,
@@ -485,6 +482,43 @@ mod scene_save_tests {
             assert!(payload.embedded.is_empty());
         }
 
+        // For each of printer and resin, the panel and the slice run use
+        // the scene's own choice when there is one and the app-wide
+        // default otherwise. The saved payload must hold those same
+        // values.
+        #[test]
+        fn a_partial_selection_is_completed_from_the_globals() {
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            assert!(doc.set_selected_printer(Some(printer_id("picked-printer"))));
+            let payload = payload_for_save(
+                &doc,
+                Some(printer_id("global-printer")),
+                Some(material_id("global-resin")),
+                &[],
+            );
+            assert_eq!(payload.printer, Some(printer_id("picked-printer")));
+            assert_eq!(payload.resin, Some(material_id("global-resin")));
+            assert_eq!(payload.first_layer_height, None);
+        }
+
+        #[test]
+        fn a_first_layer_height_alone_still_records_both_globals() {
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), PathBuf::from("/tmp/widget.stl"));
+            let height = sc_print_primitives::PositiveFiniteMm::new(0.1).expect("valid length");
+            assert!(doc.set_selected_first_layer_height(Some(height)));
+            let payload = payload_for_save(
+                &doc,
+                Some(printer_id("global-printer")),
+                Some(material_id("global-resin")),
+                &[],
+            );
+            assert_eq!(payload.printer, Some(printer_id("global-printer")));
+            assert_eq!(payload.resin, Some(material_id("global-resin")));
+            assert_eq!(payload.first_layer_height, Some(height));
+        }
+
         #[test]
         fn referenced_profiles_get_embedded_from_the_roots() {
             let root = tempfile::tempdir().expect("temp library root");
@@ -739,6 +773,76 @@ mod scene_save_tests {
             assert!(
                 loaded.slices.is_some(),
                 "slices sliced on the default profile must survive the save"
+            );
+            assert!(loaded.slice_fingerprint.is_some());
+        }
+
+        #[test]
+        fn slices_persist_when_only_the_printer_was_picked() {
+            // The pick leaves the resin to the app default, which is what
+            // slicing ran on; the saved project must name both and keep
+            // the slices.
+            use crate::slice_projection::resolve_current_schedule;
+            use crate::slice_result::{SliceParams, SliceResult};
+            use sc_print_glue::slice_input_fingerprint;
+            use sc_print_primitives::AaLevel;
+            use sc_sl1cer::contour::{ContourLayer, ContourStack};
+
+            let dir = tempfile::tempdir().expect("temp dir");
+            let source = dir.path().join("widget.stl");
+            let target = dir.path().join("widget.3mf");
+
+            let printer = printer_id("elegoo-mars-5-goo");
+            let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
+
+            let doc = SceneDocument::new();
+            doc.install_graph(one_object_graph(), source);
+            assert!(doc.set_selected_printer(Some(printer.clone())));
+            let scene = doc
+                .with_scene(|s| s.graph().clone())
+                .expect("the scene is installed");
+
+            let schedule = resolve_current_schedule(&printer, &resin, None, &scene)
+                .expect("the bundled profiles resolve a schedule");
+            let token = slice_input_fingerprint(&scene, &schedule)
+                .expect("the scene has sliceable geometry")
+                .to_token();
+            let layers: Vec<ContourLayer> = (0..schedule.total_layers())
+                .map(|_| ContourLayer::new(0.05, vec![]))
+                .collect();
+            doc.set_slice_result(SliceResult {
+                merged: ContourStack::new_unchecked(layers),
+                schedule,
+                token,
+                params: SliceParams {
+                    printer: printer.clone(),
+                    resin: resin.clone(),
+                    first_layer_height: None,
+                    aa_level: AaLevel::Off,
+                    geometry: doc.scene_revision(),
+                },
+            });
+
+            save_project_to(
+                &doc,
+                &target,
+                Some(printer_id("global-printer")),
+                Some(resin.clone()),
+            )
+            .expect("the save succeeds");
+
+            let bytes = fs::read(&target).expect("the file exists");
+            let loaded = read_project(
+                &mut Cursor::new(bytes),
+                sc_project_formats::ProjectFileType::ThreeMf,
+            )
+            .expect("the saved project reads back");
+            let payload = loaded.payload.expect("the project carries a payload");
+            assert_eq!(payload.printer, Some(printer));
+            assert_eq!(payload.resin, Some(resin));
+            assert!(
+                loaded.slices.is_some(),
+                "slices sliced on the picked printer and default resin must survive the save"
             );
             assert!(loaded.slice_fingerprint.is_some());
         }
