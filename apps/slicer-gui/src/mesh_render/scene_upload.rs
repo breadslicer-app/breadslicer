@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+use std::fmt;
+
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
@@ -77,6 +79,42 @@ impl ObjectDraw {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeafBufferKind {
+    Vertex,
+    Index,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeafBufferExceedsDeviceLimit {
+    pub node_id: NodeId,
+    pub leaf_name: Option<String>,
+    pub buffer_kind: LeafBufferKind,
+    pub num_elements: usize,
+    pub num_bytes: u64,
+    pub max_buffer_size: u64,
+}
+
+impl fmt::Display for LeafBufferExceedsDeviceLimit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let what = match self.buffer_kind {
+            LeafBufferKind::Vertex => "vertices",
+            LeafBufferKind::Index => "triangles",
+        };
+        match &self.leaf_name {
+            Some(name) => write!(f, "Object '{name}' has more {what}")?,
+            None => write!(f, "An object has more {what}")?,
+        }
+        write!(
+            f,
+            " ({}) than this graphics device can hold in one buffer",
+            self.num_elements
+        )
+    }
+}
+
+impl std::error::Error for LeafBufferExceedsDeviceLimit {}
+
 /// GPU mirror of a `Scene`. Holds one [`ObjectDraw`] per leaf in
 /// pre-order traversal of the graph's roots, plus a uniform buffer of
 /// [`ModelEntry`] slots, padded to the device's
@@ -110,8 +148,7 @@ pub struct GpuScene {
 /// object's triangles count twice, once when its vertex/index vectors
 /// are flattened and once when its device buffers are created, so
 /// `total_triangles` is twice the scene's reachable triangle count
-/// and the final tick reaches it. Objects without geometry still tick
-/// with the count unchanged.
+/// and the final tick reaches it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UploadProgress {
     /// Triangles processed so far, summed across both passes.
@@ -155,6 +192,7 @@ impl GpuScene {
         let data = build_gpu_scene_data(graph, |triangles| {
             tick(&mut processed_triangles, triangles);
         })?;
+        check_leaf_buffers_fit(&data.objects, device.limits().max_buffer_size)?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -419,8 +457,44 @@ where
 /// can be unit-tested without a `wgpu::Device`.
 struct ObjectData {
     node_id: NodeId,
+    name: Option<String>,
     vertices: Vec<GpuVertex>,
     indices: Vec<u32>,
+}
+
+/// Refuses the first leaf (pre-order, vertex buffer before index buffer)
+/// whose buffer would exceed `max_buffer_size`. Both element sizes are
+/// multiples of wgpu's copy alignment, so the byte counts here are the
+/// sizes `create_buffer_init` will request.
+fn check_leaf_buffers_fit(
+    objects: &[ObjectData],
+    max_buffer_size: u64,
+) -> std::result::Result<(), LeafBufferExceedsDeviceLimit> {
+    for obj in objects {
+        let vertex_bytes = (obj.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
+        if vertex_bytes > max_buffer_size {
+            return Err(LeafBufferExceedsDeviceLimit {
+                node_id: obj.node_id,
+                leaf_name: obj.name.clone(),
+                buffer_kind: LeafBufferKind::Vertex,
+                num_elements: obj.vertices.len(),
+                num_bytes: vertex_bytes,
+                max_buffer_size,
+            });
+        }
+        let index_bytes = (obj.indices.len() * std::mem::size_of::<u32>()) as u64;
+        if index_bytes > max_buffer_size {
+            return Err(LeafBufferExceedsDeviceLimit {
+                node_id: obj.node_id,
+                leaf_name: obj.name.clone(),
+                buffer_kind: LeafBufferKind::Index,
+                num_elements: obj.indices.len() / 3,
+                num_bytes: index_bytes,
+                max_buffer_size,
+            });
+        }
+    }
+    Ok(())
 }
 
 struct SceneData {
@@ -440,6 +514,11 @@ fn build_gpu_scene_data(
     let mut objects: Vec<ObjectData> = Vec::new();
     for_each_leaf(graph, |node_id, _world_transform, mesh| {
         on_object_flattened(mesh.faces().len() as u64);
+        let name = graph
+            .node(node_id)
+            .and_then(|node| node.meta.as_ref())
+            .and_then(|meta| meta.name.clone())
+            .or_else(|| mesh.meta.as_ref().and_then(|meta| meta.name.clone()));
         if mesh.faces().is_empty() {
             // A leaf with no geometry contributes nothing to the
             // draw set, but we keep its slot in the model buffer so
@@ -449,6 +528,7 @@ fn build_gpu_scene_data(
             // drawn as a no-op (index_count = 0).
             objects.push(ObjectData {
                 node_id,
+                name,
                 vertices: Vec::new(),
                 indices: Vec::new(),
             });
@@ -472,6 +552,7 @@ fn build_gpu_scene_data(
 
         objects.push(ObjectData {
             node_id,
+            name,
             vertices,
             indices,
         });
@@ -1299,5 +1380,160 @@ mod renderable_leaf_count_tests {
         graph.add_root(leaf).expect("leaf root");
         graph.remove_leaf(leaf).expect("remove the only root leaf");
         assert_eq!(renderable_leaf_count(&graph).expect("clean walk"), 0);
+    }
+}
+
+#[cfg(test)]
+mod leaf_buffer_limit_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use sc_mesh_core::MeshMetadata;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::scene::node::SceneMetadata;
+
+    /// Small enough that a mesh of a few dozen faces exceeds it.
+    const LIMIT: u64 = 1024;
+
+    /// A mesh of `vertex_count` vertices and `face_count` faces on the
+    /// first 3 vertices: `12 * vertex_count` vertex bytes, `12 *
+    /// face_count` index bytes.
+    fn mesh(vertex_count: usize, face_count: usize, name: Option<&str>) -> IndexedMesh {
+        IndexedMesh {
+            meta: name.map(|n| MeshMetadata {
+                name: Some(n.to_string()),
+                header_comment: None,
+            }),
+            vertices: (0..vertex_count)
+                .map(|i| Vertex::new([i as f32, 0.0, 0.0]))
+                .collect(),
+            faces: (0..face_count)
+                .map(|_| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]))
+                .collect(),
+        }
+    }
+
+    /// One root leaf per mesh, in order; returns the graph and the leaf ids.
+    fn graph_of(leaves: Vec<(IndexedMesh, Option<&str>)>) -> (Scene, Vec<NodeId>) {
+        let mut g = Scene::new();
+        let mut ids = Vec::new();
+        for (m, node_name) in leaves {
+            let meta = node_name.map(|n| SceneMetadata {
+                name: Some(n.to_string()),
+                comment: None,
+            });
+            let leaf = g
+                .add_leaf(meta, Transform3D::Identity, LeafPayload::Mesh(Arc::new(m)))
+                .expect("add leaf");
+            g.add_root(leaf).expect("leaf root");
+            ids.push(leaf);
+        }
+        (g, ids)
+    }
+
+    fn check(graph: &Scene) -> std::result::Result<(), LeafBufferExceedsDeviceLimit> {
+        let data = build_gpu_scene_data(graph, |_| {}).expect("flatten");
+        check_leaf_buffers_fit(&data.objects, LIMIT)
+    }
+
+    #[test]
+    fn no_objects_fit_trivially() {
+        assert_eq!(check_leaf_buffers_fit(&[], LIMIT), Ok(()));
+    }
+
+    #[test]
+    fn a_leaf_at_the_limit_fits() {
+        // 85 faces: 1020 index bytes.
+        let (graph, _) = graph_of(vec![(mesh(3, 85, None), None)]);
+        assert_eq!(check(&graph), Ok(()));
+    }
+
+    #[test]
+    fn a_leaf_one_face_over_the_limit_is_refused_by_its_index_buffer() {
+        let (graph, ids) = graph_of(vec![(mesh(3, 86, None), None)]);
+        assert_eq!(
+            check(&graph),
+            Err(LeafBufferExceedsDeviceLimit {
+                node_id: ids[0],
+                leaf_name: None,
+                buffer_kind: LeafBufferKind::Index,
+                num_elements: 86,
+                num_bytes: 1032,
+                max_buffer_size: LIMIT,
+            })
+        );
+    }
+
+    #[test]
+    fn a_leaf_with_too_many_vertices_is_refused_by_its_vertex_buffer() {
+        let (graph, ids) = graph_of(vec![(mesh(86, 1, None), None)]);
+        assert_eq!(
+            check(&graph),
+            Err(LeafBufferExceedsDeviceLimit {
+                node_id: ids[0],
+                leaf_name: None,
+                buffer_kind: LeafBufferKind::Vertex,
+                num_elements: 86,
+                num_bytes: 1032,
+                max_buffer_size: LIMIT,
+            })
+        );
+    }
+
+    #[test]
+    fn the_vertex_buffer_is_reported_when_both_buffers_are_over() {
+        let (graph, _) = graph_of(vec![(mesh(86, 86, None), None)]);
+        assert_eq!(
+            check(&graph).unwrap_err().buffer_kind,
+            LeafBufferKind::Vertex
+        );
+    }
+
+    #[test]
+    fn the_first_offending_leaf_in_pre_order_is_reported() {
+        let (graph, ids) = graph_of(vec![
+            (mesh(3, 10, None), None),
+            (mesh(3, 86, None), None),
+            (mesh(3, 90, None), None),
+        ]);
+        assert_eq!(check(&graph).unwrap_err().node_id, ids[1]);
+    }
+
+    #[test]
+    fn a_refusal_names_the_node_when_it_has_a_name() {
+        let (graph, _) = graph_of(vec![(mesh(3, 86, Some("mesh-name")), Some("hull"))]);
+        let err = check(&graph).unwrap_err();
+        assert_eq!(err.leaf_name.as_deref(), Some("hull"));
+        assert_eq!(
+            err.to_string(),
+            "Object 'hull' has more triangles (86) than this graphics device can hold in one buffer"
+        );
+    }
+
+    #[test]
+    fn a_refusal_falls_back_to_the_mesh_name() {
+        let (graph, _) = graph_of(vec![(mesh(3, 86, Some("part")), None)]);
+        assert_eq!(
+            check(&graph).unwrap_err().leaf_name.as_deref(),
+            Some("part")
+        );
+    }
+
+    #[test]
+    fn an_unnamed_leaf_is_reported_as_an_object() {
+        let (graph, _) = graph_of(vec![(mesh(3, 86, None), None)]);
+        assert_eq!(
+            check(&graph).unwrap_err().to_string(),
+            "An object has more triangles (86) than this graphics device can hold in one buffer"
+        );
+    }
+
+    #[test]
+    fn a_vertex_refusal_speaks_of_vertices() {
+        let (graph, _) = graph_of(vec![(mesh(86, 1, None), Some("shell"))]);
+        assert_eq!(
+            check(&graph).unwrap_err().to_string(),
+            "Object 'shell' has more vertices (86) than this graphics device can hold in one buffer"
+        );
     }
 }

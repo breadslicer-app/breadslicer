@@ -1134,21 +1134,29 @@ mod gpu_integration_tests {
     /// `render` without extra boilerplate.
     const TEST_BV: BuildVolume = HARDCODED_DEFAULT_BUILD_VOLUME;
 
-    /// Returns a clone of the process-wide wgpu (Device, Queue) pair,
-    /// built lazily on first call with the default-limits profile
-    /// Slint requests. Returns `None` if no adapter is available, the
-    /// caller soft-skips so CI without a GPU isn't blocked.
+    /// `max_buffer_size` of the small-buffer test device.
+    const SMALL_BUFFER_LIMIT: u64 = 1024;
+
+    #[derive(Clone)]
+    struct TestDevices {
+        default_limits: (wgpu::Device, wgpu::Queue),
+        small_buffers: (wgpu::Device, wgpu::Queue),
+    }
+
+    /// Builds both test devices once per process, on one adapter, one
+    /// request after the other. Returns `None` if no adapter is
+    /// available, the caller soft-skips so CI without a GPU isn't
+    /// blocked.
     ///
-    /// One shared Device across every GPU test, rather than one per
+    /// One shared adapter across every GPU test, rather than one per
     /// test: concurrent `wgpu::Instance::new` plus `request_adapter`
     /// against the same Vulkan ICD raced and crashed RADV reliably at
     /// `--test-threads=2`, intermittently at higher parallelism. wgpu's
-    /// Device and Queue are `Send + Sync` and `Arc`-shaped, so this
-    /// clone is cheap and concurrent test access is fine.
-    fn shared_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-        static DEVICE: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
-            std::sync::OnceLock::new();
-        DEVICE
+    /// Device and Queue are `Send + Sync` and `Arc`-shaped, so cloning
+    /// them out is cheap and concurrent test access is fine.
+    fn shared_test_devices() -> Option<TestDevices> {
+        static DEVICES: std::sync::OnceLock<Option<TestDevices>> = std::sync::OnceLock::new();
+        DEVICES
             .get_or_init(|| {
                 let instance =
                     wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -1156,24 +1164,44 @@ mod gpu_integration_tests {
                     instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
                 )
                 .ok()?;
-                let (device, queue) =
+                let request = |label: &'static str, required_limits: wgpu::Limits| {
                     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                        label: Some("mesh-viewer test device"),
-                        // Default-limits matches what Slint asks for. If
-                        // a binding we declare exceeds these limits,
-                        // `Renderer::new` panics in
-                        // `create_bind_group_layout`; that's the
-                        // regression these tests catch.
+                        label: Some(label),
                         required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::default(),
+                        required_limits,
                         memory_hints: wgpu::MemoryHints::default(),
                         experimental_features: wgpu::ExperimentalFeatures::default(),
                         trace: wgpu::Trace::Off,
                     }))
-                    .ok()?;
-                Some((device, queue))
+                    .ok()
+                };
+                // Default limits match what Slint asks for. If a binding
+                // we declare exceeds these limits, `Renderer::new` panics
+                // in `create_bind_group_layout`.
+                let default_limits = request("mesh-viewer test device", wgpu::Limits::default())?;
+                let small_buffers = request(
+                    "mesh-viewer small-buffer test device",
+                    wgpu::Limits {
+                        max_buffer_size: SMALL_BUFFER_LIMIT,
+                        ..wgpu::Limits::default()
+                    },
+                )?;
+                Some(TestDevices {
+                    default_limits,
+                    small_buffers,
+                })
             })
             .clone()
+    }
+
+    /// The default-limits test device.
+    fn shared_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        shared_test_devices().map(|d| d.default_limits)
+    }
+
+    /// The test device whose `max_buffer_size` is [`SMALL_BUFFER_LIMIT`].
+    fn shared_small_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        shared_test_devices().map(|d| d.small_buffers)
     }
 
     /// First reachable leaf's [`NodeId`] in pre-order traversal. The
@@ -1272,6 +1300,61 @@ mod gpu_integration_tests {
             )
             .collect();
         assert_eq!(ticks, expected);
+    }
+
+    /// One leaf whose mesh has `face_count` faces over 3 shared
+    /// vertices: an index buffer of `12 * face_count` bytes next to a
+    /// 36-byte vertex buffer.
+    fn graph_with_one_leaf_of_faces(face_count: usize) -> Scene {
+        let mesh = IndexedMesh {
+            meta: None,
+            vertices: vec![
+                Vertex::new([0.0, 0.0, 0.0]),
+                Vertex::new([1.0, 0.0, 0.0]),
+                Vertex::new([0.0, 1.0, 0.0]),
+            ],
+            faces: (0..face_count)
+                .map(|_| IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 2]))
+                .collect(),
+        };
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, mesh, Transform3D::Identity);
+        g
+    }
+
+    /// A leaf whose index buffer is over the device's `max_buffer_size`
+    /// is refused with an error, not a panic.
+    #[test]
+    fn gpu_scene_build_refuses_a_leaf_above_the_device_buffer_limit() {
+        let Some((device, _queue)) = shared_small_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        // 100 faces: 1200 index bytes against a 1024-byte limit.
+        let graph = graph_with_one_leaf_of_faces(100);
+        let err = GpuScene::build(&device, DeviceToken::next(), &graph)
+            .err()
+            .expect("a leaf above the limit is refused");
+        let refusal = err
+            .downcast_ref::<scene_upload::LeafBufferExceedsDeviceLimit>()
+            .expect("the refusal is typed");
+        assert_eq!(refusal.buffer_kind, scene_upload::LeafBufferKind::Index);
+        assert_eq!(refusal.num_elements, 100);
+        assert_eq!(refusal.num_bytes, 1200);
+        assert_eq!(refusal.max_buffer_size, SMALL_BUFFER_LIMIT);
+    }
+
+    /// A leaf whose index buffer is exactly at the limit builds.
+    #[test]
+    fn gpu_scene_build_accepts_a_leaf_at_the_device_buffer_limit() {
+        let Some((device, _queue)) = shared_small_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        // 85 faces: 1020 index bytes, padded to 1020 (already 4-aligned).
+        let graph = graph_with_one_leaf_of_faces(85);
+        GpuScene::build(&device, DeviceToken::next(), &graph)
+            .expect("a leaf at the limit should build");
     }
 
     /// Full end-to-end render: build the renderer, install a scene
