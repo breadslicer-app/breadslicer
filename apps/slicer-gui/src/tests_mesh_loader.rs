@@ -33,7 +33,7 @@ use crate::graphics_status::GraphicsUnavailable;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
     LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch,
-    ensure_measured_size_within, panic_message, parse_source, place_on_plate,
+    ensure_measured_size_within, guard_worker, panic_message, parse_source, place_on_plate,
     start_load_with_ticket,
 };
 use crate::scene_loader::SceneLoader;
@@ -444,4 +444,20 @@ fn measured_size_over_the_cap_is_refused() {
             limit_bytes: 1024,
         }
     ));
+}
+
+// --- guard_worker -----------------------------------------------------
+
+#[test]
+fn a_worker_panic_becomes_an_error_carrying_the_message() {
+    let err = guard_worker::<()>(|| panic!("boom")).expect_err("a panic must become an error");
+    assert_eq!(err.to_string(), "The mesh loader panicked: boom");
+}
+
+#[test]
+fn a_worker_result_passes_through_unchanged() {
+    assert_eq!(guard_worker(|| Ok(3)).expect("ok passes through"), 3);
+    let err = guard_worker::<()>(|| Err(anyhow::anyhow!("plain failure")))
+        .expect_err("err passes through");
+    assert_eq!(err.to_string(), "plain failure");
 }

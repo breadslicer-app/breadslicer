@@ -16,7 +16,6 @@ use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use slint::wgpu_29::wgpu;
-use wgpu::util::DeviceExt;
 
 use crate::build_volume::BuildVolume;
 
@@ -115,6 +114,107 @@ impl fmt::Display for LeafBufferExceedsDeviceLimit {
 
 impl std::error::Error for LeafBufferExceedsDeviceLimit {}
 
+#[derive(Debug)]
+pub struct DeviceRefusedBuffer {
+    /// What the buffer holds, in the user's terms ("index buffer of
+    /// object 'hull'", "per-object transform table").
+    pub what: String,
+    pub num_bytes: u64,
+    pub source: wgpu::Error,
+}
+
+impl fmt::Display for DeviceRefusedBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "The graphics device refused the {} ({} bytes)",
+            self.what, self.num_bytes
+        )
+    }
+}
+
+impl std::error::Error for DeviceRefusedBuffer {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Like `Device::create_buffer`, but a refusal comes back as `Err`
+/// instead of going to the device's uncaptured-error handler.
+pub fn create_buffer_reporting(
+    device: &wgpu::Device,
+    desc: &wgpu::BufferDescriptor<'_>,
+) -> std::result::Result<wgpu::Buffer, wgpu::Error> {
+    let scopes = [
+        device.push_error_scope(wgpu::ErrorFilter::OutOfMemory),
+        device.push_error_scope(wgpu::ErrorFilter::Validation),
+        device.push_error_scope(wgpu::ErrorFilter::Internal),
+    ];
+    let buffer = device.create_buffer(desc);
+    // Innermost first; a native pop resolves immediately.
+    let mut first_error = None;
+    for scope in scopes.into_iter().rev() {
+        if let Some(err) = pollster::block_on(scope.pop())
+            && first_error.is_none()
+        {
+            first_error = Some(err);
+        }
+    }
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(buffer),
+    }
+}
+
+fn describe_leaf_buffer(buffer: &str, leaf_name: Option<&str>) -> String {
+    match leaf_name {
+        Some(name) => format!("{buffer} of object '{name}'"),
+        None => format!("{buffer} of an object"),
+    }
+}
+
+/// Creates a buffer holding `contents`, reporting a refusal instead of
+/// panicking. Empty contents give an empty, unmapped buffer.
+fn upload_buffer(
+    device: &wgpu::Device,
+    label: &'static str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+    what: impl FnOnce() -> String,
+) -> std::result::Result<wgpu::Buffer, DeviceRefusedBuffer> {
+    let unpadded = contents.len() as u64;
+    // wgpu requires mapped-at-creation sizes to be a non-zero multiple
+    // of COPY_BUFFER_ALIGNMENT.
+    let align_mask = wgpu::COPY_BUFFER_ALIGNMENT - 1;
+    let size = if contents.is_empty() {
+        0
+    } else {
+        ((unpadded + align_mask) & !align_mask).max(wgpu::COPY_BUFFER_ALIGNMENT)
+    };
+    let buffer = create_buffer_reporting(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage,
+            mapped_at_creation: !contents.is_empty(),
+        },
+    )
+    .map_err(|source| DeviceRefusedBuffer {
+        what: what(),
+        num_bytes: size,
+        source,
+    })?;
+    if !contents.is_empty() {
+        buffer
+            .get_mapped_range_mut(..)
+            .slice(..contents.len())
+            .copy_from_slice(contents);
+        buffer.unmap();
+    }
+    Ok(buffer)
+}
+
 /// GPU mirror of a `Scene`. Holds one [`ObjectDraw`] per leaf in
 /// pre-order traversal of the graph's roots, plus a uniform buffer of
 /// [`ModelEntry`] slots, padded to the device's
@@ -195,16 +295,20 @@ impl GpuScene {
         check_leaf_buffers_fit(&data.objects, device.limits().max_buffer_size)?;
         let mut objects = Vec::with_capacity(data.objects.len());
         for obj in &data.objects {
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer object vertex buffer"),
-                contents: bytemuck::cast_slice(&obj.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer object index buffer"),
-                contents: bytemuck::cast_slice(&obj.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+            let vertex_buffer = upload_buffer(
+                device,
+                "mesh-viewer object vertex buffer",
+                bytemuck::cast_slice(&obj.vertices),
+                wgpu::BufferUsages::VERTEX,
+                || describe_leaf_buffer("vertex buffer", obj.name.as_deref()),
+            )?;
+            let index_buffer = upload_buffer(
+                device,
+                "mesh-viewer object index buffer",
+                bytemuck::cast_slice(&obj.indices),
+                wgpu::BufferUsages::INDEX,
+                || describe_leaf_buffer("index buffer", obj.name.as_deref()),
+            )?;
             objects.push(ObjectDraw {
                 node_id: obj.node_id,
                 vertex_buffer,
@@ -217,14 +321,23 @@ impl GpuScene {
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let model_stride = align_up(MODEL_ENTRY_SIZE, alignment);
 
-        let model_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer model uniform"),
-            // The bind group requires a non-zero binding size; we already
-            // bail above if the scene has no objects.
-            size: model_stride * objects.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // The bind group requires a non-zero binding size; we already
+        // bail above if the scene has no objects.
+        let model_size = model_stride * objects.len() as u64;
+        let model_buffer = create_buffer_reporting(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("mesh-viewer model uniform"),
+                size: model_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        )
+        .map_err(|source| DeviceRefusedBuffer {
+            what: "per-object transform table".to_string(),
+            num_bytes: model_size,
+            source,
+        })?;
 
         Ok(Self {
             objects,
@@ -465,7 +578,7 @@ struct ObjectData {
 /// Refuses the first leaf (pre-order, vertex buffer before index buffer)
 /// whose buffer would exceed `max_buffer_size`. Both element sizes are
 /// multiples of wgpu's copy alignment, so the byte counts here are the
-/// sizes `create_buffer_init` will request.
+/// sizes that will be requested.
 fn check_leaf_buffers_fit(
     objects: &[ObjectData],
     max_buffer_size: u64,

@@ -293,22 +293,8 @@ pub(crate) fn ensure_measured_size_within(total_bytes: u64, cap: u64) -> Result<
 
 /// Spawns a worker thread that parses the file at `path`, uploads its
 /// vertex+index buffers to `device`, and deposits the outcome via
-/// `ticket`. Doing both on the worker keeps the UI thread free of the
-/// flatten + `create_buffer_init` hitch that a large mesh otherwise
-/// costs when handled inside `handle_before_rendering`.
-///
-/// `AssertUnwindSafe` around the parser call is sound because
-/// `parse_source` returns an owned `Result` (lifted into
-/// `anyhow::Error` here at the worker boundary), so a mid-parse panic
-/// drops any partial state on the stack. A panic elsewhere in the
-/// worker (post-parse, pre-deposit) unwinds out of the thread;
-/// `ticket` drops on the worker, its `Drop` decrements inflight and
-/// schedules `loading = false` through the event loop, so the UI
-/// recovers.
-///
-/// If the parsers are ever changed to return a type borrowing from a
-/// memory-mapped region, revisit the `AssertUnwindSafe` claim: it
-/// would then hide potential UB.
+/// `ticket`. A panic anywhere in the worker is deposited as an error
+/// (via the ticket), like any other load failure.
 pub(crate) fn spawn_load(
     ticket: LoadTicket,
     path: PathBuf,
@@ -318,20 +304,7 @@ pub(crate) fn spawn_load(
     sink: LoadProgressSink,
 ) {
     std::thread::spawn(move || {
-        // `sink` is also fine under `AssertUnwindSafe`: it is a
-        // monotonic atomic counter, so a panic mid-parse leaves at
-        // worst a stale value that the next dispatch's reset clears.
-        let parsed: anyhow::Result<ParsedSource> =
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                parse_source(&path, &sink)
-            })) {
-                Ok(r) => r,
-                Err(payload) => {
-                    let msg = panic_message(&payload);
-                    Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
-                }
-            };
-        let result = parsed.and_then(|source| {
+        let result = guard_worker(|| {
             let ParsedSource {
                 mut graph,
                 warnings,
@@ -339,7 +312,7 @@ pub(crate) fn spawn_load(
                 project_warnings,
                 profile_warnings,
                 reloaded_slices,
-            } = source;
+            } = parse_source(&path, &sink)?;
             // Drop the parsed graph onto the build plate before the GPU
             // upload and cache priming run on it, so both observe the
             // placed world coordinates. A project's placement is part
@@ -383,6 +356,18 @@ pub(crate) fn spawn_load(
         });
         ticket.deposit(path, result);
     });
+}
+
+/// Runs `body`, turning a panic into an error that carries the panic
+/// message.
+pub(crate) fn guard_worker<T>(body: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
+        Ok(result) => result,
+        Err(payload) => {
+            let msg = panic_message(&payload);
+            Err(anyhow::anyhow!("The mesh loader panicked: {msg}"))
+        }
+    }
 }
 
 pub(crate) fn panic_message(payload: &Box<dyn Any + Send>) -> String {

@@ -136,6 +136,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             trace: wgpu::Trace::Off,
         },
     )?;
+    mesh_render::install_device_error_logger(&device);
     // A skipped adapter means the session is running on hardware the
     // ordering policy ranks below what the machine carries. That can
     // be a real refusal (unsupported limits) or a transient driver

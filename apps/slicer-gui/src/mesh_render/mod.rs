@@ -117,6 +117,14 @@ impl DeviceToken {
     }
 }
 
+/// Logs to stderr every uncaught wgpu error on `device`.
+/// Without this, wgpu's default handler panics on them.
+pub fn install_device_error_logger(device: &wgpu::Device) {
+    device.on_uncaptured_error(std::sync::Arc::new(|err: wgpu::Error| {
+        eprintln!("wgpu error (not fatal): {err}");
+    }));
+}
+
 /// GPU device pairing plus the identity token used to detect a
 /// cross-device install. Grouped so the [`Renderer`] struct does not
 /// expose three loose fields whose lifetime is tied together (the
@@ -250,21 +258,19 @@ impl Renderer {
         self.scene.as_ref().map(|s| s.gpu.aabb())
     }
 
-    /// UI-thread upload path. Used only on `RenderingTeardown` →
-    /// `RenderingSetup` recovery, where the new device is local to this
-    /// `Renderer` and a worker-built `GpuScene` from the previous device
-    /// would be unusable. New scene loads go through the worker via
-    /// [`GpuScene::build`] + [`Renderer::install_scene`] instead.
-    ///
-    /// A graph with no reachable leaves (every object deleted) has
-    /// nothing to mirror: a `GpuScene` for it would carry a model
-    /// uniform buffer of zero slots, and the bind group's fixed
-    /// `MODEL_ENTRY_SIZE` window into it would fail validation. Such a
-    /// graph drops the installed scene instead, which leaves [`render`]
-    /// drawing the plate alone.
+    /// Replaces the renderer's scene with one built from `graph`,
+    /// blocking the caller for the whole build. Afterwards the renderer
+    /// holds the new scene on `Ok`, and no scene at all on `Err`. When
+    /// `graph` has no renderable leaves ([`render`] then draws the plate
+    /// alone).
     ///
     /// [`render`]: Self::render
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
+        // Released before the build so the old and the new scene never
+        // occupy device memory at the same time.
+        self.scene = None;
+        // An empty model uniform buffer would fail bind-group
+        // validation, so a leafless graph gets no scene at all.
         if renderable_leaf_count(graph)? == 0 {
             self.clear_scene();
             return Ok(());
@@ -1393,6 +1399,145 @@ mod gpu_integration_tests {
             .expect("render should produce a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
+
+        // A second upload replaces the held scene and renders again.
+        let graph2 =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 7.0, 0.0]));
+        renderer
+            .upload_scene(&graph2)
+            .expect("a second upload_scene under default limits");
+        let bounds2 = renderer
+            .scene_bounds()
+            .expect("scene bounds follow the new scene");
+        assert_ne!(bounds2, bounds);
+        renderer
+            .render(
+                Some(SceneRender {
+                    graph: &graph2,
+                    selection: None,
+                    gizmo: None,
+                    clip_z: None,
+                }),
+                TEST_BV,
+                &camera,
+                64,
+                64,
+            )
+            .expect("render after the second upload should produce a texture");
+    }
+
+    /// A buffer the device refuses comes back as `Err`, with the wgpu
+    /// error, instead of a panic.
+    #[test]
+    fn create_buffer_reporting_returns_the_devices_refusal_without_panicking() {
+        let Some((device, _queue)) = shared_small_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let err = scene_upload::create_buffer_reporting(
+            &device,
+            &wgpu::BufferDescriptor {
+                label: Some("over the small limit"),
+                size: SMALL_BUFFER_LIMIT + 8,
+                usage: wgpu::BufferUsages::INDEX,
+                mapped_at_creation: false,
+            },
+        )
+        .expect_err("a buffer above max_buffer_size is refused");
+        assert!(matches!(err, wgpu::Error::Validation { .. }));
+        assert!(err.to_string().contains("maximum buffer size"), "{err}");
+    }
+
+    /// Within the limit the helper hands back a buffer that can be
+    /// mapped, written and unmapped like any other.
+    #[test]
+    fn create_buffer_reporting_yields_a_usable_buffer_within_the_limit() {
+        let Some((device, _queue)) = shared_small_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let buffer = scene_upload::create_buffer_reporting(
+            &device,
+            &wgpu::BufferDescriptor {
+                label: Some("at the small limit"),
+                size: SMALL_BUFFER_LIMIT,
+                usage: wgpu::BufferUsages::INDEX,
+                mapped_at_creation: true,
+            },
+        )
+        .expect("a buffer at max_buffer_size is accepted");
+        buffer
+            .get_mapped_range_mut(..)
+            .copy_from_slice(&[7u8; SMALL_BUFFER_LIMIT as usize]);
+        buffer.unmap();
+        assert_eq!(buffer.size(), SMALL_BUFFER_LIMIT);
+    }
+
+    /// With the error logger installed, a device error nothing scopes
+    /// is logged; the calling thread survives it.
+    #[test]
+    fn after_the_error_logger_is_installed_an_unscoped_device_error_no_longer_panics() {
+        let Some((device, _queue)) = shared_small_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        install_device_error_logger(&device);
+        let worker = std::thread::spawn(move || {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("unscoped, over the small limit"),
+                size: SMALL_BUFFER_LIMIT + 8,
+                usage: wgpu::BufferUsages::INDEX,
+                mapped_at_creation: false,
+            });
+            buffer.size()
+        });
+        assert_eq!(
+            worker
+                .join()
+                .expect("the device error must not end the thread"),
+            SMALL_BUFFER_LIMIT + 8
+        );
+    }
+
+    /// Error scopes are per thread: 2 threads scoping refused
+    /// allocations at the same time each get their own refusal back
+    /// and neither trips wgpu's scope-order check.
+    #[test]
+    fn concurrent_scoped_allocations_on_2_threads_each_get_their_own_refusal() {
+        let Some((device, _queue)) = shared_small_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let device = device.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    (0..500).all(|_| {
+                        scene_upload::create_buffer_reporting(
+                            &device,
+                            &wgpu::BufferDescriptor {
+                                label: Some("concurrently over the small limit"),
+                                size: SMALL_BUFFER_LIMIT + 8,
+                                usage: wgpu::BufferUsages::INDEX,
+                                mapped_at_creation: false,
+                            },
+                        )
+                        .is_err()
+                    })
+                })
+            })
+            .collect();
+        for worker in workers {
+            assert!(
+                worker
+                    .join()
+                    .expect("scoped allocation must not panic on a worker thread"),
+                "every refused allocation must come back as Err"
+            );
+        }
     }
 
     /// The slice-view cap renders without crashing: once `update_cap`

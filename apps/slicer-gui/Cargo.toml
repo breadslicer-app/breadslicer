@@ -45,11 +45,8 @@ slint = { version = "1.17.0", default-features = false, features = [
     "unstable-wgpu-29",
     "unstable-winit-030",
 ] }
-# Direct dependency only to enable wgpu's `wgsl` feature on the same
-# crate Slint re-exports as `slint::wgpu_29::wgpu`. Slint pulls wgpu
-# with default features off, which drops the `ShaderSource::Wgsl`
-# variant; Keep the major version locked to Slint's `unstable-wgpu-29`.
-wgpu = { version = "29", default-features = false, features = ["wgsl"] }
+# Note: keep wgpu version in sync of that used by Sling.
+wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"
