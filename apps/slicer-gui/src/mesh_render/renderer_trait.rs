@@ -48,7 +48,9 @@ pub(crate) trait MeshRenderer {
     fn update_cap(&mut self, key: Option<u64>, build: &mut dyn FnMut() -> Option<CapRaster>);
 
     /// Run the per-frame render pass. Returns `Ok(None)` when the
-    /// viewport is zero-sized.
+    /// viewport is zero-sized. The texture may be smaller than
+    /// `(width, height)` when that exceeds the device's texture
+    /// ceiling; the aspect is kept.
     fn render(
         &mut self,
         scene_render: Option<SceneRender<'_>>,

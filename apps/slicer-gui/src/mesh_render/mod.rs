@@ -25,6 +25,7 @@ mod gizmo_entries;
 #[cfg(test)]
 pub(crate) mod mock;
 mod pipelines;
+mod render_size;
 mod renderer_trait;
 pub mod scene_upload;
 mod targets;
@@ -42,6 +43,7 @@ use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
+use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
 pub(crate) use scene_upload::GpuScene;
 use scene_upload::{
@@ -137,6 +139,8 @@ struct RendererCore {
     device: wgpu::Device,
     queue: wgpu::Queue,
     device_token: DeviceToken,
+    /// The device's `max_texture_dimension_2d`.
+    max_texture_side: u32,
 }
 
 /// Per-pipeline GPU state. The mesh / outline / gizmo / plate
@@ -215,12 +219,14 @@ impl Renderer {
         let gizmo = GizmoPipeline::create(&device, &gizmo_buffers);
         let plate = PlatePipeline::create(&device, &mesh);
         let cap = CapPipeline::create(&device, &mesh);
+        let max_texture_side = device.limits().max_texture_dimension_2d;
 
         Ok(Self {
             core: RendererCore {
                 device,
                 queue,
                 device_token,
+                max_texture_side,
             },
             pipelines: Pipelines {
                 mesh,
@@ -472,7 +478,9 @@ impl Renderer {
     }
 
     /// Draws one frame into a texture Slint can show. Returns `Ok(None)`
-    /// for a zero-sized viewport.
+    /// for a zero-sized viewport. A size over the device's texture
+    /// ceiling is drawn at the ceiling with the aspect kept, so the
+    /// texture can come back smaller than asked.
     pub fn render(
         &mut self,
         scene_render: Option<SceneRender<'_>>,
@@ -484,6 +492,7 @@ impl Renderer {
         if width == 0 || height == 0 {
             return Ok(None);
         }
+        let (width, height) = clamp_render_size(width, height, self.core.max_texture_side);
 
         let (graph, selection, gizmo, clip_z) = match scene_render {
             Some(sr) => (Some(sr.graph), sr.selection, sr.gizmo, sr.clip_z),
@@ -1158,15 +1167,18 @@ mod gpu_integration_tests {
     /// `max_buffer_size` of the tiny-buffer test device: below every
     /// static buffer the renderer uploads, so each of them is refused.
     const TINY_BUFFER_LIMIT: u64 = 64;
+    /// `max_texture_dimension_2d` of the small-texture test device.
+    const SMALL_TEXTURE_LIMIT: u32 = 256;
 
     #[derive(Clone)]
     struct TestDevices {
         default_limits: (wgpu::Device, wgpu::Queue),
         small_buffers: (wgpu::Device, wgpu::Queue),
         tiny_buffers: (wgpu::Device, wgpu::Queue),
+        small_textures: (wgpu::Device, wgpu::Queue),
     }
 
-    /// Builds both test devices once per process, on one adapter, one
+    /// Builds the test devices once per process, on one adapter, one
     /// request after the other. Returns `None` if no adapter is
     /// available, the caller soft-skips so CI without a GPU isn't
     /// blocked.
@@ -1214,10 +1226,18 @@ mod gpu_integration_tests {
                         ..wgpu::Limits::default()
                     },
                 )?;
+                let small_textures = request(
+                    "mesh-viewer small-texture test device",
+                    wgpu::Limits {
+                        max_texture_dimension_2d: SMALL_TEXTURE_LIMIT,
+                        ..wgpu::Limits::default()
+                    },
+                )?;
                 Some(TestDevices {
                     default_limits,
                     small_buffers,
                     tiny_buffers,
+                    small_textures,
                 })
             })
             .clone()
@@ -1236,6 +1256,12 @@ mod gpu_integration_tests {
     /// The test device whose `max_buffer_size` is [`TINY_BUFFER_LIMIT`].
     fn shared_tiny_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         shared_test_devices().map(|d| d.tiny_buffers)
+    }
+
+    /// The test device whose `max_texture_dimension_2d` is
+    /// [`SMALL_TEXTURE_LIMIT`].
+    fn shared_small_texture_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        shared_test_devices().map(|d| d.small_textures)
     }
 
     /// Copies `buffer` back to the CPU (it must carry `COPY_SRC`).
@@ -2174,6 +2200,27 @@ mod gpu_integration_tests {
             .render(None, TEST_BV, &camera, 64, 64)
             .expect("render is not refused")
             .expect("second plate-only render should succeed");
+    }
+
+    #[test]
+    fn render_clamps_the_target_to_the_device_texture_ceiling() {
+        let Some((device, queue)) = shared_small_texture_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the small-texture test device");
+        let (centre, radius) = TEST_BV.framing(None);
+        let camera = OrbitCamera::new(centre, radius);
+        let texture = renderer
+            .render(None, TEST_BV, &camera, 300, 150)
+            .expect("render is not refused")
+            .expect("a viewport wider than the ceiling still renders");
+        assert_eq!(
+            (texture.size().width, texture.size().height),
+            (SMALL_TEXTURE_LIMIT, SMALL_TEXTURE_LIMIT / 2),
+            "the target is clamped to the ceiling with the aspect kept"
+        );
     }
 
     /// A render call against a different `BuildVolume` rebuilds the

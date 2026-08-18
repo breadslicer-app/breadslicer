@@ -317,14 +317,14 @@ fn the_selected_device_can_carry_gpu_work() {
 }
 
 #[test]
-fn the_selected_device_takes_the_adapters_buffer_ceiling() {
+fn the_selected_device_takes_the_adapters_buffer_and_texture_ceilings() {
     with_gpu_turn(|instance, _adapters| {
         let Ok(AdapterSelection {
             adapter, device, ..
         }) = select_adapter_and_device(
             instance,
             PLATFORM_BACKENDS,
-            &device_descriptor("graphics-adapter buffer ceiling test"),
+            &device_descriptor("graphics-adapter ceilings test"),
         )
         else {
             eprintln!("skipping: no adapter accepts the application device profile");
@@ -337,8 +337,14 @@ fn the_selected_device_takes_the_adapters_buffer_ceiling() {
             adapter.limits().max_buffer_size,
             "the device's buffer ceiling must be the adapter's, not the default profile's"
         );
+        assert_eq!(
+            limits.max_texture_dimension_2d,
+            adapter.limits().max_texture_dimension_2d,
+            "the device's texture ceiling must be the adapter's, not the default profile's"
+        );
         let expected_rest = wgpu::Limits {
             max_buffer_size: limits.max_buffer_size,
+            max_texture_dimension_2d: limits.max_texture_dimension_2d,
             ..wgpu::Limits::default()
         };
         assert_eq!(

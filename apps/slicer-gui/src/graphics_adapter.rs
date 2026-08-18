@@ -180,6 +180,7 @@ pub fn capability_shortfall(
 pub fn limits_for_adapter(base: &wgpu::Limits, adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_buffer_size: adapter.max_buffer_size,
+        max_texture_dimension_2d: adapter.max_texture_dimension_2d,
         ..base.clone()
     }
 }
@@ -672,15 +673,31 @@ mod limits_for_adapter_tests {
     }
 
     #[test]
+    fn the_texture_ceiling_is_the_adapters() {
+        let adapter = wgpu::Limits {
+            max_texture_dimension_2d: 16384,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            limits_for_adapter(&wgpu::Limits::default(), &adapter),
+            wgpu::Limits {
+                max_texture_dimension_2d: 16384,
+                ..wgpu::Limits::default()
+            }
+        );
+    }
+
+    #[test]
     fn every_other_limit_comes_from_the_base() {
         let base = wgpu::Limits {
-            max_texture_dimension_2d: 4096,
+            max_texture_dimension_1d: 4096,
             min_uniform_buffer_offset_alignment: 64,
             ..wgpu::Limits::default()
         };
-        // An adapter that is roomier everywhere: only the buffer
-        // ceiling follows it.
+        // An adapter that is roomier everywhere: only the buffer and
+        // texture ceilings follow it.
         let adapter = wgpu::Limits {
+            max_texture_dimension_1d: 1 << 20,
             max_texture_dimension_2d: 1 << 20,
             min_uniform_buffer_offset_alignment: 1,
             max_buffer_size: 1 << 40,
@@ -690,6 +707,7 @@ mod limits_for_adapter_tests {
             limits_for_adapter(&base, &adapter),
             wgpu::Limits {
                 max_buffer_size: 1 << 40,
+                max_texture_dimension_2d: 1 << 20,
                 ..base
             }
         );
@@ -699,6 +717,23 @@ mod limits_for_adapter_tests {
     fn a_derived_profile_never_falls_short_on_the_buffer_ceiling() {
         let adapter = wgpu::Limits {
             max_buffer_size: 128 << 20,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            capability_shortfall(
+                wgpu::Features::empty(),
+                &limits_for_adapter(&wgpu::Limits::default(), &adapter),
+                wgpu::Features::empty(),
+                &adapter,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_derived_profile_never_falls_short_on_the_texture_ceiling() {
+        let adapter = wgpu::Limits {
+            max_texture_dimension_2d: 4096,
             ..wgpu::Limits::default()
         };
         assert_eq!(
