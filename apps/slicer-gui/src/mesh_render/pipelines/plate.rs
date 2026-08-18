@@ -33,8 +33,9 @@ use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 use slint::wgpu_29::wgpu;
-use wgpu::util::DeviceExt;
 
+use super::super::device_ops::upload_static_buffer;
+use super::super::error::{RenderAllocation, RenderError};
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 use super::mesh::MeshPipeline;
@@ -312,6 +313,8 @@ impl PlatePipeline {
 /// holding all plate + cage geometry, plus four index buffers (top
 /// face, plate sides, bottom face, cage edges). The bottom face is
 /// indexed separately because it draws through its own pipeline.
+/// Cloning copies wgpu handles (reference counted), not GPU memory.
+#[derive(Clone)]
 pub(in crate::mesh_render) struct PlateBuffers {
     pub(in crate::mesh_render) build_volume: BuildVolume,
     pub(in crate::mesh_render) vertex_buffer: wgpu::Buffer,
@@ -331,39 +334,65 @@ pub(in crate::mesh_render) struct PlateBuffers {
 }
 
 impl PlateBuffers {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device, build_volume: BuildVolume) -> Self {
+    pub(in crate::mesh_render) fn create(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        build_volume: BuildVolume,
+    ) -> Result<Self, RenderError> {
+        let refused = |source| RenderError::DeviceRefused {
+            what: RenderAllocation::PlateGeometry,
+            source,
+        };
         let geom = plate_geometry(build_volume);
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate vbo"),
-            contents: bytemuck::cast_slice(&geom.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let top_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate top ibo"),
-            contents: bytemuck::cast_slice(&geom.top_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let solid_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate solid ibo"),
-            contents: bytemuck::cast_slice(&geom.solid_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let bottom_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate bottom ibo"),
-            contents: bytemuck::cast_slice(&geom.bottom_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let cage_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate cage ibo"),
-            contents: bytemuck::cast_slice(&geom.cage_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let wall_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer plate wall ibo"),
-            contents: bytemuck::cast_slice(&geom.wall_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        Self {
+        let vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate vbo",
+            bytemuck::cast_slice(&geom.vertices),
+            wgpu::BufferUsages::VERTEX,
+        )
+        .map_err(refused)?;
+        let top_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate top ibo",
+            bytemuck::cast_slice(&geom.top_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
+        let solid_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate solid ibo",
+            bytemuck::cast_slice(&geom.solid_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
+        let bottom_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate bottom ibo",
+            bytemuck::cast_slice(&geom.bottom_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
+        let cage_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate cage ibo",
+            bytemuck::cast_slice(&geom.cage_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
+        let wall_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer plate wall ibo",
+            bytemuck::cast_slice(&geom.wall_indices),
+            wgpu::BufferUsages::INDEX,
+        )
+        .map_err(refused)?;
+        Ok(Self {
             build_volume,
             vertex_buffer,
             top_index_buffer,
@@ -376,7 +405,7 @@ impl PlateBuffers {
             bottom_index_count: geom.bottom_indices.len() as u32,
             cage_index_count: geom.cage_indices.len() as u32,
             wall_index_count: geom.wall_indices.len() as u32,
-        }
+        })
     }
 }
 

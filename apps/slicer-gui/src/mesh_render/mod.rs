@@ -17,6 +17,8 @@ use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::gizmo::axis::ALL_AXES;
 use crate::slice_cap::CapRaster;
 
+mod device_ops;
+mod error;
 mod frame;
 mod gizmo_buffers;
 mod gizmo_entries;
@@ -27,6 +29,7 @@ mod renderer_trait;
 pub mod scene_upload;
 mod targets;
 
+pub use error::{RenderAllocation, RenderError, RendererInitError, RendererStage};
 use frame::Uniforms;
 use gizmo_buffers::GizmoBuffers;
 use gizmo_entries::{
@@ -195,15 +198,25 @@ pub fn default_fov_y() -> f32 {
 }
 
 impl Renderer {
-    pub fn new(device: wgpu::Device, device_token: DeviceToken, queue: wgpu::Queue) -> Self {
+    /// Builds every static GPU resource of the viewport against
+    /// `device`.
+    pub fn new(
+        device: wgpu::Device,
+        device_token: DeviceToken,
+        queue: wgpu::Queue,
+    ) -> Result<Self, RendererInitError> {
         let mesh = MeshPipeline::create(&device);
         let outline = OutlinePipeline::create(&device);
-        let gizmo_buffers = GizmoBuffers::create(&device);
+        let gizmo_buffers =
+            GizmoBuffers::create(&device, &queue).map_err(|source| RendererInitError {
+                stage: RendererStage::GizmoBuffers,
+                source,
+            })?;
         let gizmo = GizmoPipeline::create(&device, &gizmo_buffers);
         let plate = PlatePipeline::create(&device, &mesh);
         let cap = CapPipeline::create(&device, &mesh);
 
-        Self {
+        Ok(Self {
             core: RendererCore {
                 device,
                 queue,
@@ -224,7 +237,7 @@ impl Renderer {
                 msaa: None,
                 targets: None,
             },
-        }
+        })
     }
 
     /// Identity token of the device pairing this renderer was built
@@ -350,16 +363,18 @@ impl Renderer {
     /// Lazily create or rebuild the plate's GPU buffers. The cache
     /// key is the `BuildVolume`; a different value triggers a
     /// rebuild so a runtime envelope change reaches the next frame.
-    fn ensure_plate_buffers(&mut self, build_volume: BuildVolume) {
-        if self
-            .pipelines
-            .plate_buffers
-            .as_ref()
-            .is_some_and(|b| b.build_volume == build_volume)
-        {
-            return;
-        }
-        self.pipelines.plate_buffers = Some(PlateBuffers::create(&self.core.device, build_volume));
+    /// On `Err` the cache is empty, so the next frame retries. The
+    /// returned value clones the cached wgpu handles (reference
+    /// counted), so no borrow of `self` outlives the call.
+    fn ensure_plate_buffers(
+        &mut self,
+        build_volume: BuildVolume,
+    ) -> Result<PlateBuffers, RenderError> {
+        let buffers = match self.pipelines.plate_buffers.take() {
+            Some(cached) if cached.build_volume == build_volume => cached,
+            _ => PlateBuffers::create(&self.core.device, &self.core.queue, build_volume)?,
+        };
+        Ok(self.pipelines.plate_buffers.insert(buffers).clone())
     }
 
     /// Refresh the slice-view cap texture. `key` identifies the layer
@@ -456,6 +471,8 @@ impl Renderer {
             })
     }
 
+    /// Draws one frame into a texture Slint can show. Returns `Ok(None)`
+    /// for a zero-sized viewport.
     pub fn render(
         &mut self,
         scene_render: Option<SceneRender<'_>>,
@@ -463,9 +480,9 @@ impl Renderer {
         camera: &OrbitCamera,
         width: u32,
         height: u32,
-    ) -> Option<wgpu::Texture> {
+    ) -> Result<Option<wgpu::Texture>, RenderError> {
         if width == 0 || height == 0 {
-            return None;
+            return Ok(None);
         }
 
         let (graph, selection, gizmo, clip_z) = match scene_render {
@@ -475,14 +492,10 @@ impl Renderer {
 
         self.ensure_msaa(width, height);
         self.ensure_targets(width, height);
-        self.ensure_plate_buffers(build_volume);
+        let plate_buffers = self.ensure_plate_buffers(build_volume)?;
+        let plate_buffers = &plate_buffers;
         let installed = self.scene.as_ref();
         let msaa = self.target_manager.msaa.as_ref().unwrap();
-        let plate_buffers = self
-            .pipelines
-            .plate_buffers
-            .as_ref()
-            .expect("ensure_plate_buffers populated the cache");
 
         // Per-frame upload of model matrices when a `GpuScene` is
         // installed AND the caller passed the matching CPU
@@ -636,7 +649,7 @@ impl Renderer {
         }
         self.core.queue.submit(std::iter::once(encoder.finish()));
 
-        Some(target)
+        Ok(Some(target))
     }
 
     /// Plate solid (sides + bottom): drawn first with depth-write on
@@ -1142,11 +1155,15 @@ mod gpu_integration_tests {
 
     /// `max_buffer_size` of the small-buffer test device.
     const SMALL_BUFFER_LIMIT: u64 = 1024;
+    /// `max_buffer_size` of the tiny-buffer test device: below every
+    /// static buffer the renderer uploads, so each of them is refused.
+    const TINY_BUFFER_LIMIT: u64 = 64;
 
     #[derive(Clone)]
     struct TestDevices {
         default_limits: (wgpu::Device, wgpu::Queue),
         small_buffers: (wgpu::Device, wgpu::Queue),
+        tiny_buffers: (wgpu::Device, wgpu::Queue),
     }
 
     /// Builds both test devices once per process, on one adapter, one
@@ -1190,9 +1207,17 @@ mod gpu_integration_tests {
                         ..wgpu::Limits::default()
                     },
                 )?;
+                let tiny_buffers = request(
+                    "mesh-viewer tiny-buffer test device",
+                    wgpu::Limits {
+                        max_buffer_size: TINY_BUFFER_LIMIT,
+                        ..wgpu::Limits::default()
+                    },
+                )?;
                 Some(TestDevices {
                     default_limits,
                     small_buffers,
+                    tiny_buffers,
                 })
             })
             .clone()
@@ -1206,6 +1231,45 @@ mod gpu_integration_tests {
     /// The test device whose `max_buffer_size` is [`SMALL_BUFFER_LIMIT`].
     fn shared_small_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         shared_test_devices().map(|d| d.small_buffers)
+    }
+
+    /// The test device whose `max_buffer_size` is [`TINY_BUFFER_LIMIT`].
+    fn shared_tiny_buffer_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        shared_test_devices().map(|d| d.tiny_buffers)
+    }
+
+    /// Copies `buffer` back to the CPU (it must carry `COPY_SRC`).
+    fn read_buffer_back(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+    ) -> Vec<u8> {
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-viewer test buffer readback"),
+            size: buffer.size(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("mesh-viewer test buffer readback encoder"),
+        });
+        encoder.copy_buffer_to_buffer(buffer, 0, &readback, 0, buffer.size());
+        queue.submit(std::iter::once(encoder.finish()));
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result)
+                .expect("readback map_async receiver dropped");
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll for readback");
+        rx.recv()
+            .expect("readback map_async sender dropped")
+            .expect("readback map_async failed");
+        let data = slice.get_mapped_range().to_vec();
+        readback.unmap();
+        data
     }
 
     /// First reachable leaf's [`NodeId`] in pre-order traversal. The
@@ -1258,7 +1322,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let _renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let _renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
     }
 
     /// `GpuScene::build` succeeds against the default-limits device
@@ -1373,7 +1438,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1396,6 +1462,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render should produce a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
@@ -1423,6 +1490,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render after the second upload should produce a texture");
     }
 
@@ -1434,7 +1502,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let err = scene_upload::create_buffer_reporting(
+        let err = device_ops::create_buffer_reporting(
             &device,
             &wgpu::BufferDescriptor {
                 label: Some("over the small limit"),
@@ -1456,7 +1524,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let buffer = scene_upload::create_buffer_reporting(
+        let buffer = device_ops::create_buffer_reporting(
             &device,
             &wgpu::BufferDescriptor {
                 label: Some("at the small limit"),
@@ -1471,6 +1539,65 @@ mod gpu_integration_tests {
             .copy_from_slice(&[7u8; SMALL_BUFFER_LIMIT as usize]);
         buffer.unmap();
         assert_eq!(buffer.size(), SMALL_BUFFER_LIMIT);
+    }
+
+    /// The gizmo geometry is uploaded without mapping: a device that
+    /// refuses the buffers answers with `Err`, not a panic.
+    #[test]
+    fn gizmo_buffers_are_refused_typed_on_a_tiny_buffer_device() {
+        let Some((device, queue)) = shared_tiny_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let err = GizmoBuffers::create(&device, &queue)
+            .err()
+            .expect("the tiny-buffer device refuses the gizmo geometry");
+        assert!(matches!(err, wgpu::Error::Validation { .. }), "{err}");
+        assert!(err.to_string().contains("maximum buffer size"), "{err}");
+    }
+
+    /// Same for the plate geometry, which is uploaded at render time.
+    #[test]
+    fn plate_buffers_are_refused_typed_on_a_tiny_buffer_device() {
+        let Some((device, queue)) = shared_tiny_buffer_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let err = PlateBuffers::create(&device, &queue, TEST_BV)
+            .err()
+            .expect("the tiny-buffer device refuses the plate geometry");
+        assert!(
+            matches!(
+                err,
+                RenderError::DeviceRefused {
+                    what: RenderAllocation::PlateGeometry,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        assert!(err.to_string().contains("maximum buffer size"), "{err}");
+    }
+
+    /// `upload_static_buffer` fills the buffer through the queue: the
+    /// bytes read back are the bytes handed in.
+    #[test]
+    fn upload_static_buffer_round_trips_contents() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let contents: Vec<u8> = (0u8..48).collect();
+        let buffer = device_ops::upload_static_buffer(
+            &device,
+            &queue,
+            "round-trip",
+            &contents,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
+        )
+        .expect("a 48-byte buffer under default limits");
+        assert_eq!(buffer.size(), 48);
+        assert_eq!(read_buffer_back(&device, &queue, &buffer), contents);
     }
 
     /// With the error logger installed, a device error nothing scopes
@@ -1516,7 +1643,7 @@ mod gpu_integration_tests {
                 std::thread::spawn(move || {
                     start.wait();
                     (0..500).all(|_| {
-                        scene_upload::create_buffer_reporting(
+                        device_ops::create_buffer_reporting(
                             &device,
                             &wgpu::BufferDescriptor {
                                 label: Some("concurrently over the small limit"),
@@ -1549,7 +1676,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1582,6 +1710,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render should produce a texture with a cap");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
@@ -1635,7 +1764,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no DX12 wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1658,6 +1788,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render on DX12 should produce a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
@@ -1673,7 +1804,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1696,6 +1828,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render with selection should produce a texture");
         assert_eq!(texture.size().width, 64);
     }
@@ -1714,7 +1847,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1739,6 +1873,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render with selection runs the outline pass");
         let _ = renderer
             .render(
@@ -1753,6 +1888,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("cached outline bind group survives a second frame");
     }
 
@@ -1768,7 +1904,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -1800,6 +1937,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("first gizmo render should succeed");
         let _ = renderer
             .render(
@@ -1814,6 +1952,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("cached gizmo resources survive a second frame");
     }
 
@@ -1826,7 +1965,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -1858,6 +1998,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("idle gizmo render should succeed");
     }
 
@@ -1870,7 +2011,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -1902,6 +2044,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("rotate gizmo render should succeed");
     }
 
@@ -1913,7 +2056,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -1945,6 +2089,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("scale-axis gizmo render should succeed");
     }
 
@@ -1984,7 +2129,8 @@ mod gpu_integration_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([0.0, 10.0, 0.0])),
         );
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         renderer.upload_scene(&graph).expect("upload");
         let bounds = renderer.scene_bounds().expect("bounds");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -2003,6 +2149,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render multi-object");
     }
 
@@ -2015,14 +2162,17 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let (centre, radius) = TEST_BV.framing(None);
         let camera = OrbitCamera::new(centre, radius);
         let _ = renderer
             .render(None, TEST_BV, &camera, 64, 64)
+            .expect("render is not refused")
             .expect("first plate-only render should succeed");
         let _ = renderer
             .render(None, TEST_BV, &camera, 64, 64)
+            .expect("render is not refused")
             .expect("second plate-only render should succeed");
     }
 
@@ -2037,11 +2187,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let camera = OrbitCamera::new(Vec3::ZERO, 100.0);
 
         let _ = renderer
             .render(None, TEST_BV, &camera, 64, 64)
+            .expect("render is not refused")
             .expect("render at default envelope");
         let cached_after_first = renderer
             .pipelines
@@ -2053,6 +2205,7 @@ mod gpu_integration_tests {
         let smaller = BuildVolume::new(50.0, 50.0, 50.0);
         let _ = renderer
             .render(None, smaller, &camera, 64, 64)
+            .expect("render is not refused")
             .expect("render at smaller envelope");
         let cached_after_second = renderer
             .pipelines
@@ -2184,7 +2337,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue.clone());
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue.clone())
+            .expect("Renderer::new under the test device");
         // 64 * 4 = 256 bytes / row, which already satisfies
         // `COPY_BYTES_PER_ROW_ALIGNMENT` and matches the size used by
         // the other render tests in this module.
@@ -2213,6 +2367,7 @@ mod gpu_integration_tests {
                 width,
                 height,
             )
+            .expect("render is not refused")
             .expect("safe render produces a texture");
         let safe_pixels = read_target_back(&device, &queue, &safe_texture, width, height);
         let safe_warning = count_warning_pixels(&safe_pixels);
@@ -2234,6 +2389,7 @@ mod gpu_integration_tests {
                 width,
                 height,
             )
+            .expect("render is not refused")
             .expect("breach render produces a texture");
         let breach_pixels = read_target_back(&device, &queue, &breach_texture, width, height);
         let breach_warning = count_warning_pixels(&breach_pixels);
@@ -2267,7 +2423,8 @@ mod gpu_integration_tests {
         // covered by the `install_scene_with_mismatched_device_returns_false`
         // integration test.
         let token = DeviceToken::next();
-        let mut renderer = Renderer::new(device.clone(), token, queue);
+        let mut renderer = Renderer::new(device.clone(), token, queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         let gpu = GpuScene::build(&device, token, &graph).expect("gpu scene build");
@@ -2289,7 +2446,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let mut graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -2333,6 +2491,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render against the live mutated graph still produces a texture");
         assert_eq!(texture.size().width, 64);
     }
@@ -2345,7 +2504,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer.upload_scene(&graph).expect("upload");
@@ -2364,7 +2524,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let (graph, _root) = graph_with_group_root();
         renderer
             .upload_scene(&graph)
@@ -2383,7 +2544,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let mut graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -2414,6 +2576,7 @@ mod gpu_integration_tests {
                 64,
                 64,
             )
+            .expect("render is not refused")
             .expect("render after the delete still produces a texture");
         assert_eq!(texture.size().width, 64);
         assert_eq!(texture.size().height, 64);
@@ -2428,7 +2591,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let (mut graph, root) = graph_with_group_root();
         renderer.upload_scene(&graph).expect("empty upload");
         assert!(renderer.scene_bounds().is_none());
@@ -2458,7 +2622,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue);
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer.upload_scene(&graph).expect("upload");

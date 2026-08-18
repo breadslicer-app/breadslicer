@@ -1068,8 +1068,12 @@ impl ViewportController {
         self.session
             .loader()
             .set_gpu(device.clone(), device_token, queue.clone());
-        self.render
-            .handle_rendering_setup(device, device_token, queue);
+        if let Err(err) = self
+            .render
+            .handle_rendering_setup(device, device_token, queue)
+        {
+            eprintln!("The 3D view could not start: {err}");
+        }
         self.post_renderer_install();
     }
 
@@ -1361,8 +1365,17 @@ impl ViewportController {
             })
             .unwrap_or_else(|| renderer.render(None, build_volume, camera, eff_w, eff_h));
 
-        let Some(texture) = texture else {
-            return;
+        let texture = match texture {
+            Ok(Some(texture)) => texture,
+            Ok(None) => return,
+            Err(err) => {
+                // Counting the frame as done keeps a failing allocation
+                // from being retried on every tick; the previous image
+                // stays up.
+                eprintln!("The 3D view could not draw: {err}");
+                self.render.update_frame(FrameState::after_render);
+                return;
+            }
         };
         self.render.update_frame(FrameState::after_render);
         match slint::Image::try_from(texture) {

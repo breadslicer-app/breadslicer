@@ -28,7 +28,7 @@ use slint::{ComponentHandle, Weak};
 use super::render_scheduler;
 use super::types::{FrameState, ViewportSize};
 use crate::MainWindow;
-use crate::mesh_render::{DeviceToken, MeshRenderer, Renderer};
+use crate::mesh_render::{DeviceToken, MeshRenderer, Renderer, RendererInitError};
 
 pub(super) struct RenderHost {
     ui: Weak<MainWindow>,
@@ -151,17 +151,15 @@ impl RenderHost {
         render_scheduler::bucketed_size(width, height, self.resizing.get())
     }
 
-    /// `RenderingSetup` callback handler. Installs the new GPU
-    /// renderer into the slot. The coordinator handles the loader-
-    /// side device sharing and the pending-load drain around this
-    /// call.
     pub(super) fn handle_rendering_setup(
         &self,
         device: slint::wgpu_29::wgpu::Device,
         device_token: DeviceToken,
         queue: slint::wgpu_29::wgpu::Queue,
-    ) {
-        *self.renderer.borrow_mut() = Some(Box::new(Renderer::new(device, device_token, queue)));
+    ) -> Result<(), RendererInitError> {
+        let renderer = Renderer::new(device, device_token, queue)?;
+        *self.renderer.borrow_mut() = Some(Box::new(renderer));
+        Ok(())
     }
 
     /// `RenderingTeardown` callback handler. Drops the GPU renderer

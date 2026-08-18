@@ -19,10 +19,10 @@
 use std::num::NonZeroU64;
 
 use slint::wgpu_29::wgpu;
-use wgpu::util::DeviceExt;
 
 use crate::gizmo_geometry;
 
+use super::device_ops::{create_buffer_reporting, upload_static_buffer};
 use super::gizmo_entries::{GIZMO_DRAW_ENTRY_SIZE, GIZMO_ENTRY_SLOTS, GizmoDrawEntry};
 use super::scene_upload::align_up;
 
@@ -63,96 +63,116 @@ pub(super) struct GizmoBuffers {
 }
 
 impl GizmoBuffers {
-    pub(super) fn create(device: &wgpu::Device) -> Self {
+    pub(super) fn create(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, wgpu::Error> {
         let (shaft_vertices, shaft_indices) = gizmo_geometry::build_axis_shaft_line_geometry();
         let shaft_line_index_count = shaft_indices.len() as u32;
-        let shaft_line_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo shaft line vbo"),
-                contents: bytemuck::cast_slice(&shaft_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let shaft_line_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo shaft line ibo"),
-                contents: bytemuck::cast_slice(&shaft_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let shaft_line_vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo shaft line vbo",
+            bytemuck::cast_slice(&shaft_vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let shaft_line_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo shaft line ibo",
+            bytemuck::cast_slice(&shaft_indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
 
         let (cone_vertices, cone_indices) = gizmo_geometry::build_axis_cone_tip_geometry();
         let cone_tip_index_count = cone_indices.len() as u32;
-        let cone_tip_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo cone tip vbo"),
-            contents: bytemuck::cast_slice(&cone_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let cone_tip_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo cone tip ibo"),
-            contents: bytemuck::cast_slice(&cone_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let cone_tip_vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo cone tip vbo",
+            bytemuck::cast_slice(&cone_vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let cone_tip_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo cone tip ibo",
+            bytemuck::cast_slice(&cone_indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
 
         let (cube_vertices, cube_indices) = gizmo_geometry::build_axis_scale_cube_geometry();
         let scale_cube_index_count = cube_indices.len() as u32;
-        let scale_cube_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo scale cube vbo"),
-                contents: bytemuck::cast_slice(&cube_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let scale_cube_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo scale cube ibo"),
-                contents: bytemuck::cast_slice(&cube_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let scale_cube_vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo scale cube vbo",
+            bytemuck::cast_slice(&cube_vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let scale_cube_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo scale cube ibo",
+            bytemuck::cast_slice(&cube_indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
 
         let (arc_vertices, arc_indices) = gizmo_geometry::build_rotate_arc_line_geometry();
         let arc_line_index_count = arc_indices.len() as u32;
-        let arc_line_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo arc line vbo"),
-            contents: bytemuck::cast_slice(&arc_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let arc_line_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh-viewer gizmo arc line ibo"),
-            contents: bytemuck::cast_slice(&arc_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let arc_line_vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo arc line vbo",
+            bytemuck::cast_slice(&arc_vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let arc_line_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo arc line ibo",
+            bytemuck::cast_slice(&arc_indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
 
         let (rotate_cones_vertices, rotate_cones_indices) =
             gizmo_geometry::build_rotate_cones_geometry();
         let rotate_cones_index_count = rotate_cones_indices.len() as u32;
-        let rotate_cones_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo rotate cones vbo"),
-                contents: bytemuck::cast_slice(&rotate_cones_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let rotate_cones_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("mesh-viewer gizmo rotate cones ibo"),
-                contents: bytemuck::cast_slice(&rotate_cones_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let rotate_cones_vertex_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo rotate cones vbo",
+            bytemuck::cast_slice(&rotate_cones_vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let rotate_cones_index_buffer = upload_static_buffer(
+            device,
+            queue,
+            "mesh-viewer gizmo rotate cones ibo",
+            bytemuck::cast_slice(&rotate_cones_indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
 
-        let uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer gizmo uniforms"),
-            size: std::mem::size_of::<super::gizmo_entries::GizmoUniformsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniforms_buffer = create_buffer_reporting(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("mesh-viewer gizmo uniforms"),
+                size: std::mem::size_of::<super::gizmo_entries::GizmoUniformsGpu>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        )?;
 
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let entry_stride = align_up(GIZMO_DRAW_ENTRY_SIZE, alignment);
-        let entries_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer gizmo entries"),
-            size: entry_stride * GIZMO_ENTRY_SLOTS,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let entries_buffer = create_buffer_reporting(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("mesh-viewer gizmo entries"),
+                size: entry_stride * GIZMO_ENTRY_SLOTS,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        )?;
 
-        Self {
+        Ok(Self {
             shaft_line_vertex_buffer,
             shaft_line_index_buffer,
             shaft_line_index_count,
@@ -171,7 +191,7 @@ impl GizmoBuffers {
             uniforms_buffer,
             entries_buffer,
             entry_stride,
-        }
+        })
     }
 
     /// Resource window matching the gizmo entries BGL's

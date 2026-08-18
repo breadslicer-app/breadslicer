@@ -25,7 +25,7 @@ use sc_mesh_core::scene::node::NodeId;
 use slint::wgpu_29::wgpu;
 
 use super::scene_upload::GpuScene;
-use super::{MeshRenderer, SceneRender};
+use super::{MeshRenderer, RenderError, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::slice_cap::CapRaster;
@@ -70,6 +70,10 @@ pub(crate) struct MockRendererState {
     /// Empty queue (the default) means subsequent uploads return
     /// `Ok(())`. Pre-fill with `Err(...)` entries to script failures.
     pub(crate) next_upload_results: VecDeque<Result<()>>,
+    /// Queue of `render` failures: each render pops the front and
+    /// returns it as `Err`; an empty queue (the default) renders
+    /// `Ok(None)` (the mock cannot construct a `wgpu::Texture`).
+    pub(crate) next_render_errors: VecDeque<RenderError>,
 }
 
 impl MockRendererState {
@@ -83,6 +87,7 @@ impl MockRendererState {
             scene_bounds_value: None,
             install_scene_returns: true,
             next_upload_results: VecDeque::new(),
+            next_render_errors: VecDeque::new(),
         }))
     }
 }
@@ -137,12 +142,13 @@ impl MeshRenderer for MockRenderer {
         _camera: &OrbitCamera,
         width: u32,
         height: u32,
-    ) -> Option<wgpu::Texture> {
+    ) -> Result<Option<wgpu::Texture>, RenderError> {
         let (scene_present, selection, gizmo_present) = match scene_render.as_ref() {
             Some(sr) => (true, sr.selection, sr.gizmo.is_some()),
             None => (false, None, false),
         };
-        self.state.borrow_mut().render_calls.push(MockRenderArgs {
+        let mut s = self.state.borrow_mut();
+        s.render_calls.push(MockRenderArgs {
             scene_present,
             selection,
             gizmo_present,
@@ -150,10 +156,13 @@ impl MeshRenderer for MockRenderer {
             width,
             height,
         });
-        // The mock cannot construct a real wgpu::Texture; always
-        // returns `None`. Tests that need the texture-handoff branch
-        // run under the software-wgpu integration vehicle (Phase 1.F).
-        None
+        // The mock cannot construct a real wgpu::Texture; a
+        // successful render is `Ok(None)`. Tests that need the
+        // texture-handoff branch need a real device.
+        match s.next_render_errors.pop_front() {
+            Some(err) => Err(err),
+            None => Ok(None),
+        }
     }
 }
 
@@ -176,6 +185,7 @@ mod mock_smoke_tests {
         assert!(s.scene_bounds_value.is_none());
         assert!(s.install_scene_returns);
         assert!(s.next_upload_results.is_empty());
+        assert!(s.next_render_errors.is_empty());
     }
 
     #[test]
@@ -212,7 +222,9 @@ mod mock_smoke_tests {
         let mut mock = MockRenderer::new(state.clone());
         let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
         let bv = BuildVolume::new(100.0, 60.0, 80.0);
-        let texture = mock.render(None, bv, &camera, 800, 600);
+        let texture = mock
+            .render(None, bv, &camera, 800, 600)
+            .expect("the mock renders Ok by default");
         assert!(texture.is_none());
         let s = state.borrow();
         assert_eq!(s.render_calls.len(), 1);
@@ -221,5 +233,35 @@ mod mock_smoke_tests {
         assert!(!s.render_calls[0].gizmo_present);
         assert_eq!(s.render_calls[0].width, 800);
         assert_eq!(s.render_calls[0].height, 600);
+    }
+
+    #[test]
+    fn render_pops_scripted_error_before_falling_back_to_ok() {
+        use crate::mesh_render::RenderAllocation;
+        let state = MockRendererState::new_shared();
+        state
+            .borrow_mut()
+            .next_render_errors
+            .push_back(RenderError::DeviceRefused {
+                what: RenderAllocation::PlateGeometry,
+                source: wgpu::Error::Validation {
+                    source: Box::new(std::io::Error::other("scripted")),
+                    description: "scripted".to_string(),
+                },
+            });
+        let mut mock = MockRenderer::new(state.clone());
+        let camera = OrbitCamera::new(Vec3::ZERO, 1.0);
+        let bv = BuildVolume::new(100.0, 60.0, 80.0);
+        let first = mock.render(None, bv, &camera, 8, 8);
+        let second = mock.render(None, bv, &camera, 8, 8);
+        assert!(matches!(
+            first,
+            Err(RenderError::DeviceRefused {
+                what: RenderAllocation::PlateGeometry,
+                ..
+            })
+        ));
+        assert!(matches!(second, Ok(None)));
+        assert_eq!(state.borrow().render_calls.len(), 2);
     }
 }

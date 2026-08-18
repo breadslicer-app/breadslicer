@@ -15,7 +15,7 @@ use sc_mesh_core::scene::Scene;
 use slint::wgpu_29::wgpu;
 
 use super::scene_upload::GpuScene;
-use super::{Renderer, SceneRender};
+use super::{RenderError, Renderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::slice_cap::CapRaster;
@@ -47,8 +47,8 @@ pub(crate) trait MeshRenderer {
     /// coverage raster only when `key` differs from the current cap.
     fn update_cap(&mut self, key: Option<u64>, build: &mut dyn FnMut() -> Option<CapRaster>);
 
-    /// Run the per-frame render pass. Returns the produced texture,
-    /// or `None` when the viewport is zero-sized.
+    /// Run the per-frame render pass. Returns `Ok(None)` when the
+    /// viewport is zero-sized.
     fn render(
         &mut self,
         scene_render: Option<SceneRender<'_>>,
@@ -56,7 +56,7 @@ pub(crate) trait MeshRenderer {
         camera: &OrbitCamera,
         width: u32,
         height: u32,
-    ) -> Option<wgpu::Texture>;
+    ) -> Result<Option<wgpu::Texture>, RenderError>;
 }
 
 impl MeshRenderer for Renderer {
@@ -91,7 +91,7 @@ impl MeshRenderer for Renderer {
         camera: &OrbitCamera,
         width: u32,
         height: u32,
-    ) -> Option<wgpu::Texture> {
+    ) -> Result<Option<wgpu::Texture>, RenderError> {
         Renderer::render(self, scene_render, build_volume, camera, width, height)
     }
 }

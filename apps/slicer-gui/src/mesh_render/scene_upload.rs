@@ -17,6 +17,7 @@ use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use slint::wgpu_29::wgpu;
 
+use super::device_ops::create_buffer_reporting;
 use crate::build_volume::BuildVolume;
 
 #[repr(C)]
@@ -136,33 +137,6 @@ impl fmt::Display for DeviceRefusedBuffer {
 impl std::error::Error for DeviceRefusedBuffer {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.source)
-    }
-}
-
-/// Like `Device::create_buffer`, but a refusal comes back as `Err`
-/// instead of going to the device's uncaptured-error handler.
-pub fn create_buffer_reporting(
-    device: &wgpu::Device,
-    desc: &wgpu::BufferDescriptor<'_>,
-) -> std::result::Result<wgpu::Buffer, wgpu::Error> {
-    let scopes = [
-        device.push_error_scope(wgpu::ErrorFilter::OutOfMemory),
-        device.push_error_scope(wgpu::ErrorFilter::Validation),
-        device.push_error_scope(wgpu::ErrorFilter::Internal),
-    ];
-    let buffer = device.create_buffer(desc);
-    // Innermost first; a native pop resolves immediately.
-    let mut first_error = None;
-    for scope in scopes.into_iter().rev() {
-        if let Some(err) = pollster::block_on(scope.pop())
-            && first_error.is_none()
-        {
-            first_error = Some(err);
-        }
-    }
-    match first_error {
-        Some(err) => Err(err),
-        None => Ok(buffer),
     }
 }
 
