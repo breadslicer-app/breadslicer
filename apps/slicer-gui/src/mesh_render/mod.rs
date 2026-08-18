@@ -30,6 +30,7 @@ mod renderer_trait;
 pub mod scene_upload;
 mod targets;
 
+use device_ops::scoped;
 pub use error::{RenderAllocation, RenderError, RendererInitError, RendererStage};
 use frame::Uniforms;
 use gizmo_buffers::GizmoBuffers;
@@ -156,22 +157,33 @@ struct Pipelines {
     plate: PlatePipeline,
     /// The slice-view cap pipeline, immutable after construction.
     cap: CapPipeline,
-    /// The current cap's coverage texture, or `None` when no cap is
-    /// shown. Refreshed by [`Renderer::update_cap`] when the selected
-    /// layer changes; an unchanged key skips the re-upload.
-    cap_texture: Option<CapTexture>,
+    cap_state: CapState,
     /// Cached plate geometry for the current `BuildVolume`. `None`
     /// until the first render call; rebuilt when the per-frame
     /// `BuildVolume` differs from the cached one.
     plate_buffers: Option<PlateBuffers>,
 }
 
-/// The uploaded coverage texture for the current cap layer, tagged with
-/// the cache key that built it so an unchanged layer skips re-upload.
-/// The bind group keeps the texture and its view alive.
-struct CapTexture {
-    key: u64,
-    bind_group: wgpu::BindGroup,
+/// State of the slice-view cap texture, keyed by the layer it was last
+/// built for. The bind group keeps the texture and its view alive.
+enum CapState {
+    Off,
+    Shown {
+        key: u64,
+        bind_group: wgpu::BindGroup,
+    },
+    Refused {
+        key: u64,
+    },
+}
+
+impl CapState {
+    fn key(&self) -> Option<u64> {
+        match self {
+            Self::Off => None,
+            Self::Shown { key, .. } | Self::Refused { key } => Some(*key),
+        }
+    }
 }
 
 /// Viewport-sized GPU allocations that are dropped and recreated when
@@ -235,7 +247,7 @@ impl Renderer {
                 gizmo_buffers,
                 plate,
                 cap,
-                cap_texture: None,
+                cap_state: CapState::Off,
                 plate_buffers: None,
             },
             scene: None,
@@ -337,33 +349,39 @@ impl Renderer {
         });
     }
 
-    fn ensure_msaa(&mut self, width: u32, height: u32) {
+    fn ensure_msaa(&mut self, width: u32, height: u32) -> Result<(), RenderError> {
         if self
             .target_manager
             .msaa
             .as_ref()
             .is_some_and(|m| m.matches(width, height))
         {
-            return;
+            return Ok(());
         }
+        // Freed before the new allocation, not after, so a refusal is
+        // not caused by the bundle it replaces.
+        self.target_manager.msaa = None;
         self.target_manager.msaa = Some(MsaaTargets::create(
             &self.core.device,
             &self.pipelines.outline.bind_group_layout,
             width,
             height,
-        ));
+        )?);
+        Ok(())
     }
 
-    fn ensure_targets(&mut self, width: u32, height: u32) {
+    fn ensure_targets(&mut self, width: u32, height: u32) -> Result<(), RenderError> {
         if self
             .target_manager
             .targets
             .as_ref()
             .is_some_and(|t| t.matches(width, height))
         {
-            return;
+            return Ok(());
         }
-        self.target_manager.targets = Some(TargetPool::create(&self.core.device, width, height));
+        self.target_manager.targets = None;
+        self.target_manager.targets = Some(TargetPool::create(&self.core.device, width, height)?);
+        Ok(())
     }
 
     /// Lazily create or rebuild the plate's GPU buffers. The cache
@@ -385,25 +403,34 @@ impl Renderer {
 
     /// Refresh the slice-view cap texture. `key` identifies the layer
     /// being capped; `None` clears the cap. When `key` matches the
-    /// current cap nothing happens, so a camera orbit (same layer) skips
-    /// the rasterise. Otherwise `build` produces the coverage raster,
-    /// which is uploaded as an R8 texture; a `build` yielding `None`
-    /// clears the cap.
+    /// current cap (shown or refused) nothing happens, so a camera
+    /// orbit (same layer) skips the rasterise. Otherwise `build`
+    /// produces the coverage raster, which is uploaded as an R8
+    /// texture; a `build` yielding `None` clears the cap.
     pub(crate) fn update_cap(
         &mut self,
         key: Option<u64>,
         build: &mut dyn FnMut() -> Option<CapRaster>,
-    ) {
-        match key {
-            None => self.pipelines.cap_texture = None,
-            Some(key) => {
-                if self.pipelines.cap_texture.as_ref().map(|c| c.key) == Some(key) {
-                    return;
-                }
-                self.pipelines.cap_texture = build().map(|raster| {
-                    let bind_group = self.upload_cap_texture(&raster);
-                    CapTexture { key, bind_group }
-                });
+    ) -> Result<(), RenderError> {
+        let Some(key) = key else {
+            self.pipelines.cap_state = CapState::Off;
+            return Ok(());
+        };
+        if self.pipelines.cap_state.key() == Some(key) {
+            return Ok(());
+        }
+        let Some(raster) = build() else {
+            self.pipelines.cap_state = CapState::Off;
+            return Ok(());
+        };
+        match self.upload_cap_texture(&raster) {
+            Ok(bind_group) => {
+                self.pipelines.cap_state = CapState::Shown { key, bind_group };
+                Ok(())
+            }
+            Err(err) => {
+                self.pipelines.cap_state = CapState::Refused { key };
+                Err(err)
             }
         }
     }
@@ -411,7 +438,17 @@ impl Renderer {
     /// Upload a coverage raster as an R8 texture and build the cap's
     /// group-1 bind group. Each row is padded to wgpu's copy alignment,
     /// as `write_texture` requires.
-    fn upload_cap_texture(&self, raster: &CapRaster) -> wgpu::BindGroup {
+    fn upload_cap_texture(&self, raster: &CapRaster) -> Result<wgpu::BindGroup, RenderError> {
+        scoped(&self.core.device, || {
+            self.upload_cap_texture_unscoped(raster)
+        })
+        .map_err(|source| RenderError::DeviceRefused {
+            what: RenderAllocation::CapTexture,
+            source,
+        })
+    }
+
+    fn upload_cap_texture_unscoped(&self, raster: &CapRaster) -> wgpu::BindGroup {
         let width = raster.width;
         let height = raster.height;
         let texture = self.core.device.create_texture(&wgpu::TextureDescriptor {
@@ -499,8 +536,8 @@ impl Renderer {
             None => (None, None, None, None),
         };
 
-        self.ensure_msaa(width, height);
-        self.ensure_targets(width, height);
+        self.ensure_msaa(width, height)?;
+        self.ensure_targets(width, height)?;
         let plate_buffers = self.ensure_plate_buffers(build_volume)?;
         let plate_buffers = &plate_buffers;
         let installed = self.scene.as_ref();
@@ -687,12 +724,12 @@ impl Renderer {
     /// slice). The clip height and build corners come from the shared
     /// uniform buffer, so no per-cap vertex data is bound.
     fn record_cap(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let Some(cap_texture) = self.pipelines.cap_texture.as_ref() else {
+        let CapState::Shown { bind_group, .. } = &self.pipelines.cap_state else {
             return;
         };
         pass.set_pipeline(&self.pipelines.cap.pipeline);
         pass.set_bind_group(0, &self.pipelines.cap.uniforms_bind_group, &[]);
-        pass.set_bind_group(1, &cap_texture.bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
         pass.set_stencil_reference(0);
         pass.draw(0..6, 0..1);
     }
@@ -1721,7 +1758,9 @@ mod gpu_integration_tests {
                 height: 4,
             })
         };
-        renderer.update_cap(Some(1), &mut build);
+        renderer
+            .update_cap(Some(1), &mut build)
+            .expect("a 4 x 4 cap texture is not refused");
 
         let texture = renderer
             .render(
@@ -2221,6 +2260,98 @@ mod gpu_integration_tests {
             (SMALL_TEXTURE_LIMIT, SMALL_TEXTURE_LIMIT / 2),
             "the target is clamped to the ceiling with the aspect kept"
         );
+    }
+
+    #[test]
+    fn msaa_targets_are_refused_typed_on_a_small_texture_device() {
+        let Some((device, queue)) = shared_small_texture_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
+            .expect("Renderer::new under the small-texture test device");
+        let over = SMALL_TEXTURE_LIMIT + 44;
+        let refusal = MsaaTargets::create(
+            &device,
+            &renderer.pipelines.outline.bind_group_layout,
+            over,
+            over,
+        )
+        .err()
+        .expect("attachments over the texture ceiling are refused");
+        assert!(matches!(
+            refusal,
+            RenderError::DeviceRefused {
+                what: RenderAllocation::MsaaTargets,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn colour_targets_are_refused_typed_on_a_small_texture_device() {
+        let Some((device, _queue)) = shared_small_texture_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let over = SMALL_TEXTURE_LIMIT + 44;
+        let refusal = TargetPool::create(&device, over, over)
+            .err()
+            .expect("colour targets over the texture ceiling are refused");
+        assert!(matches!(
+            refusal,
+            RenderError::DeviceRefused {
+                what: RenderAllocation::ColourTargets,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn update_cap_reports_a_refused_texture_and_leaves_the_cap_off() {
+        let Some((device, queue)) = shared_small_texture_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+            .expect("Renderer::new under the small-texture test device");
+        let side = SMALL_TEXTURE_LIMIT * 2;
+        let builds = std::cell::Cell::new(0);
+        let mut build = || {
+            builds.set(builds.get() + 1);
+            Some(CapRaster {
+                coverage: vec![255u8; (side * side) as usize],
+                width: side,
+                height: side,
+            })
+        };
+
+        let refusal = renderer
+            .update_cap(Some(1), &mut build)
+            .expect_err("a cap texture over the ceiling is refused");
+        assert!(matches!(
+            refusal,
+            RenderError::DeviceRefused {
+                what: RenderAllocation::CapTexture,
+                ..
+            }
+        ));
+        assert_eq!(builds.get(), 1);
+
+        // The same key is not retried; a new key is.
+        renderer
+            .update_cap(Some(1), &mut build)
+            .expect("a remembered refusal is not an error");
+        assert_eq!(builds.get(), 1);
+        let _ = renderer.update_cap(Some(2), &mut build);
+        assert_eq!(builds.get(), 2);
+
+        let (centre, radius) = TEST_BV.framing(None);
+        let camera = OrbitCamera::new(centre, radius);
+        renderer
+            .render(None, TEST_BV, &camera, 64, 64)
+            .expect("the frame renders without the cap")
+            .expect("a 64 x 64 frame produces a texture");
     }
 
     /// A render call against a different `BuildVolume` rebuilds the

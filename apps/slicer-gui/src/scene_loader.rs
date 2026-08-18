@@ -53,13 +53,14 @@ use slint::wgpu_29::wgpu;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};
+use crate::failure_gate::FailureGate;
 use crate::graphics_status::{GraphicsGap, GraphicsUnavailable};
 use crate::i18n::ctr;
 use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
 use crate::mesh_health::MeshHealth;
-use crate::mesh_render::GpuScene;
+use crate::mesh_render::{GpuScene, RenderAllocation, RenderError};
 use crate::reloaded_slices::ReloadedSlices;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
@@ -224,6 +225,9 @@ pub struct SceneLoader {
     // successful upload, scene load/close, and on `RenderingSetup`
     // (via `reset_upload_failures`).
     upload_failures: Cell<u32>,
+    // Dialog gate for the renderer's per-frame refusals: one dialog per
+    // run of failures.
+    render_failures: FailureGate,
     // Current graphics device/queue, populated by `RenderingSetup` and
     // cleared by `RenderingTeardown`. A clone is handed to the worker at
     // `spawn_load` time so parse + GPU upload both run off the UI
@@ -255,6 +259,7 @@ impl SceneLoader {
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
+            render_failures: FailureGate::default(),
             gpu: Mutex::new(None),
             graphics_gap: GraphicsGap::default(),
             progress: Arc::new(AtomicU32::new(0)),
@@ -278,6 +283,7 @@ impl SceneLoader {
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Arc::new(AtomicU32::new(0)),
             upload_failures: Cell::new(0),
+            render_failures: FailureGate::default(),
             gpu: Mutex::new(None),
             graphics_gap: GraphicsGap::default(),
             progress: Arc::new(AtomicU32::new(0)),
@@ -497,6 +503,43 @@ impl SceneLoader {
                 format_anyhow_chain(err),
             );
         }
+    }
+
+    /// Shows the error dialog only for the first failure of a run.
+    pub fn note_render_failure(&self, err: &RenderError) {
+        if !self.render_failures.note_failure() {
+            return;
+        }
+        let RenderError::DeviceRefused { what, source } = err;
+        let context = match what {
+            RenderAllocation::CapTexture => ctr!(
+                "ErrorDialog",
+                "The cut is drawn without its fill until another layer is shown."
+            ),
+            _ => ctr!(
+                "ErrorDialog",
+                "The 3D view keeps its last image until it is resized."
+            ),
+        };
+        self.dialogs.show_error_deferred(
+            ctr!("ErrorDialog", "Failed to draw the 3D view").to_string(),
+            Some(context.to_string()),
+            err.to_string(),
+            source.to_string(),
+        );
+    }
+
+    pub fn note_render_success(&self) {
+        self.render_failures.reset();
+    }
+
+    pub fn reset_render_failures(&self) {
+        self.render_failures.reset();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn render_failures_for_test(&self) -> u32 {
+        self.render_failures.consecutive_failures()
     }
 
     /// Drains the result slot and applies the stamp check. Returns

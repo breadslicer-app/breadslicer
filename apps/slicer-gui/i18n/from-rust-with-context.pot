@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-11 19:04+0200\n"
+"POT-Creation-Date: 2026-08-19 00:46+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -32,12 +32,12 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:555 src/preferences_window.rs:1224
+#: src/preferences_window.rs:555 src/preferences_window.rs:1218
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:748 src/preferences_window.rs:1619
+#: src/preferences_window.rs:748 src/preferences_window.rs:1618
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
@@ -55,49 +55,49 @@ msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1202
+#: src/preferences_window.rs:1200
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1212
+#: src/preferences_window.rs:1207
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1218
+#: src/preferences_window.rs:1212
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1220
+#: src/preferences_window.rs:1214
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1412
+#: src/preferences_window.rs:1411
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1767
+#: src/preferences_window.rs:1766
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1793
+#: src/preferences_window.rs:1792
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: src/viewport/controller.rs:1371
+#: src/viewport/controller.rs:1388
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1375
+#: src/viewport/controller.rs:1392
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -138,7 +138,7 @@ msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:577 src/wiring.rs:699 src/scene_loader.rs:523
+#: src/wiring.rs:577 src/wiring.rs:699 src/scene_loader.rs:566
 #: src/app_state.rs:686
 #, rust-format
 msgctxt "ErrorDialog"
@@ -160,19 +160,34 @@ msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
 
-#: src/scene_loader.rs:488
+#: src/scene_loader.rs:494
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:492
+#: src/scene_loader.rs:498
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
 "build plate alone until the next successful update."
 msgstr ""
 
-#: src/scene_loader.rs:522
+#: src/scene_loader.rs:517
+msgctxt "ErrorDialog"
+msgid "The cut is drawn without its fill until another layer is shown."
+msgstr ""
+
+#: src/scene_loader.rs:521
+msgctxt "ErrorDialog"
+msgid "The 3D view keeps its last image until it is resized."
+msgstr ""
+
+#: src/scene_loader.rs:525
+msgctxt "ErrorDialog"
+msgid "Failed to draw the 3D view"
+msgstr ""
+
+#: src/scene_loader.rs:565
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""

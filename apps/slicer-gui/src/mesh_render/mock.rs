@@ -130,9 +130,14 @@ impl MeshRenderer for MockRenderer {
         self.state.borrow_mut().invalidate_sizing_calls += 1;
     }
 
-    fn update_cap(&mut self, _key: Option<u64>, _build: &mut dyn FnMut() -> Option<CapRaster>) {
+    fn update_cap(
+        &mut self,
+        _key: Option<u64>,
+        _build: &mut dyn FnMut() -> Option<CapRaster>,
+    ) -> Result<(), RenderError> {
         // The slice-view cap is a GPU-only concern; the mock holds no
         // texture state, so this is a no-op.
+        Ok(())
     }
 
     fn render(

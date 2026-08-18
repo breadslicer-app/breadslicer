@@ -1086,14 +1086,12 @@ impl ViewportController {
         self.session.loader().note_unsupported_graphics_api(api);
     }
 
-    /// Post-install side effects that are independent of the wgpu
-    /// device / queue: rearm the loader's upload-failure counter,
-    /// flag an upload if a scene is already loaded, request a redraw,
-    /// and drain any queued pending-load. Split out of
-    /// `handle_rendering_setup` so tests can drive the post-install
-    /// transitions without constructing a real `wgpu::Device`.
+    /// Rearms the loader's failure gates, flags an upload when a scene
+    /// is loaded, requests a redraw, and starts any load that was
+    /// queued while no device was available.
     pub(super) fn post_renderer_install(&self) {
         self.session.loader().reset_upload_failures();
+        self.session.loader().reset_render_failures();
         if self.session.document().is_loaded() {
             self.render.update_frame(FrameState::with_upload_owed);
         }
@@ -1312,7 +1310,9 @@ impl ViewportController {
                 })
                 .flatten()
         };
-        renderer.update_cap(cap_key, &mut build_cap);
+        if let Err(err) = renderer.update_cap(cap_key, &mut build_cap) {
+            self.session.loader().note_render_failure(&err);
+        }
 
         // Slice-view panel: mirror the same cut into the 2D panel image,
         // keyed on the same cap key so it rebuilds only when the layer or
@@ -1321,6 +1321,11 @@ impl ViewportController {
         // scene, slice completion) refreshes the panel with no extra
         // wiring.
         self.reconcile_slice_view_image(&ui, cap_key, selected_layer, &build_volume);
+
+        if self.render.is_refused_size((eff_w, eff_h)) {
+            self.render.update_frame(FrameState::after_render);
+            return;
+        }
 
         // Render path. With a scene installed, the closure inside
         // `with_scene` composes the gizmo frame against the live scene
@@ -1369,14 +1374,13 @@ impl ViewportController {
             Ok(Some(texture)) => texture,
             Ok(None) => return,
             Err(err) => {
-                // Counting the frame as done keeps a failing allocation
-                // from being retried on every tick; the previous image
-                // stays up.
-                eprintln!("The 3D view could not draw: {err}");
-                self.render.update_frame(FrameState::after_render);
+                self.render.note_render_refused((eff_w, eff_h));
+                self.session.loader().note_render_failure(&err);
                 return;
             }
         };
+        self.render.note_render_ok();
+        self.session.loader().note_render_success();
         self.render.update_frame(FrameState::after_render);
         match slint::Image::try_from(texture) {
             Ok(image) => ui.set_mesh_rendering(image),

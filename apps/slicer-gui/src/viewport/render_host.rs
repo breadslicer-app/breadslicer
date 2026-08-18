@@ -47,6 +47,10 @@ pub(super) struct RenderHost {
     /// the next `RESIZE_BUCKET` multiple so drag resizes don't churn
     /// the MSAA/target allocations on every pointer move.
     resizing: Cell<bool>,
+    /// The effective render-target size the device last refused a
+    /// frame at; paints at that size are skipped until the viewport
+    /// changes or a frame succeeds.
+    refused_size: Cell<Option<(u32, u32)>>,
 }
 
 impl RenderHost {
@@ -57,6 +61,7 @@ impl RenderHost {
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             resizing: Cell::new(false),
+            refused_size: Cell::new(None),
         }
     }
 
@@ -72,6 +77,7 @@ impl RenderHost {
             viewport: Cell::new(None),
             frame: Cell::new(FrameState::default()),
             resizing: Cell::new(false),
+            refused_size: Cell::new(None),
         }
     }
 
@@ -122,6 +128,7 @@ impl RenderHost {
     /// `viewport-resized` callback. Stores the new size, latches
     /// resize-in-progress, and pings the window.
     pub(super) fn on_viewport_resized(&self, w: f32, h: f32) {
+        self.refused_size.set(None);
         render_scheduler::on_viewport_resized(
             &self.viewport,
             &self.resizing,
@@ -137,6 +144,7 @@ impl RenderHost {
     /// exact logical size, eliminating the `image-fit: fill` stretch
     /// that persisted during the drag.
     pub(super) fn on_resize_settled(&self) {
+        self.refused_size.set(None);
         render_scheduler::on_resize_settled(&self.resizing, &self.frame, &self.ui, || {
             if let Some(r) = self.renderer.borrow_mut().as_mut() {
                 r.invalidate_sizing();
@@ -151,6 +159,20 @@ impl RenderHost {
         render_scheduler::bucketed_size(width, height, self.resizing.get())
     }
 
+    pub(super) fn is_refused_size(&self, size: (u32, u32)) -> bool {
+        self.refused_size.get() == Some(size)
+    }
+
+    /// Records the refusal and counts the frame as done.
+    pub(super) fn note_render_refused(&self, size: (u32, u32)) {
+        self.refused_size.set(Some(size));
+        self.frame.update(FrameState::after_render);
+    }
+
+    pub(super) fn note_render_ok(&self) {
+        self.refused_size.set(None);
+    }
+
     pub(super) fn handle_rendering_setup(
         &self,
         device: slint::wgpu_29::wgpu::Device,
@@ -159,6 +181,7 @@ impl RenderHost {
     ) -> Result<(), RendererInitError> {
         let renderer = Renderer::new(device, device_token, queue)?;
         *self.renderer.borrow_mut() = Some(Box::new(renderer));
+        self.refused_size.set(None);
         Ok(())
     }
 
@@ -207,6 +230,7 @@ mod render_host_tests {
         assert!(!rh.is_resizing());
         assert!(!rh.redraw_owed());
         assert!(rh.renderer_cell().borrow().is_none());
+        assert!(!rh.is_refused_size((0, 0)));
     }
 
     #[test]
@@ -254,6 +278,29 @@ mod render_host_tests {
         let (w, h) = rh.bucketed_size(65, 65);
         assert!(w >= 65);
         assert!(h >= 65);
+    }
+
+    #[test]
+    fn a_refused_size_is_skipped_until_the_size_or_the_viewport_changes() {
+        let rh = RenderHost::new_for_test();
+        assert!(!rh.is_refused_size((100, 50)));
+
+        rh.mark_dirty();
+        rh.note_render_refused((100, 50));
+        assert!(rh.is_refused_size((100, 50)));
+        assert!(!rh.is_refused_size((101, 50)));
+        assert!(!rh.redraw_owed(), "the refused frame counts as done");
+
+        rh.on_viewport_resized(800.0, 600.0);
+        assert!(!rh.is_refused_size((100, 50)));
+
+        rh.note_render_refused((100, 50));
+        rh.on_resize_settled();
+        assert!(!rh.is_refused_size((100, 50)));
+
+        rh.note_render_refused((100, 50));
+        rh.note_render_ok();
+        assert!(!rh.is_refused_size((100, 50)));
     }
 
     #[test]

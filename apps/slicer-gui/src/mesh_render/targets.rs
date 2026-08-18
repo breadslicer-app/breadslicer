@@ -13,6 +13,8 @@
 
 use slint::wgpu_29::wgpu;
 
+use super::device_ops::scoped;
+use super::error::{RenderAllocation, RenderError};
 use super::{DEPTH_FORMAT, GIZMO_DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 
 pub(super) struct MsaaTargets {
@@ -40,6 +42,21 @@ impl MsaaTargets {
     }
 
     pub(super) fn create(
+        device: &wgpu::Device,
+        outline_bind_group_layout: &wgpu::BindGroupLayout,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, RenderError> {
+        scoped(device, || {
+            Self::create_unscoped(device, outline_bind_group_layout, width, height)
+        })
+        .map_err(|source| RenderError::DeviceRefused {
+            what: RenderAllocation::MsaaTargets,
+            source,
+        })
+    }
+
+    fn create_unscoped(
         device: &wgpu::Device,
         outline_bind_group_layout: &wgpu::BindGroupLayout,
         width: u32,
@@ -138,8 +155,12 @@ impl TargetPool {
         self.width == width && self.height == height
     }
 
-    pub(super) fn create(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        Self {
+    pub(super) fn create(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, RenderError> {
+        scoped(device, || Self {
             width,
             height,
             textures: [
@@ -147,7 +168,11 @@ impl TargetPool {
                 create_color_target(device, width, height),
             ],
             next: 0,
-        }
+        })
+        .map_err(|source| RenderError::DeviceRefused {
+            what: RenderAllocation::ColourTargets,
+            source,
+        })
     }
 
     /// Hand out the next destination texture and advance the ring index.

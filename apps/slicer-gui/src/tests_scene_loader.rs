@@ -18,8 +18,10 @@ use std::path::PathBuf;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{NodeId, Scene};
 use sc_mesh_formats::messages::{LoadObjWarning, SceneLoadWarning, SharedVertexLeaf};
+use slint::wgpu_29::wgpu;
 
 use crate::error_dialog::DialogManager;
+use crate::mesh_render::{RenderAllocation, RenderError};
 use crate::scene_loader::{SceneLoader, describe_obj_warning, describe_scene_warning};
 
 /// Allocates `count` fresh NodeIds out of a throw-away scene so
@@ -102,6 +104,34 @@ fn drain_deposit_drops_a_stale_deposit_after_invalidate_and_clear() {
     // mismatches and drain returns None.
     l.invalidate_and_clear();
     assert!(l.drain_deposit_for_test().is_none());
+}
+
+fn refused_output_image() -> RenderError {
+    RenderError::DeviceRefused {
+        what: RenderAllocation::ColourTargets,
+        source: wgpu::Error::Validation {
+            source: Box::new(std::io::Error::other("scripted")),
+            description: "scripted".to_string(),
+        },
+    }
+}
+
+#[test]
+fn note_render_failure_counts_a_run_and_a_success_ends_it() {
+    let l = loader();
+    l.note_render_failure(&refused_output_image());
+    l.note_render_failure(&refused_output_image());
+    assert_eq!(l.render_failures_for_test(), 2);
+    l.note_render_success();
+    assert_eq!(l.render_failures_for_test(), 0);
+}
+
+#[test]
+fn reset_render_failures_ends_the_run() {
+    let l = loader();
+    l.note_render_failure(&refused_output_image());
+    l.reset_render_failures();
+    assert_eq!(l.render_failures_for_test(), 0);
 }
 
 // `describe_obj_warning` exhaustive coverage. The function is a

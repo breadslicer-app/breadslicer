@@ -53,12 +53,18 @@ impl std::error::Error for RendererInitError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderAllocation {
     PlateGeometry,
+    MsaaTargets,
+    ColourTargets,
+    CapTexture,
 }
 
 impl fmt::Display for RenderAllocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::PlateGeometry => "build plate geometry",
+            Self::MsaaTargets => "multisample buffers",
+            Self::ColourTargets => "output image",
+            Self::CapTexture => "slice cap texture",
         })
     }
 }
@@ -148,6 +154,23 @@ mod error_display_tests {
         assert!(text.contains("build plate geometry"), "{text}");
         assert!(text.contains("out of memory"), "{text}");
         assert!(!text.contains('\n'), "{text}");
+    }
+
+    #[test]
+    fn every_allocation_has_a_distinct_name() {
+        let names: Vec<String> = [
+            RenderAllocation::PlateGeometry,
+            RenderAllocation::MsaaTargets,
+            RenderAllocation::ColourTargets,
+            RenderAllocation::CapTexture,
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        for (i, name) in names.iter().enumerate() {
+            assert!(!name.is_empty());
+            assert!(!names[..i].contains(name), "{name} repeats");
+        }
     }
 
     #[test]

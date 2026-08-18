@@ -44,6 +44,24 @@ fn post_renderer_install_resets_the_loader_upload_failure_counter() {
 }
 
 #[test]
+fn post_renderer_install_ends_the_loader_render_failure_run() {
+    use crate::mesh_render::{RenderAllocation, RenderError};
+    use slint::wgpu_29::wgpu;
+    let (ctrl, _state) = fixture();
+    ctrl.loader()
+        .note_render_failure(&RenderError::DeviceRefused {
+            what: RenderAllocation::ColourTargets,
+            source: wgpu::Error::Validation {
+                source: Box::new(std::io::Error::other("stale")),
+                description: "stale".to_string(),
+            },
+        });
+    assert_eq!(ctrl.loader().render_failures_for_test(), 1);
+    ctrl.post_renderer_install();
+    assert_eq!(ctrl.loader().render_failures_for_test(), 0);
+}
+
+#[test]
 fn post_renderer_install_sets_upload_owed_when_a_scene_is_loaded() {
     let (ctrl, _state) = fixture();
     ctrl.install_graph_for_test(Scene::new());

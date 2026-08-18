@@ -44,8 +44,13 @@ pub(crate) trait MeshRenderer {
 
     /// Refresh the slice-view cap texture for the layer identified by
     /// `key` (`None` clears it). `build` is called to produce the
-    /// coverage raster only when `key` differs from the current cap.
-    fn update_cap(&mut self, key: Option<u64>, build: &mut dyn FnMut() -> Option<CapRaster>);
+    /// coverage raster only when `key` differs from the current cap;
+    /// a refused upload leaves the cap off for that key.
+    fn update_cap(
+        &mut self,
+        key: Option<u64>,
+        build: &mut dyn FnMut() -> Option<CapRaster>,
+    ) -> Result<(), RenderError>;
 
     /// Run the per-frame render pass. Returns `Ok(None)` when the
     /// viewport is zero-sized. The texture may be smaller than
@@ -82,8 +87,12 @@ impl MeshRenderer for Renderer {
         Renderer::invalidate_sizing(self);
     }
 
-    fn update_cap(&mut self, key: Option<u64>, build: &mut dyn FnMut() -> Option<CapRaster>) {
-        Renderer::update_cap(self, key, build);
+    fn update_cap(
+        &mut self,
+        key: Option<u64>,
+        build: &mut dyn FnMut() -> Option<CapRaster>,
+    ) -> Result<(), RenderError> {
+        Renderer::update_cap(self, key, build)
     }
 
     fn render(

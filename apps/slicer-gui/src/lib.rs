@@ -23,6 +23,7 @@ mod clipboard;
 mod error_dialog;
 mod export_progress;
 mod export_progress_panel;
+mod failure_gate;
 mod gizmo;
 mod gizmo_geometry;
 pub mod graphics_adapter;
