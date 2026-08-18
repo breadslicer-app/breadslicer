@@ -258,6 +258,15 @@ fn a_pick_on_an_unusable_renderer_is_reported_not_parked() {
 }
 
 #[test]
+fn a_pick_on_a_refused_renderer_is_reported_not_parked() {
+    let reason = GraphicsUnavailable::RendererRefused("mesh pipeline refused".to_string());
+    assert_eq!(
+        decide_load_dispatch(Some(reason.clone())),
+        LoadDispatch::Report(reason)
+    );
+}
+
+#[test]
 fn the_reported_reason_reaches_the_caller_intact() {
     // The caller turns this into the dialog body, so the API name has
     // to survive the decision rather than be flattened to a generic

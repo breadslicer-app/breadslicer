@@ -15,6 +15,7 @@ use std::num::NonZeroU64;
 
 use slint::wgpu_29::wgpu;
 
+use super::super::device_ops::scoped;
 use super::super::gizmo_buffers::GizmoBuffers;
 use super::super::gizmo_entries::{GIZMO_DRAW_ENTRY_SIZE, GizmoUniformsGpu};
 use super::super::{GIZMO_DEPTH_FORMAT, TEXTURE_FORMAT};
@@ -45,7 +46,14 @@ pub(in crate::mesh_render) struct GizmoPipeline {
 }
 
 impl GizmoPipeline {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device, buffers: &GizmoBuffers) -> Self {
+    pub(in crate::mesh_render) fn create(
+        device: &wgpu::Device,
+        buffers: &GizmoBuffers,
+    ) -> Result<Self, wgpu::Error> {
+        scoped(device, || Self::create_unscoped(device, buffers))
+    }
+
+    fn create_unscoped(device: &wgpu::Device, buffers: &GizmoBuffers) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer gizmo shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(GIZMO_SHADER_SOURCE)),

@@ -12,13 +12,23 @@ use slint::wgpu_29::wgpu;
 /// The part of the renderer whose construction the device refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RendererStage {
+    Mesh,
+    Outline,
     GizmoBuffers,
+    Gizmo,
+    Plate,
+    Cap,
 }
 
 impl fmt::Display for RendererStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::Mesh => "mesh pipeline",
+            Self::Outline => "outline pipeline",
             Self::GizmoBuffers => "gizmo geometry",
+            Self::Gizmo => "gizmo pipeline",
+            Self::Plate => "build plate pipeline",
+            Self::Cap => "slice cap pipeline",
         })
     }
 }
@@ -156,6 +166,13 @@ mod error_display_tests {
         assert!(!text.contains('\n'), "{text}");
     }
 
+    fn assert_distinct_non_empty(names: &[String]) {
+        for (i, name) in names.iter().enumerate() {
+            assert!(!name.is_empty());
+            assert!(!names[..i].contains(name), "{name} repeats");
+        }
+    }
+
     #[test]
     fn every_allocation_has_a_distinct_name() {
         let names: Vec<String> = [
@@ -167,10 +184,23 @@ mod error_display_tests {
         .iter()
         .map(ToString::to_string)
         .collect();
-        for (i, name) in names.iter().enumerate() {
-            assert!(!name.is_empty());
-            assert!(!names[..i].contains(name), "{name} repeats");
-        }
+        assert_distinct_non_empty(&names);
+    }
+
+    #[test]
+    fn every_stage_has_a_distinct_name() {
+        let names: Vec<String> = [
+            RendererStage::Mesh,
+            RendererStage::Outline,
+            RendererStage::GizmoBuffers,
+            RendererStage::Gizmo,
+            RendererStage::Plate,
+            RendererStage::Cap,
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_distinct_non_empty(&names);
     }
 
     #[test]

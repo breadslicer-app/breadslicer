@@ -408,6 +408,12 @@ impl SceneLoader {
         self.graphics_gap.note_unsupported_api(api);
     }
 
+    /// Records that a `RenderingSetup`'s device refused the viewport
+    /// renderer; the device slot stays empty.
+    pub fn note_renderer_refused(&self, reason: String) {
+        self.graphics_gap.note_renderer_refused(reason);
+    }
+
     /// Why there is no device, or `None` when there is one. Derived
     /// from the device slot so readiness has a single source: the
     /// recorded reason only speaks for an empty slot.

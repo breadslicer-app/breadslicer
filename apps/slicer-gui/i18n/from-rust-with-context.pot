@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-19 00:46+0200\n"
+"POT-Creation-Date: 2026-08-19 01:05+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -92,12 +92,22 @@ msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: src/viewport/controller.rs:1388
+#: src/viewport/controller.rs:1097
+msgctxt "ErrorDialog"
+msgid "The 3D view could not start"
+msgstr ""
+
+#: src/viewport/controller.rs:1098
+msgctxt "ErrorDialog"
+msgid "Files cannot be opened in this window."
+msgstr ""
+
+#: src/viewport/controller.rs:1413
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1392
+#: src/viewport/controller.rs:1417
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -138,7 +148,7 @@ msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:577 src/wiring.rs:699 src/scene_loader.rs:566
+#: src/wiring.rs:577 src/wiring.rs:699 src/scene_loader.rs:572
 #: src/app_state.rs:686
 #, rust-format
 msgctxt "ErrorDialog"
@@ -160,34 +170,34 @@ msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
 
-#: src/scene_loader.rs:494
+#: src/scene_loader.rs:500
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:498
+#: src/scene_loader.rs:504
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
 "build plate alone until the next successful update."
 msgstr ""
 
-#: src/scene_loader.rs:517
+#: src/scene_loader.rs:523
 msgctxt "ErrorDialog"
 msgid "The cut is drawn without its fill until another layer is shown."
 msgstr ""
 
-#: src/scene_loader.rs:521
+#: src/scene_loader.rs:527
 msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:525
+#: src/scene_loader.rs:531
 msgctxt "ErrorDialog"
 msgid "Failed to draw the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:565
+#: src/scene_loader.rs:571
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
@@ -484,17 +494,23 @@ msgctxt "ForkDialog"
 msgid "Could not derive a free profile id from that name"
 msgstr ""
 
-#: src/graphics_status.rs:59
+#: src/graphics_status.rs:65
 msgctxt "ErrorDialog"
 msgid "The 3D view is still starting up. Please try again in a moment."
 msgstr ""
 
-#: src/graphics_status.rs:64
+#: src/graphics_status.rs:70
 #, rust-format
 msgctxt "ErrorDialog"
 msgid ""
 "The 3D view could not start: this window renders through {}, which this "
 "build cannot use for 3D."
+msgstr ""
+
+#: src/graphics_status.rs:76
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "{} Files cannot be opened in this window."
 msgstr ""
 
 #: src/mesh_loader.rs:93

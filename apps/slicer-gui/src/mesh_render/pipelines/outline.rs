@@ -14,6 +14,7 @@ use std::borrow::Cow;
 use slint::wgpu_29::wgpu;
 
 use super::super::TEXTURE_FORMAT;
+use super::super::device_ops::scoped;
 
 const OUTLINE_SHADER_SOURCE: &str = include_str!("../shaders/outline.wgsl");
 
@@ -41,7 +42,11 @@ pub(in crate::mesh_render) struct OutlinePipeline {
 }
 
 impl OutlinePipeline {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device) -> Self {
+    pub(in crate::mesh_render) fn create(device: &wgpu::Device) -> Result<Self, wgpu::Error> {
+        scoped(device, || Self::create_unscoped(device))
+    }
+
+    fn create_unscoped(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer outline shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(OUTLINE_SHADER_SOURCE)),

@@ -221,16 +221,15 @@ impl Renderer {
         device_token: DeviceToken,
         queue: wgpu::Queue,
     ) -> Result<Self, RendererInitError> {
-        let mesh = MeshPipeline::create(&device);
-        let outline = OutlinePipeline::create(&device);
+        let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
+        let mesh = MeshPipeline::create(&device).map_err(at(RendererStage::Mesh))?;
+        let outline = OutlinePipeline::create(&device).map_err(at(RendererStage::Outline))?;
         let gizmo_buffers =
-            GizmoBuffers::create(&device, &queue).map_err(|source| RendererInitError {
-                stage: RendererStage::GizmoBuffers,
-                source,
-            })?;
-        let gizmo = GizmoPipeline::create(&device, &gizmo_buffers);
-        let plate = PlatePipeline::create(&device, &mesh);
-        let cap = CapPipeline::create(&device, &mesh);
+            GizmoBuffers::create(&device, &queue).map_err(at(RendererStage::GizmoBuffers))?;
+        let gizmo =
+            GizmoPipeline::create(&device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
+        let plate = PlatePipeline::create(&device, &mesh).map_err(at(RendererStage::Plate))?;
+        let cap = CapPipeline::create(&device, &mesh).map_err(at(RendererStage::Cap))?;
         let max_texture_side = device.limits().max_texture_dimension_2d;
 
         Ok(Self {
@@ -1213,6 +1212,9 @@ mod gpu_integration_tests {
         small_buffers: (wgpu::Device, wgpu::Queue),
         tiny_buffers: (wgpu::Device, wgpu::Queue),
         small_textures: (wgpu::Device, wgpu::Queue),
+        /// `max_bind_groups: 1`: every pipeline with 2 bind groups is
+        /// refused at its layout.
+        one_bind_group: (wgpu::Device, wgpu::Queue),
     }
 
     /// Builds the test devices once per process, on one adapter, one
@@ -1270,11 +1272,19 @@ mod gpu_integration_tests {
                         ..wgpu::Limits::default()
                     },
                 )?;
+                let one_bind_group = request(
+                    "mesh-viewer one-bind-group test device",
+                    wgpu::Limits {
+                        max_bind_groups: 1,
+                        ..wgpu::Limits::default()
+                    },
+                )?;
                 Some(TestDevices {
                     default_limits,
                     small_buffers,
                     tiny_buffers,
                     small_textures,
+                    one_bind_group,
                 })
             })
             .clone()
@@ -1299,6 +1309,11 @@ mod gpu_integration_tests {
     /// [`SMALL_TEXTURE_LIMIT`].
     fn shared_small_texture_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         shared_test_devices().map(|d| d.small_textures)
+    }
+
+    /// The test device whose `max_bind_groups` is 1.
+    fn shared_one_bind_group_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        shared_test_devices().map(|d| d.one_bind_group)
     }
 
     /// Copies `buffer` back to the CPU (it must carry `COPY_SRC`).
@@ -1380,13 +1395,44 @@ mod gpu_integration_tests {
     /// `create_bind_group_layout` validation error coming out of
     /// `Renderer::new`.
     #[test]
-    fn renderer_construction_under_default_limits_does_not_panic() {
+    fn renderer_construction_under_default_limits_succeeds() {
         let Some((device, queue)) = shared_test_device() else {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
         let _renderer = Renderer::new(device, DeviceToken::next(), queue)
             .expect("Renderer::new under the test device");
+    }
+
+    #[test]
+    fn renderer_new_names_the_mesh_stage_on_a_one_bind_group_device() {
+        let Some((device, queue)) = shared_one_bind_group_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let Err(err) = Renderer::new(device, DeviceToken::next(), queue) else {
+            panic!("a 2-bind-group pipeline must be refused on a 1-bind-group device");
+        };
+        assert_eq!(err.stage, RendererStage::Mesh);
+        let text = err.to_string();
+        assert!(text.contains("mesh pipeline"), "{text}");
+        assert!(
+            text.contains("bind"),
+            "the cause names the bind group limit: {text}"
+        );
+    }
+
+    #[test]
+    fn two_group_pipelines_are_refused_on_a_one_bind_group_device_and_one_group_ones_are_not() {
+        let Some((device, queue)) = shared_one_bind_group_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        assert!(MeshPipeline::create(&device).is_err());
+        assert!(OutlinePipeline::create(&device).is_ok());
+        let gizmo_buffers =
+            GizmoBuffers::create(&device, &queue).expect("buffers need no bind groups");
+        assert!(GizmoPipeline::create(&device, &gizmo_buffers).is_err());
     }
 
     /// `GpuScene::build` succeeds against the default-limits device

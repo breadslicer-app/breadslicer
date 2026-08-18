@@ -10,8 +10,8 @@
 //! An `Option` over that slot answers "is there a device", but not "will
 //! there ever be one", and those two cases call for opposite handling: a
 //! setup that has not happened yet is worth waiting for, while a setup
-//! that arrived carrying a graphics API this build cannot use will not
-//! improve on its own.
+//! that arrived carrying a graphics API this build cannot use, or whose
+//! device refused the viewport renderer, will not improve on its own.
 //!
 //! This type carries that distinction, along with the wording the user
 //! sees. Nothing here decides whether a device exists; the loader
@@ -36,6 +36,12 @@ pub(crate) enum GraphicsUnavailable {
     /// cannot render through, named as Slint reported it. The viewport
     /// stays empty for as long as that renderer is in use.
     UnsupportedApi(String),
+    /// A `RenderingSetup` published a device, but the device refused
+    /// one of the viewport renderer's resources; the text is the
+    /// renderer's account of which one and why. A deterministic
+    /// refusal repeats on the same device, so the window is left
+    /// without a viewport.
+    RendererRefused(String),
 }
 
 impl GraphicsUnavailable {
@@ -45,7 +51,7 @@ impl GraphicsUnavailable {
     pub(crate) fn may_still_arrive(&self) -> bool {
         match self {
             Self::AwaitingSetup => true,
-            Self::UnsupportedApi(_) => false,
+            Self::UnsupportedApi(_) | Self::RendererRefused(_) => false,
         }
     }
 
@@ -63,6 +69,12 @@ impl GraphicsUnavailable {
                 "ErrorDialog",
                 "The 3D view could not start: this window renders through {}, which this build cannot use for 3D.",
                 api
+            )
+            .to_string(),
+            Self::RendererRefused(reason) => ctr!(
+                "ErrorDialog",
+                "{} Files cannot be opened in this window.",
+                reason
             )
             .to_string(),
         }
@@ -99,6 +111,12 @@ impl GraphicsGap {
     /// through.
     pub(crate) fn note_unsupported_api(&self, api: String) {
         *self.reason.borrow_mut() = GraphicsUnavailable::UnsupportedApi(api);
+    }
+
+    /// A setup's device refused the viewport renderer; `reason` is the
+    /// renderer's account of it.
+    pub(crate) fn note_renderer_refused(&self, reason: String) {
+        *self.reason.borrow_mut() = GraphicsUnavailable::RendererRefused(reason);
     }
 }
 
@@ -167,6 +185,18 @@ mod graphics_gap_tests {
             gap.reason(),
             GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string())
         );
+    }
+
+    #[test]
+    fn a_refused_renderer_is_recorded_and_retired_by_a_later_device() {
+        let gap = GraphicsGap::default();
+        gap.note_renderer_refused("mesh pipeline refused".to_string());
+        assert_eq!(
+            gap.reason(),
+            GraphicsUnavailable::RendererRefused("mesh pipeline refused".to_string())
+        );
+        gap.note_device_published();
+        assert_eq!(gap.reason(), GraphicsUnavailable::AwaitingSetup);
     }
 }
 
@@ -239,6 +269,27 @@ mod graphics_unavailable_tests {
         assert!(
             !message.contains("again"),
             "waiting will not help here, so the wording must not invite it: {message}"
+        );
+    }
+
+    #[test]
+    fn no_device_is_coming_for_a_refused_renderer() {
+        assert!(!GraphicsUnavailable::RendererRefused("refused".to_string()).may_still_arrive());
+    }
+
+    #[test]
+    fn a_refused_renderer_carries_the_reason_and_says_files_cannot_open() {
+        let message = GraphicsUnavailable::RendererRefused(
+            "The 3D view could not build its mesh pipeline: Validation Error: x".to_string(),
+        )
+        .message();
+        assert!(message.contains("mesh pipeline"), "{message}");
+        assert!(message.contains("cannot be opened"), "{message}");
+        assert!(!message.contains("again"), "{message}");
+        assert_ne!(message, GraphicsUnavailable::AwaitingSetup.message());
+        assert_ne!(
+            message,
+            GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string()).message()
         );
     }
 }

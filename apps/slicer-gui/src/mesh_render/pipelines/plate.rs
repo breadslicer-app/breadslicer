@@ -34,7 +34,7 @@ use std::num::NonZeroU64;
 use bytemuck::{Pod, Zeroable};
 use slint::wgpu_29::wgpu;
 
-use super::super::device_ops::upload_static_buffer;
+use super::super::device_ops::{scoped, upload_static_buffer};
 use super::super::error::{RenderAllocation, RenderError};
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
@@ -117,7 +117,14 @@ pub(in crate::mesh_render) struct PlatePipeline {
 }
 
 impl PlatePipeline {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device, mesh: &MeshPipeline) -> Self {
+    pub(in crate::mesh_render) fn create(
+        device: &wgpu::Device,
+        mesh: &MeshPipeline,
+    ) -> Result<Self, wgpu::Error> {
+        scoped(device, || Self::create_unscoped(device, mesh))
+    }
+
+    fn create_unscoped(device: &wgpu::Device, mesh: &MeshPipeline) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer plate shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(PLATE_SHADER_SOURCE)),

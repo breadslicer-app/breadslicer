@@ -48,7 +48,7 @@ use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_health::initial_section;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::SceneRender;
+use crate::mesh_render::{RendererInitError, SceneRender};
 use crate::pending_load::PendingLoad;
 use crate::picking;
 use crate::save_progress_panel::SaveProgressPanel;
@@ -1065,16 +1065,18 @@ impl ViewportController {
         // how `Renderer::install_scene` detects an out-of-date
         // worker-built scene.
         let device_token = crate::mesh_render::DeviceToken::next();
-        self.session
-            .loader()
-            .set_gpu(device.clone(), device_token, queue.clone());
-        if let Err(err) = self
+        // The renderer is built before the device is published, so a
+        // refused renderer leaves the window with no device to load into.
+        match self
             .render
-            .handle_rendering_setup(device, device_token, queue)
+            .handle_rendering_setup(device.clone(), device_token, queue.clone())
         {
-            eprintln!("The 3D view could not start: {err}");
+            Ok(()) => {
+                self.session.loader().set_gpu(device, device_token, queue);
+                self.post_renderer_install();
+            }
+            Err(err) => self.post_renderer_refused(err),
         }
-        self.post_renderer_install();
     }
 
     /// `RenderingSetup` handler for the case the viewport cannot use:
@@ -1084,6 +1086,29 @@ impl ViewportController {
     /// so anything that needs a device can explain the absence.
     pub fn handle_unsupported_graphics_api(&self, api: String) {
         self.session.loader().note_unsupported_graphics_api(api);
+    }
+
+    /// Records the refusal as the window's reason for having no
+    /// device, shows it once, and lets a load parked for this setup
+    /// report itself against that reason.
+    pub(super) fn post_renderer_refused(&self, err: RendererInitError) {
+        self.session.loader().note_renderer_refused(err.to_string());
+        self.session.dialogs().show_error_deferred(
+            ctr!("ErrorDialog", "The 3D view could not start").to_string(),
+            Some(ctr!("ErrorDialog", "Files cannot be opened in this window.").to_string()),
+            err.to_string(),
+            err.source.to_string(),
+        );
+        if let Some(path) = self.session.pending_load().take()
+            && let Some(ticket) = self.session.loader().begin_load()
+        {
+            start_load_with_ticket(
+                ticket,
+                path,
+                self.session.loader(),
+                self.session.build_volume(),
+            );
+        }
     }
 
     /// Rearms the loader's failure gates, flags an upload when a scene

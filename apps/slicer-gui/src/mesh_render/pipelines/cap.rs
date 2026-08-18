@@ -19,6 +19,7 @@ use std::num::NonZeroU64;
 
 use slint::wgpu_29::wgpu;
 
+use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 use super::mesh::MeshPipeline;
@@ -33,7 +34,14 @@ pub(in crate::mesh_render) struct CapPipeline {
 }
 
 impl CapPipeline {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device, mesh: &MeshPipeline) -> Self {
+    pub(in crate::mesh_render) fn create(
+        device: &wgpu::Device,
+        mesh: &MeshPipeline,
+    ) -> Result<Self, wgpu::Error> {
+        scoped(device, || Self::create_unscoped(device, mesh))
+    }
+
+    fn create_unscoped(device: &wgpu::Device, mesh: &MeshPipeline) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer cap shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CAP_SHADER_SOURCE)),

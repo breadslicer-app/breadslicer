@@ -13,6 +13,7 @@ use std::num::NonZeroU64;
 
 use slint::wgpu_29::wgpu;
 
+use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;
 use super::super::scene_upload::{GpuVertex, MODEL_ENTRY_SIZE};
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
@@ -48,7 +49,11 @@ pub(in crate::mesh_render) struct MeshPipeline {
 }
 
 impl MeshPipeline {
-    pub(in crate::mesh_render) fn create(device: &wgpu::Device) -> Self {
+    pub(in crate::mesh_render) fn create(device: &wgpu::Device) -> Result<Self, wgpu::Error> {
+        scoped(device, || Self::create_unscoped(device))
+    }
+
+    fn create_unscoped(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(MESH_SHADER_SOURCE)),

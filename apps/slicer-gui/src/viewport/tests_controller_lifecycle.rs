@@ -11,6 +11,8 @@
 //! - `post_renderer_install` (the wgpu-free post-install logic that
 //!   `handle_rendering_setup` invokes after the renderer has been
 //!   installed),
+//! - `post_renderer_refused` (the wgpu-free branch
+//!   `handle_rendering_setup` takes when the renderer cannot be built),
 //! - `handle_rendering_teardown` (which takes no wgpu types and is
 //!   fully exercisable against a [`MockRenderer`]).
 //!
@@ -59,6 +61,43 @@ fn post_renderer_install_ends_the_loader_render_failure_run() {
     assert_eq!(ctrl.loader().render_failures_for_test(), 1);
     ctrl.post_renderer_install();
     assert_eq!(ctrl.loader().render_failures_for_test(), 0);
+}
+
+#[test]
+fn post_renderer_refused_records_the_reason_and_drains_the_parked_path() {
+    use crate::graphics_status::GraphicsUnavailable;
+    use crate::mesh_render::{RendererInitError, RendererStage};
+    use slint::wgpu_29::wgpu;
+    let (ctrl, _state) = fixture();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("parked.stl");
+    std::fs::File::create(&path).expect("create");
+    ctrl.pending_load().queue(path.clone());
+
+    let err = RendererInitError {
+        stage: RendererStage::Mesh,
+        source: wgpu::Error::Validation {
+            source: Box::new(std::io::Error::other("too many bind groups")),
+            description: "too many bind groups".to_string(),
+        },
+    };
+    let reason = GraphicsUnavailable::RendererRefused(err.to_string());
+    ctrl.post_renderer_refused(err);
+
+    assert_eq!(ctrl.loader().graphics_unavailable(), Some(reason.clone()));
+    assert!(
+        ctrl.pending_load().take().is_none(),
+        "the parked path is drained"
+    );
+    let (drained_path, result) = ctrl
+        .loader()
+        .drain_deposit_for_test()
+        .expect("the parked path is deposited against a ticket");
+    assert_eq!(drained_path, path);
+    let Err(load_err) = result else {
+        panic!("a refused renderer must deposit an Err");
+    };
+    assert_eq!(load_err.to_string(), reason.message());
 }
 
 #[test]
