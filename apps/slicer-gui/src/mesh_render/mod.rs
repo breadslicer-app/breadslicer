@@ -1175,9 +1175,7 @@ mod gpu_integration_tests {
                     }))
                     .ok()
                 };
-                // Default limits match what Slint asks for. If a binding
-                // we declare exceeds these limits, `Renderer::new` panics
-                // in `create_bind_group_layout`.
+                // Default limits are the base profile `run()` asks for.
                 let default_limits = request("mesh-viewer test device", wgpu::Limits::default())?;
                 let small_buffers = request(
                     "mesh-viewer small-buffer test device",

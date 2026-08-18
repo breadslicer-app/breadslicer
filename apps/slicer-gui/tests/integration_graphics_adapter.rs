@@ -317,6 +317,39 @@ fn the_selected_device_can_carry_gpu_work() {
 }
 
 #[test]
+fn the_selected_device_takes_the_adapters_buffer_ceiling() {
+    with_gpu_turn(|instance, _adapters| {
+        let Ok(AdapterSelection {
+            adapter, device, ..
+        }) = select_adapter_and_device(
+            instance,
+            PLATFORM_BACKENDS,
+            &device_descriptor("graphics-adapter buffer ceiling test"),
+        )
+        else {
+            eprintln!("skipping: no adapter accepts the application device profile");
+            return;
+        };
+
+        let limits = device.limits();
+        assert_eq!(
+            limits.max_buffer_size,
+            adapter.limits().max_buffer_size,
+            "the device's buffer ceiling must be the adapter's, not the default profile's"
+        );
+        let expected_rest = wgpu::Limits {
+            max_buffer_size: limits.max_buffer_size,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            limits, expected_rest,
+            "every other limit stays at the default profile's value"
+        );
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    });
+}
+
+#[test]
 fn an_override_naming_a_present_adapter_selects_that_adapter() {
     with_gpu_turn(|instance, adapters| {
         let infos = infos_of(adapters);

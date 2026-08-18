@@ -177,6 +177,13 @@ pub fn capability_shortfall(
     first_failure
 }
 
+pub fn limits_for_adapter(base: &wgpu::Limits, adapter: &wgpu::Limits) -> wgpu::Limits {
+    wgpu::Limits {
+        max_buffer_size: adapter.max_buffer_size,
+        ..base.clone()
+    }
+}
+
 /// Opens one candidate under the retry policy: a first attempt always,
 /// and for `retry_eligible` candidates a single re-attempt after
 /// `delay`. On success the first attempt's error is carried alongside
@@ -311,7 +318,7 @@ pub struct AdapterSelection {
 
 /// Enumerates the adapters `backends` exposes, orders them with
 /// [`rank_adapters`], and opens a device on the first one that accepts
-/// `descriptor`. The adapter override is read from [`ADAPTER_NAME_ENV`].
+/// `descriptor`.
 pub fn select_adapter_and_device(
     instance: &wgpu::Instance,
     backends: wgpu::Backends,
@@ -348,11 +355,22 @@ pub fn select_adapter_and_device_with(
         anyhow::bail!("No graphics adapter is available for backends {backends:?}");
     }
 
+    // One descriptor per adapter, so the shortfall prediction and the
+    // request below look at the same limits.
+    let descriptors: Vec<wgpu::DeviceDescriptor<'_>> = adapters
+        .iter()
+        .map(|adapter| wgpu::DeviceDescriptor {
+            required_limits: limits_for_adapter(&descriptor.required_limits, &adapter.limits()),
+            ..descriptor.clone()
+        })
+        .collect();
+
     // Predicted per adapter before any request: a shortfall marks the
     // refusal as deterministic, which disqualifies it from the retry.
     let shortfalls: Vec<Option<CapabilityShortfall>> = adapters
         .iter()
-        .map(|adapter| {
+        .zip(&descriptors)
+        .map(|(adapter, descriptor)| {
             capability_shortfall(
                 descriptor.required_features,
                 &descriptor.required_limits,
@@ -368,7 +386,7 @@ pub fn select_adapter_and_device_with(
             shortfalls[index].is_none(),
             RETRY_DELAY,
             std::thread::sleep,
-            || pollster::block_on(adapters[index].request_device(descriptor)),
+            || pollster::block_on(adapters[index].request_device(&descriptors[index])),
         )
     }) {
         Ok((index, ((device, queue), recovered_from), refusals)) => Ok(AdapterSelection {
@@ -619,6 +637,79 @@ mod parse_adapter_name_override_tests {
     #[test]
     fn plain_value_passes_through() {
         assert_eq!(parse_adapter_name_override(Some("nvidia")), Some("nvidia"));
+    }
+}
+
+#[cfg(test)]
+mod limits_for_adapter_tests {
+    use super::*;
+
+    #[test]
+    fn the_buffer_ceiling_is_the_adapters() {
+        let adapter = wgpu::Limits {
+            max_buffer_size: 1 << 40,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            limits_for_adapter(&wgpu::Limits::default(), &adapter),
+            wgpu::Limits {
+                max_buffer_size: 1 << 40,
+                ..wgpu::Limits::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_smaller_adapter_ceiling_is_taken_as_is() {
+        let adapter = wgpu::Limits {
+            max_buffer_size: 128 << 20,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            limits_for_adapter(&wgpu::Limits::default(), &adapter).max_buffer_size,
+            128 << 20
+        );
+    }
+
+    #[test]
+    fn every_other_limit_comes_from_the_base() {
+        let base = wgpu::Limits {
+            max_texture_dimension_2d: 4096,
+            min_uniform_buffer_offset_alignment: 64,
+            ..wgpu::Limits::default()
+        };
+        // An adapter that is roomier everywhere: only the buffer
+        // ceiling follows it.
+        let adapter = wgpu::Limits {
+            max_texture_dimension_2d: 1 << 20,
+            min_uniform_buffer_offset_alignment: 1,
+            max_buffer_size: 1 << 40,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            limits_for_adapter(&base, &adapter),
+            wgpu::Limits {
+                max_buffer_size: 1 << 40,
+                ..base
+            }
+        );
+    }
+
+    #[test]
+    fn a_derived_profile_never_falls_short_on_the_buffer_ceiling() {
+        let adapter = wgpu::Limits {
+            max_buffer_size: 128 << 20,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(
+            capability_shortfall(
+                wgpu::Features::empty(),
+                &limits_for_adapter(&wgpu::Limits::default(), &adapter),
+                wgpu::Features::empty(),
+                &adapter,
+            ),
+            None
+        );
     }
 }
 
