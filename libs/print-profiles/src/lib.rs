@@ -27,6 +27,7 @@
 //! per value naming its source, and any [`ResolveWarning`]s. This
 //! crate has no dependency on a slicer or on printer hardware.
 
+pub mod calibration_coverage;
 pub mod effective_material;
 pub mod generic_machine;
 pub mod image_asset_ref;
@@ -56,6 +57,7 @@ pub mod scene_overrides;
 pub mod value_source;
 pub mod writer;
 
+pub use calibration_coverage::CalibrationCoverage;
 pub use effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 pub use generic_machine::generic_printer_id;
 pub use image_asset_ref::{ImageAssetRef, NonLibraryRelativeImageRefError};
@@ -106,6 +108,8 @@ pub use writer::{
     save_printer_profile_to_path,
 };
 
+#[cfg(test)]
+mod tests_calibration_coverage;
 #[cfg(test)]
 mod tests_effective_material;
 #[cfg(test)]

@@ -17,11 +17,12 @@ use std::collections::BTreeMap;
 use sc_print_primitives::PrinterId;
 use sc_print_profiles::{
     EffectiveMaterial, MaterialDefaults, MaterialIntent, MaterialPerPrinter, MaterialProfile,
+    generic_printer_id,
 };
 use slint::SharedString;
 
 use crate::i18n::ctr;
-use crate::profile_catalog::{GENERIC_PRINTER_ID, PrinterCatalogEntry};
+use crate::profile_catalog::PrinterCatalogEntry;
 
 /// The calibration targets the effective material does not cover yet:
 /// every catalog printer (the generic machine included) without a
@@ -39,7 +40,7 @@ pub(crate) fn uncovered_targets(
     let rank = |id: &PrinterId| -> u8 {
         if default_printer == Some(id) {
             0
-        } else if id.as_str() == GENERIC_PRINTER_ID {
+        } else if id == generic_printer_id() {
             1
         } else {
             2
@@ -53,7 +54,7 @@ pub(crate) fn uncovered_targets(
     entries
         .into_iter()
         .map(|printer| {
-            let label = if printer.id.as_str() == GENERIC_PRINTER_ID {
+            let label = if &printer.id == generic_printer_id() {
                 ctr!("ExtendDialog", "Generic")
             } else {
                 SharedString::from(printer.name.as_str())

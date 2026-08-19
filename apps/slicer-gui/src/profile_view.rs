@@ -17,12 +17,12 @@ use std::collections::BTreeMap;
 use sc_print_primitives::PrinterId;
 use sc_print_profiles::{
     EffectiveMaterial, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
-    MaterialProfile,
+    MaterialProfile, generic_printer_id,
 };
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;
-use crate::profile_catalog::{GENERIC_PRINTER_ID, PrinterCatalogEntry, ProfileSource};
+use crate::profile_catalog::{PrinterCatalogEntry, ProfileSource};
 use crate::{ProfileViewField, ProfileViewSection};
 
 /// Headline shown above the sections: brand plus display name.
@@ -188,7 +188,7 @@ pub(crate) fn ordered_calibration_targets(
         let rank = |id: &PrinterId| -> u8 {
             if default_printer == Some(id) {
                 0
-            } else if id.as_str() == GENERIC_PRINTER_ID {
+            } else if id == generic_printer_id() {
                 1
             } else {
                 2
@@ -200,7 +200,7 @@ pub(crate) fn ordered_calibration_targets(
     });
     ids.into_iter()
         .map(|id| {
-            let label = if id.as_str() == GENERIC_PRINTER_ID {
+            let label = if id == generic_printer_id() {
                 ctr!("ProfileViewDialog", "Generic")
             } else {
                 SharedString::from(display_label(id))
@@ -219,14 +219,11 @@ fn calibration_sections(
 
     // The id whose block the default printer would use: its own when
     // present, otherwise the generic fallback.
-    let highlight_id: Option<&str> = default_printer.and_then(|wanted| {
+    let highlight_id: Option<&PrinterId> = default_printer.and_then(|wanted| {
         if blocks.iter().any(|(id, _)| *id == wanted) {
-            Some(wanted.as_str())
-        } else if blocks
-            .iter()
-            .any(|(id, _)| id.as_str() == GENERIC_PRINTER_ID)
-        {
-            Some(GENERIC_PRINTER_ID)
+            Some(wanted)
+        } else if blocks.iter().any(|(id, _)| *id == generic_printer_id()) {
+            Some(generic_printer_id())
         } else {
             None
         }
@@ -246,7 +243,7 @@ fn calibration_sections(
         let rank = |id: &PrinterId| -> u8 {
             if default_printer == Some(id) {
                 0
-            } else if id.as_str() == GENERIC_PRINTER_ID {
+            } else if id == generic_printer_id() {
                 1
             } else {
                 2
@@ -260,16 +257,12 @@ fn calibration_sections(
     blocks
         .into_iter()
         .map(|(id, block)| {
-            let title = if id.as_str() == GENERIC_PRINTER_ID {
+            let title = if id == generic_printer_id() {
                 ctr!("ProfileViewDialog", "Generic calibration")
             } else {
                 ctr!("ProfileViewDialog", "Calibration: {}", display_label(id))
             };
-            section(
-                title,
-                highlight_id == Some(id.as_str()),
-                calibration_fields(block),
-            )
+            section(title, highlight_id == Some(id), calibration_fields(block))
         })
         .collect()
 }

@@ -24,15 +24,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{BuildVolume, MaterialId, PrinterId};
+pub use sc_print_profiles::CalibrationCoverage;
 use sc_print_profiles::{
-    MaterialProfile, PrinterProfile, list_material_extension_ids, list_material_ids,
-    list_printer_ids, load_material_extension_from_library, load_material_profile_from_library,
-    load_printer_profile_from_library, user_library_dir,
+    MaterialProfile, PrinterProfile, generic_printer_id, list_material_extension_ids,
+    list_material_ids, list_printer_ids, load_material_extension_from_library,
+    load_material_profile_from_library, load_printer_profile_from_library, user_library_dir,
 };
-
-/// Id of the generic printer profile. Its calibration blocks apply as
-/// a fallback to any printer without a specific block.
-pub(crate) const GENERIC_PRINTER_ID: &str = "generic-machine";
 
 /// Which on-disk library a catalog entry's winning id resolved from.
 ///
@@ -82,51 +79,18 @@ pub struct MaterialExtensionEntry {
     pub printers: BTreeSet<PrinterId>,
 }
 
-/// How well a material's calibration data covers a printer, over the
-/// union of the base profile's blocks and its extension's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CalibrationCoverage {
-    /// A block for the printer itself exists.
-    Specific,
-    /// No block for the printer, but the generic block applies as a
-    /// fallback.
-    GenericFallback,
-    /// No block applies to the printer.
-    None,
-}
-
-/// Whether the union of the entry's and the extension's calibration
-/// blocks contains the printer id given as a string.
-fn union_contains(
-    entry: &MaterialCatalogEntry,
-    extension: Option<&MaterialExtensionEntry>,
-    printer_id: &str,
-) -> bool {
-    entry
-        .calibrated_printers
-        .iter()
-        .any(|id| id.as_str() == printer_id)
-        || extension.is_some_and(|ext| ext.printers.iter().any(|id| id.as_str() == printer_id))
-}
-
 /// Coverage of `printer` by the union of the entry's and the
-/// extension's calibration blocks. With no printer given, only the
-/// generic block can cover (it applies to whichever printer ends up
-/// being used).
+/// extension's calibration blocks.
 pub fn coverage(
     entry: &MaterialCatalogEntry,
     extension: Option<&MaterialExtensionEntry>,
     printer: Option<&PrinterId>,
 ) -> CalibrationCoverage {
-    if let Some(printer) = printer
-        && union_contains(entry, extension, printer.as_str())
-    {
-        return CalibrationCoverage::Specific;
-    }
-    if union_contains(entry, extension, GENERIC_PRINTER_ID) {
-        return CalibrationCoverage::GenericFallback;
-    }
-    CalibrationCoverage::None
+    let extension_keys = extension.into_iter().flat_map(|ext| ext.printers.iter());
+    CalibrationCoverage::of(
+        entry.calibrated_printers.iter().chain(extension_keys),
+        printer,
+    )
 }
 
 /// Whether the entry (with its extension) carries a block that applies
@@ -239,7 +203,7 @@ impl ProfileCatalog {
     pub fn first_run_default_printer(&self) -> Option<PrinterId> {
         self.printers
             .iter()
-            .find(|entry| entry.id.as_str() == GENERIC_PRINTER_ID)
+            .find(|entry| &entry.id == generic_printer_id())
             .or_else(|| self.printers.first())
             .map(|entry| entry.id.clone())
     }

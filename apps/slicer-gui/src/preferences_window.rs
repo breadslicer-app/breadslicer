@@ -18,7 +18,7 @@ use slint::{
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, delete_material_extension_from_library,
-    delete_material_profile_from_library, load_material_extension_from_library,
+    delete_material_profile_from_library, generic_printer_id, load_material_extension_from_library,
     load_material_profile_by_id, load_material_profile_from_library, user_library_dir,
 };
 
@@ -33,8 +33,8 @@ use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::profile_catalog::{
-    GENERIC_PRINTER_ID, MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry,
-    ProfileCatalog, ProfileSource, has_active_matcher,
+    MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry, ProfileCatalog,
+    ProfileSource, has_active_matcher,
 };
 use crate::profile_extending::{build_extension_update, uncovered_targets};
 use crate::profile_forking::{ForkParts, build_fork};
@@ -1752,7 +1752,7 @@ fn build_pills(
     let mut other_pills = Vec::new();
     for id in calibrated {
         let is_default = default_printer == Some(id);
-        let is_generic = id.as_str() == GENERIC_PRINTER_ID;
+        let is_generic = id == generic_printer_id();
         let kind = if default_printer.is_none() {
             PillKind::Other
         } else if is_default {
