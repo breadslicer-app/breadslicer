@@ -24,7 +24,7 @@ use std::path::PathBuf;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
-use crate::generic_machine::generic_printer_id;
+use crate::calibration_target::CalibrationTarget;
 use crate::material_defaults::MaterialDefaults;
 use crate::material_identity::MaterialIdentity;
 use crate::material_intent::MaterialIntent;
@@ -44,7 +44,7 @@ pub struct EffectiveMaterial {
     identity: MaterialIdentity,
     intent: MaterialIntent,
     defaults: MaterialDefaults,
-    per_printer: BTreeMap<PrinterId, MaterialPerPrinter>,
+    per_printer: BTreeMap<CalibrationTarget, MaterialPerPrinter>,
 }
 
 impl EffectiveMaterial {
@@ -99,11 +99,11 @@ impl EffectiveMaterial {
         }
 
         let mut effective = Self::from(base);
-        for (printer_id, block) in extension.per_printer {
-            match effective.per_printer.entry(printer_id) {
+        for (target, block) in extension.per_printer {
+            match effective.per_printer.entry(target) {
                 Entry::Occupied(occupied) => {
                     issues.push(MaterialExtensionIssue::OverlappingCalibrationPair {
-                        printer_id: occupied.key().clone(),
+                        target: occupied.key().clone(),
                     });
                 }
                 Entry::Vacant(vacant) => {
@@ -128,7 +128,7 @@ impl EffectiveMaterial {
 
     /// The effective per-printer calibration blocks: the base's own
     /// plus the pairs the extension added.
-    pub fn per_printer(&self) -> &BTreeMap<PrinterId, MaterialPerPrinter> {
+    pub fn per_printer(&self) -> &BTreeMap<CalibrationTarget, MaterialPerPrinter> {
         &self.per_printer
     }
 
@@ -137,10 +137,10 @@ impl EffectiveMaterial {
     pub fn calibration_for(
         &self,
         printer: &PrinterId,
-    ) -> Option<(&PrinterId, &MaterialPerPrinter)> {
+    ) -> Option<(&CalibrationTarget, &MaterialPerPrinter)> {
         self.per_printer
-            .get_key_value(printer)
-            .or_else(|| self.per_printer.get_key_value(generic_printer_id()))
+            .get_key_value(&CalibrationTarget::from_printer(printer))
+            .or_else(|| self.per_printer.get_key_value(&CalibrationTarget::Generic))
     }
 }
 
@@ -179,10 +179,10 @@ pub enum MaterialExtensionIssue {
         base: MaterialId,
         extension: MaterialId,
     },
-    /// The extension carries a calibration block for a printer the
+    /// The extension carries a calibration block for a target the
     /// base already covers; that pair was excluded and the base's
     /// block stays in effect.
-    OverlappingCalibrationPair { printer_id: PrinterId },
+    OverlappingCalibrationPair { target: CalibrationTarget },
     /// The extension's `[intent]` section carries values; intent is
     /// inherited from the base, so they were ignored.
     InheritedIntentCarriesValues,
@@ -210,10 +210,10 @@ impl fmt::Display for MaterialExtensionIssue {
                 extension.as_str(),
                 base.as_str(),
             ),
-            Self::OverlappingCalibrationPair { printer_id } => write!(
+            Self::OverlappingCalibrationPair { target } => write!(
                 f,
                 "the extension adds a calibration block for printer '{}', which the base profile already covers; the base profile's block stays in effect",
-                printer_id.as_str(),
+                target.as_str(),
             ),
             Self::InheritedIntentCarriesValues => write!(
                 f,

@@ -171,7 +171,7 @@ fn nothing_is_highlighted_without_a_default_printer_or_matching_block() {
     assert!(none_selected.iter().all(|s| !s.highlighted));
 
     let mut no_generic = parse(BASE_TOML);
-    no_generic.per_printer.remove(&printer("generic-machine"));
+    no_generic.per_printer.remove(&CalibrationTarget::Generic);
     let unmatched = build_profile_view_model(
         &effective(no_generic, None),
         &printers(),
@@ -228,7 +228,7 @@ normal_exposure_sec = 9.9
     assert_eq!(
         issues,
         vec![MaterialExtensionIssue::OverlappingCalibrationPair {
-            printer_id: printer("printer-a"),
+            target: CalibrationTarget::from(printer("printer-a")),
         }],
     );
 

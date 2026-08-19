@@ -28,6 +28,7 @@
 //! crate has no dependency on a slicer or on printer hardware.
 
 pub mod calibration_coverage;
+pub mod calibration_target;
 pub mod effective_material;
 pub mod generic_machine;
 pub mod image_asset_ref;
@@ -58,6 +59,7 @@ pub mod value_source;
 pub mod writer;
 
 pub use calibration_coverage::CalibrationCoverage;
+pub use calibration_target::{CalibrationTarget, SpecificPrinterId};
 pub use effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 pub use generic_machine::generic_printer_id;
 pub use image_asset_ref::{ImageAssetRef, NonLibraryRelativeImageRefError};
@@ -110,6 +112,8 @@ pub use writer::{
 
 #[cfg(test)]
 mod tests_calibration_coverage;
+#[cfg(test)]
+mod tests_calibration_target;
 #[cfg(test)]
 mod tests_effective_material;
 #[cfg(test)]

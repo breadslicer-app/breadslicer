@@ -87,6 +87,10 @@ fn printer_id(id: &str) -> PrinterId {
     PrinterId::new(id).unwrap()
 }
 
+fn target(id: &str) -> CalibrationTarget {
+    CalibrationTarget::from(printer_id(id))
+}
+
 fn sample_block() -> MaterialPerPrinter {
     MaterialPerPrinter {
         normal_exposure_sec: None,
@@ -153,8 +157,8 @@ fn full_coverage_leaves_nothing_to_extend() {
 #[test]
 fn the_first_extend_starts_a_fresh_extension_from_the_base_identity() {
     let base = parse(BASE_TOML);
-    let target = printer_id("printer-z");
-    let update = build_extension_update(&base, None, &target, sample_block());
+    let new_target = target("printer-z");
+    let update = build_extension_update(&base, None, &new_target, sample_block());
 
     assert!(update.extension);
     assert_eq!(update.identity, base.identity);
@@ -163,36 +167,36 @@ fn the_first_extend_starts_a_fresh_extension_from_the_base_identity() {
     assert_eq!(update.defaults.scale_compensation_pct, None);
     assert_eq!(update.defaults.bottom_layer_count, None);
     assert_eq!(update.per_printer.len(), 1);
-    assert_eq!(update.per_printer.get(&target), Some(&sample_block()));
+    assert_eq!(update.per_printer.get(&new_target), Some(&sample_block()));
 }
 
 #[test]
 fn a_later_extend_appends_to_the_existing_extension() {
     let base = parse(BASE_TOML);
     let extension = parse(EXTENSION_TOML);
-    let target = printer_id("printer-z");
-    let update = build_extension_update(&base, Some(&extension), &target, sample_block());
+    let new_target = target("printer-z");
+    let update = build_extension_update(&base, Some(&extension), &new_target, sample_block());
 
     assert!(update.extension);
     assert_eq!(update.per_printer.len(), 2);
     assert_eq!(
-        update.per_printer.get(&printer_id("printer-b")),
-        extension.per_printer.get(&printer_id("printer-b")),
+        update.per_printer.get(&target("printer-b")),
+        extension.per_printer.get(&target("printer-b")),
     );
-    assert_eq!(update.per_printer.get(&target), Some(&sample_block()));
+    assert_eq!(update.per_printer.get(&new_target), Some(&sample_block()));
 }
 
 #[test]
 fn extending_an_orphaned_extension_appends_to_its_own_pairs() {
     let orphan = parse(EXTENSION_TOML);
-    let target = printer_id("printer-z");
-    let update = build_extension_update(&orphan, None, &target, sample_block());
+    let new_target = target("printer-z");
+    let update = build_extension_update(&orphan, None, &new_target, sample_block());
 
     assert!(update.extension);
     assert_eq!(update.per_printer.len(), 2);
     assert_eq!(
-        update.per_printer.get(&printer_id("printer-b")),
-        orphan.per_printer.get(&printer_id("printer-b")),
+        update.per_printer.get(&target("printer-b")),
+        orphan.per_printer.get(&target("printer-b")),
     );
-    assert_eq!(update.per_printer.get(&target), Some(&sample_block()));
+    assert_eq!(update.per_printer.get(&new_target), Some(&sample_block()));
 }

@@ -5,6 +5,7 @@
 
 use std::fs;
 
+use sc_print_primitives::PrinterId;
 use sc_print_profiles::load_material_profile_from_path;
 
 use super::*;
@@ -37,8 +38,8 @@ fn source_profile() -> MaterialProfile {
     load_material_profile_from_path(&path).unwrap()
 }
 
-fn printer_id(id: &str) -> PrinterId {
-    PrinterId::new(id).unwrap()
+fn target(id: &str) -> CalibrationTarget {
+    CalibrationTarget::from(PrinterId::new(id).unwrap())
 }
 
 fn no_ids() -> BTreeSet<MaterialId> {
@@ -79,7 +80,7 @@ fn every_selected_part_is_copied_verbatim() {
     let parts = ForkParts {
         intent: true,
         defaults: true,
-        blocks: vec![printer_id("printer-a"), printer_id("generic-machine")],
+        blocks: vec![target("printer-a"), CalibrationTarget::Generic],
     };
     let fork = build_fork(&source, &parts, "My Fork", "Brand", &no_ids()).unwrap();
 
@@ -94,7 +95,7 @@ fn a_block_subset_copies_exactly_those_blocks() {
     let parts = ForkParts {
         intent: false,
         defaults: true,
-        blocks: vec![printer_id("generic-machine")],
+        blocks: vec![CalibrationTarget::Generic],
     };
     let fork = build_fork(&source, &parts, "My Fork", "Brand", &no_ids()).unwrap();
 
@@ -102,8 +103,8 @@ fn a_block_subset_copies_exactly_those_blocks() {
     assert_eq!(fork.defaults, source.defaults);
     assert_eq!(fork.per_printer.len(), 1);
     assert_eq!(
-        fork.per_printer.get(&printer_id("generic-machine")),
-        source.per_printer.get(&printer_id("generic-machine")),
+        fork.per_printer.get(&CalibrationTarget::Generic),
+        source.per_printer.get(&CalibrationTarget::Generic),
     );
 }
 
@@ -186,7 +187,7 @@ fn forking_an_extension_yields_a_full_profile() {
     let parts = ForkParts {
         intent: false,
         defaults: false,
-        blocks: vec![printer_id("printer-a")],
+        blocks: vec![target("printer-a")],
     };
     let fork = build_fork(&source, &parts, "My Fork", "Brand", &no_ids()).unwrap();
     assert!(!fork.extension);

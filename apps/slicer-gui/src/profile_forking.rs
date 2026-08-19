@@ -19,8 +19,10 @@ use std::fmt;
 
 use slint::SharedString;
 
-use sc_print_primitives::{MaterialId, NonEmptyString, PrinterId};
-use sc_print_profiles::{MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialProfile};
+use sc_print_primitives::{MaterialId, NonEmptyString};
+use sc_print_profiles::{
+    CalibrationTarget, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialProfile,
+};
 
 use crate::i18n::ctr;
 
@@ -29,8 +31,8 @@ use crate::i18n::ctr;
 pub(crate) struct ForkParts {
     pub intent: bool,
     pub defaults: bool,
-    /// The source calibration blocks to copy, by per-printer key.
-    pub blocks: Vec<PrinterId>,
+    /// The source calibration blocks to copy, by target.
+    pub blocks: Vec<CalibrationTarget>,
 }
 
 /// Why a fork could not be assembled. `Display` keeps the English
@@ -116,11 +118,11 @@ pub(crate) fn build_fork(
         per_printer: parts
             .blocks
             .iter()
-            .filter_map(|printer| {
+            .filter_map(|target| {
                 source
                     .per_printer
-                    .get(printer)
-                    .map(|block| (printer.clone(), *block))
+                    .get(target)
+                    .map(|block| (target.clone(), *block))
             })
             .collect::<BTreeMap<_, _>>(),
     })

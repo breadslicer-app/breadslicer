@@ -22,7 +22,8 @@ use sc_print_primitives::{
     SpeedMmPerMinOutOfRange,
 };
 use sc_print_profiles::{
-    MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter, MaterialProfile,
+    CalibrationTarget, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
+    MaterialProfile,
 };
 use semver::Version;
 use serde::Deserialize;
@@ -194,7 +195,7 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
                 preset: preset.clone(),
                 source,
             })?;
-        per_printer.insert(printer_id, per_printer_settings);
+        per_printer.insert(CalibrationTarget::from(printer_id), per_printer_settings);
     }
 
     Ok(MaterialProfile {
@@ -347,10 +348,15 @@ mod tests {
     #[test]
     fn applies_settings_to_every_valid_preset() {
         let profile = map(FULL).unwrap();
-        let keys: Vec<&str> = profile.per_printer.keys().map(PrinterId::as_str).collect();
+        let keys: Vec<&str> = profile
+            .per_printer
+            .keys()
+            .map(CalibrationTarget::as_str)
+            .collect();
         assert_eq!(keys, vec!["printer-a", "printer-b"]);
 
-        let entry = &profile.per_printer[&PrinterId::new("printer-a").unwrap()];
+        let entry =
+            &profile.per_printer[&CalibrationTarget::from(PrinterId::new("printer-a").unwrap())];
         assert_eq!(
             entry.normal_exposure_sec,
             Some(PositiveFiniteSec::new(2.5).unwrap()),

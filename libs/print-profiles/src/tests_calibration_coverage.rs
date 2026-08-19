@@ -6,13 +6,16 @@
 use sc_print_primitives::PrinterId;
 
 use super::calibration_coverage::CalibrationCoverage;
+use super::calibration_target::CalibrationTarget;
 
 fn printer_id(raw: &str) -> PrinterId {
     raw.parse().unwrap()
 }
 
-fn keys(raw: &[&str]) -> Vec<PrinterId> {
-    raw.iter().map(|id| printer_id(id)).collect()
+fn keys(raw: &[&str]) -> Vec<CalibrationTarget> {
+    raw.iter()
+        .map(|id| CalibrationTarget::from_printer(&printer_id(id)))
+        .collect()
 }
 
 #[test]

@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 
 use sc_print_primitives::PrinterId;
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialDefaults, MaterialIntent, MaterialPerPrinter, MaterialProfile,
-    generic_printer_id,
+    CalibrationTarget, EffectiveMaterial, MaterialDefaults, MaterialIntent, MaterialPerPrinter,
+    MaterialProfile,
 };
 use slint::SharedString;
 
@@ -35,31 +35,32 @@ pub(crate) fn uncovered_targets(
     material: &EffectiveMaterial,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
-) -> Vec<(PrinterId, SharedString)> {
-    let covered = |id: &PrinterId| material.per_printer().contains_key(id);
-    let rank = |id: &PrinterId| -> u8 {
-        if default_printer == Some(id) {
+) -> Vec<(CalibrationTarget, SharedString)> {
+    let default_target = default_printer.map(CalibrationTarget::from_printer);
+    let rank = |target: &CalibrationTarget| -> u8 {
+        if default_target.as_ref() == Some(target) {
             0
-        } else if id == generic_printer_id() {
-            1
         } else {
-            2
+            match target {
+                CalibrationTarget::Generic => 1,
+                CalibrationTarget::Printer(_) => 2,
+            }
         }
     };
-    let mut entries: Vec<&PrinterCatalogEntry> = printers
+    let mut entries: Vec<(CalibrationTarget, &PrinterCatalogEntry)> = printers
         .iter()
-        .filter(|printer| !covered(&printer.id))
+        .map(|printer| (CalibrationTarget::from_printer(&printer.id), printer))
+        .filter(|(target, _)| !material.per_printer().contains_key(target))
         .collect();
-    entries.sort_by_key(|printer| rank(&printer.id));
+    entries.sort_by_key(|(target, _)| rank(target));
     entries
         .into_iter()
-        .map(|printer| {
-            let label = if &printer.id == generic_printer_id() {
-                ctr!("ExtendDialog", "Generic")
-            } else {
-                SharedString::from(printer.name.as_str())
+        .map(|(target, printer)| {
+            let label = match target {
+                CalibrationTarget::Generic => ctr!("ExtendDialog", "Generic"),
+                CalibrationTarget::Printer(_) => SharedString::from(printer.name.as_str()),
             };
-            (printer.id.clone(), label)
+            (target, label)
         })
         .collect()
 }
@@ -72,7 +73,7 @@ pub(crate) fn uncovered_targets(
 pub(crate) fn build_extension_update(
     base: &MaterialProfile,
     existing_extension: Option<&MaterialProfile>,
-    target: &PrinterId,
+    target: &CalibrationTarget,
     values: MaterialPerPrinter,
 ) -> MaterialProfile {
     let mut extension = match existing_extension {

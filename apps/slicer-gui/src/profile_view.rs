@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 
 use sc_print_primitives::PrinterId;
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
-    MaterialProfile, generic_printer_id,
+    CalibrationTarget, EffectiveMaterial, MaterialDefaults, MaterialIdentity, MaterialIntent,
+    MaterialPerPrinter, MaterialProfile,
 };
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -166,16 +166,14 @@ fn defaults_section(defaults: &MaterialDefaults) -> ProfileViewSection {
     )
 }
 
-/// The profile's own calibration blocks as `(printer id, label)`
-/// picker entries for the editor, ordered like the viewer sections:
-/// the default printer's block first, generic next, the rest by
-/// display name. Labels are the printer names ("Generic" for the
-/// generic block).
+/// List the profile's calibration targets with their display labels,
+/// the default printer's first, the generic machine's next, the rest
+/// by label.
 pub(crate) fn ordered_calibration_targets(
     profile: &MaterialProfile,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
-) -> Vec<(PrinterId, SharedString)> {
+) -> Vec<(CalibrationTarget, SharedString)> {
     let display_label = |id: &PrinterId| -> String {
         printers
             .iter()
@@ -183,47 +181,55 @@ pub(crate) fn ordered_calibration_targets(
             .map(|printer| printer.name.clone())
             .unwrap_or_else(|| id.as_str().to_owned())
     };
-    let mut ids: Vec<&PrinterId> = profile.per_printer.keys().collect();
-    ids.sort_by(|a, b| {
-        let rank = |id: &PrinterId| -> u8 {
-            if default_printer == Some(id) {
+    let default_target = default_printer.map(CalibrationTarget::from_printer);
+    let mut targets: Vec<&CalibrationTarget> = profile.per_printer.keys().collect();
+    targets.sort_by(|a, b| {
+        let rank = |target: &CalibrationTarget| -> u8 {
+            if default_target.as_ref() == Some(target) {
                 0
-            } else if id == generic_printer_id() {
-                1
             } else {
-                2
+                match target {
+                    CalibrationTarget::Generic => 1,
+                    CalibrationTarget::Printer(_) => 2,
+                }
             }
         };
         rank(a)
             .cmp(&rank(b))
-            .then_with(|| display_label(a).cmp(&display_label(b)))
+            .then_with(|| display_label(a.printer_id()).cmp(&display_label(b.printer_id())))
     });
-    ids.into_iter()
-        .map(|id| {
-            let label = if id == generic_printer_id() {
-                ctr!("ProfileViewDialog", "Generic")
-            } else {
-                SharedString::from(display_label(id))
+    targets
+        .into_iter()
+        .map(|target| {
+            let label = match target {
+                CalibrationTarget::Generic => ctr!("ProfileViewDialog", "Generic"),
+                CalibrationTarget::Printer(id) => {
+                    SharedString::from(display_label(id.as_printer_id()))
+                }
             };
-            (id.clone(), label)
+            (target.clone(), label)
         })
         .collect()
 }
 
 fn calibration_sections(
-    blocks: &BTreeMap<PrinterId, MaterialPerPrinter>,
+    blocks: &BTreeMap<CalibrationTarget, MaterialPerPrinter>,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
 ) -> Vec<ProfileViewSection> {
-    let mut blocks: Vec<(&PrinterId, &MaterialPerPrinter)> = blocks.iter().collect();
+    let mut blocks: Vec<(&CalibrationTarget, &MaterialPerPrinter)> = blocks.iter().collect();
 
-    // The id whose block the default printer would use: its own when
-    // present, otherwise the generic fallback.
-    let highlight_id: Option<&PrinterId> = default_printer.and_then(|wanted| {
-        if blocks.iter().any(|(id, _)| *id == wanted) {
-            Some(wanted)
-        } else if blocks.iter().any(|(id, _)| *id == generic_printer_id()) {
-            Some(generic_printer_id())
+    let default_target = default_printer.map(CalibrationTarget::from_printer);
+    // The target whose block the default printer would use: its own
+    // when present, otherwise the generic fallback.
+    let highlight: Option<CalibrationTarget> = default_target.as_ref().and_then(|wanted| {
+        if blocks.iter().any(|(target, _)| *target == wanted) {
+            Some(wanted.clone())
+        } else if blocks
+            .iter()
+            .any(|(target, _)| **target == CalibrationTarget::Generic)
+        {
+            Some(CalibrationTarget::Generic)
         } else {
             None
         }
@@ -240,29 +246,37 @@ fn calibration_sections(
     // Default printer's block first, generic next, the rest by
     // display name.
     blocks.sort_by(|(a, _), (b, _)| {
-        let rank = |id: &PrinterId| -> u8 {
-            if default_printer == Some(id) {
+        let rank = |target: &CalibrationTarget| -> u8 {
+            if default_target.as_ref() == Some(target) {
                 0
-            } else if id == generic_printer_id() {
-                1
             } else {
-                2
+                match target {
+                    CalibrationTarget::Generic => 1,
+                    CalibrationTarget::Printer(_) => 2,
+                }
             }
         };
         rank(a)
             .cmp(&rank(b))
-            .then_with(|| display_label(a).cmp(&display_label(b)))
+            .then_with(|| display_label(a.printer_id()).cmp(&display_label(b.printer_id())))
     });
 
     blocks
         .into_iter()
-        .map(|(id, block)| {
-            let title = if id == generic_printer_id() {
-                ctr!("ProfileViewDialog", "Generic calibration")
-            } else {
-                ctr!("ProfileViewDialog", "Calibration: {}", display_label(id))
+        .map(|(target, block)| {
+            let title = match target {
+                CalibrationTarget::Generic => ctr!("ProfileViewDialog", "Generic calibration"),
+                CalibrationTarget::Printer(id) => ctr!(
+                    "ProfileViewDialog",
+                    "Calibration: {}",
+                    display_label(id.as_printer_id())
+                ),
             };
-            section(title, highlight_id == Some(id), calibration_fields(block))
+            section(
+                title,
+                highlight.as_ref() == Some(target),
+                calibration_fields(block),
+            )
         })
         .collect()
 }

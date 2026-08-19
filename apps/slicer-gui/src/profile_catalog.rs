@@ -26,9 +26,10 @@ use std::path::{Path, PathBuf};
 use sc_print_primitives::{BuildVolume, MaterialId, PrinterId};
 pub use sc_print_profiles::CalibrationCoverage;
 use sc_print_profiles::{
-    MaterialProfile, PrinterProfile, generic_printer_id, list_material_extension_ids,
-    list_material_ids, list_printer_ids, load_material_extension_from_library,
-    load_material_profile_from_library, load_printer_profile_from_library, user_library_dir,
+    CalibrationTarget, MaterialProfile, PrinterProfile, generic_printer_id,
+    list_material_extension_ids, list_material_ids, list_printer_ids,
+    load_material_extension_from_library, load_material_profile_from_library,
+    load_printer_profile_from_library, user_library_dir,
 };
 
 /// Which on-disk library a catalog entry's winning id resolved from.
@@ -63,9 +64,9 @@ pub struct MaterialCatalogEntry {
     pub brand: String,
     pub name: String,
     pub family: String,
-    /// The printers this material ships a `[per_printer.<id>]`
+    /// The targets this material ships a `[per_printer.<id>]`
     /// calibration block for.
-    pub calibrated_printers: BTreeSet<PrinterId>,
+    pub calibrated_printers: BTreeSet<CalibrationTarget>,
     pub source: ProfileSource,
 }
 
@@ -75,8 +76,8 @@ pub struct MaterialCatalogEntry {
 pub struct MaterialExtensionEntry {
     /// The shared resin id: the base entry this extension attaches to.
     pub id: MaterialId,
-    /// The printers the extension adds a calibration block for.
-    pub printers: BTreeSet<PrinterId>,
+    /// The targets the extension adds a calibration block for.
+    pub printers: BTreeSet<CalibrationTarget>,
 }
 
 /// Coverage of `printer` by the union of the entry's and the

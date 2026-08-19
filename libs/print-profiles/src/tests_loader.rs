@@ -9,6 +9,7 @@ use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
+use super::calibration_target::CalibrationTarget;
 use super::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 use super::loader::{
     LoadMaterialExtensionError, LoadMaterialProfileByIdError, LoadMaterialProfileError,
@@ -663,7 +664,7 @@ fn compose_with_library_extension_folds_a_valid_extension() {
     let (effective, issues) = compose_with_library_extension(composable_base(), dir.path());
 
     assert!(issues.is_empty());
-    let printer_b = PrinterId::new("printer-b").unwrap();
+    let printer_b = CalibrationTarget::from_printer(&PrinterId::new("printer-b").unwrap());
     assert_eq!(
         effective.per_printer()[&printer_b]
             .normal_exposure_sec
@@ -723,12 +724,12 @@ normal_exposure_sec = 3.5
 
     let (effective, issues) = compose_with_library_extension(composable_base(), dir.path());
 
-    let printer_a = PrinterId::new("printer-a").unwrap();
-    let printer_b = PrinterId::new("printer-b").unwrap();
+    let printer_a = CalibrationTarget::from_printer(&PrinterId::new("printer-a").unwrap());
+    let printer_b = CalibrationTarget::from_printer(&PrinterId::new("printer-b").unwrap());
     assert_eq!(
         issues,
         vec![MaterialExtensionIssue::OverlappingCalibrationPair {
-            printer_id: printer_a.clone(),
+            target: printer_a.clone(),
         }],
     );
     // The overlapped pair keeps the base's value; the new pair lands.

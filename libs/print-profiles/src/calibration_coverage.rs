@@ -10,7 +10,7 @@
 
 use sc_print_primitives::PrinterId;
 
-use crate::generic_machine::generic_printer_id;
+use crate::calibration_target::CalibrationTarget;
 
 /// How well a set of calibration block keys covers a printer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,15 +29,16 @@ impl CalibrationCoverage {
     /// material's own plus its extension's). With no printer, only the
     /// generic block can cover.
     pub fn of<'k>(
-        keys: impl IntoIterator<Item = &'k PrinterId>,
+        keys: impl IntoIterator<Item = &'k CalibrationTarget>,
         printer: Option<&PrinterId>,
     ) -> Self {
+        let own = printer.map(CalibrationTarget::from_printer);
         let mut has_generic = false;
         for key in keys {
-            if Some(key) == printer {
+            if Some(key) == own.as_ref() {
                 return Self::Specific;
             }
-            if key == generic_printer_id() {
+            if *key == CalibrationTarget::Generic {
                 has_generic = true;
             }
         }

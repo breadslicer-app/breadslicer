@@ -17,8 +17,8 @@ use slint::{
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialProfile, delete_material_extension_from_library,
-    delete_material_profile_from_library, generic_printer_id, load_material_extension_from_library,
+    CalibrationTarget, EffectiveMaterial, MaterialProfile, delete_material_extension_from_library,
+    delete_material_profile_from_library, load_material_extension_from_library,
     load_material_profile_by_id, load_material_profile_from_library, user_library_dir,
 };
 
@@ -1722,8 +1722,9 @@ fn has_uncovered_target(
     printers: &[PrinterCatalogEntry],
 ) -> bool {
     printers.iter().any(|printer| {
-        !entry.calibrated_printers.contains(&printer.id)
-            && extension.is_none_or(|ext| !ext.printers.contains(&printer.id))
+        let target = CalibrationTarget::from_printer(&printer.id);
+        !entry.calibrated_printers.contains(&target)
+            && extension.is_none_or(|ext| !ext.printers.contains(&target))
     })
 }
 
@@ -1743,37 +1744,38 @@ fn printer_pill_label(printers: &[PrinterCatalogEntry], id: &PrinterId) -> Share
 /// generic, gray otherwise; with no default printer everything is
 /// gray (the whole list renders dim).
 fn build_pills(
-    calibrated: &BTreeSet<PrinterId>,
+    calibrated: &BTreeSet<CalibrationTarget>,
     printers: &[PrinterCatalogEntry],
     default_printer: Option<&PrinterId>,
 ) -> Vec<ResinPill> {
+    let default_target = default_printer.map(CalibrationTarget::from_printer);
     let mut default_pill = None;
     let mut generic_pill = None;
     let mut other_pills = Vec::new();
-    for id in calibrated {
-        let is_default = default_printer == Some(id);
-        let is_generic = id == generic_printer_id();
+    for target in calibrated {
+        let is_default = default_target.as_ref() == Some(target);
         let kind = if default_printer.is_none() {
             PillKind::Other
         } else if is_default {
             PillKind::OurPrinter
-        } else if is_generic {
-            PillKind::Generic
         } else {
-            PillKind::Other
+            match target {
+                CalibrationTarget::Generic => PillKind::Generic,
+                CalibrationTarget::Printer(_) => PillKind::Other,
+            }
         };
-        let label = if is_generic {
-            ctr!("PreferencesPage", "Generic")
-        } else {
-            printer_pill_label(printers, id)
+        let label = match target {
+            CalibrationTarget::Generic => ctr!("PreferencesPage", "Generic"),
+            CalibrationTarget::Printer(id) => printer_pill_label(printers, id.as_printer_id()),
         };
         let pill = ResinPill { label, kind };
         if is_default {
             default_pill = Some(pill);
-        } else if is_generic {
-            generic_pill = Some(pill);
         } else {
-            other_pills.push(pill);
+            match target {
+                CalibrationTarget::Generic => generic_pill = Some(pill),
+                CalibrationTarget::Printer(_) => other_pills.push(pill),
+            }
         }
     }
     other_pills.sort_by(|a, b| a.label.cmp(&b.label));
@@ -2019,7 +2021,7 @@ mod derive_resin_view_tests {
             family: "other".to_owned(),
             calibrated_printers: calibrated_for
                 .iter()
-                .map(|p| PrinterId::new(p).unwrap())
+                .map(|p| CalibrationTarget::from(PrinterId::new(p).unwrap()))
                 .collect::<BTreeSet<_>>(),
             source: ProfileSource::Bundled,
         }
@@ -2030,7 +2032,7 @@ mod derive_resin_view_tests {
             id: MaterialId::new(id).unwrap(),
             printers: printers
                 .iter()
-                .map(|p| PrinterId::new(p).unwrap())
+                .map(|p| CalibrationTarget::from(PrinterId::new(p).unwrap()))
                 .collect(),
         }
     }

@@ -3,8 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::material_profile::{MaterialProfile, MaterialProfileReservedSection};
 use sc_print_primitives::PrinterId;
+
+use super::calibration_target::CalibrationTarget;
+use super::material_profile::{MaterialProfile, MaterialProfileReservedSection};
+
+fn target(raw: &str) -> CalibrationTarget {
+    CalibrationTarget::from_printer(&PrinterId::new(raw).unwrap())
+}
 
 const MINIMAL_TOML: &str = r#"
 [identity]
@@ -64,12 +70,12 @@ fn deserialise_parses_minimal_profile_with_empty_per_printer() {
 fn deserialise_parses_profile_with_per_printer_entries() {
     let parsed: MaterialProfile = toml_edit::de::from_str(WITH_PER_PRINTER_TOML).unwrap();
     assert_eq!(parsed.per_printer.len(), 2);
-    let saturn_ultra = PrinterId::new("elegoo-saturn-4-ultra").unwrap();
+    let saturn_ultra = target("elegoo-saturn-4-ultra");
     let entry = parsed.per_printer.get(&saturn_ultra).unwrap();
     assert_eq!(entry.normal_exposure_sec.map(|v| v.value()), Some(2.5));
     assert_eq!(entry.bottom_exposure_sec.map(|v| v.value()), Some(30.0));
     assert_eq!(entry.lift_distance_mm.map(|v| v.value()), Some(6.0));
-    let saturn = PrinterId::new("elegoo-saturn-4").unwrap();
+    let saturn = target("elegoo-saturn-4");
     let entry = parsed.per_printer.get(&saturn).unwrap();
     assert_eq!(entry.normal_exposure_sec.map(|v| v.value()), Some(2.8));
 }
@@ -218,7 +224,7 @@ fn reserved_section_display_messages_are_descriptive() {
     assert!(format!("{session}").contains("per_session_state"));
 
     let pp = MaterialProfileReservedSection::PerPrinterConstraints {
-        printer_id: PrinterId::new("elegoo-saturn-4-ultra").unwrap(),
+        target: target("elegoo-saturn-4-ultra"),
     };
     let msg = format!("{pp}");
     assert!(msg.contains("elegoo-saturn-4-ultra"), "msg: {msg}");

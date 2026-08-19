@@ -12,6 +12,7 @@ use std::fs;
 use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_profiles::CalibrationTarget;
 use sc_slicer_gui::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use sc_slicer_gui::profile_catalog::{
     CalibrationCoverage, ProfileCatalog, ProfileSource, coverage, has_active_matcher,
@@ -163,6 +164,10 @@ fn write_material_extension(root: &Path, id: &str, calibrated: &[&str]) {
 
 fn printer_id(id: &str) -> PrinterId {
     PrinterId::new(id).unwrap()
+}
+
+fn target(id: &str) -> CalibrationTarget {
+    CalibrationTarget::from(printer_id(id))
 }
 
 fn material_id(id: &str) -> MaterialId {
@@ -496,7 +501,7 @@ fn calibrated_printers_reflect_the_per_printer_blocks() {
     let entry = &catalog.materials()[0];
     assert_eq!(
         entry.calibrated_printers,
-        [printer_id("printer-a")].into_iter().collect()
+        [target("printer-a")].into_iter().collect()
     );
 }
 
@@ -522,7 +527,7 @@ fn an_extension_attaches_to_its_base_entry_by_id() {
     let extension = catalog.extension_for(&material_id("resin")).unwrap();
     assert_eq!(
         extension.printers,
-        [printer_id("printer-b")].into_iter().collect()
+        [target("printer-b")].into_iter().collect()
     );
     assert_eq!(catalog.extension_for(&material_id("missing")), None);
 }
@@ -543,7 +548,7 @@ fn an_extension_without_a_base_degrades_to_a_standalone_custom_entry() {
     assert_eq!(entry.name, "Extended Resin");
     assert_eq!(
         entry.calibrated_printers,
-        [printer_id("printer-b")].into_iter().collect()
+        [target("printer-b")].into_iter().collect()
     );
     // The degraded entry keeps the (brand, name) sort order intact.
     assert!(catalog.material_index(&material_id("other-resin")).unwrap() < index);

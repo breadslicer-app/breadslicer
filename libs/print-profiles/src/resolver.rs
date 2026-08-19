@@ -85,7 +85,7 @@ pub(crate) fn pick_and_derive_material(
 
     if let Some((key, block)) = material.calibration_for(&printer.identity.id) {
         apply_per_printer(block, &mut picked, &mut records);
-        if key != &printer.identity.id {
+        if key.printer_id() != &printer.identity.id {
             warnings.push(ResolveWarning::GenericCalibrationUsed);
         }
     }

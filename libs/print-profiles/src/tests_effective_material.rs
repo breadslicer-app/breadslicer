@@ -5,8 +5,8 @@
 
 use sc_print_primitives::PrinterId;
 
+use super::calibration_target::CalibrationTarget;
 use super::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
-use super::generic_machine::generic_printer_id;
 use super::material_profile::MaterialProfile;
 
 fn profile(toml: &str) -> MaterialProfile {
@@ -15,6 +15,10 @@ fn profile(toml: &str) -> MaterialProfile {
 
 fn printer_id(raw: &str) -> PrinterId {
     raw.parse().unwrap()
+}
+
+fn target(raw: &str) -> CalibrationTarget {
+    CalibrationTarget::from_printer(&printer_id(raw))
 }
 
 const BASE: &str = r#"
@@ -84,16 +88,16 @@ fn composing_adds_the_extensions_new_pairs() {
         EffectiveMaterial::compose(profile(BASE), Some(profile(EXTENSION_NEW_PAIRS)));
 
     assert!(issues.is_empty());
-    let ids: Vec<&PrinterId> = effective.per_printer().keys().collect();
+    let ids: Vec<&CalibrationTarget> = effective.per_printer().keys().collect();
     assert_eq!(
         ids,
         vec![
-            &printer_id("printer-a"),
-            &printer_id("printer-b"),
-            &printer_id("printer-c"),
+            &target("printer-a"),
+            &target("printer-b"),
+            &target("printer-c"),
         ],
     );
-    let added = &effective.per_printer()[&printer_id("printer-b")];
+    let added = &effective.per_printer()[&target("printer-b")];
     assert_eq!(added.normal_exposure_sec.unwrap().value(), 3.0);
     assert_eq!(added.bottom_exposure_sec.unwrap().value(), 25.0);
 }
@@ -125,14 +129,14 @@ normal_exposure_sec = 3.0
     assert_eq!(
         issues,
         vec![MaterialExtensionIssue::OverlappingCalibrationPair {
-            printer_id: printer_id("printer-a"),
+            target: target("printer-a"),
         }],
     );
     // The base's block stays in effect for the overlapped printer.
-    let kept = &effective.per_printer()[&printer_id("printer-a")];
+    let kept = &effective.per_printer()[&target("printer-a")];
     assert_eq!(kept.normal_exposure_sec.unwrap().value(), 2.5);
     // The valid sibling pair still landed.
-    let added = &effective.per_printer()[&printer_id("printer-b")];
+    let added = &effective.per_printer()[&target("printer-b")];
     assert_eq!(added.normal_exposure_sec.unwrap().value(), 3.0);
 }
 
@@ -225,11 +229,7 @@ normal_exposure_sec = 3.0
         effective.intent().target_layer_height_mm.unwrap().value(),
         0.05,
     );
-    assert!(
-        effective
-            .per_printer()
-            .contains_key(&printer_id("printer-b")),
-    );
+    assert!(effective.per_printer().contains_key(&target("printer-b")),);
 }
 
 #[test]
@@ -317,31 +317,31 @@ normal_exposure_sec = 9.0
             MaterialExtensionIssue::InheritedIntentCarriesValues,
             MaterialExtensionIssue::InheritedDefaultsCarryValues,
             MaterialExtensionIssue::OverlappingCalibrationPair {
-                printer_id: printer_id("printer-a"),
+                target: target("printer-a"),
             },
             MaterialExtensionIssue::OverlappingCalibrationPair {
-                printer_id: printer_id("printer-c"),
+                target: target("printer-c"),
             },
         ],
     );
     // Both overlapped pairs keep the base's values; the new pair lands.
     let map = effective.per_printer();
     assert_eq!(
-        map[&printer_id("printer-a")]
+        map[&target("printer-a")]
             .normal_exposure_sec
             .unwrap()
             .value(),
         2.5,
     );
     assert_eq!(
-        map[&printer_id("printer-b")]
+        map[&target("printer-b")]
             .normal_exposure_sec
             .unwrap()
             .value(),
         3.0,
     );
     assert_eq!(
-        map[&printer_id("printer-c")]
+        map[&target("printer-c")]
             .normal_exposure_sec
             .unwrap()
             .value(),
@@ -357,7 +357,7 @@ fn issue_display_names_what_was_dropped_and_why() {
     );
     assert_eq!(
         MaterialExtensionIssue::OverlappingCalibrationPair {
-            printer_id: printer_id("printer-a"),
+            target: target("printer-a"),
         }
         .to_string(),
         "the extension adds a calibration block for printer 'printer-a', which the base profile already covers; the base profile's block stays in effect",
@@ -396,7 +396,7 @@ fn calibration_for_prefers_the_own_block() {
     let effective = EffectiveMaterial::from(profile(BASE_WITH_GENERIC_BLOCK));
 
     let (key, block) = effective.calibration_for(&printer_id("printer-a")).unwrap();
-    assert_eq!(key, &printer_id("printer-a"));
+    assert_eq!(key, &target("printer-a"));
     assert_eq!(block.normal_exposure_sec.unwrap().value(), 2.5);
 }
 
@@ -405,7 +405,7 @@ fn calibration_for_falls_back_to_the_generic_block() {
     let effective = EffectiveMaterial::from(profile(BASE_WITH_GENERIC_BLOCK));
 
     let (key, block) = effective.calibration_for(&printer_id("printer-b")).unwrap();
-    assert_eq!(key, generic_printer_id());
+    assert_eq!(key, &CalibrationTarget::Generic);
     assert_eq!(block.normal_exposure_sec.unwrap().value(), 4.0);
 }
 

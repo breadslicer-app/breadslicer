@@ -23,9 +23,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use sc_print_primitives::PrinterId;
 use serde::{Deserialize, Serialize};
 
+use crate::calibration_target::CalibrationTarget;
 use crate::material_defaults::MaterialDefaults;
 use crate::material_identity::MaterialIdentity;
 use crate::material_intent::MaterialIntent;
@@ -43,7 +43,9 @@ pub struct MaterialProfile {
     pub identity: MaterialIdentity,
     pub intent: MaterialIntent,
     pub defaults: MaterialDefaults,
-    pub per_printer: BTreeMap<PrinterId, MaterialPerPrinter>,
+    /// Calibration blocks by target; the generic machine's block, when
+    /// present, orders first.
+    pub per_printer: BTreeMap<CalibrationTarget, MaterialPerPrinter>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,7 +56,7 @@ struct RawMaterialProfile {
     intent: MaterialIntent,
     defaults: MaterialDefaults,
     #[serde(default)]
-    per_printer: BTreeMap<PrinterId, RawPerPrinterEntry>,
+    per_printer: BTreeMap<CalibrationTarget, RawPerPrinterEntry>,
     #[serde(default)]
     per_environment: Option<serde::de::IgnoredAny>,
     #[serde(default)]
@@ -76,7 +78,7 @@ struct RawPerPrinterEntry {
 pub enum MaterialProfileReservedSection {
     PerEnvironment,
     PerSessionState,
-    PerPrinterConstraints { printer_id: PrinterId },
+    PerPrinterConstraints { target: CalibrationTarget },
 }
 
 impl fmt::Display for MaterialProfileReservedSection {
@@ -90,10 +92,10 @@ impl fmt::Display for MaterialProfileReservedSection {
                 f,
                 "the [per_session_state.*] sections are reserved for future conditional overrides and are not supported in v0",
             ),
-            Self::PerPrinterConstraints { printer_id } => write!(
+            Self::PerPrinterConstraints { target } => write!(
                 f,
                 "[per_printer.\"{}\".constraints] is reserved for material tightening of printer constraints and is not supported in v0",
-                printer_id.as_str(),
+                target.as_str(),
             ),
         }
     }
@@ -111,11 +113,11 @@ impl TryFrom<RawMaterialProfile> for MaterialProfile {
             return Err(MaterialProfileReservedSection::PerSessionState);
         }
         let mut per_printer = BTreeMap::new();
-        for (printer_id, entry) in raw.per_printer {
+        for (target, entry) in raw.per_printer {
             if entry.constraints.is_some() {
-                return Err(MaterialProfileReservedSection::PerPrinterConstraints { printer_id });
+                return Err(MaterialProfileReservedSection::PerPrinterConstraints { target });
             }
-            per_printer.insert(printer_id, entry.inner);
+            per_printer.insert(target, entry.inner);
         }
         Ok(Self {
             extension: raw.extension,
