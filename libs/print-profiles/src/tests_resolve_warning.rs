@@ -94,6 +94,14 @@ fn default_used_display_names_field() {
 }
 
 #[test]
+fn generic_calibration_used_display_names_the_fallback() {
+    assert_eq!(
+        format!("{}", ResolveWarning::GenericCalibrationUsed),
+        "no calibration block for this printer; the generic machine block was used",
+    );
+}
+
+#[test]
 fn warning_equality_is_structural() {
     let a = ResolveWarning::DefaultUsed {
         field: ResolvedField::BottomLayerCount,

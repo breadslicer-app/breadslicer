@@ -158,7 +158,7 @@ A **resin profile** describes a material, also in four sections:
 | `identity`    | Who the resin is. |
 | `intent`      | What it aims for, independent of any printer: a target layer height and a target energy density. |
 | `defaults`    | Values that apply on any printer. |
-| `per_printer` | Values calibrated for one printer, keyed by its id. |
+| `per_printer` | Values calibrated for one printer, keyed by its id; the key `generic-machine` holds values that apply to any printer without its own block. |
 
 A resin profile marked `extension = true` adds `per_printer` blocks to the
 base profile of the same id instead of replacing it. That is how calibration
@@ -184,8 +184,11 @@ Each value is taken from the first source that has it:
 
 1. The effective material's `per_printer` block matching the printer's id
    (the base profile's own pairs plus those its extension adds).
-2. The resin's `defaults`.
-3. The resin's `intent`, where the value can be derived from it. The layer
+2. Failing that, the effective material's `generic-machine` block, recorded
+   as a warning. The printer's own block, when present, is used alone: its
+   unset values do not fall through to the generic block.
+3. The resin's `defaults`.
+4. The resin's `intent`, where the value can be derived from it. The layer
    height comes from the target layer height; the normal exposure comes from
    the target energy density divided by the printer's light intensity, so it
    needs a printer that declares one.
@@ -201,7 +204,8 @@ value that no source supplies is an error naming the field.
 
 `warnings` records what happened to each value: that it fell back to the
 resin's defaults, that it was derived from intent, or that a constraint moved
-it by more than a threshold.
+it by more than a threshold; and, once per resolution, that the generic
+machine's block stood in for the printer's own.
 
 ## Profile library
 

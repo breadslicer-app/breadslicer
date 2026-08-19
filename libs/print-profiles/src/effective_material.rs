@@ -24,6 +24,7 @@ use std::path::PathBuf;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
+use crate::generic_machine::generic_printer_id;
 use crate::material_defaults::MaterialDefaults;
 use crate::material_identity::MaterialIdentity;
 use crate::material_intent::MaterialIntent;
@@ -129,6 +130,17 @@ impl EffectiveMaterial {
     /// plus the pairs the extension added.
     pub fn per_printer(&self) -> &BTreeMap<PrinterId, MaterialPerPrinter> {
         &self.per_printer
+    }
+
+    /// The calibration block that applies to `printer`, with the key it
+    /// was found under: the printer's own block, else the generic one.
+    pub fn calibration_for(
+        &self,
+        printer: &PrinterId,
+    ) -> Option<(&PrinterId, &MaterialPerPrinter)> {
+        self.per_printer
+            .get_key_value(printer)
+            .or_else(|| self.per_printer.get_key_value(generic_printer_id()))
     }
 }
 

@@ -10,8 +10,9 @@
 //! divergence between the user's stated intent and the final
 //! resolved value: autosnap when a constraint snapped a value and
 //! the relative delta exceeded the warning threshold, derivation
-//! from material intent when no calibrated value was available, and
-//! a material-default fallback.
+//! from material intent when no calibrated value was available, a
+//! material-default fallback, and the use of the generic machine's
+//! calibration block in place of one for the printer itself.
 
 use crate::resolved_field::ResolvedField;
 
@@ -30,6 +31,9 @@ pub enum ResolveWarning {
     DefaultUsed {
         field: ResolvedField,
     },
+    /// The material has no calibration block for the printer; the
+    /// values came from its `generic-machine` block.
+    GenericCalibrationUsed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +100,9 @@ impl std::fmt::Display for ResolveWarning {
             Self::DefaultUsed { field } => {
                 write!(f, "field '{field}' fell back to material default")
             }
+            Self::GenericCalibrationUsed => f.write_str(
+                "no calibration block for this printer; the generic machine block was used",
+            ),
         }
     }
 }

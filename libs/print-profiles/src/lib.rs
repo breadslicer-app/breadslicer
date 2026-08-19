@@ -28,6 +28,7 @@
 //! crate has no dependency on a slicer or on printer hardware.
 
 pub mod effective_material;
+pub mod generic_machine;
 pub mod image_asset_ref;
 pub mod library;
 pub mod listing;
@@ -56,6 +57,7 @@ pub mod value_source;
 pub mod writer;
 
 pub use effective_material::{EffectiveMaterial, MaterialExtensionIssue};
+pub use generic_machine::generic_printer_id;
 pub use image_asset_ref::{ImageAssetRef, NonLibraryRelativeImageRefError};
 pub use library::{UserLibraryDirError, user_library_dir};
 pub use listing::{

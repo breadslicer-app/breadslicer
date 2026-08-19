@@ -745,6 +745,238 @@ normal_exposure_sec = 2.5
     );
 }
 
+const GENERIC_PRINTER: &str = r#"
+[identity]
+id = "generic-machine"
+manufacturer = "SoulCrafted"
+family = "Generic"
+name = "Generic Machine"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+supports_grayscale = true
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+z_step_mm = 0.01
+"#;
+
+fn generic_printer() -> PrinterProfile {
+    toml_edit::de::from_str(GENERIC_PRINTER).unwrap()
+}
+
+const GENERIC_CALIBRATED_MATERIAL: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."generic-machine"]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 40.0
+bottom_layer_count = 4
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 180.0
+"#;
+
+fn assert_generic_values(picked: &PickedValues) {
+    assert_eq!(picked.normal_exposure_sec.map(|v| v.value()), Some(4.0));
+    assert_eq!(picked.bottom_exposure_sec.map(|v| v.value()), Some(40.0));
+    assert_eq!(picked.bottom_layer_count, Some(4));
+    assert_eq!(picked.lift_distance_mm.map(|v| v.value()), Some(7.0));
+    assert_eq!(picked.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
+    assert_eq!(picked.retract_speed_mm_min.map(|v| v.value()), Some(180.0));
+}
+
+fn generic_warning_count(warnings: &[ResolveWarning]) -> usize {
+    warnings
+        .iter()
+        .filter(|w| matches!(w, ResolveWarning::GenericCalibrationUsed))
+        .count()
+}
+
+#[test]
+fn generic_block_applies_to_a_printer_without_its_own_block() {
+    let (picked, warnings, records) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material(GENERIC_CALIBRATED_MATERIAL),
+    );
+
+    assert_generic_values(&picked);
+    assert_eq!(generic_warning_count(&warnings), 1);
+    let calibrated = records
+        .iter()
+        .filter(|r| r.source == ValueSource::Calibrated)
+        .count();
+    assert_eq!(calibrated, 6);
+}
+
+#[test]
+fn own_block_wins_over_the_generic_block() {
+    let toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+
+[per_printer."generic-machine"]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 40.0
+bottom_layer_count = 4
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 180.0
+"#;
+    let (picked, warnings, _) =
+        pick_and_derive_material(&printer_with_light_intensity(), &material(toml));
+
+    assert_eq!(picked.normal_exposure_sec.map(|v| v.value()), Some(2.5));
+    assert_eq!(picked.bottom_exposure_sec.map(|v| v.value()), Some(30.0));
+    assert_eq!(picked.bottom_layer_count, Some(8));
+    assert_eq!(picked.lift_distance_mm.map(|v| v.value()), Some(5.0));
+    assert_eq!(picked.lift_speed_mm_min.map(|v| v.value()), Some(120.0));
+    assert_eq!(picked.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
+    assert_eq!(generic_warning_count(&warnings), 0);
+}
+
+#[test]
+fn own_block_gaps_do_not_fall_to_the_generic_block() {
+    // The fallback is per block: once the printer's own block is
+    // picked, the generic block is not consulted for the fields the
+    // own block leaves unset.
+    let toml = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+
+[per_printer."generic-machine"]
+lift_speed_mm_min = 60.0
+"#;
+    let (picked, warnings, _) =
+        pick_and_derive_material(&printer_with_light_intensity(), &material(toml));
+
+    assert_eq!(picked.normal_exposure_sec.map(|v| v.value()), Some(2.5));
+    assert!(picked.lift_speed_mm_min.is_none());
+    assert_eq!(generic_warning_count(&warnings), 0);
+}
+
+#[test]
+fn the_generic_printer_uses_its_block_as_its_own() {
+    let (picked, warnings, _) =
+        pick_and_derive_material(&generic_printer(), &material(GENERIC_CALIBRATED_MATERIAL));
+
+    assert_generic_values(&picked);
+    assert_eq!(generic_warning_count(&warnings), 0);
+}
+
+#[test]
+fn a_generic_block_added_by_the_extension_applies() {
+    let extension_toml = r#"
+extension = true
+
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."generic-machine"]
+normal_exposure_sec = 4.0
+bottom_exposure_sec = 40.0
+bottom_layer_count = 4
+lift_distance_mm = 7.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 180.0
+"#;
+    let base: MaterialProfile = toml_edit::de::from_str(GENERIC_MATERIAL).unwrap();
+    let extension: MaterialProfile = toml_edit::de::from_str(extension_toml).unwrap();
+    let (effective, issues) = EffectiveMaterial::compose(base, Some(extension));
+    assert!(issues.is_empty(), "issues: {issues:?}");
+
+    let (picked, warnings, _) =
+        pick_and_derive_material(&printer_with_light_intensity(), &effective);
+
+    assert_generic_values(&picked);
+    assert_eq!(generic_warning_count(&warnings), 1);
+}
+
+#[test]
+fn resolve_succeeds_for_a_generic_only_material_on_another_printer() {
+    let resolved = resolve(
+        &printer_with_light_intensity(),
+        &material(GENERIC_CALIBRATED_MATERIAL),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+
+    let values = &resolved.material_resolved;
+    assert_eq!(values.normal_exposure_sec.value(), 4.0);
+    assert_eq!(values.bottom_exposure_sec.value(), 40.0);
+    assert_eq!(values.bottom_layer_count, 4);
+    assert_eq!(values.lift_distance_mm.value(), 7.0);
+    assert_eq!(values.lift_speed_mm_min.value(), 60.0);
+    assert_eq!(values.retract_speed_mm_min.value(), 180.0);
+    assert_eq!(generic_warning_count(&resolved.warnings), 1);
+}
+
+#[test]
+fn resolve_layer_height_is_unchanged_by_a_generic_block() {
+    let resolved = resolve_layer_height(
+        &printer_with_light_intensity(),
+        &material(GENERIC_CALIBRATED_MATERIAL),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(resolved.value(), 0.05);
+}
+
 #[test]
 fn empty_material_with_minimal_intent_produces_no_picked_values() {
     let toml = r#"

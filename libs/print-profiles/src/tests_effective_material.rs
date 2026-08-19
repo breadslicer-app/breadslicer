@@ -6,6 +6,7 @@
 use sc_print_primitives::PrinterId;
 
 use super::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
+use super::generic_machine::generic_printer_id;
 use super::material_profile::MaterialProfile;
 
 fn profile(toml: &str) -> MaterialProfile {
@@ -368,5 +369,53 @@ fn issue_display_names_what_was_dropped_and_why() {
         }
         .to_string(),
         "the extension file names material 'other-resin' but the base profile is 'test-resin'; the file was ignored",
+    );
+}
+
+const BASE_WITH_GENERIC_BLOCK: &str = r#"
+[identity]
+id = "test-resin"
+brand = "Test"
+family = "standard"
+name = "Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."printer-a"]
+normal_exposure_sec = 2.5
+
+[per_printer."generic-machine"]
+normal_exposure_sec = 4.0
+"#;
+
+#[test]
+fn calibration_for_prefers_the_own_block() {
+    let effective = EffectiveMaterial::from(profile(BASE_WITH_GENERIC_BLOCK));
+
+    let (key, block) = effective.calibration_for(&printer_id("printer-a")).unwrap();
+    assert_eq!(key, &printer_id("printer-a"));
+    assert_eq!(block.normal_exposure_sec.unwrap().value(), 2.5);
+}
+
+#[test]
+fn calibration_for_falls_back_to_the_generic_block() {
+    let effective = EffectiveMaterial::from(profile(BASE_WITH_GENERIC_BLOCK));
+
+    let (key, block) = effective.calibration_for(&printer_id("printer-b")).unwrap();
+    assert_eq!(key, generic_printer_id());
+    assert_eq!(block.normal_exposure_sec.unwrap().value(), 4.0);
+}
+
+#[test]
+fn calibration_for_is_none_without_either_block() {
+    let effective = EffectiveMaterial::from(profile(BASE));
+
+    assert!(
+        effective
+            .calibration_for(&printer_id("printer-b"))
+            .is_none()
     );
 }

@@ -10,7 +10,8 @@
 //! following layers:
 //!
 //! - Pick calibrated values from the material's per-printer block
-//!   matched to the printer's id, then fall back to material-level
+//!   matched to the printer's id, else from its `generic-machine`
+//!   block (recorded as a warning), then fall back to material-level
 //!   defaults for fields that have defaults coverage
 //!   (`bottom_layer_count` and `scale_compensation_pct`).
 //! - Derive from material intent where the prior layer left a
@@ -82,8 +83,11 @@ pub(crate) fn pick_and_derive_material(
     let mut warnings = Vec::new();
     let mut records = Vec::new();
 
-    if let Some(per_printer) = material.per_printer().get(&printer.identity.id) {
-        apply_per_printer(per_printer, &mut picked, &mut records);
+    if let Some((key, block)) = material.calibration_for(&printer.identity.id) {
+        apply_per_printer(block, &mut picked, &mut records);
+        if key != &printer.identity.id {
+            warnings.push(ResolveWarning::GenericCalibrationUsed);
+        }
     }
     apply_defaults(
         material.defaults(),
