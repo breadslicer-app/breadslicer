@@ -4,8 +4,8 @@
  */
 
 //! Integration tests that exercise the GUI's `Renderer` end-to-end
-//! against real wgpu devices, including the parts the inline
-//! `gpu_integration_tests` block in `mesh_render::mod` cannot reach
+//! against real wgpu devices, including the parts the
+//! `mesh_render::tests_gpu` module cannot reach
 //! without a second device (the `install_scene` device-mismatch
 //! branch) or the Slint texture surface (`slint::Image::try_from`).
 //!

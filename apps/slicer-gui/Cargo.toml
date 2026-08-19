@@ -45,7 +45,7 @@ slint = { version = "1.17.0", default-features = false, features = [
     "unstable-wgpu-29",
     "unstable-winit-030",
 ] }
-# Note: keep wgpu version in sync of that used by Sling.
+# Note: keep wgpu version in sync with that used by Sling.
 wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }

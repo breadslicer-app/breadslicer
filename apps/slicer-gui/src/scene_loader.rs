@@ -218,13 +218,9 @@ pub struct SceneLoader {
     // async closure / worker thread, or transferred to a guard sitting
     // in `load_slot` awaiting drain).
     inflight: Arc<AtomicU32>,
-    // Consecutive upload failures for the currently-loaded scene. The
-    // renderer drives the count via `note_upload_success` /
-    // `note_upload_failure`; the counter gates dialog-spam so the error
-    // only fires on the transition from 0 -> 1 failures. Reset on
-    // successful upload, scene load/close, and on `RenderingSetup`
-    // (via `reset_upload_failures`).
-    upload_failures: Cell<u32>,
+    // Dialog gate for scene-upload failures: one dialog per run of
+    // failures.
+    upload_failures: FailureGate,
     // Dialog gate for the renderer's per-frame refusals: one dialog per
     // run of failures.
     render_failures: FailureGate,
@@ -261,7 +257,7 @@ impl SceneLoader {
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Arc::new(AtomicU32::new(0)),
-            upload_failures: Cell::new(0),
+            upload_failures: FailureGate::default(),
             render_failures: FailureGate::default(),
             gpu: Mutex::new(None),
             graphics_gap: GraphicsGap::default(),
@@ -286,7 +282,7 @@ impl SceneLoader {
             load_gen: Cell::new(0),
             load_slot: Arc::new(Mutex::new(None)),
             inflight: Arc::new(AtomicU32::new(0)),
-            upload_failures: Cell::new(0),
+            upload_failures: FailureGate::default(),
             render_failures: FailureGate::default(),
             gpu: Mutex::new(None),
             graphics_gap: GraphicsGap::default(),
@@ -465,66 +461,54 @@ impl SceneLoader {
             .clone()
     }
 
-    /// Invalidates any in-flight load and drops any already-deposited
-    /// result. Called from the "close scene" path so a subsequent
-    /// worker arrival is dropped on stamp-check, and so a large
-    /// `LoadedMesh` sitting in the slot is freed immediately. Dropping
-    /// the slot also drops the ticket it carried, which releases the
-    /// gate via the ticket's `Drop`. Also resets the upload-failure
-    /// counter since a new empty state has no prior-upload history.
+    /// Invalidates any in-flight load, drops any already-deposited
+    /// result, and resets the upload-failure gate. A worker arrival
+    /// that was in flight is dropped on its stamp check, and a
+    /// `LoadedMesh` sitting in the slot is freed at once. Dropping the
+    /// slot also drops the ticket it carried, which releases the load
+    /// gate via the ticket's `Drop`.
     pub fn invalidate_and_clear(&self) {
         self.load_gen.set(self.load_gen.get().wrapping_add(1));
         *self
             .load_slot
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
-        self.upload_failures.set(0);
+        self.upload_failures.reset();
     }
 
-    /// Clears the upload-failure counter without touching the load
-    /// FSM. Used by `RenderingSetup`: a new device has no prior-upload
-    /// history, so any counter from the previous device shouldn't gate
-    /// the first dialog on the new one.
+    /// Ends the upload-failure run without touching the load FSM.
     pub fn reset_upload_failures(&self) {
-        self.upload_failures.set(0);
+        self.upload_failures.reset();
     }
 
-    /// Test-only accessor for the upload-failure counter, used to
-    /// assert that `note_upload_success` / `note_upload_failure` /
-    /// `reset_upload_failures` fired the expected number of times
-    /// during a `handle_before_rendering` cycle.
     #[cfg(test)]
     pub(crate) fn upload_failures_for_test(&self) -> u32 {
-        self.upload_failures.get()
+        self.upload_failures.consecutive_failures()
     }
 
     /// A scene upload just succeeded. Rearms the 0 -> 1 dialog gate so
     /// the next failure can surface an error.
     pub fn note_upload_success(&self) {
-        self.upload_failures.set(0);
+        self.upload_failures.reset();
     }
 
-    /// A scene upload just failed. Increments the counter and, on the
-    /// 0 -> 1 transition, surfaces the error dialog. Subsequent
-    /// failures for the same scene are swallowed until a reset; this
-    /// keeps a scene that fails on every attempt to one dialog.
+    /// Shows the error dialog only for the first failure of a run.
     pub fn note_upload_failure(&self, err: &anyhow::Error) {
-        let prior = self.upload_failures.get();
-        self.upload_failures.set(prior.saturating_add(1));
-        if prior == 0 {
-            self.dialogs.show_error_deferred(
-                ctr!("ErrorDialog", "Failed to prepare the 3D view").to_string(),
-                Some(
-                    ctr!(
-                        "ErrorDialog",
-                        "The scene could not be handed to the graphics device. The 3D view shows the build plate alone until the next successful update."
-                    )
-                    .to_string(),
-                ),
-                err.to_string(),
-                format_anyhow_chain(err),
-            );
+        if !self.upload_failures.note_failure() {
+            return;
         }
+        self.dialogs.show_error_deferred(
+            ctr!("ErrorDialog", "Failed to prepare the 3D view").to_string(),
+            Some(
+                ctr!(
+                    "ErrorDialog",
+                    "The scene could not be handed to the graphics device. The 3D view shows the build plate alone until the next successful update."
+                )
+                .to_string(),
+            ),
+            err.to_string(),
+            format_anyhow_chain(err),
+        );
     }
 
     /// Shows the error dialog only for the first failure of a run.
@@ -570,8 +554,8 @@ impl SceneLoader {
 
     /// Drains the result slot and applies the stamp check. Returns
     /// `Some(scene)` if the caller should install a fresh scene (also
-    /// resets the upload-failure counter so the next upload's
-    /// error-dialog gate is rearmed). Returns `None` on a stale /
+    /// resets the upload-failure gate, so the next failure shows its
+    /// dialog). Returns `None` on a stale /
     /// empty deposit, or surfaces the error dialog and returns `None`
     /// on a worker-side failure.
     ///
@@ -583,7 +567,7 @@ impl SceneLoader {
         match result {
             Ok(prepared) => {
                 log_load_warnings(&path, &prepared);
-                self.upload_failures.set(0);
+                self.upload_failures.reset();
                 Some(prepared)
             }
             Err(err) => {
