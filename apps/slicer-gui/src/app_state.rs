@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
@@ -17,11 +17,13 @@ use crate::MainWindow;
 use crate::about_window::{WiredAboutWindow, build_about_window};
 use crate::app_settings::AppSettings;
 use crate::clipboard::{Clipboard, fragment_from_document_selection};
+use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
 use crate::mesh_loader::{
     LoadDispatch, SUPPORTED_MESH_EXTENSIONS, decide_load_dispatch, is_supported_mesh_extension,
     start_load_with_ticket,
 };
+use crate::mesh_render::DeviceLoss;
 use crate::pending_load::PendingLoad;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
@@ -141,6 +143,12 @@ mod context_menu_policy {
 
 use context_menu_policy::context_menu_flags;
 
+thread_local! {
+    /// The Slint thread's `AppState`, for delivering a device loss
+    /// raised on another thread.
+    static DEVICE_LOST_TARGET: RefCell<Weak<AppState>> = const { RefCell::new(Weak::new()) };
+}
+
 /// A main window paired with its viewport controller and preference-
 /// bus subscription. Drop of this struct drops the subscription,
 /// unregistering the window's preference-apply listener. Held by value
@@ -204,6 +212,8 @@ pub(crate) struct AppState {
     /// path which lives on the viewport controller. `None` until the
     /// user has performed the first copy.
     clipboard: RefCell<Option<Clipboard>>,
+    /// The shared device's lost-device flag.
+    device_loss: DeviceLoss,
     // Bus subscriptions owned by AppState. They run on every
     // `bus.update`; dropping them unregisters. Stored here so they
     // live as long as `AppState`. The settings subscription holds the
@@ -308,7 +318,7 @@ fn spawn_settings_saver(
 }
 
 impl AppState {
-    pub fn new() -> Result<Rc<Self>, Box<dyn Error>> {
+    pub fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
         let settings = AppSettings::load();
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::load_default())));
         let default_printer = settings.default_printer();
@@ -390,7 +400,7 @@ impl AppState {
             }
         });
 
-        Ok(Rc::new(Self {
+        let app = Rc::new(Self {
             about_window: RefCell::new(None),
             preferences_window: RefCell::new(None),
             main_windows: RefCell::new(HashMap::new()),
@@ -398,10 +408,43 @@ impl AppState {
             prefs,
             catalog,
             clipboard: RefCell::new(None),
+            device_loss,
             _settings_sub: settings_sub,
             _language_apply_sub: language_apply_sub,
             _settings_saver: settings_saver,
-        }))
+        });
+        DEVICE_LOST_TARGET.with(|target| *target.borrow_mut() = Rc::downgrade(&app));
+        Ok(app)
+    }
+
+    /// Delivers a device loss to this thread's `AppState`, if one
+    /// exists.
+    pub(crate) fn dispatch_device_lost(reason: String) {
+        let target = DEVICE_LOST_TARGET.with(|target| target.borrow().upgrade());
+        if let Some(app) = target {
+            app.on_device_lost(reason);
+        }
+    }
+
+    /// Takes every window off the lost device (renderer dropped, loads
+    /// refused with the reason) and tells the user once per process.
+    fn on_device_lost(&self, reason: String) {
+        let windows = self.main_windows.borrow();
+        for wired in windows.values() {
+            wired.controller.handle_rendering_teardown();
+            wired.controller.loader().note_device_lost();
+        }
+        if !self.device_loss.take_report() {
+            return;
+        }
+        if let Some(wired) = windows.values().next() {
+            wired.controller.dialogs().show_error(
+                &ctr!("ErrorDialog", "The graphics device was lost"),
+                None,
+                GraphicsUnavailable::DeviceLost.message(),
+                reason,
+            );
+        }
     }
 
     /// Creates, wires, and shows a new `MainWindow`. Per-window Slint
@@ -484,7 +527,12 @@ impl AppState {
         }
         let document = SceneDocument::new();
         let pending_load = Rc::new(PendingLoad::new());
-        let ctrl = Rc::new(ViewportController::new(&ui, document, pending_load.clone()));
+        let ctrl = Rc::new(ViewportController::new(
+            &ui,
+            document,
+            pending_load.clone(),
+            self.device_loss.clone(),
+        ));
         ctrl.register_document_listener();
         // Bus listeners only fire on `update`, not on subscribe, so
         // the persisted build volume is pushed imperatively here.

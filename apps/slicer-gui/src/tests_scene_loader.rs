@@ -21,6 +21,7 @@ use sc_mesh_formats::messages::{LoadObjWarning, SceneLoadWarning, SharedVertexLe
 use slint::wgpu_29::wgpu;
 
 use crate::error_dialog::DialogManager;
+use crate::graphics_status::GraphicsUnavailable;
 use crate::mesh_render::{RenderAllocation, RenderError};
 use crate::scene_loader::{SceneLoader, describe_obj_warning, describe_scene_warning};
 
@@ -123,6 +124,27 @@ fn note_render_failure_counts_a_run_and_a_success_ends_it() {
     l.note_render_failure(&refused_output_image());
     assert_eq!(l.render_failures_for_test(), 2);
     l.note_render_success();
+    assert_eq!(l.render_failures_for_test(), 0);
+}
+
+#[test]
+fn note_device_lost_reports_the_loss_and_shares_the_flag() {
+    let l = loader();
+    l.note_device_lost();
+    assert_eq!(
+        l.graphics_unavailable(),
+        Some(GraphicsUnavailable::DeviceLost)
+    );
+    assert!(l.gpu_snapshot().is_none());
+    let flag = l.device_loss();
+    flag.mark("Unknown: test".to_string());
+    assert!(l.device_loss().is_lost(), "clones share one flag");
+}
+
+#[test]
+fn note_render_failure_ignores_a_lost_device() {
+    let l = loader();
+    l.note_render_failure(&RenderError::DeviceLost);
     assert_eq!(l.render_failures_for_test(), 0);
 }
 

@@ -17,6 +17,7 @@ use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use slint::wgpu_29::wgpu;
 
+use super::device_loss::DeviceLoss;
 use super::device_ops::create_buffer_reporting;
 use crate::build_volume::BuildVolume;
 
@@ -140,6 +141,17 @@ impl std::error::Error for DeviceRefusedBuffer {
     }
 }
 
+#[derive(Debug)]
+pub struct DeviceLostDuringUpload;
+
+impl fmt::Display for DeviceLostDuringUpload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("The graphics device was lost while uploading the scene")
+    }
+}
+
+impl std::error::Error for DeviceLostDuringUpload {}
+
 fn describe_leaf_buffer(buffer: &str, leaf_name: Option<&str>) -> String {
     match leaf_name {
         Some(name) => format!("{buffer} of object '{name}'"),
@@ -148,14 +160,17 @@ fn describe_leaf_buffer(buffer: &str, leaf_name: Option<&str>) -> String {
 }
 
 /// Creates a buffer holding `contents`, reporting a refusal instead of
-/// panicking. Empty contents give an empty, unmapped buffer.
+/// panicking. Empty contents give an empty, unmapped buffer. If the
+/// device is lost before or during the call, the error is
+/// [`DeviceLostDuringUpload`].
 fn upload_buffer(
     device: &wgpu::Device,
+    device_loss: &DeviceLoss,
     label: &'static str,
     contents: &[u8],
     usage: wgpu::BufferUsages,
     what: impl FnOnce() -> String,
-) -> std::result::Result<wgpu::Buffer, DeviceRefusedBuffer> {
+) -> Result<wgpu::Buffer> {
     let unpadded = contents.len() as u64;
     // wgpu requires mapped-at-creation sizes to be a non-zero multiple
     // of COPY_BUFFER_ALIGNMENT.
@@ -180,11 +195,23 @@ fn upload_buffer(
         source,
     })?;
     if !contents.is_empty() {
-        buffer
-            .get_mapped_range_mut(..)
-            .slice(..contents.len())
-            .copy_from_slice(contents);
-        buffer.unmap();
+        if device_loss.is_lost() {
+            return Err(DeviceLostDuringUpload.into());
+        }
+        // wgpu panics, instead of reporting, when a buffer on a lost
+        // device is mapped. The closure owns nothing that a panic could
+        // leave half-written; wgpu-core has already returned its error
+        // by the time the API layer panics.
+        let written = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            buffer
+                .get_mapped_range_mut(..)
+                .slice(..contents.len())
+                .copy_from_slice(contents);
+            buffer.unmap();
+        }));
+        if written.is_err() {
+            return Err(DeviceLostDuringUpload.into());
+        }
     }
     Ok(buffer)
 }
@@ -236,8 +263,9 @@ impl GpuScene {
         device: &wgpu::Device,
         device_token: super::DeviceToken,
         graph: &Scene,
+        device_loss: &DeviceLoss,
     ) -> Result<Self> {
-        Self::build_with_progress(device, device_token, graph, |_| {})
+        Self::build_with_progress(device, device_token, graph, device_loss, |_| {})
     }
 
     /// [`GpuScene::build`], reporting per-object triangle progress;
@@ -246,6 +274,7 @@ impl GpuScene {
         device: &wgpu::Device,
         device_token: super::DeviceToken,
         graph: &Scene,
+        device_loss: &DeviceLoss,
         mut progress: impl FnMut(UploadProgress),
     ) -> Result<Self> {
         let mut scene_triangles: u64 = 0;
@@ -271,6 +300,7 @@ impl GpuScene {
         for obj in &data.objects {
             let vertex_buffer = upload_buffer(
                 device,
+                device_loss,
                 "mesh-viewer object vertex buffer",
                 bytemuck::cast_slice(&obj.vertices),
                 wgpu::BufferUsages::VERTEX,
@@ -278,6 +308,7 @@ impl GpuScene {
             )?;
             let index_buffer = upload_buffer(
                 device,
+                device_loss,
                 "mesh-viewer object index buffer",
                 bytemuck::cast_slice(&obj.indices),
                 wgpu::BufferUsages::INDEX,

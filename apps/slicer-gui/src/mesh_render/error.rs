@@ -87,6 +87,8 @@ pub enum RenderError {
         what: RenderAllocation,
         source: wgpu::Error,
     },
+    /// The device is gone; nothing was attempted.
+    DeviceLost,
 }
 
 impl fmt::Display for RenderError {
@@ -97,6 +99,7 @@ impl fmt::Display for RenderError {
                 "The graphics device refused the {what}: {}",
                 one_line(source)
             ),
+            Self::DeviceLost => f.write_str("The graphics device was lost."),
         }
     }
 }
@@ -105,6 +108,7 @@ impl std::error::Error for RenderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::DeviceRefused { source, .. } => Some(source),
+            Self::DeviceLost => None,
         }
     }
 }
@@ -201,6 +205,14 @@ mod error_display_tests {
         .map(ToString::to_string)
         .collect();
         assert_distinct_non_empty(&names);
+    }
+
+    #[test]
+    fn a_lost_device_has_no_source_and_says_so() {
+        use std::error::Error as _;
+        let err = RenderError::DeviceLost;
+        assert!(err.source().is_none());
+        assert!(err.to_string().contains("lost"), "{err}");
     }
 
     #[test]

@@ -38,7 +38,9 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
 use sc_slicer_gui::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
 use sc_slicer_gui::camera::OrbitCamera;
-use sc_slicer_gui::mesh_render::{DeviceToken, Renderer, SceneRender, scene_upload::GpuScene};
+use sc_slicer_gui::mesh_render::{
+    DeviceLoss, DeviceToken, Renderer, SceneRender, scene_upload::GpuScene,
+};
 
 use slint::wgpu_29::wgpu;
 
@@ -207,9 +209,13 @@ fn first_leaf(graph: &Scene) -> NodeId {
 fn render_texture_converts_to_slint_image() {
     with_test_gpus(|gpus| {
         for gpu in &gpus.sweep {
-            let mut renderer =
-                Renderer::new(gpu.device.clone(), DeviceToken::next(), gpu.queue.clone())
-                    .expect("Renderer::new under the test device");
+            let mut renderer = Renderer::new(
+                gpu.device.clone(),
+                DeviceToken::next(),
+                gpu.queue.clone(),
+                DeviceLoss::default(),
+            )
+            .expect("Renderer::new under the test device");
             let graph = triangle_graph([5.0, 0.0, 0.0]);
             renderer.upload_scene(&graph).unwrap_or_else(|err| {
                 panic!(
@@ -262,9 +268,13 @@ fn render_texture_converts_to_slint_image() {
 fn render_with_a_slice_clip_produces_a_texture() {
     with_test_gpus(|gpus| {
         for gpu in &gpus.sweep {
-            let mut renderer =
-                Renderer::new(gpu.device.clone(), DeviceToken::next(), gpu.queue.clone())
-                    .expect("Renderer::new under the test device");
+            let mut renderer = Renderer::new(
+                gpu.device.clone(),
+                DeviceToken::next(),
+                gpu.queue.clone(),
+                DeviceLoss::default(),
+            )
+            .expect("Renderer::new under the test device");
             let graph = triangle_graph([5.0, 0.0, 0.0]);
             renderer.upload_scene(&graph).unwrap_or_else(|err| {
                 panic!(
@@ -326,10 +336,11 @@ fn install_scene_with_mismatched_device_returns_false() {
         let token_a = DeviceToken::next();
         let token_b = DeviceToken::next();
 
-        let mut renderer = Renderer::new(device_b.clone(), token_b, queue_b)
+        let mut renderer = Renderer::new(device_b.clone(), token_b, queue_b, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let graph = triangle_graph([0.0, 0.0, 0.0]);
-        let gpu = GpuScene::build(device_a, token_a, &graph).expect("GpuScene::build on device A");
+        let gpu = GpuScene::build(device_a, token_a, &graph, &DeviceLoss::default())
+            .expect("GpuScene::build on device A");
 
         let installed = renderer.install_scene(gpu);
         assert!(

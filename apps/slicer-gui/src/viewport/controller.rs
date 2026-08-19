@@ -48,7 +48,7 @@ use crate::gizmo;
 use crate::i18n::ctr;
 use crate::mesh_health::initial_section;
 use crate::mesh_loader::start_load_with_ticket;
-use crate::mesh_render::{RendererInitError, SceneRender};
+use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender};
 use crate::pending_load::PendingLoad;
 use crate::picking;
 use crate::save_progress_panel::SaveProgressPanel;
@@ -75,9 +75,10 @@ impl ViewportController {
         ui: &MainWindow,
         document: Rc<SceneDocument>,
         pending_load: Rc<PendingLoad>,
+        device_loss: DeviceLoss,
     ) -> Self {
         let dialogs = DialogManager::new();
-        let loader = Rc::new(SceneLoader::new(ui, dialogs.clone()));
+        let loader = Rc::new(SceneLoader::new(ui, dialogs.clone(), device_loss));
         let save_progress = Rc::new(SaveProgressPanel::new(ui.as_weak()));
         let export_progress = Rc::new(ExportProgressPanel::new(ui.as_weak()));
         Self {
@@ -1065,12 +1066,19 @@ impl ViewportController {
         // how `Renderer::install_scene` detects an out-of-date
         // worker-built scene.
         let device_token = crate::mesh_render::DeviceToken::next();
+        let device_loss = self.session.loader().device_loss();
+        if device_loss.is_lost() {
+            self.session.loader().note_device_lost();
+            return;
+        }
         // The renderer is built before the device is published, so a
         // refused renderer leaves the window with no device to load into.
-        match self
-            .render
-            .handle_rendering_setup(device.clone(), device_token, queue.clone())
-        {
+        match self.render.handle_rendering_setup(
+            device.clone(),
+            device_token,
+            queue.clone(),
+            device_loss,
+        ) {
             Ok(()) => {
                 self.session.loader().set_gpu(device, device_token, queue);
                 self.post_renderer_install();
@@ -1182,6 +1190,13 @@ impl ViewportController {
         let Some(renderer) = renderer_slot.as_mut() else {
             return false;
         };
+
+        if self.session.loader().device_loss().is_lost() {
+            // No dialog: a lost device is reported once per process.
+            self.render.update_frame(FrameState::upload_cleared);
+            self.render.update_frame(FrameState::after_render);
+            return false;
+        }
 
         if self.render.frame().upload_owed() {
             let upload = self
@@ -1335,8 +1350,9 @@ impl ViewportController {
                 })
                 .flatten()
         };
-        if let Err(err) = renderer.update_cap(cap_key, &mut build_cap) {
-            self.session.loader().note_render_failure(&err);
+        match renderer.update_cap(cap_key, &mut build_cap) {
+            Ok(()) | Err(RenderError::DeviceLost) => {}
+            Err(err) => self.session.loader().note_render_failure(&err),
         }
 
         // Slice-view panel: mirror the same cut into the 2D panel image,
@@ -1398,6 +1414,10 @@ impl ViewportController {
         let texture = match texture {
             Ok(Some(texture)) => texture,
             Ok(None) => return,
+            Err(RenderError::DeviceLost) => {
+                self.render.update_frame(FrameState::after_render);
+                return;
+            }
             Err(err) => {
                 self.render.note_render_refused((eff_w, eff_h));
                 self.session.loader().note_render_failure(&err);

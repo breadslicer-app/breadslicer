@@ -267,6 +267,14 @@ fn a_pick_on_a_refused_renderer_is_reported_not_parked() {
 }
 
 #[test]
+fn a_pick_after_a_device_loss_is_reported_not_parked() {
+    assert_eq!(
+        decide_load_dispatch(Some(GraphicsUnavailable::DeviceLost)),
+        LoadDispatch::Report(GraphicsUnavailable::DeviceLost)
+    );
+}
+
+#[test]
 fn the_reported_reason_reaches_the_caller_intact() {
     // The caller turns this into the dialog body, so the API name has
     // to survive the decision rather than be flattened to a generic

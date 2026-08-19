@@ -81,6 +81,7 @@ use std::path::PathBuf;
 slint::include_modules!();
 
 use crate::app_state::AppState;
+use crate::i18n::ctr;
 use crate::mesh_loader::is_supported_mesh_extension;
 
 /// Entry point invoked by the binary wrapper. Builds the shared wgpu
@@ -138,6 +139,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         },
     )?;
     mesh_render::install_device_error_logger(&device);
+    let device_loss = mesh_render::DeviceLoss::default();
+    {
+        let marker = device_loss.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            let reason = format!("{reason:?}: {message}");
+            marker.mark(reason.clone());
+            // Fails only when the event loop is already gone; the
+            // post-mortem branch after the loop covers that case.
+            let _ = slint::invoke_from_event_loop(move || {
+                AppState::dispatch_device_lost(reason);
+            });
+        });
+    }
+    // Outlives the copy Slint takes, for the post-mortem check below.
+    let device_for_post_mortem = device.clone();
     // A skipped adapter means the session is running on hardware the
     // ordering policy ranks below what the machine carries. That can
     // be a real refusal (unsupported limits) or a transient driver
@@ -201,7 +217,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         })
         .select()?;
 
-    let app = AppState::new()?;
+    let app = AppState::new(device_loss.clone())?;
 
     // OS "Open With…" / file-association support on Linux + Windows:
     // every positional argument that names a supported mesh file gets
@@ -225,8 +241,42 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    slint::run_event_loop()?;
-    Ok(())
+    let Err(err) = slint::run_event_loop() else {
+        return Ok(());
+    };
+    // A lost device that nothing polled since the loss has not fired
+    // its callback yet (wgpu fires it from a poll); a real loss has,
+    // and polling a device whose hardware is gone is a wgpu fatal path.
+    if !device_loss.is_lost() {
+        let _ = device_for_post_mortem.poll(wgpu::PollType::Poll);
+    }
+    match device_loss.reason() {
+        Some(reason) => Err(report_lost_device(&reason).into()),
+        None => Err(err.into()),
+    }
+}
+
+/// Tells the user the graphics device is gone when no window is left
+/// to say it in: stderr plus a native message box (on Linux rfd runs
+/// `zenity`; without it, stderr only). Returns the error to exit with.
+fn report_lost_device(reason: &str) -> String {
+    let heading = ctr!("ErrorDialog", "The graphics device was lost").to_string();
+    let message = format!(
+        "{} {}",
+        ctr!(
+            "ErrorDialog",
+            "The application has to close; restart it once the graphics driver is back."
+        ),
+        reason
+    );
+    eprintln!("{heading}: {message}");
+    let _ = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(heading.clone())
+        .set_description(message)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+    format!("{heading}: {reason}")
 }
 
 /// Walks `std::env::args()` and returns the positional paths whose

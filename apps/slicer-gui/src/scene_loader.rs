@@ -60,7 +60,7 @@ use crate::load_progress::{
     LoadPhase as WorkerLoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode,
 };
 use crate::mesh_health::MeshHealth;
-use crate::mesh_render::{GpuScene, RenderAllocation, RenderError};
+use crate::mesh_render::{DeviceLoss, GpuScene, RenderAllocation, RenderError};
 use crate::reloaded_slices::ReloadedSlices;
 
 /// Cadence of the UI-side progress poll while a load is in flight.
@@ -238,6 +238,9 @@ pub struct SceneLoader {
     // whether a device exists. Driven from the same two calls that fill
     // and empty the slot, which is what keeps the pair in step.
     graphics_gap: GraphicsGap,
+    // The process-wide lost-device flag, handed to workers with the
+    // device.
+    device_loss: DeviceLoss,
     // Shared load-progress cell: packed (phase, permille) values, see
     // `load_progress`. The worker writes through a `LoadProgressSink`
     // clone; the UI polls it while a load is in flight.
@@ -251,7 +254,7 @@ pub struct SceneLoader {
 }
 
 impl SceneLoader {
-    pub fn new(ui: &MainWindow, dialogs: Rc<DialogManager>) -> Self {
+    pub fn new(ui: &MainWindow, dialogs: Rc<DialogManager>, device_loss: DeviceLoss) -> Self {
         Self {
             ui: ui.as_weak(),
             dialogs,
@@ -262,6 +265,7 @@ impl SceneLoader {
             render_failures: FailureGate::default(),
             gpu: Mutex::new(None),
             graphics_gap: GraphicsGap::default(),
+            device_loss,
             progress: Arc::new(AtomicU32::new(0)),
             progress_timer: Rc::new(slint::Timer::default()),
         }
@@ -286,6 +290,7 @@ impl SceneLoader {
             render_failures: FailureGate::default(),
             gpu: Mutex::new(None),
             graphics_gap: GraphicsGap::default(),
+            device_loss: DeviceLoss::default(),
             progress: Arc::new(AtomicU32::new(0)),
             progress_timer: Rc::new(slint::Timer::default()),
         }
@@ -414,6 +419,17 @@ impl SceneLoader {
         self.graphics_gap.note_renderer_refused(reason);
     }
 
+    /// The shared device is gone: empties the device slot and records
+    /// the loss as the reason, so no load starts on it again.
+    pub fn note_device_lost(&self) {
+        self.clear_gpu();
+        self.graphics_gap.note_device_lost();
+    }
+
+    pub fn device_loss(&self) -> DeviceLoss {
+        self.device_loss.clone()
+    }
+
     /// Why there is no device, or `None` when there is one. Derived
     /// from the device slot so readiness has a single source: the
     /// recorded reason only speaks for an empty slot.
@@ -512,11 +528,15 @@ impl SceneLoader {
     }
 
     /// Shows the error dialog only for the first failure of a run.
+    /// `RenderError::DeviceLost` is ignored here; a lost device is
+    /// reported once per process elsewhere.
     pub fn note_render_failure(&self, err: &RenderError) {
+        let RenderError::DeviceRefused { what, source } = err else {
+            return;
+        };
         if !self.render_failures.note_failure() {
             return;
         }
-        let RenderError::DeviceRefused { what, source } = err;
         let context = match what {
             RenderAllocation::CapTexture => ctr!(
                 "ErrorDialog",

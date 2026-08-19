@@ -39,7 +39,7 @@ use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink, ProgressReader};
 use crate::mesh_health::scene_mesh_health;
-use crate::mesh_render::GpuScene;
+use crate::mesh_render::{DeviceLoss, GpuScene};
 use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
 use crate::reloaded_slices::{ReloadedSlices, revalidate_persisted_slices};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
@@ -165,7 +165,15 @@ pub(crate) fn start_load_with_ticket(
     // poll; placed after the bailouts above so error deposits never
     // flash the panel.
     loader.begin_progress_ui();
-    spawn_load(ticket, path, device, device_token, build_volume, sink);
+    spawn_load(
+        ticket,
+        path,
+        device,
+        device_token,
+        loader.device_loss(),
+        build_volume,
+        sink,
+    );
 }
 
 /// Drops the graph onto the plate at the envelope's XY centre with
@@ -300,6 +308,7 @@ pub(crate) fn spawn_load(
     path: PathBuf,
     device: wgpu::Device,
     device_token: crate::mesh_render::DeviceToken,
+    device_loss: DeviceLoss,
     build_volume: BuildVolume,
     sink: LoadProgressSink,
 ) {
@@ -334,14 +343,19 @@ pub(crate) fn spawn_load(
             let spatial = SceneSpatial::primed_graph_with_progress(graph, |p| {
                 sink.set(LoadPhase::Priming, p.primed_triangles, p.total_triangles)
             });
-            let gpu_scene =
-                GpuScene::build_with_progress(&device, device_token, spatial.graph(), |p| {
+            let gpu_scene = GpuScene::build_with_progress(
+                &device,
+                device_token,
+                spatial.graph(),
+                &device_loss,
+                |p| {
                     sink.set(
                         LoadPhase::GpuUpload,
                         p.processed_triangles,
                         p.total_triangles,
                     )
-                })?;
+                },
+            )?;
             Ok(PreparedScene {
                 spatial,
                 gpu_scene,

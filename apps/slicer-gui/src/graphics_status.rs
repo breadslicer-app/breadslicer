@@ -42,6 +42,10 @@ pub(crate) enum GraphicsUnavailable {
     /// refusal repeats on the same device, so the window is left
     /// without a viewport.
     RendererRefused(String),
+    /// The shared device was lost (driver reset, device removed,
+    /// destroyed). Nothing that needs a device works again in this
+    /// process.
+    DeviceLost,
 }
 
 impl GraphicsUnavailable {
@@ -51,7 +55,7 @@ impl GraphicsUnavailable {
     pub(crate) fn may_still_arrive(&self) -> bool {
         match self {
             Self::AwaitingSetup => true,
-            Self::UnsupportedApi(_) | Self::RendererRefused(_) => false,
+            Self::UnsupportedApi(_) | Self::RendererRefused(_) | Self::DeviceLost => false,
         }
     }
 
@@ -75,6 +79,11 @@ impl GraphicsUnavailable {
                 "ErrorDialog",
                 "{} Files cannot be opened in this window.",
                 reason
+            )
+            .to_string(),
+            Self::DeviceLost => ctr!(
+                "ErrorDialog",
+                "The graphics device was lost. Save your work and restart the application."
             )
             .to_string(),
         }
@@ -117,6 +126,10 @@ impl GraphicsGap {
     /// renderer's account of it.
     pub(crate) fn note_renderer_refused(&self, reason: String) {
         *self.reason.borrow_mut() = GraphicsUnavailable::RendererRefused(reason);
+    }
+
+    pub(crate) fn note_device_lost(&self) {
+        *self.reason.borrow_mut() = GraphicsUnavailable::DeviceLost;
     }
 }
 
@@ -185,6 +198,14 @@ mod graphics_gap_tests {
             gap.reason(),
             GraphicsUnavailable::UnsupportedApi("GraphicsAPI::WebGL".to_string())
         );
+    }
+
+    #[test]
+    fn a_lost_device_is_recorded() {
+        let gap = GraphicsGap::default();
+        gap.note_device_published();
+        gap.note_device_lost();
+        assert_eq!(gap.reason(), GraphicsUnavailable::DeviceLost);
     }
 
     #[test]
@@ -275,6 +296,15 @@ mod graphics_unavailable_tests {
     #[test]
     fn no_device_is_coming_for_a_refused_renderer() {
         assert!(!GraphicsUnavailable::RendererRefused("refused".to_string()).may_still_arrive());
+    }
+
+    #[test]
+    fn no_device_is_coming_after_a_loss_and_the_message_says_to_restart() {
+        assert!(!GraphicsUnavailable::DeviceLost.may_still_arrive());
+        let message = GraphicsUnavailable::DeviceLost.message();
+        assert!(message.contains("lost"), "{message}");
+        assert!(message.contains("restart"), "{message}");
+        assert_ne!(message, GraphicsUnavailable::AwaitingSetup.message());
     }
 
     #[test]

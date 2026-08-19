@@ -17,6 +17,7 @@ use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::gizmo::axis::ALL_AXES;
 use crate::slice_cap::CapRaster;
 
+mod device_loss;
 mod device_ops;
 mod error;
 mod frame;
@@ -30,6 +31,7 @@ mod renderer_trait;
 pub mod scene_upload;
 mod targets;
 
+pub use device_loss::DeviceLoss;
 use device_ops::scoped;
 pub use error::{RenderAllocation, RenderError, RendererInitError, RendererStage};
 use frame::Uniforms;
@@ -140,6 +142,7 @@ struct RendererCore {
     device: wgpu::Device,
     queue: wgpu::Queue,
     device_token: DeviceToken,
+    device_loss: DeviceLoss,
     /// The device's `max_texture_dimension_2d`.
     max_texture_side: u32,
 }
@@ -220,6 +223,7 @@ impl Renderer {
         device: wgpu::Device,
         device_token: DeviceToken,
         queue: wgpu::Queue,
+        device_loss: DeviceLoss,
     ) -> Result<Self, RendererInitError> {
         let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
         let mesh = MeshPipeline::create(&device).map_err(at(RendererStage::Mesh))?;
@@ -237,6 +241,7 @@ impl Renderer {
                 device,
                 queue,
                 device_token,
+                device_loss,
                 max_texture_side,
             },
             pipelines: Pipelines {
@@ -296,6 +301,9 @@ impl Renderer {
     ///
     /// [`render`]: Self::render
     pub fn upload_scene(&mut self, graph: &Scene) -> Result<()> {
+        if self.core.device_loss.is_lost() {
+            return Err(scene_upload::DeviceLostDuringUpload.into());
+        }
         // Released before the build so the old and the new scene never
         // occupy device memory at the same time.
         self.scene = None;
@@ -305,17 +313,22 @@ impl Renderer {
             self.clear_scene();
             return Ok(());
         }
-        let gpu = GpuScene::build(&self.core.device, self.core.device_token, graph)?;
+        let gpu = GpuScene::build(
+            &self.core.device,
+            self.core.device_token,
+            graph,
+            &self.core.device_loss,
+        )?;
         self.attach_scene(gpu);
         Ok(())
     }
 
     /// Installs a `GpuScene` built on a worker thread, but only if its
-    /// `device_token` matches this renderer's. Returns `false` if the
-    /// device has rotated since the worker started (mid-load device
-    /// loss); the caller falls back to the recovery upload path.
+    /// `device_token` matches this renderer's and the device is not
+    /// lost. Returns `false` otherwise; the caller falls back to the
+    /// recovery upload path.
     pub fn install_scene(&mut self, gpu: GpuScene) -> bool {
-        if self.core.device_token != gpu.device_token() {
+        if self.core.device_token != gpu.device_token() || self.core.device_loss.is_lost() {
             return false;
         }
         self.attach_scene(gpu);
@@ -417,6 +430,9 @@ impl Renderer {
         };
         if self.pipelines.cap_state.key() == Some(key) {
             return Ok(());
+        }
+        if self.core.device_loss.is_lost() {
+            return Err(RenderError::DeviceLost);
         }
         let Some(raster) = build() else {
             self.pipelines.cap_state = CapState::Off;
@@ -525,6 +541,9 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Option<wgpu::Texture>, RenderError> {
+        if self.core.device_loss.is_lost() {
+            return Err(RenderError::DeviceLost);
+        }
         if width == 0 || height == 0 {
             return Ok(None);
         }
@@ -1215,6 +1234,9 @@ mod gpu_integration_tests {
         /// `max_bind_groups: 1`: every pipeline with 2 bind groups is
         /// refused at its layout.
         one_bind_group: (wgpu::Device, wgpu::Queue),
+        /// Destroyed by the one test that needs a lost device; no other
+        /// test may use it.
+        doomed: (wgpu::Device, wgpu::Queue),
     }
 
     /// Builds the test devices once per process, on one adapter, one
@@ -1279,12 +1301,14 @@ mod gpu_integration_tests {
                         ..wgpu::Limits::default()
                     },
                 )?;
+                let doomed = request("mesh-viewer doomed test device", wgpu::Limits::default())?;
                 Some(TestDevices {
                     default_limits,
                     small_buffers,
                     tiny_buffers,
                     small_textures,
                     one_bind_group,
+                    doomed,
                 })
             })
             .clone()
@@ -1314,6 +1338,28 @@ mod gpu_integration_tests {
     /// The test device whose `max_bind_groups` is 1.
     fn shared_one_bind_group_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         shared_test_devices().map(|d| d.one_bind_group)
+    }
+
+    /// The doomed test device, destroyed once per process with a lost
+    /// callback that marks the returned flag; every caller sees the same
+    /// destroyed device and the same marked flag.
+    fn destroyed_test_device() -> Option<(wgpu::Device, DeviceLoss)> {
+        static DESTROYED: std::sync::OnceLock<Option<(wgpu::Device, DeviceLoss)>> =
+            std::sync::OnceLock::new();
+        DESTROYED
+            .get_or_init(|| {
+                let (device, _queue) = shared_test_devices()?.doomed;
+                let loss = DeviceLoss::default();
+                let marker = loss.clone();
+                device.set_device_lost_callback(move |reason, message| {
+                    marker.mark(format!("{reason:?}: {message}"));
+                });
+                device.destroy();
+                // The lost callback fires from a poll, not from destroy().
+                let _ = device.poll(wgpu::PollType::Poll);
+                Some((device, loss))
+            })
+            .clone()
     }
 
     /// Copies `buffer` back to the CPU (it must carry `COPY_SRC`).
@@ -1400,7 +1446,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let _renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let _renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
     }
 
@@ -1410,7 +1456,8 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let Err(err) = Renderer::new(device, DeviceToken::next(), queue) else {
+        let Err(err) = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        else {
             panic!("a 2-bind-group pipeline must be refused on a 1-bind-group device");
         };
         assert_eq!(err.stage, RendererStage::Mesh);
@@ -1435,6 +1482,113 @@ mod gpu_integration_tests {
         assert!(GizmoPipeline::create(&device, &gizmo_buffers).is_err());
     }
 
+    #[test]
+    fn renderer_calls_return_device_lost_once_the_flag_is_set() {
+        let Some((device, queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let loss = DeviceLoss::default();
+        let token = DeviceToken::next();
+        let mut renderer = Renderer::new(device.clone(), token, queue, loss.clone())
+            .expect("Renderer::new under the test device");
+        let graph =
+            triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
+        let built_before = GpuScene::build(&device, token, &graph, &DeviceLoss::default())
+            .expect("a scene built before the loss");
+        loss.mark("Unknown: test".to_string());
+
+        let (centre, radius) = TEST_BV.framing(None);
+        let camera = OrbitCamera::new(centre, radius);
+        assert!(matches!(
+            renderer.render(None, TEST_BV, &camera, 64, 64),
+            Err(RenderError::DeviceLost)
+        ));
+        let builds = std::cell::Cell::new(0);
+        let mut build = || {
+            builds.set(builds.get() + 1);
+            Some(CapRaster {
+                coverage: vec![255u8; 16],
+                width: 4,
+                height: 4,
+            })
+        };
+        assert!(matches!(
+            renderer.update_cap(Some(1), &mut build),
+            Err(RenderError::DeviceLost)
+        ));
+        assert_eq!(builds.get(), 0, "no raster is built for a lost device");
+        let upload_err = renderer
+            .upload_scene(&graph)
+            .expect_err("an upload on a lost device is refused");
+        assert!(
+            upload_err
+                .downcast_ref::<scene_upload::DeviceLostDuringUpload>()
+                .is_some(),
+            "{upload_err}"
+        );
+        assert!(!renderer.install_scene(built_before));
+    }
+
+    #[test]
+    fn gpu_scene_build_refuses_typed_on_a_flagged_device() {
+        let Some((device, _queue)) = shared_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        let loss = DeviceLoss::default();
+        loss.mark("Unknown: test".to_string());
+        let graph = graph_with_one_leaf_of_faces(4);
+        let Err(err) = GpuScene::build(&device, DeviceToken::next(), &graph, &loss) else {
+            panic!("a flagged device builds nothing");
+        };
+        assert!(
+            err.downcast_ref::<scene_upload::DeviceLostDuringUpload>()
+                .is_some(),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn gpu_scene_build_on_a_destroyed_device_is_refused_before_the_map_when_flagged() {
+        let Some((device, loss)) = destroyed_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        assert!(loss.is_lost(), "the lost callback marked the flag");
+        assert!(loss.reason().is_some_and(|r| r.contains("Destroyed")));
+        let graph = graph_with_one_leaf_of_faces(4);
+        let Err(err) = GpuScene::build(&device, DeviceToken::next(), &graph, &loss) else {
+            panic!("a destroyed device builds nothing");
+        };
+        assert!(
+            err.downcast_ref::<scene_upload::DeviceLostDuringUpload>()
+                .is_some(),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn gpu_scene_build_on_a_destroyed_device_turns_the_map_panic_into_an_error_when_unflagged() {
+        let Some((device, _flagged)) = destroyed_test_device() else {
+            eprintln!("skipping: no wgpu adapter available in this environment");
+            return;
+        };
+        // A clear flag is a loss nobody has been told about yet: the
+        // buffer map inside wgpu panics, and that panic must come back
+        // as the error, not end the thread.
+        let unflagged = DeviceLoss::default();
+        let graph = graph_with_one_leaf_of_faces(4);
+        let Err(err) = GpuScene::build(&device, DeviceToken::next(), &graph, &unflagged) else {
+            panic!("a destroyed device builds nothing, flagged or not");
+        };
+        assert!(
+            err.downcast_ref::<scene_upload::DeviceLostDuringUpload>()
+                .is_some(),
+            "{err}"
+        );
+    }
+
     /// `GpuScene::build` succeeds against the default-limits device
     /// for a non-trivial graph with a non-identity transform.
     #[test]
@@ -1445,7 +1599,7 @@ mod gpu_integration_tests {
         };
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
-        let gpu = GpuScene::build(&device, DeviceToken::next(), &graph)
+        let gpu = GpuScene::build(&device, DeviceToken::next(), &graph, &DeviceLoss::default())
             .expect("GpuScene::build should succeed");
         // Stride must be at least one ModelEntry and a multiple of the
         // device's reported alignment.
@@ -1466,8 +1620,14 @@ mod gpu_integration_tests {
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
         let mut ticks: Vec<scene_upload::UploadProgress> = Vec::new();
-        GpuScene::build_with_progress(&device, DeviceToken::next(), &graph, |p| ticks.push(p))
-            .expect("GpuScene::build_with_progress should succeed");
+        GpuScene::build_with_progress(
+            &device,
+            DeviceToken::next(),
+            &graph,
+            &DeviceLoss::default(),
+            |p| ticks.push(p),
+        )
+        .expect("GpuScene::build_with_progress should succeed");
         let expected: Vec<scene_upload::UploadProgress> = [(1, 2), (2, 2)]
             .into_iter()
             .map(
@@ -1510,7 +1670,7 @@ mod gpu_integration_tests {
         };
         // 100 faces: 1200 index bytes against a 1024-byte limit.
         let graph = graph_with_one_leaf_of_faces(100);
-        let err = GpuScene::build(&device, DeviceToken::next(), &graph)
+        let err = GpuScene::build(&device, DeviceToken::next(), &graph, &DeviceLoss::default())
             .err()
             .expect("a leaf above the limit is refused");
         let refusal = err
@@ -1531,7 +1691,7 @@ mod gpu_integration_tests {
         };
         // 85 faces: 1020 index bytes, padded to 1020 (already 4-aligned).
         let graph = graph_with_one_leaf_of_faces(85);
-        GpuScene::build(&device, DeviceToken::next(), &graph)
+        GpuScene::build(&device, DeviceToken::next(), &graph, &DeviceLoss::default())
             .expect("a leaf at the limit should build");
     }
 
@@ -1547,8 +1707,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1785,8 +1950,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1875,8 +2045,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no DX12 wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1915,8 +2090,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -1958,8 +2138,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
         renderer
@@ -2015,8 +2200,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -2076,8 +2266,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -2122,8 +2317,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -2167,8 +2367,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -2240,8 +2445,13 @@ mod gpu_integration_tests {
             mesh,
             Transform3D::Affine(AffineTransform3D::from_translation([0.0, 10.0, 0.0])),
         );
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         renderer.upload_scene(&graph).expect("upload");
         let bounds = renderer.scene_bounds().expect("bounds");
         let center = (bounds.0 + bounds.1) * 0.5;
@@ -2273,7 +2483,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let (centre, radius) = TEST_BV.framing(None);
         let camera = OrbitCamera::new(centre, radius);
@@ -2293,7 +2503,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the small-texture test device");
         let (centre, radius) = TEST_BV.framing(None);
         let camera = OrbitCamera::new(centre, radius);
@@ -2314,8 +2524,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the small-texture test device");
+        let renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the small-texture test device");
         let over = SMALL_TEXTURE_LIMIT + 44;
         let refusal = MsaaTargets::create(
             &device,
@@ -2359,7 +2574,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the small-texture test device");
         let side = SMALL_TEXTURE_LIMIT * 2;
         let builds = std::cell::Cell::new(0);
@@ -2411,7 +2626,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let camera = OrbitCamera::new(Vec3::ZERO, 100.0);
 
@@ -2561,8 +2776,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue.clone())
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue.clone(),
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         // 64 * 4 = 256 bytes / row, which already satisfies
         // `COPY_BYTES_PER_ROW_ALIGNMENT` and matches the size used by
         // the other render tests in this module.
@@ -2647,11 +2867,12 @@ mod gpu_integration_tests {
         // covered by the `install_scene_with_mismatched_device_returns_false`
         // integration test.
         let token = DeviceToken::next();
-        let mut renderer = Renderer::new(device.clone(), token, queue)
+        let mut renderer = Renderer::new(device.clone(), token, queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
-        let gpu = GpuScene::build(&device, token, &graph).expect("gpu scene build");
+        let gpu = GpuScene::build(&device, token, &graph, &DeviceLoss::default())
+            .expect("gpu scene build");
         let installed = renderer.install_scene(gpu);
         assert!(installed);
         assert!(renderer.scene_bounds().is_some());
@@ -2670,8 +2891,13 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device.clone(), DeviceToken::next(), queue)
-            .expect("Renderer::new under the test device");
+        let mut renderer = Renderer::new(
+            device.clone(),
+            DeviceToken::next(),
+            queue,
+            DeviceLoss::default(),
+        )
+        .expect("Renderer::new under the test device");
         let mut graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
         renderer
@@ -2728,7 +2954,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));
@@ -2748,7 +2974,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let (graph, _root) = graph_with_group_root();
         renderer
@@ -2768,7 +2994,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let mut graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([5.0, 0.0, 0.0]));
@@ -2815,7 +3041,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let (mut graph, root) = graph_with_group_root();
         renderer.upload_scene(&graph).expect("empty upload");
@@ -2846,7 +3072,7 @@ mod gpu_integration_tests {
             eprintln!("skipping: no wgpu adapter available in this environment");
             return;
         };
-        let mut renderer = Renderer::new(device, DeviceToken::next(), queue)
+        let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
             .expect("Renderer::new under the test device");
         let graph =
             triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 0.0]));

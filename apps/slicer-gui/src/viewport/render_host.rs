@@ -28,7 +28,7 @@ use slint::{ComponentHandle, Weak};
 use super::render_scheduler;
 use super::types::{FrameState, ViewportSize};
 use crate::MainWindow;
-use crate::mesh_render::{DeviceToken, MeshRenderer, Renderer, RendererInitError};
+use crate::mesh_render::{DeviceLoss, DeviceToken, MeshRenderer, Renderer, RendererInitError};
 
 pub(super) struct RenderHost {
     ui: Weak<MainWindow>,
@@ -178,8 +178,9 @@ impl RenderHost {
         device: slint::wgpu_29::wgpu::Device,
         device_token: DeviceToken,
         queue: slint::wgpu_29::wgpu::Queue,
+        device_loss: DeviceLoss,
     ) -> Result<(), RendererInitError> {
-        let renderer = Renderer::new(device, device_token, queue)?;
+        let renderer = Renderer::new(device, device_token, queue, device_loss)?;
         *self.renderer.borrow_mut() = Some(Box::new(renderer));
         self.refused_size.set(None);
         Ok(())

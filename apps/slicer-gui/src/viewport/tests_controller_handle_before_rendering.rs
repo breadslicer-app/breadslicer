@@ -257,3 +257,21 @@ fn no_redraw_owed_short_circuits_before_the_ui_upgrade_gate() {
     // empty regardless of which gate fired.
     assert!(state.borrow().render_calls.is_empty());
 }
+
+#[test]
+fn a_lost_device_halts_before_rendering_without_a_dialog() {
+    let (ctrl, state) = fixture();
+    ctrl.install_graph_for_test(Scene::new());
+    ctrl.loader()
+        .device_loss()
+        .mark("Unknown: test".to_string());
+    ctrl.set_frame_state_for_test(FrameState::default().with_upload_owed().with_redraw_owed());
+    ctrl.handle_before_rendering();
+    assert!(state.borrow().upload_calls.is_empty());
+    assert!(state.borrow().render_calls.is_empty());
+    let frame = ctrl.frame_state_for_test();
+    assert!(!frame.upload_owed());
+    assert!(!frame.redraw_owed());
+    assert_eq!(ctrl.loader().upload_failures_for_test(), 0);
+    assert_eq!(ctrl.loader().render_failures_for_test(), 0);
+}
