@@ -8,24 +8,21 @@
 //! - An associated TOML file format
 //! - Profiles resolution mechanisms
 //!
-//! [`PrinterProfile`] and [`MaterialProfile`] are used to represent
-//! the 2 profile types. [`loader`] reads them from a path or by id
-//! from a library directory (the user's library, see
-//! [`user_library_dir`], with a fallback to a bundled directory);
-//! [`listing`] enumerates the ids a library holds; [`writer`] saves
-//! and deletes profiles and preview images inside a library, laying
-//! the files out where the loaders find them again; [`package`] moves
-//! a selection of profiles between machines as a zip archive.
+//! [`PrinterProfile`] and [`MaterialProfile`] represent the 2 profile
+//! types. Around them:
 //!
-//! [`resolve`] takes a [`PrinterProfile`], an [`EffectiveMaterial`]
-//! (a material composed with any extension the library holds for it)
-//! and [`SceneOverrides`] (per-print adjustments), and returns a
-//! [`ResolvedPrintConfig`]: the printer profile, the
-//! [`MaterialResolved`] values chosen for that pairing (layer height,
-//! normal and bottom exposure, bottom layer count, lift distance and
-//! speed, retract speed, scale compensation), one [`OverrideRecord`]
-//! per value naming its source, and any [`ResolveWarning`]s. This
-//! crate has no dependency on a slicer or on printer hardware.
+//! - [`loader`] reads a profile from a path.
+//! - [`ProfileLibraries`] resolves profiles by id across the
+//!   libraries an application consults, user library first.
+//! - [`listing`] enumerates the ids a library holds.
+//! - [`writer`] saves and deletes profiles and preview images inside
+//!   a library, laying the files out where the loaders find them
+//!   again.
+//! - [`package`] moves a selection of profiles between machines as a
+//!   zip archive.
+//! - [`resolve`] composes a printer, an [`EffectiveMaterial`] and
+//!   per-print overrides into a [`ResolvedPrintConfig`], with
+//!   per-value provenance and warnings.
 
 pub mod calibration_coverage;
 pub mod calibration_target;
@@ -49,6 +46,7 @@ pub mod printer_constraints;
 pub mod printer_hardware;
 pub mod printer_identity;
 pub mod printer_profile;
+pub mod profile_libraries;
 pub mod resolve_error;
 pub mod resolve_warning;
 pub mod resolved_field;
@@ -93,6 +91,7 @@ pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection};
+pub use profile_libraries::{ProfileLibraries, ProfileSource};
 pub use resolve_error::ResolveError;
 pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 pub use resolved_field::ResolvedField;
@@ -152,6 +151,8 @@ mod tests_printer_hardware;
 mod tests_printer_identity;
 #[cfg(test)]
 mod tests_printer_profile;
+#[cfg(test)]
+mod tests_profile_libraries;
 #[cfg(test)]
 mod tests_resolve_error;
 #[cfg(test)]

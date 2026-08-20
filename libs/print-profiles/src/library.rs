@@ -13,7 +13,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-const PROFILES_SUBDIR: &str = "profiles";
+pub(crate) const PROFILES_SUBDIR: &str = "profiles";
 
 /// Resolve the per-platform user profile-library directory:
 /// `<data_dir>/profiles/`. Fails with

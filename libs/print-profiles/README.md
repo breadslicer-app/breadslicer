@@ -84,26 +84,29 @@ for record in &config.overrides_applied {
 }
 ```
 
-### Using the installed library
+### Using the installed libraries
 
 Profiles the user has installed are addressed by id rather than by path.
-Loading by id searches an optional explicit path, then the user's library,
-then the profiles the installation ships.
+`ProfileLibraries` names the libraries to search, highest precedence
+first: the user's writable library, then the read-only libraries the
+installation ships. Loading by id returns the profile from the first
+library that has it; when none has it, the error lists every path that
+was tried. A system without a resolvable user library searches the
+bundled libraries alone.
 
 ```rust
-use sc_print_profiles::{
-    list_printer_ids, load_printer_profile_by_id, user_library_dir,
-};
+use sc_print_profiles::{ProfileLibraries, list_printer_ids};
 
-let library = user_library_dir()?;
-let assets = std::path::Path::new("/usr/share/soulcrafted-slicer/profiles");
+let libraries = ProfileLibraries::platform_default();
 
-for id in list_printer_ids(&library)? {
-    println!("{id}");
+if let Some(library) = libraries.user_library_dir() {
+    for id in list_printer_ids(library)? {
+        println!("{id}");
+    }
 }
 
 let id = "elegoo-saturn-4-ultra-ctb".parse()?;
-let printer = load_printer_profile_by_id(&id, None, &library, assets)?;
+let printer = libraries.load_printer_by_id(&id)?;
 ```
 
 ### Moving a library between machines
@@ -209,11 +212,13 @@ machine's block stood in for the printer's own.
 
 ## Profile library
 
-Profiles live under a per-platform user data directory, as
-`printers/<id>.toml`, `materials/<id>.toml` and
-`materials/extensions/<id>.toml`. Loading by id tries an explicit path, then
-the user library, then the installation's own profiles, and reports every
-path it tried when none has the profile.
+A profile library is one directory laid out as `printers/<id>.toml`,
+`materials/<id>.toml` and `materials/extensions/<id>.toml`; the user's
+library lives under a per-platform user data directory. Loading by id
+searches the configured libraries in precedence order (`ProfileLibraries`:
+the user library, then every bundled library) and reports every path it
+tried when none has the profile. Material extensions are searched in the
+user library only.
 
 `save_printer_profile_to_library` and `save_material_profile_to_library`
 write a profile into that layout by its id; `save_printer_image_to_library`

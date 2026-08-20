@@ -32,6 +32,7 @@ use sc_print_primitives::{MaterialId, PrinterId};
 use crate::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
+use crate::profile_libraries::ProfileLibraries;
 
 pub(crate) const PRINTERS_SUBDIR: &str = "printers";
 pub(crate) const MATERIALS_SUBDIR: &str = "materials";
@@ -310,16 +311,7 @@ pub fn compose_with_library_extension(
     base: MaterialProfile,
     library_dir: &Path,
 ) -> (EffectiveMaterial, Vec<MaterialExtensionIssue>) {
-    match load_material_extension_if_present(library_dir, &base.identity.id) {
-        Ok(extension) => EffectiveMaterial::compose(base, extension),
-        Err(err) => {
-            let issue = MaterialExtensionIssue::ExtensionUnreadable {
-                path: err.path.clone(),
-                cause: err.kind.to_string(),
-            };
-            (EffectiveMaterial::from(base), vec![issue])
-        }
-    }
+    ProfileLibraries::new(Some(library_dir.to_path_buf()), Vec::new()).compose_with_extension(base)
 }
 
 /// Returned by [`load_printer_profile_by_id`] when no source had
@@ -342,11 +334,14 @@ impl fmt::Display for LoadPrinterProfileByIdError {
             Self::NotFoundAnywhere { attempted } => {
                 write!(
                     f,
-                    "printer profile not found in any of the configured sources: ",
+                    "printer profile not found in any of the configured sources"
                 )?;
+                if attempted.is_empty() {
+                    return write!(f, " (no profile library roots configured)");
+                }
                 let paths: Vec<String> =
                     attempted.iter().map(|p| p.display().to_string()).collect();
-                write!(f, "{}", paths.join(", "))
+                write!(f, ": {}", paths.join(", "))
             }
         }
     }
@@ -376,11 +371,14 @@ impl fmt::Display for LoadMaterialProfileByIdError {
             Self::NotFoundAnywhere { attempted } => {
                 write!(
                     f,
-                    "material profile not found in any of the configured sources: ",
+                    "material profile not found in any of the configured sources"
                 )?;
+                if attempted.is_empty() {
+                    return write!(f, " (no profile library roots configured)");
+                }
                 let paths: Vec<String> =
                     attempted.iter().map(|p| p.display().to_string()).collect();
-                write!(f, "{}", paths.join(", "))
+                write!(f, ": {}", paths.join(", "))
             }
         }
     }
@@ -413,26 +411,11 @@ pub fn load_printer_profile_by_id(
     if let Some(path) = explicit_path {
         return load_printer_profile_from_path(path).map_err(LoadPrinterProfileByIdError::Source);
     }
-
-    let mut attempted = Vec::with_capacity(2);
-    for base in [library_dir, assets_dir] {
-        let path = printer_profile_path_in_library(base, id);
-        match load_printer_profile_from_path(&path) {
-            Ok(profile) => return Ok(profile),
-            Err(err) => {
-                if matches!(
-                    &err.kind,
-                    LoadPrinterProfileErrorKind::Io(io_err) if io_err.kind() == io::ErrorKind::NotFound,
-                ) {
-                    attempted.push(path);
-                    continue;
-                }
-                return Err(LoadPrinterProfileByIdError::Source(err));
-            }
-        }
-    }
-
-    Err(LoadPrinterProfileByIdError::NotFoundAnywhere { attempted })
+    ProfileLibraries::new(
+        Some(library_dir.to_path_buf()),
+        vec![assets_dir.to_path_buf()],
+    )
+    .load_printer_by_id(id)
 }
 
 /// Load a material profile by id. Same source-cascade semantics as
@@ -446,24 +429,9 @@ pub fn load_material_profile_by_id(
     if let Some(path) = explicit_path {
         return load_material_profile_from_path(path).map_err(LoadMaterialProfileByIdError::Source);
     }
-
-    let mut attempted = Vec::with_capacity(2);
-    for base in [library_dir, assets_dir] {
-        let path = material_profile_path_in_library(base, id);
-        match load_material_profile_from_path(&path) {
-            Ok(profile) => return Ok(profile),
-            Err(err) => {
-                if matches!(
-                    &err.kind,
-                    LoadMaterialProfileErrorKind::Io(io_err) if io_err.kind() == io::ErrorKind::NotFound,
-                ) {
-                    attempted.push(path);
-                    continue;
-                }
-                return Err(LoadMaterialProfileByIdError::Source(err));
-            }
-        }
-    }
-
-    Err(LoadMaterialProfileByIdError::NotFoundAnywhere { attempted })
+    ProfileLibraries::new(
+        Some(library_dir.to_path_buf()),
+        vec![assets_dir.to_path_buf()],
+    )
+    .load_material_by_id(id)
 }
