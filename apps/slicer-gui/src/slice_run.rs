@@ -26,11 +26,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use sc_mesh_core::scene::Scene;
-use sc_print_glue::slice_input_fingerprint;
+use sc_print_glue::{SlicingParams, slice_input_fingerprint, slice_plate};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
-use sc_sl1cer::contour::{ContourStack, merge_stacks};
+use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::LayerSchedule;
-use sc_sl1cer::{CancelToken, LeafSlices, SliceOutcome, SliceProgress, slice_scene_with_progress};
+use sc_sl1cer::{CancelToken, SliceProgress};
 use slint::ComponentHandle;
 
 use crate::MainWindow;
@@ -38,7 +38,7 @@ use crate::error_dialog::DialogManager;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::PreferencesBus;
 use crate::scene_document::SceneDocument;
-use crate::slice_projection::{SliceFailure, build_slice_profile, load_selected_profiles};
+use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{ReSliceDecision, SliceParams, SliceResult, decide_re_slice};
 
 /// Cadence of the UI-side progress poll while a slice is in flight.
@@ -387,8 +387,8 @@ impl SliceRun {
     }
 }
 
-/// Worker body: load the profiles, build the slice profile, and slice
-/// the scene, publishing progress into `progress` as layers complete.
+/// Load the profiles and run the shared slicing service, publishing
+/// progress into `progress` as layers complete.
 fn run_slice(
     scene: &Scene,
     printer: &PrinterId,
@@ -399,39 +399,42 @@ fn run_slice(
     progress: &SliceProgressCell,
 ) -> Result<SliceRunOutcome, SliceFailure> {
     let (printer_profile, resin_profile) = load_selected_profiles(printer, resin)?;
-    let profile = build_slice_profile(
-        &printer_profile,
-        &resin_profile,
+    let params = SlicingParams {
+        layer_height_request: None,
         first_layer_height,
         aa_level,
+    };
+    let run = slice_plate(
         scene,
-    )?;
-    let outcome = slice_scene_with_progress(scene, &profile, cancel, |p: SliceProgress| {
-        progress
-            .completed
-            .fetch_max(p.completed as u32, Ordering::Relaxed);
-        progress.total.store(p.total as u32, Ordering::Relaxed);
-    })
-    .map_err(SliceFailure::Slice)?;
-    match outcome {
-        SliceOutcome::Cancelled => Ok(SliceRunOutcome::Cancelled),
-        SliceOutcome::Completed(leaves) => {
-            let stacks = leaves.into_iter().map(LeafSlices::into_stack).collect();
-            capture(scene, *profile.layer_schedule(), stacks).map(SliceRunOutcome::Completed)
+        &printer_profile,
+        &resin_profile,
+        &params,
+        cancel,
+        |p: SliceProgress| {
+            progress
+                .completed
+                .fetch_max(p.completed as u32, Ordering::Relaxed);
+            progress.total.store(p.total as u32, Ordering::Relaxed);
+        },
+    )
+    .map_err(SliceFailure::from)?;
+    match run {
+        sc_print_glue::SliceRun::Cancelled => Ok(SliceRunOutcome::Cancelled),
+        sc_print_glue::SliceRun::Completed(plate) => {
+            let schedule = *plate.schedule();
+            let merged = plate.merge().map_err(|_| SliceFailure::SliceMerge)?;
+            capture(scene, schedule, merged).map(SliceRunOutcome::Completed)
         }
     }
 }
 
-/// Merge the per-leaf stacks into the plate stack and fingerprint the
-/// slice inputs, all off the event loop. The token keys on the scene
-/// geometry and the schedule by value, the same inputs the load guard
-/// recomputes.
+/// Fingerprint the slice inputs off the event loop and wrap the
+/// merged plate stack for the UI hand-off.
 fn capture(
     scene: &Scene,
     schedule: LayerSchedule,
-    stacks: Vec<ContourStack>,
+    merged: ContourStack,
 ) -> Result<CompletedSlice, SliceFailure> {
-    let merged = merge_stacks(stacks).map_err(|_| SliceFailure::SliceMerge)?;
     let token = slice_input_fingerprint(scene, &schedule)
         .map_err(SliceFailure::Fingerprint)?
         .to_token();
@@ -471,8 +474,8 @@ mod capture_tests {
         LayerSchedule::uniform(0.05, 0.05, 2).expect("a positive, non-empty schedule")
     }
 
-    /// A CCW triangle as one solid layer plus an empty layer. Two of
-    /// them share their z grid, so they merge into one two-layer stack.
+    /// A CCW triangle as one solid layer plus an empty layer, standing
+    /// in for a merged plate stack.
     fn triangle_stack() -> ContourStack {
         let outer = ClosedRing::new(
             [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
@@ -487,11 +490,10 @@ mod capture_tests {
     }
 
     #[test]
-    fn capture_merges_the_stacks_and_fingerprints_the_scene() {
+    fn capture_carries_the_stack_and_fingerprints_the_scene() {
         let scene = cube_scene();
         let sched = schedule();
-        let completed =
-            capture(&scene, sched, vec![triangle_stack(), triangle_stack()]).expect("capture");
+        let completed = capture(&scene, sched, triangle_stack()).expect("capture");
         assert_eq!(completed.merged.layers().len(), 2);
         assert_eq!(completed.schedule, sched);
         assert_eq!(
@@ -505,8 +507,8 @@ mod capture_tests {
     #[test]
     fn capture_is_deterministic() {
         let scene = cube_scene();
-        let first = capture(&scene, schedule(), vec![triangle_stack()]).expect("first capture");
-        let second = capture(&scene, schedule(), vec![triangle_stack()]).expect("second capture");
+        let first = capture(&scene, schedule(), triangle_stack()).expect("first capture");
+        let second = capture(&scene, schedule(), triangle_stack()).expect("second capture");
         assert_eq!(first.token, second.token);
     }
 
@@ -514,7 +516,7 @@ mod capture_tests {
     fn capture_fails_when_the_scene_has_no_geometry() {
         // An empty scene has no sliceable leaf, so the fingerprint, and
         // thus the capture, cannot be computed.
-        let result = capture(&Scene::new(), schedule(), vec![triangle_stack()]);
+        let result = capture(&Scene::new(), schedule(), triangle_stack());
         assert!(matches!(result, Err(SliceFailure::Fingerprint(_))));
     }
 }

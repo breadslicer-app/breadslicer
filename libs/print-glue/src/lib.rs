@@ -3,30 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Application-layer glue between the profile-resolution bounded
-//! context and the slicing engine.
+//! Application services between the profile bounded context and the
+//! slicing engine. The 2 crates do not know each other; this one
+//! maps between them and hosts the use cases both frontends share.
 //!
-//! The resolver in `sc-print-profiles` produces a
-//! [`sc_print_profiles::ResolvedPrintConfig`]: what to print, in
-//! terms of printer hardware plus resolved material values. The
-//! slicing engine in `sc-sl1cer` consumes a
-//! [`sc_sl1cer::profile::SliceProfile`]: the geometry and schedule
-//! it needs to rasterise. These are two different shapes owned by
-//! two different crates, neither of which depends on the other.
-//!
-//! This crate owns the projection that maps the former onto the
-//! latter, combined with the per-print slicing parameters (the
-//! anti-aliasing level, the packing mode, the first-layer height,
-//! and the layer count derived from the mesh) that are not part of
-//! either profile, and the scene-level preparation
-//! ([`prepare::slice_profile_for_scene`]) that derives the layer
-//! count from the scene and assembles the engine's input. Both
-//! application frontends (the CLI and the GUI) depend on this crate
-//! so the mapping lives in one place.
+//! - [`slice_plate`] runs a whole slicing pass: schedule resolution,
+//!   the engine run with progress and cancellation, and the merge of
+//!   the per-leaf stacks into one plate stack.
+//! - [`prepare`] derives the engine's input for a measured scene
+//!   from a chosen printer + material.
+//! - [`projection`] maps printer hardware and per-print parameters
+//!   onto the engine's profile type.
+//! - [`fingerprint`] computes the slice-input token project files
+//!   use to revalidate persisted slices.
 
 pub mod fingerprint;
 pub mod prepare;
 pub mod projection;
+pub mod slice_plate;
 
 pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
@@ -39,6 +33,9 @@ pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,
 };
+pub use slice_plate::{
+    SlicePlateError, SliceRun, SlicedPlate, SlicingParams, schedule_for_selection, slice_plate,
+};
 
 #[cfg(test)]
 mod tests_fingerprint;
@@ -46,3 +43,5 @@ mod tests_fingerprint;
 mod tests_prepare;
 #[cfg(test)]
 mod tests_projection;
+#[cfg(test)]
+mod tests_slice_plate;

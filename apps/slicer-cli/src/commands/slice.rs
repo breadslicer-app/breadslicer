@@ -8,24 +8,23 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::load_mesh_from_path;
-use sc_print_glue::{UnsliceableScene, UnsliceableSelection, slice_profile_for_selection};
-use sc_print_primitives::{BuildVolume, PositiveFiniteMm};
-use sc_print_profiles::{
-    EffectiveMaterial, MaterialProfile, PrinterProfile, compose_with_library_extension,
-    load_material_profile_by_id, load_material_profile_from_path, load_printer_profile_by_id,
-    load_printer_profile_from_path,
+use sc_print_glue::{
+    SlicePlateError, SliceRun, SlicingParams, UnsliceableScene, UnsliceableSelection, slice_plate,
 };
-use sc_sl1cer::contour::merge_stacks;
+use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
+use sc_print_profiles::{
+    EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
+    load_material_profile_from_path, load_printer_profile_from_path,
+};
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
-use sc_sl1cer::profile::{AaLevel, PackingMode};
-use sc_sl1cer::{LeafSlices, VERSION, slice_scene};
+use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
@@ -68,23 +67,15 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         })?,
     };
 
-    let library_dir = resolve_user_library_dir()
-        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
-    let assets_dir = resolve_assets_profiles_dir();
-    let printer = load_printer_profile(&args.printer_profile, &library_dir, &assets_dir)?;
-    let material = load_material_profile(&args.material_profile, &library_dir, &assets_dir)?;
-    // An explicit profile path means exactly that document; only the
-    // by-id route composes the user library's same-id extension in.
-    let material = match &args.material_profile {
-        MaterialProfileRef::Path(_) => EffectiveMaterial::from(material),
-        MaterialProfileRef::Id(_) => {
-            let (material, issues) = compose_with_library_extension(material, &library_dir);
-            for issue in &issues {
-                eprintln!("warning: {issue}");
-            }
-            material
-        }
-    };
+    let libraries = ProfileLibraries::new(
+        resolve_user_library_dir().ok(),
+        vec![resolve_assets_profiles_dir()],
+    );
+    let printer = load_printer_profile(&args.printer_profile, &libraries)?;
+    let (material, issues) = load_material_profile(&args.material_profile, &libraries)?;
+    for issue in &issues {
+        eprintln!("warning: {issue}");
+    }
 
     let mut loaded =
         load_mesh_from_path(&source_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
@@ -108,50 +99,52 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     if !args.no_auto_place {
         place_on_build_plate(&mut loaded.graph, &printer.hardware.build_volume())?;
     }
-    let profile = slice_profile_for_selection(
+    let params = SlicingParams {
+        layer_height_request: args.layer_height,
+        first_layer_height: args.first_layer_height,
+        aa_level: args.aa,
+    };
+    let plate = match slice_plate(
         &loaded.graph,
         &printer,
         &material,
-        args.layer_height,
-        args.first_layer_height,
-        args.aa,
-        PackingMode::None,
-    )
-    .map_err(describe_unsliceable)?;
-
-    let leaf_slices = match slice_scene(&loaded.graph, &profile) {
-        Ok(slices) => slices,
-        Err(err @ SliceSceneError::LeavesValidationFailed(_)) => {
+        &params,
+        &CancelToken::new(),
+        |_| {},
+    ) {
+        Ok(SliceRun::Completed(plate)) => plate,
+        // Unreachable with the fresh, never-cancelled token above.
+        Ok(SliceRun::Cancelled) => return Err(anyhow!("slicing was cancelled")),
+        Err(SlicePlateError::Prepare(err)) => return Err(describe_unsliceable(err)),
+        Err(SlicePlateError::Engine(err @ SliceSceneError::LeavesValidationFailed(_))) => {
             report_validation_failure(&err, args.verbose, &mut std::io::stderr());
             return Err(anyhow!("mesh validation failed; slicing aborted"));
         }
-        Err(other) => return Err(other.into()),
+        Err(SlicePlateError::Engine(other)) => return Err(other.into()),
     };
 
-    let model_count = leaf_slices.len();
+    let model_count = plate.leaves().len();
     // Every stack shares the schedule's layer grid, and merging only
     // concatenates polygons per layer, so the totals are the same
     // whichever writer path runs below.
-    let layer_count = leaf_slices
+    let layer_count = plate
+        .leaves()
         .first()
         .map_or(0, |slices| slices.stack().layers().len());
-    let polygon_count: usize = leaf_slices
+    let polygon_count: usize = plate
+        .leaves()
         .iter()
         .flat_map(|slices| slices.stack().layers())
         .map(|layer| layer.polygons().len())
         .sum();
 
-    let options = WriterOptions::from_profile(&profile, VERSION);
+    let options = WriterOptions::from_profile(plate.profile(), VERSION);
     match target_format {
         Format::ThreeMf => {
-            write_scene_slices(&loaded.graph, &leaf_slices, &target_path, &options)?;
+            write_scene_slices(&loaded.graph, plate.leaves(), &target_path, &options)?;
         }
         Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer => {
-            let stacks: Vec<_> = leaf_slices
-                .into_iter()
-                .map(LeafSlices::into_stack)
-                .collect();
-            let stack = merge_stacks(stacks).map_err(|err| {
+            let stack = plate.merge().map_err(|err| {
                 anyhow!(
                     "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
                 )
@@ -168,36 +161,37 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     Ok(())
 }
 
-/// Load the printer profile named by the parsed flag value: read
-/// directly from a path, or look it up by id in the user library
-/// then the bundled assets directory.
+/// Loads the effective printer for `profile_ref`. It reads directly
+/// from a path, or looks it up by id across the configured libraries.
 fn load_printer_profile(
     profile_ref: &PrinterProfileRef,
-    library_dir: &Path,
-    assets_dir: &Path,
+    libraries: &ProfileLibraries,
 ) -> Result<PrinterProfile> {
     match profile_ref {
         PrinterProfileRef::Path(path) => load_printer_profile_from_path(path)
             .map_err(|e| anyhow!("could not load the printer profile: {e}")),
-        PrinterProfileRef::Id(id) => load_printer_profile_by_id(id, None, library_dir, assets_dir)
+        PrinterProfileRef::Id(id) => libraries
+            .load_printer_by_id(id)
             .map_err(|e| anyhow!("could not load the printer profile: {e}")),
     }
 }
 
-/// Load the material profile named by the parsed flag value. Same
-/// path-or-id dispatch as [`load_printer_profile`].
+/// Loads the effective material for `profile_ref`. The ref picks the
+/// base document only; the user library's same-id extension
+/// composes over it whether the ref is a path or an id.
 fn load_material_profile(
     profile_ref: &MaterialProfileRef,
-    library_dir: &Path,
-    assets_dir: &Path,
-) -> Result<MaterialProfile> {
+    libraries: &ProfileLibraries,
+) -> Result<(EffectiveMaterial, Vec<MaterialExtensionIssue>)> {
     match profile_ref {
-        MaterialProfileRef::Path(path) => load_material_profile_from_path(path)
-            .map_err(|e| anyhow!("could not load the material profile: {e}")),
-        MaterialProfileRef::Id(id) => {
-            load_material_profile_by_id(id, None, library_dir, assets_dir)
-                .map_err(|e| anyhow!("could not load the material profile: {e}"))
+        MaterialProfileRef::Path(path) => {
+            let base = load_material_profile_from_path(path)
+                .map_err(|e| anyhow!("could not load the material profile: {e}"))?;
+            Ok(libraries.compose_with_extension(base))
         }
+        MaterialProfileRef::Id(id) => libraries
+            .effective_material_by_id(id)
+            .map_err(|e| anyhow!("could not load the material profile: {e}")),
     }
 }
 

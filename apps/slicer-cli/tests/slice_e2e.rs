@@ -679,6 +679,58 @@ fn an_installed_extension_does_not_disturb_the_slice_of_the_y_tunnel_prism() {
 }
 
 #[test]
+fn a_material_given_by_path_composes_the_library_extension() {
+    // Same composition rule on both routes: a --material-profile
+    // PATH picks the document, and the user library's same-id
+    // extension still composes over it. Observable through the
+    // not-flagged exclusion warning, which only a running
+    // composition can emit.
+    let out = tempdir().unwrap();
+    let library = tempdir().unwrap();
+    let extensions_dir = library.path().join("materials").join("extensions");
+    fs::create_dir_all(&extensions_dir).unwrap();
+    fs::write(
+        extensions_dir.join("slicer-cli-e2e-test-resin.toml"),
+        r#"
+[identity]
+id = "slicer-cli-e2e-test-resin"
+brand = "SoulCrafted"
+family = "E2E"
+name = "E2E Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[per_printer."some-other-printer"]
+normal_exposure_sec = 9.0
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(out.path())
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg(profile_file("materials", "slicer-cli-e2e-test-resin.toml"))
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .env("SC_SLICER_LIBRARY_DIR", library.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 5 layers"))
+        .stderr(predicate::str::contains("not flagged as an extension"));
+}
+
+#[test]
 fn an_invalid_extension_is_reported_and_does_not_break_the_slice() {
     // The base resin is fully calibrated on its own; the file in the
     // library's extensions slot is not flagged as an extension. The
