@@ -7,82 +7,68 @@
 //!
 //! Project saves embed the referenced printer/resin profiles as raw
 //! TOML bytes, and project opens classify the references against
-//! what is installed locally. Both walk the same roots the profile
-//! catalog uses: the user library first, then every bundled data
-//! directory, first hit wins.
+//! what is installed locally. Both consult the given
+//! [`ProfileLibraries`] roots in their order: first hit wins.
 
 use std::fs;
-use std::path::PathBuf;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
-    material_extension_path_in_library, material_profile_path_in_library,
-    printer_profile_path_in_library, user_library_dir,
+    ProfileLibraries, material_extension_path_in_library, material_profile_path_in_library,
+    printer_profile_path_in_library,
 };
 use sc_project_formats::{EmbeddedProfile, ProjectPayload};
 
-/// Profile library roots in precedence order: the user's writable
-/// library (when a home directory resolves), then the bundled
-/// libraries shipped with the app. Mirrors the catalog's root list.
-pub(crate) fn profile_library_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(user) = user_library_dir() {
-        roots.push(user);
-    }
-    for root in sc_app_paths::bundled_data_dirs() {
-        roots.push(root.join("profiles"));
-    }
-    roots
-}
-
 /// Whether a printer profile with this id resolves in any root.
-pub(crate) fn printer_installed(roots: &[PathBuf], id: &PrinterId) -> bool {
-    roots
-        .iter()
-        .any(|root| printer_profile_path_in_library(root, id).is_file())
+pub(crate) fn printer_installed(libraries: &ProfileLibraries, id: &PrinterId) -> bool {
+    libraries
+        .roots()
+        .any(|(root, _)| printer_profile_path_in_library(root, id).is_file())
 }
 
 /// Whether a material profile with this id resolves in any root.
-pub(crate) fn material_installed(roots: &[PathBuf], id: &MaterialId) -> bool {
-    roots
-        .iter()
-        .any(|root| material_profile_path_in_library(root, id).is_file())
+pub(crate) fn material_installed(libraries: &ProfileLibraries, id: &MaterialId) -> bool {
+    libraries
+        .roots()
+        .any(|(root, _)| material_profile_path_in_library(root, id).is_file())
 }
 
 /// Raw bytes of the printer profile document, from the first root
 /// that has it.
-fn printer_profile_bytes(roots: &[PathBuf], id: &PrinterId) -> Option<Vec<u8>> {
-    roots
-        .iter()
-        .find_map(|root| fs::read(printer_profile_path_in_library(root, id)).ok())
+fn printer_profile_bytes(libraries: &ProfileLibraries, id: &PrinterId) -> Option<Vec<u8>> {
+    libraries
+        .roots()
+        .find_map(|(root, _)| fs::read(printer_profile_path_in_library(root, id)).ok())
 }
 
 /// Raw bytes of the material profile document, from the first root
 /// that has it.
-fn material_profile_bytes(roots: &[PathBuf], id: &MaterialId) -> Option<Vec<u8>> {
-    roots
-        .iter()
-        .find_map(|root| fs::read(material_profile_path_in_library(root, id)).ok())
+fn material_profile_bytes(libraries: &ProfileLibraries, id: &MaterialId) -> Option<Vec<u8>> {
+    libraries
+        .roots()
+        .find_map(|(root, _)| fs::read(material_profile_path_in_library(root, id)).ok())
 }
 
 /// Raw bytes of the material extension document, from the first
 /// root that has it.
-fn material_extension_bytes(roots: &[PathBuf], id: &MaterialId) -> Option<Vec<u8>> {
-    roots
-        .iter()
-        .find_map(|root| fs::read(material_extension_path_in_library(root, id)).ok())
+fn material_extension_bytes(libraries: &ProfileLibraries, id: &MaterialId) -> Option<Vec<u8>> {
+    libraries
+        .roots()
+        .find_map(|(root, _)| fs::read(material_extension_path_in_library(root, id)).ok())
 }
 
-/// Completes `payload` for a save: every referenced profile without
-/// a held embedded document gets one resolved from `roots` (raw
-/// on-disk bytes), covering the printer, the resin, and the resin's
-/// extension when one exists. Held documents are never replaced;
-/// they carry the bytes the project was opened with. A reference
-/// that resolves nowhere simply stays a plain reference.
-pub(crate) fn complete_embedded_documents(payload: &mut ProjectPayload, roots: &[PathBuf]) {
+/// Completes `payload` for a save: every referenced profile that has
+/// no embedded document in `payload` gets one; this covers the
+/// printer, the resin, and the resin's extension when one exists.
+/// Embedded documents already in `payload` are left unchanged. A
+/// reference that resolves nowhere stays a plain reference.
+pub(crate) fn complete_embedded_documents(
+    payload: &mut ProjectPayload,
+    libraries: &ProfileLibraries,
+) {
     if let Some(printer) = payload.printer.clone()
         && !payload.embeds_printer(&printer)
-        && let Some(bytes) = printer_profile_bytes(roots, &printer)
+        && let Some(bytes) = printer_profile_bytes(libraries, &printer)
     {
         payload
             .embedded
@@ -90,7 +76,7 @@ pub(crate) fn complete_embedded_documents(payload: &mut ProjectPayload, roots: &
     }
     if let Some(resin) = payload.resin.clone() {
         if !payload.embeds_material(&resin)
-            && let Some(bytes) = material_profile_bytes(roots, &resin)
+            && let Some(bytes) = material_profile_bytes(libraries, &resin)
         {
             payload.embedded.push(EmbeddedProfile::Material {
                 id: resin.clone(),
@@ -101,7 +87,7 @@ pub(crate) fn complete_embedded_documents(payload: &mut ProjectPayload, roots: &
             .embedded
             .iter()
             .any(|p| matches!(p, EmbeddedProfile::MaterialExtension { id, .. } if *id == resin));
-        if !extension_held && let Some(bytes) = material_extension_bytes(roots, &resin) {
+        if !extension_held && let Some(bytes) = material_extension_bytes(libraries, &resin) {
             payload
                 .embedded
                 .push(EmbeddedProfile::MaterialExtension { id: resin, bytes });
@@ -131,18 +117,24 @@ mod project_profiles_tests {
         fs::write(path, bytes).expect("profile file");
     }
 
+    /// Libraries with `a` as the user root and `b` bundled, so `a`
+    /// precedes `b`.
+    fn libraries(a: &Path, b: &Path) -> ProfileLibraries {
+        ProfileLibraries::new(Some(a.to_path_buf()), vec![b.to_path_buf()])
+    }
+
     #[test]
     fn installed_checks_probe_every_root() {
         let a = tempfile::tempdir().expect("root a");
         let b = tempfile::tempdir().expect("root b");
         write_profile(b.path(), "printers/only-in-b.toml", b"x = 1");
         write_profile(b.path(), "materials/resin-in-b.toml", b"x = 1");
-        let roots = vec![a.path().to_path_buf(), b.path().to_path_buf()];
+        let libraries = libraries(a.path(), b.path());
 
-        assert!(printer_installed(&roots, &printer_id("only-in-b")));
-        assert!(!printer_installed(&roots, &printer_id("nowhere")));
-        assert!(material_installed(&roots, &material_id("resin-in-b")));
-        assert!(!material_installed(&roots, &material_id("nowhere")));
+        assert!(printer_installed(&libraries, &printer_id("only-in-b")));
+        assert!(!printer_installed(&libraries, &printer_id("nowhere")));
+        assert!(material_installed(&libraries, &material_id("resin-in-b")));
+        assert!(!material_installed(&libraries, &material_id("nowhere")));
     }
 
     #[test]
@@ -151,7 +143,7 @@ mod project_profiles_tests {
         let b = tempfile::tempdir().expect("root b");
         write_profile(a.path(), "printers/shared.toml", b"from = \"a\"");
         write_profile(b.path(), "printers/shared.toml", b"from = \"b\"");
-        let roots = vec![a.path().to_path_buf(), b.path().to_path_buf()];
+        let libraries = libraries(a.path(), b.path());
 
         let mut payload = ProjectPayload {
             printer: Some(printer_id("shared")),
@@ -159,7 +151,7 @@ mod project_profiles_tests {
             first_layer_height: None,
             embedded: Vec::new(),
         };
-        complete_embedded_documents(&mut payload, &roots);
+        complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
             payload.embedded,
             vec![EmbeddedProfile::Printer {
@@ -172,14 +164,14 @@ mod project_profiles_tests {
     #[test]
     fn unresolvable_references_stay_plain_references() {
         let root = tempfile::tempdir().expect("root");
-        let roots = vec![root.path().to_path_buf()];
+        let libraries = ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]);
         let mut payload = ProjectPayload {
             printer: Some(printer_id("nowhere")),
             resin: Some(material_id("nowhere")),
             first_layer_height: None,
             embedded: Vec::new(),
         };
-        complete_embedded_documents(&mut payload, &roots);
+        complete_embedded_documents(&mut payload, &libraries);
         assert!(payload.embedded.is_empty());
         assert_eq!(payload.printer, Some(printer_id("nowhere")));
         assert_eq!(payload.resin, Some(material_id("nowhere")));
@@ -194,7 +186,7 @@ mod project_profiles_tests {
             "materials/extensions/resin.toml",
             b"kind = \"extension\"",
         );
-        let roots = vec![root.path().to_path_buf()];
+        let libraries = ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]);
 
         let mut payload = ProjectPayload {
             printer: None,
@@ -202,7 +194,7 @@ mod project_profiles_tests {
             first_layer_height: None,
             embedded: Vec::new(),
         };
-        complete_embedded_documents(&mut payload, &roots);
+        complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
             payload.embedded,
             vec![
@@ -231,7 +223,7 @@ mod project_profiles_tests {
             "materials/resin.toml",
             b"kind = \"library-material\"",
         );
-        let roots = vec![root.path().to_path_buf()];
+        let libraries = ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]);
 
         let mut payload = ProjectPayload {
             printer: Some(printer_id("printer")),
@@ -242,7 +234,7 @@ mod project_profiles_tests {
                 bytes: b"kind = \"held-printer\"".to_vec(),
             }],
         };
-        complete_embedded_documents(&mut payload, &roots);
+        complete_embedded_documents(&mut payload, &libraries);
         assert_eq!(
             payload.embedded,
             vec![

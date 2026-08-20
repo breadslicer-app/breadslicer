@@ -20,12 +20,13 @@ use anyhow::Result;
 use sc_mesh_core::Scene;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
     EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, WriteProgress,
     write_project_with_progress,
 };
 
-use crate::project_profiles::{complete_embedded_documents, profile_library_roots};
+use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
 use crate::scene_document::SceneDocument;
 use crate::slice_projection::resolve_current_schedule;
@@ -90,17 +91,19 @@ pub(crate) fn decide_save_target(target: Option<PathBuf>) -> SaveTargetDispatch 
     }
 }
 
-/// The payload a save writes: the document's composed project payload,
-/// with referenced profiles that lack a held embedded document given
-/// copies resolved from `roots`.
+/// Build the payload to write when saving `doc` as a project. A
+/// document opened from a project keeps that project's payload;
+/// `default_printer` and `default_resin` are used only when the
+/// document did not come from one. Every referenced profile without
+/// an embedded document then gets one, resolved from `libraries`.
 pub(crate) fn payload_for_save(
     doc: &SceneDocument,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
-    roots: &[PathBuf],
+    libraries: &ProfileLibraries,
 ) -> ProjectPayload {
     let mut payload = doc.compose_project_payload(default_printer, default_resin);
-    complete_embedded_documents(&mut payload, roots);
+    complete_embedded_documents(&mut payload, libraries);
     payload
 }
 
@@ -223,7 +226,7 @@ pub(crate) fn prepare_save_for_target(
         doc,
         default_printer,
         default_resin,
-        &profile_library_roots(),
+        &ProfileLibraries::platform_default(),
     );
     let bundle = prepare_save(doc, payload.clone(), target)?;
     Some((bundle, payload))
@@ -453,7 +456,7 @@ mod scene_save_tests {
                 &doc,
                 Some(printer_id("global-printer")),
                 Some(material_id("global-resin")),
-                &[],
+                &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("held-printer")));
             assert_eq!(payload.resin, Some(material_id("held-resin")));
@@ -467,7 +470,7 @@ mod scene_save_tests {
                 &doc,
                 Some(printer_id("global-printer")),
                 Some(material_id("global-resin")),
-                &[],
+                &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("global-printer")));
             assert_eq!(payload.resin, Some(material_id("global-resin")));
@@ -487,7 +490,7 @@ mod scene_save_tests {
                 &doc,
                 Some(printer_id("global-printer")),
                 Some(material_id("global-resin")),
-                &[],
+                &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("picked-printer")));
             assert_eq!(payload.resin, Some(material_id("global-resin")));
@@ -504,7 +507,7 @@ mod scene_save_tests {
                 &doc,
                 Some(printer_id("global-printer")),
                 Some(material_id("global-resin")),
-                &[],
+                &ProfileLibraries::new(None, vec![]),
             );
             assert_eq!(payload.printer, Some(printer_id("global-printer")));
             assert_eq!(payload.resin, Some(material_id("global-resin")));
@@ -538,7 +541,7 @@ mod scene_save_tests {
                 &doc,
                 Some(printer_id("global-printer")),
                 Some(material_id("global-resin")),
-                &[root.path().to_path_buf()],
+                &ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]),
             );
             assert_eq!(
                 payload.embedded,
@@ -575,7 +578,12 @@ mod scene_save_tests {
                 PathBuf::from("/tmp/plate.3mf"),
                 held_payload(),
             );
-            let payload = payload_for_save(&doc, None, None, &[root.path().to_path_buf()]);
+            let payload = payload_for_save(
+                &doc,
+                None,
+                None,
+                &ProfileLibraries::new(Some(root.path().to_path_buf()), vec![]),
+            );
             let printer_bytes: Vec<&[u8]> = payload
                 .embedded
                 .iter()

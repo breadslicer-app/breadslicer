@@ -12,11 +12,19 @@ use std::fs;
 use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
-use sc_print_profiles::CalibrationTarget;
+use sc_print_profiles::{CalibrationTarget, ProfileLibraries};
 use sc_slicer_gui::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use sc_slicer_gui::profile_catalog::{
     CalibrationCoverage, ProfileCatalog, ProfileSource, coverage, has_active_matcher,
 };
+
+/// Build the catalog from an optional user root and 1 bundled root.
+fn catalog_from(user: Option<&Path>, bundled: &Path) -> ProfileCatalog {
+    ProfileCatalog::from_libraries(&ProfileLibraries::new(
+        user.map(Path::to_path_buf),
+        vec![bundled.to_path_buf()],
+    ))
+}
 
 /// Format an `f64` with a decimal point so TOML parses it as a float
 /// (a bare `100` would be an integer and fail the `f64` field).
@@ -186,7 +194,7 @@ fn envelope_for_a_resolved_printer_is_its_build_volume() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let envelope = catalog.envelope_for_printer(Some(&printer_id("vol")));
     assert_eq!(envelope, BuildVolume::new(192.0, 120.0, 200.0));
 }
@@ -203,7 +211,7 @@ fn envelope_falls_back_to_the_hardcoded_default_when_unselected_or_unresolved() 
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(
         catalog.envelope_for_printer(None),
         HARDCODED_DEFAULT_BUILD_VOLUME
@@ -217,7 +225,7 @@ fn envelope_falls_back_to_the_hardcoded_default_when_unselected_or_unresolved() 
 #[test]
 fn empty_libraries_yield_an_empty_catalog() {
     let dir = tempfile::tempdir().unwrap();
-    let catalog = ProfileCatalog::load(None, &dir.path().join("does-not-exist"));
+    let catalog = catalog_from(None, &dir.path().join("does-not-exist"));
     assert!(catalog.printers().is_empty());
     assert!(catalog.materials().is_empty());
 }
@@ -250,7 +258,7 @@ fn printers_are_sorted_by_manufacturer_then_name() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let names: Vec<_> = catalog.printers().iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["One", "Two", "One"]);
     let makers: Vec<_> = catalog
@@ -275,7 +283,7 @@ fn materials_are_sorted_by_brand_then_name() {
     write_material(bundled.path(), "a-resin-b", "Alpha", "B", "other", &[]);
     write_material(bundled.path(), "a-resin-a", "Alpha", "A", "other", &[]);
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let brands: Vec<_> = catalog
         .materials()
         .iter()
@@ -302,7 +310,7 @@ fn build_volume_is_captured_from_the_profile() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let bv = catalog.printer_build_volume(&printer_id("vol")).unwrap();
     assert_eq!(bv.x_mm(), 192.0);
     assert_eq!(bv.y_mm(), 120.0);
@@ -323,7 +331,7 @@ fn image_path_resolves_absolute_against_the_winning_root() {
         Some("images/model.png"),
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let entry = &catalog.printers()[0];
     assert_eq!(
         entry.image_path,
@@ -343,7 +351,7 @@ fn image_path_is_none_when_the_field_is_absent() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(catalog.printers()[0].image_path, None);
 }
 
@@ -359,7 +367,7 @@ fn image_path_is_none_when_the_referenced_file_is_missing() {
         Some("images/gone.png"),
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(catalog.printers()[0].image_path, None);
 }
 
@@ -384,7 +392,7 @@ fn user_copy_wins_over_bundled_for_the_same_id() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     assert_eq!(catalog.printers().len(), 1);
     let entry = &catalog.printers()[0];
     assert_eq!(entry.manufacturer, "UserMaker");
@@ -413,7 +421,7 @@ fn provenance_records_the_library_each_id_came_from() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     let bundled_entry = catalog
         .printers()
         .iter()
@@ -456,7 +464,7 @@ fn manufacturers_are_sorted_and_deduplicated() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(
         catalog.manufacturers(),
         vec!["Alpha".to_owned(), "Zeta".to_owned()]
@@ -480,7 +488,7 @@ fn a_malformed_profile_is_skipped_without_dropping_the_valid_ones() {
     )
     .unwrap();
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(catalog.printers().len(), 1);
     assert_eq!(catalog.printers()[0].id, printer_id("good"));
 }
@@ -497,7 +505,7 @@ fn calibrated_printers_reflect_the_per_printer_blocks() {
         &["printer-a"],
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let entry = &catalog.materials()[0];
     assert_eq!(
         entry.calibrated_printers,
@@ -519,7 +527,7 @@ fn an_extension_attaches_to_its_base_entry_by_id() {
     );
     write_material_extension(user.path(), "resin", &["printer-b"]);
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     // The extension adds no material entry of its own.
     assert_eq!(catalog.materials().len(), 1);
     assert_eq!(catalog.materials()[0].source, ProfileSource::Bundled);
@@ -539,7 +547,7 @@ fn an_extension_without_a_base_degrades_to_a_standalone_custom_entry() {
     write_material(bundled.path(), "other-resin", "Aaa", "Other", "other", &[]);
     write_material_extension(user.path(), "orphaned", &["printer-b"]);
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     assert_eq!(catalog.extension_for(&material_id("orphaned")), None);
 
     let index = catalog.material_index(&material_id("orphaned")).unwrap();
@@ -578,7 +586,7 @@ fn an_unflagged_file_in_the_extensions_dir_is_skipped() {
     )
     .unwrap();
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     assert_eq!(catalog.extension_for(&material_id("resin")), None);
     assert_eq!(catalog.materials().len(), 1);
 }
@@ -595,7 +603,7 @@ fn coverage_is_specific_when_the_base_carries_the_printer_block() {
         &["printer-a"],
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let entry = &catalog.materials()[0];
     assert_eq!(
         coverage(entry, None, Some(&printer_id("printer-a"))),
@@ -621,7 +629,7 @@ fn coverage_is_specific_when_the_extension_carries_the_printer_block() {
     );
     write_material_extension(user.path(), "resin", &["printer-b"]);
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     let entry = &catalog.materials()[0];
     let extension = catalog.extension_for(&material_id("resin"));
     assert_eq!(
@@ -652,7 +660,7 @@ fn coverage_falls_back_to_generic_from_the_base_or_the_extension() {
     );
     write_material_extension(user.path(), "ext-generic", &["generic-machine"]);
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     let unmatched = printer_id("printer-z");
 
     let base_index = catalog
@@ -683,7 +691,7 @@ fn coverage_of_the_generic_printer_itself_is_specific() {
         &["generic-machine"],
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let entry = &catalog.materials()[0];
     assert_eq!(
         coverage(entry, None, Some(&printer_id("generic-machine"))),
@@ -711,7 +719,7 @@ fn coverage_without_a_printer_only_the_generic_block_applies() {
         &["printer-a"],
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let generic_index = catalog
         .material_index(&material_id("with-generic"))
         .unwrap();
@@ -752,7 +760,7 @@ fn active_matcher_follows_coverage_including_the_extension_pull() {
     // printer, pulling the entry into the active-matcher group.
     write_material_extension(user.path(), "pulled", &["printer-b"]);
 
-    let catalog = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let catalog = catalog_from(Some(user.path()), bundled.path());
     let our_printer = printer_id("printer-b");
 
     let pulled_index = catalog.material_index(&material_id("pulled")).unwrap();
@@ -792,7 +800,7 @@ fn indices_locate_entries_by_id() {
     );
     write_material(bundled.path(), "a-resin", "Alpha", "A", "other", &[]);
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(catalog.printer_index(&printer_id("z-printer")), Some(1));
     assert_eq!(catalog.printer_index(&printer_id("missing")), None);
     assert_eq!(catalog.material_index(&material_id("a-resin")), Some(0));
@@ -821,7 +829,7 @@ fn first_run_default_prefers_the_generic_machine() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(
         catalog.first_run_default_printer(),
         Some(printer_id("generic-machine"))
@@ -848,7 +856,7 @@ fn first_run_default_falls_back_to_the_first_printer_when_generic_absent() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     // Printers sort by (manufacturer, name); "Alpha A" is first.
     assert_eq!(
         catalog.first_run_default_printer(),
@@ -859,7 +867,7 @@ fn first_run_default_falls_back_to_the_first_printer_when_generic_absent() {
 #[test]
 fn first_run_default_is_none_for_an_empty_catalog() {
     let dir = tempfile::tempdir().unwrap();
-    let catalog = ProfileCatalog::load(None, &dir.path().join("does-not-exist"));
+    let catalog = catalog_from(None, &dir.path().join("does-not-exist"));
     assert_eq!(catalog.first_run_default_printer(), None);
 }
 
@@ -883,7 +891,7 @@ fn effective_default_prefers_the_explicit_choice() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     let chosen = printer_id("a-printer");
     assert_eq!(
         catalog.effective_default_printer(Some(&chosen)),
@@ -903,7 +911,7 @@ fn effective_default_falls_back_to_the_first_run_default_when_unset() {
         None,
     );
 
-    let catalog = ProfileCatalog::load(None, bundled.path());
+    let catalog = catalog_from(None, bundled.path());
     assert_eq!(
         catalog.effective_default_printer(None),
         Some(printer_id("generic-machine"))
@@ -916,11 +924,40 @@ fn a_rebuild_picks_up_a_newly_written_user_profile() {
     let bundled = tempfile::tempdir().unwrap();
     write_material(bundled.path(), "shipped", "Brand", "Shipped", "other", &[]);
 
-    let before = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let before = catalog_from(Some(user.path()), bundled.path());
     assert_eq!(before.material_index(&material_id("authored")), None);
 
     write_material(user.path(), "authored", "Brand", "Authored", "other", &[]);
-    let after = ProfileCatalog::load(Some(user.path()), bundled.path());
+    let after = catalog_from(Some(user.path()), bundled.path());
     let entry_index = after.material_index(&material_id("authored")).unwrap();
     assert_eq!(after.materials()[entry_index].source, ProfileSource::User);
+}
+
+#[test]
+fn an_id_only_in_a_second_bundled_root_is_listed_and_loads() {
+    // The catalog and the by-id loads consume one ProfileLibraries
+    // value, so an id the catalog lists must also load, wherever in
+    // the bundled list its file sits.
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    write_printer(
+        second.path(),
+        "second-root-printer",
+        "Maker",
+        "Second Root",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+
+    let libraries = ProfileLibraries::new(
+        None,
+        vec![first.path().to_path_buf(), second.path().to_path_buf()],
+    );
+    let catalog = ProfileCatalog::from_libraries(&libraries);
+    let id = printer_id("second-root-printer");
+    assert!(catalog.printer_index(&id).is_some());
+    let profile = libraries
+        .load_printer_by_id(&id)
+        .expect("the listed id loads through the same value");
+    assert_eq!(profile.identity.id, id);
 }

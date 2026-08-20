@@ -11,6 +11,7 @@ use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
+use sc_print_profiles::ProfileLibraries;
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::MainWindow;
@@ -320,7 +321,9 @@ fn spawn_settings_saver(
 impl AppState {
     pub fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
         let settings = AppSettings::load();
-        let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::load_default())));
+        let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
+            &ProfileLibraries::platform_default(),
+        ))));
         let default_printer = settings.default_printer();
         let default_resin = settings.default_resin();
         // The envelope is derived from the effective printer: the user's

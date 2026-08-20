@@ -20,9 +20,11 @@ use crate::commands::profiles::{
 };
 use crate::commands::slice::{SliceArgs, slice};
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
+use crate::config::profile_libraries::resolve_profile_libraries;
 
 fn main() -> Result<()> {
     let cmd_options = get_cmd_options().run();
+    let libraries = resolve_profile_libraries();
 
     match cmd_options {
         CmdOptions::Convert {
@@ -71,9 +73,9 @@ fn main() -> Result<()> {
             printers,
             materials,
             ids,
-        } => profiles_export(output, printers, materials, ids),
-        CmdOptions::ProfilesImport { input, force } => profiles_import(input, force),
-        CmdOptions::ProfilesList { kind } => profiles_list(kind),
+        } => profiles_export(output, printers, materials, ids, &libraries),
+        CmdOptions::ProfilesImport { input, force } => profiles_import(input, force, &libraries),
+        CmdOptions::ProfilesList { kind } => profiles_list(kind, &libraries),
         CmdOptions::Slice {
             source,
             target,
@@ -86,19 +88,22 @@ fn main() -> Result<()> {
             verbose,
             no_auto_place,
             repair,
-        } => slice(SliceArgs {
-            source,
-            target,
-            target_format,
-            printer_profile,
-            material_profile,
-            layer_height,
-            first_layer_height,
-            aa,
-            verbose,
-            no_auto_place,
-            repair,
-        }),
+        } => slice(
+            SliceArgs {
+                source,
+                target,
+                target_format,
+                printer_profile,
+                material_profile,
+                layer_height,
+                first_layer_height,
+                aa,
+                verbose,
+                no_auto_place,
+                repair,
+            },
+            &libraries,
+        ),
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
             println!("Version: {SLICER_CLI_VERSION}");

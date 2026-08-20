@@ -13,21 +13,28 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use chrono::Local;
 use sc_print_profiles::{
-    Collision, CollisionReport, ExportManifest, ExportSelection, ImportError, export_package,
-    import_package, list_material_ids, list_printer_ids, load_material_profile_from_library,
-    load_printer_profile_from_library,
+    Collision, CollisionReport, ExportManifest, ExportSelection, ImportError, ProfileLibraries,
+    export_package, import_package, list_material_ids, list_printer_ids,
+    load_material_profile_from_library, load_printer_profile_from_library,
 };
 
 use crate::config::cmd_options::ListKind;
-use crate::config::library_dir::resolve_user_library_dir;
+
+fn user_library_dir(libraries: &ProfileLibraries) -> Result<&Path> {
+    libraries.user_library_dir().ok_or_else(|| {
+        anyhow!(
+            "could not determine the user profile library directory \
+             (no home directory resolved and no SC_SLICER_LIBRARY_DIR override is set)",
+        )
+    })
+}
 
 /// Handle `profiles list [printers|materials]`: enumerate the user
 /// library and print one tab-separated line per profile.
-pub(crate) fn list(kind: ListKind) -> Result<()> {
-    let library_dir = resolve_user_library_dir()
-        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
+pub(crate) fn list(kind: ListKind, libraries: &ProfileLibraries) -> Result<()> {
+    let library_dir = user_library_dir(libraries)?;
     let mut out = std::io::stdout();
-    list_to(&library_dir, kind, &mut out)
+    list_to(library_dir, kind, &mut out)
 }
 
 /// Write the listing for `kind` from `library_dir` to `out`. Columns
@@ -77,10 +84,10 @@ pub(crate) fn export(
     printers: bool,
     materials: bool,
     ids: Vec<String>,
+    libraries: &ProfileLibraries,
 ) -> Result<()> {
     let selection = build_selection(printers, materials, ids)?;
-    let library_dir = resolve_user_library_dir()
-        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
+    let library_dir = user_library_dir(libraries)?;
 
     let output_path = PathBuf::from(output);
     let file = File::create(&output_path).map_err(|e| {
@@ -98,7 +105,7 @@ pub(crate) fn export(
         sc_slicer_version: env!("CARGO_PKG_VERSION").to_owned(),
     };
 
-    export_package(&library_dir, &selection, &manifest, file)
+    export_package(library_dir, &selection, &manifest, file)
         .map_err(|e| anyhow!("could not export the profile package: {e}"))?;
 
     println!("Exported profiles to {}", output_path.display());
@@ -128,9 +135,8 @@ fn build_selection(printers: bool, materials: bool, ids: Vec<String>) -> Result<
 /// Handle `profiles import <package.zip> [--force]`: install the
 /// package's profiles into the user library. Without `--force`, a
 /// collision aborts the import and reports every conflicting profile.
-pub(crate) fn import(input: OsString, force: bool) -> Result<()> {
-    let library_dir = resolve_user_library_dir()
-        .map_err(|e| anyhow!("could not determine the user profile library directory: {e}"))?;
+pub(crate) fn import(input: OsString, force: bool, libraries: &ProfileLibraries) -> Result<()> {
+    let library_dir = user_library_dir(libraries)?;
 
     let input_path = PathBuf::from(input);
     let file = File::open(&input_path).map_err(|e| {
@@ -140,7 +146,7 @@ pub(crate) fn import(input: OsString, force: bool) -> Result<()> {
         )
     })?;
 
-    match import_package(file, &library_dir, force) {
+    match import_package(file, library_dir, force) {
         Ok(()) => {
             println!("Imported profiles into {}", library_dir.display());
             Ok(())

@@ -30,8 +30,6 @@ use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
-use crate::config::assets_dir::resolve_assets_profiles_dir;
-use crate::config::library_dir::resolve_user_library_dir;
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 use crate::filesystem::validate_sourcefile_path;
 
@@ -53,7 +51,7 @@ pub(crate) struct SliceArgs {
     pub repair: bool,
 }
 
-pub(crate) fn slice(args: SliceArgs) -> Result<()> {
+pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(args.source))?;
     let target_path = PathBuf::from(args.target);
 
@@ -67,12 +65,8 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         })?,
     };
 
-    let libraries = ProfileLibraries::new(
-        resolve_user_library_dir().ok(),
-        vec![resolve_assets_profiles_dir()],
-    );
-    let printer = load_printer_profile(&args.printer_profile, &libraries)?;
-    let (material, issues) = load_material_profile(&args.material_profile, &libraries)?;
+    let printer = load_printer_profile(&args.printer_profile, libraries)?;
+    let (material, issues) = load_material_profile(&args.material_profile, libraries)?;
     for issue in &issues {
         eprintln!("warning: {issue}");
     }

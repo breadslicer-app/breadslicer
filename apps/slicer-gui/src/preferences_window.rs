@@ -17,9 +17,9 @@ use slint::{
 
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::{
-    CalibrationTarget, EffectiveMaterial, MaterialProfile, delete_material_extension_from_library,
-    delete_material_profile_from_library, load_material_extension_from_library,
-    load_material_profile_by_id, load_material_profile_from_library, user_library_dir,
+    CalibrationTarget, EffectiveMaterial, MaterialProfile, ProfileLibraries,
+    delete_material_extension_from_library, delete_material_profile_from_library,
+    load_material_extension_from_library, load_material_profile_from_library, user_library_dir,
 };
 
 use crate::aa_level::aa_level_from_combo_index;
@@ -486,7 +486,9 @@ fn set_tabs_model(window: &PreferencesWindow, tabs: &[String]) {
 }
 
 fn refresh_catalog(handle: &Rc<RefCell<Rc<ProfileCatalog>>>) {
-    *handle.borrow_mut() = Rc::new(ProfileCatalog::load_default());
+    *handle.borrow_mut() = Rc::new(ProfileCatalog::from_libraries(
+        &ProfileLibraries::platform_default(),
+    ));
 }
 
 /// Run the export flow for `scope`: pick a `.zip` destination, then
@@ -574,7 +576,7 @@ fn spawn_import(catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>, refresh_view: R
 
 /// Load the material profile behind a catalog entry. Regular entries
 /// resolve through the by-id cascade (user library shadowing the
-/// bundled one); an id whose only file is an extension (its base
+/// bundled roots); an id whose only file is an extension (its base
 /// profile is gone) falls back to the extension file itself so the
 /// data stays viewable.
 fn load_profile_for_view(
@@ -582,28 +584,27 @@ fn load_profile_for_view(
     index: i32,
 ) -> Option<(MaterialProfile, Option<MaterialProfile>, ProfileSource)> {
     let entry = catalog.materials().get(index as usize)?;
-    let user_lib = match user_library_dir() {
-        Ok(dir) => dir,
-        Err(err) => {
-            eprintln!("cannot resolve the user profile library directory: {err}");
-            return None;
-        }
-    };
-    let bundled = sc_app_paths::bundled_data_dir().join("profiles");
+    let libraries = ProfileLibraries::platform_default();
 
-    let profile = match load_material_profile_by_id(&entry.id, None, &user_lib, &bundled) {
+    let profile = match libraries.load_material_by_id(&entry.id) {
         Ok(profile) => profile,
-        Err(base_err) => match load_material_extension_from_library(&user_lib, &entry.id) {
-            Ok(orphan_extension) => orphan_extension,
-            Err(_) => {
-                eprintln!("{base_err}");
-                return None;
+        Err(base_err) => {
+            let orphan = libraries.user_library_dir().and_then(|user_lib| {
+                load_material_extension_from_library(user_lib, &entry.id).ok()
+            });
+            match orphan {
+                Some(orphan_extension) => orphan_extension,
+                None => {
+                    eprintln!("{base_err}");
+                    return None;
+                }
             }
-        },
+        }
     };
 
     let extension = catalog.extension_for(&entry.id).and_then(|_| {
-        match load_material_extension_from_library(&user_lib, &entry.id) {
+        let user_lib = libraries.user_library_dir()?;
+        match load_material_extension_from_library(user_lib, &entry.id) {
             Ok(extension) => Some(extension),
             Err(err) => {
                 eprintln!("{err}");
@@ -2543,7 +2544,10 @@ profile_version = \"1.0.0\"
     #[test]
     fn the_default_is_orphaned_when_nothing_resolves_the_deleted_id() {
         let bundled = tempfile::tempdir().unwrap();
-        let catalog = ProfileCatalog::load(None, bundled.path());
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(
+            None,
+            vec![bundled.path().to_owned()],
+        ));
         let deleted = material_id("gone-resin");
         assert!(default_resin_orphaned(&catalog, Some(&deleted), &deleted));
     }
@@ -2554,7 +2558,10 @@ profile_version = \"1.0.0\"
         // still resolves it after the catalog refresh.
         let bundled = tempfile::tempdir().unwrap();
         write_material(bundled.path(), "shared-resin");
-        let catalog = ProfileCatalog::load(None, bundled.path());
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(
+            None,
+            vec![bundled.path().to_owned()],
+        ));
         let deleted = material_id("shared-resin");
         assert!(!default_resin_orphaned(&catalog, Some(&deleted), &deleted));
     }
@@ -2562,7 +2569,10 @@ profile_version = \"1.0.0\"
     #[test]
     fn an_unrelated_or_absent_default_is_never_unset() {
         let bundled = tempfile::tempdir().unwrap();
-        let catalog = ProfileCatalog::load(None, bundled.path());
+        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(
+            None,
+            vec![bundled.path().to_owned()],
+        ));
         let deleted = material_id("gone-resin");
         let other = material_id("other-resin");
         assert!(!default_resin_orphaned(&catalog, Some(&other), &deleted));

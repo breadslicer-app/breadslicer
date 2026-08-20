@@ -24,25 +24,13 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{BuildVolume, MaterialId, PrinterId};
-pub use sc_print_profiles::CalibrationCoverage;
+pub use sc_print_profiles::{CalibrationCoverage, ProfileSource};
 use sc_print_profiles::{
-    CalibrationTarget, MaterialProfile, PrinterProfile, generic_printer_id,
+    CalibrationTarget, MaterialProfile, PrinterProfile, ProfileLibraries, generic_printer_id,
     list_material_extension_ids, list_material_ids, list_printer_ids,
     load_material_extension_from_library, load_material_profile_from_library,
-    load_printer_profile_from_library, user_library_dir,
+    load_printer_profile_from_library,
 };
-
-/// Which on-disk library a catalog entry's winning id resolved from.
-///
-/// This is a location signal, not authorship metadata: a user who
-/// imported an official package into their library also reads as
-/// [`ProfileSource::User`]. It is good enough to mark entries that this
-/// build did not ship as "custom / not sanctioned".
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProfileSource {
-    Bundled,
-    User,
-}
 
 /// A printer profile reduced to the fields the picker needs.
 #[derive(Clone, Debug, PartialEq)]
@@ -123,35 +111,14 @@ pub struct ProfileCatalog {
 }
 
 impl ProfileCatalog {
-    /// Build the catalog from the platform-resolved libraries: the
-    /// per-user library (when a home directory resolves) plus the
-    /// bundled library shipped with the app. A library directory that
-    /// does not exist contributes nothing; the catalog is never an
-    /// error, so a headless or fresh install simply yields whatever is
-    /// present.
-    pub fn load_default() -> Self {
-        // Highest precedence first: the user's writable library
-        // (XDG_DATA_HOME) wins over every packaged / dev-tree root.
-        let mut roots: Vec<(PathBuf, ProfileSource)> = Vec::new();
-        if let Ok(user) = user_library_dir() {
-            roots.push((user, ProfileSource::User));
-        }
-        for root in sc_app_paths::bundled_data_dirs() {
-            roots.push((root.join("profiles"), ProfileSource::Bundled));
-        }
-        Self::from_roots(&roots)
-    }
-
-    /// Build the catalog from explicit library roots. `user_dir`, when
-    /// present, has precedence over `bundled_dir`: an id present in
-    /// both resolves to the user copy and is marked
-    /// [`ProfileSource::User`].
-    pub fn load(user_dir: Option<&Path>, bundled_dir: &Path) -> Self {
-        let mut roots: Vec<(PathBuf, ProfileSource)> = Vec::with_capacity(2);
-        if let Some(dir) = user_dir {
-            roots.push((dir.to_owned(), ProfileSource::User));
-        }
-        roots.push((bundled_dir.to_owned(), ProfileSource::Bundled));
+    /// Build the catalog from the given libraries, in their root
+    /// order (earliest root wins on id collision). A root directory
+    /// that does not exist contributes nothing.
+    pub fn from_libraries(libraries: &ProfileLibraries) -> Self {
+        let roots: Vec<(PathBuf, ProfileSource)> = libraries
+            .roots()
+            .map(|(path, source)| (path.to_owned(), source))
+            .collect();
         Self::from_roots(&roots)
     }
 

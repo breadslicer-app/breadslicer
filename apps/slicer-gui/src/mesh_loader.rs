@@ -22,6 +22,7 @@ use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
+use sc_print_profiles::ProfileLibraries;
 use sc_project_formats::{
     ProfileRefWarning, ProjectPayload, ReadProjectWarning, SUPPORTED_SCENE_FILE_EXTENSIONS,
     is_supported_scene_file_extension, load_scene,
@@ -34,7 +35,7 @@ use crate::i18n::ctr;
 use crate::load_progress::{LoadPhase, LoadProgressSink};
 use crate::mesh_health::scene_mesh_health;
 use crate::mesh_render::{DeviceLoss, GpuScene};
-use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
+use crate::project_profiles::{material_installed, printer_installed};
 use crate::reloaded_slices::{ReloadedSlices, revalidate_persisted_slices};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
@@ -198,10 +199,10 @@ pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Resu
         .payload
         .as_ref()
         .map(|payload| {
-            let roots = profile_library_roots();
+            let libraries = ProfileLibraries::platform_default();
             payload.profile_ref_warnings(
-                |id| printer_installed(&roots, id),
-                |id| material_installed(&roots, id),
+                |id| printer_installed(&libraries, id),
+                |id| material_installed(&libraries, id),
             )
         })
         .unwrap_or_default();
