@@ -12,11 +12,21 @@
 
 use std::fs;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use sc_3mf::package::{Package, PartName};
+use sc_mesh_core::scene::Scene;
+use sc_mesh_core::scene::node::LeafPayload;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_fixtures::unit_cube_mesh;
+use sc_mesh_formats::filetypes::WriteFormat;
+use sc_mesh_formats::scene_writer::write_scene;
+use sc_print_primitives::{MaterialId, PrinterId};
+use sc_project_formats::{EmbedProfiles, ProjectFileType, ProjectPayload, write_project};
 use tempfile::tempdir;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -779,4 +789,136 @@ normal_exposure_sec = 9.0
         .success()
         .stdout(predicate::str::contains("Sliced 1 model: 5 layers"))
         .stderr(predicate::str::contains("not flagged as an extension"));
+}
+
+/// The origin-centred unit cube translated to x, y in [0.5, 1.5]
+/// and z in [5, 6]: off-centre and lifted, but inside the e2e
+/// printer's 5 x 5 x 50 mm envelope, so it slices without placement.
+fn lifted_cube_scene() -> Scene {
+    let mut scene = Scene::new();
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Affine(AffineTransform3D::from_translation([1.0, 1.0, 5.5])),
+            LeafPayload::Mesh(Arc::new(unit_cube_mesh())),
+        )
+        .expect("inline-mesh leaf");
+    scene.add_root(leaf).expect("fresh leaf becomes a root");
+    scene
+}
+
+/// Write `scene` as a project 3MF referencing the e2e profiles,
+/// returning the raw package bytes.
+fn project_bytes(scene: &Scene) -> Vec<u8> {
+    let payload = ProjectPayload {
+        printer: Some(PrinterId::new("slicer-cli-e2e-test").expect("valid slug")),
+        resin: Some(MaterialId::new("slicer-cli-e2e-test-resin").expect("valid slug")),
+        first_layer_height: None,
+        embedded: Vec::new(),
+    };
+    let mut bytes = Vec::new();
+    write_project(
+        scene,
+        &payload,
+        EmbedProfiles::No,
+        None,
+        None,
+        ProjectFileType::ThreeMf,
+        &mut bytes,
+    )
+    .expect("project fixture writes");
+    bytes
+}
+
+/// Run `slice --target-format svg-per-layer` on `source` with the
+/// e2e profiles plus `extra` arguments, returning the assertion
+/// handle for output checks.
+fn slice_source_as_svg_per_layer(
+    source: &Path,
+    out_dir: &Path,
+    extra: &[&str],
+) -> assert_cmd::assert::Assert {
+    let mut cmd = Command::cargo_bin("sc-slicer-cli").unwrap();
+    cmd.arg("slice")
+        .arg("--source")
+        .arg(source)
+        .arg("--target")
+        .arg(out_dir)
+        .arg("--target-format")
+        .arg("svg-per-layer")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir());
+    for arg in extra {
+        cmd.arg(arg);
+    }
+    cmd.assert()
+}
+
+#[test]
+fn a_project_3mf_slices_where_it_was_saved() {
+    // A project's placement is part of its saved content: the lifted
+    // cube (top at z = 6) must slice to 30 layers at 0.2 mm, not be
+    // dropped to the plate (5 layers).
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("lifted.3mf");
+    fs::write(&source, project_bytes(&lifted_cube_scene())).unwrap();
+    let out = tmp.path().join("layers");
+    fs::create_dir(&out).unwrap();
+    slice_source_as_svg_per_layer(&source, &out, &[])
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 30 layers"));
+}
+
+#[test]
+fn no_auto_place_does_not_change_a_project() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("lifted.3mf");
+    fs::write(&source, project_bytes(&lifted_cube_scene())).unwrap();
+    let out = tmp.path().join("layers");
+    fs::create_dir(&out).unwrap();
+    slice_source_as_svg_per_layer(&source, &out, &["--no-auto-place"])
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 30 layers"));
+}
+
+#[test]
+fn a_plain_3mf_still_auto_places() {
+    let tmp = tempdir().unwrap();
+    let source = tmp.path().join("lifted-plain.3mf");
+    write_scene(&lifted_cube_scene(), &source, WriteFormat::ThreeMf).expect("plain 3mf writes");
+    let out = tmp.path().join("layers");
+    fs::create_dir(&out).unwrap();
+    slice_source_as_svg_per_layer(&source, &out, &[])
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 5 layers"));
+}
+
+#[test]
+fn project_only_warnings_print_nothing() {
+    // Foreign project data (here a Bambu/Orca marker part) is
+    // detected by the project reader; `slice` ignores project data
+    // on purpose, so stderr must stay silent about it.
+    let tmp = tempdir().unwrap();
+    let mut package = Package::read_from(Cursor::new(project_bytes(&lifted_cube_scene())))
+        .expect("the project bytes reopen as a package");
+    package
+        .add_part(
+            PartName::new("/Metadata/project_settings.config").expect("valid part name"),
+            "application/json",
+            b"{}".to_vec(),
+        )
+        .expect("the marker part is new to the package");
+    let source = tmp.path().join("foreign.3mf");
+    let mut file = File::create(&source).unwrap();
+    package.write_to(&mut file).expect("the package rewrites");
+    drop(file);
+    let out = tmp.path().join("layers");
+    fs::create_dir(&out).unwrap();
+    slice_source_as_svg_per_layer(&source, &out, &[])
+        .success()
+        .stdout(predicate::str::contains("Sliced 1 model: 30 layers"))
+        .stderr(predicate::str::is_empty());
 }

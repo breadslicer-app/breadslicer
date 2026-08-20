@@ -16,62 +16,38 @@
 //! reaching `deposit`.
 
 use std::any::Any;
-use std::fs::File;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
-use sc_mesh_formats::LoadedMesh;
-use sc_mesh_formats::error::LoadMeshError;
-use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
-use sc_mesh_formats::loader::{load_mesh_from_reader, scene_shared_vertices_warning};
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
 use sc_project_formats::{
-    LoadedProject, ProfileRefWarning, ProjectPayload, ReadProjectWarning,
-    infer_project_file_type_from_extension, read_project_with_progress,
+    ProfileRefWarning, ProjectPayload, ReadProjectWarning, SUPPORTED_SCENE_FILE_EXTENSIONS,
+    is_supported_scene_file_extension, load_scene,
 };
 use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::graphics_status::GraphicsUnavailable;
 use crate::i18n::ctr;
-use crate::load_progress::{LoadPhase, LoadProgressSink, ProgressReader};
+use crate::load_progress::{LoadPhase, LoadProgressSink};
 use crate::mesh_health::scene_mesh_health;
 use crate::mesh_render::{DeviceLoss, GpuScene};
 use crate::project_profiles::{material_installed, printer_installed, profile_library_roots};
 use crate::reloaded_slices::{ReloadedSlices, revalidate_persisted_slices};
 use crate::scene_loader::{LoadTicket, PreparedScene, SceneLoader};
 
-// Reject mesh files larger than the loader's default cap before
-// spawning the worker, so the UI doesn't sit in `loading=true` for
-// hours (or OOM) on an accidental huge pick. Derived from
-// `sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES` so the user-
-// facing MiB figure in the error message stays in lockstep with the
-// byte cap the loader itself enforces.
 pub(crate) const MAX_MESH_FILE_SIZE_BYTES: u64 = DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 pub(crate) const MAX_MESH_FILE_SIZE_MIB: u64 = MAX_MESH_FILE_SIZE_BYTES / (1024 * 1024);
 
-/// Lower-case file extensions the GUI's mesh loader can currently
-/// read. Single source of truth: the file dialog's "All supported
-/// files" filter is derived from this list, and path-driven entries
-/// (argv, drag-and-drop) reject paths whose extension isn't in it.
-/// Per-format dialog sub-filters ("OBJ files", "STL files") are
-/// independent.
-pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = &["3mf", "obj", "stl", "stla", "stlb"];
+pub(crate) const SUPPORTED_MESH_EXTENSIONS: &[&str] = SUPPORTED_SCENE_FILE_EXTENSIONS;
 
-/// Returns `true` if `path` has an extension matching one of
-/// `SUPPORTED_MESH_EXTENSIONS`. Matching is case-insensitive: Windows
-/// file systems are case-insensitive and `.STL` is common in the wild;
-/// Linux and macOS are usually case-sensitive but the user-facing
-/// convention is still lowercase.
+/// Return whether `path`'s extension is in
+/// [`SUPPORTED_MESH_EXTENSIONS`], matching case-insensitively.
+#[inline]
 pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-        return false;
-    };
-    let ext = ext.to_ascii_lowercase();
-    SUPPORTED_MESH_EXTENSIONS.iter().any(|&e| e == ext)
+    is_supported_scene_file_extension(path)
 }
 
 /// Precheck the file at `path` against the size ceiling. Returns
@@ -204,39 +180,22 @@ pub(crate) struct ParsedSource {
     pub(crate) reloaded_slices: Option<ReloadedSlices>,
 }
 
-/// Parses the file at `path`, reporting parse-phase progress through
-/// `sink`. Project-capable formats (3MF) go through the project
-/// reader so the project payload is extracted from the same container
-/// parse, with decompressed bytes driving the phase; everything else
-/// goes through the plain mesh loader with stream position driving
-/// it.
+/// Parse the file at `path`, reporting parse-phase progress through
+/// `sink`. For a project, 2 follow-up checks run against the
+/// installed profile libraries:
+/// - the printer and resin profiles the file references produce a
+///   warning when they are not installed,
+/// - the file's persisted slices are dropped when they no longer match
+///   the reopened scene.
 pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Result<ParsedSource> {
-    let Ok(file_type) = infer_project_file_type_from_extension(path) else {
-        return parse_mesh_source(path, sink);
-    };
-
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-    let LoadedProject {
-        scene,
-        warnings: project_warnings,
-        payload,
-        slices,
-        slice_fingerprint,
-    } = read_project_with_progress(&mut reader, file_type, |p| {
-        sink.set(LoadPhase::Parse, p.decompressed_bytes, p.total_bytes)
+    let opened = load_scene(path, Some(MAX_MESH_FILE_SIZE_BYTES), |p| {
+        sink.set(LoadPhase::Parse, p.done_bytes, p.total_bytes)
     })?;
-
-    // The plain loader's post-read check; the project reader stays
-    // below that dispatch level, so it runs here instead.
-    let mut warnings = Vec::new();
-    if let Some(warning) = scene_shared_vertices_warning(&scene) {
-        warnings.push(LoadMeshWarning::Scene(warning));
-    }
 
     // Classify the profile references against the installed
     // libraries here on the worker: the checks probe the filesystem.
-    let profile_warnings = payload
+    let profile_warnings = opened
+        .payload
         .as_ref()
         .map(|payload| {
             let roots = profile_library_roots();
@@ -251,52 +210,21 @@ pub(crate) fn parse_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Resu
     // worker: resolving the profiles and recomputing the geometry
     // fingerprint both stay off the event loop. Stale or unresolvable
     // slices drop here, and the scene opens slice-less.
-    let reloaded_slices =
-        revalidate_persisted_slices(payload.as_ref(), &scene, slices, slice_fingerprint);
+    let reloaded_slices = revalidate_persisted_slices(
+        opened.payload.as_ref(),
+        &opened.scene,
+        opened.slices,
+        opened.slice_fingerprint,
+    );
 
     Ok(ParsedSource {
-        graph: scene,
-        warnings,
-        project_payload: payload,
-        project_warnings,
+        graph: opened.scene,
+        warnings: opened.mesh_warnings,
+        project_payload: opened.payload,
+        project_warnings: opened.project_warnings,
         profile_warnings,
         reloaded_slices,
     })
-}
-
-/// Plain-mesh branch of `parse_source`: STL / OBJ through the linear
-/// reader entry, with the stream position mirrored into the parse
-/// phase by a [`ProgressReader`] under the `BufReader`.
-fn parse_mesh_source(path: &Path, sink: &LoadProgressSink) -> anyhow::Result<ParsedSource> {
-    let kind = infer_mesh_file_format_from_extension(path).map_err(LoadMeshError::from)?;
-    let file = File::open(path)?;
-    let progress_reader = ProgressReader::new(file, sink.clone())?;
-    // `load_mesh_from_path` enforced the byte ceiling itself; going
-    // through the reader entry moves that duty here. The measured
-    // total also covers the precheck's metadata-failure fallthrough.
-    ensure_measured_size_within(progress_reader.total_bytes(), MAX_MESH_FILE_SIZE_BYTES)?;
-    let mut reader = BufReader::new(progress_reader);
-    let LoadedMesh { graph, warnings } = load_mesh_from_reader(kind, &mut reader)?;
-    Ok(ParsedSource {
-        graph,
-        warnings,
-        project_payload: None,
-        project_warnings: Vec::new(),
-        profile_warnings: Vec::new(),
-        reloaded_slices: None,
-    })
-}
-
-/// The reader-entry counterpart of the cap `load_mesh_from_path`
-/// applies to the on-disk size.
-pub(crate) fn ensure_measured_size_within(total_bytes: u64, cap: u64) -> Result<(), LoadMeshError> {
-    if total_bytes > cap {
-        return Err(LoadMeshError::FileTooLarge {
-            actual_bytes: total_bytes,
-            limit_bytes: cap,
-        });
-    }
-    Ok(())
 }
 
 /// Spawns a worker thread that parses the file at `path`, uploads its

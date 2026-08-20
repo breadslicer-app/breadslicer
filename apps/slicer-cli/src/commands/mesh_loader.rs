@@ -77,7 +77,7 @@ fn display_obj_warning(warning: &LoadObjWarning, out: &mut dyn Write) {
     }
 }
 
-fn display_threemf_warning(warning: &LoadThreeMfWarning, out: &mut dyn Write) {
+pub(crate) fn display_threemf_warning(warning: &LoadThreeMfWarning, out: &mut dyn Write) {
     match warning {
         LoadThreeMfWarning::MaterialsDropped { group_count } => {
             let _ = writeln!(

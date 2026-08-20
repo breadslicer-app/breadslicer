@@ -20,7 +20,6 @@ use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
-use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
 use sc_project_formats::{
@@ -32,9 +31,8 @@ use crate::error_dialog::DialogManager;
 use crate::graphics_status::GraphicsUnavailable;
 use crate::load_progress::{LoadPhase, LoadProgressSink, PROGRESS_PERMILLE_MAX, decode};
 use crate::mesh_loader::{
-    LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch,
-    ensure_measured_size_within, guard_worker, panic_message, parse_source, place_on_plate,
-    start_load_with_ticket,
+    LoadDispatch, MAX_MESH_FILE_SIZE_BYTES, check_file_size, decide_load_dispatch, guard_worker,
+    panic_message, parse_source, place_on_plate, start_load_with_ticket,
 };
 use crate::scene_loader::SceneLoader;
 
@@ -442,25 +440,6 @@ fn parse_source_3mf_project_ends_the_parse_phase_complete() {
     let parsed = parse_source(&path, &sink).expect("3mf parses");
     assert_eq!(root_child_count(&parsed.graph), 3);
     assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
-}
-
-// --- ensure_measured_size_within --------------------------------------
-
-#[test]
-fn measured_size_at_the_cap_is_accepted() {
-    assert!(ensure_measured_size_within(1024, 1024).is_ok());
-}
-
-#[test]
-fn measured_size_over_the_cap_is_refused() {
-    let err = ensure_measured_size_within(1025, 1024).expect_err("over-cap must fail");
-    assert!(matches!(
-        err,
-        LoadMeshError::FileTooLarge {
-            actual_bytes: 1025,
-            limit_bytes: 1024,
-        }
-    ));
 }
 
 // --- guard_worker -----------------------------------------------------

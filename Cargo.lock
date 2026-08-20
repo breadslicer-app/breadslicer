@@ -4827,6 +4827,7 @@ dependencies = [
  "sc-print-primitives",
  "sc-sl1cer",
  "serde",
+ "tempfile",
  "toml_edit",
  "zip",
 ]
@@ -4873,6 +4874,7 @@ dependencies = [
  "sc-print-glue",
  "sc-print-primitives",
  "sc-print-profiles",
+ "sc-project-formats",
  "sc-sl1cer",
  "sc-sla-formats",
  "tempfile",

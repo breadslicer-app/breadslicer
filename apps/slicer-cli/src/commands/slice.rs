@@ -14,7 +14,6 @@ use anyhow::{Result, anyhow};
 use sc_mesh_core::Scene;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
-use sc_mesh_formats::load_mesh_from_path;
 use sc_print_glue::{
     SlicePlateError, SliceRun, SlicingParams, UnsliceableScene, UnsliceableSelection, slice_plate,
 };
@@ -23,13 +22,14 @@ use sc_print_profiles::{
     EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
     load_material_profile_from_path, load_printer_profile_from_path,
 };
+use sc_project_formats::{ReadProjectWarning, load_scene};
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
-use crate::commands::mesh_loader::display_warnings;
+use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::assets_dir::resolve_assets_profiles_dir;
 use crate::config::library_dir::resolve_user_library_dir;
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
@@ -77,13 +77,15 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         eprintln!("warning: {issue}");
     }
 
-    let mut loaded =
-        load_mesh_from_path(&source_path, None, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES))?;
-    display_warnings(&loaded.warnings, &mut std::io::stderr());
+    let opened = load_scene(&source_path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})?;
+    display_warnings(&opened.mesh_warnings, &mut std::io::stderr());
+    display_project_warnings(&opened.project_warnings, &mut std::io::stderr());
+    let is_project = opened.payload.is_some();
+    let mut scene = opened.scene;
 
     if args.repair {
         let stderr = &mut std::io::stderr();
-        let outcomes = loaded.graph.repair_meshes(RepairPasses::default_repair());
+        let outcomes = scene.repair_meshes(RepairPasses::default_repair());
         let fixes: Vec<MeshFix> = outcomes
             .iter()
             .flat_map(|outcome| outcome.fixes.iter().cloned())
@@ -96,8 +98,10 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         show_refusal_warnings(&outcomes, stderr);
     }
 
-    if !args.no_auto_place {
-        place_on_build_plate(&mut loaded.graph, &printer.hardware.build_volume())?;
+    // A project's placement is part of its saved content: only a
+    // plain mesh auto-places.
+    if !is_project && !args.no_auto_place {
+        place_on_build_plate(&mut scene, &printer.hardware.build_volume())?;
     }
     let params = SlicingParams {
         layer_height_request: args.layer_height,
@@ -105,7 +109,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
         aa_level: args.aa,
     };
     let plate = match slice_plate(
-        &loaded.graph,
+        &scene,
         &printer,
         &material,
         &params,
@@ -141,7 +145,7 @@ pub(crate) fn slice(args: SliceArgs) -> Result<()> {
     let options = WriterOptions::from_profile(plate.profile(), VERSION);
     match target_format {
         Format::ThreeMf => {
-            write_scene_slices(&loaded.graph, plate.leaves(), &target_path, &options)?;
+            write_scene_slices(&scene, plate.leaves(), &target_path, &options)?;
         }
         Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer => {
             let stack = plate.merge().map_err(|err| {
@@ -192,6 +196,22 @@ fn load_material_profile(
         MaterialProfileRef::Id(id) => libraries
             .effective_material_by_id(id)
             .map_err(|e| anyhow!("could not load the material profile: {e}")),
+    }
+}
+
+/// Write project-read warnings to `out`: mesh-level 3MF warnings
+/// go through the shared renderer; the project-only variants print
+/// nothing.
+fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write) {
+    for warning in warnings {
+        match warning {
+            ReadProjectWarning::ThreeMf(w) => display_threemf_warning(w, out),
+            // Project data is ignored here on purpose: profiles come
+            // from the flags and nothing is re-saved.
+            ReadProjectWarning::ProjectVersionUnsupported { .. }
+            | ReadProjectWarning::UnrecognizedProfilePart { .. }
+            | ReadProjectWarning::ForeignProjectData { .. } => {}
+        }
     }
 }
 
@@ -464,5 +484,40 @@ mod report_validation_failure_tests {
         let out = render(&err, false);
         assert!(!out.contains('"'), "unexpected quotes: {out}");
         assert!(out.contains("leaf #"), "missing bare leaf label: {out}");
+    }
+}
+
+#[cfg(test)]
+mod display_project_warnings_tests {
+    use super::display_project_warnings;
+    use sc_mesh_formats::messages::LoadThreeMfWarning;
+    use sc_project_formats::{ForeignDialect, ReadProjectWarning};
+
+    fn render(warnings: &[ReadProjectWarning]) -> String {
+        let mut buf = Vec::new();
+        display_project_warnings(warnings, &mut buf);
+        String::from_utf8(buf).expect("display_project_warnings emits valid UTF-8")
+    }
+
+    #[test]
+    fn mesh_level_warnings_forward_to_the_threemf_renderer() {
+        let out = render(&[ReadProjectWarning::ThreeMf(
+            LoadThreeMfWarning::SliceDataIgnored { stack_count: 3 },
+        )]);
+        assert!(out.contains("3 slice stack"), "{out}");
+    }
+
+    #[test]
+    fn the_project_only_variants_print_nothing() {
+        let out = render(&[
+            ReadProjectWarning::ProjectVersionUnsupported { version: 99 },
+            ReadProjectWarning::UnrecognizedProfilePart {
+                part_name: "/Profiles/unexpected.bin".to_string(),
+            },
+            ReadProjectWarning::ForeignProjectData {
+                dialect: ForeignDialect::Cura,
+            },
+        ]);
+        assert_eq!(out, "");
     }
 }

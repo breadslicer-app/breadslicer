@@ -17,7 +17,6 @@
 //! dispatch. The UI side polls the cell and decodes it with
 //! [`decode`].
 
-use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -93,64 +92,6 @@ impl LoadProgressSink {
     pub fn set(&self, phase: LoadPhase, done: u64, total: u64) {
         self.cell
             .fetch_max(pack(phase, permille(done, total)), Ordering::Relaxed);
-    }
-}
-
-/// `Read + Seek` adapter that mirrors the stream position into the
-/// parse phase of a [`LoadProgressSink`]. Suited to the linear
-/// single-pass formats (STL, OBJ), where position over file size is a
-/// faithful fraction; seek-based container formats (3MF) report
-/// through their own decompression observers instead.
-///
-/// Wrap the raw `File` and put the `BufReader` on the outside, so
-/// ticks fire once per buffer refill rather than once per parser
-/// read call.
-pub(crate) struct ProgressReader<R> {
-    inner: R,
-    position: u64,
-    total: u64,
-    sink: LoadProgressSink,
-}
-
-impl<R: Read + Seek> ProgressReader<R> {
-    /// Wraps `inner`, learning the total by seeking to the end and
-    /// back to the start.
-    pub fn new(mut inner: R, sink: LoadProgressSink) -> std::io::Result<Self> {
-        let total = inner.seek(SeekFrom::End(0))?;
-        inner.seek(SeekFrom::Start(0))?;
-        Ok(Self {
-            inner,
-            position: 0,
-            total,
-            sink,
-        })
-    }
-
-    /// Total stream length in bytes, measured at construction.
-    pub fn total_bytes(&self) -> u64 {
-        self.total
-    }
-}
-
-impl<R: Read> Read for ProgressReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        if n > 0 {
-            self.position += n as u64;
-            self.sink.set(LoadPhase::Parse, self.position, self.total);
-        }
-        Ok(n)
-    }
-}
-
-impl<R: Seek> Seek for ProgressReader<R> {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.position = self.inner.seek(pos)?;
-        // The sink's fetch_max absorbs backward seeks (the STL
-        // format sniffer rewinds once at the start): the published
-        // value holds while the position catches back up.
-        self.sink.set(LoadPhase::Parse, self.position, self.total);
-        Ok(self.position)
     }
 }
 
@@ -234,62 +175,5 @@ mod sink_tests {
         sink.set(LoadPhase::GpuUpload, 1, 1);
         sink.reset();
         assert_eq!(published(&cell), (LoadPhase::Parse, 0));
-    }
-}
-
-#[cfg(test)]
-mod progress_reader_tests {
-    use super::*;
-    use std::io::Cursor;
-
-    fn reader_and_cell(bytes: Vec<u8>) -> (ProgressReader<Cursor<Vec<u8>>>, Arc<AtomicU32>) {
-        let cell = Arc::new(AtomicU32::new(0));
-        let sink = LoadProgressSink::new(cell.clone());
-        let reader = ProgressReader::new(Cursor::new(bytes), sink).expect("cursor seeks");
-        (reader, cell)
-    }
-
-    fn published(cell: &AtomicU32) -> (LoadPhase, u32) {
-        decode(cell.load(Ordering::Relaxed))
-    }
-
-    #[test]
-    fn construction_measures_the_total_and_rewinds() {
-        let (mut reader, cell) = reader_and_cell(vec![7u8; 10]);
-        assert_eq!(reader.total_bytes(), 10);
-        assert_eq!(published(&cell), (LoadPhase::Parse, 0), "no tick yet");
-        let mut all = Vec::new();
-        reader.read_to_end(&mut all).expect("read");
-        assert_eq!(all.len(), 10, "the rewind restored the start");
-    }
-
-    #[test]
-    fn reading_publishes_the_position_fraction() {
-        let (mut reader, cell) = reader_and_cell(vec![7u8; 10]);
-        let mut half = [0u8; 5];
-        reader.read_exact(&mut half).expect("read");
-        assert_eq!(published(&cell), (LoadPhase::Parse, 500));
-        let mut rest = Vec::new();
-        reader.read_to_end(&mut rest).expect("read");
-        assert_eq!(published(&cell), (LoadPhase::Parse, PROGRESS_PERMILLE_MAX));
-    }
-
-    #[test]
-    fn a_backward_seek_does_not_regress_the_published_value() {
-        // The STL sniffer reads a header probe and rewinds; the
-        // published value must hold at its high-water mark.
-        let (mut reader, cell) = reader_and_cell(vec![7u8; 10]);
-        let mut probe = [0u8; 8];
-        reader.read_exact(&mut probe).expect("read");
-        assert_eq!(published(&cell), (LoadPhase::Parse, 800));
-        reader.seek(SeekFrom::Start(0)).expect("rewind");
-        assert_eq!(published(&cell), (LoadPhase::Parse, 800));
-    }
-
-    #[test]
-    fn seeking_forward_advances_the_published_value() {
-        let (mut reader, cell) = reader_and_cell(vec![7u8; 10]);
-        reader.seek(SeekFrom::Start(9)).expect("seek");
-        assert_eq!(published(&cell), (LoadPhase::Parse, 900));
     }
 }
