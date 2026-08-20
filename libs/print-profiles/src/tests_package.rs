@@ -99,6 +99,16 @@ fn parse_manifest(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> ManifestDoc {
 }
 
 #[test]
+fn stamped_now_carries_the_given_version_and_an_rfc3339_timestamp() {
+    let manifest = ExportManifest::stamped_now("1.2.3");
+    assert_eq!(manifest.sc_slicer_version, "1.2.3");
+    assert!(manifest.name.is_none());
+    assert!(manifest.description.is_none());
+    assert!(manifest.author.is_none());
+    chrono::DateTime::parse_from_rfc3339(&manifest.exported_at).expect("an RFC3339 timestamp");
+}
+
+#[test]
 fn export_all_writes_manifest_and_every_profile() {
     let dir = write_library();
     let mut archive = export_to_archive(dir.path(), &ExportSelection::All, &manifest()).unwrap();

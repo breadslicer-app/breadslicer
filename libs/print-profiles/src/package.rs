@@ -5,25 +5,25 @@
 
 //! Packaging of a profile library into a portable zip archive.
 //!
-//! [`export_package`] reads a library directory and writes a zip that
-//! mirrors the library layout: a top-level `manifest.toml` for human
-//! inspection plus `printers/<id>.toml`, `materials/<id>.toml`, and
-//! `materials/extensions/<id>.toml` entries for the selected
-//! profiles. The selection is one of: every profile, printers only,
-//! materials only, or an explicit set of ids resolved against every
-//! kind. Material extensions ride along with the materials: they are
-//! included whenever materials are.
+//! - [`export_package`] writes the archive from a library directory.
+//! - [`import_package`] installs one into a library directory,
+//!   refusing to overwrite existing profiles unless forced.
 //!
-//! The export is clock-free: the caller supplies the `exported_at`
-//! timestamp (and the binary version) so the function stays pure and
-//! testable. The manifest is a courtesy for whoever inspects the
-//! archive; the import path ignores it.
+//! The archive mirrors the library layout: `printers/<id>.toml`,
+//! `materials/<id>.toml` and `materials/extensions/<id>.toml`
+//! entries for the selected profiles ([`ExportSelection`]), plus a
+//! top-level `manifest.toml`. Material extensions are included
+//! whenever materials are.
+//!
+//! `manifest.toml` describes the archive for human inspection;
+//! [`import_package`] never reads it.
 
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
+use chrono::Local;
 use sc_print_primitives::{InvalidProfileId, MaterialId, PrinterId};
 use zip::write::{SimpleFileOptions, ZipWriter};
 use zip::{CompressionMethod, ZipArchive};
@@ -67,6 +67,22 @@ pub struct ExportManifest {
     pub exported_at: String,
     /// Version of the binary that produced the archive.
     pub sc_slicer_version: String,
+}
+
+impl ExportManifest {
+    /// Build a manifest stamped with the current local time. Pass the
+    /// exporting application's version, not this library's:
+    /// `sc_slicer_version` names the product that produced the
+    /// archive. The descriptive fields start as `None`.
+    pub fn stamped_now(app_version: &str) -> Self {
+        Self {
+            name: None,
+            description: None,
+            author: None,
+            exported_at: Local::now().to_rfc3339(),
+            sc_slicer_version: app_version.to_owned(),
+        }
+    }
 }
 
 /// Returned by [`export_package`] when the selection cannot be

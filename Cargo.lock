@@ -4790,6 +4790,7 @@ dependencies = [
 name = "sc-print-profiles"
 version = "0.2.0"
 dependencies = [
+ "chrono",
  "nonempty-collections",
  "sc-app-paths",
  "sc-print-primitives",
@@ -4863,7 +4864,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bpaf",
- "chrono",
  "png 0.18.1",
  "predicates",
  "sc-3mf",
@@ -4887,7 +4887,6 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytemuck",
- "chrono",
  "float-cmp 0.10.0",
  "futures-channel",
  "glam",

@@ -12,6 +12,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 [dependencies]
 sc-app-paths = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }
+chrono = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 toml_edit = { workspace = true }

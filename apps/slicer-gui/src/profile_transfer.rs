@@ -17,7 +17,6 @@ use std::fs::File;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::Local;
 use rfd::MessageDialogResult;
 use sc_print_profiles::{
     Collision, CollisionReport, ExportManifest, ExportSelection, ImportError, export_package,
@@ -67,13 +66,7 @@ pub(crate) fn run_export(
 ) -> Result<()> {
     let file = File::create(dest)
         .with_context(|| format!("could not create the output archive {}", dest.display()))?;
-    let manifest = ExportManifest {
-        name: None,
-        description: None,
-        author: None,
-        exported_at: Local::now().to_rfc3339(),
-        sc_slicer_version: env!("CARGO_PKG_VERSION").to_owned(),
-    };
+    let manifest = ExportManifest::stamped_now(env!("CARGO_PKG_VERSION"));
     export_package(library_dir, selection, &manifest, file)
         .map_err(|e| anyhow!("could not export the profile package: {e}"))
 }

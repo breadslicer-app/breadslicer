@@ -11,7 +11,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use chrono::Local;
 use sc_print_profiles::{
     Collision, CollisionReport, ExportManifest, ExportSelection, ImportError, ProfileLibraries,
     export_package, import_package, list_material_ids, list_printer_ids,
@@ -97,13 +96,7 @@ pub(crate) fn export(
         )
     })?;
 
-    let manifest = ExportManifest {
-        name: None,
-        description: None,
-        author: None,
-        exported_at: Local::now().to_rfc3339(),
-        sc_slicer_version: env!("CARGO_PKG_VERSION").to_owned(),
-    };
+    let manifest = ExportManifest::stamped_now(env!("CARGO_PKG_VERSION"));
 
     export_package(library_dir, &selection, &manifest, file)
         .map_err(|e| anyhow!("could not export the profile package: {e}"))?;

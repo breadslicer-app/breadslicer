@@ -24,9 +24,6 @@ sc-sl1cer = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
-chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
-# Oneshot channel used to await the off-thread project-save worker's
-# result on the Slint event loop without blocking it.
 futures-channel = "0.3"
 glam = "0.32.1"
 ico = "0.5"
