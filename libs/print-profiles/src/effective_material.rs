@@ -167,8 +167,8 @@ pub enum MaterialExtensionIssue {
     /// The extension file exists but could not be read or parsed; the
     /// whole document was excluded. `cause` carries the rendered load
     /// error. Emitted by
-    /// [`crate::loader::compose_with_library_extension`], never by
-    /// [`EffectiveMaterial::compose`] itself.
+    /// [`ProfileLibraries::compose_with_extension`](crate::ProfileLibraries::compose_with_extension),
+    /// never by [`EffectiveMaterial::compose`] itself.
     ExtensionUnreadable { path: PathBuf, cause: String },
     /// The extension file's `extension` flag is missing or false; the
     /// whole document was excluded.

@@ -196,13 +196,17 @@ fn load_printer_by_id_not_found_lists_every_attempted_path_in_order() {
     let (libraries, user, bundled_a, bundled_b) = three_roots(dir.path());
 
     let err = libraries.load_printer_by_id(&printer_id()).unwrap_err();
-    match err {
+    match &err {
         LoadPrinterProfileByIdError::NotFoundAnywhere { attempted } => {
             let expected: Vec<PathBuf> = [&user, &bundled_a, &bundled_b]
                 .into_iter()
                 .map(|root| root.join("printers").join("elegoo-saturn-4-ultra.toml"))
                 .collect();
-            assert_eq!(attempted, expected);
+            assert_eq!(attempted, &expected);
+            let msg = format!("{err}");
+            for path in &expected {
+                assert!(msg.contains(path.to_str().unwrap()), "msg: {msg}");
+            }
         }
         other => panic!("expected NotFoundAnywhere, got {other:?}"),
     }
@@ -259,13 +263,17 @@ fn load_material_by_id_not_found_lists_every_attempted_path_in_order() {
     let (libraries, user, bundled_a, bundled_b) = three_roots(dir.path());
 
     let err = libraries.load_material_by_id(&material_id()).unwrap_err();
-    match err {
+    match &err {
         LoadMaterialProfileByIdError::NotFoundAnywhere { attempted } => {
             let expected: Vec<PathBuf> = [&user, &bundled_a, &bundled_b]
                 .into_iter()
                 .map(|root| root.join("materials").join("sirayatech-blu.toml"))
                 .collect();
-            assert_eq!(attempted, expected);
+            assert_eq!(attempted, &expected);
+            let msg = format!("{err}");
+            for path in &expected {
+                assert!(msg.contains(path.to_str().unwrap()), "msg: {msg}");
+            }
         }
         other => panic!("expected NotFoundAnywhere, got {other:?}"),
     }
@@ -326,10 +334,18 @@ fn effective_material_by_id_reports_an_unreadable_extension_and_degrades() {
     let base = libraries.load_material_by_id(&material_id()).unwrap();
     assert_eq!(effective, EffectiveMaterial::from(base));
     assert_eq!(issues.len(), 1, "issues: {issues:?}");
-    assert!(matches!(
-        &issues[0],
-        MaterialExtensionIssue::ExtensionUnreadable { .. },
-    ));
+    match &issues[0] {
+        MaterialExtensionIssue::ExtensionUnreadable { path, cause } => {
+            assert!(path.ends_with("materials/extensions/sirayatech-blu.toml"));
+            assert!(!cause.is_empty());
+        }
+        other => panic!("expected ExtensionUnreadable, got {other:?}"),
+    }
+    let rendered = issues[0].to_string();
+    assert!(
+        rendered.contains("could not be loaded and was ignored"),
+        "rendered: {rendered}",
+    );
 }
 
 #[test]
@@ -341,6 +357,57 @@ fn compose_with_extension_without_a_user_root_yields_the_base_with_no_issues() {
     let (effective, issues) = libraries.compose_with_extension(base.clone());
     assert!(issues.is_empty(), "issues: {issues:?}");
     assert_eq!(effective, EffectiveMaterial::from(base));
+}
+
+#[test]
+fn compose_with_extension_without_an_extension_file_yields_the_base_with_no_issues() {
+    let dir = tempfile::tempdir().unwrap();
+    let libraries = ProfileLibraries::new(Some(dir.path().to_path_buf()), Vec::new());
+    let base: super::material_profile::MaterialProfile =
+        toml_edit::de::from_str(VALID_MATERIAL_TOML).unwrap();
+
+    let (effective, issues) = libraries.compose_with_extension(base.clone());
+    assert!(issues.is_empty(), "issues: {issues:?}");
+    assert_eq!(effective, EffectiveMaterial::from(base));
+}
+
+#[test]
+fn compose_with_extension_salvages_valid_pairs_next_to_an_overlap() {
+    let dir = tempfile::tempdir().unwrap();
+    let base_toml =
+        format!("{VALID_MATERIAL_TOML}\n[per_printer.\"printer-a\"]\nnormal_exposure_sec = 2.5\n");
+    let extension_toml =
+        format!("{EXTENSION_TOML}\n[per_printer.\"printer-a\"]\nnormal_exposure_sec = 9.0\n");
+    write_extension(dir.path(), "sirayatech-blu", &extension_toml);
+    let libraries = ProfileLibraries::new(Some(dir.path().to_path_buf()), Vec::new());
+    let base: super::material_profile::MaterialProfile =
+        toml_edit::de::from_str(&base_toml).unwrap();
+
+    let (effective, issues) = libraries.compose_with_extension(base);
+
+    let printer_a = CalibrationTarget::from_printer(&PrinterId::new("printer-a").unwrap());
+    let printer_x = CalibrationTarget::from_printer(&PrinterId::new("printer-x").unwrap());
+    assert_eq!(
+        issues,
+        vec![MaterialExtensionIssue::OverlappingCalibrationPair {
+            target: printer_a.clone(),
+        }],
+    );
+    // The overlapped pair keeps the base's value; the new pair lands.
+    assert_eq!(
+        effective.per_printer()[&printer_a]
+            .normal_exposure_sec
+            .unwrap()
+            .value(),
+        2.5,
+    );
+    assert_eq!(
+        effective.per_printer()[&printer_x]
+            .normal_exposure_sec
+            .unwrap()
+            .value(),
+        3.5,
+    );
 }
 
 #[test]

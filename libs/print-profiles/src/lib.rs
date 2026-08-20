@@ -68,10 +68,9 @@ pub use listing::{
 pub use loader::{
     LoadMaterialExtensionError, LoadMaterialProfileByIdError, LoadMaterialProfileError,
     LoadMaterialProfileErrorKind, LoadPrinterProfileByIdError, LoadPrinterProfileError,
-    LoadPrinterProfileErrorKind, compose_with_library_extension,
-    load_material_extension_from_library, load_material_extension_if_present,
-    load_material_profile_by_id, load_material_profile_from_library,
-    load_material_profile_from_path, load_printer_profile_by_id, load_printer_profile_from_library,
+    LoadPrinterProfileErrorKind, load_material_extension_from_library,
+    load_material_extension_if_present, load_material_profile_from_library,
+    load_material_profile_from_path, load_printer_profile_from_library,
     load_printer_profile_from_path, material_extension_path_in_library,
     material_profile_path_in_library, printer_profile_path_in_library,
 };

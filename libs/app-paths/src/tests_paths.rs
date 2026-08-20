@@ -7,7 +7,7 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use super::{all_app_dirs, bundled_data_dir, bundled_data_dirs, home_dir, project_dirs};
+use super::{all_app_dirs, bundled_data_dirs, home_dir, project_dirs};
 
 #[test]
 fn all_app_dirs_returns_every_existing_base_in_order() {
@@ -52,11 +52,6 @@ fn all_app_dirs_ignores_a_file_with_the_app_name() {
     fs::write(base.path().join("soulcrafted-slicer"), b"not a dir").unwrap();
     let bases = vec![base.path().to_path_buf()];
     assert!(all_app_dirs(&bases, "soulcrafted-slicer").is_empty());
-}
-
-#[test]
-fn bundled_data_dir_is_absolute() {
-    assert!(bundled_data_dir().is_absolute());
 }
 
 #[test]

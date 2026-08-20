@@ -5,16 +5,12 @@
 
 //! Disk loading for printer- and material-profile TOML files.
 //!
-//! Provides three layers of loader functions for both profile
+//! Provides 2 layers of loader functions for both profile
 //! types. The path-based loaders take a TOML file path directly.
 //! The library-based loaders take a base directory and a profile
 //! id; they look up `<base>/printers/<id>.toml` (or
-//! `<base>/materials/<id>.toml`). The by-id loaders accept an
-//! optional explicit path plus the user library and assets base
-//! directories, and try them in order: explicit-path first; on
-//! `NotFound` from the library, cascade to the assets directory;
-//! return [`LoadPrinterProfileByIdError::NotFoundAnywhere`]
-//! listing every path that was tried if no source had the profile.
+//! `<base>/materials/<id>.toml`). Resolution by id across several
+//! libraries belongs to [`ProfileLibraries`](crate::ProfileLibraries).
 //!
 //! Each loader runs the file contents through the typed
 //! deserialisation path (which enforces field invariants and
@@ -29,10 +25,8 @@ use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
-use crate::effective_material::{EffectiveMaterial, MaterialExtensionIssue};
 use crate::material_profile::MaterialProfile;
 use crate::printer_profile::PrinterProfile;
-use crate::profile_libraries::ProfileLibraries;
 
 pub(crate) const PRINTERS_SUBDIR: &str = "printers";
 pub(crate) const MATERIALS_SUBDIR: &str = "materials";
@@ -274,8 +268,9 @@ pub fn load_material_extension_from_library(
 /// one is there: `Ok(None)` when the file does not exist, so callers
 /// never match on [`io::ErrorKind`] themselves. The `extension` flag
 /// is deliberately NOT validated here; the semantic checks belong to
-/// [`EffectiveMaterial::compose`], which reports a flag or identity
-/// problem as an issue instead of an error.
+/// [`EffectiveMaterial::compose`](crate::EffectiveMaterial::compose),
+/// which reports a flag or identity problem as an issue instead of an
+/// error.
 pub fn load_material_extension_if_present(
     library_dir: &Path,
     id: &MaterialId,
@@ -296,26 +291,10 @@ pub fn load_material_extension_if_present(
     }
 }
 
-/// The effective material for `base`, with whatever the library's
-/// extensions slot contributes: the one funnel every resolution and
-/// display consumer goes through, so the degrade behaviour is
-/// identical everywhere.
-///
-/// Total and never workflow-breaking: a missing extension file is
-/// the normal case (base only, no issues); an unreadable one is
-/// excluded whole with [`MaterialExtensionIssue::ExtensionUnreadable`];
-/// everything else is [`EffectiveMaterial::compose`]'s contract.
-/// Extensions live in the user library only, so pass the user
-/// library directory, not a bundled assets root.
-pub fn compose_with_library_extension(
-    base: MaterialProfile,
-    library_dir: &Path,
-) -> (EffectiveMaterial, Vec<MaterialExtensionIssue>) {
-    ProfileLibraries::new(Some(library_dir.to_path_buf()), Vec::new()).compose_with_extension(base)
-}
-
-/// Returned by [`load_printer_profile_by_id`] when no source had
-/// the profile or one of the sources had it but failed to load.
+/// Returned by
+/// [`ProfileLibraries::load_printer_by_id`](crate::ProfileLibraries::load_printer_by_id)
+/// when no source had the profile or one of the sources had it but
+/// failed to load.
 #[derive(Debug)]
 pub enum LoadPrinterProfileByIdError {
     /// A source produced the file but loading or parsing it failed.
@@ -356,8 +335,9 @@ impl std::error::Error for LoadPrinterProfileByIdError {
     }
 }
 
-/// Returned by [`load_material_profile_by_id`]. Same shape as
-/// [`LoadPrinterProfileByIdError`].
+/// Returned by
+/// [`ProfileLibraries::load_material_by_id`](crate::ProfileLibraries::load_material_by_id).
+/// Same shape as [`LoadPrinterProfileByIdError`].
 #[derive(Debug)]
 pub enum LoadMaterialProfileByIdError {
     Source(LoadMaterialProfileError),
@@ -391,47 +371,4 @@ impl std::error::Error for LoadMaterialProfileByIdError {
             Self::NotFoundAnywhere { .. } => None,
         }
     }
-}
-
-/// Load a printer profile by id, trying sources in order:
-/// `explicit_path` first (hard error on any failure if provided),
-/// then `<library_dir>/printers/<id>.toml`, then
-/// `<assets_dir>/printers/<id>.toml`. `NotFound` on a library or
-/// assets source cascades to the next; any other failure halts and
-/// returns [`LoadPrinterProfileByIdError::Source`]. If every source
-/// returned `NotFound`,
-/// [`LoadPrinterProfileByIdError::NotFoundAnywhere`] lists each
-/// attempted path.
-pub fn load_printer_profile_by_id(
-    id: &PrinterId,
-    explicit_path: Option<&Path>,
-    library_dir: &Path,
-    assets_dir: &Path,
-) -> Result<PrinterProfile, LoadPrinterProfileByIdError> {
-    if let Some(path) = explicit_path {
-        return load_printer_profile_from_path(path).map_err(LoadPrinterProfileByIdError::Source);
-    }
-    ProfileLibraries::new(
-        Some(library_dir.to_path_buf()),
-        vec![assets_dir.to_path_buf()],
-    )
-    .load_printer_by_id(id)
-}
-
-/// Load a material profile by id. Same source-cascade semantics as
-/// [`load_printer_profile_by_id`].
-pub fn load_material_profile_by_id(
-    id: &MaterialId,
-    explicit_path: Option<&Path>,
-    library_dir: &Path,
-    assets_dir: &Path,
-) -> Result<MaterialProfile, LoadMaterialProfileByIdError> {
-    if let Some(path) = explicit_path {
-        return load_material_profile_from_path(path).map_err(LoadMaterialProfileByIdError::Source);
-    }
-    ProfileLibraries::new(
-        Some(library_dir.to_path_buf()),
-        vec![assets_dir.to_path_buf()],
-    )
-    .load_material_by_id(id)
 }

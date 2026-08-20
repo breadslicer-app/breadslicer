@@ -39,20 +39,6 @@ pub fn home_dir() -> Option<PathBuf> {
     UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
 }
 
-/// The single installed, read-only data root a packaged build ships:
-/// the highest-precedence entry of [`bundled_data_dirs`], or the
-/// source-tree `assets/` root as a development fallback.
-///
-/// Prefer [`bundled_data_dirs`] where the full set of read-only roots
-/// matters (e.g. merging a profile library); this single-root helper
-/// exists for callers that only need one location.
-pub fn bundled_data_dir() -> PathBuf {
-    bundled_data_dirs()
-        .into_iter()
-        .next()
-        .unwrap_or_else(dev_assets_dir)
-}
-
 /// Every read-only data root a build can ship, highest precedence
 /// first: the installed roots (each existing `<base>/<application>`
 /// across the system data directories on Linux, or executable-relative
