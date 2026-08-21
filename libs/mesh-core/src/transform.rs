@@ -1200,12 +1200,7 @@ mod affine_transform_3d_tests {
 pub enum Transform3D {
     #[default]
     Identity,
-    /// 3x3 linear part plus a translation. The split is load-bearing:
-    /// `sc_mesh_spatial::MeshSpatial`'s world-AABB cache keys on the
-    /// linear part only and folds the translation in on read. A future
-    /// variant whose world-AABB depends on more than the 3x3 linear
-    /// part (shear in extra fields, projective term, time-varying
-    /// component) must invalidate or bypass that cache.
+    /// 3x3 linear part plus a translation.
     Affine(AffineTransform3D),
 }
 

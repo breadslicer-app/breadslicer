@@ -1,8 +1,7 @@
 # sc-mesh-core
 
-Triangle meshes and 3D scenes for Rust: indexed mesh storage, affine
-transforms, bounding boxes, a hierarchical scene graph, mesh validation,
-and mesh repair.
+Triangle meshes for Rust: indexed mesh storage, affine transforms,
+bounding boxes, mesh validation, and mesh repair.
 
 Written for the
 [SoulCrafted Slicer](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/README.md),
@@ -12,14 +11,14 @@ project and stands on its own.
 ## Features
 
 - Indexed triangle meshes with optional metadata.
-- A hierarchical scene graph with groups, instancing and shared mesh
-  resources.
 - Affine transforms and axis-aligned bounding boxes.
 - Validation for non-finite coordinates, out-of-range face indices,
   zero-length edges, holes, edges shared by more than 2 faces and
   inconsistent winding, with repairs for some of those.
 
-Reading and writing mesh files (STL, OBJ, 3MF) lives in
+The hierarchical scene graph lives in
+[`sc-scene`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/scene/),
+reading and writing mesh files (STL, OBJ, 3MF) lives in
 [`sc-mesh-formats`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-formats/),
 and slicing lives in
 [`sc-sl1cer`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/sl1cer/).

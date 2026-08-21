@@ -2,7 +2,9 @@
 
 Cached spatial queries over
 [`sc-mesh-core`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/mesh-core/)
-meshes and scenes: bounding boxes and triangle clusters, computed once and
+meshes and
+[`sc-scene`](https://codeberg.org/SoulCrafted/Slicer/src/branch/main/libs/scene/)
+scenes: bounding boxes and triangle clusters, computed once and
 reused until the geometry changes.
 
 Written for the
@@ -29,7 +31,7 @@ inline meshes get their own.
 ```rust
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 
-// `scene` is an sc_mesh_core::Scene; the spatial takes ownership of it.
+// `scene` is an sc_scene::Scene.
 let spatial = SceneSpatial::from_graph(scene);
 
 let bounds = scene_aabb(&spatial);
@@ -51,7 +53,7 @@ Get the scene back with `into_graph`.
 ## Mutation
 
 Scenes are mutated by passing `SceneSpatial::apply_edit` one of the typed
-edits from `sc-mesh-core`. It applies the edit and drops the cache entries
+edits from `sc-scene-edit`. It applies the edit and drops the cache entries
 that edit affects. There is no other mutation entry point.
 
 ## Conventions

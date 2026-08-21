@@ -493,8 +493,10 @@ impl<'a> ObjectQuery<'a> {
     ///
     /// Internally cached by the linear part of `transform`: the same
     /// linear key (typically the current rotation/scale) reuses the
-    /// computed AABB and only shifts it by the new translation. A
-    /// translate-mode drag, whose linear part is constant tick to
+    /// computed AABB and only shifts it by the new translation. Sound
+    /// because a translation moves every vertex, and therefore the
+    /// tight AABB, by the same offset: AABB(M v + t) = AABB(M v) + t.
+    /// A translate-mode drag, whose linear part is constant tick to
     /// tick, pays the vertex walk once.
     pub fn transformed_aabb(&self, transform: Transform3D) -> Option<Aabb> {
         match transform {

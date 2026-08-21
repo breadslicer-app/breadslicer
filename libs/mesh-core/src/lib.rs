@@ -8,10 +8,9 @@
 //! # Conventions
 //!
 //! - **Coordinate frame:** right-handed, with **Z up**. The XY plane is the
-//!   build platform; +Z points away from it.
-//!   `OrbitCamera::up = Vec3::Z` and `Axis::Z.world_dir() = Vec3::Z` in the
-//!   GUI cement this convention; the slicer engine, format readers/writers,
-//!   and any new geometry code must follow it.
+//!   build platform; +Z points away from it. The slicer engine, format
+//!   readers/writers, and any new geometry code must follow this
+//!   convention.
 //! - **Units:** every coordinate, length, and translation in this crate is
 //!   in **millimetres**. Mesh storage is `f32` for vertex positions and
 //!   `f64` for transform matrices; both share the same millimetre scale.
