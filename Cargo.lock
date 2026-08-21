@@ -4751,6 +4751,7 @@ dependencies = [
  "sc-3mf",
  "sc-mesh-core",
  "sc-mesh-fixtures",
+ "sc-scene",
  "tempfile",
 ]
 
@@ -4761,6 +4762,8 @@ dependencies = [
  "float-cmp 0.10.0",
  "proptest",
  "sc-mesh-core",
+ "sc-scene",
+ "sc-scene-edit",
 ]
 
 [[package]]
@@ -4771,6 +4774,7 @@ dependencies = [
  "sc-mesh-fixtures",
  "sc-print-primitives",
  "sc-print-profiles",
+ "sc-scene",
  "sc-sl1cer",
  "sha2",
  "toml_edit",
@@ -4826,11 +4830,30 @@ dependencies = [
  "sc-mesh-fixtures",
  "sc-mesh-formats",
  "sc-print-primitives",
+ "sc-scene",
  "sc-sl1cer",
  "serde",
  "tempfile",
  "toml_edit",
  "zip",
+]
+
+[[package]]
+name = "sc-scene"
+version = "0.1.0"
+dependencies = [
+ "float-cmp 0.10.0",
+ "proptest",
+ "rayon",
+ "sc-mesh-core",
+]
+
+[[package]]
+name = "sc-scene-edit"
+version = "0.1.0"
+dependencies = [
+ "sc-mesh-core",
+ "sc-scene",
 ]
 
 [[package]]
@@ -4842,6 +4865,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-print-primitives",
+ "sc-scene",
 ]
 
 [[package]]
@@ -4853,6 +4877,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
+ "sc-scene",
  "sc-sl1cer",
  "tempfile",
 ]
@@ -4875,6 +4900,7 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-scene",
  "sc-sl1cer",
  "sc-sla-formats",
  "tempfile",
@@ -4904,6 +4930,8 @@ dependencies = [
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
+ "sc-scene",
+ "sc-scene-edit",
  "sc-sl1cer",
  "serde",
  "slint",

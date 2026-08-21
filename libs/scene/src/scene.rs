@@ -5,41 +5,24 @@
 
 //! Hierarchical [`Scene`] aggregate and its mutation / validation
 //! API. Arena-backed; per-mesh AABB and bake helpers live in the
-//! sibling [`aabb`] / [`bake`] modules; typed edits in [`edit`].
-
-pub mod aabb;
-pub mod bake;
-pub mod diagnose;
-pub mod edit;
-pub mod error;
-pub mod expand;
-pub mod fragment;
-pub mod mesh_health;
-pub mod mesh_targets;
-pub mod node;
-pub mod repair;
-pub mod shared_vertices;
-pub mod validate;
-
-#[cfg(test)]
-mod tests_error;
+//! sibling [`sc_mesh_core::aabb`] / [`crate::bake`] modules.
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::scene::error::SceneError;
-use crate::scene::node::{
+use crate::error::SceneError;
+use crate::node::{
     CsgOp, LeafAttachment, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata,
     SubtreeResourceId,
 };
-use crate::transform::Transform3D;
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::transform::Transform3D;
 
 /// Recover the [`NodeId`] for the slot at index `i` in the node
 /// arena. Slots are append-only and never reused, so the id at
 /// index `i` is always `NodeId(NonZeroU32::new(i + 1))`.
-fn node_id_at_index(i: usize) -> NodeId {
+pub(crate) fn node_id_at_index(i: usize) -> NodeId {
     let raw = u32::try_from(i + 1).expect("node index overflow");
     NodeId(NonZeroU32::new(raw).expect("index + 1 is non-zero"))
 }
@@ -358,7 +341,7 @@ impl Scene {
     ///
     /// Use this when the id needs to exist before the node it will
     /// reference does, typically so the id can be embedded in a typed
-    /// edit (see `sc_mesh_core::scene::edit`) that the undo/redo
+    /// edit (see `sc_scene_edit`) that the undo/redo
     /// machinery replays against the same slot.
     ///
     /// The slot is permanently consumed: dropping the id without
@@ -393,7 +376,7 @@ impl Scene {
     ///
     /// Use this when the id needs to exist before the resource it will
     /// reference does, typically so the id can be embedded in a typed edit (see
-    /// `sc_mesh_core::scene::edit`) that the undo/redo machinery replays
+    /// `sc_scene_edit`) that the undo/redo machinery replays
     /// against the same slot. Mirrors [`Self::allocate_unbound_node_id`] for
     /// mesh-resource ids.
     ///
@@ -757,7 +740,7 @@ impl Scene {
     /// currently-empty node slot, and register it as a scene root.
     ///
     /// Paired with [`Self::remove_root_leaf`] so a typed edit (see
-    /// `sc_mesh_core::scene::edit`) can round-trip a paste insertion
+    /// `sc_scene_edit`) can round-trip a paste insertion
     /// through the undo/redo machinery while keeping the same
     /// [`NodeId`] across applies.
     ///
@@ -1011,7 +994,7 @@ impl From<IndexedMesh> for Scene {
 #[cfg(test)]
 mod sharing_query_tests {
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use std::sync::Arc;
 
     fn unit_triangle() -> IndexedMesh {
@@ -1115,8 +1098,8 @@ mod sharing_query_tests {
 #[cfg(test)]
 mod scene_construction_tests {
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::transform::AffineTransform3D;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::AffineTransform3D;
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {
@@ -2354,7 +2337,7 @@ mod scene_construction_tests {
 #[cfg(test)]
 mod from_indexed_mesh_tests {
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {

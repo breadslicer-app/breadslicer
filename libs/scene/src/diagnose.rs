@@ -8,9 +8,9 @@
 //! reports one finding set per target. Purely read-side: the shared
 //! borrow guarantees no stored `Arc` is ever forked.
 
-use crate::indexed_mesh::MeshDiagnosis;
-use crate::scene::Scene;
-use crate::scene::mesh_targets::MeshTarget;
+use crate::Scene;
+use crate::mesh_targets::MeshTarget;
+use sc_mesh_core::indexed_mesh::MeshDiagnosis;
 
 impl Scene {
     /// Diagnose every stored mesh and report one
@@ -32,11 +32,11 @@ mod scene_diagnose_tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::geometry::compute_normal_from_triangle_vertices;
-    use crate::indexed_mesh::{FaceDiagnosis, IndexedMesh};
-    use crate::primitives::{IndexedTriangle, Vertex};
-    use crate::scene::node::LeafPayload;
-    use crate::transform::Transform3D;
+    use crate::node::LeafPayload;
+    use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
+    use sc_mesh_core::indexed_mesh::{FaceDiagnosis, IndexedMesh};
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
+    use sc_mesh_core::transform::Transform3D;
 
     fn tetrahedron() -> IndexedMesh {
         let vertices = vec![

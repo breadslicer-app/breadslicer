@@ -16,8 +16,6 @@
 
 use std::fmt;
 
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::error::SceneError;
 use sc_print_glue::{
     SliceInputFingerprintError, SlicePlateError, SlicingParams, UnschedulableHeight,
     UnsliceableScene, UnsliceableSelection, schedule_for_selection,
@@ -27,6 +25,8 @@ use sc_print_profiles::{
     EffectiveMaterial, LoadMaterialProfileByIdError, LoadPrinterProfileByIdError, PrinterProfile,
     ProfileLibraries, ResolveError,
 };
+use sc_scene::Scene;
+use sc_scene::error::SceneError;
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
 

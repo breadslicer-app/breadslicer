@@ -23,7 +23,6 @@ pub mod aabb;
 pub mod geometry;
 pub mod indexed_mesh;
 pub mod primitives;
-pub mod scene;
 pub mod transform;
 pub mod triangle_iterator;
 
@@ -31,14 +30,6 @@ pub mod triangle_iterator;
 pub use crate::aabb::Aabb;
 pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata, ValidatedEdgeManifoldMesh};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
-pub use crate::scene::Scene;
-pub use crate::scene::bake::{bake_leaf_to_world, bake_mesh_to_world};
-pub use crate::scene::error::SceneError;
-pub use crate::scene::expand::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT};
-pub use crate::scene::fragment::SceneFragment;
-pub use crate::scene::node::{
-    CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
-};
 pub use crate::triangle_iterator::{
     IndexedMeshBuildError, TriangleIterator, indexed_mesh_from_soup,
 };

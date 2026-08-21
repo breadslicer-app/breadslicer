@@ -13,6 +13,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 sc-3mf.workspace = true
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
+sc-scene.workspace = true
 sc-sl1cer.workspace = true
 
 png = "0.18.1"

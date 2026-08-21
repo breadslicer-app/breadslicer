@@ -16,10 +16,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rayon::prelude::*;
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedEdgeManifoldMesh};
-use sc_mesh_core::scene::bake::bake_leaf_to_world;
-use sc_mesh_core::scene::node::{NodeId, NodeKind};
-use sc_mesh_core::{IndexedMesh, Scene};
+use sc_scene::Scene;
+use sc_scene::bake::bake_leaf_to_world;
+use sc_scene::node::{NodeId, NodeKind};
 
 use crate::contour::{ContourLayer, ContourStack};
 use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
@@ -530,9 +531,10 @@ pub(crate) fn slice_layer(
 mod api_tests {
     use std::sync::Arc;
 
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_scene::Scene;
+    use sc_scene::node::LeafPayload;
 
     use crate::profile::{
         AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,

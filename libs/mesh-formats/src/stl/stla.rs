@@ -23,7 +23,8 @@ use std::str::Lines;
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_from_soup};
+use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex, indexed_mesh_from_soup};
+use sc_scene::Scene;
 
 use crate::error::LoadStlError;
 
@@ -512,7 +513,8 @@ fn lowercased_tokens(line: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod test_ascii_stl_reader {
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_scene::Scene;
 
     use super::{metadata_from_text, probe, read_stla_slice};
     use crate::error::LoadStlError;

@@ -5,8 +5,6 @@
 
 use std::sync::Arc;
 
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
@@ -15,6 +13,8 @@ use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterHardware, PrinterProfile, ResolveError,
     SceneOverrides, resolve,
 };
+use sc_scene::Scene;
+use sc_scene::node::LeafPayload;
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
 
 use super::prepare::{

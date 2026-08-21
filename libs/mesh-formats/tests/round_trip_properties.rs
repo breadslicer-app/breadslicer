@@ -23,8 +23,9 @@
 use std::io::Cursor;
 
 use proptest::prelude::*;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
+use sc_scene::Scene;
 
 const NORMAL: Normal = Normal::new([1.0, 0.0, 0.0]);
 

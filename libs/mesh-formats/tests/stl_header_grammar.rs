@@ -14,9 +14,10 @@
 
 use std::io::Cursor;
 
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_mesh_formats::error::LoadStlError;
 use sc_mesh_formats::stl::{read_stl, read_stla, write_stlb};
+use sc_scene::Scene;
 
 fn single_leaf_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(graph.reachable_leaf_count(), 1);

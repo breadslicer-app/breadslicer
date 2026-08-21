@@ -17,7 +17,7 @@
 //!   the STL variants route through `flatten_graph_to_mesh` first.
 //!
 //! Expanding paths bound their work against
-//! [`sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`] before walking, so a
+//! [`sc_scene::MAX_EXPANDED_LEAF_COUNT`] before walking, so a
 //! construction describing an exponential occurrence count
 //! is refused with a typed error instead of wedging an export.
 //!
@@ -29,7 +29,8 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sc_mesh_core::{CsgPolicy, IndexedMesh, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
+use sc_mesh_core::IndexedMesh;
+use sc_scene::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
 
 use crate::error::WriteSceneError;
 use crate::filetypes::WriteFormat;
@@ -362,9 +363,8 @@ mod flatten_scene_to_mesh_tests {
     use super::{FlattenWarning, flatten_graph_to_mesh};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{
-        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, Vertex,
-    };
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_scene::{LeafPayload, Scene};
 
     fn unit_triangle_mesh(name: Option<&str>) -> IndexedMesh {
         IndexedMesh {
@@ -486,7 +486,7 @@ mod flatten_scene_to_mesh_tests {
         // Flatten's CSG stance is uniform: without a kernel, any
         // reachable CSG node refuses, including one holding a
         // single leaf operand.
-        use sc_mesh_core::{CsgOp, SceneError};
+        use sc_scene::{CsgOp, SceneError};
 
         let mut graph = Scene::new();
         let leaf = graph
@@ -548,7 +548,8 @@ mod atomic_temp_path_tests {
 mod write_scene_atomicity_tests {
     use super::write_scene;
     use crate::filetypes::WriteFormat;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_scene::Scene;
 
     fn valid_graph() -> Scene {
         Scene::from(IndexedMesh {

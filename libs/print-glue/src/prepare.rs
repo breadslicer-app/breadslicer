@@ -19,13 +19,13 @@
 
 use std::fmt;
 
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::error::SceneError;
 use sc_print_primitives::PositiveFiniteMm;
 use sc_print_profiles::{
     EffectiveMaterial, PrinterHardware, PrinterProfile, ResolveError, resolve_layer_height,
     snap_to_z_step,
 };
+use sc_scene::Scene;
+use sc_scene::error::SceneError;
 use sc_sl1cer::profile::{AaLevel, PackingMode, SliceProfile};
 
 use crate::projection::{

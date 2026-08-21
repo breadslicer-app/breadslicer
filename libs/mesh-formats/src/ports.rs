@@ -19,7 +19,7 @@
 
 use std::io::{Read, Seek, Write};
 
-use sc_mesh_core::Scene;
+use sc_scene::Scene;
 
 pub(crate) mod sealed {
     pub trait Sealed {}
@@ -76,7 +76,7 @@ pub enum WriteSceneProgress {
 /// `Reference` nodes expand: each occurrence of an referenced subtree
 /// serialises under its composed call-site transform. Expanding
 /// walks bound their occurrence count against
-/// [`sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`] before serialising.
+/// [`sc_scene::MAX_EXPANDED_LEAF_COUNT`] before serialising.
 pub trait MeshWriter: sealed::Sealed {
     type Error: std::error::Error + Send + Sync + 'static;
     type Warning;

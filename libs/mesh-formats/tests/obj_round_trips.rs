@@ -8,11 +8,10 @@ use std::sync::Arc;
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, NodeId, NodeKind, Scene, Vertex,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_mesh_formats::messages::LoadObjWarning;
 use sc_mesh_formats::obj::{read_obj, write_obj};
+use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
 
 fn make_triangle_mesh(name: Option<&str>) -> IndexedMesh {
     let vertices = vec![

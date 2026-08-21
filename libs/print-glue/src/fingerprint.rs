@@ -18,9 +18,9 @@
 
 use std::fmt;
 
-use sc_mesh_core::scene::node::NodeId;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{Scene, SceneError};
+use sc_scene::node::NodeId;
+use sc_scene::{Scene, SceneError};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
 use sc_sl1cer::sliceable_leaves;

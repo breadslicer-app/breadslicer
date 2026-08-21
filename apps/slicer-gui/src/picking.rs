@@ -35,12 +35,12 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
-use sc_mesh_core::NodeId;
 use sc_mesh_core::aabb::arvo_transformed_aabb;
 use sc_mesh_core::geometry::DEGENERACY_SIN_SQ_THRESHOLD;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
+use sc_scene::NodeId;
 
 use crate::camera::OrbitCamera;
 
@@ -624,8 +624,9 @@ mod pick_object_tests {
     use std::sync::Arc;
 
     use super::*;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+    use sc_scene::{LeafPayload, Scene};
 
     fn unit_triangle_mesh() -> IndexedMesh {
         // CCW when viewed from +Z, ~unit-sized.

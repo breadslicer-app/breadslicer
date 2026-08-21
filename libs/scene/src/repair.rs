@@ -11,10 +11,10 @@
 //! refused targets keep their pointer identity (callers may diff on
 //! it to learn what changed).
 
-use crate::indexed_mesh::repair::{RepairAssessment, assess_repair};
-use crate::indexed_mesh::{IndexedMesh, MeshFix, RepairPasses, RepairRefusal};
-use crate::scene::Scene;
-use crate::scene::mesh_targets::MeshTarget;
+use crate::Scene;
+use crate::mesh_targets::MeshTarget;
+use sc_mesh_core::indexed_mesh::repair::{RepairAssessment, assess_repair};
+use sc_mesh_core::indexed_mesh::{IndexedMesh, MeshFix, RepairPasses, RepairRefusal};
 
 /// Everything one repair run did, and did not do, to one stored mesh.
 #[derive(Clone, Debug, PartialEq)]
@@ -96,10 +96,10 @@ mod scene_repair_tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::geometry::compute_normal_from_triangle_vertices;
-    use crate::primitives::{IndexedTriangle, Vertex};
-    use crate::scene::node::{LeafPayload, NodeId};
-    use crate::transform::Transform3D;
+    use crate::node::{LeafPayload, NodeId};
+    use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
+    use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
+    use sc_mesh_core::transform::Transform3D;
 
     fn tetrahedron() -> IndexedMesh {
         let vertices = vec![

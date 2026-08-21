@@ -35,9 +35,9 @@ use sc_3mf::model::{
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::Scene;
-use sc_mesh_core::scene::bake::bake_leaf_to_world;
 use sc_mesh_formats::threemf::mesh_to_model_data;
+use sc_scene::Scene;
+use sc_scene::bake::bake_leaf_to_world;
 use sc_sl1cer::LeafSlices;
 use sc_sl1cer::contour::{ClosedRing, ContourLayer};
 

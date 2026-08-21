@@ -35,10 +35,10 @@
 //! onto the scene root) is honoured.
 
 use glam::Vec3;
-use sc_mesh_core::NodeId;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
+use sc_scene::NodeId;
 
 use crate::build_volume::BuildVolume;
 
@@ -113,8 +113,9 @@ mod translation_clamp_tests {
 
     use super::*;
     use float_cmp::assert_approx_eq;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+    use sc_scene::{LeafPayload, Scene};
 
     fn vol() -> BuildVolume {
         // 100 x 60 x 80 mm, matching the BuildVolume tests' fixture.
@@ -191,7 +192,7 @@ mod translation_clamp_tests {
     /// leaf's identity local transform as the world transform and
     /// either over-block or fail to block the drag.
     fn spatial_with_unit_cube_under_root_translation(root_translation: [f64; 3]) -> SceneSpatial {
-        use sc_mesh_core::NodeId;
+        use sc_scene::NodeId;
 
         let mesh = IndexedMesh {
             meta: None,

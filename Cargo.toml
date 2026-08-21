@@ -15,6 +15,8 @@ members = [
     "libs/print-primitives",
     "libs/print-profiles",
     "libs/project-formats",
+    "libs/scene",
+    "libs/scene-edit",
     "libs/sl1cer",
     "libs/sla-formats",
 ]
@@ -40,6 +42,8 @@ sc-print-glue = { path = "libs/print-glue", version = "0.1.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.1.0" }
 sc-print-profiles = { path = "libs/print-profiles", version = "0.2.0" }
 sc-project-formats = { path = "libs/project-formats", version = "0.1.0" }
+sc-scene = { path = "libs/scene", version = "0.1.0" }
+sc-scene-edit = { path = "libs/scene-edit", version = "0.1.0" }
 sc-sl1cer = { path = "libs/sl1cer", version = "0.1.0" }
 sc-sla-formats = { path = "libs/sla-formats", version = "0.1.0" }
 

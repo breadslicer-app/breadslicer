@@ -14,11 +14,9 @@
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{
-    CsgPolicy, IndexedMesh, IndexedTriangle, LeafPayload, MAX_EXPANDED_LEAF_COUNT, MeshMetadata,
-    NodeId, Normal, Scene, SubtreeResourceId, Vertex,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_scene::{CsgPolicy, LeafPayload, MAX_EXPANDED_LEAF_COUNT, NodeId, Scene, SubtreeResourceId};
 
 use crate::error::WriteObjError;
 
@@ -286,7 +284,7 @@ fn over_cap_expansion_is_refused_before_any_output() {
 fn csg_operands_serialise_as_plain_objects() {
     // The OBJ writer's standing CSG stance: descend into the
     // operands and serialise them as plain objects.
-    use sc_mesh_core::CsgOp;
+    use sc_scene::CsgOp;
 
     let mut g = Scene::new();
     let a = g

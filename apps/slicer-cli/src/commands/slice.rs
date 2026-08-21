@@ -11,7 +11,6 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use sc_mesh_core::Scene;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
@@ -23,6 +22,7 @@ use sc_print_profiles::{
     load_material_profile_from_path, load_printer_profile_from_path,
 };
 use sc_project_formats::{ReadProjectWarning, load_scene};
+use sc_scene::Scene;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, VERSION};
 use sc_sla_formats::format::format_from_path;
@@ -383,11 +383,11 @@ mod write_grouped_errors_tests {
 
 #[cfg(test)]
 mod report_validation_failure_tests {
-    use sc_mesh_core::Scene;
     use sc_mesh_core::indexed_mesh::MeshFaceError;
     use sc_mesh_core::primitives::{TriVertexSlot, VertexIndex};
-    use sc_mesh_core::scene::node::NodeId;
     use sc_mesh_core::transform::Transform3D;
+    use sc_scene::Scene;
+    use sc_scene::node::NodeId;
     use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 
     use super::report_validation_failure;

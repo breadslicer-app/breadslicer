@@ -8,12 +8,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{EffectiveMaterial, MaterialProfile, PrinterProfile};
+use sc_scene::Scene;
+use sc_scene::node::LeafPayload;
 use sc_sl1cer::CancelToken;
 use sc_sl1cer::error::SliceSceneError;
 

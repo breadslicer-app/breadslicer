@@ -10,8 +10,9 @@
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_scene::{LeafPayload, Scene};
 
 use crate::filetypes::WriteFormat;
 use crate::ports::WriteSceneProgress;

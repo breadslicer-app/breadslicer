@@ -15,8 +15,8 @@ use std::io;
 use std::path::PathBuf;
 
 use sc_3mf::error::{ModelWriteError, PackageWriteError};
-use sc_mesh_core::SceneError;
-use sc_mesh_core::scene::node::NodeId;
+use sc_scene::SceneError;
+use sc_scene::node::NodeId;
 
 use crate::format::Format;
 
@@ -279,7 +279,7 @@ mod writer_error_tests {
     }
 
     fn mint_node_id() -> NodeId {
-        let mut scene = sc_mesh_core::Scene::new();
+        let mut scene = sc_scene::Scene::new();
         scene.add_group(None, sc_mesh_core::transform::Transform3D::Identity)
     }
 

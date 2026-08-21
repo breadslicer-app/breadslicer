@@ -9,9 +9,9 @@ use std::error::Error;
 use std::io;
 use std::path::PathBuf;
 
-use sc_mesh_core::Scene;
-use sc_mesh_core::SceneError;
 use sc_mesh_core::transform::Transform3D;
+use sc_scene::Scene;
+use sc_scene::SceneError;
 
 use crate::error::{WriteObjError, WriteSceneError, WriteStlError};
 

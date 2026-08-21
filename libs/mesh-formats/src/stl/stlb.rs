@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rayon::iter::ParallelIterator;
 use rayon::slice::ParallelSlice;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::{MeshMetadata, Normal, Scene, Triangle, Vertex, indexed_mesh_from_soup};
+use sc_mesh_core::{MeshMetadata, Normal, Triangle, Vertex, indexed_mesh_from_soup};
+use sc_scene::Scene;
 
 use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadStlError;

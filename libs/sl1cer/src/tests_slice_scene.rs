@@ -10,10 +10,11 @@
 
 use std::sync::Arc;
 
-use sc_mesh_core::scene::node::{CsgOp, LeafPayload, NodeId, SceneMetadata};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
 use sc_mesh_fixtures::unit_cube_mesh;
+use sc_scene::Scene;
+use sc_scene::node::{CsgOp, LeafPayload, NodeId, SceneMetadata};
 
 use crate::error::{InvalidLeafGeometry, SliceSceneError};
 use crate::profile::{
@@ -463,8 +464,8 @@ mod progress_and_cancel_tests {
 #[cfg(test)]
 mod parallel_equivalence_tests {
     use sc_mesh_core::indexed_mesh::MeshTopology;
-    use sc_mesh_core::scene::bake::bake_leaf_to_world;
     use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel};
+    use sc_scene::bake::bake_leaf_to_world;
 
     use crate::api::slice_layer;
     use crate::contour::{ContourLayer, ContourStack};

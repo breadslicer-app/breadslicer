@@ -17,10 +17,11 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::Vertex;
-use sc_mesh_core::scene::Scene;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload};
+use sc_scene::LeafPayload;
+use sc_scene::Scene;
 
 use super::controller::ViewportController;
 use super::types::FrameState;

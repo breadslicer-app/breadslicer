@@ -24,7 +24,8 @@ use std::num::{ParseFloatError, ParseIntError};
 use std::path::PathBuf;
 
 use sc_3mf::error::{ModelParseError, ModelWriteError, PackageReadError, PackageWriteError};
-use sc_mesh_core::{IndexedMeshBuildError, NodeId, SceneError};
+use sc_mesh_core::IndexedMeshBuildError;
+use sc_scene::{NodeId, SceneError};
 
 use crate::filetypes::MeshFileType;
 
@@ -111,7 +112,7 @@ pub enum WriteSceneError {
     Io(std::io::Error),
     EmptyScene,
     /// The scene expands to more leaf occurrences than the flatten
-    /// path accepts (see `sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`).
+    /// path accepts (see `sc_scene::MAX_EXPANDED_LEAF_COUNT`).
     /// Mirrors the 3MF reader's load-side budget: referenced
     /// subtrees can multiply occurrences exponentially in the node
     /// count, so the writers bound the work before walking.
@@ -618,7 +619,7 @@ pub enum WriteObjError {
     Io(std::io::Error),
     Graph(SceneError),
     /// The scene expands to more leaf occurrences than the writer
-    /// accepts (see `sc_mesh_core::MAX_EXPANDED_LEAF_COUNT`).
+    /// accepts (see `sc_scene::MAX_EXPANDED_LEAF_COUNT`).
     /// Mirrors the 3MF reader's load-side budget: referenced
     /// subtrees can multiply occurrences exponentially in the node
     /// count, so the writer bounds the work before walking.

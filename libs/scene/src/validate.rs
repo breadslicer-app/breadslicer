@@ -9,9 +9,9 @@
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 
-use crate::scene::Scene;
-use crate::scene::error::SceneError;
-use crate::scene::node::{CsgOp, LeafPayload, NodeId, NodeKind};
+use crate::Scene;
+use crate::error::SceneError;
+use crate::node::{CsgOp, LeafPayload, NodeId, NodeKind};
 
 impl Scene {
     pub(crate) fn expansion_successor(&self, node_idx: usize, child_i: usize) -> Option<NodeId> {
@@ -199,9 +199,9 @@ mod scene_validate_tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::indexed_mesh::IndexedMesh;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::transform::Transform3D;
+    use sc_mesh_core::indexed_mesh::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::Transform3D;
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {

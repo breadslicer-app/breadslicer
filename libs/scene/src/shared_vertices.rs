@@ -14,9 +14,9 @@ use std::num::NonZeroU32;
 
 use rayon::slice::ParallelSliceMut;
 
-use crate::primitives::Vertex;
-use crate::scene::Scene;
-use crate::scene::node::{LeafPayload, NodeId, NodeKind};
+use crate::Scene;
+use crate::node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::primitives::Vertex;
 
 impl Scene {
     /// Returns the ids of every leaf that shares at least one vertex
@@ -27,7 +27,7 @@ impl Scene {
     /// Both inline-mesh leaves and mesh-resource leaves are walked.
     /// Mesh-resource leaves that reference a dangling slot are
     /// skipped; the structural validator at
-    /// [`Scene::validate`](crate::scene::Scene::validate) handles
+    /// [`Scene::validate`](Scene::validate) handles
     /// that variant separately.
     ///
     /// Complexity: O(total vertex count * log) time and O(total
@@ -122,9 +122,9 @@ mod shared_vertices_tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::indexed_mesh::IndexedMesh;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::transform::Transform3D;
+    use sc_mesh_core::indexed_mesh::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::Transform3D;
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
         IndexedMesh {

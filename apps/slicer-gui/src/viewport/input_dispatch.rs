@@ -28,7 +28,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use sc_mesh_core::NodeId;
+use sc_scene::NodeId;
 
 use super::gizmo_fsm::{
     GizmoFsm, HoverCtx as GizmoHoverCtx, MoveCtx as GizmoMoveCtx, StartCtx as GizmoStartCtx,

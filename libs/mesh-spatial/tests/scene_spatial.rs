@@ -14,12 +14,13 @@
 
 use std::sync::Arc;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::edit::SceneEdit;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
 use sc_mesh_spatial::{PrimingProgress, SceneSpatial, scene_aabb};
+use sc_scene::{LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
+use sc_scene_edit::SceneEdit;
 
 /// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
 /// The integration tests below operate on single- or two-leaf

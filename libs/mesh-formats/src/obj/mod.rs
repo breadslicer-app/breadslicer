@@ -12,7 +12,7 @@ mod writer;
 
 use std::io::{Read, Seek, Write};
 
-use sc_mesh_core::Scene;
+use sc_scene::Scene;
 
 use crate::error::{LoadObjError, WriteSceneError};
 use crate::messages::LoadObjWarning;

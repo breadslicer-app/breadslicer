@@ -20,7 +20,7 @@ pub(crate) const STL_TRIANGLE_RECORD_BYTES: usize = 50;
 
 use std::io::{Cursor, Read, Seek, Write};
 
-use sc_mesh_core::Scene;
+use sc_scene::Scene;
 
 use crate::error::{LoadStlError, WriteSceneError};
 use crate::messages::LoadStlWarning;

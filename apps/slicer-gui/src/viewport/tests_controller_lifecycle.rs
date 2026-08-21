@@ -19,7 +19,7 @@
 //! Tests that drive `handle_rendering_setup` end-to-end land under
 //! the software-wgpu integration vehicle (Phase 1.F).
 
-use sc_mesh_core::scene::Scene;
+use sc_scene::Scene;
 
 use super::controller::ViewportController;
 use super::types::FrameState;

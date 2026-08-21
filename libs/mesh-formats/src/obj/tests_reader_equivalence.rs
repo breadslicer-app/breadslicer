@@ -21,12 +21,10 @@ use float_cmp::approx_eq;
 use proptest::prelude::*;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, NodeKind, Normal, Scene, SceneMetadata,
-    Vertex,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_scene::node::LeafPayload;
+use sc_scene::{NodeId, NodeKind, Scene, SceneMetadata};
 
 use super::reader::{Caps, read_obj_with_caps, strip_trailing_nuls};
 use crate::error::LoadObjError;

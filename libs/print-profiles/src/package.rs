@@ -73,7 +73,7 @@ impl ExportManifest {
     /// Build a manifest stamped with the current local time. Pass the
     /// exporting application's version, not this library's:
     /// `sc_slicer_version` names the product that produced the
-    /// archive. The descriptive fields start as `None`.
+    /// archive.
     pub fn stamped_now(app_version: &str) -> Self {
         Self {
             name: None,

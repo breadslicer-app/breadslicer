@@ -10,9 +10,9 @@
 //! subtrees (and any other detached node) count; meshes held only by
 //! external `Arc`s (undo history, clipboard) do not.
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
-use crate::scene::{Scene, node_id_at_index};
+use crate::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
+use crate::{Scene, node_id_at_index};
+use sc_mesh_core::indexed_mesh::IndexedMesh;
 
 /// One place a [`Scene`] stores a mesh: a slot in the mesh-resource
 /// arena, or an inline-mesh leaf in the node arena. A resource shared
@@ -117,8 +117,8 @@ mod mesh_targets_tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::transform::Transform3D;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::Transform3D;
 
     fn triangle_mesh() -> IndexedMesh {
         IndexedMesh {

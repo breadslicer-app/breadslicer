@@ -13,11 +13,12 @@
 use std::sync::Arc;
 
 use proptest::prelude::*;
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
+use sc_scene::{LeafPayload, Scene};
 
 /// Bounded finite f32: avoid NaN / ±∞ / subnormals so the
 /// element-wise min/max walk is deterministic.

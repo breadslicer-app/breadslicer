@@ -138,10 +138,10 @@ mod display_warnings_tests {
     use super::display_warnings;
     use sc_3mf::model::ObjectType;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{NodeId, Scene};
     use sc_mesh_formats::messages::{
         LoadMeshWarning, LoadObjWarning, LoadThreeMfWarning, SceneLoadWarning, SharedVertexLeaf,
     };
+    use sc_scene::{NodeId, Scene};
 
     /// Allocates `count` fresh NodeIds out of a throw-away scene so
     /// tests don't depend on NodeId having a public raw constructor.

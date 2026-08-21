@@ -11,9 +11,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
 use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+use sc_scene::{LeafPayload, NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::LayerSchedule;
 

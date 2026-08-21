@@ -20,8 +20,9 @@ mod scene_spatial;
 pub use clusters::TriangleClusters;
 pub use scene_spatial::{ObjectQuery, PrimingProgress, SceneSpatial};
 
+use sc_mesh_core::Aabb;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{Aabb, NodeId, NodeKind};
+use sc_scene::{NodeId, NodeKind};
 
 /// World-space AABB of a scene, computed through cached per-mesh
 /// AABBs and unioned via Arvo's transformed-AABB formula. Returns
@@ -31,7 +32,7 @@ use sc_mesh_core::{Aabb, NodeId, NodeKind};
 /// geometry here because [`SceneSpatial`]'s construction contract
 /// rejects scenes with subtree references, so on every
 /// constructible input this function agrees with the uncached,
-/// reference-expanding [`sc_mesh_core::Scene::aabb`] walk, which
+/// reference-expanding [`sc_scene::Scene::aabb`] walk, which
 /// recomputes from vertex data each call. Callers that query
 /// repeatedly should construct a [`SceneSpatial`] and use this
 /// function; one-shot callers may use the uncached form directly.

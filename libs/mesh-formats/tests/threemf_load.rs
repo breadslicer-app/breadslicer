@@ -17,13 +17,14 @@ use sc_3mf::model::{
 };
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::messages::{LoadMeshWarning, LoadThreeMfWarning, SceneLoadWarning};
 use sc_mesh_formats::{LoadedMesh, load_mesh_from_path, load_mesh_from_reader};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -12,9 +12,9 @@
 
 use std::fmt;
 
-use sc_mesh_core::scene::Scene;
 use sc_print_primitives::{AaLevel, PositiveFiniteMm};
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
+use sc_scene::Scene;
 use sc_sl1cer::contour::{ContourStack, LayerAlignmentError, merge_stacks};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};

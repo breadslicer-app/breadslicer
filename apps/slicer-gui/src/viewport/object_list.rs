@@ -7,9 +7,9 @@
 //! metadata (with localised fallbacks and duplicate disambiguation),
 //! and pushing the resulting list to the Slint window.
 
-use sc_mesh_core::NodeId;
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
+use sc_scene::NodeId;
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeKind};
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
 use crate::MainWindow;
@@ -119,7 +119,8 @@ mod build_object_list_names_tests {
     use super::*;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, MeshMetadata, SceneMetadata};
+    use sc_mesh_core::{IndexedMesh, MeshMetadata};
+    use sc_scene::SceneMetadata;
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
     fn graph_with_group_root() -> (Scene, NodeId) {

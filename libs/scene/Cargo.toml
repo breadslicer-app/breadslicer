@@ -1,0 +1,18 @@
+[package]
+name = "sc-scene"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Scene aggregate for the resin pipeline: nodes, mesh resources, traversal, expansion, bake, validation and repair orchestration"
+categories = ["rendering::data-formats"]
+keywords = ["3d", "mesh", "scene", "graph"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+rayon.workspace = true
+sc-mesh-core.workspace = true
+
+[dev-dependencies]
+float-cmp.workspace = true
+proptest.workspace = true

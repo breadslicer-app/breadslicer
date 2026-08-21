@@ -25,9 +25,9 @@ use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;
 use crate::gizmo::axis::Axis;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_scene::node::LeafPayload;
 
 /// Loader-faithful empty graph: identity-Group root, no leaves yet.
 fn graph_with_group_root() -> (Scene, NodeId) {
@@ -254,7 +254,7 @@ fn read_buffer_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::B
 /// render tests resolve "the only leaf" through this helper
 /// instead of fabricating an id.
 fn first_leaf(graph: &Scene) -> NodeId {
-    use sc_mesh_core::scene::node::NodeKind;
+    use sc_scene::node::NodeKind;
     let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
         let node = graph.node(id).expect("walked id should be live");

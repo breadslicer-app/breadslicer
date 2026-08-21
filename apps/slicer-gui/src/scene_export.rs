@@ -11,10 +11,10 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sc_mesh_core::Scene;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::ports::WriteSceneProgress;
 use sc_mesh_formats::scene_writer::{self, FlattenWarning};
+use sc_scene::Scene;
 
 use crate::export_progress::ExportPhase;
 use crate::scene_document::SceneDocument;
@@ -113,7 +113,8 @@ mod scene_export_tests {
 
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, Scene, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+    use sc_scene::{LeafPayload, Scene};
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {

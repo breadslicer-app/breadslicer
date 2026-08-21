@@ -30,10 +30,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::edit::SceneEdit;
-use sc_mesh_core::scene::mesh_targets::MeshTarget;
-use sc_mesh_core::scene::repair::SceneRepairOutcome;
+use sc_scene::Scene;
+use sc_scene::mesh_targets::MeshTarget;
+use sc_scene::repair::SceneRepairOutcome;
+use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
@@ -391,12 +391,12 @@ fn target_display_name(graph: &Scene, target: MeshTarget, ordinal: usize) -> Str
 mod repair_run_tests {
     use std::path::PathBuf;
 
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::{
         cuboid_with_y_tunnel_and_flipped_faces, cuboid_with_z_tunnel_and_flipped_faces,
         unit_cube_mesh, unit_cube_with_flipped_faces,
     };
+    use sc_scene::node::LeafPayload;
 
     use super::*;
     use crate::mesh_health::{MeshHealth, scene_mesh_health};

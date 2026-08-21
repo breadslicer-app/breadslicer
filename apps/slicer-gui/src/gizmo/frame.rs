@@ -7,8 +7,8 @@
 //! controller's per-frame state (pivot, scale, visibility,
 //! lock-out mask) into the renderer's struct.
 
-use sc_mesh_core::NodeId;
 use sc_mesh_spatial::SceneSpatial;
+use sc_scene::NodeId;
 
 use crate::camera::OrbitCamera;
 use crate::mesh_render::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility, default_fov_y};
@@ -63,9 +63,10 @@ mod build_gizmo_frame_tests {
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
 
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+    use sc_scene::{LeafPayload, Scene};
 
     use crate::camera::{AxisView, OrbitCamera};
 

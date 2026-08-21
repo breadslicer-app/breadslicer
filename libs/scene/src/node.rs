@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Node-level types of [`crate::scene::Scene`].
+//! Node-level types of [`Scene`].
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::transform::Transform3D;
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::transform::Transform3D;
 
 /// Optional human-readable name and free-form comment carried by a
 /// graph node and by the graph's top-level metadata. Loaders attach
@@ -83,9 +83,9 @@ impl SubtreeResourceId {
 
 /// Where a leaf sits in the scene graph: as a scene root, or as a
 /// child of another node at a specific position in the parent's
-/// children list. Recorded by [`crate::scene::Scene::remove_leaf`]
+/// children list. Recorded by [`Scene::remove_leaf`]
 /// alongside the leaf's payload and transform so the inverse
-/// [`crate::scene::Scene::install_leaf_at`] can re-attach the leaf
+/// [`Scene::install_leaf_at`] can re-attach the leaf
 /// at the exact same place, preserving sibling order under the
 /// parent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

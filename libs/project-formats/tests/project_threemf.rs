@@ -12,9 +12,8 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::Arc;
 
-use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, MeshMetadata, Scene};
+use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_mesh_formats::load_mesh_from_reader;
@@ -26,6 +25,8 @@ use sc_project_formats::{
     ProjectFileType, ProjectPayload, infer_project_file_type_from_extension, read_project,
     read_project_with_progress, write_project,
 };
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeId, NodeKind};
 
 const TEST_PRINTER_TOML: &[u8] = include_bytes!("fixtures/test-printer.toml");
 const TEST_RESIN_TOML: &[u8] = include_bytes!("fixtures/test-resin.toml");

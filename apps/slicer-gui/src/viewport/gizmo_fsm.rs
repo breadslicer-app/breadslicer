@@ -15,8 +15,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use sc_mesh_core::NodeId;
 use sc_mesh_core::transform::Transform3D;
+use sc_scene::NodeId;
 
 use crate::PointerModifiers;
 use crate::build_volume::BuildVolume;

@@ -6,14 +6,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::messages::{LoadMeshWarning, SceneLoadWarning};
 use sc_mesh_formats::scene_writer::write_scene;
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeKind};
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 

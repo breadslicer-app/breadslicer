@@ -17,7 +17,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use sc_mesh_core::Scene;
 use sc_mesh_formats::scene_writer::write_bytes_atomically;
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::ProfileLibraries;
@@ -25,6 +24,7 @@ use sc_project_formats::{
     EmbedProfiles, PlateSlices, ProjectFileType, ProjectPayload, WriteProgress,
     write_project_with_progress,
 };
+use sc_scene::Scene;
 
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
@@ -241,8 +241,9 @@ mod scene_save_tests {
     use std::sync::Arc;
 
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, IndexedTriangle, LeafPayload, Normal, Scene, Vertex};
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
     use sc_project_formats::{EmbeddedProfile, read_project};
+    use sc_scene::{LeafPayload, Scene};
 
     fn printer_id(raw: &str) -> PrinterId {
         PrinterId::new(raw).expect("test id is a valid slug")

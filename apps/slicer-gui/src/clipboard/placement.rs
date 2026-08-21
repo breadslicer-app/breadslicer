@@ -189,11 +189,12 @@ fn overlaps_any(
 mod placement_tests {
     use std::sync::Arc;
 
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-    use sc_mesh_core::{IndexedMesh, Scene};
     use sc_mesh_spatial::SceneSpatial;
+    use sc_scene::Scene;
+    use sc_scene::node::LeafPayload;
 
     use super::*;
 

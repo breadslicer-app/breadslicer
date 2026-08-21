@@ -11,12 +11,12 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses, RepairRefusal};
-use sc_mesh_core::scene::repair::SceneRepairOutcome;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::filetypes::{
     MeshFileType, WriteFormat, infer_mesh_file_format_from_extension,
 };
 use sc_mesh_formats::load_mesh_from_path;
+use sc_scene::repair::SceneRepairOutcome;
 
 use crate::commands::diagnose::show_vertex_errors;
 use crate::commands::mesh_loader::display_warnings;
@@ -81,7 +81,7 @@ pub(crate) fn fix(
 }
 
 /// Render one warning line per refused target of a
-/// [`Scene::repair_meshes`](sc_mesh_core::scene::Scene::repair_meshes)
+/// [`Scene::repair_meshes`](sc_scene::Scene::repair_meshes)
 /// run, keeping the historical per-refusal wording, and return how
 /// many targets were refused. Vertex errors are listed before their
 /// warning, as the abort path used to do. When the scene stores more

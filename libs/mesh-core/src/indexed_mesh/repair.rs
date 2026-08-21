@@ -114,7 +114,7 @@ pub struct MeshRepairReport {
 /// What a repair run would do to a mesh, decided on a shared borrow
 /// (see [`assess_repair`]).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum RepairAssessment {
+pub enum RepairAssessment {
     /// Every enabled pass would find nothing to do.
     Clean,
     /// The run would be refused; the mesh would not change.
@@ -130,7 +130,7 @@ pub(crate) enum RepairAssessment {
 /// orientation planning included, so the assessment and the report
 /// can never disagree; the assessment-equivalence pins keep the pair
 /// in lockstep.
-pub(crate) fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessment {
+pub fn assess_repair(mesh: &IndexedMesh, passes: RepairPasses) -> RepairAssessment {
     if let Err(errors) = mesh.validate_vertices() {
         return RepairAssessment::Refused(RepairRefusal::InvalidVertices(errors));
     }

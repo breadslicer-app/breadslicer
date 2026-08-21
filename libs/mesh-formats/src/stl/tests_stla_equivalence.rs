@@ -16,9 +16,9 @@ use std::io::{BufRead, BufReader, Cursor, Read};
 use proptest::prelude::*;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{
-    IndexedMesh, MeshMetadata, Normal, Scene, Triangle, TriangleIterator, Vertex,
-    indexed_mesh_from_soup,
+    IndexedMesh, MeshMetadata, Normal, Triangle, TriangleIterator, Vertex, indexed_mesh_from_soup,
 };
+use sc_scene::Scene;
 
 use crate::error::LoadStlError;
 use crate::stl::stla::{PARALLEL_PARSE_MIN_BODY_BYTES, parse_solid_header, read_stla_slice};

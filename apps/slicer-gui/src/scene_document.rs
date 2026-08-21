@@ -13,7 +13,7 @@
 //!
 //! Mutation goes through one path: [`SceneDocument::apply_edit`].
 //! It accepts a typed [`SceneEdit`] from
-//! [`sc_mesh_core::scene::edit`] and routes through
+//! [`sc_scene_edit`] and routes through
 //! [`SceneSpatial::apply_edit`], which keeps spatial caches in sync
 //! with the scene state. There is no closure-based mutation entry
 //! point: the cache layer would not be able to inspect a closure to
@@ -25,18 +25,18 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use sc_mesh_core::Scene;
-use sc_mesh_core::SceneFragment;
-use sc_mesh_core::scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{MeshResourceId, NodeId};
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
+use sc_scene::Scene;
+use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
+use sc_scene::{MeshResourceId, NodeId};
+use sc_scene_edit::SceneFragment;
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::profile::LayerSchedule;
 
-pub(crate) use sc_mesh_core::scene::edit::SceneEdit;
+pub(crate) use sc_scene_edit::SceneEdit;
 
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{SliceParams, SliceResult};
@@ -1146,9 +1146,10 @@ mod scene_document_tests {
     use std::sync::Arc;
 
     use super::*;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeKind};
+    use sc_scene::{LeafPayload, NodeKind};
 
     /// Loader-faithful empty graph: a single identity-Group root
     /// with no children, the same shape an empty-file load produces.

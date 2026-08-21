@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! [`SceneError`]: failure variants surfaced by [`Scene`](crate::scene::Scene)
+//! [`SceneError`]: failure variants surfaced by [`Scene`](Scene)
 //! mutators, validators and queries, plus its `Display` and `Error`
 //! conformances.
 
 use std::fmt;
 
-use crate::scene::node::{MeshResourceId, NodeId, SubtreeResourceId};
-use crate::transform::TransformError;
+use crate::node::{MeshResourceId, NodeId, SubtreeResourceId};
+use sc_mesh_core::transform::TransformError;
 
-/// Failure modes of [`Scene`](crate::scene::Scene) mutators,
+/// Failure modes of [`Scene`](Scene) mutators,
 /// validators and queries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SceneError {

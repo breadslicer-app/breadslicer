@@ -23,10 +23,9 @@ use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, Vertex,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_mesh_formats::stl::{write_stla, write_stlb};
+use sc_scene::{LeafPayload, Scene};
 use tempfile::TempDir;
 
 const BIN: &str = "sc-slicer-cli";

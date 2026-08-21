@@ -14,9 +14,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use glam::Vec3;
-use sc_mesh_core::NodeId;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_scene::NodeId;
 
 use super::gizmo_drag::{axis_rotation, compose_about_pivot};
 use super::translation_clamp::clamp_translate_edit;

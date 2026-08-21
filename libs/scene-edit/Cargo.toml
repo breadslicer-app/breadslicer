@@ -1,0 +1,14 @@
+[package]
+name = "sc-scene-edit"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
+description = "Typed scene-edit vocabulary: undo / redo edits and clipboard fragments over sc-scene"
+categories = ["rendering::data-formats"]
+keywords = ["3d", "mesh", "scene", "undo"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[dependencies]
+sc-mesh-core.workspace = true
+sc-scene.workspace = true

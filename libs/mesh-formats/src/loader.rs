@@ -7,8 +7,8 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
-use sc_mesh_core::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeKind};
 
 use crate::error::LoadMeshError;
 use crate::filetypes::{MeshFileType, infer_mesh_file_format_from_extension};

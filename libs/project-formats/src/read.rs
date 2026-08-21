@@ -8,7 +8,7 @@
 use std::io::{Read, Seek};
 
 use sc_3mf::package::DecompressionProgress;
-use sc_mesh_core::Scene;
+use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 
 use crate::error::ReadProjectError;

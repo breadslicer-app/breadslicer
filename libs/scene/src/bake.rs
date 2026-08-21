@@ -5,14 +5,14 @@
 
 //! World-space mesh baking for [`Scene`].
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::primitives::{IndexedTriangle, Vertex};
-use crate::scene::Scene;
-use crate::scene::error::SceneError;
-use crate::scene::expand::CsgPolicy;
-use crate::scene::node::{LeafPayload, Node, NodeId, NodeKind};
-use crate::transform::AffineTransform3D;
-use crate::transform::Transform3D;
+use crate::Scene;
+use crate::error::SceneError;
+use crate::expand::CsgPolicy;
+use crate::node::{LeafPayload, Node, NodeId, NodeKind};
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
+use sc_mesh_core::transform::AffineTransform3D;
+use sc_mesh_core::transform::Transform3D;
 
 impl Scene {
     /// Merges all leaf meshes reachable from scene roots into a single
@@ -200,9 +200,9 @@ fn bake_into_affine(
 #[cfg(test)]
 mod scene_bake_tests {
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene::node::{CsgOp, LeafPayload};
+    use crate::node::{CsgOp, LeafPayload};
     use float_cmp::assert_approx_eq;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
 
@@ -458,7 +458,7 @@ mod scene_bake_tests {
 
     #[test]
     fn bake_mesh_to_world_drops_source_metadata() {
-        use crate::indexed_mesh::MeshMetadata;
+        use sc_mesh_core::indexed_mesh::MeshMetadata;
 
         let mut mesh = triangle_mesh(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],

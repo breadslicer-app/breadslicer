@@ -16,11 +16,10 @@ use sc_3mf::error::ModelParseError;
 use sc_3mf::model::{Matrix3D, ModelDocument, ObjectPayload, ObjectType, parse_model};
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{
-    CsgOp, IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex, bake_leaf_to_world,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata};
+use sc_scene::{CsgOp, Scene, bake_leaf_to_world};
 
 use crate::error::{LoadMeshError, LoadThreeMfError, WriteThreeMfError};
 use crate::filetypes::MeshFileType;
@@ -810,7 +809,7 @@ mod writer_tests {
 
     /// Subtree resource holding one triangle leaf under an identity
     /// group; returns the resource id.
-    fn triangle_subtree(g: &mut Scene) -> sc_mesh_core::SubtreeResourceId {
+    fn triangle_subtree(g: &mut Scene) -> sc_scene::SubtreeResourceId {
         let leaf = g
             .add_leaf(
                 None,

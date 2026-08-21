@@ -14,14 +14,14 @@
 use std::path::PathBuf;
 
 use sc_3mf::model::ObjectPayload;
-use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{CsgPolicy, Scene};
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::load_mesh_from_path;
 use sc_mesh_formats::messages::{LoadMeshWarning, SceneLoadWarning};
 use sc_mesh_formats::scene_writer::{FlattenWarning, write_scene};
 use sc_mesh_formats::threemf::scene_to_model_document;
+use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
+use sc_scene::{CsgPolicy, Scene};
 
 /// Ground truth for `P_XXX_0910_02.3mf`, read off the vendored file:
 /// 5 component references to one mesh object of 3664 vertices and

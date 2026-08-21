@@ -13,8 +13,8 @@
 //! body does not have to mix input-state reading, FSM-to-render-enum
 //! translation, and spatial gizmo-frame assembly inline.
 
-use sc_mesh_core::NodeId;
 use sc_mesh_spatial::SceneSpatial;
+use sc_scene::NodeId;
 
 use super::gizmo_drag::{DragOp, GizmoState};
 use super::input_dispatch::InputDispatch;

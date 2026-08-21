@@ -19,12 +19,12 @@ use std::sync::Arc;
 use sc_3mf::model::{MeshResolution, ModelDocument, ObjectPayload, SliceStackContent, parse_model};
 use sc_3mf::names::START_PART_REL_TYPE;
 use sc_3mf::package::{Package, PartName};
-use sc_mesh_core::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, SceneMetadata};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::messages::LoadThreeMfWarning;
 use sc_mesh_formats::threemf::read_threemf;
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_sl1cer::profile::{
     AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
 };

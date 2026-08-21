@@ -9,11 +9,10 @@ use std::sync::Arc;
 use float_cmp::approx_eq;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::primitives::VertexIndex;
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{
-    IndexedMesh, IndexedTriangle, MeshMetadata, NodeId, Normal, Scene, SceneMetadata, Vertex,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_scene::node::LeafPayload;
+use sc_scene::{NodeId, Scene, SceneMetadata};
 
 use crate::MAX_MESH_ELEMENT_COUNT;
 use crate::error::LoadObjError;
@@ -846,8 +845,9 @@ mod parse_face_vertex_index_tests {
 mod read_obj_tests {
     use std::io::Cursor;
 
-    use sc_mesh_core::SceneMetadata;
-    use sc_mesh_core::{IndexedMesh, MeshMetadata, NodeId, NodeKind, Normal, Scene, Vertex};
+    use sc_mesh_core::{IndexedMesh, MeshMetadata, Normal, Vertex};
+    use sc_scene::SceneMetadata;
+    use sc_scene::{NodeId, NodeKind, Scene};
 
     use super::{LoadObjError, LoadObjWarning, read_obj};
 

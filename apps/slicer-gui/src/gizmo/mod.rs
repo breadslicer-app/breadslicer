@@ -16,9 +16,9 @@ pub mod hit_test;
 mod tolerances;
 
 use glam::Vec3;
-use sc_mesh_core::NodeId;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
+use sc_scene::NodeId;
 
 use crate::camera::OrbitCamera;
 
@@ -79,9 +79,10 @@ mod pivot_tests {
 
     use super::*;
     use float_cmp::assert_approx_eq;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+    use sc_scene::{LeafPayload, Scene};
 
     fn triangle_mesh(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> IndexedMesh {
         IndexedMesh::new(

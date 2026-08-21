@@ -11,10 +11,10 @@ use glam::{Mat4, Vec3, Vec4};
 use sc_mesh_core::Aabb;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::Vertex;
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeId, NodeKind};
 use slint::wgpu_29::wgpu;
 
 use super::device_loss::DeviceLoss;
@@ -706,9 +706,9 @@ mod build_gpu_scene_data_tests {
 
     use super::*;
     use float_cmp::assert_approx_eq;
-    use sc_mesh_core::MeshResourceId;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_scene::MeshResourceId;
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
     fn graph_with_group_root() -> (Scene, NodeId) {
@@ -1508,7 +1508,7 @@ mod leaf_buffer_limit_tests {
     use super::*;
     use sc_mesh_core::MeshMetadata;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::SceneMetadata;
+    use sc_scene::node::SceneMetadata;
 
     /// Small enough that a mesh of a few dozen faces exceeds it.
     const LIMIT: u64 = 1024;

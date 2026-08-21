@@ -13,14 +13,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use sc_3mf::package::Package;
-use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, MeshMetadata, Scene};
+use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
 use sc_mesh_formats::threemf::{read_threemf, read_threemf_from_package, write_threemf};
 use sc_mesh_formats::{LoadedMesh, load_mesh_from_path};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 
 fn named(mesh: IndexedMesh, name: &str) -> IndexedMesh {
     let mut mesh = mesh;

@@ -14,13 +14,14 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use sc_mesh_core::scene::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, MeshMetadata, Scene};
+use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_mesh_formats::obj::{read_obj, write_obj};
 use sc_mesh_formats::stl::{read_stla, read_stlb, write_stla, write_stlb};
 use sc_mesh_formats::threemf::{read_threemf, write_threemf};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeId, NodeKind};
 
 /// The trio's hostile names with the cleaned (3MF) and folded
 /// (line-format) forms: a directive-injection attempt, a Han name,
@@ -176,7 +177,7 @@ fn emitted_model_xml_carries_no_xml_illegal_bytes() {
     // conformant parser refuses the whole document over 1 such
     // byte. The scene name (Title metadata) is covered too.
     let mut source = hostile_trio_scene();
-    source.set_meta(Some(sc_mesh_core::SceneMetadata {
+    source.set_meta(Some(sc_scene::SceneMetadata {
         name: Some("Ti\u{7}tle\u{FFFF}".to_string()),
         comment: None,
     }));

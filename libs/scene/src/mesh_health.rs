@@ -11,9 +11,9 @@
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 
-use crate::scene::Scene;
-use crate::scene::mesh_targets::MeshTarget;
-use crate::scene::node::{NodeId, NodeKind};
+use crate::Scene;
+use crate::mesh_targets::MeshTarget;
+use crate::node::{NodeId, NodeKind};
 
 impl Scene {
     /// Returns the ids of every leaf whose mesh is not closed and
@@ -84,10 +84,10 @@ mod mesh_health_tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::indexed_mesh::IndexedMesh;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene::node::LeafPayload;
-    use crate::transform::Transform3D;
+    use crate::node::LeafPayload;
+    use sc_mesh_core::indexed_mesh::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::Transform3D;
 
     /// A closed, consistently wound tetrahedron: a valid manifold. The
     /// stored normal is irrelevant to the manifold check (which looks

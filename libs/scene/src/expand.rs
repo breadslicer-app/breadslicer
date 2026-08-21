@@ -13,11 +13,11 @@
 
 use std::collections::HashMap;
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::scene::Scene;
-use crate::scene::error::SceneError;
-use crate::scene::node::{LeafPayload, NodeId, NodeKind, SubtreeResourceId};
-use crate::transform::Transform3D;
+use crate::Scene;
+use crate::error::SceneError;
+use crate::node::{LeafPayload, NodeId, NodeKind, SubtreeResourceId};
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::transform::Transform3D;
 
 /// Hard ceiling shared by consumers that expand subtree references
 /// into leaf occurrences (format readers, scene writers). Expansion
@@ -230,10 +230,10 @@ struct ScopeTally {
 #[cfg(test)]
 mod expand_tests {
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene::node::{CsgOp, SubtreeResourceId};
-    use crate::transform::AffineTransform3D;
+    use crate::node::{CsgOp, SubtreeResourceId};
     use float_cmp::assert_approx_eq;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::AffineTransform3D;
     use std::sync::Arc;
 
     fn tri_mesh() -> IndexedMesh {

@@ -9,7 +9,7 @@
 //! anything with detected problems (or not yet checked) opens in
 //! Prepare, the home of the future mesh-repair tooling.
 
-use sc_mesh_core::scene::Scene;
+use sc_scene::Scene;
 
 use crate::WorkspaceSection;
 
@@ -51,9 +51,10 @@ pub(crate) fn initial_section(health: MeshHealth) -> WorkspaceSection {
 mod mesh_health_tests {
     use std::sync::Arc;
 
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId};
+    use sc_scene::{LeafPayload, NodeId};
 
     use super::*;
 

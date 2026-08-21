@@ -14,10 +14,11 @@ use std::sync::Arc;
 
 use sc_3mf::model::{ModelDocument, Slice, SlicePolygon, SliceStackContent, parse_model};
 use sc_3mf::package::{Package, PartName};
-use sc_mesh_core::scene::node::LeafPayload;
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, Scene};
 use sc_mesh_fixtures::{cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_scene::Scene;
+use sc_scene::node::LeafPayload;
 use sc_sl1cer::profile::{
     AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
 };

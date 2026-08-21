@@ -158,7 +158,7 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(crate) fn install_graph_for_test(&self, graph: sc_mesh_core::Scene) {
+    pub(crate) fn install_graph_for_test(&self, graph: sc_scene::Scene) {
         // Tests don't care about the source path; populate the slot
         // with a sentinel so the document's invariant ("scene present
         // <=> path present") holds and any future test assertion on
@@ -918,7 +918,7 @@ impl ViewportController {
     /// Context-menu orchestration uses this to decide whether to
     /// move the selection to the right-clicked object and whether
     /// to surface the Copy item.
-    pub fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_mesh_core::NodeId> {
+    pub fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_scene::NodeId> {
         self.input
             .pick_at(
                 self.session.document(),
@@ -1468,9 +1468,10 @@ mod selection_tests {
     use std::sync::Arc;
 
     use super::*;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+    use sc_scene::{LeafPayload, Scene};
 
     /// `PointerModifiers::default()` with all flags off. The selection
     /// tests don't exercise modifier-driven branches, so every press
@@ -1716,10 +1717,11 @@ mod viewport_click_tests {
     use crate::scene_document::SceneSubscription;
     use float_cmp::assert_approx_eq;
     use glam::Vec3;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
+    use sc_scene::{LeafPayload, NodeId, Scene};
     use std::cell::Cell;
     use std::sync::Arc;
 
@@ -2607,9 +2609,10 @@ mod keyboard_focus_tests {
     use crate::gizmo::axis::Axis;
     use crate::scene_document::SceneEdit;
     use glam::Vec3;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+    use sc_scene::{LeafPayload, Scene};
 
     /// Loader-shape one-object graph: a single inline-mesh leaf
     /// attached under an identity-Group root.
@@ -3036,9 +3039,10 @@ mod paste_clipboard_tests {
     use std::sync::Arc;
 
     use super::*;
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{IndexedMesh, SceneFragment};
+    use sc_scene_edit::SceneFragment;
 
     fn triangle_clipboard() -> Clipboard {
         let mesh = Arc::new(IndexedMesh {

@@ -18,10 +18,10 @@
 //! [`SliceResult`] at install time, when the scene-geometry marker is
 //! known.
 
-use sc_mesh_core::Scene;
 use sc_print_glue::{PersistedSliceValidity, validate_persisted_slices};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::ProjectPayload;
+use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::LayerSchedule;
 
@@ -117,13 +117,13 @@ mod reloaded_slices_tests {
 
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
     use sc_print_glue::slice_input_fingerprint;
     use sc_project_formats::{
         EmbedProfiles, ProjectFileType, infer_project_file_type_from_extension, read_project,
         write_project,
     };
+    use sc_scene::node::LeafPayload;
 
     fn cube_mesh() -> IndexedMesh {
         let v = |x, y, z| Vertex::new([x, y, z]);

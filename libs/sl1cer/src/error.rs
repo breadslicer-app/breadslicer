@@ -12,11 +12,11 @@
 
 use std::fmt;
 
-use sc_mesh_core::SceneError;
 use sc_mesh_core::indexed_mesh::{
     MeshEdgeManifoldError, MeshErrorReport, MeshFaceError, MeshVertexError, group_errors_by_variant,
 };
-use sc_mesh_core::scene::node::NodeId;
+use sc_scene::SceneError;
+use sc_scene::node::NodeId;
 
 /// Maximum number of representative face indices listed per variant
 /// in the [`SliceError`] summary output. Larger lists are truncated;
@@ -335,9 +335,9 @@ impl std::error::Error for SliceSceneError {
 mod slice_error_tests {
     use std::error::Error as _;
 
-    use sc_mesh_core::Scene;
-    use sc_mesh_core::scene::error::SceneError;
     use sc_mesh_core::transform::Transform3D;
+    use sc_scene::Scene;
+    use sc_scene::error::SceneError;
 
     use super::*;
 
@@ -611,10 +611,10 @@ mod manifold_check_summary_tests {
 mod slice_scene_error_tests {
     use std::error::Error as _;
 
-    use sc_mesh_core::Scene;
     use sc_mesh_core::indexed_mesh::{MeshEdgeManifoldError, MeshVertexError};
     use sc_mesh_core::primitives::{CoordAxis, TriVertexSlot, VertexIndex};
     use sc_mesh_core::transform::Transform3D;
+    use sc_scene::Scene;
 
     use super::*;
 

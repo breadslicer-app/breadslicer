@@ -12,8 +12,8 @@ use sc_3mf::names::{
     DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE,
 };
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::Scene;
 use sc_mesh_formats::threemf::scene_to_model_document;
+use sc_scene::Scene;
 
 use crate::error::WriteThreeMfProjectError;
 use crate::payload::{EmbedProfiles, EmbeddedProfile, ProjectPayload};

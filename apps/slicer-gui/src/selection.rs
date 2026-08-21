@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-use sc_mesh_core::NodeId;
+use sc_scene::NodeId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct LeafId(pub(crate) NodeId);

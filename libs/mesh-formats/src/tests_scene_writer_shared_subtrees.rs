@@ -15,11 +15,9 @@
 use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{
-    CsgPolicy, IndexedMesh, IndexedTriangle, LeafPayload, MAX_EXPANDED_LEAF_COUNT, MeshMetadata,
-    NodeId, Normal, Scene, SubtreeResourceId, Vertex,
-};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_scene::{CsgPolicy, LeafPayload, MAX_EXPANDED_LEAF_COUNT, NodeId, Scene, SubtreeResourceId};
 
 use crate::error::{WriteObjError, WriteSceneError};
 use crate::filetypes::WriteFormat;

@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use glam::{Mat4, Vec3};
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::NodeId;
+use sc_scene::Scene;
+use sc_scene::node::NodeId;
 use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;

@@ -12,8 +12,9 @@
 
 use std::io::Cursor;
 
-use sc_mesh_core::{IndexedMesh, Scene};
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_formats::stl::{read_stla, read_stlb};
+use sc_scene::Scene;
 
 fn unwrap_single_mesh(graph: &Scene) -> &IndexedMesh {
     assert_eq!(

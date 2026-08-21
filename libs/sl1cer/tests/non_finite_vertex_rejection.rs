@@ -12,10 +12,11 @@
 
 use std::sync::Arc;
 
-use sc_mesh_core::scene::node::{LeafPayload, NodeId, SceneMetadata};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, Vertex};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeId, SceneMetadata};
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::error::{InvalidLeafGeometry, SliceError, SliceSceneError};
 use sc_sl1cer::profile::{

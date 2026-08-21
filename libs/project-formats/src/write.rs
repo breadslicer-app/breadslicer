@@ -7,7 +7,7 @@
 
 use std::io::Write;
 
-use sc_mesh_core::Scene;
+use sc_scene::Scene;
 
 use crate::error::WriteProjectError;
 use crate::filetypes::ProjectFileType;

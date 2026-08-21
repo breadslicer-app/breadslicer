@@ -24,9 +24,10 @@ use sc_3mf::model::{
 };
 use sc_3mf::names::{DEFAULT_MODEL_PART_NAME, MODEL_PART_CONTENT_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName, Relationship};
-use sc_mesh_core::scene::node::{Node, NodeId, NodeKind, SubtreeResourceId};
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, Scene, SceneError};
+use sc_scene::node::{Node, NodeId, NodeKind, SubtreeResourceId};
+use sc_scene::{Scene, SceneError};
 
 use crate::clean_name::CleanName;
 use crate::error::WriteThreeMfError;

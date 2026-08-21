@@ -9,10 +9,11 @@
 
 use std::sync::Arc;
 
-use sc_mesh_core::scene::node::{LeafPayload, SceneMetadata};
+use sc_mesh_core::Vertex;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{Scene, Vertex};
 use sc_mesh_fixtures::unit_cube_mesh;
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
 

@@ -15,12 +15,12 @@ use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::LoadedMesh;
 use sc_mesh_formats::error::LoadMeshError;
 use sc_mesh_formats::filetypes::infer_mesh_file_format_from_extension;
 use sc_mesh_formats::loader::{load_mesh_from_reader, scene_shared_vertices_warning};
 use sc_mesh_formats::messages::LoadMeshWarning;
+use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 
 use crate::error::ReadProjectError;

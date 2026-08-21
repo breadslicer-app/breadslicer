@@ -20,6 +20,8 @@ sc-print-glue = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }
 sc-print-profiles = { workspace = true }
 sc-project-formats = { workspace = true }
+sc-scene = { workspace = true }
+sc-scene-edit = { workspace = true }
 sc-sl1cer = { workspace = true }
 
 anyhow = { workspace = true }

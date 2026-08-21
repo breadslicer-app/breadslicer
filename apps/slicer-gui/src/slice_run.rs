@@ -25,9 +25,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_mesh_core::scene::Scene;
 use sc_print_glue::{SlicingParams, slice_input_fingerprint, slice_plate};
 use sc_print_primitives::{AaLevel, MaterialId, PositiveFiniteMm, PrinterId};
+use sc_scene::Scene;
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::LayerSchedule;
 use sc_sl1cer::{CancelToken, SliceProgress};
@@ -451,9 +451,9 @@ mod capture_tests {
 
     use std::sync::Arc;
 
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_fixtures::unit_cube_mesh;
+    use sc_scene::node::LeafPayload;
     use sc_sl1cer::contour::{ClosedRing, ContourLayer, Polygon};
     use sc_sl1cer::geom2d::Point2D;
 

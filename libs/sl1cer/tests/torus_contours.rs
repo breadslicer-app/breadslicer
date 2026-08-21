@@ -22,9 +22,10 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use sc_mesh_core::scene::node::{LeafPayload, NodeId};
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, Normal, Vertex};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeId};
 use sc_sl1cer::profile::{
     AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
 };

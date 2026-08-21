@@ -5,7 +5,7 @@
 
 //! Application-wide clipboard for the copy / paste pipeline.
 //!
-//! Holds a [`sc_mesh_core::SceneFragment`] captured from the source
+//! Holds a [`sc_scene_edit::SceneFragment`] captured from the source
 //! window's selection, plus a counter that the paste path uses to
 //! offset consecutive pastes so each copy is visually distinguishable.
 //!
@@ -17,9 +17,10 @@
 
 pub(crate) mod placement;
 
-use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
+use sc_mesh_core::Aabb;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{Aabb, SceneFragment};
+use sc_scene::node::{LeafPayload, NodeKind};
+use sc_scene_edit::SceneFragment;
 
 use crate::scene_document::SceneDocument;
 
@@ -69,7 +70,7 @@ impl Clipboard {
 /// component is dropped because the paste primitive sets the new
 /// coordinates from the placement search. The mesh `Arc` is preserved
 /// by identity, so a later same-scene paste can dedupe via
-/// [`sc_mesh_core::Scene::find_mesh_resource_by_arc`] instead of
+/// [`sc_scene::Scene::find_mesh_resource_by_arc`] instead of
 /// pushing a fresh `AddMeshResource` edit.
 pub(crate) fn fragment_from_document_selection(doc: &SceneDocument) -> Option<SceneFragment> {
     let node_id = doc.selection_primary_node_id()?;
@@ -135,9 +136,10 @@ mod clipboard_tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use sc_mesh_core::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::LeafPayload;
-    use sc_mesh_core::{IndexedMesh, Scene};
+    use sc_scene::Scene;
+    use sc_scene::node::LeafPayload;
 
     use crate::selection::{LeafId, Selection};
 
@@ -168,7 +170,7 @@ mod clipboard_tests {
     fn scene_with_inline_leaf(
         mesh: Arc<IndexedMesh>,
         leaf_local: Transform3D,
-    ) -> (Scene, sc_mesh_core::NodeId) {
+    ) -> (Scene, sc_scene::NodeId) {
         let mut g = Scene::new();
         let root = g.add_group(None, Transform3D::Identity);
         g.add_root(root).unwrap();

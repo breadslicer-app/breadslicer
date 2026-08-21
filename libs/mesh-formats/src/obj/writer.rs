@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_mesh_core::{CsgPolicy, IndexedMesh, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
+use sc_mesh_core::IndexedMesh;
+use sc_scene::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT, Scene, bake_mesh_to_world};
 
 use crate::ascii_name::AsciiName;
 use crate::error::WriteObjError;
@@ -212,10 +213,8 @@ mod tests {
     use std::sync::Arc;
 
     use sc_mesh_core::transform::Transform3D;
-    use sc_mesh_core::{
-        IndexedMesh, IndexedTriangle, LeafPayload, MeshMetadata, Normal, Scene, SceneMetadata,
-        Vertex,
-    };
+    use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+    use sc_scene::{LeafPayload, Scene, SceneMetadata};
 
     use super::write_obj;
 

@@ -4,7 +4,7 @@
  */
 
 use sc_3mf::model::ObjectType;
-use sc_mesh_core::NodeId;
+use sc_scene::NodeId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadObjWarning {

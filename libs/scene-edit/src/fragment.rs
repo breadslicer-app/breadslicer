@@ -12,7 +12,7 @@
 //! fragment, allocates target ids in the destination scene's arenas,
 //! emits the matching `AddMeshResource` / `AddRootLeaf` (and later
 //! `AddGroup` / `AddCsg` / `AddReference`) typed edits, and wraps the
-//! whole thing in a single [`crate::scene::edit::SceneEdit::Compound`].
+//! whole thing in a single [`crate::edit::SceneEdit::Compound`].
 //!
 //! The current builder only populates the fragment with a single
 //! root leaf and a single mesh resource. The same type generalises
@@ -22,10 +22,10 @@
 
 use std::sync::Arc;
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::scene::Scene;
-use crate::scene::node::LeafPayload;
-use crate::transform::Transform3D;
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::transform::Transform3D;
+use sc_scene::Scene;
+use sc_scene::node::LeafPayload;
 
 /// Self-contained scene subgraph. The newtype around [`Scene`] makes
 /// the role explicit at API boundaries (a paste primitive that takes
@@ -76,9 +76,9 @@ impl SceneFragment {
 #[cfg(test)]
 mod scene_fragment_tests {
     use super::*;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene::node::NodeKind;
-    use crate::transform::AffineTransform3D;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::AffineTransform3D;
+    use sc_scene::node::NodeKind;
 
     fn triangle_arc() -> Arc<IndexedMesh> {
         Arc::new(IndexedMesh {

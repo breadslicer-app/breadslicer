@@ -19,14 +19,14 @@ use std::sync::Arc;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use sc_3mf::package::{Package, PartName};
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer::write_scene;
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_project_formats::{EmbedProfiles, ProjectFileType, ProjectPayload, write_project};
+use sc_scene::Scene;
+use sc_scene::node::LeafPayload;
 use tempfile::tempdir;
 
 fn fixture_path(name: &str) -> PathBuf {

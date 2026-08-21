@@ -10,11 +10,11 @@ use sc_3mf::error::PackageWriteError;
 use sc_3mf::model::{ResourceId, parse_model};
 use sc_3mf::names::{MODEL_PART_CONTENT_TYPE, MUST_PRESERVE_REL_TYPE, START_PART_REL_TYPE};
 use sc_3mf::package::{Package, PartName};
-use sc_mesh_core::Scene;
-use sc_mesh_core::scene::node::LeafPayload;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_fixtures::unit_cube_mesh;
 use sc_print_primitives::{MaterialId, PrinterId};
+use sc_scene::Scene;
+use sc_scene::node::LeafPayload;
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 

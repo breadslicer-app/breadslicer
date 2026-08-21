@@ -14,9 +14,10 @@
 
 use std::sync::Arc;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{IndexedMesh, LeafPayload, Scene};
+use sc_scene::{LeafPayload, Scene};
 
 use super::controller::ViewportController;
 use super::keyboard_drive::KbdFocus;

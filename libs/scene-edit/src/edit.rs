@@ -13,10 +13,10 @@
 
 use std::sync::Arc;
 
-use crate::indexed_mesh::IndexedMesh;
-use crate::scene::Scene;
-use crate::scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId};
-use crate::transform::Transform3D;
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::transform::Transform3D;
+use sc_scene::Scene;
+use sc_scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId};
 
 /// Typed scene mutation. The shared edit shape across the workspace:
 /// the GUI's undo/redo stack, the headless apply paths, and any
@@ -313,7 +313,7 @@ impl SceneEdit {
 #[cfg(test)]
 mod scene_edit_tests {
     use super::*;
-    use crate::transform::AffineTransform3D;
+    use sc_mesh_core::transform::AffineTransform3D;
 
     #[test]
     fn set_local_transform_is_noop_when_before_equals_after() {
@@ -341,10 +341,10 @@ mod scene_edit_tests {
 
     #[test]
     fn add_root_leaf_is_structural() {
-        use std::num::NonZeroU32;
+        let mut g = Scene::new();
         let edit = SceneEdit::AddRootLeaf {
-            node_id: crate::scene::node::NodeId(NonZeroU32::new(1).unwrap()),
-            mesh: crate::scene::node::MeshResourceId(NonZeroU32::new(1).unwrap()),
+            node_id: g.allocate_unbound_node_id(),
+            mesh: g.allocate_unbound_mesh_resource_id(),
             local_transform: Transform3D::Identity,
         };
         assert!(edit.is_structural());
@@ -352,7 +352,8 @@ mod scene_edit_tests {
 
     #[test]
     fn compound_is_structural_iff_any_inner_is() {
-        let nid = crate::scene::node::NodeId(std::num::NonZeroU32::new(1).unwrap());
+        let mut g = Scene::new();
+        let nid = g.allocate_unbound_node_id();
         let only_set = SceneEdit::Compound(vec![SceneEdit::SetLocalTransform {
             node_id: nid,
             before: Transform3D::Identity,
@@ -367,7 +368,7 @@ mod scene_edit_tests {
             },
             SceneEdit::AddRootLeaf {
                 node_id: nid,
-                mesh: crate::scene::node::MeshResourceId(std::num::NonZeroU32::new(1).unwrap()),
+                mesh: g.allocate_unbound_mesh_resource_id(),
                 local_transform: Transform3D::Identity,
             },
         ]);
@@ -438,9 +439,10 @@ mod scene_edit_tests {
 
     #[test]
     fn set_local_transform_on_dangling_node_id_is_silent_noop() {
-        use std::num::NonZeroU32;
         let mut g = Scene::new();
-        let bogus = NodeId(NonZeroU32::new(99).unwrap());
+        // An id allocated by another scene is out of range for `g`,
+        // whose arena is empty.
+        let bogus = Scene::new().allocate_unbound_node_id();
         // Should not panic; the underlying graph mutator returns an
         // error and we discard it.
         SceneEdit::SetLocalTransform {
@@ -454,8 +456,8 @@ mod scene_edit_tests {
     }
 
     fn fresh_scene_with_one_resource() -> (Scene, NodeId, MeshResourceId, Transform3D) {
-        use crate::indexed_mesh::IndexedMesh;
-        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::indexed_mesh::IndexedMesh;
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         let mut g = Scene::new();
         let mesh = IndexedMesh {
             meta: None,
@@ -577,10 +579,12 @@ mod scene_edit_tests {
 
     #[test]
     fn add_root_leaf_with_out_of_range_id_is_silent_noop() {
-        use std::num::NonZeroU32;
         let mut g = Scene::new();
-        let bogus = NodeId(NonZeroU32::new(99).unwrap());
-        let bogus_rid = MeshResourceId(NonZeroU32::new(99).unwrap());
+        // Ids allocated by another scene are out of range for `g`,
+        // whose arenas are empty.
+        let mut scratch = Scene::new();
+        let bogus = scratch.allocate_unbound_node_id();
+        let bogus_rid = scratch.allocate_unbound_mesh_resource_id();
         SceneEdit::AddRootLeaf {
             node_id: bogus,
             mesh: bogus_rid,
@@ -605,7 +609,7 @@ mod scene_edit_tests {
     }
 
     fn fresh_scene_with_unbound_mesh_slot() -> (Scene, MeshResourceId, Arc<IndexedMesh>) {
-        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         let mut g = Scene::new();
         let mesh = Arc::new(IndexedMesh {
             meta: None,
@@ -684,7 +688,7 @@ mod scene_edit_tests {
     }
 
     fn triangle_mesh_arc() -> Arc<IndexedMesh> {
-        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         Arc::new(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -845,7 +849,7 @@ mod scene_edit_tests {
         // Identity-only SetLocalTransform and same-Arc Replace*
         // edits are the only noop shapes in the enum's vocabulary;
         // everything else is unconditionally mutating.
-        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         let mut g = Scene::new();
         let nid = g.add_group(None, Transform3D::Identity);
         let noop = SceneEdit::SetLocalTransform {
@@ -932,7 +936,7 @@ mod scene_edit_tests {
     }
 
     fn triangle_arc() -> Arc<IndexedMesh> {
-        use crate::primitives::{IndexedTriangle, Normal, Vertex};
+        use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
         Arc::new(IndexedMesh {
             meta: None,
             vertices: vec![
@@ -975,7 +979,7 @@ mod scene_edit_tests {
         let mut g = Scene::new();
         let nid = g.allocate_unbound_node_id();
         let attachment = LeafAttachment::Parent {
-            parent: NodeId(std::num::NonZeroU32::new(42).unwrap()),
+            parent: g.allocate_unbound_node_id(),
             position: 3,
         };
         let payload = LeafPayload::Mesh(triangle_arc());
@@ -1052,8 +1056,10 @@ mod scene_edit_tests {
             local_transform: Transform3D::Identity,
         };
         edit.apply_to_scene(&mut g);
-        let children = g.node(parent).unwrap().kind.children();
-        assert_eq!(children, &[new_id, sibling]);
+        let sc_scene::NodeKind::Group { children } = &g.node(parent).unwrap().kind else {
+            panic!("parent should still be a group");
+        };
+        assert_eq!(children.as_slice(), &[new_id, sibling]);
     }
 
     #[test]

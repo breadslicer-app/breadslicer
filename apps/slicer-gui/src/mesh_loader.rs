@@ -18,7 +18,6 @@
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
-use sc_mesh_core::scene::Scene;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_mesh_formats::messages::LoadMeshWarning;
 use sc_mesh_spatial::SceneSpatial;
@@ -27,6 +26,7 @@ use sc_project_formats::{
     ProfileRefWarning, ProjectPayload, ReadProjectWarning, SUPPORTED_SCENE_FILE_EXTENSIONS,
     is_supported_scene_file_extension, load_scene,
 };
+use sc_scene::Scene;
 use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
@@ -442,8 +442,8 @@ mod place_on_plate_tests {
     use super::*;
     use sc_mesh_core::indexed_mesh::IndexedMesh;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_mesh_core::scene::node::LeafPayload;
     use sc_mesh_core::transform::Transform3D;
+    use sc_scene::node::LeafPayload;
 
     fn cube_mesh(min: [f32; 3], max: [f32; 3]) -> IndexedMesh {
         let v = |x, y, z| Vertex::new([x, y, z]);

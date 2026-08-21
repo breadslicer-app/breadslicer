@@ -13,9 +13,9 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sc_mesh_core::Scene;
 use sc_mesh_formats::filetypes::WriteFormat;
 use sc_mesh_formats::scene_writer;
+use sc_scene::Scene;
 
 pub(crate) fn write_scene(
     graph: &Scene,

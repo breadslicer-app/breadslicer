@@ -16,9 +16,10 @@ use sc_3mf::model::{
 use sc_3mf::names::MODEL_PART_CONTENT_TYPE;
 use sc_3mf::package::Package;
 use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
-use sc_mesh_core::scene::node::{LeafPayload, MeshResourceId, NodeId, SceneMetadata};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Scene, Vertex};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, MeshResourceId, NodeId, SceneMetadata};
 
 use crate::error::LoadThreeMfError;
 use crate::messages::LoadThreeMfWarning;
@@ -30,7 +31,7 @@ use crate::messages::LoadThreeMfWarning;
 /// computed up front and an oversized document is refused before any
 /// scene node is built, in the same spirit as
 /// [`crate::MAX_MESH_ELEMENT_COUNT`].
-pub use sc_mesh_core::MAX_EXPANDED_LEAF_COUNT;
+pub use sc_scene::MAX_EXPANDED_LEAF_COUNT;
 
 /// Hard ceiling on component nesting depth. The conversion recurses
 /// one frame per `<components>` level; the parser's

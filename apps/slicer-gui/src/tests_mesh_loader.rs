@@ -15,8 +15,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-use sc_mesh_core::scene::Scene;
-use sc_mesh_core::scene::node::{LeafPayload, NodeKind};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, MeshMetadata};
 use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
@@ -25,6 +23,8 @@ use sc_mesh_formats::scene_writer::write_scene;
 use sc_project_formats::{
     EmbedProfiles, ProjectPayload, infer_project_file_type_from_extension, write_project,
 };
+use sc_scene::Scene;
+use sc_scene::node::{LeafPayload, NodeKind};
 
 use crate::build_volume::BuildVolume;
 use crate::error_dialog::DialogManager;

@@ -12,8 +12,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, LeafPayload, NodeId, Scene};
+use sc_scene::{LeafPayload, NodeId, Scene};
 
 use crate::scene_document::{
     SceneDocument, SceneEdit, SceneEvent, SceneSubscription, UNDO_STACK_CAP,

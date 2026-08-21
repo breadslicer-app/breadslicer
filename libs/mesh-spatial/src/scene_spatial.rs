@@ -14,11 +14,10 @@
 //! and the spatial cache that belongs to that mesh; mismatched
 //! pairings are structurally impossible.
 
-use sc_mesh_core::scene::edit::SceneEdit;
 use sc_mesh_core::transform::Transform3D;
-use sc_mesh_core::{
-    Aabb, IndexedMesh, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, Scene, Vertex,
-};
+use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
+use sc_scene::{LeafPayload, MeshResourceId, Node, NodeId, NodeKind, Scene};
+use sc_scene_edit::SceneEdit;
 
 use crate::clusters::TriangleClusters;
 use crate::mesh_spatial::MeshSpatial;

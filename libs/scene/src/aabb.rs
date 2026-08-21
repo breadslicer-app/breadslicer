@@ -8,11 +8,11 @@
 #[cfg(test)]
 use std::sync::Arc;
 
-use crate::aabb::Aabb;
-use crate::scene::Scene;
-use crate::scene::error::SceneError;
-use crate::scene::node::{LeafPayload, NodeId, NodeKind};
-use crate::transform::{AffineTransform3D, Transform3D};
+use crate::Scene;
+use crate::error::SceneError;
+use crate::node::{LeafPayload, NodeId, NodeKind};
+use sc_mesh_core::aabb::Aabb;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 
 impl Scene {
     /// Axis-aligned bounding box over every scene root in world space.
@@ -134,11 +134,11 @@ impl Scene {
 #[cfg(test)]
 mod scene_aabb_tests {
     use super::*;
-    use crate::indexed_mesh::IndexedMesh;
-    use crate::primitives::{IndexedTriangle, Normal, Vertex};
-    use crate::scene::node::{CsgOp, LeafPayload};
-    use crate::transform::AffineTransform3D;
+    use crate::node::{CsgOp, LeafPayload};
     use float_cmp::assert_approx_eq;
+    use sc_mesh_core::indexed_mesh::IndexedMesh;
+    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_mesh_core::transform::AffineTransform3D;
 
     fn unit_cube_mesh() -> IndexedMesh {
         let v: Vec<Vertex> = vec![
