@@ -13,8 +13,7 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::Scene;
-use sc_scene::node::{LeafPayload, NodeId, NodeKind};
+use sc_scene::{CsgPolicy, NodeId, Scene, SceneError};
 use slint::wgpu_29::wgpu;
 
 use super::device_loss::DeviceLoss;
@@ -278,10 +277,13 @@ impl GpuScene {
         mut progress: impl FnMut(UploadProgress),
     ) -> Result<Self> {
         let mut scene_triangles: u64 = 0;
-        for_each_leaf(graph, |_node_id, _world_transform, mesh| {
-            scene_triangles += mesh.faces().len() as u64;
-            Ok(())
-        })?;
+        graph.for_each_expanded_leaf::<SceneError, _>(
+            CsgPolicy::Descend,
+            |_node_id, _world_transform, mesh| {
+                scene_triangles += mesh.faces().len() as u64;
+                Ok(())
+            },
+        )?;
         let total_triangles = scene_triangles.saturating_mul(2);
         let mut processed_triangles: u64 = 0;
         let mut tick = |processed: &mut u64, triangles: u64| {
@@ -416,15 +418,18 @@ pub(super) fn build_model_entries(
     build_volume: BuildVolume,
 ) -> Result<Vec<ModelEntry>> {
     let mut entries: Vec<ModelEntry> = Vec::new();
-    for_each_leaf(graph, |node_id, world_transform, mesh| {
-        let selected = selection == Some(node_id);
-        let breaches = leaf_breaches_envelope(mesh, &world_transform, &build_volume);
-        entries.push(ModelEntry {
-            model: transform_to_mat4(&world_transform).to_cols_array_2d(),
-            flags: [u32::from(selected), u32::from(breaches), 0, 0],
-        });
-        Ok(())
-    })?;
+    graph.for_each_expanded_leaf::<SceneError, _>(
+        CsgPolicy::Descend,
+        |node_id, world_transform, mesh| {
+            let selected = selection == Some(node_id);
+            let breaches = leaf_breaches_envelope(mesh, world_transform, &build_volume);
+            entries.push(ModelEntry {
+                model: transform_to_mat4(world_transform).to_cols_array_2d(),
+                flags: [u32::from(selected), u32::from(breaches), 0, 0],
+            });
+            Ok(())
+        },
+    )?;
     Ok(entries)
 }
 
@@ -472,102 +477,52 @@ pub(super) fn build_envelope_warning_mask(graph: &Scene, build_volume: BuildVolu
     let env_min = build_volume.envelope_min_mm();
     let env_max = build_volume.envelope_max_mm();
     let mut mask = 0u32;
-    for_each_leaf(graph, |_node_id, world_transform, mesh| {
-        let transform_mat = transform_to_mat4(&world_transform);
-        for v in mesh.vertices() {
-            let p = transform_mat.transform_point3(Vec3::from(v.coords()));
-            if p.x < env_min.x {
-                mask |= FACE_BIT_X_NEG;
+    graph.for_each_expanded_leaf::<SceneError, _>(
+        CsgPolicy::Descend,
+        |_node_id, world_transform, mesh| {
+            let transform_mat = transform_to_mat4(world_transform);
+            for v in mesh.vertices() {
+                let p = transform_mat.transform_point3(Vec3::from(v.coords()));
+                if p.x < env_min.x {
+                    mask |= FACE_BIT_X_NEG;
+                }
+                if p.x > env_max.x {
+                    mask |= FACE_BIT_X_POS;
+                }
+                if p.y < env_min.y {
+                    mask |= FACE_BIT_Y_NEG;
+                }
+                if p.y > env_max.y {
+                    mask |= FACE_BIT_Y_POS;
+                }
+                if p.z < env_min.z {
+                    mask |= FACE_BIT_Z_NEG;
+                }
+                if p.z > env_max.z {
+                    mask |= FACE_BIT_Z_POS;
+                }
             }
-            if p.x > env_max.x {
-                mask |= FACE_BIT_X_POS;
-            }
-            if p.y < env_min.y {
-                mask |= FACE_BIT_Y_NEG;
-            }
-            if p.y > env_max.y {
-                mask |= FACE_BIT_Y_POS;
-            }
-            if p.z < env_min.z {
-                mask |= FACE_BIT_Z_NEG;
-            }
-            if p.z > env_max.z {
-                mask |= FACE_BIT_Z_POS;
-            }
-        }
-        Ok(())
-    })?;
+            Ok(())
+        },
+    )?;
     Ok(mask)
 }
 
-/// How many leaves are reachable from `graph.roots()`. Counts the same
-/// population [`build_gpu_scene_data`] would turn into draws, so a zero
-/// answer means there is nothing for the GPU to mirror.
-///
-/// Walks through [`for_each_leaf`], so a dangling node id or dangling
-/// subtree-resource id surfaces as an error instead of being flattened
-/// into a count of zero.
+/// Count the leaf occurrences [`Scene::for_each_expanded_leaf`]
+/// visits under [`CsgPolicy::Descend`]: the population
+/// [`build_gpu_scene_data`] turns into draws, so a zero answer means
+/// there is nothing for the GPU to mirror. A dangling id surfaces as
+/// an error instead of being flattened into a count of zero.
 pub(super) fn renderable_leaf_count(graph: &Scene) -> Result<usize> {
     let mut count = 0usize;
-    for_each_leaf(graph, |_node_id, _world_transform, _mesh| {
-        count += 1;
-        Ok(())
-    })?;
+    graph.for_each_expanded_leaf::<SceneError, _>(
+        CsgPolicy::Descend,
+        |_node_id, _world_transform, _mesh| {
+            count += 1;
+            Ok(())
+        },
+    )?;
     Ok(count)
-}
-
-/// Pre-order traversal of every leaf reachable from `graph.roots()`,
-/// resolving `MeshResource` payloads and composing each leaf's world
-/// transform from the ancestor chain. The closure receives the leaf's
-/// `NodeId`, its composed world transform, and a borrow of the leaf's
-/// mesh. Propagates the closure's error and any dangling-id error from
-/// the walk.
-fn for_each_leaf<F>(graph: &Scene, mut f: F) -> Result<()>
-where
-    F: FnMut(NodeId, Transform3D, &IndexedMesh) -> Result<()>,
-{
-    for &root in graph.roots() {
-        descend_leaves(graph, root, Transform3D::Identity, &mut f)?;
-    }
-    Ok(())
-}
-
-fn descend_leaves<F>(
-    graph: &Scene,
-    node_id: NodeId,
-    parent_world: Transform3D,
-    f: &mut F,
-) -> Result<()>
-where
-    F: FnMut(NodeId, Transform3D, &IndexedMesh) -> Result<()>,
-{
-    let node = graph
-        .node(node_id)
-        .ok_or_else(|| anyhow!("dangling node id {}", node_id.get()))?;
-    let world_from_self = parent_world.compose(&node.local_transform);
-    match &node.kind {
-        NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-            for &c in children {
-                descend_leaves(graph, c, world_from_self, f)?;
-            }
-        }
-        NodeKind::Reference { resource } => {
-            let root = graph
-                .subtree_resource_root(*resource)
-                .ok_or_else(|| anyhow!("dangling subtree resource id {}", resource.get()))?;
-            descend_leaves(graph, root, world_from_self, f)?;
-        }
-        NodeKind::Leaf(payload) => {
-            let mesh = match payload {
-                LeafPayload::Mesh(m) => m.as_ref(),
-                LeafPayload::MeshResource(rid) => graph
-                    .mesh_resource(*rid)
-                    .ok_or_else(|| anyhow!("dangling mesh resource id {}", rid.get()))?,
-            };
-            f(node_id, world_from_self, mesh)?;
-        }
-    }
-    Ok(())
 }
 
 /// CPU-only build of the per-object draw data plus the world-space
@@ -630,52 +585,55 @@ fn build_gpu_scene_data(
     mut on_object_flattened: impl FnMut(u64),
 ) -> Result<SceneData> {
     let mut objects: Vec<ObjectData> = Vec::new();
-    for_each_leaf(graph, |node_id, _world_transform, mesh| {
-        on_object_flattened(mesh.faces().len() as u64);
-        let name = graph
-            .node(node_id)
-            .and_then(|node| node.meta.as_ref())
-            .and_then(|meta| meta.name.clone())
-            .or_else(|| mesh.meta.as_ref().and_then(|meta| meta.name.clone()));
-        if mesh.faces().is_empty() {
-            // A leaf with no geometry contributes nothing to the
-            // draw set, but we keep its slot in the model buffer so
-            // the per-frame `build_model_entries` walk (which uses
-            // the same pre-order traversal) lines up index-by-index
-            // with the renderer's per-leaf draw loop. The slot is
-            // drawn as a no-op (index_count = 0).
+    graph.for_each_expanded_leaf::<SceneError, _>(
+        CsgPolicy::Descend,
+        |node_id, _world_transform, mesh| {
+            on_object_flattened(mesh.faces().len() as u64);
+            let name = graph
+                .node(node_id)
+                .and_then(|node| node.meta.as_ref())
+                .and_then(|meta| meta.name.clone())
+                .or_else(|| mesh.meta.as_ref().and_then(|meta| meta.name.clone()));
+            if mesh.faces().is_empty() {
+                // A leaf with no geometry contributes nothing to the
+                // draw set, but we keep its slot in the model buffer so
+                // the per-frame `build_model_entries` walk (which uses
+                // the same pre-order traversal) lines up index-by-index
+                // with the renderer's per-leaf draw loop. The slot is
+                // drawn as a no-op (index_count = 0).
+                objects.push(ObjectData {
+                    node_id,
+                    name,
+                    vertices: Vec::new(),
+                    indices: Vec::new(),
+                });
+                return Ok(());
+            }
+
+            let vertices: Vec<GpuVertex> = mesh
+                .vertices()
+                .iter()
+                .map(|v| GpuVertex {
+                    position: v.coords(),
+                })
+                .collect();
+
+            let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
+            for face in mesh.faces() {
+                for vidx in face.vertices {
+                    indices.push(u32::from(vidx));
+                }
+            }
+
             objects.push(ObjectData {
                 node_id,
                 name,
-                vertices: Vec::new(),
-                indices: Vec::new(),
+                vertices,
+                indices,
             });
-            return Ok(());
-        }
-
-        let vertices: Vec<GpuVertex> = mesh
-            .vertices()
-            .iter()
-            .map(|v| GpuVertex {
-                position: v.coords(),
-            })
-            .collect();
-
-        let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces().len() * 3);
-        for face in mesh.faces() {
-            for vidx in face.vertices {
-                indices.push(u32::from(vidx));
-            }
-        }
-
-        objects.push(ObjectData {
-            node_id,
-            name,
-            vertices,
-            indices,
-        });
-        Ok(())
-    })?;
+            Ok(())
+        },
+    )?;
 
     if objects.is_empty() {
         return Err(anyhow!("Graph has no leaves to render"));
@@ -708,7 +666,7 @@ mod build_gpu_scene_data_tests {
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
     use sc_mesh_core::transform::AffineTransform3D;
-    use sc_scene::MeshResourceId;
+    use sc_scene::{LeafPayload, MeshResourceId};
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
     fn graph_with_group_root() -> (Scene, NodeId) {
@@ -936,6 +894,7 @@ mod transform_to_mat4_tests {
     use super::*;
     use float_cmp::assert_approx_eq;
     use sc_mesh_core::transform::AffineTransform3D;
+    use sc_scene::LeafPayload;
 
     fn assert_mat4_approx(a: Mat4, b: Mat4, eps: f32) {
         let a = a.to_cols_array();
@@ -1016,7 +975,7 @@ mod transform_to_mat4_tests {
     /// real id instead of a counter.
     fn nth_leaf(graph: &Scene, n: usize) -> NodeId {
         let mut ids: Vec<NodeId> = Vec::new();
-        let _ = for_each_leaf(graph, |id, _, _| {
+        let _ = graph.for_each_expanded_leaf::<SceneError, _>(CsgPolicy::Descend, |id, _, _| {
             ids.push(id);
             Ok(())
         });
@@ -1291,96 +1250,18 @@ mod align_up_tests {
     }
 }
 
-#[cfg(test)]
-mod for_each_leaf_tests {
-    use std::sync::Arc;
-
-    use super::*;
-    use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-
-    fn unit_triangle() -> IndexedMesh {
-        IndexedMesh {
-            meta: None,
-            vertices: vec![
-                Vertex::new([0.0, 0.0, 0.0]),
-                Vertex::new([1.0, 0.0, 0.0]),
-                Vertex::new([0.0, 1.0, 0.0]),
-            ],
-            faces: vec![IndexedTriangle::from_raw_indices(
-                Normal::new([0.0, 0.0, 1.0]),
-                [0, 1, 2],
-            )],
-        }
-    }
-
-    fn two_leaf_graph() -> Scene {
-        let mut g = Scene::new();
-        let root = g.add_group(None, Transform3D::Identity);
-        g.add_root(root).expect("root");
-        let a = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_triangle())),
-            )
-            .expect("first leaf");
-        g.add_child(root, a).expect("attach first leaf");
-        let b = g
-            .add_leaf(
-                None,
-                Transform3D::Identity,
-                LeafPayload::Mesh(Arc::new(unit_triangle())),
-            )
-            .expect("second leaf");
-        g.add_child(root, b).expect("attach second leaf");
-        g
-    }
-
-    /// `for_each_leaf` must surface a closure-returned `Err` to its
-    /// caller; callers that discard this with `let _ = ...` (the
-    /// shape this regression test exists to lock out) silently lose
-    /// graph-walk failures and leave downstream buffers in a stale
-    /// state. The closure-error path is the only side of the
-    /// contract reachable from a public-API-constructed `Scene`; the
-    /// `descend_leaves` dangling-id branch is exercised by the
-    /// type-system signature change on `build_model_entries` and
-    /// `build_envelope_warning_mask` (their `?` cannot be reduced to
-    /// `let _ =` without a compile error).
-    #[test]
-    fn for_each_leaf_propagates_closure_err() {
-        let graph = two_leaf_graph();
-        let result = for_each_leaf(&graph, |_, _, _| Err(anyhow!("simulated downstream error")));
-        assert!(result.is_err());
-    }
-
-    /// Once the closure has returned `Err`, the walk must short-circuit:
-    /// later leaves are not visited, so a partial state mutated by the
-    /// closure before the first failure stays partial rather than
-    /// continuing to grow against half-valid input.
-    #[test]
-    fn for_each_leaf_short_circuits_on_first_closure_err() {
-        let graph = two_leaf_graph();
-        let mut visited = 0usize;
-        let result = for_each_leaf(&graph, |_, _, _| {
-            visited += 1;
-            Err(anyhow!("simulated"))
-        });
-        assert!(result.is_err());
-        assert_eq!(visited, 1);
-    }
-}
-
 /// The walk-error arm of `renderable_leaf_count` is not covered here:
 /// `Scene::add_leaf` rejects an unbound `MeshResourceId` and
 /// `Scene::remove_mesh_resource` rejects a still-referenced one, so a
 /// graph with a dangling id cannot be built through the public API.
-/// `for_each_leaf_tests` covers the propagation itself.
+/// The walk's own error propagation is pinned by `sc-scene`'s suite.
 #[cfg(test)]
 mod renderable_leaf_count_tests {
     use std::sync::Arc;
 
     use super::*;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
+    use sc_scene::LeafPayload;
 
     fn unit_triangle() -> IndexedMesh {
         IndexedMesh {
@@ -1508,7 +1389,7 @@ mod leaf_buffer_limit_tests {
     use super::*;
     use sc_mesh_core::MeshMetadata;
     use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
-    use sc_scene::node::SceneMetadata;
+    use sc_scene::node::{LeafPayload, SceneMetadata};
 
     /// Small enough that a mesh of a few dozen faces exceeds it.
     const LIMIT: u64 = 1024;
