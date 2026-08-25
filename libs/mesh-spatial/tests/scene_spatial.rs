@@ -19,7 +19,7 @@ use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::{PrimingProgress, SceneSpatial, scene_aabb};
-use sc_scene::{CsgOp, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
+use sc_scene::{CsgOp, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene, SceneError};
 use sc_scene_edit::SceneEdit;
 
 /// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
@@ -488,10 +488,38 @@ mod scene_aabb_consistency {
 mod invalidation_discipline {
     //! For each `SceneEdit` variant, document the invalidation
     //! contract via a runtime test. Future variants get one entry
-    //! here when they land; the compile-time match in `apply_edit`
-    //! is the first line of defence, this is the second.
+    //! here when they land; the compile-time match in the
+    //! invalidation walk is the first line of defence, this is the
+    //! second.
 
     use super::*;
+
+    #[test]
+    fn a_failed_edit_propagates_the_error_and_leaves_graph_and_caches_consistent() {
+        let (mut graph, root) = graph_with_group_root();
+        let rid = graph.add_mesh_resource(triangle_mesh(1.0));
+        add_resource_leaf(&mut graph, root, rid, Transform3D::Identity);
+        let mut spatial = SceneSpatial::primed_graph(graph);
+        let leaf_id = first_leaf(&spatial);
+        let primed = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
+        let live_arc = Arc::clone(spatial.graph().mesh_resource_arc(rid).unwrap());
+        // An allocated-but-unbound resource slot: the replace has
+        // nothing to swap and must fail without touching anything.
+        let dangling = spatial.allocate_unbound_mesh_resource_id();
+        let err = spatial
+            .apply_edit(SceneEdit::ReplaceMeshResource {
+                rid: dangling,
+                before: Arc::clone(&live_arc),
+                after: Arc::new(triangle_mesh(3.0)),
+            })
+            .unwrap_err();
+        assert!(matches!(err, SceneError::DanglingMeshResource { id } if id == dangling));
+        assert!(Arc::ptr_eq(
+            spatial.graph().mesh_resource_arc(rid).unwrap(),
+            &live_arc
+        ));
+        assert_eq!(spatial.leaf(leaf_id).unwrap().local_aabb().unwrap(), primed);
+    }
 
     #[test]
     fn set_local_transform_does_not_invalidate() {
@@ -505,11 +533,13 @@ mod invalidation_discipline {
         let before = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         let new_transform =
             Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 0.0]));
-        spatial.apply_edit(SceneEdit::SetLocalTransform {
-            node_id: leaf_id,
-            before: Transform3D::Identity,
-            after: new_transform,
-        });
+        spatial
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id: leaf_id,
+                before: Transform3D::Identity,
+                after: new_transform,
+            })
+            .expect("apply");
         let after = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         assert_eq!(
             before, after,
@@ -576,11 +606,13 @@ mod invalidation_discipline {
         let stale = spatial.leaf(leaf_id).unwrap().local_aabb().unwrap();
         let before = Arc::clone(spatial.graph().mesh_resource_arc(rid).unwrap());
         let after = Arc::new(triangle_mesh(3.0));
-        spatial.apply_edit(SceneEdit::ReplaceMeshResource {
-            rid,
-            before,
-            after: Arc::clone(&after),
-        });
+        spatial
+            .apply_edit(SceneEdit::ReplaceMeshResource {
+                rid,
+                before,
+                after: Arc::clone(&after),
+            })
+            .expect("apply");
         assert!(Arc::ptr_eq(
             spatial.graph().mesh_resource_arc(rid).unwrap(),
             &after
@@ -605,11 +637,13 @@ mod invalidation_discipline {
         let stale = spatial.leaf(leaf).unwrap().local_aabb().unwrap();
         let before = Arc::clone(spatial.graph().leaf_mesh_arc(leaf).unwrap());
         let after = Arc::new(triangle_mesh(3.0));
-        spatial.apply_edit(SceneEdit::ReplaceLeafMesh {
-            node_id: leaf,
-            before,
-            after: Arc::clone(&after),
-        });
+        spatial
+            .apply_edit(SceneEdit::ReplaceLeafMesh {
+                node_id: leaf,
+                before,
+                after: Arc::clone(&after),
+            })
+            .expect("apply");
         assert!(Arc::ptr_eq(
             spatial.graph().leaf_mesh_arc(leaf).unwrap(),
             &after
@@ -649,11 +683,13 @@ mod invalidation_discipline {
         let mut spatial = SceneSpatial::primed_graph(graph);
         let id = spatial.allocate_unbound_node_id();
         let xform = Transform3D::Affine(AffineTransform3D::from_translation([7.0, 8.0, 9.0]));
-        spatial.apply_edit(SceneEdit::AddRootLeaf {
-            node_id: id,
-            mesh: rid,
-            local_transform: xform,
-        });
+        spatial
+            .apply_edit(SceneEdit::AddRootLeaf {
+                node_id: id,
+                mesh: rid,
+                local_transform: xform,
+            })
+            .expect("apply");
         assert!(spatial.graph().roots().contains(&id));
         let q = spatial.leaf(id).expect("new leaf is queryable");
         assert!(q.local_aabb().is_some());
@@ -666,17 +702,21 @@ mod invalidation_discipline {
         let mut spatial = SceneSpatial::primed_graph(graph);
         let id = spatial.allocate_unbound_node_id();
         let xform = Transform3D::Identity;
-        spatial.apply_edit(SceneEdit::AddRootLeaf {
-            node_id: id,
-            mesh: rid,
-            local_transform: xform,
-        });
+        spatial
+            .apply_edit(SceneEdit::AddRootLeaf {
+                node_id: id,
+                mesh: rid,
+                local_transform: xform,
+            })
+            .expect("apply");
         assert!(spatial.leaf(id).is_some());
-        spatial.apply_edit(SceneEdit::RemoveRootLeaf {
-            node_id: id,
-            mesh: rid,
-            local_transform: xform,
-        });
+        spatial
+            .apply_edit(SceneEdit::RemoveRootLeaf {
+                node_id: id,
+                mesh: rid,
+                local_transform: xform,
+            })
+            .expect("apply");
         assert!(spatial.leaf(id).is_none());
         assert!(!spatial.graph().roots().contains(&id));
     }
@@ -694,11 +734,11 @@ mod invalidation_discipline {
             local_transform: xform,
         };
         let remove = add.inverse();
-        spatial.apply_edit(add.clone());
+        spatial.apply_edit(add.clone()).expect("apply");
         let aabb_first = spatial.leaf(id).unwrap().local_aabb().unwrap();
-        spatial.apply_edit(remove);
+        spatial.apply_edit(remove).expect("apply");
         assert!(spatial.leaf(id).is_none());
-        spatial.apply_edit(add);
+        spatial.apply_edit(add).expect("apply");
         let aabb_redo = spatial.leaf(id).unwrap().local_aabb().unwrap();
         assert_eq!(
             aabb_first, aabb_redo,
@@ -721,10 +761,12 @@ mod invalidation_discipline {
         let mut spatial = SceneSpatial::primed_graph(graph);
         let rid = spatial.allocate_unbound_mesh_resource_id();
         let arc = Arc::new(triangle_mesh(1.0));
-        spatial.apply_edit(SceneEdit::AddMeshResource {
-            rid,
-            mesh: Arc::clone(&arc),
-        });
+        spatial
+            .apply_edit(SceneEdit::AddMeshResource {
+                rid,
+                mesh: Arc::clone(&arc),
+            })
+            .expect("apply");
         assert!(std::ptr::eq(
             Arc::as_ptr(&arc),
             Arc::as_ptr(spatial.graph().mesh_resource_arc(rid).unwrap())
@@ -754,10 +796,10 @@ mod invalidation_discipline {
                 local_transform: xform,
             },
         ]);
-        spatial.apply_edit(compound.clone());
+        spatial.apply_edit(compound.clone()).expect("apply");
         assert!(spatial.leaf(nid).is_some());
         assert!(spatial.graph().mesh_resource(rid).is_some());
-        spatial.apply_edit(compound.inverse());
+        spatial.apply_edit(compound.inverse()).expect("apply");
         assert!(spatial.leaf(nid).is_none());
         assert!(spatial.graph().mesh_resource(rid).is_none());
     }

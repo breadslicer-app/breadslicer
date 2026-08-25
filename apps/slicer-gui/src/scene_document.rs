@@ -669,7 +669,7 @@ impl SceneDocument {
         } else {
             SceneEvent::Mutated
         };
-        spatial.apply_edit(edit);
+        let _ = spatial.apply_edit(edit);
         drop(slot);
         // If the edit tombstoned the currently-selected leaf, drop
         // the now-dangling selection so observers don't keep pointing
