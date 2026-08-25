@@ -21,6 +21,7 @@
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, Write};
 
+use quick_xml::XmlVersion;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesStart, Event};
 use quick_xml::reader::NsReader;
@@ -618,7 +619,11 @@ impl ContentTypes {
 }
 
 fn attr_value(attr: &Attribute<'_>) -> Option<String> {
-    attr.unescape_value().ok().map(|v| v.into_owned())
+    // 3MF mandates XML 1.0; the reader never checks the declaration,
+    // so the 1.0 rules are assumed.
+    attr.normalized_value(XmlVersion::Implicit1_0)
+        .ok()
+        .map(|v| v.into_owned())
 }
 
 fn parse_content_types(bytes: &[u8]) -> Result<ContentTypes, PackageReadError> {

@@ -360,6 +360,18 @@ mod text_and_unit_tests {
         let reparsed = parse_model(&bytes).expect("escaped document parses");
         assert_eq!(reparsed, document);
     }
+
+    #[test]
+    fn attribute_values_are_unescaped_and_normalized() {
+        // A literal tab and newline inside an attribute value; XML 1.0
+        // attribute-value normalization maps each onto 1 space.
+        let body = TETRA_BODY.replace(
+            r#"<object id="1">"#,
+            "<object id=\"1\" name=\"a&amp;b\tc\nd\">",
+        );
+        let document = parse(&minimal_model(&body)).expect("named object parses");
+        assert_eq!(document.objects[0].name.as_deref(), Some("a&b c d"));
+    }
 }
 
 #[cfg(test)]

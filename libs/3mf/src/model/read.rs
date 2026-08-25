@@ -28,6 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::{PrefixDeclaration, QName, ResolveResult};
 use quick_xml::reader::NsReader;
@@ -138,7 +139,9 @@ fn collect_attributes(
     for attr in e.attributes() {
         let attr = attr?;
         if let Some(declaration) = attr.key.as_namespace_binding() {
-            let ns = attr.unescape_value()?.into_owned();
+            // 3MF mandates XML 1.0; the reader never checks the
+            // declaration, so the 1.0 rules are assumed.
+            let ns = attr.normalized_value(XmlVersion::Implicit1_0)?.into_owned();
             let prefix = match declaration {
                 PrefixDeclaration::Default => String::new(),
                 PrefixDeclaration::Named(p) => String::from_utf8_lossy(p).into_owned(),
@@ -151,13 +154,13 @@ fn collect_attributes(
             ResolveResult::Unbound => {
                 local.insert(
                     local_name.as_ref().to_vec(),
-                    attr.unescape_value()?.into_owned(),
+                    attr.normalized_value(XmlVersion::Implicit1_0)?.into_owned(),
                 );
             }
             _ if is_slice_ns(&ns) => {
                 slice.insert(
                     local_name.as_ref().to_vec(),
-                    attr.unescape_value()?.into_owned(),
+                    attr.normalized_value(XmlVersion::Implicit1_0)?.into_owned(),
                 );
             }
             _ if is_production_ns(&ns) && local_name.as_ref() == b"path" => {
