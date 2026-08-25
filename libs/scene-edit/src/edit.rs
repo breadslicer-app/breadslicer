@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId};
+use sc_scene::{Scene, SceneError};
 
 /// Typed scene mutation. The shared edit shape across the workspace:
 /// the GUI's undo/redo stack, the headless apply paths, and any
@@ -257,54 +257,53 @@ impl SceneEdit {
     }
 
     /// Apply this edit to a [`Scene`]. Each variant calls the
-    /// matching scene mutator and silently swallows precondition
-    /// errors (dangling id, occupied slot, kind mismatch); the only
-    /// way to reach a precondition violation here is a programming
-    /// bug, and a downstream cache layer (see
-    /// `sc_mesh_spatial::SceneSpatial::apply_edit`) is the next gate.
-    pub fn apply_to_scene(&self, graph: &mut Scene) {
+    /// matching scene mutator and propagates its precondition error
+    /// (dangling id, occupied slot, kind mismatch); on error the
+    /// scene is unchanged. A [`Self::Compound`] is atomic: when an
+    /// inner edit fails, the already-applied prefix is undone before
+    /// the error is returned, so a failed Compound also leaves the
+    /// scene unchanged.
+    pub fn apply_to_scene(&self, graph: &mut Scene) -> Result<(), SceneError> {
         match self {
             Self::SetLocalTransform { node_id, after, .. } => {
-                let _ = graph.set_local_transform(*node_id, *after);
+                graph.set_local_transform(*node_id, *after)
             }
             Self::AddRootLeaf {
                 node_id,
                 mesh,
                 local_transform,
-            } => {
-                let _ = graph.install_root_leaf(*node_id, *mesh, *local_transform);
-            }
-            Self::RemoveRootLeaf { node_id, .. } => {
-                let _ = graph.remove_root_leaf(*node_id);
-            }
+            } => graph.install_root_leaf(*node_id, *mesh, *local_transform),
+            Self::RemoveRootLeaf { node_id, .. } => graph.remove_root_leaf(*node_id).map(|_| ()),
             Self::AddLeaf {
                 node_id,
                 attachment,
                 payload,
                 local_transform,
-            } => {
-                let _ =
-                    graph.install_leaf_at(*node_id, *attachment, payload.clone(), *local_transform);
-            }
-            Self::RemoveLeaf { node_id, .. } => {
-                let _ = graph.remove_leaf(*node_id);
-            }
+            } => graph.install_leaf_at(*node_id, *attachment, payload.clone(), *local_transform),
+            Self::RemoveLeaf { node_id, .. } => graph.remove_leaf(*node_id).map(|_| ()),
             Self::AddMeshResource { rid, mesh } => {
-                let _ = graph.install_mesh_resource_at(*rid, Arc::clone(mesh));
+                graph.install_mesh_resource_at(*rid, Arc::clone(mesh))
             }
-            Self::RemoveMeshResource { rid, .. } => {
-                let _ = graph.remove_mesh_resource(*rid);
-            }
-            Self::ReplaceMeshResource { rid, after, .. } => {
-                let _ = graph.replace_mesh_resource(*rid, Arc::clone(after));
-            }
-            Self::ReplaceLeafMesh { node_id, after, .. } => {
-                let _ = graph.replace_inline_leaf_mesh(*node_id, Arc::clone(after));
-            }
+            Self::RemoveMeshResource { rid, .. } => graph.remove_mesh_resource(*rid).map(|_| ()),
+            Self::ReplaceMeshResource { rid, after, .. } => graph
+                .replace_mesh_resource(*rid, Arc::clone(after))
+                .map(|_| ()),
+            Self::ReplaceLeafMesh { node_id, after, .. } => graph
+                .replace_inline_leaf_mesh(*node_id, Arc::clone(after))
+                .map(|_| ()),
             Self::Compound(edits) => {
-                for edit in edits {
-                    edit.apply_to_scene(graph);
+                for (applied, edit) in edits.iter().enumerate() {
+                    if let Err(error) = edit.apply_to_scene(graph) {
+                        // A prefix inverse applies against exactly the
+                        // state its edit produced, so rollback cannot
+                        // fail.
+                        for done in edits[..applied].iter().rev() {
+                            let _ = done.inverse().apply_to_scene(graph);
+                        }
+                        return Err(error);
+                    }
                 }
+                Ok(())
             }
         }
     }
@@ -417,7 +416,8 @@ mod scene_edit_tests {
             before: Transform3D::Identity,
             after,
         }
-        .apply_to_scene(&mut g);
+        .apply_to_scene(&mut g)
+        .expect("apply");
         assert_eq!(g.node(id).unwrap().local_transform, after);
     }
 
@@ -432,26 +432,25 @@ mod scene_edit_tests {
             before,
             after,
         };
-        edit.apply_to_scene(&mut g);
-        edit.inverse().apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g.node(id).unwrap().local_transform, before);
     }
 
     #[test]
-    fn set_local_transform_on_dangling_node_id_is_silent_noop() {
+    fn set_local_transform_on_dangling_node_id_errors_and_changes_nothing() {
         let mut g = Scene::new();
         // An id allocated by another scene is out of range for `g`,
         // whose arena is empty.
         let bogus = Scene::new().allocate_unbound_node_id();
-        // Should not panic; the underlying graph mutator returns an
-        // error and we discard it.
-        SceneEdit::SetLocalTransform {
+        let err = SceneEdit::SetLocalTransform {
             node_id: bogus,
             before: Transform3D::Identity,
             after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
         }
-        .apply_to_scene(&mut g);
-        // No nodes existed before and none exist after.
+        .apply_to_scene(&mut g)
+        .unwrap_err();
+        assert!(matches!(err, sc_scene::SceneError::DanglingNodeId { id } if id == bogus));
         assert!(g.node(bogus).is_none());
     }
 
@@ -543,7 +542,7 @@ mod scene_edit_tests {
             mesh: rid,
             local_transform: xform,
         };
-        edit.apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
         assert!(g.roots().contains(&id));
         assert!(g.node(id).is_some());
     }
@@ -557,8 +556,8 @@ mod scene_edit_tests {
             mesh: rid,
             local_transform: xform,
         };
-        edit.apply_to_scene(&mut g);
-        edit.inverse().apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g, snapshot_before);
     }
 
@@ -572,38 +571,42 @@ mod scene_edit_tests {
             mesh: rid,
             local_transform: xform,
         };
-        edit.apply_to_scene(&mut g);
-        edit.inverse().apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g, snapshot_after_install);
     }
 
     #[test]
-    fn add_root_leaf_with_out_of_range_id_is_silent_noop() {
+    fn add_root_leaf_with_out_of_range_id_errors_and_changes_nothing() {
         let mut g = Scene::new();
         // Ids allocated by another scene are out of range for `g`,
         // whose arenas are empty.
         let mut scratch = Scene::new();
         let bogus = scratch.allocate_unbound_node_id();
         let bogus_rid = scratch.allocate_unbound_mesh_resource_id();
-        SceneEdit::AddRootLeaf {
+        let err = SceneEdit::AddRootLeaf {
             node_id: bogus,
             mesh: bogus_rid,
             local_transform: Transform3D::Identity,
         }
-        .apply_to_scene(&mut g);
+        .apply_to_scene(&mut g)
+        .unwrap_err();
+        assert!(matches!(err, sc_scene::SceneError::DanglingNodeId { id } if id == bogus));
         assert!(g.node(bogus).is_none());
         assert!(g.roots().is_empty());
     }
 
     #[test]
-    fn remove_root_leaf_on_empty_slot_is_silent_noop() {
+    fn remove_root_leaf_on_empty_slot_errors_and_changes_nothing() {
         let (mut g, id, rid, xform) = fresh_scene_with_one_resource();
-        SceneEdit::RemoveRootLeaf {
+        let err = SceneEdit::RemoveRootLeaf {
             node_id: id,
             mesh: rid,
             local_transform: xform,
         }
-        .apply_to_scene(&mut g);
+        .apply_to_scene(&mut g)
+        .unwrap_err();
+        assert!(matches!(err, sc_scene::SceneError::DanglingNodeId { id: e } if e == id));
         assert!(g.node(id).is_none());
         assert!(!g.roots().contains(&id));
     }
@@ -667,7 +670,8 @@ mod scene_edit_tests {
             rid,
             mesh: Arc::clone(&mesh),
         }
-        .apply_to_scene(&mut g);
+        .apply_to_scene(&mut g)
+        .expect("apply");
         assert!(std::ptr::eq(
             Arc::as_ptr(&mesh),
             Arc::as_ptr(g.mesh_resource_arc(rid).unwrap())
@@ -682,8 +686,8 @@ mod scene_edit_tests {
             rid,
             mesh: Arc::clone(&mesh),
         };
-        edit.apply_to_scene(&mut g);
-        edit.inverse().apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g, snapshot_before);
     }
 
@@ -823,9 +827,9 @@ mod scene_edit_tests {
             before: Arc::clone(&before),
             after: Arc::clone(&after),
         };
-        edit.apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
         assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &after));
-        edit.inverse().apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &before));
     }
 
@@ -838,9 +842,9 @@ mod scene_edit_tests {
             before: Arc::clone(&before),
             after: Arc::clone(&after),
         };
-        edit.apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
         assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &after));
-        edit.inverse().apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &before));
     }
 
@@ -928,10 +932,39 @@ mod scene_edit_tests {
             },
         ]);
         let snapshot_before = g.clone();
-        compound.apply_to_scene(&mut g);
+        compound.apply_to_scene(&mut g).expect("apply");
         assert!(g.roots().contains(&nid));
         assert!(g.mesh_resource(rid).is_some());
-        compound.inverse().apply_to_scene(&mut g);
+        compound.inverse().apply_to_scene(&mut g).expect("apply");
+        assert_eq!(g, snapshot_before);
+    }
+
+    #[test]
+    fn compound_failure_rolls_back_the_applied_prefix() {
+        // The second edit targets an occupied slot, so it fails after
+        // the first has installed the mesh resource. The Compound must
+        // return that error with the resource uninstalled again: a
+        // failed Compound leaves the scene exactly as it found it.
+        let (mut g, rid, mesh) = fresh_scene_with_unbound_mesh_slot();
+        let occupied = g.add_group(None, Transform3D::Identity);
+        let snapshot_before = g.clone();
+        let err = SceneEdit::Compound(vec![
+            SceneEdit::AddMeshResource {
+                rid,
+                mesh: Arc::clone(&mesh),
+            },
+            SceneEdit::AddRootLeaf {
+                node_id: occupied,
+                mesh: rid,
+                local_transform: Transform3D::Identity,
+            },
+        ])
+        .apply_to_scene(&mut g)
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            sc_scene::SceneError::NodeSlotOccupied { id } if id == occupied
+        ));
         assert_eq!(g, snapshot_before);
     }
 
@@ -1024,7 +1057,7 @@ mod scene_edit_tests {
             payload: LeafPayload::Mesh(Arc::clone(&arc)),
             local_transform: Transform3D::Identity,
         };
-        edit.apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
         assert!(g.roots().contains(&nid));
         let observed = g.leaf_mesh_arc(nid).map(Arc::as_ptr);
         assert_eq!(observed, Some(Arc::as_ptr(&arc)));
@@ -1055,7 +1088,7 @@ mod scene_edit_tests {
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
         };
-        edit.apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
         let sc_scene::NodeKind::Group { children } = &g.node(parent).unwrap().kind else {
             panic!("parent should still be a group");
         };
@@ -1073,8 +1106,8 @@ mod scene_edit_tests {
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
         };
-        edit.apply_to_scene(&mut g);
-        edit.inverse().apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g, snapshot_before);
     }
 
@@ -1101,9 +1134,9 @@ mod scene_edit_tests {
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
         };
-        edit.apply_to_scene(&mut g);
+        edit.apply_to_scene(&mut g).expect("apply");
         assert!(g.node(leaf).is_none());
-        edit.inverse().apply_to_scene(&mut g);
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g, snapshot_before);
     }
 }
