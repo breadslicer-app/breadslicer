@@ -7,9 +7,8 @@
 //! metadata (with localised fallbacks and duplicate disambiguation),
 //! and pushing the resulting list to the Slint window.
 
-use sc_scene::NodeId;
-use sc_scene::Scene;
 use sc_scene::node::{LeafPayload, NodeKind};
+use sc_scene::{CsgPolicy, ReferencePolicy, Scene};
 use slint::{ModelRc, SharedString, StandardListViewItem, VecModel};
 
 use crate::MainWindow;
@@ -29,16 +28,18 @@ use crate::i18n::ctr;
 /// The traversal order matches `SceneSpatial::leaf_id_at_index`: row
 /// `i` in the returned list maps to the leaf at pre-order index `i`.
 pub(super) fn build_object_list_names(graph: &Scene) -> Vec<String> {
-    let raw: Vec<String> = pre_order_leaves(graph)
+    let raw: Vec<String> = graph
+        .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
+        .expect("a (Descend, Skip) structural walk has no error source")
         .into_iter()
         .enumerate()
         .map(|(i, leaf_id)| {
             let node = graph
                 .node(leaf_id)
-                .expect("pre_order_leaves only yields reachable leaves");
+                .expect("reachable_leaves yields only live node ids");
             let scene_name = node.meta.as_ref().and_then(|m| m.name.clone());
             let NodeKind::Leaf(payload) = &node.kind else {
-                unreachable!("pre_order_leaves filters to NodeKind::Leaf")
+                unreachable!("reachable_leaves yields only leaf nodes")
             };
             let mesh_name = match payload {
                 LeafPayload::Mesh(mesh) => mesh.meta().as_ref().and_then(|m| m.name.clone()),
@@ -75,31 +76,6 @@ pub(super) fn build_object_list_names(graph: &Scene) -> Vec<String> {
         .collect()
 }
 
-/// Pre-order list of `NodeId`s for every reachable leaf reachable from
-/// `graph.roots()`, in the same traversal order as
-/// `SceneSpatial::leaf_id_at_index`. Groups and CSG nodes recurse;
-/// `Reference` nodes are skipped (the current phase does not produce
-/// them, and expansion semantics get their own resolver later).
-fn pre_order_leaves(graph: &Scene) -> Vec<NodeId> {
-    let mut out = Vec::new();
-    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(node) = graph.node(id) else {
-            continue;
-        };
-        match &node.kind {
-            NodeKind::Leaf(_) => out.push(id),
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
-            }
-            NodeKind::Reference { .. } => {}
-        }
-    }
-    out
-}
-
 /// Pushes a fresh `[StandardListViewItem]` model to the window. A
 /// fresh `VecModel` per call is the simplest way to keep the UI in
 /// sync: the list rebuilds rarely (only on scene load/close), so the
@@ -120,7 +96,8 @@ mod build_object_list_names_tests {
     use sc_mesh_core::primitives::Vertex;
     use sc_mesh_core::transform::Transform3D;
     use sc_mesh_core::{IndexedMesh, MeshMetadata};
-    use sc_scene::SceneMetadata;
+    use sc_mesh_spatial::SceneSpatial;
+    use sc_scene::{CsgOp, NodeId, SceneMetadata};
 
     /// Loader-faithful empty graph: identity-Group root, no leaves yet.
     fn graph_with_group_root() -> (Scene, NodeId) {
@@ -185,6 +162,15 @@ mod build_object_list_names_tests {
 
     fn add_mesh_named(g: &mut Scene, parent: NodeId, name: &str) -> NodeId {
         add_leaf_under(g, parent, None, mesh_with_name(name))
+    }
+
+    fn add_named_detached(g: &mut Scene, name: &str) -> NodeId {
+        g.add_leaf(
+            Some(scene_meta(name)),
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(empty_mesh())),
+        )
+        .expect("add detached leaf")
     }
 
     #[test]
@@ -269,25 +255,39 @@ mod build_object_list_names_tests {
     }
 
     #[test]
-    fn row_order_matches_pre_order_leaf_traversal() {
-        // The traversal order this helper uses must agree with
-        // `SceneSpatial::leaf_id_at_index`, so row `i` in the
-        // sidebar list selects the same leaf as the controller's
-        // `on_select_by_index(i)` resolves. The check is positional:
-        // the names appear in the same order as the underlying
-        // pre-order leaf walk hands them out.
+    fn row_order_matches_scene_spatial_rows() {
+        // Row `i` in the sidebar list must name the leaf that
+        // `SceneSpatial::leaf_id_at_index(i)` resolves. The fixture
+        // includes a nested group and CSG operand leaves so the
+        // equality is pinned beyond the flat case.
         let (mut g, root) = graph_with_group_root();
-        add_named(&mut g, root, "Body");
-        add_named(&mut g, root, "Cap");
-        add_named(&mut g, root, "Pin");
+        add_named(&mut g, root, "Before");
+        let sub = g.add_group(None, Transform3D::Identity);
+        g.add_child(root, sub).expect("attach subgroup");
+        add_named(&mut g, sub, "Nested");
+        let op1 = add_named_detached(&mut g, "Op1");
+        let op2 = add_named_detached(&mut g, "Op2");
+        let csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![op1, op2])
+            .expect("csg union");
+        g.add_child(root, csg).expect("attach csg");
+        add_named(&mut g, root, "After");
+
         let names = build_object_list_names(&g);
-        let leaves = pre_order_leaves(&g);
-        assert_eq!(names.len(), leaves.len());
-        for (i, leaf_id) in leaves.iter().enumerate() {
-            let node = g.node(*leaf_id).unwrap();
-            let expected = node.meta.as_ref().unwrap().name.as_deref().unwrap();
-            assert_eq!(names[i], expected);
+        assert_eq!(names, vec!["Before", "Nested", "Op1", "Op2", "After"]);
+
+        let spatial = SceneSpatial::from_graph(g);
+        for (i, name) in names.iter().enumerate() {
+            let leaf_id = spatial
+                .leaf_id_at_index(i)
+                .expect("every list row resolves to a leaf");
+            let node = spatial.graph().node(leaf_id).expect("live leaf");
+            assert_eq!(
+                node.meta.as_ref().unwrap().name.as_deref(),
+                Some(name.as_str())
+            );
         }
+        assert!(spatial.leaf_id_at_index(names.len()).is_none());
     }
 
     #[test]
