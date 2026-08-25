@@ -22,7 +22,7 @@ pub use scene_spatial::{ObjectQuery, PrimingProgress, SceneSpatial};
 
 use sc_mesh_core::Aabb;
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::{NodeId, NodeKind};
+use sc_scene::{CsgPolicy, ReferencePolicy, SceneError};
 
 /// World-space AABB of a scene, computed through cached per-mesh
 /// AABBs and unioned via Arvo's transformed-AABB formula. Returns
@@ -37,35 +37,22 @@ use sc_scene::{NodeId, NodeKind};
 /// repeatedly should construct a [`SceneSpatial`] and use this
 /// function; one-shot callers may use the uncached form directly.
 pub fn scene_aabb(spatial: &SceneSpatial) -> Option<Aabb> {
-    let graph = spatial.graph();
     let mut aabb = Aabb::empty();
     let mut has_any = false;
-    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(node) = graph.node(id) else {
-            continue;
-        };
-        match &node.kind {
-            NodeKind::Leaf(_) => {
-                let Some(query) = spatial.leaf(id) else {
-                    continue;
-                };
-                let Some(local) = query.local_aabb() else {
-                    continue;
-                };
+    spatial
+        .graph()
+        .for_each_reachable_leaf::<SceneError, _>(CsgPolicy::Descend, ReferencePolicy::Skip, |id| {
+            if let Some(query) = spatial.leaf(id)
+                && let Some(local) = query.local_aabb()
+            {
                 match query.world_transform() {
                     Transform3D::Identity => aabb.union(&local),
                     Transform3D::Affine(a) => aabb.union(&local.transformed_arvo(&a)),
                 }
                 has_any = true;
             }
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
-            }
-            NodeKind::Reference { .. } => {}
-        }
-    }
+            Ok(())
+        })
+        .expect("a (Descend, Skip) structural walk has no error source");
     has_any.then_some(aabb)
 }

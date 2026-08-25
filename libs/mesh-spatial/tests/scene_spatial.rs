@@ -19,7 +19,7 @@ use sc_mesh_core::primitives::{IndexedTriangle, Normal, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::{PrimingProgress, SceneSpatial, scene_aabb};
-use sc_scene::{LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
+use sc_scene::{CsgOp, LeafPayload, MeshResourceId, NodeId, NodeKind, Scene};
 use sc_scene_edit::SceneEdit;
 
 /// Pre-order leaf `NodeId` of the spatial's first reachable leaf.
@@ -1011,5 +1011,54 @@ mod construction_contract {
             .register_subtree_resource(orphan)
             .expect("unparented group registers");
         let _ = SceneSpatial::from_graph(graph);
+    }
+}
+
+mod row_order {
+    //! Pins for the pre-order row-index space: CSG operand leaves
+    //! count as rows (descend stance), and index resolution
+    //! round-trips both ways.
+
+    use super::*;
+
+    #[test]
+    fn rows_enumerate_csg_operand_leaves_in_pre_order() {
+        let (mut g, root) = graph_with_group_root();
+        let before = add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
+        let op1 = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(triangle_mesh(2.0))),
+            )
+            .expect("first operand");
+        let op2 = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(triangle_mesh(3.0))),
+            )
+            .expect("second operand");
+        let csg = g
+            .add_csg(None, Transform3D::Identity, CsgOp::Union, vec![op1, op2])
+            .expect("csg installs");
+        g.add_child(root, csg).expect("attach csg");
+        let after = add_inline_leaf(&mut g, root, triangle_mesh(4.0), Transform3D::Identity);
+        let spatial = SceneSpatial::from_graph(g);
+        let expected = [before, op1, op2, after];
+        for (i, id) in expected.iter().enumerate() {
+            assert_eq!(spatial.leaf_id_at_index(i), Some(*id));
+            assert_eq!(spatial.leaf_index_of(*id), Some(i));
+        }
+        assert!(spatial.leaf_id_at_index(expected.len()).is_none());
+    }
+
+    #[test]
+    fn a_non_leaf_node_has_no_row() {
+        let (mut g, root) = graph_with_group_root();
+        add_inline_leaf(&mut g, root, triangle_mesh(1.0), Transform3D::Identity);
+        let spatial = SceneSpatial::from_graph(g);
+        let group_id = spatial.graph().roots()[0];
+        assert_eq!(spatial.leaf_index_of(group_id), None);
     }
 }

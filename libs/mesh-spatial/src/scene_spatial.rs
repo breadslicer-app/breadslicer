@@ -16,7 +16,9 @@
 
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{Aabb, IndexedMesh, Vertex};
-use sc_scene::{LeafPayload, MeshResourceId, Node, NodeId, NodeKind, Scene};
+use sc_scene::{
+    CsgPolicy, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, ReferencePolicy, Scene,
+};
 use sc_scene_edit::SceneEdit;
 
 use crate::clusters::TriangleClusters;
@@ -156,9 +158,9 @@ impl SceneSpatial {
                 (mesh, cache)
             }
         };
-        let world_transform = compose_world_transform(&self.graph, id);
+        let world_transform = self.graph.world_transform_of(id).ok()?;
         let parent_world = match self.graph.parent_of(id) {
-            Some(parent) => compose_world_transform(&self.graph, parent),
+            Some(parent) => self.graph.world_transform_of(parent).ok()?,
             None => Transform3D::Identity,
         };
         Some(ObjectQuery {
@@ -270,67 +272,27 @@ impl SceneSpatial {
     }
 
     /// Resolve a zero-based pre-order leaf index against the scene
-    /// roots, returning the addressed leaf's stable [`NodeId`]. Used
-    /// by the slicer-gui boundary code that translates a Slint `i32`
-    /// row index (sidebar click, Tab/Shift+Tab cycle) into a
-    /// [`NodeId`] before storing it on the selection.
+    /// roots, returning the addressed leaf's stable [`NodeId`]. The
+    /// index space is [`Scene::reachable_leaves`] under
+    /// (`Descend`, `Skip`): CSG operand leaves have rows, and
+    /// references cannot occur here (construction contract).
     pub fn leaf_id_at_index(&self, target: usize) -> Option<NodeId> {
-        let mut count = 0usize;
-        let mut stack: Vec<NodeId> = self.graph.roots().iter().rev().copied().collect();
-        while let Some(id) = stack.pop() {
-            let Some(node) = self.graph.node(id) else {
-                continue;
-            };
-            match &node.kind {
-                NodeKind::Leaf(_) => {
-                    if count == target {
-                        return Some(id);
-                    }
-                    count += 1;
-                }
-                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                }
-                NodeKind::Reference { .. } => {
-                    // Unreachable: the construction contract rejects
-                    // scenes with subtree references.
-                }
-            }
-        }
-        None
+        self.row_leaves().get(target).copied()
     }
 
-    /// Inverse of [`Self::leaf_id_at_index`]: walk the scene roots
-    /// in pre-order and return the leaf-index of `target`, or `None`
-    /// when the node is not a reachable leaf. Used by the slicer-gui
-    /// boundary code that resolves a [`NodeId`] back to a Slint
-    /// `i32` row index (the `selected_object_index` mirror and the
-    /// Tab/Shift+Tab cycle helpers).
+    /// Resolve a reachable leaf's [`NodeId`] back to its pre-order
+    /// leaf index; `None` when `target` is not a reachable leaf.
+    /// Inverse of [`Self::leaf_id_at_index`].
     pub fn leaf_index_of(&self, target: NodeId) -> Option<usize> {
-        let mut count = 0usize;
-        let mut stack: Vec<NodeId> = self.graph.roots().iter().rev().copied().collect();
-        while let Some(id) = stack.pop() {
-            let Some(node) = self.graph.node(id) else {
-                continue;
-            };
-            match &node.kind {
-                NodeKind::Leaf(_) => {
-                    if id == target {
-                        return Some(count);
-                    }
-                    count += 1;
-                }
-                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                }
-                NodeKind::Reference { .. } => {}
-            }
-        }
-        None
+        self.row_leaves().iter().position(|&id| id == target)
+    }
+
+    /// Collect the (Descend, Skip) structural leaf order both row
+    /// queries resolve against.
+    fn row_leaves(&self) -> Vec<NodeId> {
+        self.graph
+            .reachable_leaves(CsgPolicy::Descend, ReferencePolicy::Skip)
+            .expect("a (Descend, Skip) structural walk has no error source")
     }
 
     /// Inner constructor shared by all entry points.
@@ -369,7 +331,7 @@ impl SceneSpatial {
     }
 
     fn allocate_inline_cache_slots(graph: &Scene, leaves: &mut [Option<MeshSpatial>]) {
-        for_each_reachable_node(graph, |id, node| {
+        graph.for_each_reachable_node(|id, node| {
             if let NodeKind::Leaf(LeafPayload::Mesh(_)) = &node.kind {
                 leaves[id.index()] = Some(MeshSpatial::default());
             }
@@ -379,55 +341,57 @@ impl SceneSpatial {
     fn prime_reachable_caches(&self, progress: &mut impl FnMut(PrimingProgress)) {
         let total_triangles = self.reachable_triangle_total();
         let mut primed_triangles: u64 = 0;
-        for_each_reachable_node(&self.graph, |id, node| match &node.kind {
-            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => {
-                if let Some(Some(cache)) = self.leaves.get(id.index()) {
-                    cache.prime(mesh);
-                    primed_triangles += mesh.faces.len() as u64;
-                    progress(PrimingProgress {
-                        primed_triangles,
-                        total_triangles,
-                    });
+        self.graph
+            .for_each_reachable_node(|id, node| match &node.kind {
+                NodeKind::Leaf(LeafPayload::Mesh(mesh)) => {
+                    if let Some(Some(cache)) = self.leaves.get(id.index()) {
+                        cache.prime(mesh);
+                        primed_triangles += mesh.faces.len() as u64;
+                        progress(PrimingProgress {
+                            primed_triangles,
+                            total_triangles,
+                        });
+                    }
                 }
-            }
-            NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
-                if let (Some(mesh), Some(cache)) = (
-                    self.graph.mesh_resource(*rid),
-                    self.mesh_resources.get(rid.index()),
-                ) {
-                    cache.prime(mesh);
-                    primed_triangles += mesh.faces.len() as u64;
-                    progress(PrimingProgress {
-                        primed_triangles,
-                        total_triangles,
-                    });
+                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
+                    if let (Some(mesh), Some(cache)) = (
+                        self.graph.mesh_resource(*rid),
+                        self.mesh_resources.get(rid.index()),
+                    ) {
+                        cache.prime(mesh);
+                        primed_triangles += mesh.faces.len() as u64;
+                        progress(PrimingProgress {
+                            primed_triangles,
+                            total_triangles,
+                        });
+                    }
                 }
-            }
-            _ => {}
-        });
+                _ => {}
+            });
     }
 
-    /// Reachable triangle count, per leaf visit, mirroring exactly
-    /// what `prime_reachable_caches` primes so the two agree on the
-    /// denominator.
+    /// Count reachable triangles, one contribution per leaf visit,
+    /// mirroring exactly what `prime_reachable_caches` primes so the
+    /// two agree on the denominator.
     fn reachable_triangle_total(&self) -> u64 {
         let mut total: u64 = 0;
-        for_each_reachable_node(&self.graph, |id, node| match &node.kind {
-            NodeKind::Leaf(LeafPayload::Mesh(mesh)) => {
-                if let Some(Some(_)) = self.leaves.get(id.index()) {
-                    total += mesh.faces.len() as u64;
+        self.graph
+            .for_each_reachable_node(|id, node| match &node.kind {
+                NodeKind::Leaf(LeafPayload::Mesh(mesh)) => {
+                    if let Some(Some(_)) = self.leaves.get(id.index()) {
+                        total += mesh.faces.len() as u64;
+                    }
                 }
-            }
-            NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
-                if let (Some(mesh), Some(_)) = (
-                    self.graph.mesh_resource(*rid),
-                    self.mesh_resources.get(rid.index()),
-                ) {
-                    total += mesh.faces.len() as u64;
+                NodeKind::Leaf(LeafPayload::MeshResource(rid)) => {
+                    if let (Some(mesh), Some(_)) = (
+                        self.graph.mesh_resource(*rid),
+                        self.mesh_resources.get(rid.index()),
+                    ) {
+                        total += mesh.faces.len() as u64;
+                    }
                 }
-            }
-            _ => {}
-        });
+                _ => {}
+            });
         total
     }
 }
@@ -446,50 +410,42 @@ pub struct ObjectQuery<'a> {
 }
 
 impl<'a> ObjectQuery<'a> {
-    /// The resolved mesh: for an inline leaf, the leaf's inline
-    /// mesh; for a resource-backed leaf, the resource it points to.
+    /// Borrow the leaf's resolved mesh: the inline mesh for an
+    /// inline leaf, the pointed-to resource for a resource-backed
+    /// leaf.
     pub fn mesh(&self) -> &'a IndexedMesh {
         self.mesh
     }
 
-    /// Leaf's parent-relative transform. For a loader-shape graph
-    /// (a single identity-Group root with leaves attached directly),
-    /// this equals the world transform.
     pub fn local_transform(&self) -> Transform3D {
         self.node.local_transform
     }
 
-    /// Leaf's world-space transform, composed from the ancestor
-    /// chain at query construction time. This is the transform
-    /// that places the leaf's mesh in world coordinates.
+    /// Return the leaf's world-space transform, composed from its
+    /// ancestor chain.
     pub fn world_transform(&self) -> Transform3D {
         self.world_transform
     }
 
-    /// Composed world transform of the leaf's ancestor chain,
-    /// excluding the leaf's own local transform. Equals
-    /// `Transform3D::Identity` when the leaf has no parent. For any
-    /// candidate `local`, `parent_world ∘ local` is the leaf's
-    /// world-space transform under that candidate. Callers that need
-    /// to evaluate the leaf in world space against a different
-    /// `local` than the one stored on the node (e.g. a captured drag
-    /// original or a proposed-edit candidate) compose this with that
-    /// `local`.
+    /// Return the composed world transform of the ancestor chain,
+    /// excluding the leaf's own local transform; `Identity` for a
+    /// parentless leaf. For any `local`,
+    /// `parent_world().compose(&local)` is the leaf's world
+    /// transform under that `local`.
     pub fn parent_world(&self) -> Transform3D {
         self.parent_world
     }
 
-    /// Object-space AABB of [`Self::mesh`]. Cached. `None` when the
-    /// mesh has no vertices.
+    /// Compute the object-space AABB of [`Self::mesh`], cached on
+    /// first call; `None` when the mesh has no vertices.
     pub fn local_aabb(&self) -> Option<Aabb> {
         self.cache.local_aabb(self.mesh)
     }
 
-    /// World-space AABB of [`Self::mesh`] after applying `transform`.
-    /// Computed from the transformed vertices, so the result is the
-    /// tight AABB of the rotated mesh, not the larger AABB-of-the-
-    /// rotated-local-AABB that Arvo's formula produces. `None` when
-    /// the mesh has no vertices.
+    /// Compute the world-space AABB of [`Self::mesh`] under
+    /// `transform`, from the transformed vertices: the tight AABB of
+    /// the rotated mesh, not the larger box Arvo's formula yields
+    /// from the local AABB. `None` when the mesh has no vertices.
     ///
     /// Internally cached by the linear part of `transform`: the same
     /// linear key (typically the current rotation/scale) reuses the
@@ -508,56 +464,11 @@ impl<'a> ObjectQuery<'a> {
         }
     }
 
-    /// Object-space triangle clusters over [`Self::mesh`]. Cached.
-    /// `None` when the mesh has no faces or has corrupt face indices.
+    /// Compute the object-space triangle clusters over
+    /// [`Self::mesh`], cached on first call; `None` when the mesh
+    /// has no faces or has corrupt face indices.
     pub fn clusters(&self) -> Option<&'a TriangleClusters> {
         self.cache.clusters(self.mesh)
-    }
-}
-
-/// Compose the world transform of a leaf by walking its ancestor
-/// chain up to the (scene or subtree) root. The order is
-/// root-applied-last: `world = root.compose(parent).compose(self)`,
-/// which matches the convention in [`Transform3D::compose`] where
-/// `self.compose(other)` applies `other` first and `self` second.
-fn compose_world_transform(graph: &Scene, leaf: NodeId) -> Transform3D {
-    let mut chain: Vec<Transform3D> = Vec::new();
-    let mut current = Some(leaf);
-    while let Some(id) = current {
-        let Some(node) = graph.node(id) else {
-            break;
-        };
-        chain.push(node.local_transform);
-        current = graph.parent_of(id);
-    }
-    let mut acc = Transform3D::Identity;
-    for t in chain.iter().rev() {
-        acc = acc.compose(t);
-    }
-    acc
-}
-
-/// Pre-order traversal of every node reachable from the scene roots
-/// without expanding `Reference` edges. `visit` is called once per
-/// reachable node.
-fn for_each_reachable_node<F>(graph: &Scene, mut visit: F)
-where
-    F: FnMut(NodeId, &Node),
-{
-    let mut stack: Vec<NodeId> = graph.roots().iter().rev().copied().collect();
-    while let Some(id) = stack.pop() {
-        let Some(node) = graph.node(id) else {
-            continue;
-        };
-        visit(id, node);
-        match &node.kind {
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
-            }
-            NodeKind::Leaf(_) | NodeKind::Reference { .. } => {}
-        }
     }
 }
 
