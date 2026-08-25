@@ -78,7 +78,14 @@ mod workspace_section;
 use std::error::Error;
 use std::path::PathBuf;
 
-slint::include_modules!();
+// Slint's generated code allows the clippy groups by itself, but not
+// the rustc lints the workspace denies. Lint attributes are ignored on
+// macro invocations, hence the wrapper module.
+#[allow(missing_debug_implementations, unreachable_pub, unused_qualifications)]
+mod slint_ui {
+    slint::include_modules!();
+}
+pub use slint_ui::*;
 
 use crate::app_state::AppState;
 use crate::i18n::ctr;

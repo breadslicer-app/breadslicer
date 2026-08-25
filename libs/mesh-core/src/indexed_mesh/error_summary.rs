@@ -90,6 +90,7 @@ impl MeshErrorReport for MeshEdgeManifoldError {
 }
 
 /// One variant's slice of an error list, in input order.
+#[derive(Debug)]
 pub struct ErrorVariantGroup<'a, E> {
     pub variant_name: &'static str,
     pub members: Vec<&'a E>,

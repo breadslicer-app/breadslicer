@@ -63,7 +63,7 @@ use targets::{MsaaTargets, TargetPool};
 /// [`Renderer::render`]'s top-level signature where the type system
 /// would let a caller pass `selection: Some(_)` against
 /// `scene: None`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SceneRender<'a> {
     pub graph: &'a Scene,
     /// Stable [`NodeId`] whose stencil mask the outline post-pass
@@ -205,6 +205,14 @@ pub struct Renderer {
     pipelines: Pipelines,
     scene: Option<InstalledScene>,
     target_manager: TargetManager,
+}
+
+impl std::fmt::Debug for Renderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Renderer")
+            .field("has_scene", &self.scene.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Vertical field of view in radians.

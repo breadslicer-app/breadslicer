@@ -35,6 +35,7 @@ type Result<T> = std::result::Result<T, LoadStlError>;
 /// Format marker for the binary STL format. Implements
 /// [`MeshReader`] via static dispatch; the dispatcher in
 /// [`crate::loader`] invokes `StlBin::read(reader)`.
+#[derive(Debug)]
 pub struct StlBin;
 
 impl sealed::Sealed for StlBin {}
@@ -67,6 +68,7 @@ impl MeshWriter for StlBin {
 
 /// Format marker for the ASCII STL format. Like [`StlBin`], it
 /// implements [`MeshReader`] via static dispatch.
+#[derive(Debug)]
 pub struct StlAscii;
 
 impl sealed::Sealed for StlAscii {}
@@ -102,6 +104,7 @@ impl MeshWriter for StlAscii {
 /// declared triangle count means binary; otherwise a `solid` header
 /// line means ASCII; anything else is treated as binary. Use
 /// [`StlBin`] or [`StlAscii`] directly when the variant is known.
+#[derive(Debug)]
 pub struct Stl;
 
 impl sealed::Sealed for Stl {}

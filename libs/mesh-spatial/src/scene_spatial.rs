@@ -71,6 +71,14 @@ pub struct SceneSpatial {
     mesh_resources: Vec<MeshSpatial>,
 }
 
+impl std::fmt::Debug for SceneSpatial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SceneSpatial")
+            .field("graph", &self.graph)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SceneSpatial {
     /// Wrap a [`Scene`] without priming any caches. First query
     /// on each mesh will build the relevant cache lazily.
@@ -373,6 +381,16 @@ pub struct ObjectQuery<'a> {
     cache: &'a MeshSpatial,
     world_transform: Transform3D,
     parent_world: Transform3D,
+}
+
+impl std::fmt::Debug for ObjectQuery<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectQuery")
+            .field("node", &self.node)
+            .field("world_transform", &self.world_transform)
+            .field("parent_world", &self.parent_world)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> ObjectQuery<'a> {

@@ -522,8 +522,7 @@ fn gpu_scene_build_refuses_a_leaf_above_the_device_buffer_limit() {
     // 100 faces: 1200 index bytes against a 1024-byte limit.
     let graph = graph_with_one_leaf_of_faces(100);
     let err = GpuScene::build(&device, DeviceToken::next(), &graph, &DeviceLoss::default())
-        .err()
-        .expect("a leaf above the limit is refused");
+        .expect_err("a leaf above the limit is refused");
     let refusal = err
         .downcast_ref::<scene_upload::LeafBufferExceedsDeviceLimit>()
         .expect("the refusal is typed");

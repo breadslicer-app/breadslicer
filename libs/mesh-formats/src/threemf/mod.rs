@@ -39,6 +39,7 @@ pub use writer::{
 /// Format marker for 3MF packages. Implements [`MeshReader`] via
 /// static dispatch; the dispatcher in [`crate::loader`] invokes
 /// `ThreeMf::read(reader)`.
+#[derive(Debug)]
 pub struct ThreeMf;
 
 impl sealed::Sealed for ThreeMf {}

@@ -244,6 +244,17 @@ pub struct GpuScene {
     aabb_max: Vec3,
 }
 
+impl std::fmt::Debug for GpuScene {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpuScene")
+            .field("objects", &self.objects.len())
+            .field("model_stride", &self.model_stride)
+            .field("aabb_min", &self.aabb_min)
+            .field("aabb_max", &self.aabb_max)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Triangle counts reported while a scene's GPU data is built. Each
 /// object's triangles count twice, once when its vertex/index vectors
 /// are flattened and once when its device buffers are created, so

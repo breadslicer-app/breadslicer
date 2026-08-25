@@ -25,6 +25,7 @@ pub use writer::{write_obj, write_obj_with_progress};
 /// Format marker for the OBJ format. Implements [`MeshReader`] via
 /// static dispatch; the dispatcher in [`crate::loader`] invokes
 /// `Obj::read(reader)`.
+#[derive(Debug)]
 pub struct Obj;
 
 impl sealed::Sealed for Obj {}
