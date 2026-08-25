@@ -695,6 +695,14 @@ impl Scene {
         if self.is_subtree_resource_root(child) {
             return Err(SceneError::AlreadyASubtreeResourceRoot { node_id: child });
         }
+        // The expansion graph is acyclic before this call, so the only
+        // cycle the new edge can close is one completing a path that
+        // already runs from `child` back to `parent`. Deciding it from
+        // `child` costs the reachable subgraph rather than the whole
+        // arena, and answering before linking leaves nothing to undo.
+        if self.expansion_reaches(child, parent) {
+            return Err(SceneError::ExpansionCycle { node_id: parent });
+        }
         let parent_node = self.nodes[parent.index()].as_mut().expect("checked above");
         match &mut parent_node.kind {
             NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
@@ -703,17 +711,6 @@ impl Scene {
             _ => unreachable!("NotABranch was checked above"),
         }
         self.parents[child.index()] = Some(parent);
-        if let Some(cycle_id) = self.find_cycle_in_expansion() {
-            let parent_node = self.nodes[parent.index()].as_mut().expect("just mutated");
-            match &mut parent_node.kind {
-                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                    children.pop();
-                }
-                _ => unreachable!(),
-            }
-            self.parents[child.index()] = None;
-            return Err(SceneError::ExpansionCycle { node_id: cycle_id });
-        }
         Ok(())
     }
 
@@ -1406,7 +1403,7 @@ mod scene_construction_tests {
         // Try to put the Reference inside its own subtree.
         let result = g.add_child(res_root, reference);
         assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
-        // Rollback worked: reference still parent-less, res_root has no children.
+        // Refused before linking: reference still parent-less, res_root childless.
         assert_eq!(g.parent_of(reference), None);
         assert!(matches!(
             &g.node(res_root).unwrap().kind,
@@ -1440,7 +1437,7 @@ mod scene_construction_tests {
         g.add_child(a, b).unwrap();
         let result = g.add_child(b, a);
         assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
-        // Rollback worked: a still parent-less, b has no children.
+        // Refused before linking: a still parent-less, b has no children.
         assert_eq!(g.parent_of(a), None);
         assert!(matches!(
             &g.node(b).unwrap().kind,
@@ -1454,12 +1451,116 @@ mod scene_construction_tests {
         let c = g.add_group(None, Transform3D::Identity);
         let result = g.add_child(c, c);
         assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
-        // Rollback worked: c still parent-less and childless.
+        // Refused before linking: c still parent-less and childless.
         assert_eq!(g.parent_of(c), None);
         assert!(matches!(
             &g.node(c).unwrap().kind,
             NodeKind::Group { children } if children.is_empty()
         ));
+    }
+
+    #[test]
+    fn add_child_three_level_reference_cycle_rejected() {
+        // S1 -> S2 -> S3; closing S3 -> S1 needs the walk to follow two
+        // resource hops before it meets the parent again.
+        let mut g = Scene::new();
+        let s1_root = g.add_group(None, Transform3D::Identity);
+        let s2_root = g.add_group(None, Transform3D::Identity);
+        let s3_root = g.add_group(None, Transform3D::Identity);
+        let s1 = g.register_subtree_resource(s1_root).unwrap();
+        let s2 = g.register_subtree_resource(s2_root).unwrap();
+        let s3 = g.register_subtree_resource(s3_root).unwrap();
+
+        let to_s2 = g.add_reference(None, Transform3D::Identity, s2).unwrap();
+        g.add_child(s1_root, to_s2).unwrap();
+        let to_s3 = g.add_reference(None, Transform3D::Identity, s3).unwrap();
+        g.add_child(s2_root, to_s3).unwrap();
+
+        let to_s1 = g.add_reference(None, Transform3D::Identity, s1).unwrap();
+        let result = g.add_child(s3_root, to_s1);
+        assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
+        assert_eq!(g.parent_of(to_s1), None);
+    }
+
+    #[test]
+    fn add_child_cycle_through_a_nested_reference_rejected() {
+        // The attached node is a plain Group; the path back to the
+        // parent runs through a Reference buried inside it, so a walk
+        // that only followed children edges would miss the cycle.
+        let mut g = Scene::new();
+        let res_root = g.add_group(None, Transform3D::Identity);
+        let rid = g.register_subtree_resource(res_root).unwrap();
+
+        let carrier = g.add_group(None, Transform3D::Identity);
+        let buried = g.add_reference(None, Transform3D::Identity, rid).unwrap();
+        g.add_child(carrier, buried).unwrap();
+
+        let result = g.add_child(res_root, carrier);
+        assert!(matches!(result, Err(SceneError::ExpansionCycle { .. })));
+        assert_eq!(g.parent_of(carrier), None);
+    }
+
+    #[test]
+    fn add_child_accepts_a_reference_that_does_not_reach_the_parent() {
+        // Sibling subtree: the attached Reference expands into S2,
+        // which never reaches the group it is being attached under.
+        let mut g = Scene::new();
+        let s2_root = g.add_group(None, Transform3D::Identity);
+        let s2 = g.register_subtree_resource(s2_root).unwrap();
+        let host = g.add_group(None, Transform3D::Identity);
+        g.add_root(host).unwrap();
+
+        let to_s2 = g.add_reference(None, Transform3D::Identity, s2).unwrap();
+        g.add_child(host, to_s2).unwrap();
+
+        assert_eq!(g.parent_of(to_s2), Some(host));
+        assert_eq!(g.validate(), Ok(()));
+    }
+
+    #[test]
+    fn add_child_accepts_a_second_reference_to_the_same_subtree() {
+        // Diamond: two references to one subtree under a common
+        // parent. Shared expansion targets are legal, so the walk must
+        // treat an already-seen node as visited, not as a cycle.
+        let mut g = Scene::new();
+        let shared_root = g.add_group(None, Transform3D::Identity);
+        let shared = g.register_subtree_resource(shared_root).unwrap();
+        let host = g.add_group(None, Transform3D::Identity);
+        g.add_root(host).unwrap();
+
+        let first = g
+            .add_reference(None, Transform3D::Identity, shared)
+            .unwrap();
+        g.add_child(host, first).unwrap();
+        let second = g
+            .add_reference(None, Transform3D::Identity, shared)
+            .unwrap();
+        g.add_child(host, second).unwrap();
+
+        assert_eq!(g.parent_of(second), Some(host));
+        assert_eq!(g.validate(), Ok(()));
+    }
+
+    #[test]
+    fn add_child_accepts_a_deep_chain_under_a_referenced_subtree() {
+        // The parent sits inside a registered subtree and the attached
+        // chain is several levels deep, but nothing in it points back
+        // at the resource, so the attachment is legal.
+        let mut g = Scene::new();
+        let res_root = g.add_group(None, Transform3D::Identity);
+        g.register_subtree_resource(res_root).unwrap();
+        let inner = g.add_group(None, Transform3D::Identity);
+        g.add_child(res_root, inner).unwrap();
+
+        let a = g.add_group(None, Transform3D::Identity);
+        let b = g.add_group(None, Transform3D::Identity);
+        let c = g.add_group(None, Transform3D::Identity);
+        g.add_child(b, c).unwrap();
+        g.add_child(a, b).unwrap();
+
+        g.add_child(inner, a).unwrap();
+        assert_eq!(g.parent_of(a), Some(inner));
+        assert_eq!(g.validate(), Ok(()));
     }
 
     #[test]

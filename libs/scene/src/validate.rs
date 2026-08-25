@@ -31,6 +31,32 @@ impl Scene {
         }
     }
 
+    /// Whether `goal` is reachable from `from` in the expansion graph
+    /// (children edges plus `Reference -> resource root` edges). A node
+    /// reaches itself.
+    ///
+    /// Visits only the subgraph reachable from `from`, so the cost is
+    /// bounded by that subgraph and not by the size of the arena.
+    pub(crate) fn expansion_reaches(&self, from: NodeId, goal: NodeId) -> bool {
+        let goal_idx = goal.index();
+        let mut seen: HashSet<usize> = HashSet::new();
+        let mut stack = vec![from.index()];
+        while let Some(curr) = stack.pop() {
+            if curr == goal_idx {
+                return true;
+            }
+            if !seen.insert(curr) {
+                continue;
+            }
+            let mut child_i = 0;
+            while let Some(next) = self.expansion_successor(curr, child_i) {
+                stack.push(next.index());
+                child_i += 1;
+            }
+        }
+        false
+    }
+
     pub(crate) fn find_cycle_in_expansion(&self) -> Option<NodeId> {
         // Three-color iterative DFS over the expansion graph (children
         // edges plus `Reference -> resource root` edges). A back edge to
