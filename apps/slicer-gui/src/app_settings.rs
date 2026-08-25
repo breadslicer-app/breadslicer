@@ -346,7 +346,7 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    pub fn load() -> Self {
+    pub(crate) fn load() -> Self {
         let Some(path) = settings_path() else {
             return Self::default();
         };
@@ -399,7 +399,7 @@ impl AppSettings {
         fresh
     }
 
-    pub fn save(&self) -> io::Result<()> {
+    pub(crate) fn save(&self) -> io::Result<()> {
         let path =
             settings_path().ok_or_else(|| io::Error::other("no config directory available"))?;
         self.save_to_path(&path)
@@ -415,251 +415,251 @@ impl AppSettings {
         write_atomically(path, content.as_bytes())
     }
 
-    pub fn theme(&self) -> ThemePreference {
+    pub(crate) fn theme(&self) -> ThemePreference {
         self.appearance.theme.into()
     }
 
-    pub fn set_theme(&mut self, theme: ThemePreference) {
+    pub(crate) fn set_theme(&mut self, theme: ThemePreference) {
         self.appearance.theme = theme.into();
     }
 
-    pub fn language(&self) -> LanguagePreference {
+    pub(crate) fn language(&self) -> LanguagePreference {
         self.appearance.language
     }
 
-    pub fn set_language(&mut self, language: LanguagePreference) {
+    pub(crate) fn set_language(&mut self, language: LanguagePreference) {
         self.appearance.language = language;
     }
 
-    pub fn menu_layout(&self) -> MenuLayout {
+    pub(crate) fn menu_layout(&self) -> MenuLayout {
         self.appearance.menu_layout.into()
     }
 
-    pub fn set_menu_layout(&mut self, menu_layout: MenuLayout) {
+    pub(crate) fn set_menu_layout(&mut self, menu_layout: MenuLayout) {
         self.appearance.menu_layout = menu_layout.into();
     }
 
-    pub fn default_printer(&self) -> Option<PrinterId> {
+    pub(crate) fn default_printer(&self) -> Option<PrinterId> {
         self.default_printer.clone()
     }
 
-    pub fn set_default_printer(&mut self, id: Option<PrinterId>) {
+    pub(crate) fn set_default_printer(&mut self, id: Option<PrinterId>) {
         self.default_printer = id;
     }
 
-    pub fn default_resin(&self) -> Option<MaterialId> {
+    pub(crate) fn default_resin(&self) -> Option<MaterialId> {
         self.default_resin.clone()
     }
 
-    pub fn set_default_resin(&mut self, id: Option<MaterialId>) {
+    pub(crate) fn set_default_resin(&mut self, id: Option<MaterialId>) {
         self.default_resin = id;
     }
 
-    pub fn favourite_printers(&self) -> BTreeSet<PrinterId> {
+    pub(crate) fn favourite_printers(&self) -> BTreeSet<PrinterId> {
         self.favourite_printers.clone()
     }
 
-    pub fn set_favourite_printers(&mut self, ids: BTreeSet<PrinterId>) {
+    pub(crate) fn set_favourite_printers(&mut self, ids: BTreeSet<PrinterId>) {
         self.favourite_printers = ids;
     }
 
-    pub fn favourite_resins(&self) -> BTreeSet<MaterialId> {
+    pub(crate) fn favourite_resins(&self) -> BTreeSet<MaterialId> {
         self.favourite_resins.clone()
     }
 
-    pub fn set_favourite_resins(&mut self, ids: BTreeSet<MaterialId>) {
+    pub(crate) fn set_favourite_resins(&mut self, ids: BTreeSet<MaterialId>) {
         self.favourite_resins = ids;
     }
 
-    pub fn aa_level(&self) -> AaLevel {
+    pub(crate) fn aa_level(&self) -> AaLevel {
         self.aa_level
     }
 
-    pub fn set_aa_level(&mut self, level: AaLevel) {
+    pub(crate) fn set_aa_level(&mut self, level: AaLevel) {
         self.aa_level = level;
     }
 
-    pub fn object_list_visible(&self) -> bool {
+    pub(crate) fn object_list_visible(&self) -> bool {
         self.object_list.visible
     }
 
-    pub fn set_object_list_visible(&mut self, visible: bool) {
+    pub(crate) fn set_object_list_visible(&mut self, visible: bool) {
         self.object_list.visible = visible;
     }
 
-    pub fn object_list_anchor_right(&self) -> bool {
+    pub(crate) fn object_list_anchor_right(&self) -> bool {
         self.object_list.anchor_right
     }
 
-    pub fn set_object_list_anchor_right(&mut self, anchor_right: bool) {
+    pub(crate) fn set_object_list_anchor_right(&mut self, anchor_right: bool) {
         self.object_list.anchor_right = anchor_right;
     }
 
-    pub fn object_list_anchor_bottom(&self) -> bool {
+    pub(crate) fn object_list_anchor_bottom(&self) -> bool {
         self.object_list.anchor_bottom
     }
 
-    pub fn set_object_list_anchor_bottom(&mut self, anchor_bottom: bool) {
+    pub(crate) fn set_object_list_anchor_bottom(&mut self, anchor_bottom: bool) {
         self.object_list.anchor_bottom = anchor_bottom;
     }
 
-    pub fn object_list_offset_x(&self) -> Option<f32> {
+    pub(crate) fn object_list_offset_x(&self) -> Option<f32> {
         self.object_list.offset_x
     }
 
-    pub fn set_object_list_offset_x(&mut self, offset_x: Option<f32>) {
+    pub(crate) fn set_object_list_offset_x(&mut self, offset_x: Option<f32>) {
         self.object_list.offset_x = offset_x;
     }
 
-    pub fn object_list_offset_y(&self) -> Option<f32> {
+    pub(crate) fn object_list_offset_y(&self) -> Option<f32> {
         self.object_list.offset_y
     }
 
-    pub fn set_object_list_offset_y(&mut self, offset_y: Option<f32>) {
+    pub(crate) fn set_object_list_offset_y(&mut self, offset_y: Option<f32>) {
         self.object_list.offset_y = offset_y;
     }
 
-    pub fn object_list_width(&self) -> Option<f32> {
+    pub(crate) fn object_list_width(&self) -> Option<f32> {
         self.object_list.width
     }
 
-    pub fn set_object_list_width(&mut self, width: Option<f32>) {
+    pub(crate) fn set_object_list_width(&mut self, width: Option<f32>) {
         self.object_list.width = width;
     }
 
-    pub fn object_list_height(&self) -> Option<f32> {
+    pub(crate) fn object_list_height(&self) -> Option<f32> {
         self.object_list.height
     }
 
-    pub fn set_object_list_height(&mut self, height: Option<f32>) {
+    pub(crate) fn set_object_list_height(&mut self, height: Option<f32>) {
         self.object_list.height = height;
     }
 
-    pub fn object_list_minimized(&self) -> bool {
+    pub(crate) fn object_list_minimized(&self) -> bool {
         self.object_list.minimized
     }
 
-    pub fn set_object_list_minimized(&mut self, minimized: bool) {
+    pub(crate) fn set_object_list_minimized(&mut self, minimized: bool) {
         self.object_list.minimized = minimized;
     }
 
-    pub fn slice_panel_anchor_right(&self) -> bool {
+    pub(crate) fn slice_panel_anchor_right(&self) -> bool {
         self.slice_panel.anchor_right
     }
 
-    pub fn set_slice_panel_anchor_right(&mut self, anchor_right: bool) {
+    pub(crate) fn set_slice_panel_anchor_right(&mut self, anchor_right: bool) {
         self.slice_panel.anchor_right = anchor_right;
     }
 
-    pub fn slice_panel_anchor_bottom(&self) -> bool {
+    pub(crate) fn slice_panel_anchor_bottom(&self) -> bool {
         self.slice_panel.anchor_bottom
     }
 
-    pub fn set_slice_panel_anchor_bottom(&mut self, anchor_bottom: bool) {
+    pub(crate) fn set_slice_panel_anchor_bottom(&mut self, anchor_bottom: bool) {
         self.slice_panel.anchor_bottom = anchor_bottom;
     }
 
-    pub fn slice_panel_offset_x(&self) -> Option<f32> {
+    pub(crate) fn slice_panel_offset_x(&self) -> Option<f32> {
         self.slice_panel.offset_x
     }
 
-    pub fn set_slice_panel_offset_x(&mut self, offset_x: Option<f32>) {
+    pub(crate) fn set_slice_panel_offset_x(&mut self, offset_x: Option<f32>) {
         self.slice_panel.offset_x = offset_x;
     }
 
-    pub fn slice_panel_offset_y(&self) -> Option<f32> {
+    pub(crate) fn slice_panel_offset_y(&self) -> Option<f32> {
         self.slice_panel.offset_y
     }
 
-    pub fn set_slice_panel_offset_y(&mut self, offset_y: Option<f32>) {
+    pub(crate) fn set_slice_panel_offset_y(&mut self, offset_y: Option<f32>) {
         self.slice_panel.offset_y = offset_y;
     }
 
-    pub fn slice_panel_width(&self) -> Option<f32> {
+    pub(crate) fn slice_panel_width(&self) -> Option<f32> {
         self.slice_panel.width
     }
 
-    pub fn set_slice_panel_width(&mut self, width: Option<f32>) {
+    pub(crate) fn set_slice_panel_width(&mut self, width: Option<f32>) {
         self.slice_panel.width = width;
     }
 
-    pub fn slice_panel_height(&self) -> Option<f32> {
+    pub(crate) fn slice_panel_height(&self) -> Option<f32> {
         self.slice_panel.height
     }
 
-    pub fn set_slice_panel_height(&mut self, height: Option<f32>) {
+    pub(crate) fn set_slice_panel_height(&mut self, height: Option<f32>) {
         self.slice_panel.height = height;
     }
 
-    pub fn slice_view_visible(&self) -> bool {
+    pub(crate) fn slice_view_visible(&self) -> bool {
         self.slice_view.visible
     }
 
-    pub fn set_slice_view_visible(&mut self, visible: bool) {
+    pub(crate) fn set_slice_view_visible(&mut self, visible: bool) {
         self.slice_view.visible = visible;
     }
 
-    pub fn slice_view_anchor_right(&self) -> bool {
+    pub(crate) fn slice_view_anchor_right(&self) -> bool {
         self.slice_view.anchor_right
     }
 
-    pub fn set_slice_view_anchor_right(&mut self, anchor_right: bool) {
+    pub(crate) fn set_slice_view_anchor_right(&mut self, anchor_right: bool) {
         self.slice_view.anchor_right = anchor_right;
     }
 
-    pub fn slice_view_anchor_bottom(&self) -> bool {
+    pub(crate) fn slice_view_anchor_bottom(&self) -> bool {
         self.slice_view.anchor_bottom
     }
 
-    pub fn set_slice_view_anchor_bottom(&mut self, anchor_bottom: bool) {
+    pub(crate) fn set_slice_view_anchor_bottom(&mut self, anchor_bottom: bool) {
         self.slice_view.anchor_bottom = anchor_bottom;
     }
 
-    pub fn slice_view_offset_x(&self) -> Option<f32> {
+    pub(crate) fn slice_view_offset_x(&self) -> Option<f32> {
         self.slice_view.offset_x
     }
 
-    pub fn set_slice_view_offset_x(&mut self, offset_x: Option<f32>) {
+    pub(crate) fn set_slice_view_offset_x(&mut self, offset_x: Option<f32>) {
         self.slice_view.offset_x = offset_x;
     }
 
-    pub fn slice_view_offset_y(&self) -> Option<f32> {
+    pub(crate) fn slice_view_offset_y(&self) -> Option<f32> {
         self.slice_view.offset_y
     }
 
-    pub fn set_slice_view_offset_y(&mut self, offset_y: Option<f32>) {
+    pub(crate) fn set_slice_view_offset_y(&mut self, offset_y: Option<f32>) {
         self.slice_view.offset_y = offset_y;
     }
 
-    pub fn slice_view_width(&self) -> Option<f32> {
+    pub(crate) fn slice_view_width(&self) -> Option<f32> {
         self.slice_view.width
     }
 
-    pub fn set_slice_view_width(&mut self, width: Option<f32>) {
+    pub(crate) fn set_slice_view_width(&mut self, width: Option<f32>) {
         self.slice_view.width = width;
     }
 
-    pub fn slice_view_height(&self) -> Option<f32> {
+    pub(crate) fn slice_view_height(&self) -> Option<f32> {
         self.slice_view.height
     }
 
-    pub fn set_slice_view_height(&mut self, height: Option<f32>) {
+    pub(crate) fn set_slice_view_height(&mut self, height: Option<f32>) {
         self.slice_view.height = height;
     }
 
-    pub fn slice_view_minimized(&self) -> bool {
+    pub(crate) fn slice_view_minimized(&self) -> bool {
         self.slice_view.minimized
     }
 
-    pub fn set_slice_view_minimized(&mut self, minimized: bool) {
+    pub(crate) fn set_slice_view_minimized(&mut self, minimized: bool) {
         self.slice_view.minimized = minimized;
     }
 
-    pub fn last_open_dir(&self) -> Option<PathBuf> {
+    pub(crate) fn last_open_dir(&self) -> Option<PathBuf> {
         self.last_open_dir.clone()
     }
 
-    pub fn set_last_open_dir(&mut self, dir: Option<PathBuf>) {
+    pub(crate) fn set_last_open_dir(&mut self, dir: Option<PathBuf>) {
         self.last_open_dir = dir;
     }
 }

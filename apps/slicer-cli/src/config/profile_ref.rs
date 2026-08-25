@@ -28,7 +28,7 @@ use sc_print_primitives::{InvalidProfileId, MaterialId, PrinterId};
 /// A `--printer-profile` flag value: an explicit path or a printer
 /// id.
 #[derive(Clone, Debug)]
-pub enum PrinterProfileRef {
+pub(crate) enum PrinterProfileRef {
     Path(PathBuf),
     Id(PrinterId),
 }
@@ -36,7 +36,7 @@ pub enum PrinterProfileRef {
 /// A `--material-profile` flag value: an explicit path or a material
 /// id.
 #[derive(Clone, Debug)]
-pub enum MaterialProfileRef {
+pub(crate) enum MaterialProfileRef {
     Path(PathBuf),
     Id(MaterialId),
 }
@@ -44,7 +44,7 @@ pub enum MaterialProfileRef {
 /// Returned when a flag value is neither a path nor a valid profile
 /// id.
 #[derive(Debug)]
-pub struct ProfileRefParseError {
+pub(crate) struct ProfileRefParseError {
     value: String,
     id_error: InvalidProfileId,
 }

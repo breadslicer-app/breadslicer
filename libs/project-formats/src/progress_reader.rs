@@ -27,7 +27,7 @@ impl<R: Read + Seek, F: FnMut(u64, u64)> ProgressReader<R, F> {
     /// Wrap `inner`, learning the total by seeking to the end and
     /// back to the start. `on_position` receives `(position, total)`
     /// in bytes.
-    pub fn new(mut inner: R, on_position: F) -> std::io::Result<Self> {
+    pub(crate) fn new(mut inner: R, on_position: F) -> std::io::Result<Self> {
         let total = inner.seek(SeekFrom::End(0))?;
         inner.seek(SeekFrom::Start(0))?;
         Ok(Self {
@@ -39,7 +39,7 @@ impl<R: Read + Seek, F: FnMut(u64, u64)> ProgressReader<R, F> {
     }
 
     /// Total stream length in bytes, measured at construction.
-    pub fn total_bytes(&self) -> u64 {
+    pub(crate) fn total_bytes(&self) -> u64 {
         self.total
     }
 }

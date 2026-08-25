@@ -57,7 +57,7 @@ use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use sc_scene::SceneError;
 
-pub struct ViewportController {
+pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
     camera: CameraController,
@@ -72,7 +72,7 @@ pub struct ViewportController {
 }
 
 impl ViewportController {
-    pub fn new(
+    pub(crate) fn new(
         ui: &MainWindow,
         document: Rc<SceneDocument>,
         pending_load: Rc<PendingLoad>,
@@ -220,7 +220,7 @@ impl ViewportController {
     /// Access to the loader FSM. `wiring.rs` drives the async file-load
     /// handshake (begin/end, stamp, slot) against the loader directly
     /// rather than through delegating methods on the controller.
-    pub fn loader(&self) -> Rc<SceneLoader> {
+    pub(crate) fn loader(&self) -> Rc<SceneLoader> {
         self.session.loader().clone()
     }
 
@@ -228,14 +228,14 @@ impl ViewportController {
     /// the window had a graphics device. `wiring.rs` parks the menu's
     /// picked path here when the viewport has not started yet;
     /// `post_renderer_install` drains it.
-    pub fn pending_load(&self) -> Rc<PendingLoad> {
+    pub(crate) fn pending_load(&self) -> Rc<PendingLoad> {
         self.session.pending_load().clone()
     }
 
     /// Access to the document. Used by `wiring.rs` to drive the
     /// `Export As` flow (read scene + source path) without going
     /// through delegating methods on the controller.
-    pub fn document(&self) -> Rc<SceneDocument> {
+    pub(crate) fn document(&self) -> Rc<SceneDocument> {
         self.session.document().clone()
     }
 
@@ -243,16 +243,16 @@ impl ViewportController {
     /// errors that don't originate from a controller call (e.g. an
     /// async file-save dialog flow whose result needs an error
     /// dialog).
-    pub fn dialogs(&self) -> Rc<DialogManager> {
+    pub(crate) fn dialogs(&self) -> Rc<DialogManager> {
         self.session.dialogs().clone()
     }
 
     /// The save-progress panel driver, shared with the async save flow.
-    pub fn save_progress(&self) -> Rc<SaveProgressPanel> {
+    pub(crate) fn save_progress(&self) -> Rc<SaveProgressPanel> {
         self.session.save_progress().clone()
     }
 
-    pub fn export_progress(&self) -> Rc<ExportProgressPanel> {
+    pub(crate) fn export_progress(&self) -> Rc<ExportProgressPanel> {
         self.session.export_progress().clone()
     }
 
@@ -260,7 +260,7 @@ impl ViewportController {
     /// `app_state` once the controller is wrapped in `Rc`. The
     /// listener captures a `Weak<Self>` to avoid an `Rc` cycle through
     /// the document.
-    pub fn register_document_listener(self: &Rc<Self>) {
+    pub(crate) fn register_document_listener(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
         let sub = self.session.document().subscribe(move |event| {
             if let Some(strong) = weak.upgrade() {
@@ -436,11 +436,11 @@ impl ViewportController {
     /// window-poke isn't enough on its own.
     /// Current build envelope. Read by the load pipeline at dispatch
     /// time so the worker can drop the parsed scene onto the plate.
-    pub fn build_volume(&self) -> BuildVolume {
+    pub(crate) fn build_volume(&self) -> BuildVolume {
         self.session.build_volume()
     }
 
-    pub fn set_build_volume(&self, bv: BuildVolume) {
+    pub(crate) fn set_build_volume(&self, bv: BuildVolume) {
         if self.session.set_build_volume(bv) {
             self.mark_dirty();
         }
@@ -452,7 +452,7 @@ impl ViewportController {
     /// initial section from mesh health. Leaving Transform cancels any
     /// in-flight gizmo gesture so a half-finished transform cannot
     /// linger in a section that forbids editing.
-    pub fn set_section(&self, section: WorkspaceSection) {
+    pub(crate) fn set_section(&self, section: WorkspaceSection) {
         if !self.session.set_section(section) {
             return;
         }
@@ -468,14 +468,14 @@ impl ViewportController {
     /// Whether the active section permits the layout tools (gizmo,
     /// delete, copy, paste). The gating across the input paths reads
     /// this; selection and camera navigation ignore it.
-    pub fn allows_layout_tools(&self) -> bool {
+    pub(crate) fn allows_layout_tools(&self) -> bool {
         crate::workspace_section::allows_layout_tools(self.session.section())
     }
 
     /// Whether the active section permits undo/redo. Wider than the
     /// layout gate: history stays reachable in Prepare (mesh repair
     /// is undoable there) and is blocked only in Slice.
-    pub fn allows_undo_redo(&self) -> bool {
+    pub(crate) fn allows_undo_redo(&self) -> bool {
         crate::workspace_section::allows_undo_redo(self.session.section())
     }
 
@@ -498,11 +498,11 @@ impl ViewportController {
     /// The slice height slider moved: repaint so the mesh clip follows
     /// the new layer. The clip height is recomputed from the current UI
     /// value at paint time.
-    pub fn on_selected_layer_changed(&self) {
+    pub(crate) fn on_selected_layer_changed(&self) {
         self.mark_dirty();
     }
 
-    pub fn on_viewport_resized(&self, w: f32, h: f32) {
+    pub(crate) fn on_viewport_resized(&self, w: f32, h: f32) {
         self.render.on_viewport_resized(w, h);
     }
 
@@ -510,23 +510,23 @@ impl ViewportController {
     /// Drops the bucketed MSAA / target allocations so the next frame
     /// reallocates at the exact logical size, eliminating the `image-fit:
     /// fill` stretch that persisted during the drag.
-    pub fn on_resize_settled(&self) {
+    pub(crate) fn on_resize_settled(&self) {
         self.render.on_resize_settled();
     }
 
-    pub fn on_rotate(&self, delta: ScreenDelta) {
+    pub(crate) fn on_rotate(&self, delta: ScreenDelta) {
         if self.camera.on_rotate(delta, self.render.viewport()) {
             self.mark_dirty();
         }
     }
 
-    pub fn on_pan(&self, delta: ScreenDelta) {
+    pub(crate) fn on_pan(&self, delta: ScreenDelta) {
         if self.camera.on_pan(delta, self.render.viewport()) {
             self.mark_dirty();
         }
     }
 
-    pub fn on_zoom(&self, wheel_delta: f32, cursor: ScreenPoint) {
+    pub(crate) fn on_zoom(&self, wheel_delta: f32, cursor: ScreenPoint) {
         if self
             .camera
             .on_zoom(wheel_delta, cursor, self.render.viewport())
@@ -535,19 +535,19 @@ impl ViewportController {
         }
     }
 
-    pub fn on_frame_view(&self) {
+    pub(crate) fn on_frame_view(&self) {
         if self.camera.on_frame_view() {
             self.mark_dirty();
         }
     }
 
-    pub fn on_axis_view(&self, view: crate::AxisView) {
+    pub(crate) fn on_axis_view(&self, view: crate::AxisView) {
         if self.camera.on_axis_view(axis_from_ui(view)) {
             self.mark_dirty();
         }
     }
 
-    pub fn on_close_scene(&self) {
+    pub(crate) fn on_close_scene(&self) {
         // Loader-side invalidation is not driven by the document's
         // listener, it's coupled to the close *gesture*, not to the
         // scene state itself. The `clear_scene` call below fires
@@ -558,7 +558,7 @@ impl ViewportController {
         self.session.document().clear_scene();
     }
 
-    pub fn on_scene_load_finished(&self) {
+    pub(crate) fn on_scene_load_finished(&self) {
         let Some(prepared) = self.session.loader().take_finished_load() else {
             return;
         };
@@ -653,7 +653,7 @@ impl ViewportController {
     /// but a stale callback can race with a scene reload). The Cell
     /// guard short-circuits the round-trip so the mirror-back to the UI
     /// doesn't fire `selection-changed` again.
-    pub fn on_select_by_index(&self, idx: usize) {
+    pub(crate) fn on_select_by_index(&self, idx: usize) {
         // Resolve the legacy pre-order index against the live graph
         // and store the resulting NodeId in the selection. An
         // out-of-range index degrades to `Selection::None`, the same
@@ -690,7 +690,7 @@ impl ViewportController {
     /// transform). The current implementation does not abort an
     /// in-progress drag on Tab; if that turns out to be wrong, the
     /// fix is to call `abort_gizmo_drag` here.
-    pub fn on_selection_cycle(&self, delta: i32) {
+    pub(crate) fn on_selection_cycle(&self, delta: i32) {
         let scene_len = self
             .session
             .document()
@@ -731,7 +731,7 @@ impl ViewportController {
     /// (which is what `can-undo` already gates in the menu, but the
     /// shortcut can race a freshly-emptied stack, the document's
     /// own check is the source of truth).
-    pub fn on_undo_requested(&self) {
+    pub(crate) fn on_undo_requested(&self) {
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
@@ -741,7 +741,7 @@ impl ViewportController {
     }
 
     /// Edit -> Redo handler.
-    pub fn on_redo_requested(&self) {
+    pub(crate) fn on_redo_requested(&self) {
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
@@ -782,7 +782,7 @@ impl ViewportController {
     /// right-click context menu, and the Edit > Delete menu item.
     /// No-op when no scene is loaded, nothing is selected, or the
     /// selection is not a leaf.
-    pub fn on_delete_requested(&self) {
+    pub(crate) fn on_delete_requested(&self) {
         if !self.allows_layout_tools() {
             return;
         }
@@ -791,7 +791,7 @@ impl ViewportController {
         }
     }
 
-    pub fn on_clear_selection(&self) {
+    pub(crate) fn on_clear_selection(&self) {
         if matches!(self.input.gizmo_fsm().current(), GizmoState::Drag { .. }) {
             self.input.abort_gizmo_drag(self.session.document());
             return;
@@ -817,15 +817,15 @@ impl ViewportController {
     /// pick something to focus on first). Pressing the same focus
     /// type twice is a no-op so the integrator's tick clock isn't
     /// reset by autorepeat.
-    pub fn on_gizmo_focus_translate(&self) {
+    pub(crate) fn on_gizmo_focus_translate(&self) {
         self.apply_keyboard_focus(KbdFocus::Translate);
     }
 
-    pub fn on_gizmo_focus_rotate(&self) {
+    pub(crate) fn on_gizmo_focus_rotate(&self) {
         self.apply_keyboard_focus(KbdFocus::Rotate);
     }
 
-    pub fn on_gizmo_focus_scale(&self) {
+    pub(crate) fn on_gizmo_focus_scale(&self) {
         self.apply_keyboard_focus(KbdFocus::Scale);
     }
 
@@ -853,7 +853,7 @@ impl ViewportController {
         self.mark_dirty();
     }
 
-    pub fn on_gizmo_arrow_pressed(&self, code: i32) {
+    pub(crate) fn on_gizmo_arrow_pressed(&self, code: i32) {
         if self
             .input
             .on_gizmo_arrow_pressed(self.session.document(), code)
@@ -862,7 +862,7 @@ impl ViewportController {
         }
     }
 
-    pub fn on_gizmo_arrow_released(&self, code: i32) {
+    pub(crate) fn on_gizmo_arrow_released(&self, code: i32) {
         if self
             .input
             .on_gizmo_arrow_released(self.session.document(), code)
@@ -871,7 +871,7 @@ impl ViewportController {
         }
     }
 
-    pub fn on_pointer_down(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
+    pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
         self.input.on_pointer_down(
             self.session.document(),
             self.camera.camera_cell(),
@@ -882,7 +882,7 @@ impl ViewportController {
         );
     }
 
-    pub fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
+    pub(crate) fn on_pointer_move(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
         // Track the cursor in every section so a later paste anchors on
         // it; the gizmo drag / hover only runs in the Transform section.
         self.input.note_hover_cursor(cursor);
@@ -901,7 +901,7 @@ impl ViewportController {
         }
     }
 
-    pub fn on_pointer_up(&self, cursor: ScreenPoint, _modifiers: PointerModifiers) {
+    pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, _modifiers: PointerModifiers) {
         match self.input.on_pointer_up(self.session.document(), cursor) {
             PointerUpOutcome::DragCommitted => self.mark_dirty(),
             PointerUpOutcome::Click(cursor) => self.run_pick_at(cursor),
@@ -913,7 +913,7 @@ impl ViewportController {
     /// hover-cursor so the paste path falls back to the
     /// viewport-centre placement instead of anchoring on a stale
     /// last-known pixel.
-    pub fn on_pointer_leave(&self) {
+    pub(crate) fn on_pointer_leave(&self) {
         self.input.on_pointer_leave();
     }
 
@@ -921,7 +921,7 @@ impl ViewportController {
     /// classifies the gesture as click (context menu) or drag
     /// (camera orbit) by comparing displacement against the
     /// click threshold.
-    pub fn on_right_pointer_down(&self, x: f32, y: f32) {
+    pub(crate) fn on_right_pointer_down(&self, x: f32, y: f32) {
         self.input.on_right_pointer_down(ScreenPoint { x, y });
     }
 
@@ -930,7 +930,7 @@ impl ViewportController {
     /// the context menu at that pixel); `None` for a drag the
     /// orbit gesture already consumed or a release without a
     /// matching press.
-    pub fn on_right_pointer_up(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+    pub(crate) fn on_right_pointer_up(&self, x: f32, y: f32) -> Option<(f32, f32)> {
         self.input
             .on_right_pointer_up(ScreenPoint { x, y })
             .map(|p| (p.x, p.y))
@@ -942,7 +942,7 @@ impl ViewportController {
     /// Context-menu orchestration uses this to decide whether to
     /// move the selection to the right-clicked object and whether
     /// to surface the Copy item.
-    pub fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_scene::NodeId> {
+    pub(crate) fn pick_node_at(&self, x: f32, y: f32) -> Option<sc_scene::NodeId> {
         self.input
             .pick_at(
                 self.session.document(),
@@ -1086,7 +1086,7 @@ impl ViewportController {
         }
     }
 
-    pub fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
+    pub(crate) fn handle_rendering_setup(&self, device: wgpu::Device, queue: wgpu::Queue) {
         // Mint a fresh token for this setup edition. Both the loader
         // snapshot (consumed by the worker-side `GpuScene::build`) and
         // the renderer (built below) carry it. The two values match
@@ -1121,7 +1121,7 @@ impl ViewportController {
     /// wgpu one this build draws with, so no device will be published
     /// for it and the viewport stays empty. Records which API arrived
     /// so anything that needs a device can explain the absence.
-    pub fn handle_unsupported_graphics_api(&self, api: String) {
+    pub(crate) fn handle_unsupported_graphics_api(&self, api: String) {
         self.session.loader().note_unsupported_graphics_api(api);
     }
 
@@ -1187,7 +1187,7 @@ impl ViewportController {
     // is cleared too, so a click on Open between teardown and the next
     // setup is bounced by `begin_load` instead of leaving a worker to
     // build buffers against an unowned device.
-    pub fn handle_rendering_teardown(&self) {
+    pub(crate) fn handle_rendering_teardown(&self) {
         self.session.loader().clear_gpu();
         self.render.handle_rendering_teardown();
     }
@@ -1473,7 +1473,7 @@ impl ViewportController {
         }
     }
 
-    pub fn handle_before_rendering(&self) {
+    pub(crate) fn handle_before_rendering(&self) {
         if !self.on_scene_change() {
             return;
         }

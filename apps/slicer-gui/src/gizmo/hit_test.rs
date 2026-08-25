@@ -19,7 +19,7 @@ use super::tolerances::{LOCKOUT_COS, ROTATE_LOCKOUT_COS};
 /// looking too closely along the axis (see `LOCKOUT_COS`). The
 /// renderer should also grey the axis tint when this returns false
 /// so the user sees that the lock-out is intentional.
-pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
+pub(crate) fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
     let a = axis.world_dir();
     a.dot(ray.direction).abs() < LOCKOUT_COS
 }
@@ -33,7 +33,7 @@ pub fn axis_pickable(ray: &Ray, axis: Axis) -> bool {
 /// The returned `t` is exposed so the controller can arbitrate
 /// front-most across the three hit-test categories (translate cones,
 /// rotate cones, scale midpoint cubes).
-pub fn hit_test(
+pub(crate) fn hit_test(
     ray: &Ray,
     pivot: Vec3,
     length_world: f32,
@@ -157,7 +157,7 @@ fn ray_hits_finite_cylinder(
 /// the basis of both hit-test and drag math, degenerates. The
 /// renderer should grey the arc in that state so the user sees why
 /// it is unresponsive.
-pub fn arc_pickable(ray: &Ray, axis: Axis) -> bool {
+pub(crate) fn arc_pickable(ray: &Ray, axis: Axis) -> bool {
     let a = axis.world_dir();
     a.dot(ray.direction).abs() >= ROTATE_LOCKOUT_COS
 }
@@ -202,7 +202,7 @@ fn arc_midpoint_world(ray: &Ray, pivot: Vec3, axis: Axis, arc_radius_world: f32)
 /// cylinder, or `None` if it misses. The torus *tube* itself is no
 /// longer a click target; it's a visual aid that connects the
 /// two-cone spindle around the rotation axis.
-pub fn ray_hits_rotate_cones(
+pub(crate) fn ray_hits_rotate_cones(
     ray: &Ray,
     pivot: Vec3,
     axis: Axis,
@@ -235,7 +235,7 @@ pub fn ray_hits_rotate_cones(
 /// is each cone's length along the axis; `cone_radius_world` is the
 /// shared cone base radius; both follow the per-frame world-per-
 /// pixel ratio so the cones keep a constant on-screen size.
-pub fn rotate_hit_test(
+pub(crate) fn rotate_hit_test(
     ray: &Ray,
     pivot: Vec3,
     arc_radius_world: f32,
@@ -280,7 +280,7 @@ fn ray_hits_axis_cube(
 /// inherit the translate lock-out (the closest-point-on-axis drag
 /// math has the same instability as translate near the camera-
 /// parallel-to-axis configuration).
-pub fn scale_hit_test(
+pub(crate) fn scale_hit_test(
     ray: &Ray,
     pivot: Vec3,
     shaft_length_world: f32,

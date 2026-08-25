@@ -229,7 +229,7 @@ pub(crate) struct SceneDocument {
 }
 
 impl SceneDocument {
-    pub fn new() -> Rc<Self> {
+    pub(crate) fn new() -> Rc<Self> {
         Rc::new(Self {
             spatial: RefCell::new(None),
             source_path: RefCell::new(None),
@@ -254,7 +254,7 @@ impl SceneDocument {
     /// Test utility: Wrap a [`Scene`] in a fresh (lazy)
     /// [`SceneSpatial`] and install it.
     #[cfg(test)]
-    pub fn install_graph(&self, graph: Scene, source_path: PathBuf) {
+    pub(crate) fn install_graph(&self, graph: Scene, source_path: PathBuf) {
         self.install_spatial(SceneSpatial::from_graph(graph), source_path, None);
     }
 
@@ -262,7 +262,7 @@ impl SceneDocument {
     /// [`Self::install_graph`] but with the project data the file
     /// carried.
     #[cfg(test)]
-    pub fn install_project_graph(
+    pub(crate) fn install_project_graph(
         &self,
         graph: Scene,
         source_path: PathBuf,
@@ -275,7 +275,7 @@ impl SceneDocument {
     /// worker thread). Resets selection and clears history just like
     /// [`Self::install_graph`]. `project_payload` is the project data
     /// the source file carried, `None` for plain mesh files.
-    pub fn install_spatial(
+    pub(crate) fn install_spatial(
         &self,
         spatial: SceneSpatial,
         source_path: PathBuf,
@@ -315,7 +315,7 @@ impl SceneDocument {
         self.notify_dirty_change(was_dirty);
     }
 
-    pub fn clear_scene(&self) {
+    pub(crate) fn clear_scene(&self) {
         let was_dirty = self.is_dirty();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
@@ -354,7 +354,7 @@ impl SceneDocument {
     /// [`Self::evicted_since_save`]). The comparison can over-report
     /// dirty (the save point may sit deeper in the stack or be
     /// evicted), never under-report it.
-    pub fn is_dirty(&self) -> bool {
+    pub(crate) fn is_dirty(&self) -> bool {
         if !self.is_loaded() {
             return false;
         }
@@ -371,7 +371,7 @@ impl SceneDocument {
     /// Records the current history position as the saved state, so
     /// [`Self::is_dirty`] reads `false` until the next committed
     /// change. Called by the save flow after a successful write.
-    pub fn mark_saved(&self) {
+    pub(crate) fn mark_saved(&self) {
         let was_dirty = self.is_dirty();
         self.save_point.set(self.top_edit_id());
         self.evicted_since_save.set(false);
@@ -382,7 +382,7 @@ impl SceneDocument {
     /// The project payload for a save: the scene's own choices, with a
     /// missing printer or resin filled from the given app-wide default,
     /// plus the held embedded profile documents.
-    pub fn compose_project_payload(
+    pub(crate) fn compose_project_payload(
         &self,
         default_printer: Option<PrinterId>,
         default_resin: Option<MaterialId>,
@@ -398,7 +398,7 @@ impl SceneDocument {
 
     /// Whether this document is a project: it was opened from a
     /// project file or has been saved as one.
-    pub fn is_project(&self) -> bool {
+    pub(crate) fn is_project(&self) -> bool {
         self.is_loaded() && self.origin.get() == DocumentOrigin::Project
     }
 
@@ -407,7 +407,7 @@ impl SceneDocument {
     /// written, `target` is the file "Save" overwrites from now on, the
     /// document is a project whatever its origin was, and the dirty
     /// marker clears.
-    pub fn record_project_save(&self, payload: ProjectPayload, target: PathBuf) {
+    pub(crate) fn record_project_save(&self, payload: ProjectPayload, target: PathBuf) {
         let (selection, embedded) = PrintSelection::from_payload(payload);
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
@@ -417,37 +417,37 @@ impl SceneDocument {
     }
 
     /// The scene's own printer choice.
-    pub fn selected_printer(&self) -> Option<PrinterId> {
+    pub(crate) fn selected_printer(&self) -> Option<PrinterId> {
         self.print_selection.borrow().printer.clone()
     }
 
     /// The scene's own resin choice.
-    pub fn selected_resin(&self) -> Option<MaterialId> {
+    pub(crate) fn selected_resin(&self) -> Option<MaterialId> {
         self.print_selection.borrow().resin.clone()
     }
 
     /// The scene's own first-layer height.
-    pub fn selected_first_layer_height(&self) -> Option<PositiveFiniteMm> {
+    pub(crate) fn selected_first_layer_height(&self) -> Option<PositiveFiniteMm> {
         self.print_selection.borrow().first_layer_height
     }
 
     /// Sets the scene's own printer choice. Marks the document
     /// save-dirty only when the value actually changes. Returns whether
     /// it changed.
-    pub fn set_selected_printer(&self, printer: Option<PrinterId>) -> bool {
+    pub(crate) fn set_selected_printer(&self, printer: Option<PrinterId>) -> bool {
         self.set_selection_field(|selection| &mut selection.printer, printer)
     }
 
     /// Sets the scene's own resin choice. Marks the document save-dirty
     /// only when the value actually changes. Returns whether it changed.
-    pub fn set_selected_resin(&self, resin: Option<MaterialId>) -> bool {
+    pub(crate) fn set_selected_resin(&self, resin: Option<MaterialId>) -> bool {
         self.set_selection_field(|selection| &mut selection.resin, resin)
     }
 
     /// Sets the scene's own first-layer height. Marks the document
     /// save-dirty only when the value actually changes. Returns whether
     /// it changed.
-    pub fn set_selected_first_layer_height(&self, height: Option<PositiveFiniteMm>) -> bool {
+    pub(crate) fn set_selected_first_layer_height(&self, height: Option<PositiveFiniteMm>) -> bool {
         self.set_selection_field(|selection| &mut selection.first_layer_height, height)
     }
 
@@ -479,7 +479,7 @@ impl SceneDocument {
     /// at slice time and compared later by [`Self::slice_geometry_changed`]
     /// to tell whether the geometry has changed since. This is the same
     /// identity the save-point tracking snapshots.
-    pub fn scene_revision(&self) -> SceneRevision {
+    pub(crate) fn scene_revision(&self) -> SceneRevision {
         SceneRevision(self.top_edit_id())
     }
 
@@ -488,7 +488,7 @@ impl SceneDocument {
     /// means changed; a matching empty stack (`None`) is trusted only
     /// while no applied edit has been evicted since the slice was
     /// recorded. Can over-report a change, never under-report it.
-    pub fn slice_geometry_changed(&self, since: SceneRevision) -> bool {
+    pub(crate) fn slice_geometry_changed(&self, since: SceneRevision) -> bool {
         let top = self.top_edit_id();
         if top != since.0 {
             return true;
@@ -500,7 +500,7 @@ impl SceneDocument {
     /// present geometry as its baseline (a fresh eviction window).
     /// Slice staleness is tracked separately from the save-dirty signal,
     /// so this does not touch [`Self::is_dirty`].
-    pub fn set_slice_result(&self, result: SliceResult) {
+    pub(crate) fn set_slice_result(&self, result: SliceResult) {
         *self.slice_result.borrow_mut() = Some(result);
         self.evicted_since_slice.set(false);
         self.slice_generation
@@ -511,7 +511,7 @@ impl SceneDocument {
     /// data is left in place). `None` when no slice has been produced
     /// for the current scene. Used by the re-slice decision to compare
     /// against the current inputs.
-    pub fn slice_params(&self) -> Option<SliceParams> {
+    pub(crate) fn slice_params(&self) -> Option<SliceParams> {
         self.slice_result
             .borrow()
             .as_ref()
@@ -521,7 +521,7 @@ impl SceneDocument {
     /// The number of layers in the held slice, or `None` when no slice
     /// is held. Drives the height slider's range and enabled state: a
     /// `None` (or, upstream, a zero) disables it.
-    pub fn slice_layer_count(&self) -> Option<u32> {
+    pub(crate) fn slice_layer_count(&self) -> Option<u32> {
         self.slice_result
             .borrow()
             .as_ref()
@@ -531,7 +531,7 @@ impl SceneDocument {
     /// The top Z (mm above the plate) of the held slice's layer at
     /// `index`, or `None` when no slice is held or the index is past the
     /// last layer. The slice-view clip uses this as its cut height.
-    pub fn slice_layer_top_z(&self, index: u32) -> Option<f64> {
+    pub(crate) fn slice_layer_top_z(&self, index: u32) -> Option<f64> {
         self.slice_result
             .borrow()
             .as_ref()
@@ -541,7 +541,7 @@ impl SceneDocument {
     /// A counter bumped each time a slice result is stored. Combined
     /// with the layer index it keys the slice-view cap's cached texture,
     /// so a re-slice invalidates it.
-    pub fn slice_generation(&self) -> u64 {
+    pub(crate) fn slice_generation(&self) -> u64 {
         self.slice_generation.get()
     }
 
@@ -549,7 +549,11 @@ impl SceneDocument {
     /// `None` when no slice is held or the index is past the last layer.
     /// The layer is borrowed in place, so the cap raster is built
     /// without cloning the contour.
-    pub fn with_slice_layer<R>(&self, index: u32, f: impl FnOnce(&ContourLayer) -> R) -> Option<R> {
+    pub(crate) fn with_slice_layer<R>(
+        &self,
+        index: u32,
+        f: impl FnOnce(&ContourLayer) -> R,
+    ) -> Option<R> {
         self.slice_result
             .borrow()
             .as_ref()
@@ -564,7 +568,7 @@ impl SceneDocument {
     /// identities and the anti-aliasing level are deliberately not
     /// consulted; they are not the vector slices' inputs. Out-of-sync
     /// slices never reach the file.
-    pub fn slices_for_persist(
+    pub(crate) fn slices_for_persist(
         &self,
         current_schedule: &LayerSchedule,
     ) -> Option<(PlateSlices, String)> {
@@ -623,11 +627,11 @@ impl SceneDocument {
         had
     }
 
-    pub fn selection(&self) -> Selection {
+    pub(crate) fn selection(&self) -> Selection {
         self.selection.current()
     }
 
-    pub fn set_selection(&self, sel: Selection) {
+    pub(crate) fn set_selection(&self, sel: Selection) {
         if self.selection.current() == sel {
             return;
         }
@@ -639,7 +643,7 @@ impl SceneDocument {
     /// selection exists. Equivalent to
     /// `self.selection().primary().map(LeafId::node_id)` but cheaper
     /// to call repeatedly.
-    pub fn selection_primary_node_id(&self) -> Option<NodeId> {
+    pub(crate) fn selection_primary_node_id(&self) -> Option<NodeId> {
         self.selection.primary_node_id()
     }
 
@@ -655,7 +659,7 @@ impl SceneDocument {
     /// concern so live-drag ticks can mutate the scene without
     /// flooding the history. Callers that mean "apply and record"
     /// invoke `apply_edit` followed by `push_edit` at gesture-end.
-    pub fn apply_edit(&self, edit: SceneEdit) -> Result<(), EditNotApplied> {
+    pub(crate) fn apply_edit(&self, edit: SceneEdit) -> Result<(), EditNotApplied> {
         let mut slot = self.spatial.borrow_mut();
         let Some(spatial) = slot.as_mut() else {
             return Err(EditNotApplied::NoSceneLoaded);
@@ -922,11 +926,11 @@ impl SceneDocument {
         Some((compound, new_root))
     }
 
-    pub fn can_undo(&self) -> bool {
+    pub(crate) fn can_undo(&self) -> bool {
         !self.undo_stack.borrow().is_empty()
     }
 
-    pub fn can_redo(&self) -> bool {
+    pub(crate) fn can_redo(&self) -> bool {
         !self.redo_stack.borrow().is_empty()
     }
 
@@ -935,7 +939,7 @@ impl SceneDocument {
     /// applied, `Ok(false)` if there was nothing to undo (empty stack
     /// or no scene loaded), and the scene's rejection otherwise; on
     /// anything but `Ok(true)` the stacks are left as they were.
-    pub fn undo(&self) -> Result<bool, SceneError> {
+    pub(crate) fn undo(&self) -> Result<bool, SceneError> {
         let was_dirty = self.is_dirty();
         let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
             return Ok(false);
@@ -969,7 +973,7 @@ impl SceneDocument {
     /// nothing to redo (empty stack or no scene loaded), and the
     /// scene's rejection otherwise; on anything but `Ok(true)` the
     /// stacks are left as they were.
-    pub fn redo(&self) -> Result<bool, SceneError> {
+    pub(crate) fn redo(&self) -> Result<bool, SceneError> {
         let was_dirty = self.is_dirty();
         let Some(entry) = self.redo_stack.borrow_mut().pop_back() else {
             return Ok(false);
@@ -999,7 +1003,7 @@ impl SceneDocument {
 
     /// Registers a listener. Returns a handle whose `Drop` removes
     /// the listener. Listeners fire in registration order.
-    pub fn subscribe<F>(self: &Rc<Self>, listener: F) -> SceneSubscription
+    pub(crate) fn subscribe<F>(self: &Rc<Self>, listener: F) -> SceneSubscription
     where
         F: Fn(SceneEvent) + 'static,
     {
@@ -1033,20 +1037,20 @@ impl SceneDocument {
     // Tests exercise the field; the production caller (export-as
     // default-filename derivation) lands with the export feature.
     #[cfg(test)]
-    pub fn source_path(&self) -> Option<PathBuf> {
+    pub(crate) fn source_path(&self) -> Option<PathBuf> {
         self.source_path.borrow().clone()
     }
 
     /// Borrow form for callers that only need the path's lifetime
     /// inside a closure (avoids the clone in `source_path`).
-    pub fn with_source_path<R>(&self, f: impl FnOnce(&Path) -> R) -> Option<R> {
+    pub(crate) fn with_source_path<R>(&self, f: impl FnOnce(&Path) -> R) -> Option<R> {
         self.source_path.borrow().as_deref().map(f)
     }
 
     /// The source file's name with extension (for example
     /// `widget.stl`), used as the window title. `None` when no scene
     /// is loaded or the path has no final component.
-    pub fn source_file_name(&self) -> Option<String> {
+    pub(crate) fn source_file_name(&self) -> Option<String> {
         self.with_source_path(|p| {
             p.file_name()
                 .and_then(|name| name.to_str())
@@ -1060,11 +1064,11 @@ impl SceneDocument {
     /// closure short: the internal borrow is held for its
     /// duration. Use `spatial.graph()` for read-only navigation and
     /// `spatial.leaf(id)` for per-leaf queries.
-    pub fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
+    pub(crate) fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
         self.spatial.borrow().as_ref().map(f)
     }
 
-    pub fn is_loaded(&self) -> bool {
+    pub(crate) fn is_loaded(&self) -> bool {
         self.spatial.borrow().is_some()
     }
 }
@@ -1088,7 +1092,7 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
 /// Why [`SceneDocument::apply_edit`] did not apply an edit. Either
 /// way the scene, the caches, and the selection are untouched.
 #[derive(Debug)]
-pub enum EditNotApplied {
+pub(crate) enum EditNotApplied {
     /// No document is loaded; a legal UI state (a shortcut firing
     /// with nothing open), not an error worth a dialog.
     NoSceneLoaded,

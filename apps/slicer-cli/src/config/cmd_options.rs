@@ -16,7 +16,7 @@ use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
 
 /// Which kinds of profile a `profiles list` invocation lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ListKind {
+pub(crate) enum ListKind {
     All,
     Printers,
     Materials,
@@ -35,7 +35,7 @@ impl FromStr for ListKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum CmdOptions {
+pub(crate) enum CmdOptions {
     Convert {
         source: OsString,
         source_format: Option<MeshFileType>,
@@ -327,7 +327,7 @@ fn get_profiles_options() -> impl Parser<CmdOptions> {
     construct!([list, export, import])
 }
 
-pub fn get_cmd_options() -> OptionParser<CmdOptions> {
+pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
     let convert = get_convert_options()
         .to_options()
         .descr("Convert between file formats")

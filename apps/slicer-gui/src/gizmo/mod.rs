@@ -8,11 +8,11 @@
 //! drag-time closest-point math. Renderer-agnostic so it can be
 //! unit-tested without a `wgpu::Device`.
 
-pub mod axis;
-pub mod dimensions;
-pub mod drag_math;
-pub mod frame;
-pub mod hit_test;
+pub(crate) mod axis;
+pub(crate) mod dimensions;
+pub(crate) mod drag_math;
+pub(crate) mod frame;
+pub(crate) mod hit_test;
 mod tolerances;
 
 use glam::Vec3;
@@ -31,7 +31,7 @@ use self::dimensions::{HANDLE_PIXEL_LENGTH, HANDLE_PIXEL_RADIUS};
 /// resulting pivot has any non-finite component (a NaN/Inf vertex
 /// in the mesh, or a transform that overflows to infinity); all of
 /// which render the gizmo unattachable.
-pub fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
+pub(crate) fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
     let query = spatial.leaf(node_id)?;
     let aabb = query.local_aabb()?;
     let lmin = Vec3::from(aabb.min().coords());
@@ -58,7 +58,7 @@ pub fn pivot_for_leaf(spatial: &SceneSpatial, node_id: NodeId) -> Option<Vec3> {
 /// every handle subtends `HANDLE_PIXEL_LENGTH` pixels regardless of
 /// camera distance. Uses the same `world_per_pixel` formula as the
 /// camera's pan code path.
-pub fn gizmo_scale(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
+pub(crate) fn gizmo_scale(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
     let h = viewport_h.max(1.0);
     let world_per_pixel = 2.0 * camera.distance * (fov_y * 0.5).tan() / h;
     world_per_pixel * HANDLE_PIXEL_LENGTH
@@ -67,7 +67,7 @@ pub fn gizmo_scale(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
 /// World-unit radius of the hit cylinder, derived the same way as
 /// `gizmo_scale` so the hit volume keeps its ~6 px screen radius
 /// regardless of camera distance.
-pub fn hit_radius_world(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
+pub(crate) fn hit_radius_world(camera: &OrbitCamera, fov_y: f32, viewport_h: f32) -> f32 {
     let h = viewport_h.max(1.0);
     let world_per_pixel = 2.0 * camera.distance * (fov_y * 0.5).tan() / h;
     world_per_pixel * HANDLE_PIXEL_RADIUS

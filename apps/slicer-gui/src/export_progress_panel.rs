@@ -47,7 +47,7 @@ pub(crate) struct ExportProgressPanel {
 }
 
 impl ExportProgressPanel {
-    pub fn new(ui: slint::Weak<MainWindow>) -> Self {
+    pub(crate) fn new(ui: slint::Weak<MainWindow>) -> Self {
         Self {
             ui,
             cell: Arc::new(AtomicU32::new(0)),
@@ -57,7 +57,7 @@ impl ExportProgressPanel {
 
     /// Sink handle for the shared progress cell, handed to the worker at
     /// dispatch time.
-    pub fn sink(&self) -> ExportProgressSink {
+    pub(crate) fn sink(&self) -> ExportProgressSink {
         ExportProgressSink::new(self.cell.clone())
     }
 
@@ -70,7 +70,7 @@ impl ExportProgressPanel {
     /// the window's `saving-in-progress` to false, and the next tick
     /// observes that and calls `Timer::stop` through the `Weak` (no
     /// timer/closure `Rc` cycle).
-    pub fn begin(&self) {
+    pub(crate) fn begin(&self) {
         self.sink().reset();
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -105,7 +105,7 @@ impl ExportProgressPanel {
     }
 
     /// Hide the panel. The poll timer stops itself on its next tick.
-    pub fn end(&self) {
+    pub(crate) fn end(&self) {
         if let Some(ui) = self.ui.upgrade() {
             ui.set_saving_in_progress(false);
         }

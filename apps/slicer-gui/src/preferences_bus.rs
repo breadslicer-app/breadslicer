@@ -146,7 +146,7 @@ pub(crate) struct PreferencesBus {
 }
 
 impl PreferencesBus {
-    pub fn new(initial: PreferencesSnapshot) -> Rc<Self> {
+    pub(crate) fn new(initial: PreferencesSnapshot) -> Rc<Self> {
         Rc::new(Self {
             inner: RefCell::new(BusInner {
                 snapshot: initial,
@@ -161,7 +161,7 @@ impl PreferencesBus {
     /// Current snapshot. Windows call this at construction time to
     /// apply the initial state; listeners usually receive a reference
     /// to the post-update snapshot instead.
-    pub fn snapshot(&self) -> PreferencesSnapshot {
+    pub(crate) fn snapshot(&self) -> PreferencesSnapshot {
         self.inner.borrow().snapshot.clone()
     }
 
@@ -175,7 +175,7 @@ impl PreferencesBus {
     /// callback) are queued and drained after the in-flight dispatch
     /// finishes, in registration order. This preserves the temporal
     /// order of updates as observed by listeners.
-    pub fn update<F>(&self, f: F)
+    pub(crate) fn update<F>(&self, f: F)
     where
         F: FnOnce(&mut PreferencesSnapshot) -> PreferencesChange + 'static,
     {
@@ -217,7 +217,7 @@ impl PreferencesBus {
     /// Subscribes a listener and returns a handle that removes it
     /// when dropped. Listener is called on every `update`, in
     /// registration order.
-    pub fn subscribe<F>(self: &Rc<Self>, listener: F) -> Subscription
+    pub(crate) fn subscribe<F>(self: &Rc<Self>, listener: F) -> Subscription
     where
         F: Fn(&PreferencesSnapshot, &PreferencesChange) + 'static,
     {

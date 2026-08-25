@@ -18,15 +18,15 @@ use sc_print_profiles::{ProfileLibraries, ProfileSource, user_library_dir};
 
 /// Environment variable that overrides the user profile-library
 /// directory when set.
-pub const LIBRARY_DIR_ENV: &str = "SC_SLICER_LIBRARY_DIR";
+pub(crate) const LIBRARY_DIR_ENV: &str = "SC_SLICER_LIBRARY_DIR";
 
 /// Environment variable that overrides the bundled-profiles
 /// directory when set.
-pub const ASSETS_DIR_ENV: &str = "SC_SLICER_ASSETS_DIR";
+pub(crate) const ASSETS_DIR_ENV: &str = "SC_SLICER_ASSETS_DIR";
 
 /// Resolve the profile libraries from the environment overrides,
 /// falling back to the platform's libraries.
-pub fn resolve_profile_libraries() -> ProfileLibraries {
+pub(crate) fn resolve_profile_libraries() -> ProfileLibraries {
     libraries_from_overrides(
         std::env::var_os(LIBRARY_DIR_ENV),
         std::env::var_os(ASSETS_DIR_ENV),

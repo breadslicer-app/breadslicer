@@ -83,7 +83,7 @@ pub(crate) struct DialogManager {
 }
 
 impl DialogManager {
-    pub fn new() -> Rc<Self> {
+    pub(crate) fn new() -> Rc<Self> {
         Rc::new(Self {
             dialogs: RefCell::new(HashMap::new()),
             info_dialogs: RefCell::new(HashMap::new()),
@@ -94,7 +94,7 @@ impl DialogManager {
     }
 
     /// Shows an error dialog immediately. Must run on the Slint UI thread.
-    pub fn show_error(
+    pub(crate) fn show_error(
         self: &Rc<Self>,
         heading: &str,
         context: Option<String>,
@@ -141,7 +141,7 @@ impl DialogManager {
     /// lifecycle as [`Self::show_error`] (owned by the manager until
     /// dismissed), without the error styling or the stderr log line.
     /// Must run on the Slint UI thread.
-    pub fn show_info(self: &Rc<Self>, heading: &str, message: String, details: String) {
+    pub(crate) fn show_info(self: &Rc<Self>, heading: &str, message: String, details: String) {
         let dialog = match InfoDialog::new() {
             Ok(d) => d,
             Err(err) => {
@@ -181,7 +181,7 @@ impl DialogManager {
     /// rendering notifier callback). `Timer::single_shot` (rather than
     /// `invoke_from_event_loop`) is used so the callback stays on the UI
     /// thread and `Rc<DialogManager>` can be captured without `Send`.
-    pub fn show_error_deferred(
+    pub(crate) fn show_error_deferred(
         self: &Rc<Self>,
         heading: String,
         context: Option<String>,
@@ -202,7 +202,7 @@ impl DialogManager {
     /// whether the Save button uses "Save As" wording. Must run on the
     /// Slint UI thread. Logs and bails silently if the dialog can't be
     /// constructed or shown.
-    pub fn show_replace_scene_confirm(
+    pub(crate) fn show_replace_scene_confirm(
         self: &Rc<Self>,
         source_name: String,
         offer: KeepChangesOffer,
@@ -279,7 +279,10 @@ impl DialogManager {
     /// discard the held slice without an explicit yes). Must run on the
     /// Slint UI thread. Logs and bails silently if the dialog cannot be
     /// constructed or shown; a failure to show is treated as cancel.
-    pub fn show_slice_overwrite_confirm(self: &Rc<Self>, on_confirm: impl FnOnce() + 'static) {
+    pub(crate) fn show_slice_overwrite_confirm(
+        self: &Rc<Self>,
+        on_confirm: impl FnOnce() + 'static,
+    ) {
         let dialog = match SliceOverwriteDialog::new() {
             Ok(d) => d,
             Err(err) => {

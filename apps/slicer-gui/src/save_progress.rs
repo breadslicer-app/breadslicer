@@ -67,18 +67,18 @@ pub(crate) struct SaveProgressSink {
 }
 
 impl SaveProgressSink {
-    pub fn new(cell: Arc<AtomicU32>) -> Self {
+    pub(crate) fn new(cell: Arc<AtomicU32>) -> Self {
         Self { cell }
     }
 
     /// Rearm the cell to the start of the serialize phase.
-    pub fn reset(&self) {
+    pub(crate) fn reset(&self) {
         self.cell.store(0, Ordering::Relaxed);
     }
 
     /// Record `done` of `total` units inside `phase`. `fetch_max` keeps
     /// the published value monotonic; see the module doc.
-    pub fn set(&self, phase: SavePhase, done: u64, total: u64) {
+    pub(crate) fn set(&self, phase: SavePhase, done: u64, total: u64) {
         self.cell
             .fetch_max(pack(phase, permille(done, total)), Ordering::Relaxed);
     }

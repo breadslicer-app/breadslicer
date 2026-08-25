@@ -79,7 +79,7 @@ struct LocalRay {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Ray {
+pub(crate) struct Ray {
     pub origin: Vec3,
     /// Always unit length (constructed by [`ray_from_pixel`]).
     pub direction: Vec3,
@@ -92,7 +92,7 @@ pub struct Ray {
 /// `(viewport_w, viewport_h)` use the same units. `fov_y` is the
 /// vertical FOV in radians, matching the value the renderer feeds
 /// into `Mat4::perspective_rh`.
-pub fn ray_from_pixel(
+pub(crate) fn ray_from_pixel(
     camera: &OrbitCamera,
     fov_y: f32,
     viewport_w: f32,
@@ -134,7 +134,7 @@ pub fn ray_from_pixel(
 /// near/far depths used here are placeholders: the projection
 /// matrix's near/far only affect z, and we discard the z component
 /// after the perspective divide.
-pub fn project_world_to_screen(
+pub(crate) fn project_world_to_screen(
     camera: &OrbitCamera,
     fov_y: f32,
     viewport_w: f32,
@@ -187,7 +187,7 @@ pub(crate) fn ray_z_plane_intersection(ray: &Ray, z: f32) -> Option<(f32, f32)> 
 /// via the bridge enumerator on [`SceneSpatial`]; the closest-hit
 /// arbitration ties by first-encountered, matching today's
 /// `scene.objects` iteration order.
-pub fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
+pub(crate) fn pick_object(ray: &Ray, spatial: &SceneSpatial) -> Option<NodeId> {
     let mut best: Option<(NodeId, f32)> = None;
     let mut idx = 0usize;
     while let Some(node_id) = spatial.leaf_id_at_index(idx) {

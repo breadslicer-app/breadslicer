@@ -19,7 +19,7 @@ use crate::payload::ProjectPayload;
 
 /// Version of the project-part document this build reads and
 /// writes.
-pub const PROJECT_PART_VERSION: i64 = 1;
+pub(super) const PROJECT_PART_VERSION: i64 = 1;
 
 /// On-disk shape of the project part (version 1).
 #[derive(Debug, Serialize, Deserialize)]

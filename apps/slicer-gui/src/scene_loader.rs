@@ -173,7 +173,7 @@ impl Drop for TicketGuard {
 /// of `deposit`'s body) or cancelled (the field drops with the ticket).
 /// Crucially, the slot ref does NOT travel into the slot itself, only
 /// the guard does, so there is no path that forms a self-cycle.
-pub struct LoadTicket {
+pub(crate) struct LoadTicket {
     guard: TicketGuard,
     slot: LoadSlot,
 }
@@ -193,7 +193,7 @@ impl LoadTicket {
     /// inside the slot, which drops later when the UI handler drains
     /// the slot via `take_finished_load` (or when the slot itself is
     /// freed because the loader was dropped without a drain).
-    pub fn deposit(self, path: PathBuf, result: anyhow::Result<PreparedScene>) {
+    pub(crate) fn deposit(self, path: PathBuf, result: anyhow::Result<PreparedScene>) {
         let LoadTicket { guard, slot } = self;
         let ui = guard.ui.clone();
         *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((guard, path, result));
@@ -207,7 +207,7 @@ impl LoadTicket {
     }
 }
 
-pub struct SceneLoader {
+pub(crate) struct SceneLoader {
     ui: slint::Weak<MainWindow>,
     dialogs: Rc<DialogManager>,
     load_gen: Cell<u64>,
@@ -250,7 +250,11 @@ pub struct SceneLoader {
 }
 
 impl SceneLoader {
-    pub fn new(ui: &MainWindow, dialogs: Rc<DialogManager>, device_loss: DeviceLoss) -> Self {
+    pub(crate) fn new(
+        ui: &MainWindow,
+        dialogs: Rc<DialogManager>,
+        device_loss: DeviceLoss,
+    ) -> Self {
         Self {
             ui: ui.as_weak(),
             dialogs,
@@ -294,7 +298,7 @@ impl SceneLoader {
 
     /// Sink handle for the shared progress cell, handed to the worker
     /// at dispatch time.
-    pub fn progress_sink(&self) -> LoadProgressSink {
+    pub(crate) fn progress_sink(&self) -> LoadProgressSink {
         LoadProgressSink::new(self.progress.clone())
     }
 
@@ -309,7 +313,7 @@ impl SceneLoader {
     /// window's `load-in-progress` to false on every load-exit path,
     /// and the next tick observes that and calls `Timer::stop`
     /// through the `Weak` (no timer/closure `Rc` cycle).
-    pub fn begin_progress_ui(&self) {
+    pub(crate) fn begin_progress_ui(&self) {
         self.progress_sink().reset();
         let Some(ui) = self.ui.upgrade() else {
             return;
@@ -360,7 +364,7 @@ impl SceneLoader {
     /// first `RenderingSetup` and a synchronous gate would prevent
     /// the file dialog from opening at all in unit-test or
     /// pre-first-paint scenarios.
-    pub fn begin_load(&self) -> Option<LoadTicket> {
+    pub(crate) fn begin_load(&self) -> Option<LoadTicket> {
         // compare_exchange 0 -> 1: atomically checks that no ticket is
         // alive. `AcqRel` on success synchronises with the prior
         // ticket's `fetch_sub` release, so a fresh begin sees all
@@ -390,7 +394,7 @@ impl SceneLoader {
     /// `handle_rendering_setup`; the worker clones this pair at
     /// `spawn_load` time so parsing + upload both happen off the UI
     /// thread.
-    pub fn set_gpu(
+    pub(crate) fn set_gpu(
         &self,
         device: wgpu::Device,
         device_token: crate::mesh_render::DeviceToken,
@@ -405,31 +409,31 @@ impl SceneLoader {
     /// this build cannot render through. The device slot stays empty,
     /// and anything that needs a device now has a reason to report
     /// instead of an unexplained absence.
-    pub fn note_unsupported_graphics_api(&self, api: String) {
+    pub(crate) fn note_unsupported_graphics_api(&self, api: String) {
         self.graphics_gap.note_unsupported_api(api);
     }
 
     /// Records that a `RenderingSetup`'s device refused the viewport
     /// renderer; the device slot stays empty.
-    pub fn note_renderer_refused(&self, reason: String) {
+    pub(crate) fn note_renderer_refused(&self, reason: String) {
         self.graphics_gap.note_renderer_refused(reason);
     }
 
     /// The shared device is gone: empties the device slot and records
     /// the loss as the reason, so no load starts on it again.
-    pub fn note_device_lost(&self) {
+    pub(crate) fn note_device_lost(&self) {
         self.clear_gpu();
         self.graphics_gap.note_device_lost();
     }
 
-    pub fn device_loss(&self) -> DeviceLoss {
+    pub(crate) fn device_loss(&self) -> DeviceLoss {
         self.device_loss.clone()
     }
 
     /// Why there is no device, or `None` when there is one. Derived
     /// from the device slot so readiness has a single source: the
     /// recorded reason only speaks for an empty slot.
-    pub fn graphics_unavailable(&self) -> Option<GraphicsUnavailable> {
+    pub(crate) fn graphics_unavailable(&self) -> Option<GraphicsUnavailable> {
         if self
             .gpu
             .lock()
@@ -446,13 +450,13 @@ impl SceneLoader {
     /// and continue running; if a resulting `PreparedScene` arrives
     /// against a stale device, `Renderer::install_mesh` drops it and
     /// the UI thread re-uploads via the recovery path.
-    pub fn clear_gpu(&self) {
+    pub(crate) fn clear_gpu(&self) {
         *self.gpu.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// Snapshot of the current device/queue. `None` if
     /// `RenderingSetup` hasn't fired yet (or a teardown cleared it).
-    pub fn gpu_snapshot(
+    pub(crate) fn gpu_snapshot(
         &self,
     ) -> Option<(wgpu::Device, crate::mesh_render::DeviceToken, wgpu::Queue)> {
         self.gpu
@@ -467,7 +471,7 @@ impl SceneLoader {
     /// `LoadedMesh` sitting in the slot is freed at once. Dropping the
     /// slot also drops the ticket it carried, which releases the load
     /// gate via the ticket's `Drop`.
-    pub fn invalidate_and_clear(&self) {
+    pub(crate) fn invalidate_and_clear(&self) {
         self.load_gen.set(self.load_gen.get().wrapping_add(1));
         *self
             .load_slot
@@ -477,7 +481,7 @@ impl SceneLoader {
     }
 
     /// Ends the upload-failure run without touching the load FSM.
-    pub fn reset_upload_failures(&self) {
+    pub(crate) fn reset_upload_failures(&self) {
         self.upload_failures.reset();
     }
 
@@ -488,12 +492,12 @@ impl SceneLoader {
 
     /// A scene upload just succeeded. Rearms the 0 -> 1 dialog gate so
     /// the next failure can surface an error.
-    pub fn note_upload_success(&self) {
+    pub(crate) fn note_upload_success(&self) {
         self.upload_failures.reset();
     }
 
     /// Shows the error dialog only for the first failure of a run.
-    pub fn note_upload_failure(&self, err: &anyhow::Error) {
+    pub(crate) fn note_upload_failure(&self, err: &anyhow::Error) {
         if !self.upload_failures.note_failure() {
             return;
         }
@@ -514,7 +518,7 @@ impl SceneLoader {
     /// Shows the error dialog only for the first failure of a run.
     /// `RenderError::DeviceLost` is ignored here; a lost device is
     /// reported once per process elsewhere.
-    pub fn note_render_failure(&self, err: &RenderError) {
+    pub(crate) fn note_render_failure(&self, err: &RenderError) {
         let RenderError::DeviceRefused { what, source } = err else {
             return;
         };
@@ -539,11 +543,11 @@ impl SceneLoader {
         );
     }
 
-    pub fn note_render_success(&self) {
+    pub(crate) fn note_render_success(&self) {
         self.render_failures.reset();
     }
 
-    pub fn reset_render_failures(&self) {
+    pub(crate) fn reset_render_failures(&self) {
         self.render_failures.reset();
     }
 
@@ -562,7 +566,7 @@ impl SceneLoader {
     /// The ticket that was in the slot drops here on the UI thread,
     /// which synchronously flips `loading = false` when the counter
     /// hits zero.
-    pub fn take_finished_load(&self) -> Option<PreparedScene> {
+    pub(crate) fn take_finished_load(&self) -> Option<PreparedScene> {
         let (path, result) = self.drain_matching_deposit()?;
         match result {
             Ok(prepared) => {

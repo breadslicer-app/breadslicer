@@ -28,10 +28,10 @@ use crate::printer_constraints::PrinterConstraints;
 use crate::resolve_warning::SnapReason;
 use crate::resolved_field::ResolvedField;
 
-pub const AUTOSNAP_WARNING_THRESHOLD: f64 = 0.05;
+pub(crate) const AUTOSNAP_WARNING_THRESHOLD: f64 = 0.05;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ConstraintPolicy {
+pub(crate) enum ConstraintPolicy {
     SnapToMultiple { step: f64 },
     SnapIntoRange { min: f64, max: f64 },
     SnapAtMaximum { max: f64 },
@@ -39,14 +39,14 @@ pub enum ConstraintPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ApplyResult {
+pub(crate) enum ApplyResult {
     Unchanged,
     Snapped { snapped: f64, reason: SnapReason },
     RejectedBelow { minimum: f64 },
 }
 
 impl ConstraintPolicy {
-    pub fn apply(self, value: f64) -> ApplyResult {
+    pub(crate) fn apply(self, value: f64) -> ApplyResult {
         match self {
             Self::SnapToMultiple { step } => {
                 let multiples = (value / step).round();

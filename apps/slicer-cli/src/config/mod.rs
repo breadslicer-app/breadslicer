@@ -3,6 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-pub mod cmd_options;
-pub mod profile_libraries;
-pub mod profile_ref;
+pub(crate) mod cmd_options;
+pub(crate) mod profile_libraries;
+pub(crate) mod profile_ref;

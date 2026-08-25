@@ -34,7 +34,7 @@ use crate::gizmo::dimensions::{
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
-pub struct GizmoVertex {
+pub(crate) struct GizmoVertex {
     pub position: [f32; 3],
 }
 
@@ -69,7 +69,7 @@ const ROTATE_ARC_SEGMENTS: u32 = 32;
 
 /// Builds the axis shaft as a single `LineList` segment from the
 /// gizmo origin to the cone base.
-pub fn build_axis_shaft_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+pub(crate) fn build_axis_shaft_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let vertices = vec![
         GizmoVertex {
             position: [0.0, 0.0, 0.0],
@@ -84,7 +84,7 @@ pub fn build_axis_shaft_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 
 /// Builds the translate cone tip: a 12-sided solid cone whose base
 /// sits at the shaft tip and whose apex points along +X.
-pub fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+pub(crate) fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((CONE_SIDES + 1) as usize);
     let mut indices = Vec::with_capacity((CONE_SIDES * 3) as usize);
 
@@ -113,7 +113,7 @@ pub fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 
 /// Builds the per-axis scale cube: an axis-aligned cube centred at
 /// the shaft midpoint along +X, side length `MIDPOINT_CUBE_SIDE_LOCAL`.
-pub fn build_axis_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+pub(crate) fn build_axis_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity(8);
     let mut indices = Vec::with_capacity(36);
     let centre = Vec3::new(SHAFT_LENGTH * MIDPOINT_FRACTION, 0.0, 0.0);
@@ -131,7 +131,7 @@ pub fn build_axis_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 /// composes a per-frame X-roll to swing the arc onto the camera-
 /// facing quadrant before the per-axis world rotation maps it onto
 /// X / Y / Z.
-pub fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+pub(crate) fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let arc_span = std::f32::consts::FRAC_PI_2;
     let step = arc_span / ROTATE_ARC_SEGMENTS as f32;
     let r = ROTATE_ARC_RADIUS_LOCAL;
@@ -165,7 +165,7 @@ pub fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
 /// polyline to swing the spindle onto the camera-facing direction
 /// before the world-axis rotation lifts it onto +X / +Y / +Z. This
 /// is the *active* rotate handle (the click target for rotate drag).
-pub fn build_rotate_cones_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
+pub(crate) fn build_rotate_cones_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((CONE_SIDES * 2 + 2) as usize);
     let mut indices = Vec::with_capacity((CONE_SIDES * 6) as usize);
     let midpoint = Vec3::new(0.0, ROTATE_ARC_RADIUS_LOCAL, 0.0);

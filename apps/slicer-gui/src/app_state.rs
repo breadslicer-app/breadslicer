@@ -319,7 +319,7 @@ fn spawn_settings_saver(
 }
 
 impl AppState {
-    pub fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
+    pub(crate) fn new(device_loss: DeviceLoss) -> Result<Rc<Self>, Box<dyn Error>> {
         let settings = AppSettings::load();
         let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_libraries(
             &ProfileLibraries::platform_default(),
@@ -455,7 +455,7 @@ impl AppState {
     /// resize debounce) are installed by `crate::wiring::wire_main_window`;
     /// the app-level "About" and "New Window" menu items and the OS
     /// close-request handler are wired here.
-    pub fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
+    pub(crate) fn spawn_main_window(self: &Rc<Self>) -> Result<u64, Box<dyn Error>> {
         let ui = MainWindow::new()?;
         // Static platform flag consumed by the View menu to show the
         // correct fullscreen accelerator (Cmd+Ctrl+F on macOS, F11

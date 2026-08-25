@@ -33,7 +33,7 @@ const DENOM_FLOOR: f32 = 1.0 - LOCKOUT_COS * LOCKOUT_COS;
 /// the lock-out region mid-drag; the controller treats `None` as
 /// "no usable delta this frame" and leaves the running transform
 /// unchanged until the camera leaves the unstable cone.
-pub fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
+pub(crate) fn closest_point_on_axis(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<Vec3> {
     let a = axis.world_dir();
     let d = ray.direction;
     let oc = pivot - ray.origin;
@@ -93,7 +93,7 @@ fn axis_plane_angle(point: Vec3, pivot: Vec3, axis: Axis) -> f32 {
 /// Returns `None` only for the degenerate cases that
 /// [`super::hit_test::arc_pickable`] is supposed to forbid; the controller is
 /// expected to gate this call on that lock-out at gesture start.
-pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
+pub(crate) fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
     let hit = ray_hits_axis_plane(ray, pivot, axis)?;
     Some(axis_plane_angle(hit, pivot, axis))
 }
@@ -110,7 +110,7 @@ pub fn rotate_drag_angle(ray: &Ray, pivot: Vec3, axis: Axis) -> Option<f32> {
 /// with the pivot along the axis: the ratio is undefined there
 /// and the drag should not move the object until the cursor leaves
 /// the pivot's neighbourhood.
-pub fn scale_factor_along_axis(
+pub(crate) fn scale_factor_along_axis(
     start_anchor: Vec3,
     current_anchor: Vec3,
     pivot: Vec3,
@@ -138,7 +138,7 @@ pub fn scale_factor_along_axis(
 ///
 /// Returns `1.0` when the press lands within `1e-6` pixels of the
 /// projected pivot; the ratio is undefined there.
-pub fn uniform_scale_factor(
+pub(crate) fn uniform_scale_factor(
     pivot_screen_x: f32,
     pivot_screen_y: f32,
     x_press: f32,

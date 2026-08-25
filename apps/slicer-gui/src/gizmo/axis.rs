@@ -24,7 +24,7 @@ impl Axis {
     }
 }
 
-pub const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
+pub(crate) const ALL_AXES: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 
 /// In-plane orthonormal basis around `axis`, right-handed about the
 /// axis (`axis × u = v`). Used by every rotate primitive so the

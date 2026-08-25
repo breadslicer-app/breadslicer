@@ -29,7 +29,7 @@ pub(crate) struct PendingLoad {
 }
 
 impl PendingLoad {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             slot: Cell::new(None),
         }
@@ -38,14 +38,14 @@ impl PendingLoad {
     /// Park `path` in the slot. Latest-wins: silently overwrites any
     /// path that was already queued. Used by external entry points
     /// before the window's GPU device is available.
-    pub fn queue(&self, path: PathBuf) {
+    pub(crate) fn queue(&self, path: PathBuf) {
         self.slot.set(Some(path));
     }
 
     /// Drain the slot, returning the queued path if any. The drainer
     /// (the controller's `handle_rendering_setup`) calls this once the
     /// device is published; `None` is the steady-state.
-    pub fn take(&self) -> Option<PathBuf> {
+    pub(crate) fn take(&self) -> Option<PathBuf> {
         self.slot.take()
     }
 
@@ -53,7 +53,7 @@ impl PendingLoad {
     /// where the request becomes moot (e.g. the window is closing) so
     /// the slot doesn't fire on a dead window.
     #[allow(dead_code)]
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.slot.set(None);
     }
 }

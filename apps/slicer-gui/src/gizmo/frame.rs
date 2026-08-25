@@ -26,7 +26,7 @@ use super::{gizmo_scale, pivot_for_leaf};
 /// centre, all rays through the gizmo region are within a degree or
 /// so of the camera forward, so a per-frame "is this axis grabbable
 /// from this view" check is uniform across the handle.
-pub fn build_gizmo_frame(
+pub(crate) fn build_gizmo_frame(
     spatial: &SceneSpatial,
     camera: &OrbitCamera,
     selection: NodeId,
