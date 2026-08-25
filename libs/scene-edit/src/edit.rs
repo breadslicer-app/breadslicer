@@ -5,11 +5,14 @@
 
 //! Typed scene mutation vocabulary.
 //!
-//! Every observable change to a [`Scene`] is one variant of
-//! [`SceneEdit`]. Headless callers apply edits directly with
-//! [`SceneEdit::apply_to_scene`]; cache layers (notably
-//! `sc_mesh_spatial::SceneSpatial`) dispatch the same enum and add
-//! invalidation hooks for the cached state that the variant affects.
+//! [`SceneEdit`] covers leaf and mesh-resource arena membership,
+//! local transforms, and mesh swaps. Group / CSG / Reference
+//! construction, reparenting, node metadata edits and mesh repair
+//! are outside the undo vocabulary today. Headless callers apply
+//! edits directly with [`SceneEdit::apply_to_scene`]; cache layers
+//! (notably `sc_mesh_spatial::SceneSpatial`) dispatch the same enum
+//! and add invalidation hooks for the cached state that the variant
+//! affects.
 
 use std::sync::Arc;
 
