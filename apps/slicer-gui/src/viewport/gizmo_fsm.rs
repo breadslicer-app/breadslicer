@@ -335,11 +335,13 @@ impl GizmoFsm {
             node_id,
         });
 
-        ctx.document.apply_edit(SceneEdit::SetLocalTransform {
-            node_id,
-            before: original,
-            after: new_transform,
-        })
+        ctx.document
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
+                before: original,
+                after: new_transform,
+            })
+            .is_ok()
     }
 
     /// Aborts any in-progress drag and reverts the affected object's
@@ -361,7 +363,9 @@ impl GizmoFsm {
             .with_scene(|spatial| spatial.leaf(node_id).map(|q| q.local_transform()))
             .flatten()
             .unwrap_or(original);
-        document.apply_edit(SceneEdit::SetLocalTransform {
+        // A rejected revert means the tick did not land; the abort
+        // still ends the drag either way.
+        let _ = document.apply_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: current,
             after: original,

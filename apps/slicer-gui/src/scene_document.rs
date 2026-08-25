@@ -31,7 +31,7 @@ use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
 use sc_scene::Scene;
 use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
-use sc_scene::{MeshResourceId, NodeId};
+use sc_scene::{MeshResourceId, NodeId, SceneError};
 use sc_scene_edit::SceneFragment;
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::profile::LayerSchedule;
@@ -645,18 +645,19 @@ impl SceneDocument {
     /// Apply a typed scene edit. The single mutation choke-point on
     /// `SceneDocument`: routes through [`SceneSpatial::apply_edit`]
     /// (which keeps spatial caches in sync) and fires
-    /// [`SceneEvent::Mutated`]. Returns `true` when a scene was
-    /// loaded and the edit was applied, `false` when no scene is
-    /// loaded.
+    /// [`SceneEvent::Mutated`] or [`SceneEvent::Restructured`].
+    ///
+    /// On [`EditNotApplied`] the scene, the caches, and the
+    /// selection are untouched and no event fires.
     ///
     /// Does **not** touch the undo stack: `push_edit` is a separate
     /// concern so live-drag ticks can mutate the scene without
     /// flooding the history. Callers that mean "apply and record"
     /// invoke `apply_edit` followed by `push_edit` at gesture-end.
-    pub fn apply_edit(&self, edit: SceneEdit) -> bool {
+    pub fn apply_edit(&self, edit: SceneEdit) -> Result<(), EditNotApplied> {
         let mut slot = self.spatial.borrow_mut();
         let Some(spatial) = slot.as_mut() else {
-            return false;
+            return Err(EditNotApplied::NoSceneLoaded);
         };
         // Decide selection-clearing and the post-mutation event
         // kind BEFORE moving the edit into spatial.apply_edit: the
@@ -669,7 +670,7 @@ impl SceneDocument {
         } else {
             SceneEvent::Mutated
         };
-        let _ = spatial.apply_edit(edit);
+        spatial.apply_edit(edit).map_err(EditNotApplied::Rejected)?;
         drop(slot);
         // If the edit tombstoned the currently-selected leaf, drop
         // the now-dangling selection so observers don't keep pointing
@@ -686,7 +687,7 @@ impl SceneDocument {
         if selection_cleared {
             self.notify(SceneEvent::SelectionChanged);
         }
-        true
+        Ok(())
     }
 
     /// Records a reversible edit on the undo stack. No-op edits
@@ -718,8 +719,9 @@ impl SceneDocument {
     /// Allocate a fresh [`NodeId`] and install a mesh-resource-backed
     /// leaf at it as a scene root. Combines the `allocate +
     /// AddRootLeaf + push_edit` dance into the single call paste
-    /// needs, returning the new id (or `None` when no scene is
-    /// loaded).
+    /// needs, returning the new id (`Ok(None)` when no scene is
+    /// loaded, `Err` when the scene rejected the edit; either way
+    /// nothing is recorded).
     ///
     /// The corresponding edit goes onto the undo stack: a subsequent
     /// `undo` pops it as a `RemoveRootLeaf` and tombstones the leaf.
@@ -728,10 +730,12 @@ impl SceneDocument {
         &self,
         mesh: MeshResourceId,
         local_transform: Transform3D,
-    ) -> Option<NodeId> {
+    ) -> Result<Option<NodeId>, SceneError> {
         let node_id = {
             let mut slot = self.spatial.borrow_mut();
-            let spatial = slot.as_mut()?;
+            let Some(spatial) = slot.as_mut() else {
+                return Ok(None);
+            };
             spatial.allocate_unbound_node_id()
         };
         let edit = SceneEdit::AddRootLeaf {
@@ -739,11 +743,14 @@ impl SceneDocument {
             mesh,
             local_transform,
         };
-        if !self.apply_edit(edit.clone()) {
-            return None;
+        match self.apply_edit(edit.clone()) {
+            Ok(()) => {
+                self.push_edit(edit);
+                Ok(Some(node_id))
+            }
+            Err(EditNotApplied::NoSceneLoaded) => Ok(None),
+            Err(EditNotApplied::Rejected(error)) => Err(error),
         }
-        self.push_edit(edit);
-        Some(node_id)
     }
 
     /// Delete the currently-selected leaf, recording the operation as one
@@ -756,9 +763,10 @@ impl SceneDocument {
     ///   parent and position are recorded in the edit so undo restores
     ///   sibling order.
     ///
-    /// Bails with `false` (no scene mutation, no undo push) when no scene
-    /// is loaded, the selection is `Selection::None`, or the selected
-    /// node is not a leaf.
+    /// Bails with `Ok(false)` (no scene mutation, no undo push) when no
+    /// scene is loaded, the selection is `Selection::None`, or the
+    /// selected node is not a leaf; errs, recording nothing, when the
+    /// scene rejected the edit.
     ///
     /// When a mesh-resource leaf was the last live reference to its
     /// `MeshResourceId`, the recorded edit is a `Compound` that also
@@ -766,23 +774,26 @@ impl SceneDocument {
     /// live-leaf population. Inline-mesh leaves carry their own `Arc`,
     /// so removal of an inline-mesh leaf never produces a Compound.
     ///
-    /// Returns `true` on a successful deletion. Selection clearing and
-    /// the `Restructured` event are handled by [`Self::apply_edit`].
-    pub(crate) fn delete_selected_leaf(&self) -> bool {
+    /// Returns `Ok(true)` on a successful deletion. Selection clearing
+    /// and the `Restructured` event are handled by [`Self::apply_edit`].
+    pub(crate) fn delete_selected_leaf(&self) -> Result<bool, SceneError> {
         let Some(node_id) = self.selection_primary_node_id() else {
-            return false;
+            return Ok(false);
         };
         let edit = self
             .with_scene(|spatial| build_delete_leaf_edit(spatial.graph(), node_id))
             .flatten();
         let Some(edit) = edit else {
-            return false;
+            return Ok(false);
         };
-        if !self.apply_edit(edit.clone()) {
-            return false;
+        match self.apply_edit(edit.clone()) {
+            Ok(()) => {
+                self.push_edit(edit);
+                Ok(true)
+            }
+            Err(EditNotApplied::NoSceneLoaded) => Ok(false),
+            Err(EditNotApplied::Rejected(error)) => Err(error),
         }
-        self.push_edit(edit);
-        true
     }
 
     /// Paste a [`SceneFragment`] into the current scene as a new root.
@@ -799,22 +810,31 @@ impl SceneDocument {
     /// whole paste reaches the undo stack as one entry so a single
     /// `Ctrl+Z` reverses the entire gesture.
     ///
-    /// Returns the new root leaf's `NodeId`, or `None` when no scene
+    /// Returns the new root leaf's `NodeId`; `Ok(None)` when no scene
     /// is loaded or the fragment carries no mesh-resource leaf roots
     /// (the only shape the current builder produces; future variants
-    /// extend the match in [`Self::paste_fragment_compound`]).
+    /// extend the match in [`Self::paste_fragment_compound`]); `Err`,
+    /// with nothing recorded and the selection untouched, when the
+    /// scene rejected the edit.
     pub(crate) fn paste_fragment(
         &self,
         fragment: &SceneFragment,
         placement_translation: [f64; 3],
-    ) -> Option<NodeId> {
-        let (compound, new_root) = self.paste_fragment_compound(fragment, placement_translation)?;
-        if !self.apply_edit(compound.clone()) {
-            return None;
+    ) -> Result<Option<NodeId>, SceneError> {
+        let Some((compound, new_root)) =
+            self.paste_fragment_compound(fragment, placement_translation)
+        else {
+            return Ok(None);
+        };
+        match self.apply_edit(compound.clone()) {
+            Ok(()) => {
+                self.push_edit(compound);
+                self.set_selection(Selection::One(crate::selection::LeafId(new_root)));
+                Ok(Some(new_root))
+            }
+            Err(EditNotApplied::NoSceneLoaded) => Ok(None),
+            Err(EditNotApplied::Rejected(error)) => Err(error),
         }
-        self.push_edit(compound);
-        self.set_selection(Selection::One(crate::selection::LeafId(new_root)));
-        Some(new_root)
     }
 
     fn paste_fragment_compound(
@@ -910,18 +930,26 @@ impl SceneDocument {
     }
 
     /// Pops the most recent edit, applies its inverse, and moves the
-    /// entry onto the redo stack. Returns `true` if an edit was
-    /// applied.
-    pub fn undo(&self) -> bool {
+    /// entry onto the redo stack. Returns `Ok(true)` if an edit was
+    /// applied, `Ok(false)` if there was nothing to undo (empty stack
+    /// or no scene loaded), and the scene's rejection otherwise; on
+    /// anything but `Ok(true)` the stacks are left as they were.
+    pub fn undo(&self) -> Result<bool, SceneError> {
         let was_dirty = self.is_dirty();
         let Some(entry) = self.undo_stack.borrow_mut().pop_back() else {
-            return false;
+            return Ok(false);
         };
-        if !self.apply_edit(entry.edit.inverse()) {
-            // No scene loaded: restore the popped entry so the
-            // stack stays consistent with the user's history.
-            self.undo_stack.borrow_mut().push_back(entry);
-            return false;
+        match self.apply_edit(entry.edit.inverse()) {
+            Ok(()) => {}
+            Err(reason) => {
+                // Restore the popped entry so the stack stays
+                // consistent with the user's history.
+                self.undo_stack.borrow_mut().push_back(entry);
+                return match reason {
+                    EditNotApplied::NoSceneLoaded => Ok(false),
+                    EditNotApplied::Rejected(error) => Err(error),
+                };
+            }
         }
         let mut redo = self.redo_stack.borrow_mut();
         if redo.len() == UNDO_STACK_CAP {
@@ -931,20 +959,29 @@ impl SceneDocument {
         drop(redo);
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
-        true
+        Ok(true)
     }
 
     /// Pops the most recent rolled-back edit, applies it forward,
-    /// and moves the entry back onto the undo stack. Returns `true`
-    /// if an edit was applied.
-    pub fn redo(&self) -> bool {
+    /// and moves the entry back onto the undo stack. Returns
+    /// `Ok(true)` if an edit was applied, `Ok(false)` if there was
+    /// nothing to redo (empty stack or no scene loaded), and the
+    /// scene's rejection otherwise; on anything but `Ok(true)` the
+    /// stacks are left as they were.
+    pub fn redo(&self) -> Result<bool, SceneError> {
         let was_dirty = self.is_dirty();
         let Some(entry) = self.redo_stack.borrow_mut().pop_back() else {
-            return false;
+            return Ok(false);
         };
-        if !self.apply_edit(entry.edit.clone()) {
-            self.redo_stack.borrow_mut().push_back(entry);
-            return false;
+        match self.apply_edit(entry.edit.clone()) {
+            Ok(()) => {}
+            Err(reason) => {
+                self.redo_stack.borrow_mut().push_back(entry);
+                return match reason {
+                    EditNotApplied::NoSceneLoaded => Ok(false),
+                    EditNotApplied::Rejected(error) => Err(error),
+                };
+            }
         }
         let mut undo = self.undo_stack.borrow_mut();
         if undo.len() == UNDO_STACK_CAP {
@@ -956,7 +993,7 @@ impl SceneDocument {
         drop(undo);
         self.notify(SceneEvent::UndoStackChanged);
         self.notify_dirty_change(was_dirty);
-        true
+        Ok(true)
     }
 
     /// Registers a listener. Returns a handle whose `Drop` removes
@@ -1098,6 +1135,19 @@ fn build_delete_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
         ]));
     }
     Some(remove_leaf)
+}
+
+/// Why [`SceneDocument::apply_edit`] did not apply an edit. Either
+/// way the scene, the caches, and the selection are untouched.
+#[derive(Debug)]
+pub enum EditNotApplied {
+    /// No document is loaded; a legal UI state (a shortcut firing
+    /// with nothing open), not an error worth a dialog.
+    NoSceneLoaded,
+    /// The scene rejected the edit's preconditions. The GUI builds
+    /// edits against the live scene, so this indicates a programming
+    /// bug; callers surface it instead of recording the edit.
+    Rejected(SceneError),
 }
 
 /// True when applying `edit` would tombstone the leaf the document's
@@ -1376,7 +1426,7 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn apply_edit_returns_false_with_no_scene_loaded() {
+    fn apply_edit_errors_with_no_scene_loaded() {
         let doc = SceneDocument::new();
         // The edit's contents are irrelevant: apply_edit short-
         // circuits before touching the edit when no scene is
@@ -1390,7 +1440,64 @@ mod scene_document_tests {
             before: Transform3D::Identity,
             after: translation(1.0),
         });
-        assert!(!result);
+        assert!(matches!(result, Err(EditNotApplied::NoSceneLoaded)));
+    }
+
+    #[test]
+    fn apply_edit_rejection_fires_no_events_and_keeps_selection() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let leaf = first_leaf_id(&doc);
+        doc.set_selection(Selection::One(leaf));
+        let (log, listener) = capture_events();
+        let _sub = doc.subscribe(listener);
+        // An id whose index lies beyond the loaded arena: the graph
+        // mutator rejects it with DanglingNodeId.
+        let mut scratch = sc_scene::Scene::new();
+        for _ in 0..16 {
+            scratch.add_group(None, Transform3D::Identity);
+        }
+        let bogus = scratch.allocate_unbound_node_id();
+        let result = doc.apply_edit(SceneEdit::SetLocalTransform {
+            node_id: bogus,
+            before: Transform3D::Identity,
+            after: translation(1.0),
+        });
+        assert!(matches!(
+            result,
+            Err(EditNotApplied::Rejected(
+                sc_scene::SceneError::DanglingNodeId { .. }
+            ))
+        ));
+        // The scene did not change, so observers hear nothing and
+        // the selection stays where it was.
+        assert!(log.borrow().is_empty());
+        assert_eq!(doc.selection(), Selection::One(leaf));
+    }
+
+    #[test]
+    fn undo_rejection_restores_the_entry_and_surfaces_the_error() {
+        let doc = SceneDocument::new();
+        doc.install_graph(graph_with_one_object(), fixture_path());
+        let node_id = first_leaf_id(&doc).node_id();
+        // A poisoned history entry: its inverse (AddRootLeaf) targets
+        // the occupied slot of the live leaf, so undo is rejected.
+        let rid = sc_scene::Scene::new().allocate_unbound_mesh_resource_id();
+        doc.push_edit(SceneEdit::RemoveRootLeaf {
+            node_id,
+            mesh: rid,
+            local_transform: Transform3D::Identity,
+        });
+        assert!(doc.can_undo());
+        let err = doc.undo().unwrap_err();
+        assert!(matches!(
+            err,
+            sc_scene::SceneError::NodeSlotOccupied { id } if id == node_id
+        ));
+        // The entry stays at the top of the undo stack and nothing
+        // moved onto the redo stack.
+        assert!(doc.can_undo());
+        assert!(!doc.can_redo());
     }
 
     #[test]
@@ -1406,7 +1513,7 @@ mod scene_document_tests {
             before: Transform3D::Identity,
             after: translation(1.0),
         });
-        assert!(applied);
+        assert!(applied.is_ok());
         // Installed (from install_graph), then Mutated (from apply_edit).
         assert_eq!(
             *log.borrow(),
@@ -1424,7 +1531,8 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after,
-        });
+        })
+        .unwrap();
         assert_eq!(obj_transform(&doc, 0), after);
     }
 
@@ -1486,14 +1594,15 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after,
-        });
+        })
+        .unwrap();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: Transform3D::Identity,
             after,
         });
 
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert_eq!(obj_transform(&doc, 0), Transform3D::Identity);
         assert!(!doc.can_undo());
         assert!(doc.can_redo());
@@ -1514,7 +1623,7 @@ mod scene_document_tests {
             before: Arc::clone(&before),
             after: Arc::clone(&after),
         };
-        doc.apply_edit(edit.clone());
+        doc.apply_edit(edit.clone()).unwrap();
         doc.push_edit(edit);
         // The push moved the revision: a slice captured before this
         // mesh-content replacement must read as stale.
@@ -1523,7 +1632,7 @@ mod scene_document_tests {
             doc.with_scene(|s| Arc::ptr_eq(s.graph().leaf_mesh_arc(node_id).unwrap(), &after))
                 .unwrap()
         );
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(
             doc.with_scene(|s| Arc::ptr_eq(s.graph().leaf_mesh_arc(node_id).unwrap(), &before))
                 .unwrap()
@@ -1540,15 +1649,16 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after,
-        });
+        })
+        .unwrap();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: Transform3D::Identity,
             after,
         });
 
-        doc.undo();
-        assert!(doc.redo());
+        doc.undo().unwrap();
+        assert!(doc.redo().unwrap());
         assert_eq!(obj_transform(&doc, 0), after);
         assert!(doc.can_undo());
         assert!(!doc.can_redo());
@@ -1564,13 +1674,14 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after: a,
-        });
+        })
+        .unwrap();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: Transform3D::Identity,
             after: a,
         });
-        doc.undo();
+        doc.undo().unwrap();
         assert!(doc.can_redo());
 
         // A new branch of history invalidates the redo trail.
@@ -1579,7 +1690,8 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after: b,
-        });
+        })
+        .unwrap();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: Transform3D::Identity,
@@ -1592,11 +1704,11 @@ mod scene_document_tests {
     #[test]
     fn undo_and_redo_are_no_ops_when_stacks_are_empty() {
         let doc = SceneDocument::new();
-        assert!(!doc.undo());
-        assert!(!doc.redo());
+        assert!(!doc.undo().unwrap());
+        assert!(!doc.redo().unwrap());
         doc.install_graph(empty_graph(), fixture_path());
-        assert!(!doc.undo());
-        assert!(!doc.redo());
+        assert!(!doc.undo().unwrap());
+        assert!(!doc.redo().unwrap());
     }
 
     #[test]
@@ -1690,7 +1802,8 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after,
-        });
+        })
+        .unwrap();
         doc.push_edit(SceneEdit::SetLocalTransform {
             node_id,
             before: Transform3D::Identity,
@@ -1699,7 +1812,7 @@ mod scene_document_tests {
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
 
-        doc.undo();
+        doc.undo().unwrap();
         // The undo also drains the never-saved single-entry stack,
         // returning the document to its freshly-installed content,
         // so the dirty flag flips back to clean.
@@ -1763,7 +1876,11 @@ mod scene_document_tests {
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
         doc.clear_scene();
-        assert!(doc.add_root_leaf(rid, Transform3D::Identity).is_none());
+        assert!(
+            doc.add_root_leaf(rid, Transform3D::Identity)
+                .unwrap()
+                .is_none()
+        );
         assert!(!doc.can_undo());
     }
 
@@ -1773,7 +1890,10 @@ mod scene_document_tests {
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
         let xform = translation(5.0);
-        let id = doc.add_root_leaf(rid, xform).expect("scene is loaded");
+        let id = doc
+            .add_root_leaf(rid, xform)
+            .unwrap()
+            .expect("scene is loaded");
         let observed = doc.with_scene(|s| {
             let node = s.graph().node(id).expect("new node lives");
             (
@@ -1796,6 +1916,7 @@ mod scene_document_tests {
         assert!(!doc.can_undo());
         let _ = doc
             .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
             .expect("scene is loaded");
         assert!(doc.can_undo());
     }
@@ -1807,14 +1928,15 @@ mod scene_document_tests {
         doc.install_graph(graph, fixture_path());
         let id = doc
             .add_root_leaf(rid, translation(3.0))
+            .unwrap()
             .expect("scene is loaded");
         assert_eq!(doc.with_scene(|s| s.graph().node(id).is_some()), Some(true));
-        doc.undo();
+        doc.undo().unwrap();
         assert_eq!(
             doc.with_scene(|s| s.graph().node(id).is_some()),
             Some(false)
         );
-        doc.redo();
+        doc.redo().unwrap();
         let kind_ok = doc.with_scene(|s| {
             let node = s.graph().node(id).expect("redo restores the node");
             matches!(node.kind, NodeKind::Leaf(LeafPayload::MeshResource(r)) if r == rid)
@@ -1827,11 +1949,14 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let id = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
         assert_eq!(doc.selection_primary_node_id(), Some(id));
         // Undo the AddRootLeaf so the inverse RemoveRootLeaf fires.
-        doc.undo();
+        doc.undo().unwrap();
         assert_eq!(
             doc.selection_primary_node_id(),
             None,
@@ -1845,8 +1970,11 @@ mod scene_document_tests {
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
         // Add two roots so removing one leaves the other selectable.
-        let kept = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
-        let to_remove = doc.add_root_leaf(rid, translation(5.0)).unwrap();
+        let kept = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
+        let to_remove = doc.add_root_leaf(rid, translation(5.0)).unwrap().unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(kept)));
         // Apply the RemoveRootLeaf directly (skip the undo stack so
         // the selection-clear logic is exercised on a non-matching id).
@@ -1855,7 +1983,7 @@ mod scene_document_tests {
             mesh: rid,
             local_transform: translation(5.0),
         };
-        assert!(doc.apply_edit(edit));
+        assert!(doc.apply_edit(edit).is_ok());
         assert_eq!(doc.selection_primary_node_id(), Some(kept));
     }
 
@@ -1864,12 +1992,15 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let id = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
         let events: Rc<RefCell<Vec<SceneEvent>>> = Rc::default();
         let log = events.clone();
         let _sub = doc.subscribe(move |ev| log.borrow_mut().push(ev));
-        doc.undo();
+        doc.undo().unwrap();
         assert_eq!(
             *events.borrow(),
             vec![
@@ -1886,7 +2017,7 @@ mod scene_document_tests {
     #[test]
     fn delete_selected_leaf_with_no_scene_loaded_returns_false() {
         let doc = SceneDocument::new();
-        assert!(!doc.delete_selected_leaf());
+        assert!(!doc.delete_selected_leaf().unwrap());
         assert!(!doc.can_undo());
     }
 
@@ -1895,10 +2026,13 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        let _ = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let _ = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
         // Selection stays None (add_root_leaf does not auto-select).
         assert_eq!(doc.selection(), Selection::None);
-        assert!(!doc.delete_selected_leaf());
+        assert!(!doc.delete_selected_leaf().unwrap());
         // Only the AddRootLeaf entry from the setup is on the stack.
         let undo_entries_before = doc.undo_stack.borrow().len();
         assert_eq!(undo_entries_before, 1);
@@ -1918,7 +2052,7 @@ mod scene_document_tests {
             .with_scene(|s| s.graph().parent_of(leaf.node_id()))
             .flatten();
 
-        assert!(doc.delete_selected_leaf());
+        assert!(doc.delete_selected_leaf().unwrap());
 
         let leaf_gone = doc
             .with_scene(|s| s.graph().node(leaf.node_id()).is_none())
@@ -1927,7 +2061,7 @@ mod scene_document_tests {
         assert_eq!(doc.selection_primary_node_id(), None);
         assert!(doc.can_undo());
 
-        doc.undo();
+        doc.undo().unwrap();
 
         let restored = doc
             .with_scene(|s| {
@@ -1945,11 +2079,14 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        let kept = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
-        let to_delete = doc.add_root_leaf(rid, translation(5.0)).unwrap();
+        let kept = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
+        let to_delete = doc.add_root_leaf(rid, translation(5.0)).unwrap().unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(to_delete)));
 
-        assert!(doc.delete_selected_leaf());
+        assert!(doc.delete_selected_leaf().unwrap());
 
         let observed = doc
             .with_scene(|s| {
@@ -1965,7 +2102,7 @@ mod scene_document_tests {
 
         // Undo restores only the leaf; the resource was never removed
         // because the sibling kept it live.
-        doc.undo();
+        doc.undo().unwrap();
         let observed = doc
             .with_scene(|s| {
                 (
@@ -1982,10 +2119,13 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let id = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
 
-        assert!(doc.delete_selected_leaf());
+        assert!(doc.delete_selected_leaf().unwrap());
 
         // Leaf gone and resource arena's live-iter count dropped to 0:
         // the Compound also tombstoned the mesh resource.
@@ -2002,7 +2142,7 @@ mod scene_document_tests {
 
         // Undo restores both leaf and resource via the inverse Compound
         // (Compound([AddMeshResource, AddLeaf])).
-        doc.undo();
+        doc.undo().unwrap();
         let observed = doc
             .with_scene(|s| {
                 let node_back = s.graph().node(id);
@@ -2025,11 +2165,14 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
-        let id = doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        let id = doc
+            .add_root_leaf(rid, Transform3D::Identity)
+            .unwrap()
+            .unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
-        assert!(doc.delete_selected_leaf());
+        assert!(doc.delete_selected_leaf().unwrap());
         assert_eq!(
             *log.borrow(),
             vec![
@@ -2060,7 +2203,11 @@ mod scene_document_tests {
     fn paste_fragment_with_no_scene_loaded_returns_none() {
         let doc = SceneDocument::new();
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
-        assert!(doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).is_none());
+        assert!(
+            doc.paste_fragment(&fragment, [0.0, 0.0, 0.0])
+                .unwrap()
+                .is_none()
+        );
         assert!(!doc.can_undo());
     }
 
@@ -2072,6 +2219,7 @@ mod scene_document_tests {
         let fragment = SceneFragment::from_leaf_snapshot(Arc::clone(&mesh), Transform3D::Identity);
         let new_root = doc
             .paste_fragment(&fragment, [5.0, 0.0, 0.0])
+            .unwrap()
             .expect("paste into loaded scene");
         // Both AddMeshResource and AddRootLeaf landed: the scene has
         // a new root leaf referencing a new resource that shares the
@@ -2116,7 +2264,10 @@ mod scene_document_tests {
         doc.install_graph(graph, fixture_path());
         let resources_before = doc.with_scene(|s| s.graph().mesh_resources_len()).unwrap();
         let fragment = SceneFragment::from_leaf_snapshot(Arc::clone(&mesh), Transform3D::Identity);
-        let new_root = doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        let new_root = doc
+            .paste_fragment(&fragment, [0.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
         let (resources_after, leaf_rid) = doc
             .with_scene(|s| {
                 let NodeKind::Leaf(LeafPayload::MeshResource(rid)) =
@@ -2143,13 +2294,16 @@ mod scene_document_tests {
         doc.install_graph(empty_graph(), fixture_path());
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
         assert!(!doc.can_undo());
-        let new_root = doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        let new_root = doc
+            .paste_fragment(&fragment, [0.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
         assert!(doc.can_undo());
         // One undo reverses the entire paste: leaf and resource both
         // tombstoned, no stranded entry left on the stack. Counts use
         // the live-only iterators because the arena Vecs keep their
         // length even when every entry is `None`.
-        doc.undo();
+        doc.undo().unwrap();
         let observed = doc.with_scene(|s| {
             (
                 s.graph().node(new_root).is_some(),
@@ -2173,7 +2327,9 @@ mod scene_document_tests {
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
         let (log, listener) = capture_events();
         let _sub = doc.subscribe(listener);
-        doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        doc.paste_fragment(&fragment, [0.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
         assert!(log.borrow().contains(&SceneEvent::Restructured));
         assert!(!log.borrow().contains(&SceneEvent::Mutated));
     }
@@ -2193,7 +2349,8 @@ mod scene_document_tests {
             node_id,
             before: Transform3D::Identity,
             after: translation(1.0),
-        });
+        })
+        .unwrap();
         assert!(log.borrow().contains(&SceneEvent::Mutated));
         assert!(!log.borrow().contains(&SceneEvent::Restructured));
     }
@@ -2203,7 +2360,10 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_graph(empty_graph(), fixture_path());
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
-        let new_root = doc.paste_fragment(&fragment, [0.0, 0.0, 0.0]).unwrap();
+        let new_root = doc
+            .paste_fragment(&fragment, [0.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
         assert_eq!(doc.selection_primary_node_id(), Some(new_root));
     }
 
@@ -2212,9 +2372,12 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_graph(empty_graph(), fixture_path());
         let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
-        let new_root = doc.paste_fragment(&fragment, [1.0, 2.0, 3.0]).unwrap();
-        doc.undo();
-        doc.redo();
+        let new_root = doc
+            .paste_fragment(&fragment, [1.0, 2.0, 3.0])
+            .unwrap()
+            .unwrap();
+        doc.undo().unwrap();
+        doc.redo().unwrap();
         let observed = doc.with_scene(|s| {
             let node = s.graph().node(new_root).expect("redo restores the leaf");
             (

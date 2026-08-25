@@ -30,9 +30,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{MeshFix, RepairPasses};
-use sc_scene::Scene;
 use sc_scene::mesh_targets::MeshTarget;
 use sc_scene::repair::SceneRepairOutcome;
+use sc_scene::{Scene, SceneError};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
@@ -40,7 +40,7 @@ use crate::MainWindow;
 use crate::error_dialog::DialogManager;
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
-use crate::scene_document::{SceneDocument, SceneRevision};
+use crate::scene_document::{EditNotApplied, SceneDocument, SceneRevision};
 use crate::workspace_section::allows_repair;
 
 /// One mesh the repair run rewrote: the storage place plus the exact
@@ -86,6 +86,8 @@ enum RepairSettlement {
     NothingApplied,
     /// The replacements landed as one undoable Compound edit.
     Applied,
+    /// The scene rejected the replacement edit; nothing was recorded.
+    Rejected(SceneError),
 }
 
 pub(crate) struct RepairRun {
@@ -206,6 +208,18 @@ impl RepairRun {
                     details,
                 );
             }
+            RepairSettlement::Rejected(error) => {
+                self.dialogs.show_error(
+                    &ctr!("RepairDialog", "Repair failed"),
+                    None,
+                    ctr!(
+                        "RepairDialog",
+                        "The scene rejected the repair edit; nothing was changed."
+                    )
+                    .to_string(),
+                    error.to_string(),
+                );
+            }
         }
     }
 }
@@ -271,9 +285,16 @@ fn settle(
             .map(MeshReplacement::as_edit)
             .collect(),
     );
-    document.apply_edit(edit.clone());
-    document.push_edit(edit);
-    RepairSettlement::Applied
+    match document.apply_edit(edit.clone()) {
+        Ok(()) => {
+            document.push_edit(edit);
+            RepairSettlement::Applied
+        }
+        // The scene disappearing mid-settle is the stale case; the
+        // revision guard above makes it unreachable in practice.
+        Err(EditNotApplied::NoSceneLoaded) => RepairSettlement::DiscardedStale,
+        Err(EditNotApplied::Rejected(error)) => RepairSettlement::Rejected(error),
+    }
 }
 
 /// One-line rollup for the dialog's message.
@@ -513,7 +534,7 @@ mod repair_run_tests {
         // repair reads as stale.
         assert!(doc.slice_geometry_changed(captured));
 
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert_eq!(
             doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
             MeshHealth::HasProblems
@@ -551,7 +572,7 @@ mod repair_run_tests {
                 sc_mesh_core::transform::AffineTransform3D::from_translation([1.0, 0.0, 0.0]),
             ),
         };
-        doc.apply_edit(edit.clone());
+        doc.apply_edit(edit.clone()).unwrap();
         doc.push_edit(edit);
 
         assert_eq!(

@@ -308,7 +308,7 @@ mod scene_save_tests {
             before: Transform3D::Identity,
             after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
         };
-        assert!(doc.apply_edit(edit.clone()));
+        assert!(doc.apply_edit(edit.clone()).is_ok());
         doc.push_edit(edit);
     }
 

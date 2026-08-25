@@ -68,7 +68,7 @@ fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
         },
         after: translation(dx),
     };
-    assert!(doc.apply_edit(edit.clone()));
+    assert!(doc.apply_edit(edit.clone()).is_ok());
     doc.push_edit(edit);
 }
 
@@ -146,9 +146,9 @@ fn undo_back_to_the_slice_point_reads_unchanged_again() {
     doc.set_slice_result(sample_result(rev));
     commit_step(&doc, node_id, 2.0);
     assert!(doc.slice_geometry_changed(rev));
-    assert!(doc.undo());
+    assert!(doc.undo().unwrap());
     assert!(!doc.slice_geometry_changed(rev));
-    assert!(doc.redo());
+    assert!(doc.redo().unwrap());
     assert!(doc.slice_geometry_changed(rev));
 }
 
@@ -162,7 +162,7 @@ fn an_empty_stack_slice_point_without_eviction_reads_unchanged_after_full_undo()
     doc.set_slice_result(sample_result(rev));
     commit_step(&doc, node_id, 1.0);
     assert!(doc.slice_geometry_changed(rev));
-    assert!(doc.undo());
+    assert!(doc.undo().unwrap());
     assert!(!doc.slice_geometry_changed(rev));
 }
 
@@ -180,7 +180,7 @@ fn eviction_after_an_empty_stack_slice_point_reads_changed() {
         commit_step(&doc, node_id, (i + 1) as f64);
     }
     for _ in 0..UNDO_STACK_CAP {
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
     }
     assert!(!doc.can_undo());
     assert!(doc.slice_geometry_changed(rev));

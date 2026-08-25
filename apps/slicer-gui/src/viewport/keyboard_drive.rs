@@ -477,11 +477,13 @@ impl KeyboardDriveState {
             new_transform
         };
 
-        ctx.document.apply_edit(SceneEdit::SetLocalTransform {
-            node_id,
-            before: running,
-            after: new_transform,
-        })
+        ctx.document
+            .apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
+                before: running,
+                after: new_transform,
+            })
+            .is_ok()
     }
 }
 

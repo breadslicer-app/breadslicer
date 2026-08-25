@@ -55,6 +55,7 @@ use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
+use sc_scene::SceneError;
 
 pub struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -734,7 +735,9 @@ impl ViewportController {
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
-        self.session.document().undo();
+        if let Err(error) = self.session.document().undo() {
+            self.show_edit_rejected(error);
+        }
     }
 
     /// Edit -> Redo handler.
@@ -742,7 +745,26 @@ impl ViewportController {
         if !self.allows_undo_redo() || self.repair_in_flight() {
             return;
         }
-        self.session.document().redo();
+        if let Err(error) = self.session.document().redo() {
+            self.show_edit_rejected(error);
+        }
+    }
+
+    /// Surface a scene-rejected edit through the error dialog. The
+    /// GUI builds its edits against the live scene, so a rejection
+    /// indicates a programming bug; the dialog beats silently
+    /// dropping the user's gesture.
+    fn show_edit_rejected(&self, error: SceneError) {
+        self.session.dialogs().show_error(
+            &ctr!("ErrorDialog", "Edit failed"),
+            None,
+            ctr!(
+                "ErrorDialog",
+                "The scene rejected the last edit; nothing was changed."
+            )
+            .to_string(),
+            error.to_string(),
+        );
     }
 
     /// Whether a repair worker is running. Undo/redo is silenced for
@@ -764,7 +786,9 @@ impl ViewportController {
         if !self.allows_layout_tools() {
             return;
         }
-        self.session.document().delete_selected_leaf();
+        if let Err(error) = self.session.document().delete_selected_leaf() {
+            self.show_edit_rejected(error);
+        }
     }
 
     pub fn on_clear_selection(&self) {
@@ -1034,16 +1058,21 @@ impl ViewportController {
             clipboard.cascade_count(),
             &obstacles,
         );
-        if self
+        match self
             .session
             .document()
             .paste_fragment(clipboard.fragment(), translation)
-            .is_none()
         {
-            return false;
+            Ok(Some(_)) => {
+                self.mark_dirty();
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                self.show_edit_rejected(error);
+                false
+            }
         }
-        self.mark_dirty();
-        true
     }
 
     fn mirror_selection_to_ui(&self) {
@@ -2123,13 +2152,13 @@ mod viewport_click_tests {
         let after_drag = read_translation(&ctrl);
         assert!(after_drag.x.abs() > 1e-4);
 
-        assert!(ctrl.session.document().undo());
+        assert!(ctrl.session.document().undo().unwrap());
         let after_undo = read_translation(&ctrl);
         assert_approx_eq!(f32, after_undo.x, 0.0, epsilon = 1e-6);
         assert!(!ctrl.session.document().can_undo());
         assert!(ctrl.session.document().can_redo());
 
-        assert!(ctrl.session.document().redo());
+        assert!(ctrl.session.document().redo().unwrap());
         let after_redo = read_translation(&ctrl);
         assert_approx_eq!(f32, after_redo.x, after_drag.x, epsilon = 1e-6);
     }
@@ -2734,11 +2763,12 @@ mod keyboard_focus_tests {
                 node_id,
                 before: Transform3D::Identity,
                 after: translation_x(2.0),
-            });
+            })
+            .unwrap();
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
 
         assert!(ctrl.session.document().can_undo());
-        assert!(ctrl.session.document().undo());
+        assert!(ctrl.session.document().undo().unwrap());
         let after_undo = ctrl
             .session
             .document()
@@ -2784,12 +2814,13 @@ mod keyboard_focus_tests {
                 node_id,
                 before: Transform3D::Identity,
                 after: translation_x(3.0),
-            });
+            })
+            .unwrap();
         // User switches mode without releasing the key.
         ctrl.on_gizmo_focus_rotate();
 
         assert!(ctrl.session.document().can_undo());
-        ctrl.session.document().undo();
+        ctrl.session.document().undo().unwrap();
         let after_undo = ctrl
             .session
             .document()
@@ -2820,14 +2851,15 @@ mod keyboard_focus_tests {
                 node_id,
                 before: Transform3D::Identity,
                 after: translation_x(1.0),
-            });
+            })
+            .unwrap();
         ctrl.on_gizmo_arrow_released(ARROW_X_POS);
         // Bitset still has Y_POS held, must not flush yet.
         assert!(!ctrl.session.document().can_undo());
         ctrl.on_gizmo_arrow_released(ARROW_Y_POS);
         assert!(ctrl.session.document().can_undo());
         // Exactly one entry: a second undo is rejected.
-        assert!(ctrl.session.document().undo());
+        assert!(ctrl.session.document().undo().unwrap());
         assert!(!ctrl.session.document().can_undo());
     }
 
@@ -2848,7 +2880,8 @@ mod keyboard_focus_tests {
                 node_id,
                 before: Transform3D::Identity,
                 after: translation_x(1.0),
-            });
+            })
+            .unwrap();
 
         ctrl.on_close_scene();
         assert!(!ctrl.session.document().can_undo());

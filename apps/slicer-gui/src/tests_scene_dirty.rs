@@ -68,7 +68,7 @@ fn commit_step(doc: &SceneDocument, node_id: NodeId, dx: f64) {
         },
         after: translation(dx),
     };
-    assert!(doc.apply_edit(edit.clone()));
+    assert!(doc.apply_edit(edit.clone()).is_ok());
     doc.push_edit(edit);
 }
 
@@ -103,11 +103,14 @@ mod baseline_tests {
     #[test]
     fn a_mid_gesture_mutation_without_a_commit_stays_clean() {
         let (doc, node_id) = loaded_document();
-        assert!(doc.apply_edit(SceneEdit::SetLocalTransform {
-            node_id,
-            before: Transform3D::Identity,
-            after: translation(1.0),
-        }));
+        assert!(
+            doc.apply_edit(SceneEdit::SetLocalTransform {
+                node_id,
+                before: Transform3D::Identity,
+                after: translation(1.0),
+            })
+            .is_ok()
+        );
         assert!(!doc.is_dirty());
     }
 
@@ -150,7 +153,7 @@ mod save_point_tests {
         commit_step(&doc, node_id, 3.0);
         assert!(doc.is_dirty());
 
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(!doc.is_dirty());
     }
 
@@ -161,7 +164,7 @@ mod save_point_tests {
         commit_step(&doc, node_id, 2.0);
         doc.mark_saved();
 
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(doc.is_dirty());
     }
 
@@ -171,9 +174,9 @@ mod save_point_tests {
         commit_step(&doc, node_id, 1.0);
         commit_step(&doc, node_id, 2.0);
         doc.mark_saved();
-        doc.undo();
+        doc.undo().unwrap();
 
-        assert!(doc.redo());
+        assert!(doc.redo().unwrap());
         assert!(!doc.is_dirty());
     }
 
@@ -183,13 +186,13 @@ mod save_point_tests {
         commit_step(&doc, node_id, 1.0);
         commit_step(&doc, node_id, 2.0);
         doc.mark_saved();
-        doc.undo();
+        doc.undo().unwrap();
 
         // The new branch replaces the saved top entry; its fresh id
         // can never match the save point again.
         commit_step(&doc, node_id, 5.0);
         assert!(doc.is_dirty());
-        doc.undo();
+        doc.undo().unwrap();
         assert!(doc.is_dirty());
     }
 }
@@ -205,9 +208,9 @@ mod eviction_tests {
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
         commit_step(&doc, node_id, 2.0);
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(doc.is_dirty());
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(!doc.is_dirty());
     }
 
@@ -219,9 +222,9 @@ mod eviction_tests {
         let (doc, node_id) = loaded_document();
         commit_step(&doc, node_id, 1.0);
         doc.mark_saved();
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(doc.is_dirty());
-        assert!(doc.redo());
+        assert!(doc.redo().unwrap());
         assert!(!doc.is_dirty());
     }
 
@@ -238,7 +241,7 @@ mod eviction_tests {
             commit_step(&doc, node_id, (i + 1) as f64);
         }
         for _ in 0..UNDO_STACK_CAP {
-            assert!(doc.undo());
+            assert!(doc.undo().unwrap());
         }
         assert!(!doc.can_undo());
         assert!(doc.is_dirty());
@@ -254,7 +257,7 @@ mod eviction_tests {
             commit_step(&doc, node_id, (i + 1) as f64);
         }
         for _ in 0..UNDO_STACK_CAP {
-            assert!(doc.undo());
+            assert!(doc.undo().unwrap());
         }
         assert!(doc.is_dirty());
 
@@ -267,7 +270,7 @@ mod eviction_tests {
         // the chain is 2.0.
         commit_step(&doc, node_id, 2.0);
         assert!(doc.is_dirty());
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(!doc.is_dirty());
     }
 }
@@ -308,7 +311,7 @@ mod reset_tests {
         // Were the eviction flag still set, this change-then-undo
         // cycle would read dirty at the end.
         commit_step(&doc, node_id, 1.0);
-        assert!(doc.undo());
+        assert!(doc.undo().unwrap());
         assert!(!doc.is_dirty());
     }
 }
@@ -340,10 +343,10 @@ mod dirty_changed_event_tests {
         doc.mark_saved(); // clean -> clean
         assert_eq!(dirty_flips(&log), 2);
 
-        doc.undo(); // clean -> dirty (below the save point)
+        doc.undo().unwrap(); // clean -> dirty (below the save point)
         assert_eq!(dirty_flips(&log), 3);
 
-        doc.redo(); // dirty -> clean (back at the save point)
+        doc.redo().unwrap(); // dirty -> clean (back at the save point)
         assert_eq!(dirty_flips(&log), 4);
     }
 
@@ -492,7 +495,7 @@ mod unsaved_project_state_tests {
         commit_step(&doc, node_id, 2.0);
         assert!(doc.is_dirty());
 
-        assert!(doc.undo()); // back to the geometry save point
+        assert!(doc.undo().unwrap()); // back to the geometry save point
         assert!(doc.is_dirty()); // still dirty: the selection is unsaved
     }
 
