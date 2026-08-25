@@ -244,6 +244,28 @@ mod reference_and_id_tests {
     }
 
     #[test]
+    fn component_referencing_its_own_object_is_rejected() {
+        // An object joins the reference set only once its own element
+        // has been parsed, so it cannot name itself.
+        let body = r#"<resources><object id="1"><components><component objectid="1"/></components></object></resources><build/>"#;
+        let err = parse(&minimal_model(body)).unwrap_err();
+        assert!(matches!(
+            err,
+            ModelParseError::UnknownObjectReference { id: 1 }
+        ));
+    }
+
+    #[test]
+    fn build_items_resolve_objects_declared_at_any_position() {
+        // Every declared object stays reachable, not just the most
+        // recent one.
+        let body = r#"<resources><object id="4"><components/></object><object id="5"><components/></object><object id="6"><components/></object></resources><build><item objectid="4"/><item objectid="6"/><item objectid="5"/></build>"#;
+        let document = parse(&minimal_model(body)).expect("every item resolves");
+        let ids: Vec<u32> = document.build.iter().map(|i| i.object_id.get()).collect();
+        assert_eq!(ids, vec![4, 6, 5]);
+    }
+
+    #[test]
     fn build_item_referencing_an_other_type_object_is_rejected() {
         let body = r#"<resources><object id="1" type="other"><components/></object></resources><build><item objectid="1"/></build>"#;
         let err = parse(&minimal_model(body)).unwrap_err();

@@ -26,7 +26,7 @@
 //! skipped immediately, so an unmatched End event always belongs to
 //! the enclosing container.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -277,6 +277,7 @@ fn parse_model_element(
     }
 
     let mut seen_ids: BTreeSet<u32> = BTreeSet::new();
+    let mut declared = DeclaredObjects::default();
     let mut buffer = Vec::new();
     loop {
         match reader.read_event_into(&mut buffer)? {
@@ -292,9 +293,9 @@ fn parse_model_element(
                             document.metadata.push(parse_metadata(reader, &owned)?);
                         }
                         b"resources" => {
-                            parse_resources(reader, &mut document, &mut seen_ids)?;
+                            parse_resources(reader, &mut document, &mut seen_ids, &mut declared)?;
                         }
-                        b"build" => parse_build(reader, &mut document)?,
+                        b"build" => parse_build(reader, &mut document, &declared)?,
                         _ => skip_subtree(reader, &owned)?,
                     }
                 }
@@ -378,6 +379,25 @@ fn resolve_general_ref(r: &BytesRef<'_>) -> Result<String, ModelParseError> {
     Ok(resolved.to_string())
 }
 
+/// The objects parsed so far, with the type each one declared.
+///
+/// An object joins this set only once its own element has been fully
+/// parsed, which is what makes a reference to a later object, or to the
+/// enclosing object itself, resolve to nothing.
+#[derive(Default)]
+struct DeclaredObjects(HashMap<ResourceId, ObjectType>);
+
+impl DeclaredObjects {
+    fn declare(&mut self, object: &ObjectResource) {
+        self.0.insert(object.id, object.object_type);
+    }
+
+    /// `None` when no object with `id` has been declared yet.
+    fn object_type(&self, id: ResourceId) -> Option<ObjectType> {
+        self.0.get(&id).copied()
+    }
+}
+
 fn register_id(seen_ids: &mut BTreeSet<u32>, id: ResourceId) -> Result<(), ModelParseError> {
     if !seen_ids.insert(id.get()) {
         return Err(ModelParseError::DuplicateResourceId { id: id.get() });
@@ -389,6 +409,7 @@ fn parse_resources(
     reader: &mut Reader<'_>,
     document: &mut ModelDocument,
     seen_ids: &mut BTreeSet<u32>,
+    declared: &mut DeclaredObjects,
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
@@ -404,8 +425,9 @@ fn parse_resources(
                             document.base_materials.push(group);
                         }
                         b"object" => {
-                            let object = parse_object(reader, &owned, document)?;
+                            let object = parse_object(reader, &owned, document, declared)?;
                             register_id(seen_ids, object.id)?;
+                            declared.declare(&object);
                             document.objects.push(object);
                         }
                         _ => skip_subtree(reader, &owned)?,
@@ -797,6 +819,7 @@ fn parse_object(
     reader: &mut Reader<'_>,
     start: &BytesStart<'static>,
     document: &ModelDocument,
+    declared: &DeclaredObjects,
 ) -> Result<ObjectResource, ModelParseError> {
     let attributes = collect_attributes(reader, start)?;
     let id = parse_resource_id(attributes.require("object", "id")?)?;
@@ -859,7 +882,7 @@ fn parse_object(
                                 return Err(ModelParseError::DuplicateGeometry { id: id.get() });
                             }
                             payload = Some(ObjectPayload::Components(parse_components(
-                                reader, document,
+                                reader, declared,
                             )?));
                         }
                         _ => skip_subtree(reader, &owned)?,
@@ -1098,7 +1121,7 @@ fn parse_triangle_attributes(
 
 fn parse_components(
     reader: &mut Reader<'_>,
-    document: &ModelDocument,
+    declared: &DeclaredObjects,
 ) -> Result<Vec<Component>, ModelParseError> {
     let mut components = Vec::new();
     let mut buffer = Vec::new();
@@ -1106,7 +1129,7 @@ fn parse_components(
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();
-                let component = parse_component_attributes(reader, &owned, document)?;
+                let component = parse_component_attributes(reader, &owned, declared)?;
                 skip_subtree(reader, &owned)?;
                 if let Some(component) = component {
                     components.push(component);
@@ -1114,7 +1137,7 @@ fn parse_components(
             }
             Event::Empty(e) => {
                 let owned = e.into_owned();
-                if let Some(component) = parse_component_attributes(reader, &owned, document)? {
+                if let Some(component) = parse_component_attributes(reader, &owned, declared)? {
                     components.push(component);
                 }
             }
@@ -1130,7 +1153,7 @@ fn parse_components(
 fn parse_component_attributes(
     reader: &Reader<'_>,
     e: &BytesStart<'static>,
-    document: &ModelDocument,
+    declared: &DeclaredObjects,
 ) -> Result<Option<Component>, ModelParseError> {
     let (ns, local) = reader.resolver().resolve_element(e.name());
     if !(is_core_ns(&ns) && local.as_ref() == b"component") {
@@ -1138,7 +1161,7 @@ fn parse_component_attributes(
     }
     let attributes = collect_attributes(reader, e)?;
     let object_id = parse_resource_id(attributes.require("component", "objectid")?)?;
-    if document.object(object_id).is_none() {
+    if declared.object_type(object_id).is_none() {
         return Err(ModelParseError::UnknownObjectReference {
             id: object_id.get(),
         });
@@ -1156,13 +1179,14 @@ fn parse_component_attributes(
 fn parse_build(
     reader: &mut Reader<'_>,
     document: &mut ModelDocument,
+    declared: &DeclaredObjects,
 ) -> Result<(), ModelParseError> {
     let mut buffer = Vec::new();
     loop {
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) => {
                 let owned = e.into_owned();
-                let item = parse_item_attributes(reader, &owned, document)?;
+                let item = parse_item_attributes(reader, &owned, declared)?;
                 skip_subtree(reader, &owned)?;
                 if let Some(item) = item {
                     document.build.push(item);
@@ -1170,7 +1194,7 @@ fn parse_build(
             }
             Event::Empty(e) => {
                 let owned = e.into_owned();
-                if let Some(item) = parse_item_attributes(reader, &owned, document)? {
+                if let Some(item) = parse_item_attributes(reader, &owned, declared)? {
                     document.build.push(item);
                 }
             }
@@ -1186,7 +1210,7 @@ fn parse_build(
 fn parse_item_attributes(
     reader: &Reader<'_>,
     e: &BytesStart<'static>,
-    document: &ModelDocument,
+    declared: &DeclaredObjects,
 ) -> Result<Option<BuildItem>, ModelParseError> {
     let (ns, local) = reader.resolver().resolve_element(e.name());
     if !(is_core_ns(&ns) && local.as_ref() == b"item") {
@@ -1194,12 +1218,12 @@ fn parse_item_attributes(
     }
     let attributes = collect_attributes(reader, e)?;
     let object_id = parse_resource_id(attributes.require("item", "objectid")?)?;
-    let Some(object) = document.object(object_id) else {
+    let Some(object_type) = declared.object_type(object_id) else {
         return Err(ModelParseError::UnknownObjectReference {
             id: object_id.get(),
         });
     };
-    if object.object_type == ObjectType::Other {
+    if object_type == ObjectType::Other {
         return Err(ModelParseError::BuildItemReferencesOtherType {
             id: object_id.get(),
         });
