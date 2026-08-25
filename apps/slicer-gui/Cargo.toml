@@ -34,8 +34,8 @@ futures-channel = "0.3"
 glam = "0.32.1"
 ico = "0.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+harfrust = "0.8"
 rfd = "0.17.2"
-rustybuzz = "0.20"
 # Slint's default feature set minus FemtoVG renderer.
 slint = { version = "1.17.0", default-features = false, features = [
     "accessibility",
