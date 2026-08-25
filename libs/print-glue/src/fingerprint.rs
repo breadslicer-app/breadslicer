@@ -19,7 +19,6 @@
 use std::fmt;
 
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::node::NodeId;
 use sc_scene::{Scene, SceneError};
 use sc_sl1cer::error::SliceSceneError;
 use sc_sl1cer::profile::LayerSchedule;
@@ -122,7 +121,12 @@ pub fn slice_input_fingerprint(
             }
         }
 
-        let world = leaf_world_transform(scene, leaf).map_err(SliceInputFingerprintError::Scene)?;
+        // Hashing the composed placement, not the chain, keeps the
+        // fingerprint stable across non-geometric regrouping (a save
+        // then reopen wraps the leaf under a fresh identity group).
+        let world = scene
+            .world_transform_of(leaf)
+            .map_err(SliceInputFingerprintError::Scene)?;
         hash_transform(&mut hasher, &world);
     }
 
@@ -158,25 +162,6 @@ pub fn validate_persisted_slices(
         Ok(fingerprint) if fingerprint.to_token() == stored_token => PersistedSliceValidity::InSync,
         _ => PersistedSliceValidity::Stale,
     }
-}
-
-/// The leaf's world placement: every local transform from `leaf` up to
-/// its root, composed into one. Two scenes that put the same geometry at
-/// the same world coordinates share this value whatever intermediate
-/// grouping each uses, so the fingerprint ignores non-geometric nesting
-/// (an extra identity group a format reader wraps around a leaf on
-/// reopen, for instance). Walking leaf to root and composing each
-/// ancestor onto the accumulated child builds `root . ... . parent .
-/// leaf`, which is the leaf's world transform.
-fn leaf_world_transform(scene: &Scene, leaf: NodeId) -> Result<Transform3D, SceneError> {
-    let mut world = Transform3D::Identity;
-    let mut current = Some(leaf);
-    while let Some(id) = current {
-        let node = scene.node(id).ok_or(SceneError::DanglingNodeId { id })?;
-        world = node.local_transform.compose(&world);
-        current = scene.parent_of(id);
-    }
-    Ok(world)
 }
 
 /// Feed one transform into the hasher: a discriminant byte, then, for an
