@@ -18,9 +18,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use rayon::prelude::*;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::indexed_mesh::{MeshTopology, ValidatedEdgeManifoldMesh};
-use sc_scene::Scene;
 use sc_scene::bake::bake_leaf_to_world;
 use sc_scene::node::{NodeId, NodeKind};
+use sc_scene::{CsgPolicy, ReferencePolicy, Scene, SceneError};
 
 use crate::contour::{ContourLayer, ContourStack};
 use crate::error::{InvalidLeafGeometry, LeafValidationFailure, SliceError, SliceSceneError};
@@ -335,38 +335,29 @@ where
     }
 }
 
-/// The mesh leaves reachable from the scene roots, in the pre-order the
-/// slicer visits them. [`slice_scene`] and any caller that must reason
-/// about the same leaf set without slicing share this one walk, so they
-/// cannot disagree on which leaves a scene slices. `Group` containers
-/// are entered at any depth; dangling child ids are skipped, matching
-/// the scene's own traversal helpers. `Csg` and `Reference` nodes abort
-/// the walk, since their leaves are operands, not independent solids,
-/// and slicing them as such would silently apply union semantics
-/// regardless of the operator. An empty result is reported as
-/// [`SliceSceneError::EmptyScene`].
+/// List the mesh leaves reachable from the scene roots, in the
+/// pre-order the slicer visits them. [`slice_scene`] and any caller
+/// that must reason about the same leaf set without slicing share this
+/// one walk, so they cannot disagree on which leaves a scene slices.
+/// The walk is [`Scene::reachable_leaves`] with both policies at
+/// `Refuse`: `Csg` and `Reference` nodes abort it, since their leaves
+/// are operands, not independent solids, and slicing them as such
+/// would silently apply union semantics regardless of the operator. An
+/// empty result is reported as [`SliceSceneError::EmptyScene`].
 pub fn sliceable_leaves(scene: &Scene) -> Result<Vec<NodeId>, SliceSceneError> {
-    let mut stack: Vec<NodeId> = scene.roots().iter().rev().copied().collect();
-    let mut leaves: Vec<NodeId> = Vec::new();
-    while let Some(id) = stack.pop() {
-        let Some(node) = scene.node(id) else {
-            continue;
-        };
-        match &node.kind {
-            NodeKind::Leaf(_) => leaves.push(id),
-            NodeKind::Group { children } => {
-                for child in children.iter().rev() {
-                    stack.push(*child);
-                }
+    let leaves = scene
+        .reachable_leaves(CsgPolicy::Refuse, ReferencePolicy::Refuse)
+        .map_err(|err| match err {
+            SceneError::UnevaluatedCsg { node_id } => {
+                SliceSceneError::CsgNotYetSupported { node_id }
             }
-            NodeKind::Csg { .. } => {
-                return Err(SliceSceneError::CsgNotYetSupported { node_id: id });
+            SceneError::UnexpandedReference { node_id } => {
+                SliceSceneError::SubtreeReferenceNotYetSupported { node_id }
             }
-            NodeKind::Reference { .. } => {
-                return Err(SliceSceneError::SubtreeReferenceNotYetSupported { node_id: id });
-            }
-        }
-    }
+            other => unreachable!(
+                "a (Refuse, Refuse) structural walk errors only on Csg and Reference nodes: {other}"
+            ),
+        })?;
     if leaves.is_empty() {
         return Err(SliceSceneError::EmptyScene);
     }
