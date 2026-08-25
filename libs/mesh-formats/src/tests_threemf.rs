@@ -291,6 +291,44 @@ mod transform_tests {
     }
 
     #[test]
+    fn references_resolve_by_id_not_by_declaration_order() {
+        // Non-contiguous ids, a build that names them in the reverse
+        // of declaration order, and a components object reaching past
+        // its immediate predecessor.
+        let triangle = r#"<object id="5"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>"#;
+        let tetra = r#"<object id="2"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/><triangle v1="0" v2="3" v3="2"/><triangle v1="1" v2="2" v3="3"/></triangles></mesh></object>"#;
+        let group = r#"<object id="9"><components><component objectid="5"/></components></object>"#;
+        let body = format!(
+            r#"<resources>{triangle}{tetra}{group}</resources><build><item objectid="2"/><item objectid="9"/><item objectid="5"/></build>"#,
+        );
+
+        let (scene, warnings) = read("millimeter", &body);
+        assert!(warnings.is_empty());
+        let children = root_children(&scene);
+        assert_eq!(children.len(), 3);
+
+        let first = resource_mesh(&scene, leaf_resource(&scene, children[0]));
+        assert_eq!(first.vertices.len(), 4, "item 1 must resolve object 2");
+
+        let nested = group_children(&scene, children[1]);
+        assert_eq!(nested.len(), 1);
+        let inner = resource_mesh(&scene, leaf_resource(&scene, nested[0]));
+        assert_eq!(
+            inner.vertices.len(),
+            3,
+            "the component must resolve object 5"
+        );
+
+        let third = resource_mesh(&scene, leaf_resource(&scene, children[2]));
+        assert_eq!(third.vertices.len(), 3, "item 3 must resolve object 5");
+        assert_eq!(
+            leaf_resource(&scene, nested[0]),
+            leaf_resource(&scene, children[2]),
+            "both routes to object 5 share one mesh resource",
+        );
+    }
+
+    #[test]
     fn nested_components_compose_through_the_ancestor_chain() {
         let body = format!(
             r#"<resources>{TETRA_OBJECT}<object id="2"><components><component objectid="1" transform="1 0 0 0 1 0 0 0 1 3 0 0"/></components></object><object id="3"><components><component objectid="2" transform="1 0 0 0 1 0 0 0 1 0 2 0"/></components></object></resources><build><item objectid="3" transform="1 0 0 0 1 0 0 0 1 0 0 1"/></build>"#,

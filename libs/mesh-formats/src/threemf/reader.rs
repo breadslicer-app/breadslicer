@@ -11,7 +11,7 @@ use std::io::{Read, Seek};
 
 use sc_3mf::model::{
     Matrix3D, MeshData, MeshResolution, ModelDocument, ObjectPayload, ObjectResource, ObjectType,
-    parse_model,
+    ResourceId, parse_model,
 };
 use sc_3mf::names::MODEL_PART_CONTENT_TYPE;
 use sc_3mf::package::Package;
@@ -81,7 +81,9 @@ pub fn read_threemf_from_package(
 }
 
 struct Converter<'doc> {
-    document: &'doc ModelDocument,
+    /// Every object in the document, keyed by id, so resolving a build
+    /// item or a component does not rescan the object list.
+    objects: HashMap<ResourceId, &'doc ObjectResource>,
     scale: f64,
     scene: Scene,
     /// Object id -> registered mesh resource, so N references to one
@@ -136,7 +138,7 @@ fn convert_document(
     }
 
     let mut converter = Converter {
-        document,
+        objects: document.objects.iter().map(|o| (o.id, o)).collect(),
         scale: document.unit.scale_to_mm(),
         scene: Scene::new(),
         resources: HashMap::new(),
@@ -169,8 +171,10 @@ fn convert_document(
         .expect("freshly allocated group is not yet a root");
 
     for item in &document.build {
-        let object = document
-            .object(item.object_id)
+        let object = converter
+            .objects
+            .get(&item.object_id)
+            .copied()
             .expect("parse_model verified every build item reference");
         let transform = convert_transform(item.transform, converter.scale);
         let node = converter.convert_object(object, transform, 0)?;
@@ -251,8 +255,9 @@ impl Converter<'_> {
                 let group = self.scene.add_group(None, local_transform);
                 for component in components {
                     let child_object = self
-                        .document
-                        .object(component.object_id)
+                        .objects
+                        .get(&component.object_id)
+                        .copied()
                         .expect("parse_model verified every component reference");
                     let child_transform = convert_transform(component.transform, self.scale);
                     let child = self.convert_object(child_object, child_transform, depth + 1)?;
