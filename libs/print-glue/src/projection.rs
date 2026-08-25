@@ -18,10 +18,16 @@ use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile, Unif
 pub enum UnschedulableHeight {
     /// `z_max` is NaN or infinite, so no layer count is defined for
     /// it.
-    NonFiniteHeight { z_max_mm: f64 },
+    NonFiniteHeight {
+        /// The offending `z_max` value.
+        z_max_mm: f64,
+    },
     /// Covering `z_max` needs more layers than a `u32` layer count
     /// can represent.
-    LayerCountOverflow { z_max_mm: f64 },
+    LayerCountOverflow {
+        /// The offending `z_max` value.
+        z_max_mm: f64,
+    },
 }
 
 impl fmt::Display for UnschedulableHeight {

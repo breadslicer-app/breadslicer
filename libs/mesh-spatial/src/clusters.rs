@@ -76,6 +76,9 @@ impl TriangleClusters {
         self.aabbs.len()
     }
 
+    /// Report whether the clustering holds no clusters. A
+    /// constructed value has at least 1, so the answer is always
+    /// `false`.
     pub fn is_empty(&self) -> bool {
         self.aabbs.is_empty()
     }

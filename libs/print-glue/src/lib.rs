@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#![deny(missing_docs)]
+
 //! Application services between the profile bounded context and the
 //! slicing engine. The 2 crates do not know each other; this one
 //! maps between them and hosts the use cases both frontends share.

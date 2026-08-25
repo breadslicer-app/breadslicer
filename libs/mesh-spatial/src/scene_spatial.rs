@@ -401,6 +401,7 @@ impl<'a> ObjectQuery<'a> {
         self.mesh
     }
 
+    /// Return the leaf's transform relative to its parent.
     pub fn local_transform(&self) -> Transform3D {
         self.node.local_transform
     }

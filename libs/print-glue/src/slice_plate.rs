@@ -30,6 +30,7 @@ pub struct SlicingParams {
     pub layer_height_request: Option<PositiveFiniteMm>,
     /// Thicker first layer; `None` inherits the layer height.
     pub first_layer_height: Option<PositiveFiniteMm>,
+    /// Anti-aliasing level forwarded to the engine's slice profile.
     pub aa_level: AaLevel,
 }
 
@@ -63,6 +64,7 @@ impl std::error::Error for SlicePlateError {
 /// How a [`slice_plate`] run ended.
 #[derive(Debug)]
 pub enum SliceRun {
+    /// The run finished and produced the plate's slices.
     Completed(SlicedPlate),
     /// The cancel token was tripped; no slices were produced.
     Cancelled,
@@ -82,6 +84,7 @@ impl SlicedPlate {
         &self.leaves
     }
 
+    /// Return the layer schedule shared by every leaf stack.
     pub fn schedule(&self) -> &LayerSchedule {
         self.profile.layer_schedule()
     }

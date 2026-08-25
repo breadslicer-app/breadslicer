@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#![deny(missing_docs)]
+
 //! Spatial-query acceleration over [`sc_mesh_core`] types.
 //!
 //! This crate caches the results of geometric queries over

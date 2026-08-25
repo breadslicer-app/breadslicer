@@ -5,6 +5,12 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
+#![deny(missing_docs)]
+
+//! Command-line frontend for the SoulCrafted Slicer. Slices plates,
+//! converts between mesh formats, diagnoses and repairs meshes, and
+//! imports, exports and lists printer and material profiles.
+
 mod commands;
 mod config;
 mod filesystem;
