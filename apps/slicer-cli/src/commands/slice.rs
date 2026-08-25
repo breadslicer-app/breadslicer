@@ -31,7 +31,9 @@ use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
-use crate::filesystem::validate_sourcefile_path;
+use crate::filesystem::{
+    ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
+};
 
 /// Parsed CLI arguments for the `slice` subcommand. The profile
 /// references are classified at parse time into either a path or a
@@ -53,16 +55,30 @@ pub(crate) struct SliceArgs {
 
 pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()> {
     let source_path = validate_sourcefile_path(PathBuf::from(args.source))?;
-    let target_path = PathBuf::from(args.target);
+    let requested_target = PathBuf::from(args.target);
 
     let target_format = match args.target_format {
         Some(f) => f,
-        None => format_from_path(&target_path).ok_or_else(|| {
+        None => format_from_path(&requested_target).ok_or_else(|| {
             anyhow!(
                 "could not infer target format from path \"{}\"; pass --target-format with one of: svg-per-layer, svg-combined, png-per-layer, 3mf",
-                target_path.display(),
+                requested_target.display(),
             )
         })?,
+    };
+
+    // A file-target format truncates whatever sits at the target, and
+    // the source is fully in memory by write time, so nothing further
+    // down notices it is destroying its own input. Directory-target
+    // formats take a path the target-file validation would reject, and
+    // the writer's own "must be an empty directory" check already keeps
+    // them away from the source file.
+    let target_path = if target_format.is_directory_format() {
+        requested_target
+    } else {
+        let target_path = validate_targetfile_path(requested_target)?;
+        ensure_distinct_files(&source_path, &target_path)?;
+        target_path
     };
 
     let printer = load_printer_profile(&args.printer_profile, libraries)?;

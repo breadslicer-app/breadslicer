@@ -2596,3 +2596,175 @@ mod slice_threemf_tests {
         assert!(package.start_part().is_ok());
     }
 }
+
+#[cfg(test)]
+mod slice_target_guard_tests {
+    use super::*;
+
+    fn run_slice(
+        source: &str,
+        target: &str,
+        extra_args: &[&str],
+        working_dir: &Path,
+    ) -> assert_cmd::assert::Assert {
+        let mut cmd = Command::cargo_bin(BIN).unwrap();
+        cmd.current_dir(working_dir);
+        cmd.args([
+            "slice",
+            "-s",
+            source,
+            "-t",
+            target,
+            "--printer-profile",
+            "slicer-cli-e2e-test",
+            "--material-profile",
+            "slicer-cli-e2e-test-resin",
+        ]);
+        cmd.env("SC_SLICER_ASSETS_DIR", profiles_dir());
+        cmd.args(extra_args);
+        cmd.assert()
+    }
+
+    // The whole source is read into memory before the writer runs, so
+    // nothing downstream notices that the file it truncates is the one
+    // it just sliced: the mesh is replaced by slice output and the
+    // command reports success.
+    #[test]
+    fn slice_rejects_3mf_target_equal_to_source() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("model.3mf");
+        write_clean_3mf(&source);
+        let original = fs::read(&source).unwrap();
+        let path = source.to_str().unwrap();
+
+        run_slice(path, path, &[], tmp.path())
+            .failure()
+            .stderr(no_panic_in_stderr().not());
+
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            original,
+            "source mesh must survive a rejected same-file slice"
+        );
+    }
+
+    #[test]
+    fn slice_rejects_svg_combined_target_equal_to_source() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        write_clean_stla(&source);
+        let original = fs::read(&source).unwrap();
+        let path = source.to_str().unwrap();
+
+        run_slice(path, path, &["--target-format", "svg-combined"], tmp.path())
+            .failure()
+            .stderr(no_panic_in_stderr().not());
+
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            original,
+            "source mesh must survive a rejected same-file slice"
+        );
+    }
+
+    // A relative target naming the canonicalised source: caught only
+    // because the target is brought into the same spelling before the
+    // comparison.
+    #[test]
+    fn slice_rejects_target_equal_to_source_via_relative_spelling() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        write_clean_stla(&source);
+        let original = fs::read(&source).unwrap();
+
+        run_slice(
+            source.to_str().unwrap(),
+            "tet.stla",
+            &["--target-format", "svg-combined"],
+            tmp.path(),
+        )
+        .failure();
+
+        assert_eq!(fs::read(&source).unwrap(), original);
+    }
+
+    // Path canonicalisation cannot see through a hard link; the
+    // file-identity comparison can.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn slice_rejects_target_hardlinked_to_source() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("model.3mf");
+        let target = tmp.path().join("alias.3mf");
+        write_clean_3mf(&source);
+        fs::hard_link(&source, &target).unwrap();
+        let original = fs::read(&source).unwrap();
+
+        run_slice(
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            &[],
+            tmp.path(),
+        )
+        .failure()
+        .stderr(predicate::str::contains("same underlying file"));
+
+        assert_eq!(fs::read(&source).unwrap(), original);
+    }
+
+    // Writing through a symlink hands the truncation to whatever the
+    // link points at, which may be any file the user can write.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn slice_rejects_symlinked_target() {
+        #[cfg(unix)]
+        use std::os::unix::fs::symlink as symlink_file;
+        #[cfg(windows)]
+        use std::os::windows::fs::symlink_file;
+
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("model.3mf");
+        let pointee = tmp.path().join("precious.3mf");
+        let target = tmp.path().join("link.3mf");
+        write_clean_3mf(&source);
+        fs::write(&pointee, b"precious").unwrap();
+
+        if let Err(e) = symlink_file(&pointee, &target) {
+            eprintln!("SKIPPED slice_rejects_symlinked_target: symlinks unavailable ({e})");
+            return;
+        }
+
+        run_slice(
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            &[],
+            tmp.path(),
+        )
+        .failure();
+
+        assert_eq!(
+            fs::read(&pointee).unwrap(),
+            b"precious",
+            "the symlink's pointee must not be written through"
+        );
+    }
+
+    // A directory-target format keeps taking an existing empty
+    // directory: the same-file guard must not reach it.
+    #[test]
+    fn slice_into_existing_empty_directory_still_succeeds() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("tet.stla");
+        let output = tmp.path().join("layers");
+        write_clean_stla(&source);
+        fs::create_dir(&output).unwrap();
+
+        run_slice(
+            source.to_str().unwrap(),
+            output.to_str().unwrap(),
+            &["--target-format", "png-per-layer"],
+            tmp.path(),
+        )
+        .success();
+    }
+}
