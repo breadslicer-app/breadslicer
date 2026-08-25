@@ -9,6 +9,9 @@ categories = ["filesystem"]
 keywords = ["xdg", "paths", "directories"]
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 directories = "6.0.0"
 

@@ -9,6 +9,9 @@ categories = ["rendering::data-formats"]
 keywords = ["3d", "mesh", "scene", "graph"]
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 rayon.workspace = true
 sc-mesh-core.workspace = true

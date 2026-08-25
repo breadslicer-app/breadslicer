@@ -9,6 +9,9 @@ categories = ["rendering::data-formats"]
 keywords = ["3d", "slicer", "resin", "sla"]
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 sc-3mf.workspace = true
 sc-mesh-core.workspace = true

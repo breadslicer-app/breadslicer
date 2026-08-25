@@ -71,3 +71,25 @@ serde_json = "1.0.150"
 sha2 = "0.10"
 toml_edit = { version = "0.25.12", features = ["serde"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[workspace.lints.rust]
+# "deny" instead of "forbid": slicer-cli's Windows file-identity read
+# carries a scoped allow.
+unsafe_code = "deny"
+
+# Block non-ASCII and visually confusable identifiers (homoglyph and
+# trojan-source identifier attacks). The bidi text-flow control lints
+# (text_direction_codepoint_in_literal / _in_comment) are already
+# deny-by-default in rustc.
+non_ascii_idents         = "deny"
+confusable_idents        = "deny"
+mixed_script_confusables = "deny"
+uncommon_codepoints      = "deny"
+
+# Not yet clean; each entry moves to "deny" once the tree is remediated.
+missing_debug_implementations = "allow"
+unreachable_pub               = "allow"
+unused_qualifications         = "allow"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }

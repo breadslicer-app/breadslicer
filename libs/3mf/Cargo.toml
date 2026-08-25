@@ -9,6 +9,9 @@ categories = ["rendering::data-formats"]
 keywords = ["3d", "3mf", "opc", "slice"]
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 crc32fast.workspace = true
 flate2.workspace = true

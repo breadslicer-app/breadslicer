@@ -9,5 +9,8 @@ categories = ["development-tools::testing"]
 keywords = ["3d", "mesh", "fixtures"]
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 sc-mesh-core.workspace = true

@@ -9,6 +9,9 @@ categories = ["data-structures"]
 keywords = ["3d", "printing", "resin", "sla", "profiles"]
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 sc-app-paths = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }

@@ -142,6 +142,8 @@ fn read_file_identity(path: &Path) -> Result<FileIdentity> {
     })
 }
 
+// FFI: no safe std API exposes the volume serial and file index.
+#[allow(unsafe_code)]
 #[cfg(windows)]
 fn read_file_identity(path: &Path) -> Result<FileIdentity> {
     use std::fs::File;

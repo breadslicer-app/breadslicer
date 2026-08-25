@@ -5,6 +5,9 @@ edition.workspace = true
 publish = false
 description = "Convert third-party printer and material profiles into the SoulCrafted Slicer TOML format."
 
+[lints]
+workspace = true
+
 [dependencies]
 sc-print-primitives.workspace = true
 sc-print-profiles.workspace = true
