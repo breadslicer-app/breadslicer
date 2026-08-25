@@ -492,7 +492,9 @@ mod parser_equality_tests {
             ),
         ) {
             let vertices: Vec<Vertex3> = coordinates
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|chunk| Vertex3 {
                     x: chunk[0],
                     y: chunk[1],

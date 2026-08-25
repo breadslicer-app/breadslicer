@@ -26,6 +26,7 @@ pub mod node;
 pub mod repair;
 mod scene;
 pub mod shared_vertices;
+pub mod traverse;
 pub mod validate;
 
 pub use crate::bake::{bake_leaf_to_world, bake_mesh_to_world};
@@ -36,6 +37,9 @@ pub use crate::node::{
 };
 pub use crate::scene::Scene;
 pub(crate) use crate::scene::node_id_at_index;
+pub use crate::traverse::ReferencePolicy;
 
 #[cfg(test)]
 mod tests_error;
+#[cfg(test)]
+mod tests_traverse;

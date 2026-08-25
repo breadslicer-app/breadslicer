@@ -259,7 +259,7 @@ fn pair_vertex_hub(
         if !fan_group.len().is_multiple_of(2) {
             return None;
         }
-        for chunk in fan_group.chunks_exact(2) {
+        for chunk in fan_group.as_chunks::<2>().0 {
             pairs.push((chunk[0].1, chunk[1].1));
         }
     }

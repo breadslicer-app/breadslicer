@@ -327,7 +327,7 @@ mod axis_cone_tip_tests {
     #[test]
     fn every_triangle_winds_ccw_outward() {
         let (v, indices) = build_axis_cone_tip_geometry();
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             let p0 = Vec3::from(v[tri[0] as usize].position);
             let p1 = Vec3::from(v[tri[1] as usize].position);
             let p2 = Vec3::from(v[tri[2] as usize].position);
@@ -370,7 +370,7 @@ mod axis_scale_cube_tests {
     fn every_triangle_winds_ccw_outward() {
         let (v, indices) = build_axis_scale_cube_geometry();
         let cube_centre = Vec3::new(SHAFT_LENGTH * MIDPOINT_FRACTION, 0.0, 0.0);
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             let p0 = Vec3::from(v[tri[0] as usize].position);
             let p1 = Vec3::from(v[tri[1] as usize].position);
             let p2 = Vec3::from(v[tri[2] as usize].position);

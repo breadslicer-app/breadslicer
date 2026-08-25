@@ -68,9 +68,11 @@ pub enum SceneError {
     /// A mutator that was asked to remove a mesh resource that at
     /// least one live leaf still references.
     MeshResourceInUse { id: MeshResourceId },
-    /// `merge_meshes` was asked to bake a graph that still contains an
-    /// unevaluated CSG node.
+    /// A walk or bake that refuses CSG met an unevaluated CSG node.
     UnevaluatedCsg { node_id: NodeId },
+    /// A structural walk that refuses references met a `Reference`
+    /// node it was not allowed to follow.
+    UnexpandedReference { node_id: NodeId },
     /// A transform operation in the bake path failed.
     Transform(TransformError),
 }
@@ -156,6 +158,9 @@ impl fmt::Display for SceneError {
             ),
             Self::UnevaluatedCsg { node_id } => {
                 write!(f, "unevaluated CSG node {}", node_id.get())
+            }
+            Self::UnexpandedReference { node_id } => {
+                write!(f, "unexpanded Reference node {}", node_id.get())
             }
             Self::Transform(err) => write!(f, "transform error: {err}"),
         }

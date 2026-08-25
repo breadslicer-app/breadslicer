@@ -21,6 +21,11 @@ members = [
     "libs/sla-formats",
 ]
 
+[workspace.package]
+edition      = "2024"
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+rust-version = "1.98.0"
+
 [profile.dev]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"

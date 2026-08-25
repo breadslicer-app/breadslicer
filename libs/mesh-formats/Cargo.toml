@@ -1,13 +1,13 @@
 [package]
 name = "sc-mesh-formats"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 license = "Apache-2.0"
 authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
 description = "A library to load, inspect & write 3d mesh data."
 categories = ["rendering::data-formats"]
 keywords = ["3d", "mesh", "stl"]
-repository = "https://codeberg.org/SoulCrafted/Slicer"
+repository.workspace = true
 
 [dependencies]
 any_ascii.workspace = true

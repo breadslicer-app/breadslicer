@@ -1536,7 +1536,9 @@ fn x_pos_breaching_graph() -> Scene {
 /// grey mesh, dark cage) but tight enough that no untinted
 /// surface in the scene clears the bar.
 fn count_warning_pixels(rgba: &[u8]) -> usize {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| {
             let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
             r > 128 && (r - g) > 40 && (r - b) > 40

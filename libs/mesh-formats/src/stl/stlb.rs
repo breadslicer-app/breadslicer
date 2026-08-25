@@ -177,7 +177,7 @@ pub(super) const PARALLEL_PARSE_MIN_RECORDS: usize = 8192;
 
 fn parse_records_sequential(records: &[u8]) -> Result<Vec<Triangle>> {
     let mut soup: Vec<Triangle> = Vec::with_capacity(records.len() / STL_TRIANGLE_RECORD_BYTES);
-    for record in records.chunks_exact(STL_TRIANGLE_RECORD_BYTES) {
+    for record in records.as_chunks::<STL_TRIANGLE_RECORD_BYTES>().0 {
         soup.push(parse_triangle_record(record)?);
     }
     Ok(soup)

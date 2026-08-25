@@ -8,7 +8,7 @@
 use crate::Scene;
 use crate::error::SceneError;
 use crate::expand::CsgPolicy;
-use crate::node::{LeafPayload, Node, NodeId, NodeKind};
+use crate::node::{LeafPayload, NodeId, NodeKind};
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::AffineTransform3D;
@@ -92,7 +92,7 @@ pub fn bake_leaf_to_world(graph: &Scene, node_id: NodeId) -> Result<IndexedMesh,
             .mesh_resource(*rid)
             .ok_or(SceneError::DanglingMeshResource { id: *rid })?,
     };
-    let world = world_from_ancestor_chain(graph, leaf_node, node_id)?;
+    let world = graph.world_transform_of(node_id)?;
     bake_mesh_to_world(mesh, &world)
 }
 
@@ -120,25 +120,6 @@ pub fn bake_mesh_to_world(
         vertices,
         faces,
     })
-}
-
-fn world_from_ancestor_chain(
-    graph: &Scene,
-    leaf_node: &Node,
-    leaf_id: NodeId,
-) -> Result<Transform3D, SceneError> {
-    let mut chain: Vec<Transform3D> = vec![leaf_node.local_transform];
-    let mut current = leaf_id;
-    while let Some(p) = graph.parent_of(current) {
-        let pnode = graph.node(p).ok_or(SceneError::DanglingNodeId { id: p })?;
-        chain.push(pnode.local_transform);
-        current = p;
-    }
-    let mut world = Transform3D::Identity;
-    for t in chain.iter().rev() {
-        world = world.compose(t);
-    }
-    Ok(world)
 }
 
 fn bake_into(

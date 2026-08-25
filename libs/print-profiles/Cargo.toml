@@ -1,13 +1,13 @@
 [package]
 name = "sc-print-profiles"
 version = "0.2.0"
-edition = "2024"
+edition.workspace = true
 license = "Apache-2.0"
 authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
 description = "Printer and material profile types, loading, and resolution for the resin-printing pipeline."
 categories = ["data-structures"]
 keywords = ["3d", "printing", "resin", "sla", "profiles"]
-repository = "https://codeberg.org/SoulCrafted/Slicer"
+repository.workspace = true
 
 [dependencies]
 sc-app-paths = { workspace = true }

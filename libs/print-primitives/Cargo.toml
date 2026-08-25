@@ -1,13 +1,13 @@
 [package]
 name = "sc-print-primitives"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 license = "Apache-2.0"
 authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
 description = "Shared primitive types for the resin-printing pipeline: build volume, pixel resolution, mirror flags, validated millimetre lengths."
 categories = ["data-structures"]
 keywords = ["3d", "printing", "resin", "sla", "primitives"]
-repository = "https://codeberg.org/SoulCrafted/Slicer"
+repository.workspace = true
 
 [dependencies]
 sc-mesh-core.workspace = true

@@ -1,7 +1,7 @@
 [package]
 name = "sc-icon-gen"
 version = "0.0.0"
-edition = "2024"
+edition.workspace = true
 publish = false
 description = "Generate the Windows .ico from the shared SVG logo."
 

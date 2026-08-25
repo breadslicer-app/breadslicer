@@ -185,21 +185,15 @@ impl Scene {
     /// and [`Scene::aabb`], which expand references.
     pub fn reachable_leaf_count(&self) -> usize {
         let mut count = 0usize;
-        let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
-        while let Some(id) = stack.pop() {
-            let Some(node) = self.node(id) else {
-                continue;
-            };
-            match &node.kind {
-                NodeKind::Leaf(_) => count += 1,
-                NodeKind::Group { children } | NodeKind::Csg { children, .. } => {
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                }
-                NodeKind::Reference { .. } => {}
-            }
-        }
+        self.for_each_reachable_leaf::<SceneError, _>(
+            crate::expand::CsgPolicy::Descend,
+            crate::traverse::ReferencePolicy::Skip,
+            |_| {
+                count += 1;
+                Ok(())
+            },
+        )
+        .expect("a (Descend, Skip) structural walk has no error source");
         count
     }
 

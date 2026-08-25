@@ -1,13 +1,13 @@
 [package]
 name = "sc-print-glue"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 license = "Apache-2.0"
 authors = ["Andres Correa Casablanca <andreu@ctrlback.coop>"]
 description = "Application-layer glue projecting a resolved print configuration onto the slicing engine's input port."
 categories = ["data-structures"]
 keywords = ["3d", "printing", "resin", "sla", "slicing"]
-repository = "https://codeberg.org/SoulCrafted/Slicer"
+repository.workspace = true
 
 [dependencies]
 sc-mesh-core = { workspace = true }
