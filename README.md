@@ -21,8 +21,8 @@ The software libraries behind our applications:
   container and a typed 3D model document.
 - [`sc-app-paths`](./libs/app-paths/) - Application identity and on-disk path
   resolution.
-- [`sc-mesh-core`](./libs/mesh-core/README.md) - Core 3D mesh and scene types,
-  plus mesh validation and repair.
+- [`sc-mesh-core`](./libs/mesh-core/README.md) - Core 3D mesh types, plus mesh
+  validation and repair.
 - [`sc-mesh-formats`](./libs/mesh-formats/README.md) - Reading and writing 3D
   mesh files (STL, OBJ, 3MF).
 - [`sc-mesh-spatial`](./libs/mesh-spatial/README.md) - Spatial-query
@@ -36,6 +36,10 @@ The software libraries behind our applications:
   profile types, loading, and resolution.
 - [`sc-project-formats`](./libs/project-formats/README.md) - Reading and
   writing slicer project files.
+- [`sc-scene`](./libs/scene/README.md) - Hierarchical scene graph over the
+  core mesh types: groups, leaves, shared resources, traversal and baking.
+- [`sc-scene-edit`](./libs/scene-edit/README.md) - Typed mutation vocabulary
+  for scene graphs: invertible edits and clipboard-style fragments.
 - [`sc-sl1cer`](./libs/sl1cer/README.md) - The slicing engine: validated meshes
   in, per-layer geometry out.
 - [`sc-sla-formats`](./libs/sla-formats/README.md) - Writers for SLA-printer
