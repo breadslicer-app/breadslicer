@@ -35,8 +35,8 @@ pub use crate::expand::{CsgPolicy, MAX_EXPANDED_LEAF_COUNT};
 pub use crate::node::{
     CsgOp, LeafPayload, MeshResourceId, Node, NodeId, NodeKind, SceneMetadata, SubtreeResourceId,
 };
-pub use crate::scene::Scene;
 pub(crate) use crate::scene::node_id_at_index;
+pub use crate::scene::{RemovedLeaf, Scene};
 pub use crate::traverse::ReferencePolicy;
 
 #[cfg(test)]

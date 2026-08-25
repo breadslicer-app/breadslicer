@@ -59,6 +59,17 @@ impl Default for Scene {
     }
 }
 
+/// Snapshot of a leaf taken by [`Scene::remove_leaf`]: everything
+/// [`Scene::install_leaf_at`] needs to re-install the leaf exactly
+/// as it was, metadata included.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemovedLeaf {
+    pub attachment: LeafAttachment,
+    pub payload: LeafPayload,
+    pub local_transform: Transform3D,
+    pub meta: Option<SceneMetadata>,
+}
+
 impl Scene {
     pub fn new() -> Self {
         Self {
@@ -825,8 +836,6 @@ impl Scene {
     ///   recording which case applied and, for parented leaves,
     ///   the position in the parent's children list.
     ///
-    /// Any [`SceneMetadata`] on the removed leaf is dropped.
-    ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if no live node lives at
     ///   `id`.
@@ -835,10 +844,7 @@ impl Scene {
     ///   not in `roots()`, signalling a corrupted graph state.
     ///
     /// On error the scene is unchanged.
-    pub fn remove_leaf(
-        &mut self,
-        id: NodeId,
-    ) -> Result<(LeafAttachment, LeafPayload, Transform3D), SceneError> {
+    pub fn remove_leaf(&mut self, id: NodeId) -> Result<RemovedLeaf, SceneError> {
         let node = self.node(id).ok_or(SceneError::DanglingNodeId { id })?;
         if !matches!(node.kind, NodeKind::Leaf(_)) {
             return Err(SceneError::NotALeaf { node_id: id });
@@ -872,14 +878,18 @@ impl Scene {
         let removed = self.nodes[id.index()]
             .take()
             .expect("checked Some via node(id) above");
-        let local_transform = removed.local_transform;
         let payload = match removed.kind {
             NodeKind::Leaf(payload) => payload,
             NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => {
                 unreachable!("validated Leaf at top of remove_leaf")
             }
         };
-        Ok((attachment, payload, local_transform))
+        Ok(RemovedLeaf {
+            attachment,
+            payload,
+            local_transform: removed.local_transform,
+            meta: removed.meta,
+        })
     }
 
     /// Re-install a leaf at a previously-allocated `id`, with the
@@ -890,10 +900,7 @@ impl Scene {
     /// status, matching the attachment that the paired remove
     /// captured.
     ///
-    /// `id` must come from [`Self::allocate_unbound_node_id`]. The
-    /// installed leaf carries no [`SceneMetadata`]; callers that
-    /// need to round-trip metadata must snapshot it before
-    /// removing.
+    /// `id` must come from [`Self::allocate_unbound_node_id`].
     ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if `id` is out of range, or
@@ -916,6 +923,7 @@ impl Scene {
         attachment: LeafAttachment,
         payload: LeafPayload,
         local_transform: Transform3D,
+        meta: Option<SceneMetadata>,
     ) -> Result<(), SceneError> {
         if id.index() >= self.nodes.len() {
             return Err(SceneError::DanglingNodeId { id });
@@ -940,7 +948,7 @@ impl Scene {
             }
         }
         self.nodes[id.index()] = Some(Node {
-            meta: None,
+            meta,
             local_transform,
             kind: NodeKind::Leaf(payload),
         });
@@ -2065,7 +2073,12 @@ mod scene_construction_tests {
             )
             .unwrap();
         g.add_root(leaf).unwrap();
-        let (attachment, payload, transform) = g.remove_leaf(leaf).unwrap();
+        let RemovedLeaf {
+            attachment,
+            payload,
+            local_transform: transform,
+            ..
+        } = g.remove_leaf(leaf).unwrap();
         assert_eq!(attachment, LeafAttachment::Root);
         match payload {
             LeafPayload::Mesh(returned) => {
@@ -2086,7 +2099,11 @@ mod scene_construction_tests {
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
             .unwrap();
         g.add_root(leaf).unwrap();
-        let (attachment, payload, _) = g.remove_leaf(leaf).unwrap();
+        let RemovedLeaf {
+            attachment,
+            payload,
+            ..
+        } = g.remove_leaf(leaf).unwrap();
         assert_eq!(attachment, LeafAttachment::Root);
         assert!(matches!(payload, LeafPayload::MeshResource(r) if r == rid));
     }
@@ -2101,7 +2118,11 @@ mod scene_construction_tests {
             .add_leaf(None, Transform3D::Identity, LeafPayload::Mesh(arc))
             .unwrap();
         g.add_child(root, leaf).unwrap();
-        let (attachment, payload, _) = g.remove_leaf(leaf).unwrap();
+        let RemovedLeaf {
+            attachment,
+            payload,
+            ..
+        } = g.remove_leaf(leaf).unwrap();
         assert_eq!(
             attachment,
             LeafAttachment::Parent {
@@ -2149,7 +2170,7 @@ mod scene_construction_tests {
             )
             .unwrap();
         g.add_child(root, c).unwrap();
-        let (attachment, _, _) = g.remove_leaf(b).unwrap();
+        let RemovedLeaf { attachment, .. } = g.remove_leaf(b).unwrap();
         assert_eq!(
             attachment,
             LeafAttachment::Parent {
@@ -2198,8 +2219,13 @@ mod scene_construction_tests {
             .unwrap();
         g.add_child(root, leaf).unwrap();
         let snapshot = g.clone();
-        let (attachment, payload, transform) = g.remove_leaf(leaf).unwrap();
-        g.install_leaf_at(leaf, attachment, payload, transform)
+        let RemovedLeaf {
+            attachment,
+            payload,
+            local_transform: transform,
+            ..
+        } = g.remove_leaf(leaf).unwrap();
+        g.install_leaf_at(leaf, attachment, payload, transform, None)
             .unwrap();
         assert_eq!(g, snapshot);
     }
@@ -2216,9 +2242,45 @@ mod scene_construction_tests {
             .unwrap();
         g.add_root(leaf).unwrap();
         let snapshot = g.clone();
-        let (attachment, payload, transform) = g.remove_leaf(leaf).unwrap();
-        g.install_leaf_at(leaf, attachment, payload, transform)
+        let RemovedLeaf {
+            attachment,
+            payload,
+            local_transform: transform,
+            ..
+        } = g.remove_leaf(leaf).unwrap();
+        g.install_leaf_at(leaf, attachment, payload, transform, None)
             .unwrap();
+        assert_eq!(g, snapshot);
+    }
+
+    #[test]
+    fn remove_leaf_returns_the_meta_and_install_leaf_at_restores_it() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let meta = SceneMetadata {
+            name: Some("Bracket".to_string()),
+            comment: None,
+        };
+        let leaf = g
+            .add_leaf(
+                Some(meta.clone()),
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        g.add_child(root, leaf).unwrap();
+        let snapshot = g.clone();
+        let removed = g.remove_leaf(leaf).unwrap();
+        assert_eq!(removed.meta, Some(meta));
+        g.install_leaf_at(
+            leaf,
+            removed.attachment,
+            removed.payload,
+            removed.local_transform,
+            removed.meta,
+        )
+        .unwrap();
         assert_eq!(g, snapshot);
     }
 
@@ -2240,6 +2302,7 @@ mod scene_construction_tests {
                 LeafAttachment::Root,
                 LeafPayload::Mesh(Arc::new(unit_triangle())),
                 Transform3D::Identity,
+                None,
             ),
             Err(SceneError::NodeSlotOccupied { id: leaf })
         );
@@ -2258,6 +2321,7 @@ mod scene_construction_tests {
                 LeafAttachment::Root,
                 LeafPayload::MeshResource(bogus_rid),
                 Transform3D::Identity,
+                None,
             ),
             Err(SceneError::DanglingMeshResource { id: bogus_rid })
         );
@@ -2286,6 +2350,7 @@ mod scene_construction_tests {
                 },
                 LeafPayload::Mesh(Arc::new(unit_triangle())),
                 Transform3D::Identity,
+                None,
             ),
             Err(SceneError::NotABranch {
                 node_id: leaf_parent
@@ -2309,6 +2374,7 @@ mod scene_construction_tests {
                 },
                 LeafPayload::Mesh(Arc::new(unit_triangle())),
                 Transform3D::Identity,
+                None,
             ),
             Err(SceneError::DanglingNodeId { id: bogus_parent })
         );

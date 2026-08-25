@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId};
+use sc_scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId, SceneMetadata};
 use sc_scene::{Scene, SceneError};
 
 /// Typed scene mutation. The shared edit shape across the workspace:
@@ -73,16 +73,19 @@ pub enum SceneEdit {
         attachment: LeafAttachment,
         payload: LeafPayload,
         local_transform: Transform3D,
+        meta: Option<SceneMetadata>,
     },
     /// Tombstone the leaf at `node_id`. `attachment`, `payload`,
-    /// and `local_transform` snapshot the state so the inverse
-    /// [`Self::AddLeaf`] re-installs it identically, including the
-    /// position within the parent's children list.
+    /// `local_transform`, and `meta` snapshot the state so the
+    /// inverse [`Self::AddLeaf`] re-installs it identically,
+    /// including the position within the parent's children list and
+    /// the leaf's name.
     RemoveLeaf {
         node_id: NodeId,
         attachment: LeafAttachment,
         payload: LeafPayload,
         local_transform: Transform3D,
+        meta: Option<SceneMetadata>,
     },
     /// Install a mesh resource at `rid` carrying the given `Arc`.
     /// The id must come from
@@ -211,22 +214,26 @@ impl SceneEdit {
                 attachment,
                 payload,
                 local_transform,
+                meta,
             } => Self::RemoveLeaf {
                 node_id: *node_id,
                 attachment: *attachment,
                 payload: payload.clone(),
                 local_transform: *local_transform,
+                meta: meta.clone(),
             },
             Self::RemoveLeaf {
                 node_id,
                 attachment,
                 payload,
                 local_transform,
+                meta,
             } => Self::AddLeaf {
                 node_id: *node_id,
                 attachment: *attachment,
                 payload: payload.clone(),
                 local_transform: *local_transform,
+                meta: meta.clone(),
             },
             Self::AddMeshResource { rid, mesh } => Self::RemoveMeshResource {
                 rid: *rid,
@@ -279,7 +286,14 @@ impl SceneEdit {
                 attachment,
                 payload,
                 local_transform,
-            } => graph.install_leaf_at(*node_id, *attachment, payload.clone(), *local_transform),
+                meta,
+            } => graph.install_leaf_at(
+                *node_id,
+                *attachment,
+                payload.clone(),
+                *local_transform,
+                meta.clone(),
+            ),
             Self::RemoveLeaf { node_id, .. } => graph.remove_leaf(*node_id).map(|_| ()),
             Self::AddMeshResource { rid, mesh } => {
                 graph.install_mesh_resource_at(*rid, Arc::clone(mesh))
@@ -993,12 +1007,14 @@ mod scene_edit_tests {
             attachment: LeafAttachment::Root,
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
+            meta: None,
         };
         let remove = SceneEdit::RemoveLeaf {
             node_id: nid,
             attachment: LeafAttachment::Root,
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
+            meta: None,
         };
         assert!(add.is_structural());
         assert!(!add.is_noop());
@@ -1022,6 +1038,7 @@ mod scene_edit_tests {
             attachment,
             payload: payload.clone(),
             local_transform: xform,
+            meta: None,
         };
         match add.inverse() {
             SceneEdit::RemoveLeaf {
@@ -1029,11 +1046,13 @@ mod scene_edit_tests {
                 attachment: a,
                 payload: p,
                 local_transform,
+                meta,
             } => {
                 assert_eq!(node_id, nid);
                 assert_eq!(a, attachment);
                 assert_eq!(p, payload);
                 assert_eq!(local_transform, xform);
+                assert_eq!(meta, None);
             }
             _ => panic!("AddLeaf inverse must be RemoveLeaf"),
         }
@@ -1042,6 +1061,7 @@ mod scene_edit_tests {
             attachment,
             payload: payload.clone(),
             local_transform: xform,
+            meta: None,
         };
         assert!(matches!(remove.inverse(), SceneEdit::AddLeaf { .. }));
     }
@@ -1056,6 +1076,7 @@ mod scene_edit_tests {
             attachment: LeafAttachment::Root,
             payload: LeafPayload::Mesh(Arc::clone(&arc)),
             local_transform: Transform3D::Identity,
+            meta: None,
         };
         edit.apply_to_scene(&mut g).expect("apply");
         assert!(g.roots().contains(&nid));
@@ -1087,6 +1108,7 @@ mod scene_edit_tests {
             },
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
+            meta: None,
         };
         edit.apply_to_scene(&mut g).expect("apply");
         let sc_scene::NodeKind::Group { children } = &g.node(parent).unwrap().kind else {
@@ -1105,6 +1127,7 @@ mod scene_edit_tests {
             attachment: LeafAttachment::Root,
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
+            meta: None,
         };
         edit.apply_to_scene(&mut g).expect("apply");
         edit.inverse().apply_to_scene(&mut g).expect("apply");
@@ -1133,10 +1156,46 @@ mod scene_edit_tests {
             },
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
+            meta: None,
         };
         edit.apply_to_scene(&mut g).expect("apply");
         assert!(g.node(leaf).is_none());
         edit.inverse().apply_to_scene(&mut g).expect("apply");
+        assert_eq!(g, snapshot_before);
+    }
+
+    #[test]
+    fn remove_leaf_then_inverse_restores_the_leaf_meta() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let meta = SceneMetadata {
+            name: Some("Bracket".to_string()),
+            comment: None,
+        };
+        let leaf = g
+            .add_leaf(
+                Some(meta.clone()),
+                Transform3D::Identity,
+                LeafPayload::Mesh(triangle_arc()),
+            )
+            .unwrap();
+        g.add_child(root, leaf).unwrap();
+        let snapshot_before = g.clone();
+        let edit = SceneEdit::RemoveLeaf {
+            node_id: leaf,
+            attachment: LeafAttachment::Parent {
+                parent: root,
+                position: 0,
+            },
+            payload: LeafPayload::Mesh(triangle_arc()),
+            local_transform: Transform3D::Identity,
+            meta: Some(meta.clone()),
+        };
+        edit.apply_to_scene(&mut g).expect("apply");
+        assert!(g.node(leaf).is_none());
+        edit.inverse().apply_to_scene(&mut g).expect("apply");
+        assert_eq!(g.node(leaf).unwrap().meta, Some(meta));
         assert_eq!(g, snapshot_before);
     }
 }

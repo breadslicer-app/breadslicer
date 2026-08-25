@@ -1102,6 +1102,7 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
 fn build_delete_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
     let node = graph.node(node_id)?;
     let local_transform = node.local_transform;
+    let meta = node.meta.clone();
     let payload = match &node.kind {
         NodeKind::Leaf(payload) => payload.clone(),
         NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => return None,
@@ -1124,6 +1125,7 @@ fn build_delete_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
         attachment,
         payload: payload.clone(),
         local_transform,
+        meta,
     };
     if let LeafPayload::MeshResource(rid) = payload
         && !graph.other_leaf_references_resource(rid, node_id)
@@ -2072,6 +2074,41 @@ mod scene_document_tests {
             })
             .unwrap();
         assert_eq!(restored, (true, parent_before));
+    }
+
+    #[test]
+    fn delete_then_undo_restores_the_leaf_name() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).expect("group root");
+        let leaf = g
+            .add_leaf(
+                Some(sc_scene::SceneMetadata {
+                    name: Some("Named".to_string()),
+                    comment: None,
+                }),
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
+            )
+            .expect("add leaf");
+        g.add_child(root, leaf).expect("attach leaf");
+        let doc = SceneDocument::new();
+        doc.install_graph(g, fixture_path());
+        let leaf = first_leaf_id(&doc);
+        doc.set_selection(Selection::One(leaf));
+
+        assert!(doc.delete_selected_leaf().unwrap());
+        doc.undo().unwrap();
+
+        let name = doc
+            .with_scene(|s| {
+                s.graph()
+                    .node(leaf.node_id())
+                    .and_then(|node| node.meta.as_ref())
+                    .and_then(|meta| meta.name.clone())
+            })
+            .flatten();
+        assert_eq!(name.as_deref(), Some("Named"));
     }
 
     #[test]
