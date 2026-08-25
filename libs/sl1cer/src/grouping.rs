@@ -391,7 +391,7 @@ mod grouping_tests {
         assert_eq!(polygons.len(), 1);
         let outer_ring = polygons[0].outer().clone();
         let hole_rings: Vec<ClosedRing> = polygons[0].holes().to_vec();
-        let rebuilt = crate::contour::Polygon::new(outer_ring, hole_rings)
+        let rebuilt = Polygon::new(outer_ring, hole_rings)
             .expect("checked Polygon::new must accept group_into_polygons output");
         assert_eq!(rebuilt.holes().len(), 1);
     }

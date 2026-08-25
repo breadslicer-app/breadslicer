@@ -227,17 +227,8 @@ mod scene_node_tests {
 
     #[test]
     fn nonzero_u32_makes_option_node_id_one_word() {
-        assert_eq!(
-            std::mem::size_of::<Option<NodeId>>(),
-            std::mem::size_of::<u32>()
-        );
-        assert_eq!(
-            std::mem::size_of::<Option<MeshResourceId>>(),
-            std::mem::size_of::<u32>()
-        );
-        assert_eq!(
-            std::mem::size_of::<Option<SubtreeResourceId>>(),
-            std::mem::size_of::<u32>()
-        );
+        assert_eq!(size_of::<Option<NodeId>>(), size_of::<u32>());
+        assert_eq!(size_of::<Option<MeshResourceId>>(), size_of::<u32>());
+        assert_eq!(size_of::<Option<SubtreeResourceId>>(), size_of::<u32>());
     }
 }

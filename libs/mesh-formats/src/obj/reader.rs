@@ -851,14 +851,12 @@ mod read_obj_tests {
 
     use super::{LoadObjError, LoadObjWarning, read_obj};
 
-    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadObjWarning>), super::LoadObjError> {
+    fn read_obj_from_str(s: &str) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
         let mut reader = Cursor::new(s.as_bytes());
         read_obj(&mut reader)
     }
 
-    fn read_obj_from_bytes(
-        bytes: &[u8],
-    ) -> Result<(Scene, Vec<LoadObjWarning>), super::LoadObjError> {
+    fn read_obj_from_bytes(bytes: &[u8]) -> Result<(Scene, Vec<LoadObjWarning>), LoadObjError> {
         let mut reader = Cursor::new(bytes);
         read_obj(&mut reader)
     }
@@ -1629,7 +1627,7 @@ f 2 3 1
         let mut reader = Cursor::new(bytes);
         let err = read_obj(&mut reader).unwrap_err();
         match err {
-            super::LoadObjError::Io(io_error) => {
+            LoadObjError::Io(io_error) => {
                 assert_eq!(io_error.kind(), std::io::ErrorKind::InvalidData);
                 assert_eq!(io_error.to_string(), "stream did not contain valid UTF-8");
             }
@@ -1647,7 +1645,7 @@ f 2 3 1
         assert!(
             matches!(
                 err,
-                super::LoadObjError::VertexCoordCountInvalid { line: 1, got: 2 }
+                LoadObjError::VertexCoordCountInvalid { line: 1, got: 2 }
             ),
             "{err:?}"
         );

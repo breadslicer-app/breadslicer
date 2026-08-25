@@ -2534,7 +2534,7 @@ profile_version = \"1.0.0\"
         MaterialId::new(id).unwrap()
     }
 
-    fn write_material(root: &std::path::Path, id: &str) {
+    fn write_material(root: &Path, id: &str) {
         let materials = root.join("materials");
         fs::create_dir_all(&materials).unwrap();
         let toml = MATERIAL_TOML.replace("brand-resin", id);

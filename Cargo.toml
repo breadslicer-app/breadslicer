@@ -87,10 +87,10 @@ mixed_script_confusables = "deny"
 uncommon_codepoints      = "deny"
 
 missing_debug_implementations = "deny"
+unused_qualifications         = "deny"
 
-# Not yet clean; each entry moves to "deny" once the tree is remediated.
-unreachable_pub       = "allow"
-unused_qualifications = "allow"
+# Not yet clean; the entry moves to "deny" once the tree is remediated.
+unreachable_pub = "allow"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

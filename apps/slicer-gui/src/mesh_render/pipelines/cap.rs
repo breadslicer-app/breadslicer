@@ -59,7 +59,7 @@ impl CapPipeline {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+                    min_binding_size: NonZeroU64::new(size_of::<Uniforms>() as u64),
                 },
                 count: None,
             }],

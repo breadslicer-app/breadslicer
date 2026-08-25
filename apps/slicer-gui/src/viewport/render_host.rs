@@ -175,9 +175,9 @@ impl RenderHost {
 
     pub(super) fn handle_rendering_setup(
         &self,
-        device: slint::wgpu_29::wgpu::Device,
+        device: wgpu::Device,
         device_token: DeviceToken,
-        queue: slint::wgpu_29::wgpu::Queue,
+        queue: wgpu::Queue,
         device_loss: DeviceLoss,
     ) -> Result<(), RendererInitError> {
         let renderer = Renderer::new(device, device_token, queue, device_loss)?;

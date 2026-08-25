@@ -67,9 +67,7 @@ impl GizmoPipeline {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(
-                        std::mem::size_of::<GizmoUniformsGpu>() as u64
-                    ),
+                    min_binding_size: NonZeroU64::new(size_of::<GizmoUniformsGpu>() as u64),
                 },
                 count: None,
             }],
@@ -112,7 +110,7 @@ impl GizmoPipeline {
                     entry_point: Some("vs_main"),
                     compilation_options: Default::default(),
                     buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<GizmoVertex>() as u64,
+                        array_stride: size_of::<GizmoVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x3],
                     }],

@@ -31,7 +31,7 @@ use crate::mesh_render::mock::{MockRenderer, MockRendererState};
 /// returned shared state handle for inspection.
 fn fixture() -> (
     ViewportController,
-    std::rc::Rc<std::cell::RefCell<MockRendererState>>,
+    Rc<std::cell::RefCell<MockRendererState>>,
 ) {
     let ctrl = ViewportController::new_for_test();
     let state = MockRendererState::new_shared();
@@ -44,7 +44,7 @@ fn fixture() -> (
 /// production instead of the test setting the flags by hand.
 fn subscribed_fixture() -> (
     Rc<ViewportController>,
-    std::rc::Rc<std::cell::RefCell<MockRendererState>>,
+    Rc<std::cell::RefCell<MockRendererState>>,
 ) {
     let ctrl = Rc::new(ViewportController::new_for_test());
     let state = MockRendererState::new_shared();

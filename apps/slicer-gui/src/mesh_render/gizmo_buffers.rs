@@ -154,7 +154,7 @@ impl GizmoBuffers {
             device,
             &wgpu::BufferDescriptor {
                 label: Some("mesh-viewer gizmo uniforms"),
-                size: std::mem::size_of::<super::gizmo_entries::GizmoUniformsGpu>() as u64,
+                size: size_of::<super::gizmo_entries::GizmoUniformsGpu>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             },

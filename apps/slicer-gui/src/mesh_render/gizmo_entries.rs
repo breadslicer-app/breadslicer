@@ -28,7 +28,7 @@ pub(super) struct GizmoDrawEntry {
     tint: [f32; 4],
 }
 
-pub(super) const GIZMO_DRAW_ENTRY_SIZE: u64 = std::mem::size_of::<GizmoDrawEntry>() as u64;
+pub(super) const GIZMO_DRAW_ENTRY_SIZE: u64 = size_of::<GizmoDrawEntry>() as u64;
 
 /// Total number of per-frame draw entries reserved in
 /// `gizmo_entries_buffer`. See `GIZMO_SLOTS` for the per-category
@@ -685,7 +685,7 @@ mod gizmo_entry_tests {
                 Axis::Z => 2,
             };
             let m = Mat4::from_cols_array_2d(&entries[i].axis_rotation);
-            let p = m * glam::Vec4::new(0.0, r, 0.0, 1.0);
+            let p = m * Vec4::new(0.0, r, 0.0, 1.0);
             let (u, v) = basis(axis);
             let expected = u * (r * cursor_angle.cos()) + v * (r * cursor_angle.sin());
             assert_approx_eq!(f32, p.x, expected.x, epsilon = 1e-5);

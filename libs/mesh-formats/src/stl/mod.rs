@@ -122,7 +122,7 @@ impl MeshReader for Stl {
 /// warnings; the ASCII route has none today.
 pub fn read_stl<R>(read: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)>
 where
-    R: std::io::Read + std::io::Seek,
+    R: Read + Seek,
 {
     let bytes = slurp(read)?;
     // Binary first: a byte length that matches the binary layout
@@ -143,7 +143,7 @@ where
 
 pub fn read_stla<R>(read: &mut R) -> Result<Scene>
 where
-    R: std::io::Read + std::io::Seek,
+    R: Read + Seek,
 {
     let bytes = slurp(read)?;
     stla::read_stla_slice(&bytes)
@@ -152,7 +152,7 @@ where
 /// Binary STL reader, plus any header warning.
 pub fn read_stlb<R>(read: &mut R) -> Result<(Scene, Vec<LoadStlWarning>)>
 where
-    R: std::io::Read + std::io::Seek,
+    R: Read + Seek,
 {
     let bytes = slurp(read)?;
     stlb::read_stlb_slice(&bytes)

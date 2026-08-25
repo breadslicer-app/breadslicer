@@ -145,7 +145,7 @@ impl PlatePipeline {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
+                    min_binding_size: NonZeroU64::new(size_of::<Uniforms>() as u64),
                 },
                 count: None,
             }],
@@ -175,7 +175,7 @@ impl PlatePipeline {
                     entry_point: Some("vs_main"),
                     compilation_options: Default::default(),
                     buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<PlateVertex>() as u64,
+                        array_stride: size_of::<PlateVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
                     }],
@@ -257,7 +257,7 @@ impl PlatePipeline {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<PlateVertex>() as u64,
+                    array_stride: size_of::<PlateVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
                 }],

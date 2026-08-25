@@ -357,7 +357,7 @@ fn prism_trio_scene() -> Scene {
             .add_leaf(
                 None,
                 transform,
-                LeafPayload::Mesh(std::sync::Arc::new(named(mesh, name))),
+                LeafPayload::Mesh(Arc::new(named(mesh, name))),
             )
             .expect("add leaf");
         scene.add_child(root, leaf).expect("attach leaf");

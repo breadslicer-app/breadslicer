@@ -317,7 +317,7 @@ mod deflate_tests {
     fn hand_built_zip_reads_back_through_the_zip_crate() {
         let data = sample(120_000);
         let zip_bytes = parallel_entry("3D/3dmodel.model", &data).unwrap();
-        let mut archive = ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        let mut archive = ZipArchive::new(io::Cursor::new(zip_bytes)).unwrap();
         assert_eq!(archive.len(), 1);
         let mut entry = archive.by_index(0).unwrap();
         assert_eq!(entry.name(), "3D/3dmodel.model");
@@ -333,8 +333,8 @@ mod deflate_tests {
         let entry_zip = parallel_entry("3D/3dmodel.model", &mesh).unwrap();
 
         let final_zip = {
-            let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
-            let mut source = ZipArchive::new(std::io::Cursor::new(entry_zip)).unwrap();
+            let mut writer = ZipWriter::new(io::Cursor::new(Vec::new()));
+            let mut source = ZipArchive::new(io::Cursor::new(entry_zip)).unwrap();
             writer.raw_copy_file(source.by_index(0).unwrap()).unwrap();
             writer
                 .start_file(
@@ -347,7 +347,7 @@ mod deflate_tests {
             writer.finish().unwrap().into_inner()
         };
 
-        let mut archive = ZipArchive::new(std::io::Cursor::new(final_zip)).unwrap();
+        let mut archive = ZipArchive::new(io::Cursor::new(final_zip)).unwrap();
         assert_eq!(archive.len(), 2);
         let mut mesh_back = Vec::new();
         archive

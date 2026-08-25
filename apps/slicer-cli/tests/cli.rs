@@ -647,7 +647,7 @@ mod convert_tests {
         let source = tmp.path().join("in.stla");
         let target = tmp.path().join("link.stla");
         write_clean_stla(&source);
-        std::fs::hard_link(&source, &target).unwrap();
+        fs::hard_link(&source, &target).unwrap();
         let original = fs::read(&source).unwrap();
 
         Command::cargo_bin(BIN)
@@ -2450,8 +2450,8 @@ mod slice_schedule_flag_tests {
         buffer
     }
 
-    fn sorted_png_layers(dir: &Path) -> Vec<std::path::PathBuf> {
-        let mut paths: Vec<std::path::PathBuf> = fs::read_dir(dir)
+    fn sorted_png_layers(dir: &Path) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = fs::read_dir(dir)
             .unwrap()
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())

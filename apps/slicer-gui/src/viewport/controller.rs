@@ -154,7 +154,7 @@ impl ViewportController {
     /// upload-owed / redraw-owed combinations the production code
     /// reaches through document events.
     #[cfg(test)]
-    pub(super) fn set_frame_state_for_test(&self, state: super::types::FrameState) {
+    pub(super) fn set_frame_state_for_test(&self, state: FrameState) {
         self.render.set_frame(state);
     }
 
@@ -180,7 +180,7 @@ impl ViewportController {
     }
 
     #[cfg(test)]
-    pub(super) fn frame_state_for_test(&self) -> super::types::FrameState {
+    pub(super) fn frame_state_for_test(&self) -> FrameState {
         self.render.frame()
     }
 
@@ -1811,7 +1811,7 @@ mod viewport_click_tests {
     /// end-to-end.
     fn camera_looking_down_minus_z_at(target: Vec3, distance: f32) -> OrbitCamera {
         let mut cam = OrbitCamera::new(target, distance);
-        cam.set_axis_view(crate::camera::AxisView::Top);
+        cam.set_axis_view(AxisView::Top);
         cam
     }
 
@@ -1889,7 +1889,7 @@ mod viewport_click_tests {
     /// the X handle.
     fn front_camera() -> OrbitCamera {
         let mut c = OrbitCamera::new(Vec3::ZERO, 1.0);
-        c.set_axis_view(crate::camera::AxisView::Front);
+        c.set_axis_view(AxisView::Front);
         c
     }
 
@@ -2867,7 +2867,7 @@ mod keyboard_focus_tests {
     fn keyboard_burst_dropped_on_scene_close() {
         // Scene close drops the burst without flushing, the object
         // index it captured is about to become meaningless.
-        let ctrl = std::rc::Rc::new(ViewportController::new_for_test());
+        let ctrl = Rc::new(ViewportController::new_for_test());
         ctrl.register_document_listener();
         ctrl.install_graph_for_test(one_object_graph());
         ctrl.on_select_by_index(0);
@@ -2957,7 +2957,7 @@ mod keyboard_focus_tests {
     fn install_for_integration(ctrl: &ViewportController) {
         ctrl.install_graph_for_test(cube_object_graph());
         let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
-        cam.set_axis_view(crate::camera::AxisView::Front);
+        cam.set_axis_view(AxisView::Front);
         *ctrl.camera.camera_cell().borrow_mut() = Some(cam);
         ctrl.set_viewport_for_test(400.0, 200.0);
     }

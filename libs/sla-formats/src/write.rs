@@ -282,7 +282,7 @@ mod write_slice_tests {
         )
         .unwrap();
         assert!(out.is_file());
-        let bytes = std::fs::metadata(&out).unwrap().len();
+        let bytes = fs::metadata(&out).unwrap().len();
         assert!(bytes > 0, "writer should have populated the file");
     }
 }

@@ -37,7 +37,7 @@ pub(super) struct ModelEntry {
     flags: [u32; 4],
 }
 
-pub(super) const MODEL_ENTRY_SIZE: u64 = std::mem::size_of::<ModelEntry>() as u64;
+pub(super) const MODEL_ENTRY_SIZE: u64 = size_of::<ModelEntry>() as u64;
 
 /// Round `size` up to the next multiple of `alignment`. Used to space
 /// successive `ModelEntry` slots in the per-scene uniform buffer at the
@@ -244,8 +244,8 @@ pub struct GpuScene {
     aabb_max: Vec3,
 }
 
-impl std::fmt::Debug for GpuScene {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for GpuScene {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GpuScene")
             .field("objects", &self.objects.len())
             .field("model_stride", &self.model_stride)
@@ -555,7 +555,7 @@ fn check_leaf_buffers_fit(
     max_buffer_size: u64,
 ) -> std::result::Result<(), LeafBufferExceedsDeviceLimit> {
     for obj in objects {
-        let vertex_bytes = (obj.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
+        let vertex_bytes = (obj.vertices.len() * size_of::<GpuVertex>()) as u64;
         if vertex_bytes > max_buffer_size {
             return Err(LeafBufferExceedsDeviceLimit {
                 node_id: obj.node_id,
@@ -566,7 +566,7 @@ fn check_leaf_buffers_fit(
                 max_buffer_size,
             });
         }
-        let index_bytes = (obj.indices.len() * std::mem::size_of::<u32>()) as u64;
+        let index_bytes = (obj.indices.len() * size_of::<u32>()) as u64;
         if index_bytes > max_buffer_size {
             return Err(LeafBufferExceedsDeviceLimit {
                 node_id: obj.node_id,
@@ -946,7 +946,7 @@ mod transform_to_mat4_tests {
         let m = affine_to_mat4(&a);
         for v in [[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
             let by_matrix = m.transform_point3(Vec3::from(v));
-            let by_apply = a.apply_to_vertex(sc_mesh_core::primitives::Vertex::new(v));
+            let by_apply = a.apply_to_vertex(Vertex::new(v));
             assert_approx_eq!(f32, by_matrix.x, by_apply[0], epsilon = 1e-5);
             assert_approx_eq!(f32, by_matrix.y, by_apply[1], epsilon = 1e-5);
             assert_approx_eq!(f32, by_matrix.z, by_apply[2], epsilon = 1e-5);

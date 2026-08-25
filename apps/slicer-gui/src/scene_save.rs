@@ -627,11 +627,8 @@ mod scene_save_tests {
             assert_eq!(decide_save_dispatch(&doc), SaveDispatch::AlreadySaved);
 
             let bytes = fs::read(&target).expect("the file exists");
-            let loaded = read_project(
-                &mut Cursor::new(bytes),
-                sc_project_formats::ProjectFileType::ThreeMf,
-            )
-            .expect("the saved project reads back");
+            let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
+                .expect("the saved project reads back");
             assert_eq!(loaded.payload, Some(held_payload()));
             assert_eq!(loaded.scene.roots().len(), 1);
         }
@@ -702,11 +699,8 @@ mod scene_save_tests {
             .expect("the save succeeds");
 
             let bytes = fs::read(&target).expect("the file exists");
-            let loaded = read_project(
-                &mut Cursor::new(bytes),
-                sc_project_formats::ProjectFileType::ThreeMf,
-            )
-            .expect("the saved project reads back");
+            let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
+                .expect("the saved project reads back");
             let payload = loaded.payload.expect("the payload is present");
             assert_eq!(payload.printer, Some(printer_id("nonexistent-printer")));
             assert_eq!(payload.resin, Some(material_id("nonexistent-resin")));
@@ -772,11 +766,8 @@ mod scene_save_tests {
             save_project_to(&doc, &target, Some(printer), Some(resin)).expect("the save succeeds");
 
             let bytes = fs::read(&target).expect("the file exists");
-            let loaded = read_project(
-                &mut Cursor::new(bytes),
-                sc_project_formats::ProjectFileType::ThreeMf,
-            )
-            .expect("the saved project reads back");
+            let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
+                .expect("the saved project reads back");
             assert!(
                 loaded.slices.is_some(),
                 "slices sliced on the default profile must survive the save"
@@ -839,11 +830,8 @@ mod scene_save_tests {
             .expect("the save succeeds");
 
             let bytes = fs::read(&target).expect("the file exists");
-            let loaded = read_project(
-                &mut Cursor::new(bytes),
-                sc_project_formats::ProjectFileType::ThreeMf,
-            )
-            .expect("the saved project reads back");
+            let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
+                .expect("the saved project reads back");
             let payload = loaded.payload.expect("the project carries a payload");
             assert_eq!(payload.printer, Some(printer));
             assert_eq!(payload.resin, Some(resin));
@@ -871,11 +859,8 @@ mod scene_save_tests {
             write_bundle(&bundle, |_, _, _| {}).expect("the bundle writes");
 
             let bytes = fs::read(&target).expect("the file exists");
-            let loaded = read_project(
-                &mut Cursor::new(bytes),
-                sc_project_formats::ProjectFileType::ThreeMf,
-            )
-            .expect("the saved project reads back");
+            let loaded = read_project(&mut Cursor::new(bytes), ProjectFileType::ThreeMf)
+                .expect("the saved project reads back");
             assert_eq!(loaded.payload, Some(held_payload()));
         }
 

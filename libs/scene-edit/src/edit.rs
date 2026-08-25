@@ -526,7 +526,7 @@ mod scene_edit_tests {
         }
         .apply_to_scene(&mut g)
         .unwrap_err();
-        assert!(matches!(err, sc_scene::SceneError::DanglingNodeId { id } if id == bogus));
+        assert!(matches!(err, SceneError::DanglingNodeId { id } if id == bogus));
         assert!(g.node(bogus).is_none());
     }
 
@@ -667,7 +667,7 @@ mod scene_edit_tests {
         }
         .apply_to_scene(&mut g)
         .unwrap_err();
-        assert!(matches!(err, sc_scene::SceneError::DanglingNodeId { id } if id == bogus));
+        assert!(matches!(err, SceneError::DanglingNodeId { id } if id == bogus));
         assert!(g.node(bogus).is_none());
         assert!(g.roots().is_empty());
     }
@@ -682,7 +682,7 @@ mod scene_edit_tests {
         }
         .apply_to_scene(&mut g)
         .unwrap_err();
-        assert!(matches!(err, sc_scene::SceneError::DanglingNodeId { id: e } if e == id));
+        assert!(matches!(err, SceneError::DanglingNodeId { id: e } if e == id));
         assert!(g.node(id).is_none());
         assert!(!g.roots().contains(&id));
     }
@@ -1039,7 +1039,7 @@ mod scene_edit_tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            sc_scene::SceneError::NodeSlotOccupied { id } if id == occupied
+            SceneError::NodeSlotOccupied { id } if id == occupied
         ));
         assert_eq!(g, snapshot_before);
     }
@@ -1173,7 +1173,7 @@ mod scene_edit_tests {
             meta: None,
         };
         edit.apply_to_scene(&mut g).expect("apply");
-        let sc_scene::NodeKind::Group { children } = &g.node(parent).unwrap().kind else {
+        let NodeKind::Group { children } = &g.node(parent).unwrap().kind else {
             panic!("parent should still be a group");
         };
         assert_eq!(children.as_slice(), &[new_id, sibling]);

@@ -571,7 +571,7 @@ async fn pick_save_target(default_stem: Option<String>) -> Option<PathBuf> {
     dialog.save_file().await.map(|h| h.path().to_path_buf())
 }
 
-fn show_save_error(dialogs: &Rc<DialogManager>, target: &std::path::Path, err: &anyhow::Error) {
+fn show_save_error(dialogs: &Rc<DialogManager>, target: &Path, err: &anyhow::Error) {
     dialogs.show_error(
         ctr!("ErrorDialog", "Failed to save").as_str(),
         Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),
@@ -693,7 +693,7 @@ pub(crate) async fn run_export_as_flow(
     }
 }
 
-fn show_export_error(dialogs: &Rc<DialogManager>, target: &std::path::Path, err: &anyhow::Error) {
+fn show_export_error(dialogs: &Rc<DialogManager>, target: &Path, err: &anyhow::Error) {
     dialogs.show_error(
         ctr!("ErrorDialog", "Failed to export").as_str(),
         Some(ctr!("ErrorDialog", "File: {}", target.display()).to_string()),

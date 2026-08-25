@@ -1401,7 +1401,7 @@ mod scene_document_tests {
         let _sub = doc.subscribe(listener);
         // An id whose index lies beyond the loaded arena: the graph
         // mutator rejects it with DanglingNodeId.
-        let mut scratch = sc_scene::Scene::new();
+        let mut scratch = Scene::new();
         for _ in 0..16 {
             scratch.add_group(None, Transform3D::Identity);
         }
@@ -1413,9 +1413,7 @@ mod scene_document_tests {
         });
         assert!(matches!(
             result,
-            Err(EditNotApplied::Rejected(
-                sc_scene::SceneError::DanglingNodeId { .. }
-            ))
+            Err(EditNotApplied::Rejected(SceneError::DanglingNodeId { .. }))
         ));
         // The scene did not change, so observers hear nothing and
         // the selection stays where it was.
@@ -1430,7 +1428,7 @@ mod scene_document_tests {
         let node_id = first_leaf_id(&doc).node_id();
         // A poisoned history entry: its inverse (AddRootLeaf) targets
         // the occupied slot of the live leaf, so undo is rejected.
-        let rid = sc_scene::Scene::new().allocate_unbound_mesh_resource_id();
+        let rid = Scene::new().allocate_unbound_mesh_resource_id();
         doc.push_edit(SceneEdit::RemoveRootLeaf {
             node_id,
             mesh: rid,
@@ -1440,7 +1438,7 @@ mod scene_document_tests {
         let err = doc.undo().unwrap_err();
         assert!(matches!(
             err,
-            sc_scene::SceneError::NodeSlotOccupied { id } if id == node_id
+            SceneError::NodeSlotOccupied { id } if id == node_id
         ));
         // The entry stays at the top of the undo stack and nothing
         // moved onto the redo stack.
