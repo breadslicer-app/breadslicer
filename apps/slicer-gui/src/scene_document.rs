@@ -29,8 +29,9 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
+#[cfg(test)]
 use sc_scene::Scene;
-use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
+use sc_scene::node::{LeafPayload, NodeKind};
 use sc_scene::{MeshResourceId, NodeId, SceneError};
 use sc_scene_edit::SceneFragment;
 use sc_sl1cer::contour::ContourLayer;
@@ -781,7 +782,7 @@ impl SceneDocument {
             return Ok(false);
         };
         let edit = self
-            .with_scene(|spatial| build_delete_leaf_edit(spatial.graph(), node_id))
+            .with_scene(|spatial| SceneEdit::remove_leaf_with_gc(spatial.graph(), node_id))
             .flatten();
         let Some(edit) = edit else {
             return Ok(false);
@@ -1082,61 +1083,6 @@ fn substitute_translation(xform: Transform3D, translation: [f64; 3]) -> Transfor
             AffineTransform3D::from_linear_and_translation(*a.linear(), translation),
         ),
     }
-}
-
-/// Build the `SceneEdit` that removes the leaf at `node_id`, or `None`
-/// if the node is not a leaf or its graph attachment cannot be
-/// determined.
-///
-/// The returned edit is:
-/// - a plain `RemoveLeaf` for inline-mesh leaves, or for mesh-resource
-///   leaves where at least one other live leaf still references the
-///   same `MeshResourceId`;
-/// - a `Compound([RemoveLeaf, RemoveMeshResource])` when a mesh-resource
-///   leaf was the last live reference, so the inverse
-///   `Compound([AddMeshResource, AddLeaf])` re-installs both on undo.
-///
-/// The compound order matters: `RemoveMeshResource` requires that no
-/// leaf still references the rid, and the preceding `RemoveLeaf`
-/// satisfies that precondition.
-fn build_delete_leaf_edit(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
-    let node = graph.node(node_id)?;
-    let local_transform = node.local_transform;
-    let meta = node.meta.clone();
-    let payload = match &node.kind {
-        NodeKind::Leaf(payload) => payload.clone(),
-        NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => return None,
-    };
-    let attachment = if let Some(parent) = graph.parent_of(node_id) {
-        let parent_node = graph.node(parent)?;
-        let children = match &parent_node.kind {
-            NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
-            NodeKind::Leaf(_) | NodeKind::Reference { .. } => return None,
-        };
-        let position = children.iter().position(|c| *c == node_id)?;
-        LeafAttachment::Parent { parent, position }
-    } else if graph.roots().contains(&node_id) {
-        LeafAttachment::Root
-    } else {
-        return None;
-    };
-    let remove_leaf = SceneEdit::RemoveLeaf {
-        node_id,
-        attachment,
-        payload: payload.clone(),
-        local_transform,
-        meta,
-    };
-    if let LeafPayload::MeshResource(rid) = payload
-        && !graph.other_leaf_references_resource(rid, node_id)
-    {
-        let arc = Arc::clone(graph.mesh_resource_arc(rid)?);
-        return Some(SceneEdit::Compound(vec![
-            remove_leaf,
-            SceneEdit::RemoveMeshResource { rid, mesh: arc },
-        ]));
-    }
-    Some(remove_leaf)
 }
 
 /// Why [`SceneDocument::apply_edit`] did not apply an edit. Either

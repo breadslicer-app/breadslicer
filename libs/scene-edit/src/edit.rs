@@ -15,7 +15,9 @@ use std::sync::Arc;
 
 use sc_mesh_core::indexed_mesh::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
-use sc_scene::node::{LeafAttachment, LeafPayload, MeshResourceId, NodeId, SceneMetadata};
+use sc_scene::node::{
+    LeafAttachment, LeafPayload, MeshResourceId, NodeId, NodeKind, SceneMetadata,
+};
 use sc_scene::{Scene, SceneError};
 
 /// Typed scene mutation. The shared edit shape across the workspace:
@@ -320,6 +322,64 @@ impl SceneEdit {
                 Ok(())
             }
         }
+    }
+
+    /// Build the edit that removes the leaf at `node_id`, or `None`
+    /// if the node is not a leaf or its graph attachment cannot be
+    /// determined.
+    ///
+    /// The returned edit is:
+    /// - a plain [`Self::RemoveLeaf`] for inline-mesh leaves, or for
+    ///   mesh-resource leaves where at least one other live leaf
+    ///   still references the same [`MeshResourceId`];
+    /// - a `Compound([RemoveLeaf, RemoveMeshResource])` when a
+    ///   mesh-resource leaf was the last live reference, so the
+    ///   inverse `Compound([AddMeshResource, AddLeaf])` re-installs
+    ///   both on undo.
+    ///
+    /// The compound order matters: `RemoveMeshResource` requires
+    /// that no leaf still references the rid, and the preceding
+    /// `RemoveLeaf` satisfies that precondition.
+    pub fn remove_leaf_with_gc(graph: &Scene, node_id: NodeId) -> Option<SceneEdit> {
+        let node = graph.node(node_id)?;
+        let local_transform = node.local_transform;
+        let meta = node.meta.clone();
+        let payload = match &node.kind {
+            NodeKind::Leaf(payload) => payload.clone(),
+            NodeKind::Group { .. } | NodeKind::Csg { .. } | NodeKind::Reference { .. } => {
+                return None;
+            }
+        };
+        let attachment = if let Some(parent) = graph.parent_of(node_id) {
+            let parent_node = graph.node(parent)?;
+            let children = match &parent_node.kind {
+                NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
+                NodeKind::Leaf(_) | NodeKind::Reference { .. } => return None,
+            };
+            let position = children.iter().position(|c| *c == node_id)?;
+            LeafAttachment::Parent { parent, position }
+        } else if graph.roots().contains(&node_id) {
+            LeafAttachment::Root
+        } else {
+            return None;
+        };
+        let remove_leaf = SceneEdit::RemoveLeaf {
+            node_id,
+            attachment,
+            payload: payload.clone(),
+            local_transform,
+            meta,
+        };
+        if let LeafPayload::MeshResource(rid) = payload
+            && !graph.other_leaf_references_resource(rid, node_id)
+        {
+            let arc = Arc::clone(graph.mesh_resource_arc(rid)?);
+            return Some(SceneEdit::Compound(vec![
+                remove_leaf,
+                SceneEdit::RemoveMeshResource { rid, mesh: arc },
+            ]));
+        }
+        Some(remove_leaf)
     }
 }
 
@@ -1197,5 +1257,94 @@ mod scene_edit_tests {
         edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert_eq!(g.node(leaf).unwrap().meta, Some(meta));
         assert_eq!(g, snapshot_before);
+    }
+
+    fn root_resource_leaf(g: &mut Scene, rid: MeshResourceId) -> NodeId {
+        let leaf = g
+            .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        leaf
+    }
+
+    #[test]
+    fn remove_leaf_with_gc_on_an_inline_leaf_is_a_plain_remove() {
+        let mut g = Scene::new();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(triangle_arc()),
+            )
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        let edit = SceneEdit::remove_leaf_with_gc(&g, leaf).unwrap();
+        assert!(matches!(
+            edit,
+            SceneEdit::RemoveLeaf { node_id, .. } if node_id == leaf
+        ));
+    }
+
+    #[test]
+    fn remove_leaf_with_gc_keeps_a_resource_another_leaf_references() {
+        let mut g = Scene::new();
+        let rid = g.add_mesh_resource_arc(triangle_arc());
+        let _kept = root_resource_leaf(&mut g, rid);
+        let doomed = root_resource_leaf(&mut g, rid);
+        let edit = SceneEdit::remove_leaf_with_gc(&g, doomed).unwrap();
+        assert!(matches!(
+            edit,
+            SceneEdit::RemoveLeaf { node_id, .. } if node_id == doomed
+        ));
+    }
+
+    #[test]
+    fn remove_leaf_with_gc_bundles_the_last_reference_into_a_compound() {
+        let mut g = Scene::new();
+        let arc = triangle_arc();
+        let rid = g.add_mesh_resource_arc(Arc::clone(&arc));
+        let leaf = g
+            .add_leaf(
+                Some(SceneMetadata {
+                    name: Some("Named".to_string()),
+                    comment: None,
+                }),
+                Transform3D::Identity,
+                LeafPayload::MeshResource(rid),
+            )
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        let Some(SceneEdit::Compound(parts)) = SceneEdit::remove_leaf_with_gc(&g, leaf) else {
+            panic!("the sole reference must produce a Compound");
+        };
+        assert_eq!(parts.len(), 2);
+        // RemoveLeaf first: RemoveMeshResource requires that no leaf
+        // still references the rid.
+        assert!(matches!(
+            &parts[0],
+            SceneEdit::RemoveLeaf { node_id, attachment, meta, .. }
+                if *node_id == leaf
+                    && *attachment == LeafAttachment::Root
+                    && meta.as_ref().and_then(|m| m.name.as_deref()) == Some("Named")
+        ));
+        let SceneEdit::RemoveMeshResource { rid: out_rid, mesh } = &parts[1] else {
+            panic!("the second edit must remove the mesh resource");
+        };
+        assert_eq!(*out_rid, rid);
+        assert!(Arc::ptr_eq(mesh, &arc));
+    }
+
+    #[test]
+    fn remove_leaf_with_gc_on_a_non_leaf_or_foreign_id_is_none() {
+        let mut g = Scene::new();
+        let group = g.add_group(None, Transform3D::Identity);
+        g.add_root(group).unwrap();
+        assert!(SceneEdit::remove_leaf_with_gc(&g, group).is_none());
+        let mut scratch = Scene::new();
+        for _ in 0..8 {
+            scratch.add_group(None, Transform3D::Identity);
+        }
+        let foreign = scratch.allocate_unbound_node_id();
+        assert!(SceneEdit::remove_leaf_with_gc(&g, foreign).is_none());
     }
 }
