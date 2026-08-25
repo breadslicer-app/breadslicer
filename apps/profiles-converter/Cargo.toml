@@ -2,6 +2,7 @@
 name = "sc-profiles-converter"
 version = "0.0.1"
 edition.workspace = true
+license = "AGPL-3.0-or-later"
 publish = false
 description = "Convert third-party printer and material profiles into the SoulCrafted Slicer TOML format."
 

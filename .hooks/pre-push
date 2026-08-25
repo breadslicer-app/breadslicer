@@ -1,5 +1,11 @@
 #!/bin/sh
 
+set -eu;
+
+# Offline dependency-policy subset; the advisories check needs the
+# network and runs on demand instead.
+cargo deny check licenses bans sources;
+
 cargo check --all-targets --all-features;
 cargo clippy --all-targets --all-features -- -D warnings;
 cargo test --all-targets --all-features;

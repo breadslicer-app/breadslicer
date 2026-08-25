@@ -1,0 +1,76 @@
+# cargo-deny configuration: dependency policy gate for the workspace.
+#
+# Four checks: security advisories (RustSec), license policy, crate bans and
+# duplicate detection, and source allow-listing. See
+# https://embarkstudios.github.io/cargo-deny/ for the schema.
+#
+# The pre-push hook runs the offline-safe subset (licenses, bans, sources).
+# The advisory check needs network access and changes over time independently
+# of the code, so it runs on demand.
+
+[graph]
+# Build the dependency graph with every feature enabled, so feature-gated and
+# target-specific dependencies are also checked.
+all-features = true
+
+[advisories]
+# Fail on any security advisory or yanked crate. No exceptions are carried.
+ignore = []
+
+[licenses]
+# Allow-list of permissive licenses, plus the file-level weak copyleft
+# MPL-2.0 (carried by option-ext). Anything outside this set trips the gate
+# so it can be reviewed before it is accepted.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+# The apps are AGPL-3.0-or-later by design (the libs are Apache-2.0). AGPL
+# is allowed only for the app crates, so a third-party copyleft dependency
+# still trips the gate instead of being accepted silently. Add a line here
+# when a new app crate is introduced. Slint is consumed under the GPL-3.0
+# arm of its triple license, allowed only for the Slint crates.
+exceptions = [
+    # Its licence expression is (MIT OR Apache-2.0) AND NCSA, so the
+    # permissive NCSA part cannot be avoided by picking an OR arm.
+    { allow = ["NCSA"], crate = "libfuzzer-sys" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-icon-gen" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-profiles-converter" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-cli" },
+    { allow = ["AGPL-3.0-or-later"], crate = "sc-slicer-gui" },
+    { allow = ["GPL-3.0-only"], crate = "slint" },
+    { allow = ["GPL-3.0-only"], crate = "slint-build" },
+    { allow = ["GPL-3.0-only"], crate = "slint-macros" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-backend-selector" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-backend-winit" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-common" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-compiler" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-core" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-core-macros" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-renderer-skia" },
+    { allow = ["GPL-3.0-only"], crate = "i-slint-renderer-software" },
+]
+
+[bans]
+# Duplicate (semver-incompatible) versions of a crate are surfaced as
+# warnings rather than failures: the GUI stack (winit, wgpu, skia) carries
+# transitive duplicates that are not ours to fix.
+multiple-versions = "warn"
+# Reject `*` version requirements on external crates.
+wildcards = "deny"
+
+[sources]
+# Every dependency must come from crates.io. Unknown registries and git
+# sources are rejected.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
