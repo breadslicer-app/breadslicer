@@ -34,8 +34,7 @@ impl Scene {
     /// Visit every node reachable from the scene roots through
     /// children edges, in pre-order. `Csg` operands are entered;
     /// `Reference` nodes are visited themselves but never followed.
-    /// Ids whose slot is tombstoned are passed over silently, so the
-    /// walk is safe on scenes mid-undo.
+    /// Ids whose slot is tombstoned are passed over silently.
     pub fn for_each_reachable_node<F>(&self, mut visit: F)
     where
         F: FnMut(NodeId, &Node),
@@ -60,7 +59,7 @@ impl Scene {
     /// Visit every leaf reachable from the scene roots through
     /// children edges, in pre-order, under the stated `Csg` and
     /// `Reference` stances. Ids whose slot is tombstoned are passed
-    /// over silently, so the walk is safe on scenes mid-undo.
+    /// over silently.
     ///
     /// The first refusal or closure error aborts the walk.
     pub fn for_each_reachable_leaf<E, F>(

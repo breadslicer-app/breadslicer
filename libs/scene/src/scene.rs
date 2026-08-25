@@ -129,10 +129,10 @@ impl Scene {
 
     /// Mutable borrow into the addressed mesh resource. `None` on a
     /// dangling or tombstoned id. Uses [`Arc::make_mut`] semantics:
-    /// if the `Arc` is shared (refcount > 1, e.g. an inline leaf or
-    /// the clipboard also holds it), the call deep-clones the mesh
-    /// into a fresh `Arc` first, leaving every other holder pointing
-    /// at the original bytes.
+    /// if the `Arc` is shared (refcount > 1, e.g. an inline leaf
+    /// also holds it), the call deep-clones the mesh into a fresh
+    /// `Arc` first, leaving every other holder pointing at the
+    /// original bytes.
     pub fn mesh_resource_mut(&mut self, id: MeshResourceId) -> Option<&mut IndexedMesh> {
         let slot = self.mesh_resources.get_mut(id.index())?.as_mut()?;
         Some(Arc::make_mut(slot))
@@ -258,10 +258,10 @@ impl Scene {
     /// break parent / child invariants).
     ///
     /// Uses [`Arc::make_mut`] semantics: if the inline `Arc` is
-    /// shared with another holder (clipboard, mesh-resource arena,
-    /// another inline leaf), the first mutation forks a fresh copy
-    /// for this leaf so the other holders keep observing the
-    /// pre-mutation bytes.
+    /// shared with another holder (the mesh-resource arena, another
+    /// inline leaf), the first mutation forks a fresh copy for this
+    /// leaf so the other holders keep observing the pre-mutation
+    /// bytes.
     pub fn inline_mesh_mut(&mut self, id: NodeId) -> Option<&mut IndexedMesh> {
         let node = self.nodes.get_mut(id.index())?.as_mut()?;
         match &mut node.kind {
@@ -275,10 +275,6 @@ impl Scene {
     /// resource id. `None` for any non-leaf node, a dangling id, or a
     /// resource-backed leaf whose resource slot was tombstoned (which
     /// would be a graph invariant violation, not a routine case).
-    /// Used by the copy primitive: the clipboard needs the live `Arc`
-    /// itself, so a later same-scene paste can dedupe by
-    /// `Arc::as_ptr` identity instead of registering a duplicate
-    /// resource.
     pub fn leaf_mesh_arc(&self, id: NodeId) -> Option<&Arc<IndexedMesh>> {
         let node = self.nodes.get(id.index())?.as_ref()?;
         match &node.kind {
@@ -345,9 +341,8 @@ impl Scene {
     /// as a scene root.
     ///
     /// Use this when the id needs to exist before the node it will
-    /// reference does, typically so the id can be embedded in a typed
-    /// edit (see `sc_scene_edit`) that the undo/redo
-    /// machinery replays against the same slot.
+    /// reference does, so a caller can record the id and later
+    /// install at the same slot.
     ///
     /// The slot is permanently consumed: dropping the id without
     /// later installing a node at it leaks one arena slot. Slots are
@@ -380,9 +375,8 @@ impl Scene {
     /// returned id's arena slot is `None`.
     ///
     /// Use this when the id needs to exist before the resource it will
-    /// reference does, typically so the id can be embedded in a typed edit (see
-    /// `sc_scene_edit`) that the undo/redo machinery replays
-    /// against the same slot. Mirrors [`Self::allocate_unbound_node_id`] for
+    /// reference does, so a caller can record the id and later install at the
+    /// same slot. Mirrors [`Self::allocate_unbound_node_id`] for
     /// mesh-resource ids.
     ///
     /// The slot is permanently consumed: dropping the id without later
@@ -393,9 +387,8 @@ impl Scene {
     }
 
     /// Install a mesh resource at a previously-allocated, currently-empty slot.
-    /// Pairs with [`Self::remove_mesh_resource`] so a typed edit can round-trip
-    /// a paste's mesh-resource creation through undo/redo while keeping the
-    /// same [`MeshResourceId`].
+    /// Pairs with [`Self::remove_mesh_resource`]: a remove-then-install round
+    /// trip keeps the same [`MeshResourceId`].
     ///
     /// Errors:
     /// - [`SceneError::DanglingMeshResource`] if `rid` is past the arena's
@@ -428,8 +421,7 @@ impl Scene {
     ///   `rid`.
     /// - [`SceneError::MeshResourceInUse`] if at least one live
     ///   `Leaf(MeshResource(rid))` still references the resource. Callers must
-    ///   remove every referencing leaf first (the compound paste-undo path
-    ///   orders edits accordingly).
+    ///   remove every referencing leaf first.
     ///
     /// On error the scene is unchanged.
     pub fn remove_mesh_resource(
@@ -449,8 +441,7 @@ impl Scene {
     }
 
     /// Swap the mesh stored at the live resource slot `rid` for
-    /// `mesh`, returning the `Arc` that lived there so a typed edit
-    /// can snapshot it for undo.
+    /// `mesh`, returning the `Arc` that lived there.
     ///
     /// Errors:
     /// - [`SceneError::DanglingMeshResource`] if no live resource
@@ -473,8 +464,7 @@ impl Scene {
     }
 
     /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `id` for
-    /// `mesh`, returning the `Arc` that lived there so a typed edit
-    /// can snapshot it for undo.
+    /// `mesh`, returning the `Arc` that lived there.
     ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if no live node lives at `id`.
@@ -744,10 +734,8 @@ impl Scene {
     /// Install a mesh-resource-backed leaf at a previously-allocated,
     /// currently-empty node slot, and register it as a scene root.
     ///
-    /// Paired with [`Self::remove_root_leaf`] so a typed edit (see
-    /// `sc_scene_edit`) can round-trip a paste insertion
-    /// through the undo/redo machinery while keeping the same
-    /// [`NodeId`] across applies.
+    /// Paired with [`Self::remove_root_leaf`]: a remove-then-install
+    /// round trip keeps the same [`NodeId`] across applies.
     ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if `id` is past the arena's

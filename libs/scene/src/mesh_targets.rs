@@ -8,7 +8,7 @@
 //! scene-level repair / diagnosis drivers so they can never disagree
 //! about the target set. Arena-wide: inline leaves inside registered
 //! subtrees (and any other detached node) count; meshes held only by
-//! external `Arc`s (undo history, clipboard) do not.
+//! `Arc`s outside the scene do not.
 
 use crate::node::{LeafPayload, MeshResourceId, NodeId, NodeKind};
 use crate::{Scene, node_id_at_index};
