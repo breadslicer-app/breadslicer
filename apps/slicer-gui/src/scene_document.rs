@@ -31,7 +31,7 @@ use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
 #[cfg(test)]
 use sc_scene::Scene;
-use sc_scene::node::{LeafPayload, NodeKind};
+use sc_scene::node::{LeafAttachment, LeafPayload, NodeKind};
 use sc_scene::{MeshResourceId, NodeId, SceneError};
 use sc_scene_edit::SceneFragment;
 use sc_sl1cer::contour::ContourLayer;
@@ -748,7 +748,7 @@ impl SceneDocument {
         };
         // Decide selection-clearing and the post-mutation event
         // kind BEFORE moving the edit into spatial.apply_edit: the
-        // typed-edit enum is no longer `Copy`, and `RemoveRootLeaf`
+        // typed-edit enum is no longer `Copy`, and `RemoveLeaf`
         // may be nested under a `Compound` produced by paste-undo,
         // so a plain `match` post-apply is not enough.
         let drops_selection = edit_removes_selected_leaf(&edit, &self.selection);
@@ -804,31 +804,34 @@ impl SceneDocument {
     }
 
     /// Allocate a fresh [`NodeId`] and install a mesh-resource-backed
-    /// leaf at it as a scene root. Combines the `allocate +
-    /// AddRootLeaf + push_edit` dance into the single call paste
-    /// needs, returning the new id (`Ok(None)` when no scene is
-    /// loaded, `Err` when the scene rejected the edit; either way
-    /// nothing is recorded).
+    /// leaf at it as the last scene root. Combines the `allocate +
+    /// AddLeaf + push_edit` dance into the single call paste needs,
+    /// returning the new id (`Ok(None)` when no scene is loaded,
+    /// `Err` when the scene rejected the edit; either way nothing is
+    /// recorded).
     ///
     /// The corresponding edit goes onto the undo stack: a subsequent
-    /// `undo` pops it as a `RemoveRootLeaf` and tombstones the leaf.
+    /// `undo` pops it as a `RemoveLeaf` and tombstones the leaf.
     #[allow(dead_code)]
     pub(crate) fn add_root_leaf(
         &self,
         mesh: MeshResourceId,
         local_transform: Transform3D,
     ) -> Result<Option<NodeId>, SceneError> {
-        let node_id = {
+        let (node_id, position) = {
             let mut slot = self.spatial.borrow_mut();
             let Some(spatial) = slot.as_mut() else {
                 return Ok(None);
             };
-            spatial.allocate_unbound_node_id()
+            let position = spatial.graph().roots().len();
+            (spatial.allocate_unbound_node_id(), position)
         };
-        let edit = SceneEdit::AddRootLeaf {
+        let edit = SceneEdit::AddLeaf {
             node_id,
-            mesh,
+            attachment: LeafAttachment::Root { position },
+            payload: LeafPayload::MeshResource(mesh),
             local_transform,
+            meta: None,
         };
         match self.apply_edit(edit.clone()) {
             Ok(()) => {
@@ -962,10 +965,13 @@ impl SceneDocument {
         }
 
         // Step 2: walk the fragment's roots, allocate target node ids,
-        // emit AddRootLeaf for each mesh-resource leaf root. Future
+        // emit AddLeaf for each mesh-resource leaf root. Future
         // CSG / multi-select phases extend this match with AddGroup /
         // AddCsg / AddReference branches.
         let mut first_new_root: Option<NodeId> = None;
+        // Pasted leaves land after the roots already there, one after
+        // another, and none of the edits before them adds a root.
+        let mut position = spatial.graph().roots().len();
         for &frag_root in frag_scene.roots() {
             let frag_node = frag_scene
                 .node(frag_root)
@@ -992,11 +998,14 @@ impl SceneDocument {
             }
             let final_xform =
                 substitute_translation(frag_node.local_transform, placement_translation);
-            edits.push(SceneEdit::AddRootLeaf {
+            edits.push(SceneEdit::AddLeaf {
                 node_id: target_node_id,
-                mesh: target_rid,
+                attachment: LeafAttachment::Root { position },
+                payload: LeafPayload::MeshResource(target_rid),
                 local_transform: final_xform,
+                meta: None,
             });
+            position += 1;
         }
 
         let new_root = first_new_root?;
@@ -1186,7 +1195,7 @@ pub(crate) enum EditNotApplied {
 
 /// True when applying `edit` would tombstone the leaf the document's
 /// `selection` currently points at. Handles the nested case where a
-/// `RemoveRootLeaf` is inside a `Compound` (the shape paste-undo
+/// `RemoveLeaf` is inside a `Compound` (the shape paste-undo
 /// produces).
 fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> bool {
     let Some(selected) = selection.primary_node_id() else {
@@ -1194,12 +1203,9 @@ fn edit_removes_selected_leaf(edit: &SceneEdit, selection: &SelectionState) -> b
     };
     fn touches(edit: &SceneEdit, selected: NodeId) -> bool {
         match edit {
-            SceneEdit::RemoveRootLeaf { node_id, .. } | SceneEdit::RemoveLeaf { node_id, .. } => {
-                *node_id == selected
-            }
+            SceneEdit::RemoveLeaf { node_id, .. } => *node_id == selected,
             SceneEdit::Compound(edits) => edits.iter().any(|e| touches(e, selected)),
             SceneEdit::SetLocalTransform { .. }
-            | SceneEdit::AddRootLeaf { .. }
             | SceneEdit::AddLeaf { .. }
             | SceneEdit::AddMeshResource { .. }
             | SceneEdit::RemoveMeshResource { .. }
@@ -1517,13 +1523,15 @@ mod scene_document_tests {
         let doc = SceneDocument::new();
         doc.install_graph(graph_with_one_object(), fixture_path());
         let node_id = first_leaf_id(&doc).node_id();
-        // A poisoned history entry: its inverse (AddRootLeaf) targets
+        // A poisoned history entry: its inverse (AddLeaf) targets
         // the occupied slot of the live leaf, so undo is rejected.
         let rid = Scene::new().allocate_unbound_mesh_resource_id();
-        doc.push_edit(SceneEdit::RemoveRootLeaf {
+        doc.push_edit(SceneEdit::RemoveLeaf {
             node_id,
-            mesh: rid,
+            attachment: LeafAttachment::Root { position: 0 },
+            payload: LeafPayload::MeshResource(rid),
             local_transform: Transform3D::Identity,
+            meta: None,
         });
         assert!(doc.can_undo());
         let err = doc.undo().unwrap_err();
@@ -1982,7 +1990,7 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn remove_root_leaf_clears_selection_when_pointing_at_removed_node() {
+    fn remove_leaf_clears_selection_when_pointing_at_removed_node() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
@@ -1992,7 +2000,7 @@ mod scene_document_tests {
             .unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(id)));
         assert_eq!(doc.selection_primary_node_id(), Some(id));
-        // Undo the AddRootLeaf so the inverse RemoveRootLeaf fires.
+        // Undo the AddLeaf so the inverse RemoveLeaf fires.
         doc.undo().unwrap();
         assert_eq!(
             doc.selection_primary_node_id(),
@@ -2002,7 +2010,7 @@ mod scene_document_tests {
     }
 
     #[test]
-    fn remove_root_leaf_does_not_clear_selection_pointing_at_other_node() {
+    fn remove_leaf_does_not_clear_selection_pointing_at_other_node() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
@@ -2013,19 +2021,21 @@ mod scene_document_tests {
             .unwrap();
         let to_remove = doc.add_root_leaf(rid, translation(5.0)).unwrap().unwrap();
         doc.set_selection(Selection::One(crate::selection::LeafId(kept)));
-        // Apply the RemoveRootLeaf directly (skip the undo stack so
+        // Apply the RemoveLeaf directly (skip the undo stack so
         // the selection-clear logic is exercised on a non-matching id).
-        let edit = SceneEdit::RemoveRootLeaf {
+        let edit = SceneEdit::RemoveLeaf {
             node_id: to_remove,
-            mesh: rid,
+            attachment: LeafAttachment::Root { position: 2 },
+            payload: LeafPayload::MeshResource(rid),
             local_transform: translation(5.0),
+            meta: None,
         };
         assert!(doc.apply_edit(edit).is_ok());
         assert_eq!(doc.selection_primary_node_id(), Some(kept));
     }
 
     #[test]
-    fn remove_root_leaf_fires_selection_changed_when_selection_dropped() {
+    fn remove_leaf_fires_selection_changed_when_selection_dropped() {
         let doc = SceneDocument::new();
         let (graph, rid) = graph_with_one_resource();
         doc.install_graph(graph, fixture_path());
@@ -2070,7 +2080,7 @@ mod scene_document_tests {
         // Selection stays None (add_root_leaf does not auto-select).
         assert_eq!(doc.selection(), Selection::None);
         assert!(!doc.delete_selected_leaf().unwrap());
-        // Only the AddRootLeaf entry from the setup is on the stack.
+        // Only the AddLeaf entry from the setup is on the stack.
         let undo_entries_before = doc.undo_stack.borrow().len();
         assert_eq!(undo_entries_before, 1);
     }
@@ -2293,7 +2303,7 @@ mod scene_document_tests {
             .paste_fragment(&fragment, [5.0, 0.0, 0.0])
             .unwrap()
             .expect("paste into loaded scene");
-        // Both AddMeshResource and AddRootLeaf landed: the scene has
+        // Both AddMeshResource and AddLeaf landed: the scene has
         // a new root leaf referencing a new resource that shares the
         // same Arc bytes as the clipboard's mesh.
         let observed = doc.with_scene(|s| {
@@ -2321,6 +2331,32 @@ mod scene_document_tests {
             panic!("paste must materialise an Affine transform");
         };
         assert_eq!(*a.translation(), [5.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn paste_appends_the_new_root_and_undo_restores_the_root_order() {
+        let doc = SceneDocument::new();
+        let (graph, rid) = graph_with_one_resource();
+        doc.install_graph(graph, fixture_path());
+        doc.add_root_leaf(rid, Transform3D::Identity).unwrap();
+        doc.add_root_leaf(rid, translation(5.0)).unwrap();
+        let roots_before = doc.with_scene(|s| s.graph().roots().to_vec()).unwrap();
+        let fragment = SceneFragment::from_leaf_snapshot(triangle_arc(), Transform3D::Identity);
+        let new_root = doc
+            .paste_fragment(&fragment, [9.0, 0.0, 0.0])
+            .unwrap()
+            .expect("paste into loaded scene");
+        let mut expected = roots_before.clone();
+        expected.push(new_root);
+        assert_eq!(
+            doc.with_scene(|s| s.graph().roots().to_vec()).unwrap(),
+            expected
+        );
+        doc.undo().unwrap();
+        assert_eq!(
+            doc.with_scene(|s| s.graph().roots().to_vec()).unwrap(),
+            roots_before
+        );
     }
 
     #[test]

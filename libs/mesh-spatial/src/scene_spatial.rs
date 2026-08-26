@@ -205,8 +205,6 @@ impl SceneSpatial {
                 }
             }
             SceneEdit::SetLocalTransform { .. }
-            | SceneEdit::AddRootLeaf { .. }
-            | SceneEdit::RemoveRootLeaf { .. }
             | SceneEdit::AddLeaf { .. }
             | SceneEdit::RemoveLeaf { .. }
             | SceneEdit::AddMeshResource { .. }

@@ -169,13 +169,6 @@ fn display_attachment_position_out_of_range() {
 }
 
 #[test]
-fn display_not_a_mesh_resource_leaf() {
-    let s = SceneError::NotAMeshResourceLeaf { node_id: node(16) }.to_string();
-    assert!(s.contains("not a mesh-resource leaf"), "{s}");
-    assert!(s.contains("16"), "{s}");
-}
-
-#[test]
 fn display_mesh_resource_slot_occupied() {
     let s = SceneError::MeshResourceSlotOccupied { id: mesh_res(2) }.to_string();
     assert!(s.contains("mesh resource slot"), "{s}");

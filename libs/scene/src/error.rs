@@ -62,9 +62,6 @@ pub enum SceneError {
     /// when an attachment recorded by an earlier removal is redeemed
     /// against a scene that has since shrunk that list.
     AttachmentPositionOutOfRange { position: usize, len: usize },
-    /// A mutator that expects a `Leaf(MeshResource(_))` was given a
-    /// leaf carrying an inline mesh instead.
-    NotAMeshResourceLeaf { node_id: NodeId },
     /// A mutator that expects a `Leaf(Mesh(_))` was given a leaf
     /// carrying its mesh by resource id instead.
     NotAnInlineMeshLeaf { node_id: NodeId },
@@ -153,11 +150,6 @@ impl fmt::Display for SceneError {
             Self::AttachmentPositionOutOfRange { position, len } => write!(
                 f,
                 "attachment position {position} is past the end of a list of {len}"
-            ),
-            Self::NotAMeshResourceLeaf { node_id } => write!(
-                f,
-                "node {} is a leaf but not a mesh-resource leaf",
-                node_id.get()
             ),
             Self::NotAnInlineMeshLeaf { node_id } => write!(
                 f,

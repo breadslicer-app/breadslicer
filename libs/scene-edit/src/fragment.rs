@@ -10,7 +10,7 @@
 //! roots, nodes and mesh resources the user selected, all in their
 //! own arenas. The paste primitive in the document layer walks the
 //! fragment, allocates target ids in the destination scene's arenas,
-//! emits the matching `AddMeshResource` / `AddRootLeaf` (and later
+//! emits the matching `AddMeshResource` / `AddLeaf` (and later
 //! `AddGroup` / `AddCsg` / `AddReference`) typed edits, and wraps the
 //! whole thing in a single [`crate::edit::SceneEdit::Compound`].
 //!
