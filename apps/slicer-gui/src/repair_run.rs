@@ -17,7 +17,8 @@
 //! landing mid-run would invalidate the worker's Arc diff), and it is
 //! cleared on every exit path. The scene revision captured at launch
 //! guards the apply: a result computed against geometry that changed
-//! mid-run is discarded, never merged.
+//! mid-run, or against a scene the user has replaced since, is
+//! discarded, never merged.
 //!
 //! The applied result is ONE `SceneEdit::Compound` of mesh-content
 //! replace edits (one undo unit): only meshes the policy actually
@@ -584,6 +585,58 @@ mod repair_run_tests {
             MeshHealth::HasProblems,
             "a discarded result must not touch the scene"
         );
+    }
+
+    #[test]
+    fn settle_discards_a_result_whose_scene_was_replaced() {
+        let doc = SceneDocument::new();
+        doc.install_graph(
+            broken_trio_scene(),
+            PathBuf::from("/tmp/repair-run-fixture.obj"),
+        );
+        let captured = doc.scene_revision();
+        let completed = doc
+            .with_scene(|spatial| run_repair(spatial.graph().clone()))
+            .unwrap();
+        // The user opens another file while the worker runs. The
+        // replacement numbers its targets exactly like the outgoing
+        // scene, so nothing but the scene's identity separates them.
+        doc.install_graph(
+            broken_trio_scene(),
+            PathBuf::from("/tmp/repair-run-other.obj"),
+        );
+        let installed: Vec<(MeshTarget, Arc<IndexedMesh>)> = doc
+            .with_scene(|spatial| {
+                let graph = spatial.graph();
+                graph
+                    .mesh_targets()
+                    .into_iter()
+                    .filter_map(|t| Some((t, target_arc(graph, t)?)))
+                    .collect()
+            })
+            .unwrap();
+
+        assert_eq!(
+            settle(&doc, &completed, captured),
+            RepairSettlement::DiscardedStale
+        );
+        assert_eq!(
+            doc.with_scene(|s| scene_mesh_health(s.graph())).unwrap(),
+            MeshHealth::HasProblems,
+            "the freshly opened scene must keep its own geometry"
+        );
+        doc.with_scene(|spatial| {
+            let graph = spatial.graph();
+            for (target, installed) in &installed {
+                let live = target_arc(graph, *target).expect("live target");
+                assert!(
+                    Arc::ptr_eq(&live, installed),
+                    "a discarded result must not touch {target:?}"
+                );
+            }
+        })
+        .unwrap();
+        assert!(!doc.can_undo(), "nothing was recorded on the new scene");
     }
 
     #[test]

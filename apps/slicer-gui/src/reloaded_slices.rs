@@ -44,10 +44,10 @@ pub(crate) struct ReloadedSlices {
 
 impl ReloadedSlices {
     /// Build the held slice result, stamping the scene-geometry marker
-    /// captured after the fresh install (`SceneRevision(None)` on a clean
-    /// load), so the reloaded slice reads as in sync and re-persists
-    /// without a re-slice. The anti-aliasing level is not persisted and
-    /// does not feed the token, so it defaults to `Off`.
+    /// captured after the fresh install, so the reloaded slice reads as
+    /// in sync and re-persists without a re-slice. The anti-aliasing
+    /// level is not persisted and does not feed the token, so it
+    /// defaults to `Off`.
     pub(crate) fn into_slice_result(self, geometry: SceneRevision) -> SliceResult {
         SliceResult {
             merged: self.contours,

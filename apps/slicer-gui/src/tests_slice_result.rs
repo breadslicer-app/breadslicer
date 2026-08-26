@@ -117,6 +117,26 @@ fn a_committed_edit_moves_the_scene_revision() {
 }
 
 #[test]
+fn replacing_the_scene_reads_changed_even_at_an_empty_undo_stack() {
+    // Both scenes sit at an empty stack, so only the scene half of the
+    // revision separates them. A marker taken against the outgoing
+    // scene describes geometry the document no longer holds.
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.install_graph(graph_with_one_object(), fixture_path());
+    assert_ne!(doc.scene_revision(), rev);
+    assert!(doc.slice_geometry_changed(rev));
+}
+
+#[test]
+fn clearing_the_scene_reads_changed_even_at_an_empty_undo_stack() {
+    let (doc, _) = loaded_document();
+    let rev = doc.scene_revision();
+    doc.clear_scene();
+    assert!(doc.slice_geometry_changed(rev));
+}
+
+#[test]
 fn an_unchanged_scene_reads_unchanged_against_the_slice_point() {
     let (doc, node_id) = loaded_document();
     commit_step(&doc, node_id, 1.0);

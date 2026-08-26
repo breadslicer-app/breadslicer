@@ -42,20 +42,26 @@ pub(crate) use sc_scene_edit::SceneEdit;
 use crate::selection::{Selection, SelectionState};
 use crate::slice_result::{SliceParams, SliceResult};
 
-/// An opaque marker of the scene graph's committed-edit state, taken by
-/// [`SceneDocument::scene_revision`] and compared by
-/// [`SceneDocument::slice_geometry_changed`] to tell whether the
-/// geometry changed between two moments (producing a slice and a later
-/// Slice press). It wraps the same top-of-undo-stack edit id the
-/// save-point tracking uses; two equal markers prove the committed
-/// geometry matches.
+/// An opaque marker of which scene is installed and of its
+/// committed-edit state, taken by [`SceneDocument::scene_revision`] and
+/// compared by [`SceneDocument::slice_geometry_changed`] to tell whether
+/// the geometry changed between two moments (producing a slice and a
+/// later Slice press). Two equal markers prove the committed geometry
+/// matches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SceneRevision(Option<u64>);
+pub(crate) struct SceneRevision {
+    /// Which installed scene. Two freshly loaded scenes both sit at an
+    /// empty undo stack, so the edit head alone cannot tell them apart.
+    scene: u64,
+    /// Committed-edit head, the identity the save point also tracks.
+    top_edit: Option<u64>,
+}
 
 impl SceneRevision {
+    /// Marker for `top_edit` within an arbitrary installed scene.
     #[cfg(test)]
-    pub(crate) fn from_top_edit_id(top: Option<u64>) -> Self {
-        Self(top)
+    pub(crate) fn from_top_edit_id(top_edit: Option<u64>) -> Self {
+        Self { scene: 0, top_edit }
     }
 }
 
@@ -544,25 +550,30 @@ impl SceneDocument {
         changed
     }
 
-    /// A marker of the scene's current committed-edit state, captured
-    /// at slice time and compared later by [`Self::slice_geometry_changed`]
-    /// to tell whether the geometry has changed since. This is the same
-    /// identity the save-point tracking snapshots.
+    /// Captures the installed scene's identity together with its
+    /// committed-edit head, so a later comparison can tell whether the
+    /// geometry moved on.
     pub(crate) fn scene_revision(&self) -> SceneRevision {
-        SceneRevision(self.top_edit_id())
+        SceneRevision {
+            scene: self.scene_generation.get(),
+            top_edit: self.top_edit_id(),
+        }
     }
 
-    /// Whether the committed geometry changed since `since` was taken.
-    /// Mirrors [`Self::is_dirty`]'s comparison: a differing top edit id
-    /// means changed; a matching empty stack (`None`) is trusted only
-    /// while no applied edit has been evicted since the slice was
-    /// recorded. Can over-report a change, never under-report it.
+    /// Reports whether the committed geometry changed since `since` was
+    /// taken. Installing or clearing a scene in between always counts as
+    /// a change: the geometry `since` describes is gone. Within one
+    /// scene this mirrors [`Self::is_dirty`]'s comparison: a differing
+    /// top edit id means changed; a matching empty stack (`None`) is
+    /// trusted only while no applied edit has been evicted since the
+    /// slice was recorded. Can over-report a change, never under-report
+    /// it.
     pub(crate) fn slice_geometry_changed(&self, since: SceneRevision) -> bool {
-        let top = self.top_edit_id();
-        if top != since.0 {
+        let current = self.scene_revision();
+        if current != since {
             return true;
         }
-        top.is_none() && self.evicted_since_slice.get()
+        current.top_edit.is_none() && self.evicted_since_slice.get()
     }
 
     /// Stores the slice produced for the current scene, marking the
@@ -576,10 +587,8 @@ impl SceneDocument {
             .set(self.slice_generation.get().wrapping_add(1));
     }
 
-    /// The parameters of the held slice result, cloned out (the contour
-    /// data is left in place). `None` when no slice has been produced
-    /// for the current scene. Used by the re-slice decision to compare
-    /// against the current inputs.
+    /// Returns the parameters the held slice ran with, or `None` when
+    /// the current scene has not been sliced.
     pub(crate) fn slice_params(&self) -> Option<SliceParams> {
         self.slice_result
             .borrow()
@@ -587,9 +596,8 @@ impl SceneDocument {
             .map(|result| result.params.clone())
     }
 
-    /// The number of layers in the held slice, or `None` when no slice
-    /// is held. Drives the height slider's range and enabled state: a
-    /// `None` (or, upstream, a zero) disables it.
+    /// Returns how many layers the held slice has, or `None` when no
+    /// slice is held.
     pub(crate) fn slice_layer_count(&self) -> Option<u32> {
         self.slice_result
             .borrow()
@@ -597,9 +605,9 @@ impl SceneDocument {
             .map(|result| result.schedule.total_layers())
     }
 
-    /// The top Z (mm above the plate) of the held slice's layer at
-    /// `index`, or `None` when no slice is held or the index is past the
-    /// last layer. The slice-view clip uses this as its cut height.
+    /// Returns the top Z of the held slice's layer at `index`, in mm
+    /// above the plate, or `None` when no slice is held or `index` is
+    /// past the last layer.
     pub(crate) fn slice_layer_top_z(&self, index: u32) -> Option<f64> {
         self.slice_result
             .borrow()
@@ -607,9 +615,9 @@ impl SceneDocument {
             .and_then(|result| result.schedule.iter_slab_tops().nth(index as usize))
     }
 
-    /// A counter bumped each time a slice result is stored. Combined
-    /// with the layer index it keys the slice-view cap's cached texture,
-    /// so a re-slice invalidates it.
+    /// Returns a counter that changes every time a slice result is
+    /// stored, so callers caching per-slice data can tell a re-slice
+    /// happened.
     pub(crate) fn slice_generation(&self) -> u64 {
         self.slice_generation.get()
     }
@@ -629,14 +637,12 @@ impl SceneDocument {
             .and_then(|result| result.merged.layers().get(index as usize).map(f))
     }
 
-    /// The held slices packaged for persistence, or `None` when there is
-    /// nothing safe to write. This is the write guard: it returns `Some`
-    /// only when a result is held, the scene geometry is unchanged since
-    /// the slice (`slice_geometry_changed`), and the schedule the slice
-    /// ran under still matches `current_schedule` by value. Profile
-    /// identities and the anti-aliasing level are deliberately not
-    /// consulted; they are not the vector slices' inputs. Out-of-sync
-    /// slices never reach the file.
+    /// Packages the held slices for persistence, or returns `None` when
+    /// writing them would be wrong (no slice is held, the geometry
+    /// changed since the slice ran, or the slice ran under a schedule
+    /// that no longer matches `current_schedule`). Printer, resin and
+    /// anti-aliasing choices do not count here, because the vector
+    /// slices do not depend on them.
     pub(crate) fn slices_for_persist(
         &self,
         current_schedule: &LayerSchedule,
