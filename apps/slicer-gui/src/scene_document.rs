@@ -59,6 +59,37 @@ impl SceneRevision {
     }
 }
 
+/// The document state a save was prepared from, rechecked when the
+/// write completes. The write runs off the UI thread while the event
+/// loop stays live, so all three parts can move on in between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SaveStamp {
+    /// Which installed scene. Two freshly loaded scenes both sit at an
+    /// empty undo stack, so the edit head alone cannot tell them apart.
+    scene: u64,
+    /// Committed-edit head, the identity the save point also tracks.
+    top_edit: Option<u64>,
+    /// Number of project-level changes so far. The printer and resin
+    /// choices never reach the undo stack.
+    project_state: u64,
+}
+
+/// What [`SceneDocument::record_project_save_for`] did with a completed
+/// write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SaveRecorded {
+    /// The document still held what was written; it now points at the
+    /// target and reads clean.
+    Clean,
+    /// The same scene, moved on while the write ran. The target is
+    /// recorded, and the document stays dirty for the changes the file
+    /// does not contain.
+    Drifted,
+    /// The document holds a different scene now, so nothing was
+    /// recorded against it.
+    Replaced,
+}
+
 /// Maximum number of entries kept on each of the undo and redo
 /// stacks. On overflow the oldest entry (front of the deque) is
 /// discarded.
@@ -226,6 +257,12 @@ pub(crate) struct SceneDocument {
     /// cap keys its cached texture on this plus the layer index, so a
     /// re-slice invalidates the cap.
     slice_generation: Cell<u64>,
+    /// Bumped by every install and clear, so a save prepared against
+    /// one scene can tell it is completing against another.
+    scene_generation: Cell<u64>,
+    /// Bumped by every project-level change, giving those the same
+    /// comparable identity committed edits get from their ids.
+    project_state_generation: Cell<u64>,
 }
 
 impl SceneDocument {
@@ -248,6 +285,8 @@ impl SceneDocument {
             slice_result: RefCell::new(None),
             evicted_since_slice: Cell::new(false),
             slice_generation: Cell::new(0),
+            scene_generation: Cell::new(0),
+            project_state_generation: Cell::new(0),
         })
     }
 
@@ -282,6 +321,7 @@ impl SceneDocument {
         project_payload: Option<ProjectPayload>,
     ) {
         let was_dirty = self.is_dirty();
+        self.bump_scene_generation();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
         let (selection, embedded) = match project_payload {
@@ -317,6 +357,7 @@ impl SceneDocument {
 
     pub(crate) fn clear_scene(&self) {
         let was_dirty = self.is_dirty();
+        self.bump_scene_generation();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
         self.origin.set(DocumentOrigin::PlainMesh);
@@ -402,18 +443,46 @@ impl SceneDocument {
         self.is_loaded() && self.origin.get() == DocumentOrigin::Project
     }
 
-    /// Records that the document was written as a project to `target`:
-    /// the scene's choices and embedded documents become those actually
-    /// written, `target` is the file "Save" overwrites from now on, the
-    /// document is a project whatever its origin was, and the dirty
-    /// marker clears.
-    pub(crate) fn record_project_save(&self, payload: ProjectPayload, target: PathBuf) {
+    /// Captures the document state a save is being prepared from, to be
+    /// handed back to [`Self::record_project_save_for`] on completion.
+    pub(crate) fn save_stamp(&self) -> SaveStamp {
+        SaveStamp {
+            scene: self.scene_generation.get(),
+            top_edit: self.top_edit_id(),
+            project_state: self.project_state_generation.get(),
+        }
+    }
+
+    /// Records that the document was written as a project to `target`,
+    /// against the state the write was prepared from.
+    ///
+    /// Only a document still matching `prepared` is marked saved: the
+    /// file holds that state and nothing later. A document that moved
+    /// on keeps its dirty marker, and one that now holds a different
+    /// scene is left untouched, since the file describes neither its
+    /// contents nor its identity.
+    pub(crate) fn record_project_save_for(
+        &self,
+        payload: ProjectPayload,
+        target: PathBuf,
+        prepared: SaveStamp,
+    ) -> SaveRecorded {
+        let current = self.save_stamp();
+        if current.scene != prepared.scene {
+            return SaveRecorded::Replaced;
+        }
+        // The file came from this document, so it is what Save
+        // overwrites from here on regardless of what else moved.
+        *self.source_path.borrow_mut() = Some(target);
+        self.origin.set(DocumentOrigin::Project);
+        if current != prepared {
+            return SaveRecorded::Drifted;
+        }
         let (selection, embedded) = PrintSelection::from_payload(payload);
         *self.print_selection.borrow_mut() = selection;
         *self.embedded_profiles.borrow_mut() = embedded;
-        *self.source_path.borrow_mut() = Some(target);
-        self.origin.set(DocumentOrigin::Project);
         self.mark_saved();
+        SaveRecorded::Clean
     }
 
     /// The scene's own printer choice.
@@ -611,7 +680,14 @@ impl SceneDocument {
     fn mark_project_state_unsaved(&self) {
         let was_dirty = self.is_dirty();
         self.unsaved_project_state.set(true);
+        self.project_state_generation
+            .set(self.project_state_generation.get().wrapping_add(1));
         self.notify_dirty_change(was_dirty);
+    }
+
+    fn bump_scene_generation(&self) {
+        self.scene_generation
+            .set(self.scene_generation.get().wrapping_add(1));
     }
 
     /// Drops any pending undo/redo entries. Returns whether either
@@ -1280,7 +1356,12 @@ mod scene_document_tests {
     fn source_file_name_follows_a_save_as_relocation() {
         let doc = SceneDocument::new();
         doc.install_graph(empty_graph(), fixture_path());
-        doc.record_project_save(ProjectPayload::default(), PathBuf::from("/tmp/project.3mf"));
+        let stamp = doc.save_stamp();
+        doc.record_project_save_for(
+            ProjectPayload::default(),
+            PathBuf::from("/tmp/project.3mf"),
+            stamp,
+        );
         assert_eq!(doc.source_file_name().as_deref(), Some("project.3mf"));
     }
 

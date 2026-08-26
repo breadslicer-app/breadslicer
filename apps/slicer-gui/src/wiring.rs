@@ -22,7 +22,7 @@ use crate::i18n::ctr;
 use crate::mesh_loader::{self, LoadDispatch};
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
 use crate::save_progress_panel::SaveProgressPanel;
-use crate::scene_document::SceneDocument;
+use crate::scene_document::{SaveRecorded, SceneDocument};
 use crate::scene_export;
 use crate::scene_loader::LoadTicket;
 use crate::scene_save::{self, SaveDispatch, SaveTargetDispatch};
@@ -367,7 +367,7 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
         let ctrl = ctrl.clone();
         let snapshot = prefs.snapshot();
         if let Err(err) = slint::spawn_local(async move {
-            let saved = run_save_flow(
+            let _ = run_save_flow(
                 ctrl.document(),
                 ctrl.dialogs(),
                 ctrl.save_progress(),
@@ -375,12 +375,11 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
                 snapshot.default_resin,
             )
             .await;
-            if saved {
-                // A first "Save" falls back to "Save As", which
-                // relocates the document; refresh the title to the new
-                // file name.
-                ctrl.refresh_document_title();
-            }
+            // A first "Save" falls back to "Save As", which relocates
+            // the document. So does a write that completed while the
+            // document moved on, which reports itself as not saved, so
+            // mirror the name whatever the outcome was.
+            ctrl.refresh_document_title();
         }) {
             eprintln!("Failed to spawn save task: {err}");
         }
@@ -435,9 +434,13 @@ pub(crate) async fn run_save_flow(
 /// save-progress panel. Snapshots the scene and payload on the UI
 /// thread, spawns a worker for the serialize + compress + disk write,
 /// and awaits its result over a oneshot delivered back through the event
-/// loop, so the event loop stays responsive throughout. On success the
-/// document is recorded on the UI thread and `true` is returned; a write
-/// failure surfaces the error dialog and returns `false`.
+/// loop, so the event loop stays responsive throughout.
+///
+/// Returns `true` only when the document's current state is the one that
+/// reached the disk. The event loop keeps running during the write, so
+/// the user can edit, change the printer, or open another file in that
+/// window; the file then holds none of that, and the document stays
+/// dirty. A write failure surfaces the error dialog and returns `false`.
 async fn save_to_target(
     doc: &Rc<SceneDocument>,
     dialogs: &Rc<DialogManager>,
@@ -446,7 +449,7 @@ async fn save_to_target(
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
 ) -> bool {
-    let Some((bundle, payload)) = scene_save::prepare_save_for_target(
+    let Some((bundle, payload, stamp)) = scene_save::prepare_save_for_target(
         doc,
         target.to_path_buf(),
         default_printer,
@@ -477,8 +480,10 @@ async fn save_to_target(
     save_progress.end();
     match outcome {
         Ok(Ok(())) => {
-            doc.record_project_save(payload, target.to_path_buf());
-            true
+            matches!(
+                doc.record_project_save_for(payload, target.to_path_buf(), stamp),
+                SaveRecorded::Clean,
+            )
         }
         Ok(Err(err)) => {
             show_save_error(dialogs, target, &err);
@@ -508,7 +513,7 @@ fn spawn_save_as_flow(
 ) {
     let default_stem = scene_export::default_export_stem(&ctrl.document());
     if let Err(err) = slint::spawn_local(async move {
-        let saved = run_save_as_flow(
+        let _ = run_save_as_flow(
             ctrl.document(),
             ctrl.dialogs(),
             ctrl.save_progress(),
@@ -517,11 +522,10 @@ fn spawn_save_as_flow(
             default_resin,
         )
         .await;
-        if saved {
-            // "Save As" relocates the document; refresh the title to
-            // the new file name.
-            ctrl.refresh_document_title();
-        }
+        // "Save As" relocates the document even when the write
+        // completed against a moved-on document and reported itself as
+        // not saved, so mirror the name whatever the outcome was.
+        ctrl.refresh_document_title();
     }) {
         eprintln!("Failed to spawn save dialog task: {err}");
     }

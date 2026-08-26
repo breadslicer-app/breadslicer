@@ -17,7 +17,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{LeafPayload, NodeId, Scene};
 
 use crate::scene_document::{
-    SceneDocument, SceneEdit, SceneEvent, SceneSubscription, UNDO_STACK_CAP,
+    SaveRecorded, SceneDocument, SceneEdit, SceneEvent, SceneSubscription, UNDO_STACK_CAP,
 };
 
 fn fixture_path() -> PathBuf {
@@ -598,5 +598,120 @@ mod unsaved_project_state_tests {
         assert_eq!(flips(&log), 1);
         doc.mark_saved(); // dirty -> clean
         assert_eq!(flips(&log), 2);
+    }
+}
+
+/// The save flow snapshots the payload on the UI thread, writes on a
+/// worker while the event loop stays live, then records the result.
+/// These drive that gap: whatever lands between the snapshot and the
+/// recording is NOT in the file that was written.
+#[cfg(test)]
+mod save_completion_guard_tests {
+    use super::*;
+
+    use sc_print_primitives::PrinterId;
+
+    fn target() -> PathBuf {
+        PathBuf::from("/tmp/dirty_fixture.scproj")
+    }
+
+    #[test]
+    fn an_edit_landing_during_the_write_keeps_the_document_dirty() {
+        let (doc, node_id) = loaded_document();
+        commit_step(&doc, node_id, 1.0);
+        let payload = doc.compose_project_payload(None, None);
+        let stamp = doc.save_stamp();
+
+        // The write is in flight from here.
+        commit_step(&doc, node_id, 2.0);
+        assert_eq!(
+            doc.record_project_save_for(payload, target(), stamp),
+            SaveRecorded::Drifted,
+        );
+
+        assert!(
+            doc.is_dirty(),
+            "the second edit is not in the written file, so it is unsaved",
+        );
+    }
+
+    #[test]
+    fn a_printer_change_during_the_write_survives_the_recording() {
+        let (doc, _) = loaded_document();
+        let payload = doc.compose_project_payload(None, None);
+        let stamp = doc.save_stamp();
+
+        let chosen = PrinterId::new("elegoo-mars-4").expect("valid id");
+        assert!(doc.set_selected_printer(Some(chosen.clone())));
+        assert_eq!(
+            doc.record_project_save_for(payload, target(), stamp),
+            SaveRecorded::Drifted,
+        );
+
+        assert_eq!(
+            doc.selected_printer(),
+            Some(chosen),
+            "the recording must not overwrite a choice made after the snapshot",
+        );
+        assert!(doc.is_dirty(), "that choice is not in the written file");
+    }
+
+    #[test]
+    fn an_undisturbed_write_records_the_project_and_cleans_the_document() {
+        let (doc, node_id) = loaded_document();
+        commit_step(&doc, node_id, 1.0);
+        let payload = doc.compose_project_payload(None, None);
+        let stamp = doc.save_stamp();
+
+        assert_eq!(
+            doc.record_project_save_for(payload, target(), stamp),
+            SaveRecorded::Clean,
+        );
+        assert!(!doc.is_dirty());
+        assert!(doc.is_project());
+        assert_eq!(doc.source_path(), Some(target()));
+    }
+
+    #[test]
+    fn a_drifted_write_still_becomes_the_save_target() {
+        let (doc, node_id) = loaded_document();
+        let payload = doc.compose_project_payload(None, None);
+        let stamp = doc.save_stamp();
+
+        commit_step(&doc, node_id, 1.0);
+        assert_eq!(
+            doc.record_project_save_for(payload, target(), stamp),
+            SaveRecorded::Drifted,
+        );
+        assert_eq!(
+            doc.source_path(),
+            Some(target()),
+            "a later Save overwrites the file this write produced",
+        );
+        assert!(doc.is_project());
+    }
+
+    #[test]
+    fn a_scene_replaced_during_the_write_is_not_relabeled() {
+        let (doc, _) = loaded_document();
+        let payload = doc.compose_project_payload(None, None);
+        let stamp = doc.save_stamp();
+
+        let replacement = PathBuf::from("/tmp/other_fixture.obj");
+        doc.install_graph(graph_with_one_object(), replacement.clone());
+        assert_eq!(
+            doc.record_project_save_for(payload, target(), stamp),
+            SaveRecorded::Replaced,
+        );
+
+        assert_eq!(
+            doc.source_path(),
+            Some(replacement),
+            "the replacement scene keeps its own path",
+        );
+        assert!(
+            !doc.is_project(),
+            "a plain mesh must not become the saved project",
+        );
     }
 }

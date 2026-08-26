@@ -28,7 +28,7 @@ use sc_scene::Scene;
 
 use crate::project_profiles::complete_embedded_documents;
 use crate::save_progress::SavePhase;
-use crate::scene_document::SceneDocument;
+use crate::scene_document::{SaveStamp, SceneDocument};
 use crate::slice_projection::resolve_current_schedule;
 
 /// Classification of a "Save" command against the document state.
@@ -205,23 +205,27 @@ pub(crate) fn save_project_to(
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
 ) -> Result<()> {
-    let (bundle, payload) =
+    let (bundle, payload, stamp) =
         prepare_save_for_target(doc, target.to_path_buf(), default_printer, default_resin)
             .ok_or_else(|| anyhow::anyhow!("No scene loaded"))?;
     write_bundle(&bundle, |_, _, _| {})?;
-    doc.record_project_save(payload, target.to_path_buf());
+    doc.record_project_save_for(payload, target.to_path_buf(), stamp);
     Ok(())
 }
 
 /// Builds the save payload and snapshots the scene into a `Send`
-/// [`SaveBundle`] for `target`. Returns the bundle together with the
-/// payload it carries; `None` when no scene is loaded.
+/// [`SaveBundle`] for `target`. Returns the bundle, the payload it
+/// carries, and the document state both were taken from; `None` when no
+/// scene is loaded.
+///
+/// The stamp is captured here so it cannot drift from the snapshot it
+/// describes: the caller hands it back once the write completes.
 pub(crate) fn prepare_save_for_target(
     doc: &SceneDocument,
     target: PathBuf,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
-) -> Option<(SaveBundle, ProjectPayload)> {
+) -> Option<(SaveBundle, ProjectPayload, SaveStamp)> {
     let payload = payload_for_save(
         doc,
         default_printer,
@@ -229,7 +233,7 @@ pub(crate) fn prepare_save_for_target(
         &ProfileLibraries::platform_default(),
     );
     let bundle = prepare_save(doc, payload.clone(), target)?;
-    Some((bundle, payload))
+    Some((bundle, payload, doc.save_stamp()))
 }
 
 #[cfg(test)]
