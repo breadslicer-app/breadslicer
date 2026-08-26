@@ -957,12 +957,12 @@ msgctxt "FileDialog"
 msgid "All supported files"
 msgstr ""
 
-#: src/wiring.rs:352 src/wiring.rs:567 src/wiring.rs:726
+#: src/wiring.rs:352 src/wiring.rs:598 src/wiring.rs:757
 msgctxt "FileDialog"
 msgid "3MF files"
 msgstr ""
 
-#: src/wiring.rs:353 src/wiring.rs:722
+#: src/wiring.rs:353 src/wiring.rs:753
 msgctxt "FileDialog"
 msgid "OBJ files"
 msgstr ""
@@ -977,61 +977,61 @@ msgctxt "FileDialog"
 msgid "All files"
 msgstr ""
 
-#: src/wiring.rs:576
+#: src/wiring.rs:607
 msgctxt "ErrorDialog"
 msgid "Failed to save"
 msgstr ""
 
-#: src/wiring.rs:577 src/wiring.rs:699 src/scene_loader.rs:576
-#: src/app_state.rs:737
+#: src/wiring.rs:608 src/wiring.rs:730 src/scene_loader.rs:580
+#: src/app_state.rs:738
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
 msgstr ""
 
-#: src/wiring.rs:698
+#: src/wiring.rs:729
 msgctxt "ErrorDialog"
 msgid "Failed to export"
 msgstr ""
 
-#: src/wiring.rs:714
+#: src/wiring.rs:745
 msgctxt "FileDialog"
 msgid "STL (binary)"
 msgstr ""
 
-#: src/wiring.rs:718
+#: src/wiring.rs:749
 msgctxt "FileDialog"
 msgid "STL (ASCII)"
 msgstr ""
 
-#: src/scene_loader.rs:501
+#: src/scene_loader.rs:505
 msgctxt "ErrorDialog"
 msgid "Failed to prepare the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:505
+#: src/scene_loader.rs:509
 msgctxt "ErrorDialog"
 msgid ""
 "The scene could not be handed to the graphics device. The 3D view shows the "
 "build plate alone until the next successful update."
 msgstr ""
 
-#: src/scene_loader.rs:527
+#: src/scene_loader.rs:531
 msgctxt "ErrorDialog"
 msgid "The cut is drawn without its fill until another layer is shown."
 msgstr ""
 
-#: src/scene_loader.rs:531
+#: src/scene_loader.rs:535
 msgctxt "ErrorDialog"
 msgid "The 3D view keeps its last image until it is resized."
 msgstr ""
 
-#: src/scene_loader.rs:535
+#: src/scene_loader.rs:539
 msgctxt "ErrorDialog"
 msgid "Failed to draw the 3D view"
 msgstr ""
 
-#: src/scene_loader.rs:575
+#: src/scene_loader.rs:579
 msgctxt "ErrorDialog"
 msgid "Failed to open 3D model"
 msgstr ""
@@ -1179,20 +1179,32 @@ msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""
 
-#: src/app_state.rs:445 src/lib.rs:263
+#: src/app_state.rs:446 src/lib.rs:270
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
 
-#: src/app_state.rs:736
+#: src/app_state.rs:737
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:740
+#: src/app_state.rs:741
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
+msgstr ""
+
+#: src/app_state.rs:989
+msgctxt "SaveDialog"
+msgid "Scene not replaced"
+msgstr ""
+
+#: src/app_state.rs:992
+msgctxt "SaveDialog"
+msgid ""
+"The scene changed while saving, so the file does not hold its current state. "
+"Nothing was replaced."
 msgstr ""
 
 #: src/repair_run.rs:179 src/repair_run.rs:213
@@ -1329,7 +1341,7 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:268
+#: src/lib.rs:275
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."

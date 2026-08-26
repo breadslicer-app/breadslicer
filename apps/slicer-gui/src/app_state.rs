@@ -39,6 +39,7 @@ use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
+use crate::wiring::SaveOutcome;
 
 mod replace_scene_policy {
     use crate::error_dialog::{KeepChangesOffer, ReplaceSceneChoice};
@@ -955,7 +956,10 @@ impl AppState {
     /// close the current scene and dispatch the new path. Cancellation
     /// of the Save As dialog or a write failure leaves the current
     /// scene intact (the failure dialog is surfaced by `run_save_flow`
-    /// itself).
+    /// itself). A write that completed against a document which moved
+    /// on in the meantime also leaves the scene intact, and says so:
+    /// the user asked to replace what they had saved, and that is not
+    /// what is on disk.
     fn save_then_open(self: &Rc<Self>, window_id: u64, path: PathBuf) {
         let controller = {
             let main_windows = self.main_windows.borrow();
@@ -970,16 +974,29 @@ impl AppState {
         let snapshot = self.prefs.snapshot();
         let app_weak = Rc::downgrade(self);
         if let Err(err) = slint::spawn_local(async move {
-            let saved = crate::wiring::run_save_flow(
+            let outcome = crate::wiring::run_save_flow(
                 doc,
-                dialogs,
+                dialogs.clone(),
                 save_progress,
                 snapshot.default_printer,
                 snapshot.default_resin,
             )
             .await;
-            if !saved {
-                return;
+            match outcome {
+                SaveOutcome::Saved => {}
+                SaveOutcome::MovedOn => {
+                    dialogs.show_info(
+                        &ctr!("SaveDialog", "Scene not replaced"),
+                        ctr!(
+                            "SaveDialog",
+                            "The scene changed while saving, so the file does not hold its current state. Nothing was replaced."
+                        )
+                        .to_string(),
+                        String::new(),
+                    );
+                    return;
+                }
+                SaveOutcome::NotSaved => return,
             }
             if let Some(app) = app_weak.upgrade() {
                 app.discard_then_open(window_id, path);

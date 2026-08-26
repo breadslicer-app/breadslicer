@@ -386,24 +386,51 @@ fn wire_save(ui: &MainWindow, ctrl: Rc<ViewportController>, prefs: Rc<Preference
     });
 }
 
+/// Result of one Save or Save As command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SaveOutcome {
+    /// The document's current state is on disk. The only outcome that
+    /// lets a chained caller discard the scene.
+    Saved,
+    /// A file was written, but from a snapshot the document has since
+    /// left behind. The event loop stays live during a write, so an
+    /// edit, a printer change or an Open can land after the snapshot
+    /// was taken; the file holds none of it.
+    MovedOn,
+    /// Nothing reached the disk: no scene, a cancelled dialog, or a
+    /// write failure that surfaced its own dialog.
+    NotSaved,
+}
+
+impl SaveOutcome {
+    /// Reads a completed write's recording as a save outcome.
+    fn from_recorded(recorded: SaveRecorded) -> Self {
+        match recorded {
+            SaveRecorded::Clean => Self::Saved,
+            // Both mean the file does not hold what the document holds
+            // now, whether it drifted or was swapped outright.
+            SaveRecorded::Drifted | SaveRecorded::Replaced => Self::MovedOn,
+        }
+    }
+}
+
 /// Orchestrates one "Save" command: overwrite the document's project
 /// file, fall back to the Save As flow when there is none, and treat
 /// a clean project as already saved without touching the disk.
-/// Returns `true` only when the document's current state is on disk
-/// by the time the flow ends (so a chained "Save & Open" caller knows
-/// it's safe to discard the current scene); cancellation of the Save
-/// As dialog and write failures return `false` and surface their own
-/// dialogs.
+/// Reports [`SaveOutcome::Saved`] only when the document's current
+/// state is on disk by the time the flow ends; cancellation of the Save
+/// As dialog and write failures surface their own dialogs and report
+/// nothing written.
 pub(crate) async fn run_save_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     save_progress: Rc<SaveProgressPanel>,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
-) -> bool {
+) -> SaveOutcome {
     match scene_save::decide_save_dispatch(&doc) {
-        SaveDispatch::NoScene => false,
-        SaveDispatch::AlreadySaved => true,
+        SaveDispatch::NoScene => SaveOutcome::NotSaved,
+        SaveDispatch::AlreadySaved => SaveOutcome::Saved,
         SaveDispatch::OverwriteProject(target) => {
             save_to_target(
                 &doc,
@@ -436,11 +463,12 @@ pub(crate) async fn run_save_flow(
 /// and awaits its result over a oneshot delivered back through the event
 /// loop, so the event loop stays responsive throughout.
 ///
-/// Returns `true` only when the document's current state is the one that
-/// reached the disk. The event loop keeps running during the write, so
-/// the user can edit, change the printer, or open another file in that
-/// window; the file then holds none of that, and the document stays
-/// dirty. A write failure surfaces the error dialog and returns `false`.
+/// Reports [`SaveOutcome::Saved`] only when the document's current state
+/// is the one that reached the disk. The event loop keeps running during
+/// the write, so the user can edit, change the printer, or open another
+/// file in that window; the file then holds none of that, the document
+/// stays dirty, and the outcome is [`SaveOutcome::MovedOn`]. A write
+/// failure surfaces the error dialog.
 async fn save_to_target(
     doc: &Rc<SceneDocument>,
     dialogs: &Rc<DialogManager>,
@@ -448,7 +476,7 @@ async fn save_to_target(
     target: &Path,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
-) -> bool {
+) -> SaveOutcome {
     let Some((bundle, payload, stamp)) = scene_save::prepare_save_for_target(
         doc,
         target.to_path_buf(),
@@ -457,7 +485,7 @@ async fn save_to_target(
     ) else {
         // The menu gates this, but a stale callback could still race a
         // close: no scene means nothing to write.
-        return false;
+        return SaveOutcome::NotSaved;
     };
 
     save_progress.begin();
@@ -479,19 +507,18 @@ async fn save_to_target(
     let outcome = rx.await;
     save_progress.end();
     match outcome {
-        Ok(Ok(())) => {
-            matches!(
-                doc.record_project_save_for(payload, target.to_path_buf(), stamp),
-                SaveRecorded::Clean,
-            )
-        }
+        Ok(Ok(())) => SaveOutcome::from_recorded(doc.record_project_save_for(
+            payload,
+            target.to_path_buf(),
+            stamp,
+        )),
         Ok(Err(err)) => {
             show_save_error(dialogs, target, &err);
-            false
+            SaveOutcome::NotSaved
         }
         // The sender dropped without sending (event loop gone at
         // shutdown): treat as not saved.
-        Err(_canceled) => false,
+        Err(_canceled) => SaveOutcome::NotSaved,
     }
 }
 
@@ -533,9 +560,9 @@ fn spawn_save_as_flow(
 
 /// Orchestrates one "Save As" command: show the file-save dialog
 /// (seeded with the source stem and the `.3mf` extension), validate
-/// the picked name, and write the project. Returns `true` only when
-/// a file was actually written; cancellation, wrong extensions, and
-/// write failures all return `false` and surface their own dialogs.
+/// the picked name, and write the project. Cancellation, wrong
+/// extensions, and write failures report nothing written and surface
+/// their own dialogs.
 async fn run_save_as_flow(
     doc: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
@@ -543,14 +570,14 @@ async fn run_save_as_flow(
     default_stem: Option<String>,
     default_printer: Option<PrinterId>,
     default_resin: Option<MaterialId>,
-) -> bool {
+) -> SaveOutcome {
     let dispatch = scene_save::decide_save_target(pick_save_target(default_stem).await);
     match dispatch {
-        SaveTargetDispatch::Cancelled => false,
+        SaveTargetDispatch::Cancelled => SaveOutcome::NotSaved,
         SaveTargetDispatch::WrongExtension(target) => {
             let err = anyhow::anyhow!("Project files are saved as .3mf packages.");
             show_save_error(&dialogs, &target, &err);
-            false
+            SaveOutcome::NotSaved
         }
         SaveTargetDispatch::Ready(target) => {
             save_to_target(
@@ -745,6 +772,37 @@ async fn pick_export_target(
         dialog = dialog.set_file_name(format!("{stem}.{default_extension}"));
     }
     dialog.save_file().await.map(|h| h.path().to_path_buf())
+}
+
+/// The save flow's promise to a chained caller: only an undisturbed
+/// write lets that caller discard the scene it just saved.
+#[cfg(test)]
+mod save_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn a_clean_recording_is_the_only_saved_outcome() {
+        assert_eq!(
+            SaveOutcome::from_recorded(SaveRecorded::Clean),
+            SaveOutcome::Saved,
+        );
+    }
+
+    #[test]
+    fn a_drifted_recording_is_not_saved() {
+        assert_eq!(
+            SaveOutcome::from_recorded(SaveRecorded::Drifted),
+            SaveOutcome::MovedOn,
+        );
+    }
+
+    #[test]
+    fn a_replaced_document_is_not_saved() {
+        assert_eq!(
+            SaveOutcome::from_recorded(SaveRecorded::Replaced),
+            SaveOutcome::MovedOn,
+        );
+    }
 }
 
 #[cfg(test)]
