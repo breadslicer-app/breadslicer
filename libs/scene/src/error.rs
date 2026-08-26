@@ -56,6 +56,12 @@ pub enum SceneError {
     NodeSlotOccupied { id: NodeId },
     /// A mutator that expects a scene root was given a non-root node.
     NotARoot { node_id: NodeId },
+    /// A [`LeafAttachment`](crate::node::LeafAttachment) named a
+    /// position past the end of the list it anchors into: the roots
+    /// list for `Root`, the parent's children for `Parent`. Reached
+    /// when an attachment recorded by an earlier removal is redeemed
+    /// against a scene that has since shrunk that list.
+    AttachmentPositionOutOfRange { position: usize, len: usize },
     /// A mutator that expects a `Leaf(MeshResource(_))` was given a
     /// leaf carrying an inline mesh instead.
     NotAMeshResourceLeaf { node_id: NodeId },
@@ -144,6 +150,10 @@ impl fmt::Display for SceneError {
             Self::NotARoot { node_id } => {
                 write!(f, "node {} is not a scene root", node_id.get())
             }
+            Self::AttachmentPositionOutOfRange { position, len } => write!(
+                f,
+                "attachment position {position} is past the end of a list of {len}"
+            ),
             Self::NotAMeshResourceLeaf { node_id } => write!(
                 f,
                 "node {} is a leaf but not a mesh-resource leaf",

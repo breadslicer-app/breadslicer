@@ -81,16 +81,18 @@ impl SubtreeResourceId {
     }
 }
 
-/// Where a leaf sits in the scene graph: as a scene root, or as a
-/// child of another node at a specific position in the parent's
-/// children list. Recorded by [`Scene::remove_leaf`]
-/// alongside the leaf's payload and transform so the inverse
-/// [`Scene::install_leaf_at`] can re-attach the leaf
-/// at the exact same place, preserving sibling order under the
-/// parent.
+/// Where a leaf sits in the scene graph: at a position in the scene's
+/// roots list, or at a position in another node's children list.
+/// Recorded by [`Scene::remove_leaf`] alongside the leaf's payload and
+/// transform so the inverse [`Scene::install_leaf_at`] can re-attach
+/// the leaf at the exact same place, preserving root and sibling order.
+///
+/// A position is measured against the list as it stood when the
+/// attachment was recorded, so redeeming one against a scene that has
+/// since shrunk that list is refused rather than clamped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LeafAttachment {
-    Root,
+    Root { position: usize },
     Parent { parent: NodeId, position: usize },
 }
 

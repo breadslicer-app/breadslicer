@@ -837,6 +837,33 @@ impl Scene {
         Ok((mesh, local_transform))
     }
 
+    /// Mint the attachment that [`Self::install_leaf_at`] needs to put
+    /// the leaf at `id` back where it sits now.
+    ///
+    /// `None` for a dangling id, for a non-leaf node, and for a leaf
+    /// that neither has a parent nor appears in the roots list.
+    pub fn attachment_of(&self, id: NodeId) -> Option<LeafAttachment> {
+        let node = self.node(id)?;
+        if !matches!(node.kind, NodeKind::Leaf(_)) {
+            return None;
+        }
+        match self.parent_of(id) {
+            Some(parent) => {
+                let position = self
+                    .node(parent)?
+                    .kind
+                    .children()
+                    .iter()
+                    .position(|c| *c == id)?;
+                Some(LeafAttachment::Parent { parent, position })
+            }
+            None => {
+                let position = self.roots.iter().position(|&r| r == id)?;
+                Some(LeafAttachment::Root { position })
+            }
+        }
+    }
+
     /// Tombstone any leaf, returning the [`LeafAttachment`],
     /// [`LeafPayload`], and [`Transform3D`] needed to re-install it
     /// identically via [`Self::install_leaf_at`].
@@ -845,8 +872,8 @@ impl Scene {
     /// - inline-mesh and mesh-resource leaves alike, returning the
     ///   payload as-is;
     /// - root and parented leaves alike, with the attachment
-    ///   recording which case applied and, for parented leaves,
-    ///   the position in the parent's children list.
+    ///   recording which case applied and the position the leaf held
+    ///   in the roots list or in the parent's children list.
     ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if no live node lives at
@@ -879,13 +906,13 @@ impl Scene {
             self.parents[id.index()] = None;
             LeafAttachment::Parent { parent, position }
         } else {
-            let root_pos = self
+            let position = self
                 .roots
                 .iter()
                 .position(|&r| r == id)
                 .ok_or(SceneError::NotARoot { node_id: id })?;
-            self.roots.remove(root_pos);
-            LeafAttachment::Root
+            self.roots.remove(position);
+            LeafAttachment::Root { position }
         };
         let removed = self.nodes[id.index()]
             .take()
@@ -906,11 +933,9 @@ impl Scene {
 
     /// Re-install a leaf at a previously-allocated `id`, with the
     /// given payload, attachment, and transform. The inverse of
-    /// [`Self::remove_leaf`]: re-attaches the leaf at the same
-    /// parent and the same position in the parent's children list
-    /// (so the sibling order is preserved) or restores its root
-    /// status, matching the attachment that the paired remove
-    /// captured.
+    /// [`Self::remove_leaf`]: re-attaches the leaf at the position the
+    /// attachment records, in the roots list or under the same parent,
+    /// so root and sibling order come back as they were.
     ///
     /// `id` must come from [`Self::allocate_unbound_node_id`].
     ///
@@ -923,12 +948,11 @@ impl Scene {
     ///   references a missing mesh resource.
     /// - [`SceneError::NotABranch`] if the attachment is `Parent`
     ///   and the parent is a leaf or reference.
+    /// - [`SceneError::AttachmentPositionOutOfRange`] if the
+    ///   attachment's position is past the end of the roots list, or
+    ///   of the parent's children list.
     ///
-    /// On error the scene is unchanged. The position field of a
-    /// `Parent` attachment is not bounds-checked here: paired use
-    /// with the position recorded by [`Self::remove_leaf`] keeps it
-    /// valid, but passing a position greater than the parent's
-    /// current children count panics inside `Vec::insert`.
+    /// On error the scene is unchanged.
     pub fn install_leaf_at(
         &mut self,
         id: NodeId,
@@ -948,14 +972,30 @@ impl Scene {
         {
             return Err(SceneError::DanglingMeshResource { id: rid });
         }
-        if let LeafAttachment::Parent { parent, .. } = attachment {
-            let parent_node = self
-                .node(parent)
-                .ok_or(SceneError::DanglingNodeId { id: parent })?;
-            match parent_node.kind {
-                NodeKind::Group { .. } | NodeKind::Csg { .. } => {}
-                NodeKind::Leaf(_) | NodeKind::Reference { .. } => {
-                    return Err(SceneError::NotABranch { node_id: parent });
+        match attachment {
+            LeafAttachment::Root { position } => {
+                if position > self.roots.len() {
+                    return Err(SceneError::AttachmentPositionOutOfRange {
+                        position,
+                        len: self.roots.len(),
+                    });
+                }
+            }
+            LeafAttachment::Parent { parent, position } => {
+                let parent_node = self
+                    .node(parent)
+                    .ok_or(SceneError::DanglingNodeId { id: parent })?;
+                let children = match &parent_node.kind {
+                    NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
+                    NodeKind::Leaf(_) | NodeKind::Reference { .. } => {
+                        return Err(SceneError::NotABranch { node_id: parent });
+                    }
+                };
+                if position > children.len() {
+                    return Err(SceneError::AttachmentPositionOutOfRange {
+                        position,
+                        len: children.len(),
+                    });
                 }
             }
         }
@@ -965,8 +1005,8 @@ impl Scene {
             kind: NodeKind::Leaf(payload),
         });
         match attachment {
-            LeafAttachment::Root => {
-                self.roots.push(id);
+            LeafAttachment::Root { position } => {
+                self.roots.insert(position, id);
             }
             LeafAttachment::Parent { parent, position } => {
                 let parent_node = self.nodes[parent.index()]
@@ -2244,7 +2284,7 @@ mod scene_construction_tests {
             local_transform: transform,
             ..
         } = g.remove_leaf(leaf).unwrap();
-        assert_eq!(attachment, LeafAttachment::Root);
+        assert_eq!(attachment, LeafAttachment::Root { position: 0 });
         match payload {
             LeafPayload::Mesh(returned) => {
                 assert!(std::ptr::eq(Arc::as_ptr(&arc), Arc::as_ptr(&returned)));
@@ -2269,7 +2309,7 @@ mod scene_construction_tests {
             payload,
             ..
         } = g.remove_leaf(leaf).unwrap();
-        assert_eq!(attachment, LeafAttachment::Root);
+        assert_eq!(attachment, LeafAttachment::Root { position: 0 });
         assert!(matches!(payload, LeafPayload::MeshResource(r) if r == rid));
     }
 
@@ -2418,6 +2458,176 @@ mod scene_construction_tests {
         assert_eq!(g, snapshot);
     }
 
+    fn root_inline_leaf(g: &mut Scene) -> NodeId {
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        leaf
+    }
+
+    #[test]
+    fn attachment_of_reports_the_position_a_root_leaf_holds() {
+        let mut g = Scene::new();
+        let _a = root_inline_leaf(&mut g);
+        let b = root_inline_leaf(&mut g);
+        assert_eq!(
+            g.attachment_of(b),
+            Some(LeafAttachment::Root { position: 1 })
+        );
+    }
+
+    #[test]
+    fn attachment_of_reports_the_position_a_parented_leaf_holds() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let mut children = Vec::new();
+        for _ in 0..2 {
+            let leaf = g
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(unit_triangle())),
+                )
+                .unwrap();
+            g.add_child(root, leaf).unwrap();
+            children.push(leaf);
+        }
+        assert_eq!(
+            g.attachment_of(children[1]),
+            Some(LeafAttachment::Parent {
+                parent: root,
+                position: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn attachment_of_is_none_for_a_non_leaf_a_dangling_id_and_a_detached_leaf() {
+        let mut g = Scene::new();
+        let group = g.add_group(None, Transform3D::Identity);
+        g.add_root(group).unwrap();
+        assert_eq!(g.attachment_of(group), None);
+        let bogus = NodeId(NonZeroU32::new(9999).unwrap());
+        assert_eq!(g.attachment_of(bogus), None);
+        let detached = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        assert_eq!(g.attachment_of(detached), None);
+    }
+
+    #[test]
+    fn install_leaf_at_restores_a_head_root_to_its_place_among_the_roots() {
+        // Scene equality is the order-sensitive oracle here: `roots`
+        // is a `Vec<NodeId>`, so a permuted roots list is a scene
+        // inequality.
+        let mut g = Scene::new();
+        let a = root_inline_leaf(&mut g);
+        let _b = root_inline_leaf(&mut g);
+        let _c = root_inline_leaf(&mut g);
+        let snapshot = g.clone();
+        let removed = g.remove_leaf(a).unwrap();
+        g.install_leaf_at(
+            a,
+            removed.attachment,
+            removed.payload,
+            removed.local_transform,
+            removed.meta,
+        )
+        .unwrap();
+        assert_eq!(g, snapshot);
+    }
+
+    #[test]
+    fn install_leaf_at_restores_a_middle_root_to_its_place_among_the_roots() {
+        let mut g = Scene::new();
+        let _a = root_inline_leaf(&mut g);
+        let b = root_inline_leaf(&mut g);
+        let _c = root_inline_leaf(&mut g);
+        let snapshot = g.clone();
+        let removed = g.remove_leaf(b).unwrap();
+        g.install_leaf_at(
+            b,
+            removed.attachment,
+            removed.payload,
+            removed.local_transform,
+            removed.meta,
+        )
+        .unwrap();
+        assert_eq!(g, snapshot);
+    }
+
+    #[test]
+    fn install_leaf_at_refuses_a_parent_position_past_the_children_count() {
+        let mut g = Scene::new();
+        let root = g.add_group(None, Transform3D::Identity);
+        g.add_root(root).unwrap();
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(unit_triangle())),
+            )
+            .unwrap();
+        g.add_child(root, leaf).unwrap();
+        let removed = g.remove_leaf(leaf).unwrap();
+        let before = g.clone();
+        assert_eq!(
+            g.install_leaf_at(
+                leaf,
+                LeafAttachment::Parent {
+                    parent: root,
+                    position: 5,
+                },
+                removed.payload,
+                removed.local_transform,
+                removed.meta,
+            ),
+            Err(SceneError::AttachmentPositionOutOfRange {
+                position: 5,
+                len: 0,
+            })
+        );
+        assert_eq!(g, before);
+    }
+
+    #[test]
+    fn install_leaf_at_refuses_a_root_position_past_the_roots_count() {
+        // A recorded root position goes stale when another root is
+        // removed before the attachment is redeemed.
+        let mut g = Scene::new();
+        let _a = root_inline_leaf(&mut g);
+        let b = root_inline_leaf(&mut g);
+        let c = root_inline_leaf(&mut g);
+        let removed_c = g.remove_leaf(c).unwrap();
+        assert_eq!(removed_c.attachment, LeafAttachment::Root { position: 2 });
+        g.remove_leaf(b).unwrap();
+        let before = g.clone();
+        assert_eq!(
+            g.install_leaf_at(
+                c,
+                removed_c.attachment,
+                removed_c.payload,
+                removed_c.local_transform,
+                removed_c.meta,
+            ),
+            Err(SceneError::AttachmentPositionOutOfRange {
+                position: 2,
+                len: 1,
+            })
+        );
+        assert_eq!(g, before);
+    }
+
     #[test]
     fn remove_leaf_returns_the_meta_and_install_leaf_at_restores_it() {
         let mut g = Scene::new();
@@ -2464,7 +2674,7 @@ mod scene_construction_tests {
         assert_eq!(
             g.install_leaf_at(
                 leaf,
-                LeafAttachment::Root,
+                LeafAttachment::Root { position: 1 },
                 LeafPayload::Mesh(Arc::new(unit_triangle())),
                 Transform3D::Identity,
                 None,
@@ -2483,7 +2693,7 @@ mod scene_construction_tests {
         assert_eq!(
             g.install_leaf_at(
                 id,
-                LeafAttachment::Root,
+                LeafAttachment::Root { position: 0 },
                 LeafPayload::MeshResource(bogus_rid),
                 Transform3D::Identity,
                 None,

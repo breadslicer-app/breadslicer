@@ -157,6 +157,18 @@ fn display_not_a_root() {
 }
 
 #[test]
+fn display_attachment_position_out_of_range() {
+    let s = SceneError::AttachmentPositionOutOfRange {
+        position: 4,
+        len: 2,
+    }
+    .to_string();
+    assert!(s.contains("attachment position"), "{s}");
+    assert!(s.contains("4"), "{s}");
+    assert!(s.contains("2"), "{s}");
+}
+
+#[test]
 fn display_not_a_mesh_resource_leaf() {
     let s = SceneError::NotAMeshResourceLeaf { node_id: node(16) }.to_string();
     assert!(s.contains("not a mesh-resource leaf"), "{s}");

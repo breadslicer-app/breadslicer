@@ -358,19 +358,7 @@ impl SceneEdit {
                 return None;
             }
         };
-        let attachment = if let Some(parent) = graph.parent_of(node_id) {
-            let parent_node = graph.node(parent)?;
-            let children = match &parent_node.kind {
-                NodeKind::Group { children } | NodeKind::Csg { children, .. } => children,
-                NodeKind::Leaf(_) | NodeKind::Reference { .. } => return None,
-            };
-            let position = children.iter().position(|c| *c == node_id)?;
-            LeafAttachment::Parent { parent, position }
-        } else if graph.roots().contains(&node_id) {
-            LeafAttachment::Root
-        } else {
-            return None;
-        };
+        let attachment = graph.attachment_of(node_id)?;
         let remove_leaf = SceneEdit::RemoveLeaf {
             node_id,
             attachment,
@@ -1155,14 +1143,14 @@ mod scene_edit_tests {
         let nid = g.allocate_unbound_node_id();
         let add = SceneEdit::AddLeaf {
             node_id: nid,
-            attachment: LeafAttachment::Root,
+            attachment: LeafAttachment::Root { position: 0 },
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
             meta: None,
         };
         let remove = SceneEdit::RemoveLeaf {
             node_id: nid,
-            attachment: LeafAttachment::Root,
+            attachment: LeafAttachment::Root { position: 0 },
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
             meta: None,
@@ -1224,7 +1212,7 @@ mod scene_edit_tests {
         let arc = triangle_arc();
         let edit = SceneEdit::AddLeaf {
             node_id: nid,
-            attachment: LeafAttachment::Root,
+            attachment: LeafAttachment::Root { position: 0 },
             payload: LeafPayload::Mesh(Arc::clone(&arc)),
             local_transform: Transform3D::Identity,
             meta: None,
@@ -1275,7 +1263,7 @@ mod scene_edit_tests {
         let snapshot_before = g.clone();
         let edit = SceneEdit::AddLeaf {
             node_id: nid,
-            attachment: LeafAttachment::Root,
+            attachment: LeafAttachment::Root { position: 0 },
             payload: LeafPayload::Mesh(triangle_arc()),
             local_transform: Transform3D::Identity,
             meta: None,
@@ -1415,7 +1403,7 @@ mod scene_edit_tests {
             &parts[0],
             SceneEdit::RemoveLeaf { node_id, attachment, meta, .. }
                 if *node_id == leaf
-                    && *attachment == LeafAttachment::Root
+                    && *attachment == (LeafAttachment::Root { position: 0 })
                     && meta.as_ref().and_then(|m| m.name.as_deref()) == Some("Named")
         ));
         let SceneEdit::RemoveMeshResource { rid: out_rid, mesh } = &parts[1] else {
@@ -1437,5 +1425,61 @@ mod scene_edit_tests {
         }
         let foreign = scratch.allocate_unbound_node_id();
         assert!(SceneEdit::remove_leaf_with_gc(&g, foreign).is_none());
+    }
+
+    fn root_inline_leaf(g: &mut Scene) -> NodeId {
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(triangle_arc()),
+            )
+            .unwrap();
+        g.add_root(leaf).unwrap();
+        leaf
+    }
+
+    #[test]
+    fn remove_leaf_with_gc_and_its_inverse_restore_a_head_root_position() {
+        // Delete then undo in the GUI, on a scene with several root
+        // leaves. Scene equality catches a permuted roots list.
+        let mut g = Scene::new();
+        let rid_a = g.add_mesh_resource_arc(triangle_arc());
+        let a = root_resource_leaf(&mut g, rid_a);
+        let rid_b = g.add_mesh_resource_arc(triangle_arc());
+        let _b = root_resource_leaf(&mut g, rid_b);
+        let rid_c = g.add_mesh_resource_arc(triangle_arc());
+        let _c = root_resource_leaf(&mut g, rid_c);
+        let snapshot = g.clone();
+        let edit = SceneEdit::remove_leaf_with_gc(&g, a).expect("a is a leaf");
+        edit.apply_to_scene(&mut g).expect("apply");
+        edit.inverse().apply_to_scene(&mut g).expect("undo");
+        assert_eq!(g, snapshot);
+    }
+
+    #[test]
+    fn a_compound_whose_tail_is_refused_restores_root_order() {
+        let mut g = Scene::new();
+        let a = root_inline_leaf(&mut g);
+        let _b = root_inline_leaf(&mut g);
+        let _c = root_inline_leaf(&mut g);
+        let mut scratch = Scene::new();
+        for _ in 0..8 {
+            scratch.add_group(None, Transform3D::Identity);
+        }
+        let foreign = scratch.allocate_unbound_node_id();
+        let snapshot = g.clone();
+        let err = SceneEdit::Compound(vec![
+            SceneEdit::remove_leaf_with_gc(&g, a).expect("a is a leaf"),
+            SceneEdit::SetLocalTransform {
+                node_id: foreign,
+                before: Transform3D::Identity,
+                after: Transform3D::Affine(AffineTransform3D::from_translation([1.0, 0.0, 0.0])),
+            },
+        ])
+        .apply_to_scene(&mut g)
+        .unwrap_err();
+        assert!(matches!(err, SceneError::DanglingNodeId { id } if id == foreign));
+        assert_eq!(g, snapshot);
     }
 }
