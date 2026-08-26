@@ -441,18 +441,27 @@ impl Scene {
     }
 
     /// Swap the mesh stored at the live resource slot `rid` for
-    /// `mesh`, returning the `Arc` that lived there.
+    /// `mesh`, but only while that slot still holds `expected`.
+    ///
+    /// The caller states what it believes is there, so a swap
+    /// computed against a mesh the scene has since moved past is
+    /// refused instead of overwriting the newer one. `expected` is
+    /// matched by pointer identity, the same identity
+    /// [`Self::find_mesh_resource_by_arc`] resolves.
     ///
     /// Errors:
     /// - [`SceneError::DanglingMeshResource`] if no live resource
     ///   lives at `rid`.
+    /// - [`SceneError::MeshResourceMismatch`] if the slot holds an
+    ///   `Arc` other than `expected`.
     ///
     /// On error the scene is unchanged.
     pub fn replace_mesh_resource(
         &mut self,
         rid: MeshResourceId,
+        expected: &Arc<IndexedMesh>,
         mesh: Arc<IndexedMesh>,
-    ) -> Result<Arc<IndexedMesh>, SceneError> {
+    ) -> Result<(), SceneError> {
         let Some(slot) = self
             .mesh_resources
             .get_mut(rid.index())
@@ -460,29 +469,47 @@ impl Scene {
         else {
             return Err(SceneError::DanglingMeshResource { id: rid });
         };
-        Ok(std::mem::replace(slot, mesh))
+        if !Arc::ptr_eq(slot, expected) {
+            return Err(SceneError::MeshResourceMismatch { id: rid });
+        }
+        *slot = mesh;
+        Ok(())
     }
 
     /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `id` for
-    /// `mesh`, returning the `Arc` that lived there.
+    /// `mesh`, but only while that leaf still holds `expected`.
+    ///
+    /// The caller states what it believes is there, so a swap
+    /// computed against a mesh the scene has since moved past is
+    /// refused instead of overwriting the newer one. `expected` is
+    /// matched by pointer identity.
     ///
     /// Errors:
     /// - [`SceneError::DanglingNodeId`] if no live node lives at `id`.
     /// - [`SceneError::NotALeaf`] for Group, Csg, and Reference nodes.
     /// - [`SceneError::NotAnInlineMeshLeaf`] for a leaf that stores
     ///   its mesh by resource id.
+    /// - [`SceneError::InlineMeshMismatch`] if the leaf holds an
+    ///   `Arc` other than `expected`.
     ///
     /// On error the scene is unchanged.
     pub fn replace_inline_leaf_mesh(
         &mut self,
         id: NodeId,
+        expected: &Arc<IndexedMesh>,
         mesh: Arc<IndexedMesh>,
-    ) -> Result<Arc<IndexedMesh>, SceneError> {
+    ) -> Result<(), SceneError> {
         let Some(node) = self.nodes.get_mut(id.index()).and_then(Option::as_mut) else {
             return Err(SceneError::DanglingNodeId { id });
         };
         match &mut node.kind {
-            NodeKind::Leaf(LeafPayload::Mesh(arc)) => Ok(std::mem::replace(arc, mesh)),
+            NodeKind::Leaf(LeafPayload::Mesh(arc)) => {
+                if !Arc::ptr_eq(arc, expected) {
+                    return Err(SceneError::InlineMeshMismatch { node_id: id });
+                }
+                *arc = mesh;
+                Ok(())
+            }
             NodeKind::Leaf(LeafPayload::MeshResource(_)) => {
                 Err(SceneError::NotAnInlineMeshLeaf { node_id: id })
             }
@@ -2019,13 +2046,13 @@ mod scene_construction_tests {
     }
 
     #[test]
-    fn replace_mesh_resource_swaps_the_arc_and_returns_the_previous_one() {
+    fn replace_mesh_resource_swaps_the_arc() {
         let mut g = Scene::new();
         let before = Arc::new(unit_triangle());
         let rid = g.add_mesh_resource_arc(Arc::clone(&before));
         let after = Arc::new(unit_triangle());
-        let returned = g.replace_mesh_resource(rid, Arc::clone(&after)).unwrap();
-        assert!(Arc::ptr_eq(&returned, &before));
+        g.replace_mesh_resource(rid, &before, Arc::clone(&after))
+            .unwrap();
         assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &after));
     }
 
@@ -2033,14 +2060,43 @@ mod scene_construction_tests {
     fn replace_mesh_resource_on_dangling_id_errors() {
         let mut g = Scene::new();
         let bogus = MeshResourceId(NonZeroU32::new(99).unwrap());
+        let expected = Arc::new(unit_triangle());
         assert_eq!(
-            g.replace_mesh_resource(bogus, Arc::new(unit_triangle())),
+            g.replace_mesh_resource(bogus, &expected, Arc::new(unit_triangle())),
             Err(SceneError::DanglingMeshResource { id: bogus })
         );
     }
 
     #[test]
-    fn replace_inline_leaf_mesh_swaps_the_arc_and_returns_the_previous_one() {
+    fn replace_mesh_resource_refuses_an_expected_arc_the_slot_moved_past() {
+        let mut g = Scene::new();
+        let original = Arc::new(unit_triangle());
+        let rid = g.add_mesh_resource_arc(Arc::clone(&original));
+        let current = Arc::new(unit_triangle());
+        g.replace_mesh_resource(rid, &original, Arc::clone(&current))
+            .unwrap();
+        assert_eq!(
+            g.replace_mesh_resource(rid, &original, Arc::new(unit_triangle())),
+            Err(SceneError::MeshResourceMismatch { id: rid })
+        );
+        assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &current));
+    }
+
+    #[test]
+    fn replace_mesh_resource_matches_the_expected_arc_by_pointer_not_content() {
+        let mut g = Scene::new();
+        let stored = Arc::new(unit_triangle());
+        let rid = g.add_mesh_resource_arc(Arc::clone(&stored));
+        let content_equal = Arc::new((*stored).clone());
+        assert_eq!(
+            g.replace_mesh_resource(rid, &content_equal, Arc::new(unit_triangle())),
+            Err(SceneError::MeshResourceMismatch { id: rid })
+        );
+        assert!(Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &stored));
+    }
+
+    #[test]
+    fn replace_inline_leaf_mesh_swaps_the_arc() {
         let mut g = Scene::new();
         let before = Arc::new(unit_triangle());
         let leaf = g
@@ -2051,24 +2107,44 @@ mod scene_construction_tests {
             )
             .unwrap();
         let after = Arc::new(unit_triangle());
-        let returned = g
-            .replace_inline_leaf_mesh(leaf, Arc::clone(&after))
+        g.replace_inline_leaf_mesh(leaf, &before, Arc::clone(&after))
             .unwrap();
-        assert!(Arc::ptr_eq(&returned, &before));
         assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &after));
+    }
+
+    #[test]
+    fn replace_inline_leaf_mesh_refuses_an_expected_arc_the_leaf_moved_past() {
+        let mut g = Scene::new();
+        let original = Arc::new(unit_triangle());
+        let leaf = g
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::clone(&original)),
+            )
+            .unwrap();
+        let current = Arc::new(unit_triangle());
+        g.replace_inline_leaf_mesh(leaf, &original, Arc::clone(&current))
+            .unwrap();
+        assert_eq!(
+            g.replace_inline_leaf_mesh(leaf, &original, Arc::new(unit_triangle())),
+            Err(SceneError::InlineMeshMismatch { node_id: leaf })
+        );
+        assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &current));
     }
 
     #[test]
     fn replace_inline_leaf_mesh_rejects_every_non_inline_target_unchanged() {
         let mut g = Scene::new();
         let dangling = NodeId(NonZeroU32::new(99).unwrap());
+        let expected = Arc::new(unit_triangle());
         assert_eq!(
-            g.replace_inline_leaf_mesh(dangling, Arc::new(unit_triangle())),
+            g.replace_inline_leaf_mesh(dangling, &expected, Arc::new(unit_triangle())),
             Err(SceneError::DanglingNodeId { id: dangling })
         );
         let group = g.add_group(None, Transform3D::Identity);
         assert_eq!(
-            g.replace_inline_leaf_mesh(group, Arc::new(unit_triangle())),
+            g.replace_inline_leaf_mesh(group, &expected, Arc::new(unit_triangle())),
             Err(SceneError::NotALeaf { node_id: group })
         );
         let shared = Arc::new(unit_triangle());
@@ -2077,7 +2153,7 @@ mod scene_construction_tests {
             .add_leaf(None, Transform3D::Identity, LeafPayload::MeshResource(rid))
             .unwrap();
         assert_eq!(
-            g.replace_inline_leaf_mesh(backed, Arc::new(unit_triangle())),
+            g.replace_inline_leaf_mesh(backed, &shared, Arc::new(unit_triangle())),
             Err(SceneError::NotAnInlineMeshLeaf { node_id: backed })
         );
         // The refusals left the resource-backed storage untouched.

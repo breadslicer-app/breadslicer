@@ -68,6 +68,12 @@ pub enum SceneError {
     /// A mutator that was asked to remove a mesh resource that at
     /// least one live leaf still references.
     MeshResourceInUse { id: MeshResourceId },
+    /// A conditional swap named the mesh it expected to find at `id`,
+    /// but the slot holds a different `Arc`.
+    MeshResourceMismatch { id: MeshResourceId },
+    /// A conditional swap named the inline mesh it expected to find at
+    /// `node_id`, but the leaf holds a different `Arc`.
+    InlineMeshMismatch { node_id: NodeId },
     /// A walk or bake that refuses CSG met an unevaluated CSG node.
     UnevaluatedCsg { node_id: NodeId },
     /// A structural walk that refuses references met a `Reference`
@@ -155,6 +161,16 @@ impl fmt::Display for SceneError {
                 f,
                 "mesh resource {} is still referenced by at least one leaf",
                 id.get()
+            ),
+            Self::MeshResourceMismatch { id } => write!(
+                f,
+                "mesh resource {} does not hold the mesh the swap expected",
+                id.get()
+            ),
+            Self::InlineMeshMismatch { node_id } => write!(
+                f,
+                "node {} does not hold the inline mesh the swap expected",
+                node_id.get()
             ),
             Self::UnevaluatedCsg { node_id } => {
                 write!(f, "unevaluated CSG node {}", node_id.get())

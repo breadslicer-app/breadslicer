@@ -179,6 +179,22 @@ fn display_mesh_resource_in_use() {
 }
 
 #[test]
+fn display_mesh_resource_mismatch() {
+    let s = SceneError::MeshResourceMismatch { id: mesh_res(6) }.to_string();
+    assert!(s.contains("mesh resource"), "{s}");
+    assert!(s.contains("the swap expected"), "{s}");
+    assert!(s.contains("6"), "{s}");
+}
+
+#[test]
+fn display_inline_mesh_mismatch() {
+    let s = SceneError::InlineMeshMismatch { node_id: node(21) }.to_string();
+    assert!(s.contains("inline mesh"), "{s}");
+    assert!(s.contains("the swap expected"), "{s}");
+    assert!(s.contains("21"), "{s}");
+}
+
+#[test]
 fn display_unevaluated_csg() {
     let s = SceneError::UnevaluatedCsg { node_id: node(17) }.to_string();
     assert!(s.contains("unevaluated CSG"), "{s}");

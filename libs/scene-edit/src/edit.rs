@@ -109,7 +109,9 @@ pub enum SceneEdit {
     /// Swap the mesh stored at the live resource slot `rid` from
     /// `before` to `after`. Both `Arc`s are snapshotted, so the
     /// inverse swap restores the exact previous storage, pointer
-    /// identity included.
+    /// identity included. `before` is also the precondition:
+    /// applying the edit to a scene whose slot has moved past it is
+    /// refused.
     ReplaceMeshResource {
         rid: MeshResourceId,
         before: Arc<IndexedMesh>,
@@ -118,7 +120,9 @@ pub enum SceneEdit {
     /// Swap the inline mesh of the `Leaf(Mesh(_))` node at `node_id`
     /// from `before` to `after`. Both `Arc`s are snapshotted, so the
     /// inverse swap restores the exact previous storage, pointer
-    /// identity included.
+    /// identity included. `before` is also the precondition:
+    /// applying the edit to a scene whose leaf has moved past it is
+    /// refused.
     ReplaceLeafMesh {
         node_id: NodeId,
         before: Arc<IndexedMesh>,
@@ -269,8 +273,8 @@ impl SceneEdit {
 
     /// Apply this edit to a [`Scene`]. Each variant calls the
     /// matching scene mutator and propagates its precondition error
-    /// (dangling id, occupied slot, kind mismatch); on error the
-    /// scene is unchanged. A [`Self::Compound`] is atomic: when an
+    /// (dangling id, occupied slot, kind mismatch, a `Replace*` whose
+    /// `before` is no longer stored); on error the scene is unchanged. A [`Self::Compound`] is atomic: when an
     /// inner edit fails, the already-applied prefix is undone before
     /// the error is returned, so a failed Compound also leaves the
     /// scene unchanged.
@@ -303,12 +307,14 @@ impl SceneEdit {
                 graph.install_mesh_resource_at(*rid, Arc::clone(mesh))
             }
             Self::RemoveMeshResource { rid, .. } => graph.remove_mesh_resource(*rid).map(|_| ()),
-            Self::ReplaceMeshResource { rid, after, .. } => graph
-                .replace_mesh_resource(*rid, Arc::clone(after))
-                .map(|_| ()),
-            Self::ReplaceLeafMesh { node_id, after, .. } => graph
-                .replace_inline_leaf_mesh(*node_id, Arc::clone(after))
-                .map(|_| ()),
+            Self::ReplaceMeshResource { rid, before, after } => {
+                graph.replace_mesh_resource(*rid, before, Arc::clone(after))
+            }
+            Self::ReplaceLeafMesh {
+                node_id,
+                before,
+                after,
+            } => graph.replace_inline_leaf_mesh(*node_id, before, Arc::clone(after)),
             Self::Compound(edits) => {
                 for (applied, edit) in edits.iter().enumerate() {
                     if let Err(error) = edit.apply_to_scene(graph) {
@@ -922,6 +928,89 @@ mod scene_edit_tests {
         assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &after));
         edit.inverse().apply_to_scene(&mut g).expect("apply");
         assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &before));
+    }
+
+    #[test]
+    fn apply_replace_mesh_resource_refuses_a_stale_before() {
+        let (mut g, rid, original, _, _) = scene_with_replaceable_targets();
+        // Something else already swapped the slot, so the edit's
+        // recorded `before` is no longer what the scene stores.
+        let current = triangle_mesh_arc();
+        SceneEdit::ReplaceMeshResource {
+            rid,
+            before: Arc::clone(&original),
+            after: Arc::clone(&current),
+        }
+        .apply_to_scene(&mut g)
+        .expect("the first swap is well-formed");
+
+        let stale = SceneEdit::ReplaceMeshResource {
+            rid,
+            before: original,
+            after: triangle_mesh_arc(),
+        };
+        assert!(stale.apply_to_scene(&mut g).is_err());
+        assert!(
+            Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &current),
+            "a refused edit leaves the slot untouched"
+        );
+    }
+
+    #[test]
+    fn apply_replace_leaf_mesh_refuses_a_stale_before() {
+        let (mut g, _, _, leaf, original) = scene_with_replaceable_targets();
+        let current = triangle_mesh_arc();
+        SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: Arc::clone(&original),
+            after: Arc::clone(&current),
+        }
+        .apply_to_scene(&mut g)
+        .expect("the first swap is well-formed");
+
+        let stale = SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: original,
+            after: triangle_mesh_arc(),
+        };
+        assert!(stale.apply_to_scene(&mut g).is_err());
+        assert!(
+            Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &current),
+            "a refused edit leaves the leaf untouched"
+        );
+    }
+
+    #[test]
+    fn a_compound_carrying_a_stale_replace_rolls_the_prefix_back() {
+        let (mut g, rid, resource_original, leaf, leaf_original) = scene_with_replaceable_targets();
+        let leaf_current = triangle_mesh_arc();
+        SceneEdit::ReplaceLeafMesh {
+            node_id: leaf,
+            before: Arc::clone(&leaf_original),
+            after: Arc::clone(&leaf_current),
+        }
+        .apply_to_scene(&mut g)
+        .expect("the first swap is well-formed");
+
+        // The resource half is still current, the leaf half is not.
+        let compound = SceneEdit::Compound(vec![
+            SceneEdit::ReplaceMeshResource {
+                rid,
+                before: Arc::clone(&resource_original),
+                after: triangle_mesh_arc(),
+            },
+            SceneEdit::ReplaceLeafMesh {
+                node_id: leaf,
+                before: leaf_original,
+                after: triangle_mesh_arc(),
+            },
+        ]);
+        assert!(compound.apply_to_scene(&mut g).is_err());
+        assert!(
+            Arc::ptr_eq(g.mesh_resource_arc(rid).unwrap(), &resource_original),
+            "the applied prefix is rolled back"
+        );
+        assert!(Arc::ptr_eq(g.leaf_mesh_arc(leaf).unwrap(), &leaf_current));
     }
 
     #[test]
