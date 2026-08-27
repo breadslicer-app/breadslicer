@@ -21,11 +21,9 @@ members = [
     "libs/sla-formats",
 ]
 
-# sc-geom roots its own nested workspace (see: `libs/sc-geom/Cargo.toml`)
-# for its sibling crates, so it stays out of this one.
-# If not done, `cargo` refuses it: It's a path dependency that leads to
-# another  `[workspace]` (self-declared) inside the same tree ("multiple workspace roots"),
-# unless it is excluded here.
+# `sc-geom` (see: `libs/sc-geom/Cargo.toml`) roots its own nested workspace.
+# As a workspace for its sibling crates, so it stays out of the main repo's workspace.
+# If not excluded below, cargo path dependencies ->leads to "multiple workspace roots".
 exclude = ["libs/sc-geom"]
 
 [workspace.package]
@@ -81,7 +79,6 @@ serde_json = "1.0.150"
 sha2 = "0.10"
 toml_edit = { version = "0.25.12", features = ["serde"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
-
 
 [workspace.lints.rust]
 # "deny" instead of "forbid": slicer-cli's Windows file-identity read
