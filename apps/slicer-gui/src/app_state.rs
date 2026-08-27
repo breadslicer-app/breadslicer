@@ -37,6 +37,7 @@ use crate::scene_export::{default_export_extension, default_export_stem};
 use crate::selection::{LeafId, Selection};
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
+use crate::support_gen_run::GenSupportRun;
 use crate::viewport::ViewportController;
 use crate::window_prefs::WindowPreferences;
 use crate::wiring::SaveOutcome;
@@ -179,6 +180,9 @@ struct WiredMainWindow {
     /// The Repair action driver. Held so its Slint callbacks live as
     /// long as the window.
     _repair_run: Rc<RepairRun>,
+    /// The Tools > "Generate Support (trivial for test)" action driver.
+    /// Held so its Slint callbacks live as long as the window.
+    _support_gen_run: Rc<GenSupportRun>,
 }
 
 /// Owns every piece of state that is app-wide (not tied to a single
@@ -552,6 +556,8 @@ impl AppState {
         );
         let slice_run = SliceRun::install(&ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
         let repair_run = RepairRun::install(&ui, ctrl.document(), ctrl.dialogs());
+        let support_gen_run =
+            GenSupportRun::install(&ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         self.wire_app_level_menus(&ui);
 
         let id = self.next_window_id.get();
@@ -692,6 +698,7 @@ impl AppState {
                 _slice_panel: slice_panel,
                 _slice_run: slice_run,
                 _repair_run: repair_run,
+                _support_gen_run: support_gen_run,
             },
         );
         Ok(id)

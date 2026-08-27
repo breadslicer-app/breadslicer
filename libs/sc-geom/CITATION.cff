@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: >
+  If you use SC-Geom or part of it, or research methods implemented in it,
+  please cite the software using the metadata in this file.
+  When using algorithms associated with specific publications, please also cite
+  the corresponding publication listed in the module documentation or references.
+
+title: "SC-Geom: SoulCrafted Geometry and Numerical Methods Subsystem"
+
+type: software
+
+authors:
+  - family-names: "Siadatnejad"
+    given-names: "Sohail"
+    alias: "Sohail Siadat"
+    affiliation: "EntoMind Ltd"
+
+abstract: >
+  SC-Geom is the advanced geometry and numerical-computation subsystem of the SoulCrafted Slicer.
+  It provides research-oriented and production geometry functionality including
+  support-structure generation, mesh analysis, remeshing, physically-aware slicing,
+  printing quality optimisation, numerical field methods, diagnostics,
+  and related operations.
+
+repository-code: "https://codeberg.org/SoulCrafted/Slicer"
+
+url: "https://entomind.com/geom/sc-geom"
+
+version: "0.1.0"
+# provisional:
+date-released: "2026-09-14"
+
+license: "GPL-3.0-only"

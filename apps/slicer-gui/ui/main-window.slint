@@ -189,6 +189,15 @@ export component MainWindow inherits Window {
     // undo/redo (an undo landing mid-run would invalidate the
     // worker's result).
     in-out property <bool> repairing-in-progress: false;
+
+    // support-generatoin run state (Menu: Tools > Generate Support (trivial for test)):
+    // set when the job is submitted and cleared on
+    // completion, error, or submission failure. `support-gen-phase` /
+    // `support-gen-progress` are polled from Rust while it is true.
+    in-out property <bool> support-gen-in-progress: false;
+    in property <string> support-gen-phase: "";
+    in property <float> support-gen-progress: 0.0;
+
     in property <int> slice-completed: 0;
     in property <int> slice-total: 0;
     in property <float> slice-progress: 0.0;
@@ -304,6 +313,15 @@ export component MainWindow inherits Window {
     callback redo-requested();
     callback repair-requested();
     callback repair-finished();
+    // Tools > Generate Support (trivial): runs `sc-geom`'s
+    // support-generation trivial (stub) algorithm end to end against the loaded scene.
+    // Each generated component (mesh) is pasted into the scene as a real object (see
+    // `support-gen-in-progress` above) and the run is reported through
+    // an info dialog. It is for end-to-end testing of integration.
+    // N ot a real support-generation feature yet.
+    // It proves the crate's interface works inside the GUI.
+
+    callback support-gen-requested();
     in property <bool> gizmo-keyboard-focus-active: false;
     callback gizmo-focus-translate-pressed();
     callback gizmo-focus-rotate-pressed();
@@ -458,6 +476,18 @@ export component MainWindow inherits Window {
                 shortcut: @keys(Control + Comma);
                 activated => {
                     root.show-preferences-requested();
+                }
+            }
+        }
+
+        Menu {
+            title: @tr("MenuBar" => "Tools");
+
+            MenuItem {
+                title: @tr("MenuBar" => "Generate Support (trivial for test)…");
+                enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                activated => {
+                    root.support-gen-requested();
                 }
             }
         }
@@ -1013,6 +1043,18 @@ export component MainWindow inherits Window {
             }
 
             Menu {
+                title: @tr("MenuBar" => "Tools");
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Generate Support (trivial for test)…");
+                    enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
+                    activated => {
+                        root.support-gen-requested();
+                    }
+                }
+            }
+
+            Menu {
                 title: @tr("MenuBar" => "View");
 
                 MenuItem {
@@ -1174,6 +1216,37 @@ export component MainWindow inherits Window {
 
             ProgressIndicator {
                 progress: root.load-progress;
+            }
+        }
+    }
+
+    // Floating support generator progress panel: same placement/style as the
+    // load panel. `support-gen-phase` is passed straight through from
+    // the Rust-side `JobProgress.phase` string rather than mapped
+    // through an enum, since it is purely informational here.
+    if root.support-gen-in-progress: Rectangle {
+        width: Math.max(240px, Math.min(parent.width * 50%, 420px));
+        height: support-gen-progress-panel-layout.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 16px;
+        background: Palette.background;
+        border-color: Palette.border;
+        border-width: 1px;
+        border-radius: 6px;
+
+        support-gen-progress-panel-layout := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: root.support-gen-phase == ""
+                    ? @tr("Generating support structure…")
+                    : root.support-gen-phase;
+                color: Palette.foreground;
+            }
+
+            ProgressIndicator {
+                progress: root.support-gen-progress;
             }
         }
     }

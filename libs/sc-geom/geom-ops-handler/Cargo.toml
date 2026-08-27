@@ -1,0 +1,21 @@
+[package]
+name = "geom-ops-handler"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+authors = ["Sohail Siadat <sohail@entomind.co.uk>"]
+description = "Dispatches a geometry-operation job (CSG subtract/intersect, mesh fixing, ...) to one of several algorithm variants behind one shared interface. No concrete operations registered yet."
+categories = ["algorithms"]
+keywords = ["geometry", "csg"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess" }
+sc-mesh-core = { path = "../../mesh-core" }
+sc-mesh-spatial = { path = "../../mesh-spatial" }
+sc-scene = { path = "../../scene" }
+
+[dev-dependencies]

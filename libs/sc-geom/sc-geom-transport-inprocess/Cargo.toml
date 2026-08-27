@@ -1,0 +1,17 @@
+[package]
+name = "sc-geom-transport-inprocess"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+authors = ["Sohail Siadat <sohail@entomind.co.uk>"]
+description = "In-process job/progress/diagnostics/recipe transport shared by every sc-geom handler. Domain-agnostic: no mesh dependency."
+categories = ["algorithms"]
+keywords = ["geometry", "job", "async"]
+repository = "https://codeberg.org/SoulCrafted/Slicer"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]

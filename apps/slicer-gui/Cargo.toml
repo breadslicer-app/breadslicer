@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 sc-app-paths = { workspace = true }
+sc-geom = { workspace = true }
 sc-mesh-core = { workspace = true }
 sc-mesh-formats = { workspace = true }
 sc-mesh-spatial = { workspace = true }

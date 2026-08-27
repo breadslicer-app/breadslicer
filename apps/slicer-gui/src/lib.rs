@@ -60,6 +60,7 @@ mod slice_projection;
 mod slice_result;
 mod slice_run;
 mod slice_selection;
+mod support_gen_run;
 #[cfg(test)]
 mod tests_mesh_loader;
 #[cfg(test)]

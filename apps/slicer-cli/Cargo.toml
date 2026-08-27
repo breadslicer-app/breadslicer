@@ -12,6 +12,7 @@ name = "sc-slicer-cli"
 
 [dependencies]
 sc-app-paths.workspace = true
+sc-geom.workspace = true
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
 sc-print-glue.workspace = true

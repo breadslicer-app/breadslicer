@@ -2597,6 +2597,78 @@ mod slice_threemf_tests {
     }
 }
 
+/// Mainly for end-to-end coverage for the CLI (`support-gen`) integration  for `sc-geom`:
+/// Does not generate a real support-generation feature,
+/// but proves the crate's interface (settings resolution, job progress/diagnostics, a reproducible recipe).
+/// Tests integration because, it checks that it works against a real mesh inside the actual product, not only in `sc-geom`'s own test suite.
+#[cfg(test)]
+mod support_gen_tests {
+    use super::*;
+
+    fn run_support_gen(
+        source: &Path,
+        target: &Path,
+        extra_args: &[&str],
+    ) -> assert_cmd::assert::Assert {
+        let mut args = vec![
+            "support-gen",
+            "-s",
+            source.to_str().unwrap(),
+            "-t",
+            target.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra_args);
+        Command::cargo_bin(BIN).unwrap().args(&args).assert()
+    }
+
+    #[test]
+    fn an_explicit_anchor_writes_a_valid_support_mesh_and_prints_the_recipe() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("support.stl");
+
+        run_support_gen(&fixture_path("cube.stl"), &target, &["--anchor", "0,0,5"])
+            .success()
+            .stdout(predicate::str::contains("algorithm=trivial-support-v0"))
+            .stdout(predicate::str::contains("support.anchors = 0,0,5"));
+
+        // The written mesh round-trips as a clean, closed manifold.
+        Command::cargo_bin(BIN)
+            .unwrap()
+            .args(["diagnose", "-s", target.to_str().unwrap()])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn omitting_the_anchor_flag_auto_detects_one() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("support.stl");
+
+        run_support_gen(&fixture_path("cube.stl"), &target, &[])
+            .success()
+            .stdout(predicate::str::contains("support.anchors <- Derived"));
+    }
+
+    #[test]
+    fn a_non_positive_radius_is_rejected_with_a_clear_message() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("support.stl");
+
+        run_support_gen(
+            &fixture_path("cube.stl"),
+            &target,
+            &["--anchor", "0,0,5", "--radius-mm", "0"],
+        )
+        .failure()
+        .stderr(predicate::str::contains("radius_mm"));
+
+        assert!(
+            !target.exists(),
+            "a rejected job must not write a target file"
+        );
+    }
+}
+
 #[cfg(test)]
 mod slice_target_guard_tests {
     use super::*;
