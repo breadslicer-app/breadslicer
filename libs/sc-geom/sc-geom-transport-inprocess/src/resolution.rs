@@ -4,7 +4,7 @@
  */
 
 //! Constraint-to-actual resolution trail, following the pattern of
-//! `sc_print_profiles::resolve()`'s `warnings`: every settings field an
+//! `sc_print_profiles::resolve()`'s `warnings`: every specs/settings field an
 //! algorithm resolves gets one [`ResolutionRecord`] naming where the
 //! final value came from, in resolution order. A field the caller
 //! specified outright, one that fell back to a default, one derived

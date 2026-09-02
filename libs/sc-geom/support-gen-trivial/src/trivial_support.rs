@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! [`TrivialSupport`]: the reference [`SupportAlgorithm`] implementation.
+//! [`TrivialSupport`]: the reference `GeomAlgorithm` implementation for
+//! the support-generation family.
 //!
 //! Deliberately trivial and geometrically uninteresting:
 //! Strut (as in "strut of a truss") means each rod for hypothetical support structures in such heuristic.
@@ -13,18 +14,18 @@
 //! hexagon's plane perpendicular to `axis` (assumed a unit vector).
 
 //! It exists to exercise every piece of
-//! the interface end to end (settings resolution with a trail, a
+//! the interface end to end (specs/settings resolution with a trail, a
 //! worker-thread job with progress/diagnostics/partial previews, a
 //! reproducible recipe) with real, deterministic geometry, so a real
 //! algorithm slots into a socket that already works.
 //!
 //! Determinism: once `explicit_locations` is non-empty (either the
 //! caller supplied it, or a prior run's `JobRecipe`
-//! did via [`TrivialSupport::settings_from_recipe`]), this algorithm's
+//! did via [`TrivialSupport::specs_pair_from_recipe`]), this algorithm's
 //! output is a pure function of the resolved anchors, boundary,
 //! gravity and radius: it never reads mesh geometry beyond the
 //! scene's world AABB, and only then when `explicit_locations` was
-//! empty. A `support_gen_handler::reproduce_support` replay therefore
+//! empty. A `geom_ops_handler::reproduce_geom_algorithm` replay therefore
 //! reproduces byte-identical meshes regardless of what `scene` is
 //! passed to it, as long as the recipe's anchors are honoured (see
 //! `tests_trivial_support::reproduce_support_is_byte_identical`).
@@ -40,8 +41,8 @@ use sc_mesh_core::{Aabb, IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vec
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 use sha2::{Digest, Sha256};
 use support_gen_handler::{
-    BoundaryShape, SupportAlgorithm, SupportError, SupportJobContext, SupportStructureResult,
-    SupportStructureSettings, normalize,
+    BoundaryShape, GeomAlgorithm, GeomAlgorithmError, GeomAlgorithmJobContext, GeomAlgorithmResult,
+    PrintPlate, SupportAlgError, SupportStructureSpecs, normalize,
 };
 
 pub const TRIVIAL_SUPPORT_ALGORITHM_ID: &str = "trivial-support-v0";
@@ -52,7 +53,7 @@ const SIDES: usize = 6;
 
 const ARTIFICIAL_DELAY_TICKS: u32 = 20;
 
-/// Artificial, demo-only wait (see `sc_geom::TrivialSupportSettings::artificial_delay_ms`)
+/// Artificial, demo-only wait (see `sc_geom::TrivialSupportSpecs::artificial_delay_ms`)
 /// so the progress bar has something to visibly animate through.
 const ARTIFICIAL_DELAY_MS: u64 = 2_000;
 
@@ -67,7 +68,7 @@ const ARTIFICIAL_DELAY_MS: u64 = 2_000;
 const MIN_STRUT_LENGTH_MM: f64 = 1e-2;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrivialSupportSettings {
+pub struct TrivialSupportSpecs {
     pub radius_mm: f64,
     /*
     /// Artificial, demo-only delay: sleeps this many milliseconds
@@ -85,7 +86,7 @@ pub struct TrivialSupportSettings {
      */
 }
 
-impl Default for TrivialSupportSettings {
+impl Default for TrivialSupportSpecs {
     fn default() -> Self {
         Self { radius_mm: 1.0 }
     }
@@ -108,10 +109,12 @@ pub struct SupportPartial {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrivialSupport;
 
-impl SupportAlgorithm for TrivialSupport {
-    type Settings = TrivialSupportSettings;
+impl GeomAlgorithm for TrivialSupport {
+    type GeomAlgCommonSpecs = SupportStructureSpecs;
+    type GeomAlgSpecificSpecs = TrivialSupportSpecs;
     type InferredSpecs = TrivialSupportInferredSpecs;
     type Partial = SupportPartial;
+    type Error = SupportAlgError;
 
     fn id(&self) -> AlgorithmId {
         AlgorithmId::new(TRIVIAL_SUPPORT_ALGORITHM_ID)
@@ -123,25 +126,30 @@ impl SupportAlgorithm for TrivialSupport {
 
     fn start(
         &self,
-        ctx: SupportJobContext<Self::Settings>,
-    ) -> Result<JobHandle<SupportStructureResult<Self::InferredSpecs>, Self::Partial>, SupportError>
-    {
-        let SupportJobContext {
+        ctx: GeomAlgorithmJobContext<Self::GeomAlgCommonSpecs, Self::GeomAlgSpecificSpecs>,
+    ) -> Result<
+        JobHandle<GeomAlgorithmResult<Self::InferredSpecs>, Self::Partial>,
+        GeomAlgorithmError<Self::Error>,
+    > {
+        let GeomAlgorithmJobContext {
             scene,
-            print_plate: _print_plate,
-            common,
-            algorithm_settings,
+            common_family_alg_specs,
+            specific_alg_specs,
         } = ctx;
 
-        if !(algorithm_settings.radius_mm.is_finite() && algorithm_settings.radius_mm > 0.0) {
-            return Err(SupportError::InvalidSettings(
+        if !(specific_alg_specs.radius_mm.is_finite() && specific_alg_specs.radius_mm > 0.0) {
+            return Err(GeomAlgorithmError::InvalidSpecs(
                 "radius_mm must be a finite, positive number".to_string(),
             ));
         }
-        if matches!(common.boundary_shape, BoundaryShape::Mesh(_)) {
-            return Err(SupportError::UnsupportedBoundaryShape);
+        if matches!(common_family_alg_specs.boundary_shape, BoundaryShape::Mesh(_)) {
+            return Err(GeomAlgorithmError::FamilySpecific(
+                SupportAlgError::UnsupportedBoundaryShape,
+            ));
         }
-        let gravity = normalize(common.gravity).ok_or(SupportError::ZeroGravity)?;
+        let gravity = normalize(common_family_alg_specs.gravity).ok_or(GeomAlgorithmError::FamilySpecific(
+            SupportAlgError::ZeroGravity,
+        ))?;
 
         let scene_aabb_now = {
             let spatial = SceneSpatial::from_graph(scene.clone());
@@ -150,15 +158,17 @@ impl SupportAlgorithm for TrivialSupport {
         let input_mesh_hash = hash_aabb(scene_aabb_now);
 
         let mut trail = Vec::new();
-        let anchors = if !common.explicit_locations.is_empty() {
+        let anchors = if !common_family_alg_specs.explicit_locations.is_empty() {
             trail.push(ResolutionRecord::new(
                 "support.anchors",
                 FieldSource::Requested,
-                format_points(&common.explicit_locations),
+                format_points(&common_family_alg_specs.explicit_locations),
             ));
-            common.explicit_locations.clone()
+            common_family_alg_specs.explicit_locations.clone()
         } else {
-            let aabb = scene_aabb_now.ok_or(SupportError::EmptySceneAndNoExplicitLocations)?;
+            let aabb = scene_aabb_now.ok_or(GeomAlgorithmError::FamilySpecific(
+                SupportAlgError::EmptySceneAndNoExplicitLocations,
+            ))?;
             let anchor = lowest_point_along(aabb, gravity);
             trail.push(ResolutionRecord::new(
                 "support.anchors",
@@ -170,21 +180,21 @@ impl SupportAlgorithm for TrivialSupport {
         trail.push(ResolutionRecord::new(
             "support.radius_mm",
             FieldSource::Requested,
-            algorithm_settings.radius_mm.to_string(),
+            specific_alg_specs.radius_mm.to_string(),
         ));
 
         let recipe = build_recipe(
             self.id(),
             self.version().to_string(),
-            &common,
-            &algorithm_settings,
+            &common_family_alg_specs,
+            &specific_alg_specs,
             &anchors,
             input_mesh_hash,
         )?;
 
-        let boundary = common.boundary_shape.clone();
-        let radius = algorithm_settings.radius_mm;
-        // let artificial_delay_ms = algorithm_settings.artificial_delay_ms;
+        let boundary = common_family_alg_specs.boundary_shape.clone();
+        let radius = specific_alg_specs.radius_mm;
+        // let artificial_delay_ms = specific_alg_specs.artificial_delay_ms;
 
         Ok(JobHandle::spawn(move |worker| {
             let total = anchors.len() as u32;
@@ -252,11 +262,11 @@ impl SupportAlgorithm for TrivialSupport {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
 
-            // Artificial, demo-only wait. See `TrivialSupportSettings::artificial_delay_ms`.
+            // Artificial, demo-only wait. See `TrivialSupportSpecs::artificial_delay_ms`.
             // The geometry above is already final; this exists purely
             // so a caller watching progress has something to watch.
             let artificial_delay_ms: u64 =
-                (ARTIFICIAL_DELAY_MS + 1) / 2 + rand::random_range(0..(ARTIFICIAL_DELAY_MS / 2));
+                ARTIFICIAL_DELAY_MS.div_ceil(2) + rand::random_range(0..(ARTIFICIAL_DELAY_MS / 2));
             if artificial_delay_ms > 0 {
                 let per_tick_ms = artificial_delay_ms / u64::from(ARTIFICIAL_DELAY_TICKS);
                 for tick in 0..ARTIFICIAL_DELAY_TICKS {
@@ -282,7 +292,7 @@ impl SupportAlgorithm for TrivialSupport {
                 estimated_material_g: Staged::Final(material_g),
             });
 
-            Ok(SupportStructureResult {
+            Ok(GeomAlgorithmResult {
                 meshes,
                 algorithm_specs: TrivialSupportInferredSpecs {
                     anchors_used: used_anchors,
@@ -294,23 +304,16 @@ impl SupportAlgorithm for TrivialSupport {
         }))
     }
 
-    fn settings_from_recipe(
+    fn specs_pair_from_recipe(
         &self,
         recipe: &JobRecipe,
-    ) -> Result<(SupportStructureSettings, Self::Settings), SupportError> {
-        if recipe.algorithm_id.as_str() != TRIVIAL_SUPPORT_ALGORITHM_ID {
-            return Err(SupportError::AlgorithmMismatch {
-                recipe_algorithm: recipe.algorithm_id.clone(),
-                requested_algorithm: self.id(),
-            });
-        }
-
+    ) -> Result<(SupportStructureSpecs, Self::GeomAlgSpecificSpecs), GeomAlgorithmError<Self::Error>> {
         let gravity = parse_point(get(recipe, "support.gravity")?)?;
         let boundary_min = parse_point(get(recipe, "support.boundary.min")?)?;
         let boundary_max = parse_point(get(recipe, "support.boundary.max")?)?;
         let anchors = parse_points(get(recipe, "support.anchors")?)?;
         let radius_mm: f64 = get(recipe, "support.radius_mm")?.parse().map_err(|_| {
-            SupportError::MalformedRecipe("support.radius_mm is not a number".to_string())
+            GeomAlgorithmError::MalformedRecipe("support.radius_mm is not a number".to_string())
         })?;
         let allow_expand_touch = recipe
             .get("support.allow_expand_touch")
@@ -319,19 +322,24 @@ impl SupportAlgorithm for TrivialSupport {
             .get("support.allow_expand_trunk")
             .is_some_and(|v| v == "true");
 
-        let common = SupportStructureSettings {
+        let boundary_shape = BoundaryShape::BuildVolumeBox {
+            min: boundary_min,
+            max: boundary_max,
+        };
+        let common_family_alg_specs = SupportStructureSpecs {
             gravity,
-            boundary_shape: BoundaryShape::BuildVolumeBox {
-                min: boundary_min,
-                max: boundary_max,
+            boundary_shape: boundary_shape.clone(),
+            print_plate: PrintPlate {
+                boundary: boundary_shape,
+                plate_normal: Vector3D::new([0.0, 0.0, 1.0]),
             },
             explicit_locations: anchors,
             allow_expand_touch,
             allow_expand_trunk,
         };
         Ok((
-            common,
-            TrivialSupportSettings {
+            common_family_alg_specs,
+            TrivialSupportSpecs {
                 radius_mm,
                 // `artificial_delay_ms` is an example of what is not part of the recipe:
                 // Because it does not affect reproducibility of the result:
@@ -342,29 +350,36 @@ impl SupportAlgorithm for TrivialSupport {
     }
 }
 
-fn get<'a>(recipe: &'a JobRecipe, key: &'static str) -> Result<&'a str, SupportError> {
+fn get<'a>(
+    recipe: &'a JobRecipe,
+    key: &'static str,
+) -> Result<&'a str, GeomAlgorithmError<SupportAlgError>> {
     recipe
         .get(key)
-        .ok_or_else(|| SupportError::MalformedRecipe(format!("missing key '{key}'")))
+        .ok_or_else(|| GeomAlgorithmError::MalformedRecipe(format!("missing key '{key}'")))
 }
 
 fn build_recipe(
     algorithm_id: AlgorithmId,
     algorithm_version: String,
-    common: &SupportStructureSettings,
-    algorithm_settings: &TrivialSupportSettings,
+    common_family_alg_specs: &SupportStructureSpecs,
+    specific_alg_specs: &TrivialSupportSpecs,
     anchors: &[Vector3D<f64>],
     input_mesh_hash: String,
-) -> Result<JobRecipe, SupportError> {
-    let (boundary_min, boundary_max) = match &common.boundary_shape {
+) -> Result<JobRecipe, GeomAlgorithmError<SupportAlgError>> {
+    let (boundary_min, boundary_max) = match &common_family_alg_specs.boundary_shape {
         BoundaryShape::BuildVolumeBox { min, max } => (*min, *max),
-        BoundaryShape::Mesh(_) => return Err(SupportError::UnsupportedBoundaryShape),
+        BoundaryShape::Mesh(_) => {
+            return Err(GeomAlgorithmError::FamilySpecific(
+                SupportAlgError::UnsupportedBoundaryShape,
+            ));
+        }
     };
     Ok(JobRecipe {
         algorithm_id,
         algorithm_version,
         resolved_settings: vec![
-            ("support.gravity".to_string(), format_point(common.gravity)),
+            ("support.gravity".to_string(), format_point(common_family_alg_specs.gravity)),
             (
                 "support.boundary.min".to_string(),
                 format_point(boundary_min),
@@ -376,15 +391,15 @@ fn build_recipe(
             ("support.anchors".to_string(), format_points(anchors)),
             (
                 "support.radius_mm".to_string(),
-                algorithm_settings.radius_mm.to_string(),
+                specific_alg_specs.radius_mm.to_string(),
             ),
             (
                 "support.allow_expand_touch".to_string(),
-                common.allow_expand_touch.to_string(),
+                common_family_alg_specs.allow_expand_touch.to_string(),
             ),
             (
                 "support.allow_expand_trunk".to_string(),
-                common.allow_expand_trunk.to_string(),
+                common_family_alg_specs.allow_expand_trunk.to_string(),
             ),
         ],
         input_mesh_hash,
@@ -405,23 +420,23 @@ fn format_points(points: &[Vector3D<f64>]) -> String {
         .join(";")
 }
 
-fn parse_point(s: &str) -> Result<Vector3D<f64>, SupportError> {
+fn parse_point(s: &str) -> Result<Vector3D<f64>, GeomAlgorithmError<SupportAlgError>> {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 3 {
-        return Err(SupportError::MalformedRecipe(format!(
+        return Err(GeomAlgorithmError::MalformedRecipe(format!(
             "expected 3 comma-separated components, got '{s}'"
         )));
     }
     let mut coords = [0.0_f64; 3];
     for (i, part) in parts.iter().enumerate() {
-        coords[i] = part
-            .parse()
-            .map_err(|_| SupportError::MalformedRecipe(format!("'{part}' is not a number")))?;
+        coords[i] = part.parse().map_err(|_| {
+            GeomAlgorithmError::MalformedRecipe(format!("'{part}' is not a number"))
+        })?;
     }
     Ok(Vector3D::new(coords))
 }
 
-fn parse_points(s: &str) -> Result<Vec<Vector3D<f64>>, SupportError> {
+fn parse_points(s: &str) -> Result<Vec<Vector3D<f64>>, GeomAlgorithmError<SupportAlgError>> {
     if s.is_empty() {
         return Ok(Vec::new());
     }

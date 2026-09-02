@@ -8,7 +8,7 @@
 //! `support-gen`: the CLI's integration touchpoint for `sc-geom`.
 //!
 //! Runs the crate's deliberately trivial `TrivialSupport` support
-//! algorithm "end to end": settings resolution, a worker-thread job
+//! algorithm "end to end": support_general_specs resolution, a worker-thread job
 //! with live progress and diagnostics, and a reproducible recipe --
 //! against a real mesh, so the interface is proven inside the actual
 //! product rather than only in `sc-geom`'s own test suite. Not a
@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use sc_geom::{
-    BoundaryShape, PrintPlate, SupportStructureSettings, TrivialSupport, TrivialSupportSettings,
-    gen_support,
+    BoundaryShape, PrintPlate, SupportStructureSpecs, TrivialSupport, TrivialSupportSpecs,
+    run_geom_algorithm,
 };
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
@@ -74,27 +74,27 @@ pub(crate) fn support_gen(args: GenSupportArgs) -> Result<()> {
         min: args.boundary_min.into(),
         max: args.boundary_max.into(),
     };
-    let plate = PrintPlate {
+    let print_plate = PrintPlate {
         boundary: boundary_shape.clone(),
         plate_normal: sc_mesh_core::Vector3D::new([0.0, 0.0, 1.0]),
     };
-    let settings = SupportStructureSettings {
+    let support_general_specs = SupportStructureSpecs {
         gravity: args.gravity.into(),
         boundary_shape,
+        print_plate,
         explicit_locations: args.anchors.into_iter().map(Into::into).collect(),
         allow_expand_touch: false,
         allow_expand_trunk: false,
     };
-    let algorithm_settings = TrivialSupportSettings {
+    let specific_alg_specs = TrivialSupportSpecs {
         radius_mm: args.radius_mm,
     };
 
-    let handle = gen_support(
+    let handle = run_geom_algorithm(
         &TrivialSupport,
         &loaded.graph,
-        &plate,
-        &settings,
-        &algorithm_settings,
+        &support_general_specs,
+        &specific_alg_specs,
     )
     .map_err(|e| anyhow!("could not start support-gen job: {e}"))?;
 

@@ -22,15 +22,17 @@
 //!   for progress/diagnostics/partial snapshots/cancellation/the
 //!   terminal result, all without assuming any particular async
 //!   runtime (this workspace has none).
+//!
 //! - [`staged`] wraps a single result field as [`staged::Staged::Provisional`]
 //!   or [`staged::Staged::Final`]. It is orthogonal to the concept of job progress:
-//!       e.g., how much to trust one value right now.
-//!       It is not about how far along the job is.
+//!       e.g., how much to trust the progressive result / partial value returned/ent back so far.
+//!       It is not about how far along the job is (in terms of time, iterations, etc).
+//!
 //! - [`resolution`] is the constraint-to-actual trail, mirroring
 //!   `sc_print_profiles::resolve()`'s warnings: one [`resolution::ResolutionRecord`]
-//!   per settings field, naming where its final value came from.
+//!   per specs/settings field, naming where its final value came from.
 //! - [`recipe`] is what makes a finished job reproducible: a
-//!   [`recipe::JobRecipe`] captures the fully resolved settings (not
+//!   [`recipe::JobRecipe`] captures the fully resolved specs/settings (not
 //!   the caller's original, possibly-underspecified ones), so a replay
 //!   never re-runs auto-detection.
 //!

@@ -9,12 +9,12 @@
 //! support-generation feature.
 //!
 //! Unlike `SliceRun` / `RepairRun`, no `std::thread::spawn` happens
-//! here: `sc_geom::gen_support` already runs the algorithm on its own
+//! here: `sc_geom::run_geom_algorithm` already runs the algorithm on its own
 //! worker thread and hands back a pollable `JobHandle`, so this driver
 //! just holds that handle and polls `JobHandle::progress()` /
 //! `try_poll()` from a `slint::Timer` on the UI thread, the same
 //! cadence `SliceRun` polls its atomics at. `artificial_delay_ms` is
-//! set deliberately high here (see `sc_geom::TrivialSupportSettings`'s
+//! set deliberately high here (see `sc_geom::TrivialSupportSpecs`'s
 //! own doc comment) purely so that progress bar has ~2 real seconds
 //! to animate instead of resolving instantly.
 //!
@@ -39,9 +39,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sc_geom::{
-    BoundaryShape, JobError, JobHandle, JobRecipe, PrintPlate, ResolutionRecord,
-    SupportStructureResult, SupportStructureSettings, TrivialSupport, TrivialSupportInferredSpecs,
-    TrivialSupportSettings, gen_support,
+    BoundaryShape, GeomAlgorithmResult, JobError, JobHandle, JobRecipe, PrintPlate,
+    ResolutionRecord, SupportStructureSpecs, TrivialSupport, TrivialSupportInferredSpecs,
+    TrivialSupportSpecs, run_geom_algorithm,
 };
 use sc_mesh_core::Vector3D;
 use sc_mesh_core::transform::Transform3D;
@@ -60,7 +60,7 @@ use crate::viewport::ViewportController;
 const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 type GenSupportHandle =
-    JobHandle<SupportStructureResult<TrivialSupportInferredSpecs>, sc_geom::SupportPartial>;
+    JobHandle<GeomAlgorithmResult<TrivialSupportInferredSpecs>, sc_geom::SupportPartial>;
 
 pub(crate) struct GenSupportRun {
     ui: slint::Weak<MainWindow>,
@@ -116,28 +116,23 @@ impl GenSupportRun {
             return;
         };
         let boundary_shape = boundary_box_from_build_volume(self.controller.build_volume());
-        let plate = PrintPlate {
+        let print_plate = PrintPlate {
             boundary: boundary_shape.clone(),
             plate_normal: Vector3D::new([0.0, 0.0, 1.0]),
         };
-        let settings = SupportStructureSettings {
+        let support_general_specs = SupportStructureSpecs {
             gravity: Vector3D::new([0.0, 0.0, -1.0]),
             boundary_shape,
+            print_plate,
             explicit_locations: Vec::new(), // auto-detect
             allow_expand_touch: false,
             allow_expand_trunk: false,
         };
-        let algorithm_settings = TrivialSupportSettings {
-            ..TrivialSupportSettings::default()
+        let specific_alg_specs = TrivialSupportSpecs {
+            ..TrivialSupportSpecs::default()
         };
 
-        match gen_support(
-            &TrivialSupport,
-            &scene,
-            &plate,
-            &settings,
-            &algorithm_settings,
-        ) {
+        match run_geom_algorithm(&TrivialSupport, &scene, &support_general_specs, &specific_alg_specs) {
             Ok(handle) => {
                 ui.set_support_gen_in_progress(true);
                 ui.set_support_gen_progress(0.0);
@@ -200,10 +195,7 @@ impl GenSupportRun {
 
     /// Pastes every generated support structure mesh component into the scene as a real, undoable
     /// object and reports the run through the info/error dialog.
-    fn finish(
-        &self,
-        outcome: Result<SupportStructureResult<TrivialSupportInferredSpecs>, JobError>,
-    ) {
+    fn finish(&self, outcome: Result<GeomAlgorithmResult<TrivialSupportInferredSpecs>, JobError>) {
         match outcome {
             Ok(result) => {
                 let total = result.meshes.len();

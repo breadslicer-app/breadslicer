@@ -58,8 +58,8 @@ For example, `support-gen-trivial`, `support-gen-chalyplex`, out-of-process/Pyth
 
 ```rust
 use sc_geom::{
-    BoundaryShape, PrintPlate, SupportStructureSettings, TrivialSupport,
-    TrivialSupportSettings, gen_support,
+    BoundaryShape, PrintPlate, SupportStructureSpecs, TrivialSupport,
+    TrivialSupportSpecs, gen_support,
 };
 use sc_mesh_core::{Scene, Vector3D};
 
@@ -71,7 +71,7 @@ let plate = PrintPlate {
     },
     plate_normal: Vector3D::new([0.0, 0.0, 1.0]),
 };
-let settings = SupportStructureSettings {
+let support_specs = SupportStructureSpecs {
     gravity: Vector3D::new([0.0, 0.0, -1.0]),
     boundary_shape: plate.boundary.clone(),
     explicit_locations: Vec::new(), // empty => auto-detect
@@ -83,8 +83,8 @@ let handle = gen_support(
     &TrivialSupport,
     &scene,
     &plate,
-    &settings,
-    &TrivialSupportSettings::default(),
+    &support_specs,
+    &TrivialSupportSpecs::default(),
 )?;
 
 // Poll `handle.progress()` / `handle.latest_partial()` / `handle.diagnostics_snapshot()`

@@ -15,7 +15,7 @@ use sc_mesh_core::Vector3D;
 use crate::boundary::BoundaryShape;
 
 /// The printer's physical build envelope and which way is "down" off
-/// the plate. Distinct from a job's [`BoundaryShape`] settings, which
+/// the plate. Distinct from a job's [`BoundaryShape`] specs/settings, which
 /// may be a tighter region chosen for one print-job alone.
 /// This is the chosen 3D-printer machine's own limits (in-itself).
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +24,6 @@ pub struct PrintPlate {
     /// Outward normal of the plate surface. Not assumed to be
     /// parallel to gravity: non-planar and non-horizontal printing are
     /// in scope for this crate even though today's callers are
-    /// conventional printers (see [`crate::handler::SupportStructureSettings::gravity`]).
+    /// conventional printers (see [`crate::handler::SupportStructureSpecs::gravity`]).
     pub plate_normal: Vector3D<f64>,
 }

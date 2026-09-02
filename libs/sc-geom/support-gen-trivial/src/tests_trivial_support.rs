@@ -12,11 +12,11 @@ use sc_scene::{LeafPayload, Scene};
 
 use sc_geom_transport_inprocess::{AlgorithmId, JobError, JobHandle, JobRecipe};
 use support_gen_handler::{
-    BoundaryShape, PrintPlate, SupportAlgorithm, SupportError, SupportStructureSettings,
-    gen_support, normalize, reproduce_support,
+    BoundaryShape, GeomAlgorithmError, PrintPlate, SupportAlgError, SupportStructureSpecs,
+    normalize, reproduce_geom_algorithm, run_geom_algorithm,
 };
 
-use crate::trivial_support::{TrivialSupport, TrivialSupportSettings, hex_prism};
+use crate::trivial_support::{TrivialSupport, TrivialSupportSpecs, hex_prism};
 
 fn cube_mesh() -> IndexedMesh {
     let v = |x, y, z| Vertex::new([x, y, z]);
@@ -66,10 +66,11 @@ fn print_plate() -> PrintPlate {
     }
 }
 
-fn base_settings() -> SupportStructureSettings {
-    SupportStructureSettings {
+fn base_settings() -> SupportStructureSpecs {
+    SupportStructureSpecs {
         gravity: Vector3D::new([0.0, 0.0, -1.0]),
         boundary_shape: boundary_box(),
+        print_plate: print_plate(),
         explicit_locations: Vec::new(),
         allow_expand_touch: false,
         allow_expand_trunk: false,
@@ -127,16 +128,15 @@ fn hex_prism_builds_nothing_for_a_negligible_length() {
 #[test]
 fn explicit_anchor_runs_are_deterministic() {
     let scene = scene_with_cube_at([0.0, 0.0, 0.0]);
-    let plate = print_plate();
-    let mut settings = base_settings();
-    settings.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
-    let algo_settings = TrivialSupportSettings { radius_mm: 1.0 };
+    let mut family_specs = base_settings();
+    family_specs.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
+    let algo_settings = TrivialSupportSpecs { radius_mm: 1.0 };
 
-    let first = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings)
+    let first = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings)
         .unwrap()
         .join()
         .unwrap();
-    let second = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings)
+    let second = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings)
         .unwrap()
         .join()
         .unwrap();
@@ -148,11 +148,10 @@ fn explicit_anchor_runs_are_deterministic() {
 #[test]
 fn auto_detected_anchor_is_recorded_and_replay_does_not_need_the_original_scene() {
     let scene = scene_with_cube_at([0.0, 0.0, 50.0]);
-    let plate = print_plate();
-    let settings = base_settings(); // empty explicit_locations => auto-detect
-    let algo_settings = TrivialSupportSettings { radius_mm: 2.0 };
+    let family_specs = base_settings(); // empty explicit_locations => auto-detect
+    let algo_settings = TrivialSupportSpecs { radius_mm: 2.0 };
 
-    let first = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings)
+    let first = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings)
         .unwrap()
         .join()
         .unwrap();
@@ -164,7 +163,7 @@ fn auto_detected_anchor_is_recorded_and_replay_does_not_need_the_original_scene(
     // Replay against a *different* scene entirely; only the recipe's
     // recorded anchor should matter to a pure-geometry support-structure algorithm.
     let unrelated_scene = scene_with_cube_at([999.0, 999.0, 999.0]);
-    let replayed = reproduce_support(&TrivialSupport, &first.recipe, &unrelated_scene, &plate)
+    let replayed = reproduce_geom_algorithm(&TrivialSupport, &first.recipe, &unrelated_scene)
         .unwrap()
         .join()
         .unwrap();
@@ -174,7 +173,7 @@ fn auto_detected_anchor_is_recorded_and_replay_does_not_need_the_original_scene(
 }
 
 #[test]
-fn settings_from_recipe_rejects_a_recipe_from_another_algorithm() {
+fn reproduce_rejects_a_recipe_from_another_algorithm() {
     let recipe = JobRecipe {
         algorithm_id: AlgorithmId::new("some-other-algorithm"),
         algorithm_version: "0.0.1".to_string(),
@@ -182,23 +181,23 @@ fn settings_from_recipe_rejects_a_recipe_from_another_algorithm() {
         input_mesh_hash: String::new(),
         seeds: Vec::new(),
     };
-    let err = TrivialSupport.settings_from_recipe(&recipe).unwrap_err();
-    assert!(matches!(err, SupportError::AlgorithmMismatch { .. }));
+    let scene = Scene::new();
+    let err = reproduce_geom_algorithm(&TrivialSupport, &recipe, &scene).unwrap_err();
+    assert!(matches!(err, GeomAlgorithmError::AlgorithmMismatch { .. }));
 }
 
 #[test]
 fn two_explicit_anchors_produce_two_strut_rods() {
     // See note on "Strut" in support-gen-trivial/src/trivial_support.rs
     let scene = scene_with_cube_at([0.0, 0.0, 0.0]);
-    let plate = print_plate();
-    let mut settings = base_settings();
-    settings.explicit_locations = vec![
+    let mut family_specs = base_settings();
+    family_specs.explicit_locations = vec![
         Vector3D::new([0.0, 0.0, 5.0]),
         Vector3D::new([2.0, 0.0, 5.0]),
     ];
-    let algo_settings = TrivialSupportSettings::default();
+    let algo_settings = TrivialSupportSpecs::default();
 
-    let handle = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings).unwrap();
+    let handle = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap();
     let result = handle.join().unwrap();
     assert_eq!(result.meshes.len(), 2);
     for mesh in &result.meshes {
@@ -213,16 +212,16 @@ fn an_anchor_already_on_the_boundary_is_skipped_with_a_diagnostic() {
         min: Vector3D::new([-10.0, -10.0, 0.0]),
         max: Vector3D::new([10.0, 10.0, 10.0]),
     };
-    let mut settings = base_settings();
-    settings.boundary_shape = boundary.clone();
-    settings.explicit_locations = vec![Vector3D::new([0.0, 0.0, 0.0])]; // already on the floor
-    let plate = PrintPlate {
+    let mut family_specs = base_settings();
+    family_specs.boundary_shape = boundary.clone();
+    family_specs.print_plate = PrintPlate {
         boundary,
         plate_normal: Vector3D::new([0.0, 0.0, 1.0]),
     };
-    let algo_settings = TrivialSupportSettings::default();
+    family_specs.explicit_locations = vec![Vector3D::new([0.0, 0.0, 0.0])]; // already on the floor
+    let algo_settings = TrivialSupportSpecs::default();
 
-    let handle = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings).unwrap();
+    let handle = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap();
     let result = poll_until_done(&handle).unwrap();
     assert!(result.meshes.is_empty());
 
@@ -238,41 +237,37 @@ fn an_anchor_already_on_the_boundary_is_skipped_with_a_diagnostic() {
 #[test]
 fn no_explicit_locations_and_an_empty_scene_is_rejected() {
     let scene = Scene::new();
-    let plate = print_plate();
-    let settings = base_settings();
-    let algo_settings = TrivialSupportSettings::default();
+    let family_specs = base_settings();
+    let algo_settings = TrivialSupportSpecs::default();
 
-    let err = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings).unwrap_err();
-    assert_eq!(err, SupportError::EmptySceneAndNoExplicitLocations);
+    let err = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap_err();
+    assert_eq!(
+        err,
+        GeomAlgorithmError::FamilySpecific(SupportAlgError::EmptySceneAndNoExplicitLocations)
+    );
 }
 
 #[test]
 fn artificial_delay_reports_progress_and_does_not_change_the_geometry() {
     let scene = scene_with_cube_at([0.0, 0.0, 0.0]);
-    let plate = print_plate();
-    let mut settings = base_settings();
-    settings.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
+    let mut family_specs = base_settings();
+    family_specs.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
 
-    let no_delay = gen_support(
+    let no_delay = run_geom_algorithm(
         &TrivialSupport,
         &scene,
-        &plate,
-        &settings,
-        &TrivialSupportSettings { radius_mm: 1.0 },
+        &family_specs,
+        &TrivialSupportSpecs { radius_mm: 1.0 },
     )
     .unwrap()
     .join()
     .unwrap();
 
-    let handle = gen_support(
+    let handle = run_geom_algorithm(
         &TrivialSupport,
         &scene,
-        &plate,
-        &settings,
-        &TrivialSupportSettings {
-            radius_mm: 1.0,
-            // artificial_delay_ms: 100,
-        },
+        &family_specs,
+        &TrivialSupportSpecs { radius_mm: 1.0 },
     )
     .unwrap();
 
@@ -301,17 +296,15 @@ fn artificial_delay_reports_progress_and_does_not_change_the_geometry() {
 #[test]
 fn zero_or_negative_radius_is_rejected() {
     let scene = scene_with_cube_at([0.0, 0.0, 0.0]);
-    let plate = print_plate();
-    let mut settings = base_settings();
-    settings.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
+    let mut family_specs = base_settings();
+    family_specs.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
 
-    let err = gen_support(
+    let err = run_geom_algorithm(
         &TrivialSupport,
         &scene,
-        &plate,
-        &settings,
-        &TrivialSupportSettings { radius_mm: 0.0 },
+        &family_specs,
+        &TrivialSupportSpecs { radius_mm: 0.0 },
     )
     .unwrap_err();
-    assert!(matches!(err, SupportError::InvalidSettings(_)));
+    assert!(matches!(err, GeomAlgorithmError::InvalidSpecs(_)));
 }

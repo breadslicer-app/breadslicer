@@ -8,9 +8,9 @@
 //! workshop running many prints.
 //!
 //! "Recipe" is about "output" of a finished job. Is is relevant more to the record of what the algorithm actually did, rather than what was requested.
-//! A "recipe" should capture the *fully resolved* settings an algorithm actually used.
+//! A "recipe" should capture the *fully resolved* specs/settings an algorithm actually used.
 //! This includes anything it auto-detected on this job execution.
-//! It contains more information than the original, possibly-underspecified settings that the caller provided.
+//! It contains more information than the original, possibly-underspecified specs/settings that the caller provided.
 //! Therefore, it can be used so that a "replay" does not re-run auto-detection.
 //! It fills in gaps or undetermined or randomised inputs and reuses exactly what the first run decided.
 //! This is what makes the reproduction deterministic even if/when some details of the first run was not fully
@@ -18,7 +18,7 @@
 //!
 //! `resolved_settings` is a plain key/value bag rather than a typed or
 //! serialised structure: this implementation has not not used `serde` yet, to persisted the records to disk.
-//! To be decided: Currently, every algorithm reads back only the keys it itself wrote via its own [`crate::support::SupportAlgorithm::settings_from_recipe`]
+//! To be decided: Currently, every algorithm reads back only the keys it itself wrote via its own [`crate::support::SupportAlgorithm::specs_pair_from_recipe`]
 //! (or the equivalent for a future operation kind).
 
 use std::fmt;
@@ -53,7 +53,7 @@ impl fmt::Display for AlgorithmId {
 pub struct JobRecipe {
     pub algorithm_id: AlgorithmId,
     pub algorithm_version: String,
-    /// The fully resolved settings the algorithm used, as key/value
+    /// The fully resolved specs/settings the algorithm used, as key/value
     /// pairs it can parse back out of on replay.
     pub resolved_settings: Vec<(String, String)>,
 

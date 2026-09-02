@@ -12,31 +12,43 @@
 //! This crate owns only what is shared between all algorithms
 //! (the common settings shape, the "job context", the result shape,
 //! the resolution entry points and reproduction entry point).
+//! Support-structure generation, the first geometry-operation family
+//! built on `geom-ops-handler`'s generic dispatch (see that crate for
+//! the shared job/result/error machinery this family builds on, and for
+//! why support generation is not treated as special).
 //!
-//! Uses `sc-geom-transport-inprocess` for
-//! the job/progress/diagnostics/recipe machinery.
-//! This crate adds no transport mechanism of its own.
-//! The support-generation-specific types are layered on top of the shared infrastructure.
 //!
 //! How these pieces fit together:
 //!
-//! - [`handler`] is the main module: [`handler::SupportAlgorithm`],
-//!   [`handler::gen_support`] / [`handler::reproduce_support`], and
+//! - [`handler`] holds what's specific to this family:
+//!   [`handler::SupportStructureSpecs`] (this family's common
+//!   family_specs), [`handler::SupportAlgError`] (this family's error,
+//!   wrapped generically via
+//!   `geom_ops_handler::GeomAlgorithmError::FamilySpecific`), and
 //!   [`handler::suggest_support_regions`], a lightweight, synchronous,
 //!   separate query for "what needs support, how badly."
 //! - [`boundary`] and [`print_plate`] are the shared geometric context
 //!   (the region a job's output must stay within, and the physical
 //!   machine) every support algorithm needs.
+//!
+//! A concrete algorithm (`support-gen-trivial`'s `TrivialSupport`,
+//! `support-gen-chalyplex`'s future one) implements
+//! `geom_ops_handler::GeomAlgorithm` directly, with
+//! `GeomAlgCommonSpecs = SupportStructureSpecs`; drivers submit/replay a
+//! job through `geom_ops_handler::run_geom_algorithm`/
+//! `reproduce_geom_algorithm`, same as any other family -- this crate
+//! adds no submission entry point of its own.
 
 pub mod boundary;
 pub mod handler;
 pub mod print_plate;
 
 pub use boundary::{BoundaryIntersection, BoundaryShape};
-pub use handler::{
-    SupportAlgorithm, SupportError, SupportJobContext, SupportStructureResult,
-    SupportStructureSettings, gen_support, normalize, reproduce_support, suggest_support_regions,
+pub use geom_ops_handler::{
+    AlgorithmFamilyCommonSpecs, GeomAlgorithm, GeomAlgorithmError, GeomAlgorithmJobContext,
+    GeomAlgorithmResult, reproduce_geom_algorithm, run_geom_algorithm,
 };
+pub use handler::{SupportAlgError, SupportStructureSpecs, normalize, suggest_support_regions};
 pub use print_plate::PrintPlate;
 
 #[cfg(test)]

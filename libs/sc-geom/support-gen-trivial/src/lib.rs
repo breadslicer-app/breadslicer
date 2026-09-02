@@ -13,7 +13,7 @@ pub mod trivial_support;
 
 pub use trivial_support::{
     SupportPartial, TRIVIAL_SUPPORT_ALGORITHM_ID, TRIVIAL_SUPPORT_VERSION, TrivialSupport,
-    TrivialSupportInferredSpecs, TrivialSupportSettings,
+    TrivialSupportInferredSpecs, TrivialSupportSpecs,
 };
 
 #[cfg(test)]
