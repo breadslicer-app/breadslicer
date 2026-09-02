@@ -13,15 +13,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 workspace = true
 
 [dependencies]
-<<<<<<< HEAD
 geom-ops-handler = { path = "../geom-ops-handler", version = "0.0.1" }
 sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
-||||||| parent of ef5e0a7 (refactor, renames, algorith-family, pair of specs (common, alg-specific), suppost-gen is now a algorithm-family -- in progress (2))
-geom-ops-handler = { path = "../geom-ops-handler", version = "0.0.1" }
-sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
-=======
-geom-ops-handler = { path = "../geom-ops-handler", version = "0.0.1" }
-sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
->>>>>>> ef5e0a7 (refactor, renames, algorith-family, pair of specs (common, alg-specific), suppost-gen is now a algorithm-family -- in progress (2))
 
 [dev-dependencies]
