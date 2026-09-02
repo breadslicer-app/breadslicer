@@ -3,24 +3,19 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Dispatches a geometry-operation job to a concrete algorithm:
-//! such as CSG subtract/intersect, mesh fixing, and future variants.
-//! Based on the algorithm the caller (app/cli) picks.
-//! Same protocol/shape/contract as `support-gen-handler`'s [`GeomOpAlgorithm`]. It may be merged.
-//! See `SupportAlgorithm`. Currently the two handlers share nothing but the underlying
-//! `sc-geom-transport-inprocess` job, but a caller sees the same "submit, poll, get one result"
-//! protocol/shape/contract.
+//! [`GeomAlgorithm`]: the shared dispatch skeleton every geometry-operation
+//! family (support generation first; CSG, shell, offset, mesh-fixing later)
+//! builds on. Support generation is not a special algorithm:
+//! It happens to be the first algorithm-family written. Its I/O interface shape
+//! informs the generalisation that designs future goeometric algorithms the same way.
 //!
-//! Implementation detail: Currently (this may change), unlike support generation (which gets one algorithm-family
-//! handler per concern) every geometry operation shares this one handler;
-//! `GeomOpAlgorithm::id()` names which operation *and* which
-//! variant of it a given implementation is (e.g. a future
-//! `"csg-subtract-v0"`). No concrete operation is registered yet: see
-//! the crate README.
-//!
-//! The protocol/contract stays uniform with support generation on purpose:
-//! Multiple meshes input and multiple mehes can be output.
-//! One input [`Scene`] in (which may hold more than one object, eg, both operands of a CSG-subtract).
+//! The protocol/contract stays uniform with algorithms in its family ( algoritgms sharing same  purpose/intention):
+//! One input [`Scene`] (which may hold more than one object, e.g. both
+//! operands of a future CSG subtract), mesh(es) out, submitted as a job and
+//! polled through [`JobHandle`]. A family (e.g. support generation) owns
+//! its own [`AlgorithmFamilyCommonSpecs`]-implementing specs/settings type,
+//! shared by every algorithm in that family; an individual algorithm
+//! (e.g. `TrivialSupport`) owns its own `GeomAlgSpecificSpecs`/`InferredSpecs`/`Partial`.
 
 use sc_geom_transport_inprocess::{AlgorithmId, JobHandle, JobRecipe, ResolutionRecord};
 use sc_mesh_core::IndexedMesh;
@@ -60,21 +55,12 @@ pub struct GeomAlgorithmResult<A> {
 /// in one family, belongs in that family's own error type instead, via
 /// [`Self::FamilySpecific`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GeomOpError {
-    /// The scene has no geometry for the algorithm to operate on.
-    EmptyScene,
-    /// A settings field failed an algorithm's own validation.
-    InvalidSettings(String),
-    /// A recipe named an algorithm other than the one asked to
-    /// reproduce it.
 pub enum GeomAlgorithmError<E> {
     InvalidSpecs(String),
     AlgorithmMismatch {
         recipe_algorithm: AlgorithmId,
         requested_algorithm: AlgorithmId,
     },
-    /// A recipe's `resolved_settings` were missing or malformed for a
-    /// key the algorithm needed to reconstruct its settings.
     MalformedRecipe(String),
     FamilySpecific(E),
 }

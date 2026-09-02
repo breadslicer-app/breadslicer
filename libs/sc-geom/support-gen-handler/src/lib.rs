@@ -3,15 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! "Dispatch"es a support-generation job to whichever concrete algorithm that the caller chooses.
-//! Currently: `support-gen-trivial`, `support-gen-chalyplex`.
-//! Later: It can be another one, or even a Python-wrapping variant, alongside it.
-//! All are behind one shared interface.
-//! It should never run a job itself.
-//! [`handler::SupportAlgorithm`] "seam"s various algorithm crates as a plugin.
-//! This crate owns only what is shared between all algorithms
-//! (the common settings shape, the "job context", the result shape,
-//! the resolution entry points and reproduction entry point).
 //! Support-structure generation, the first geometry-operation family
 //! built on `geom-ops-handler`'s generic dispatch (see that crate for
 //! the shared job/result/error machinery this family builds on, and for

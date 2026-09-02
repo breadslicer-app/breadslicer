@@ -83,14 +83,11 @@ impl GeomAlgorithm for NoOpAlgorithm {
         }))
     }
 
-    fn settings_from_recipe(&self, recipe: &JobRecipe) -> Result<Self::Settings, GeomOpError> {
-        if recipe.algorithm_id.as_str() != NOOP_ALGORITHM_ID {
-            return Err(GeomOpError::AlgorithmMismatch {
-                recipe_algorithm: recipe.algorithm_id.clone(),
-                requested_algorithm: self.id(),
-            });
-        }
-        Ok(NoOpSettings)
+    fn specs_pair_from_recipe(
+        &self,
+        _recipe: &JobRecipe,
+    ) -> Result<(Self::GeomAlgCommonSpecs, Self::GeomAlgSpecificSpecs), GeomAlgorithmError<Self::Error>> {
+        Ok(((), NoOpSpecs))
     }
 }
 
