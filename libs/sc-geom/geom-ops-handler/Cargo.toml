@@ -6,7 +6,7 @@ license = "AGPL-3.0-only"
 authors = ["Sohail Siadat <sohail@entomind.co.uk>"]
 description = "Dispatches a geometry-operation job (CSG subtract/intersect, mesh fixing, ...) to one of several algorithm variants behind one shared interface. No concrete operations registered yet."
 categories = ["algorithms"]
-keywords = ["geometry", "csg"]
+keywords = ["geometry", "support", "csg", "handler", "transport"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [lints]

@@ -7,6 +7,7 @@
 //! reproduced byte-for-byte later, for undo/redo and for audit in a
 //! workshop running many prints.
 //!
+//! "Recipe" is about "output" of a finished job. Is is relevant more to the record of what the algorithm actually did, rather than what was requested.
 //! A "recipe" should capture the *fully resolved* settings an algorithm actually used.
 //! This includes anything it auto-detected on this job execution.
 //! It contains more information than the original, possibly-underspecified settings that the caller provided.

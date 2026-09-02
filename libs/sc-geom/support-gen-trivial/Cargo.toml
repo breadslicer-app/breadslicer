@@ -6,7 +6,7 @@ license = "AGPL-3.0-only"
 authors = ["Sohail Siadat <soh.ale@gmail.com>"]
 description = "Deliberately trivial reference implementation of support-gen-handler's algorithm trait, used to prove and integration-test the interface end to end."
 categories = ["algorithms"]
-keywords = ["geometry", "support", "printing", "trivial", "debug", "stub"]
+keywords = ["geometry", "support", "trivial", "debug", "stub"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 
 [lints]
