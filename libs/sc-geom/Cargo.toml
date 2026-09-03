@@ -15,10 +15,10 @@ workspace = true
 [dependencies]
 # Facade crate: the one thing the main app (SoulCrafted Slicer) depends on. Its own dependency line never doe snot need to change as this workspace's internal module boundaries change.
 # It only re-exports below modules. No code of its own.
-geom-ops-handler = { path = "geom-ops-handler", version = "0.0.1" }
+generic-geom-alg-family-dispatch = { path = "generic-geom-alg-family-dispatch", version = "0.0.1" }
 sc-geom-transport-inprocess = { path = "sc-geom-transport-inprocess", version = "0.0.1" }
 support-gen-trivial = { path = "support-gen-trivial", version = "0.0.2" }
-support-gen-handler = { path = "support-gen-handler", version = "0.0.1" }
+support-gen-family-dispatch = { path = "support-gen-family-dispatch", version = "0.0.1" }
 
 [dev-dependencies]
 
@@ -28,10 +28,10 @@ support-gen-handler = { path = "support-gen-handler", version = "0.0.1" }
 # It keeps this subsystem's internal boundaries self-contained rather than declared by the outer repo.
 [workspace]
 members = [
-    "geom-ops-handler",
+    "generic-geom-alg-family-dispatch",
     "sc-geom-transport-inprocess",
     "support-gen-chalyplex",
-    "support-gen-handler",
+    "support-gen-family-dispatch",
     "support-gen-trivial",
 ]
 

@@ -7,7 +7,7 @@
 //! the support-generation family.
 //!
 //! Deliberately trivial and geometrically uninteresting:
-//! Strut (as in "strut of a truss") means each rod for hypothetical support structures in such heuristic.
+//! Terminology: "Strut" (as in "strut of a truss") means each rod for hypothetical support structures in such heuristic.
 //! "Strut": one "hexagonal strut" per anchor point, (a typical heuristic support structure)
 //! running straight from the anchor to the solid's boundary along `gravity`.
 //! It is a watertight hexagonal-prism strut from `top` to `bottom`, with the
@@ -25,7 +25,7 @@
 //! output is a pure function of the resolved anchors, boundary,
 //! gravity and radius: it never reads mesh geometry beyond the
 //! scene's world AABB, and only then when `explicit_locations` was
-//! empty. A `geom_ops_handler::reproduce_geom_algorithm` replay therefore
+//! empty. A `generic_geom_alg_family_dispatch::reproduce_geom_algorithm` replay therefore
 //! reproduces byte-identical meshes regardless of what `scene` is
 //! passed to it, as long as the recipe's anchors are honoured (see
 //! `tests_trivial_support::reproduce_support_is_byte_identical`).
@@ -40,7 +40,7 @@ use sc_mesh_core::geometry::compute_normal_from_triangle_vertices;
 use sc_mesh_core::{Aabb, IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vector3D, Vertex};
 use sc_mesh_spatial::{SceneSpatial, scene_aabb};
 use sha2::{Digest, Sha256};
-use support_gen_handler::{
+use support_gen_family_dispatch::{
     BoundaryShape, GeomAlgorithm, GeomAlgorithmError, GeomAlgorithmJobContext, GeomAlgorithmResult,
     PrintPlate, SupportAlgError, SupportStructureSpecs, normalize,
 };
@@ -142,14 +142,17 @@ impl GeomAlgorithm for TrivialSupport {
                 "radius_mm must be a finite, positive number".to_string(),
             ));
         }
-        if matches!(common_family_alg_specs.boundary_shape, BoundaryShape::Mesh(_)) {
+        if matches!(
+            common_family_alg_specs.boundary_shape,
+            BoundaryShape::Mesh(_)
+        ) {
             return Err(GeomAlgorithmError::FamilySpecific(
                 SupportAlgError::UnsupportedBoundaryShape,
             ));
         }
-        let gravity = normalize(common_family_alg_specs.gravity).ok_or(GeomAlgorithmError::FamilySpecific(
-            SupportAlgError::ZeroGravity,
-        ))?;
+        let gravity = normalize(common_family_alg_specs.gravity).ok_or(
+            GeomAlgorithmError::FamilySpecific(SupportAlgError::ZeroGravity),
+        )?;
 
         let scene_aabb_now = {
             let spatial = SceneSpatial::from_graph(scene.clone());
@@ -307,7 +310,8 @@ impl GeomAlgorithm for TrivialSupport {
     fn specs_pair_from_recipe(
         &self,
         recipe: &JobRecipe,
-    ) -> Result<(SupportStructureSpecs, Self::GeomAlgSpecificSpecs), GeomAlgorithmError<Self::Error>> {
+    ) -> Result<(SupportStructureSpecs, Self::GeomAlgSpecificSpecs), GeomAlgorithmError<Self::Error>>
+    {
         let gravity = parse_point(get(recipe, "support.gravity")?)?;
         let boundary_min = parse_point(get(recipe, "support.boundary.min")?)?;
         let boundary_max = parse_point(get(recipe, "support.boundary.max")?)?;
@@ -379,7 +383,10 @@ fn build_recipe(
         algorithm_id,
         algorithm_version,
         resolved_settings: vec![
-            ("support.gravity".to_string(), format_point(common_family_alg_specs.gravity)),
+            (
+                "support.gravity".to_string(),
+                format_point(common_family_alg_specs.gravity),
+            ),
             (
                 "support.boundary.min".to_string(),
                 format_point(boundary_min),

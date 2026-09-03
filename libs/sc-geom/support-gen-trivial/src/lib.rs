@@ -4,7 +4,7 @@
  */
 
 //! [`TrivialSupport`], the deliberately trivial reference implementation
-//! of `support-gen-handler`'s `SupportAlgorithm` trait, used to
+//! of `support-gen-family-dispatch`'s `GeomAlgorithm` trait, used to
 //! exercise and integration-test that interface end to end before any
 //! real algorithm (e.g. `support-gen-chalyplex`) exists. Not a real
 //! support-generation feature. See the crate README.

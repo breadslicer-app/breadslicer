@@ -11,7 +11,7 @@ use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vector3D,
 use sc_scene::{LeafPayload, Scene};
 
 use sc_geom_transport_inprocess::{AlgorithmId, JobError, JobHandle, JobRecipe};
-use support_gen_handler::{
+use support_gen_family_dispatch::{
     BoundaryShape, GeomAlgorithmError, PrintPlate, SupportAlgError, SupportStructureSpecs,
     normalize, reproduce_geom_algorithm, run_geom_algorithm,
 };
@@ -197,7 +197,8 @@ fn two_explicit_anchors_produce_two_strut_rods() {
     ];
     let algo_settings = TrivialSupportSpecs::default();
 
-    let handle = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap();
+    let handle =
+        run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap();
     let result = handle.join().unwrap();
     assert_eq!(result.meshes.len(), 2);
     for mesh in &result.meshes {
@@ -221,7 +222,8 @@ fn an_anchor_already_on_the_boundary_is_skipped_with_a_diagnostic() {
     family_specs.explicit_locations = vec![Vector3D::new([0.0, 0.0, 0.0])]; // already on the floor
     let algo_settings = TrivialSupportSpecs::default();
 
-    let handle = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap();
+    let handle =
+        run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap();
     let result = poll_until_done(&handle).unwrap();
     assert!(result.meshes.is_empty());
 
@@ -240,7 +242,8 @@ fn no_explicit_locations_and_an_empty_scene_is_rejected() {
     let family_specs = base_settings();
     let algo_settings = TrivialSupportSpecs::default();
 
-    let err = run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap_err();
+    let err =
+        run_geom_algorithm(&TrivialSupport, &scene, &family_specs, &algo_settings).unwrap_err();
     assert_eq!(
         err,
         GeomAlgorithmError::FamilySpecific(SupportAlgError::EmptySceneAndNoExplicitLocations)

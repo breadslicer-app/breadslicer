@@ -10,9 +10,8 @@
 //! projects its own `PrinterHardware` into a `PrintPlate` instead of
 //! this crate reading a printer profile directly.
 
+use generic_geom_alg_family_dispatch::BoundaryShape;
 use sc_mesh_core::Vector3D;
-
-use crate::boundary::BoundaryShape;
 
 /// The printer's physical build envelope and which way is "down" off
 /// the plate. Distinct from a job's [`BoundaryShape`] specs/settings, which
@@ -24,6 +23,6 @@ pub struct PrintPlate {
     /// Outward normal of the plate surface. Not assumed to be
     /// parallel to gravity: non-planar and non-horizontal printing are
     /// in scope for this crate even though today's callers are
-    /// conventional printers (see [`crate::handler::SupportStructureSpecs::gravity`]).
+    /// conventional printers (see [`crate::dispatch::SupportStructureSpecs::gravity`]).
     pub plate_normal: Vector3D<f64>,
 }

@@ -1,5 +1,5 @@
 [package]
-name = "support-gen-handler"
+name = "support-gen-family-dispatch"
 version = "0.0.1"
 edition = "2024"
 license = "AGPL-3.0-only"
@@ -13,7 +13,7 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 workspace = true
 
 [dependencies]
-geom-ops-handler = { path = "../geom-ops-handler", version = "0.0.1" }
+generic-geom-alg-family-dispatch = { path = "../generic-geom-alg-family-dispatch", version = "0.0.1" }
 sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
 
 [dev-dependencies]

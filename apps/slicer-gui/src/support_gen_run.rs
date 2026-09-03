@@ -132,7 +132,12 @@ impl GenSupportRun {
             ..TrivialSupportSpecs::default()
         };
 
-        match run_geom_algorithm(&TrivialSupport, &scene, &support_general_specs, &specific_alg_specs) {
+        match run_geom_algorithm(
+            &TrivialSupport,
+            &scene,
+            &support_general_specs,
+            &specific_alg_specs,
+        ) {
             Ok(handle) => {
                 ui.set_support_gen_in_progress(true);
                 ui.set_support_gen_progress(0.0);

@@ -3,8 +3,8 @@ name = "support-gen-trivial"
 version = "0.0.2"
 edition = "2024"
 license = "AGPL-3.0-only"
-authors = ["Sohail Siadat <soh.ale@gmail.com>"]
-description = "Deliberately trivial reference implementation of support-gen-handler's algorithm trait, used to prove and integration-test the interface end to end."
+authors = ["Sohail Siadat <sohail3d@sntomind.co.uk>"]
+description = "Deliberately trivial reference implementation of support-gen-family-dispatch's algorithm trait, used to prove and integration-test the interface end to end."
 categories = ["algorithms"]
 keywords = ["geometry", "support", "trivial", "debug", "stub"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
@@ -16,7 +16,7 @@ workspace = true
 sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version = "0.0.1" }
 sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
 sc-mesh-spatial = { path = "../../mesh-spatial", version = "0.1.0" }
-support-gen-handler = { path = "../support-gen-handler", version = "0.0.1" }
+support-gen-family-dispatch = { path = "../support-gen-family-dispatch", version = "0.0.1" }
 
 sha2 = "0.10"
 rand = "0.10.2"

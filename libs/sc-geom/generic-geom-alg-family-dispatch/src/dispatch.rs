@@ -102,7 +102,6 @@ pub trait AlgorithmFamilyCommonSpecs<E>: Clone + Send + 'static {
     /// Knobs/specs/params specific to this algorithm/operation.
     type Settings: Clone + Send + 'static;
     */
-
 }
 
 /// A running (or submission-rejected) job for one [`GeomAlgorithm`], and
@@ -202,5 +201,10 @@ pub fn reproduce_geom_algorithm<A: GeomAlgorithm>(
         });
     }
     let (common_family_alg_specs, specific_alg_specs) = algorithm.specs_pair_from_recipe(recipe)?;
-    run_geom_algorithm(algorithm, scene, &common_family_alg_specs, &specific_alg_specs)
+    run_geom_algorithm(
+        algorithm,
+        scene,
+        &common_family_alg_specs,
+        &specific_alg_specs,
+    )
 }

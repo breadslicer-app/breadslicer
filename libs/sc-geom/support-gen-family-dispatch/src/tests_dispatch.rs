@@ -5,7 +5,7 @@
 
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Normal, Vertex};
 
-use crate::handler::{normalize, suggest_support_regions};
+use crate::dispatch::{normalize, suggest_support_regions};
 
 fn single_triangle_mesh(normal: [f32; 3]) -> IndexedMesh {
     IndexedMesh::new(

@@ -6,7 +6,7 @@
 use sc_geom_transport_inprocess::{AlgorithmId, JobHandle, JobRecipe};
 use sc_scene::Scene;
 
-use crate::handler::{
+use crate::dispatch::{
     AlgorithmFamilyCommonSpecs, GeomAlgorithm, GeomAlgorithmError, GeomAlgorithmJobContext,
     GeomAlgorithmResult, reproduce_geom_algorithm, run_geom_algorithm,
 };
@@ -32,17 +32,13 @@ impl AlgorithmFamilyCommonSpecs<NoOpAlgError> for () {
     }
 }
 
-/// Minimal `GeomOpAlgorithm` mock proving the handler's generic
-/// Minimal `GeomAlgorithm` mock proving the generic
-/// dispatch compiles and runs end to end. Not a real operation.
-/// No concrete geometry algorithm is implemented in this crate yet. It returns zero meshes.
+/// Minimal `GeomAlgorithm` mock proving the generic dispatch compiles and
+/// runs end to end. Not a real operation. No concrete geometry algorithm
+/// is implemented in this crate yet. It returns zero meshes.
 #[derive(Clone, Copy, Debug, Default)]
 struct NoOpAlgorithm;
 
 #[derive(Clone, Debug, Default, PartialEq)]
-struct NoOpSpecs;
-
-#[derive(Clone, Debug, PartialEq)]
 struct NoOpSpecs;
 
 impl GeomAlgorithm for NoOpAlgorithm {
@@ -86,7 +82,10 @@ impl GeomAlgorithm for NoOpAlgorithm {
     fn specs_pair_from_recipe(
         &self,
         _recipe: &JobRecipe,
-    ) -> Result<(Self::GeomAlgCommonSpecs, Self::GeomAlgSpecificSpecs), GeomAlgorithmError<Self::Error>> {
+    ) -> Result<
+        (Self::GeomAlgCommonSpecs, Self::GeomAlgSpecificSpecs),
+        GeomAlgorithmError<Self::Error>,
+    > {
         Ok(((), NoOpSpecs))
     }
 }

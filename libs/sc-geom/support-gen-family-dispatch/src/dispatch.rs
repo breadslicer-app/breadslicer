@@ -3,31 +3,26 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Support-structure generation: the first geometry-operation family
-//! built on `geom-ops-handler`'s generic [`geom_ops_handler::GeomAlgorithm`]
-//! dispatch. Everything here is specific to support generation alone; the
-//! dispatch machinery itself
-//! (job context, result, error wrapping, submit/replay)
-//! lives one layer down and is shared with every future family.
-//!
-//! [`SupportStructureSpecs`] is this family's
-//! [`AlgorithmFamilyCommonSpecs`]: the inputs every support algorithm
-//! shares (gravity, the region it must stay within, the printer's own
-//! plate, explicit or auto-detected anchor locations). Anything specific
-//! to one algorithm's numerics lives in that algorithm's own `GeomAlgSpecificSpecs`
-//! associated type instead.
+//! See notes on `libs/sc-geom/support-gen-family-dispatch/src/lib.rs`
 
-use geom_ops_handler::AlgorithmFamilyCommonSpecs;
+use generic_geom_alg_family_dispatch::AlgorithmFamilyCommonSpecs;
+use generic_geom_alg_family_dispatch::BoundaryShape;
 use sc_mesh_core::{IndexedMesh, Vector3D};
 
-use crate::boundary::BoundaryShape;
 use crate::print_plate::PrintPlate;
 
-/// Common, cross-algorithm support-generation inputs.
-/// That is, what is common across all support algorithms.
-/// Not exhaustive: this v0 covers what the toy "trivial support" algorithm needs;
-/// later algorithms are expected to add fields here only when genuinely shared
-/// across more than one algorithm,
+/// The inputs that are common across algorithms in algorithm-family "support-generation".
+/// It defines, what is common across all support algorithms (hence, defines this family).
+/// It is incomplete. It currently covers the iputs that are recealed by current implementations.
+/// (currenlty, the toy "trivial support" algorithm , calyplex).
+/// It is at the elvel of `AlgorithmFamilyCommonSpecs`, which itself is expected to grow a bit.
+/// Future algorithms may descover fields to be added to `GeomAlgSpecificSpecs`,
+/// some may be genuinely shared across more than one algorithm,
+/// and then they will be added here to `SupportStructureSpecs`
+/// as the specialisation of `AlgorithmFamilyCommonSpecs` for support generation.
+/// In other words,
+/// later algorithms are expected to add fields here to `SupportStructureSpecs`,
+/// but only when genuinely shared across more than one algorithm.
 /// and to keep the rest on their own `specific_alg_specs: &GeomAlgSpecificSpecs` type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SupportStructureSpecs {
@@ -56,7 +51,7 @@ pub struct SupportStructureSpecs {
 }
 
 /// Failures specific to the support-generation family, reached
-/// generically via `geom_ops_handler::GeomAlgorithmError::FamilySpecific`.
+/// generically via `generic_geom_alg_family_dispatch::GeomAlgorithmError::FamilySpecific`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SupportAlgError {
     /// No explicit anchor locations were given and the scene has no
@@ -102,9 +97,13 @@ impl AlgorithmFamilyCommonSpecs<SupportAlgError> for SupportStructureSpecs {
 /// A heuristic that says: per-vertex, "how much does this need support"
 /// score. In `[0.0, 1.0]`. It is aligned one-to-one with
 /// `mesh.vertices()`: this helps the app (driver/caller) to colour-code
-/// as a heat map. Since it is lightweight, it is synchronous (unlike a
-/// `geom_ops_handler::run_geom_algorithm` job). It is a version-0.0.0
-/// heuristic, don't consider it a proper "structural analysis".
+/// as a heat map. Since it is lightweight, it is synchronous
+/// (unlike a `generic_geom_alg_family_dispatch::run_geom_algorithm` job).
+///
+/// It is a version-0.0.0 heuristic (intended for sanity testing of E2E integration itself,
+/// including highlighting overhand (support-needing) for GUI,
+/// not geometry operations), shall not be mistaken with a proper "structural analysis".
+///
 /// Heuristic: it scores each vertex by how much its neighbouring faces'
 /// normals point along `gravity`. Direction: a face whose normal points
 /// the way gravity pulls is a downward-facing (overhanging) surface.
@@ -135,7 +134,7 @@ pub fn suggest_support_regions(mesh: &IndexedMesh, gravity: Vector3D<f64>) -> Ve
 
 /// Unit vector along `v`, or `None` when `v` is (numerically) zero.
 /// `pub`, not `pub(crate)`: algorithm crates implementing
-/// [`geom_ops_handler::GeomAlgorithm`] for this family (outside this
+/// [`generic_geom_alg_family_dispatch::GeomAlgorithm`] for this family (outside this
 /// crate) legitimately need it too.
 pub fn normalize(v: Vector3D<f64>) -> Option<Vector3D<f64>> {
     let n = v.norm();
