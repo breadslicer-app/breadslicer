@@ -58,6 +58,13 @@ exceptions = [
     { allow = ["GPL-3.0-only"], crate = "i-slint-core-macros" },
     { allow = ["GPL-3.0-only"], crate = "i-slint-renderer-skia" },
     { allow = ["GPL-3.0-only"], crate = "i-slint-renderer-software" },
+
+    # Temporary license allowance
+    { allow = ["AGPL-3.0-only"], crate = "sc-geom" },
+    { allow = ["AGPL-3.0-only"], crate = "geom-ops-handler" },
+    { allow = ["AGPL-3.0-only"], crate = "sc-geom-transport-inprocess" },
+    { allow = ["AGPL-3.0-only"], crate = "support-gen-handler" },
+    { allow = ["AGPL-3.0-only"], crate = "support-gen-trivial" },
 ]
 
 [bans]
