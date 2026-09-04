@@ -6,45 +6,13 @@
 use proptest::prelude::*;
 
 use super::chunk::{MAX_RUN_LENGTH, encode_run};
-
-/// Decode a chunk stream back to `(value, length)` runs, one entry
-/// per chunk. Panics on a delta chunk, which the encoder never emits.
-fn decode(bytes: &[u8]) -> Vec<(u8, u32)> {
-    let mut runs = Vec::new();
-    let mut cursor = 0;
-    while cursor < bytes.len() {
-        let tag = bytes[cursor];
-        cursor += 1;
-        let value = match tag >> 6 {
-            0b00 => 0x00,
-            0b11 => 0xFF,
-            0b01 => {
-                let grey = bytes[cursor];
-                cursor += 1;
-                grey
-            }
-            _ => panic!("delta chunk at byte {cursor}"),
-        };
-        let mut high = 0_u32;
-        for _ in 0..((tag >> 4) & 0b11) {
-            high = (high << 8) | u32::from(bytes[cursor]);
-            cursor += 1;
-        }
-        runs.push((value, (high << 4) | u32::from(tag & 0x0F)));
-    }
-    runs
-}
+use super::test_decode::decode_chunks as decode;
 
 fn encoded(value: u8, length: u32) -> Vec<u8> {
     let mut out = Vec::new();
     encode_run(value, length, &mut out);
     out
 }
-
-// The published specification lists a fourth worked example,
-// `F1 CC BB AA FF`, whose run length is transcribed with 9 hex digits
-// and cannot fit the 28-bit field. The bit rules are what this
-// encoder follows, so that row is left out below.
 
 #[test]
 fn the_specified_black_run_example_encodes_byte_for_byte() {

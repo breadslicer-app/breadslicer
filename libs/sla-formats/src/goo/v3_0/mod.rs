@@ -9,6 +9,11 @@
 //! is the opposite of the other printer formats.
 
 pub mod chunk;
+pub mod payload;
 
 #[cfg(test)]
+mod test_decode;
+#[cfg(test)]
 mod tests_chunk;
+#[cfg(test)]
+mod tests_payload;
