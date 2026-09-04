@@ -30,5 +30,6 @@ has_camera = false
 
 [[capabilities.output_formats]]
 format = "goo"
+version = "v3.0"
 
 [constraints]

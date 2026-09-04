@@ -35,5 +35,6 @@ version = "v5enc"
 
 [[capabilities.output_formats]]
 format = "goo"
+version = "v3.0"
 
 [constraints]
