@@ -9,7 +9,7 @@ image_asset_path = "images/elegoo-mars-5-goo.png"
 [hardware.build_volume]
 x_mm = 143.43
 y_mm = 89.6
-z_mm = 165.0
+z_mm = 150.0
 
 [hardware.pixel_resolution]
 x = 4098
