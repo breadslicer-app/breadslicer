@@ -54,7 +54,7 @@ const ARTIFICIAL_DELAY_TICKS: u32 = 20;
 
 /// Artificial, demo-only wait (see `sc_geom::TrivialSupportSettings::artificial_delay_ms`)
 /// so the progress bar has something to visibly animate through.
-const ARTIFICIAL_DELAY_MS : u64 = 2_000;
+const ARTIFICIAL_DELAY_MS: u64 = 2_000;
 
 /// Below this strut length (the distance from anchor to boundary),
 /// [`hex_prism`] refuses to build geometry: the anchor is already
@@ -69,7 +69,6 @@ const MIN_STRUT_LENGTH_MM: f64 = 1e-2;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TrivialSupportSettings {
     pub radius_mm: f64,
-
     /*
     /// Artificial, demo-only delay: sleeps this many milliseconds
     /// (spread across [`ARTIFICIAL_DELAY_TICKS`] progress ticks)
@@ -83,14 +82,12 @@ pub struct TrivialSupportSettings {
     /// `0` (the default) disables it. Not part of the recipe: it
     /// doesn't affect the geometry, so a replay never needs it.
     /// pub artificial_delay_ms: u64,
-    */
+     */
 }
 
 impl Default for TrivialSupportSettings {
     fn default() -> Self {
-        Self {
-            radius_mm: 1.0,
-        }
+        Self { radius_mm: 1.0 }
     }
 }
 
@@ -258,7 +255,8 @@ impl SupportAlgorithm for TrivialSupport {
             // Artificial, demo-only wait. See `TrivialSupportSettings::artificial_delay_ms`.
             // The geometry above is already final; this exists purely
             // so a caller watching progress has something to watch.
-            let artificial_delay_ms: u64 = (ARTIFICIAL_DELAY_MS + 1)/2 + rand::random_range(0..(ARTIFICIAL_DELAY_MS/2));
+            let artificial_delay_ms: u64 =
+                (ARTIFICIAL_DELAY_MS + 1) / 2 + rand::random_range(0..(ARTIFICIAL_DELAY_MS / 2));
             if artificial_delay_ms > 0 {
                 let per_tick_ms = artificial_delay_ms / u64::from(ARTIFICIAL_DELAY_TICKS);
                 for tick in 0..ARTIFICIAL_DELAY_TICKS {
@@ -335,7 +333,6 @@ impl SupportAlgorithm for TrivialSupport {
             common,
             TrivialSupportSettings {
                 radius_mm,
-
                 // `artificial_delay_ms` is an example of what is not part of the recipe:
                 // Because it does not affect reproducibility of the result:
                 // A replay never needs to re-wait

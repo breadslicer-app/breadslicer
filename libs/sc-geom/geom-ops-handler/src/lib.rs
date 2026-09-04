@@ -12,7 +12,6 @@
 //!
 //! This is a placeholder, no geometry algorithm/operation is implemented or registered here yet.
 
-
 pub mod handler;
 
 pub use handler::{

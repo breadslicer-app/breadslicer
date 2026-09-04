@@ -130,9 +130,7 @@ fn explicit_anchor_runs_are_deterministic() {
     let plate = print_plate();
     let mut settings = base_settings();
     settings.explicit_locations = vec![Vector3D::new([0.0, 0.0, 5.0])];
-    let algo_settings = TrivialSupportSettings {
-        radius_mm: 1.0,
-    };
+    let algo_settings = TrivialSupportSettings { radius_mm: 1.0 };
 
     let first = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings)
         .unwrap()
@@ -152,9 +150,7 @@ fn auto_detected_anchor_is_recorded_and_replay_does_not_need_the_original_scene(
     let scene = scene_with_cube_at([0.0, 0.0, 50.0]);
     let plate = print_plate();
     let settings = base_settings(); // empty explicit_locations => auto-detect
-    let algo_settings = TrivialSupportSettings {
-        radius_mm: 2.0,
-    };
+    let algo_settings = TrivialSupportSettings { radius_mm: 2.0 };
 
     let first = gen_support(&TrivialSupport, &scene, &plate, &settings, &algo_settings)
         .unwrap()
@@ -262,9 +258,7 @@ fn artificial_delay_reports_progress_and_does_not_change_the_geometry() {
         &scene,
         &plate,
         &settings,
-        &TrivialSupportSettings {
-            radius_mm: 1.0,
-        },
+        &TrivialSupportSettings { radius_mm: 1.0 },
     )
     .unwrap()
     .join()
@@ -316,9 +310,7 @@ fn zero_or_negative_radius_is_rejected() {
         &scene,
         &plate,
         &settings,
-        &TrivialSupportSettings {
-            radius_mm: 0.0,
-        },
+        &TrivialSupportSettings { radius_mm: 0.0 },
     )
     .unwrap_err();
     assert!(matches!(err, SupportError::InvalidSettings(_)));
