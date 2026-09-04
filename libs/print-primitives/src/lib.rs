@@ -22,6 +22,7 @@ pub mod format;
 pub mod identity;
 pub mod length;
 pub mod light_intensity;
+pub mod light_pwm;
 pub mod mirror;
 pub mod network;
 pub mod non_empty_string;
@@ -41,6 +42,7 @@ pub use length::{
     PositiveFiniteMicrons, PositiveFiniteMm,
 };
 pub use light_intensity::{MwPerCm2OutOfRange, PositiveFiniteMwPerCm2};
+pub use light_pwm::{LightPwm, LightPwmOutOfRange};
 pub use mirror::Mirror;
 pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
@@ -53,7 +55,7 @@ pub use speed::{
     PositiveFiniteMmPerMin, SpeedMmPerMinOutOfRange, SpeedRangeMmPerMin,
     SpeedRangeMmPerMinBoundsInverted,
 };
-pub use time::{PositiveFiniteSec, SecOutOfRange};
+pub use time::{NegativeDuration, NonNegativeFiniteSec, PositiveFiniteSec, SecOutOfRange};
 
 #[cfg(test)]
 mod tests_aa_level;
@@ -69,6 +71,8 @@ mod tests_identity;
 mod tests_length;
 #[cfg(test)]
 mod tests_light_intensity;
+#[cfg(test)]
+mod tests_light_pwm;
 #[cfg(test)]
 mod tests_mirror;
 #[cfg(test)]
