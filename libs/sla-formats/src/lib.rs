@@ -22,6 +22,7 @@ pub mod debug;
 pub mod error;
 pub mod format;
 pub mod options;
+pub mod raster_setup;
 pub mod threemf;
 pub mod write;
 
@@ -31,5 +32,6 @@ mod tests_threemf;
 pub use error::WriterError;
 pub use format::Format;
 pub use options::WriterOptions;
+pub use raster_setup::RasterSetup;
 pub use threemf::write_scene_slices;
 pub use write::write_slice;

@@ -14,17 +14,15 @@ use sc_sl1cer::profile::{
     AaLevel, BuildVolume, LayerSchedule, Mirror, PixelResolution, SliceProfile,
 };
 
+use crate::raster_setup::RasterSetup;
+
 /// Bundle of slicer-run parameters used to write a contour stack to
 /// disk. Built from a [`SliceProfile`] plus the slicer's version
 /// string; `min_alpha_pct` defaults to `0.0` and can be set via
 /// [`with_min_alpha_pct`](Self::with_min_alpha_pct).
 #[derive(Clone, Debug, PartialEq)]
 pub struct WriterOptions {
-    build_volume: BuildVolume,
-    pixel_resolution: PixelResolution,
-    mirror: Mirror,
-    aa: AaLevel,
-    min_alpha_pct: f32,
+    raster: RasterSetup,
     layer_schedule: LayerSchedule,
     slicer_version: &'static str,
 }
@@ -39,11 +37,7 @@ impl WriterOptions {
     /// construction.
     pub fn from_profile(profile: &SliceProfile, slicer_version: &'static str) -> Self {
         Self {
-            build_volume: *profile.build_volume(),
-            pixel_resolution: *profile.pixel_resolution(),
-            mirror: profile.mirror(),
-            aa: profile.aa_level(),
-            min_alpha_pct: 0.0,
+            raster: RasterSetup::from_profile(profile),
             layer_schedule: *profile.layer_schedule(),
             slicer_version,
         }
@@ -54,33 +48,39 @@ impl WriterOptions {
     #[inline]
     #[must_use]
     pub fn with_min_alpha_pct(mut self, min_alpha_pct: f32) -> Self {
-        self.min_alpha_pct = min_alpha_pct;
+        self.raster = self.raster.with_min_alpha_pct(min_alpha_pct);
         self
+    }
+
+    /// Report the projection every image writer shares.
+    #[inline]
+    pub fn raster(&self) -> &RasterSetup {
+        &self.raster
     }
 
     #[inline]
     pub fn build_volume(&self) -> &BuildVolume {
-        &self.build_volume
+        self.raster.build_volume()
     }
 
     #[inline]
     pub fn pixel_resolution(&self) -> &PixelResolution {
-        &self.pixel_resolution
+        self.raster.pixel_resolution()
     }
 
     #[inline]
     pub fn mirror(&self) -> Mirror {
-        self.mirror
+        self.raster.mirror()
     }
 
     #[inline]
     pub fn aa(&self) -> AaLevel {
-        self.aa
+        self.raster.aa()
     }
 
     #[inline]
     pub fn min_alpha_pct(&self) -> f32 {
-        self.min_alpha_pct
+        self.raster.min_alpha_pct()
     }
 
     #[inline]
