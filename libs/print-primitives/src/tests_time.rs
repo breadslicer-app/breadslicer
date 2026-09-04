@@ -113,6 +113,63 @@ fn positive_finite_sec_roundtrip_preserves_value() {
 }
 
 #[test]
+fn interpolate_towards_at_zero_returns_the_starting_duration() {
+    let from = PositiveFiniteSec::new(30.0).unwrap();
+    let to = PositiveFiniteSec::new(2.5).unwrap();
+    assert_eq!(from.interpolate_towards(to, 0.0).value(), 30.0);
+}
+
+#[test]
+fn interpolate_towards_at_one_reaches_the_target_duration() {
+    let from = PositiveFiniteSec::new(30.0).unwrap();
+    let to = PositiveFiniteSec::new(2.5).unwrap();
+    assert_eq!(from.interpolate_towards(to, 1.0).value(), 2.5);
+}
+
+#[test]
+fn interpolate_towards_steps_proportionally() {
+    let from = PositiveFiniteSec::new(30.0).unwrap();
+    let to = PositiveFiniteSec::new(2.5).unwrap();
+    // 30 - 27.5 / 6 * 2, the second step of a five-layer ramp.
+    let stepped = from.interpolate_towards(to, 2.0 / 6.0).value();
+    assert!(
+        (stepped - 30.0 + 27.5 / 6.0 * 2.0).abs() < 1e-12,
+        "stepped: {stepped}",
+    );
+}
+
+#[test]
+fn interpolate_towards_clamps_fractions_outside_the_unit_interval() {
+    let from = PositiveFiniteSec::new(30.0).unwrap();
+    let to = PositiveFiniteSec::new(2.5).unwrap();
+    assert_eq!(from.interpolate_towards(to, 4.0).value(), 2.5);
+    assert_eq!(from.interpolate_towards(to, -4.0).value(), 30.0);
+    assert_eq!(from.interpolate_towards(to, f64::INFINITY).value(), 2.5);
+}
+
+#[test]
+fn interpolate_towards_treats_a_nan_fraction_as_no_step() {
+    let from = PositiveFiniteSec::new(30.0).unwrap();
+    let to = PositiveFiniteSec::new(2.5).unwrap();
+    assert_eq!(from.interpolate_towards(to, f64::NAN).value(), 30.0);
+}
+
+#[test]
+fn interpolate_towards_stays_in_range_at_the_extremes() {
+    let tiny = PositiveFiniteSec::new(f64::MIN_POSITIVE).unwrap();
+    let huge = PositiveFiniteSec::new(f64::MAX).unwrap();
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        for (from, to) in [(tiny, huge), (huge, tiny)] {
+            let value = from.interpolate_towards(to, fraction).value();
+            assert!(
+                PositiveFiniteSec::new(value).is_ok(),
+                "fraction {fraction} produced {value}",
+            );
+        }
+    }
+}
+
+#[test]
 fn non_negative_finite_sec_new_accepts_zero() {
     let v = NonNegativeFiniteSec::new(0.0).unwrap();
     assert_eq!(v.value(), 0.0);

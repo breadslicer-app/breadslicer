@@ -58,6 +58,25 @@ impl PositiveFiniteSec {
     pub fn value(self) -> f64 {
         self.0
     }
+
+    /// Interpolate from this duration towards `target` by `fraction`,
+    /// clamped to `[0.0, 1.0]`.
+    #[inline]
+    #[must_use]
+    pub fn interpolate_towards(self, target: Self, fraction: f64) -> Self {
+        let fraction = if fraction.is_nan() {
+            0.0
+        } else {
+            fraction.clamp(0.0, 1.0)
+        };
+        let interpolated = (target.0 - self.0).mul_add(fraction, self.0);
+        let (low, high) = if self.0 <= target.0 {
+            (self.0, target.0)
+        } else {
+            (target.0, self.0)
+        };
+        Self(interpolated.clamp(low, high))
+    }
 }
 
 impl fmt::Display for PositiveFiniteSec {
