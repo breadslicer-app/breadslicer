@@ -8,7 +8,9 @@
 
 use std::fmt;
 
-use sc_print_primitives::{LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec};
+use sc_print_primitives::{
+    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec,
+};
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
@@ -38,7 +40,9 @@ impl std::error::Error for SlabTopOutOfRange {}
 /// Build the [`PrintProgram`] for a resolved configuration, one
 /// record per layer of `profile`'s schedule.
 ///
-/// `profile` must be the one the contours were sliced under.
+/// `profile` must be the one the contours were sliced under, and
+/// `created_at` must already be rendered the way the target file
+/// records a creation time.
 ///
 /// # Errors
 ///
@@ -47,6 +51,7 @@ impl std::error::Error for SlabTopOutOfRange {}
 pub fn project_to_print_program(
     config: &ResolvedPrintConfig,
     profile: &SliceProfile,
+    created_at: NonEmptyString,
     slicer_version: &'static str,
 ) -> Result<PrintProgram, SlabTopOutOfRange> {
     let material = &config.material_resolved;
@@ -90,6 +95,10 @@ pub fn project_to_print_program(
         machine_name: config.printer.identity.name.clone(),
         material_name: material.identity.name.clone(),
         layers,
+        layer_height_mm: material.layer_height_mm,
+        bottom_layer_count: material.bottom_layer_count,
+        transition_layer_count: transition_count,
+        created_at,
         slicer_version,
     })
 }

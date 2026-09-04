@@ -5,7 +5,7 @@
 
 use std::num::NonZeroU32;
 
-use sc_print_primitives::{LightPwm, NonNegativeFiniteSec, PositiveFiniteMm};
+use sc_print_primitives::{LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides,
 };
@@ -112,10 +112,16 @@ fn slice_profile(config: &ResolvedPrintConfig, total_layers: u32) -> SliceProfil
     )
 }
 
+const CREATED_AT: &str = "2026-09-04 17:31:02";
+
+fn created_at() -> NonEmptyString {
+    NonEmptyString::new(CREATED_AT).unwrap()
+}
+
 fn program(printer_toml: &str, total_layers: u32) -> PrintProgram {
     let config = resolved_config(printer_toml);
     let profile = slice_profile(&config, total_layers);
-    project_to_print_program(&config, &profile, "0.0.12").unwrap()
+    project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap()
 }
 
 fn exposures(program: &PrintProgram) -> Vec<f64> {
@@ -203,7 +209,7 @@ fn a_schedule_shorter_than_the_bottom_layers_is_all_bottom_layers() {
 fn every_layer_records_its_slab_top() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, "0.0.12").unwrap();
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
 
     let scheduled: Vec<f64> = profile.layer_schedule().iter_slab_tops().collect();
     let recorded: Vec<f64> = program
@@ -218,7 +224,7 @@ fn every_layer_records_its_slab_top() {
 fn the_raster_setup_comes_from_the_slice_profile() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, "0.0.12").unwrap();
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
 
     assert_eq!(program.raster.build_volume(), profile.build_volume());
     assert_eq!(
@@ -235,6 +241,52 @@ fn the_machine_and_material_names_come_from_the_profiles() {
     assert_eq!(program.machine_name.as_str(), "Mars 5");
     assert_eq!(program.material_name.as_str(), "Blu");
     assert_eq!(program.slicer_version, "0.0.12");
+}
+
+#[test]
+fn the_creation_time_is_the_callers() {
+    assert_eq!(program(PRINTER_TOML, 20).created_at.as_str(), CREATED_AT);
+}
+
+#[test]
+fn the_layer_height_is_the_resolved_one() {
+    let program = program(PRINTER_TOML, 20);
+    assert_eq!(program.layer_height_mm.value(), LAYER_HEIGHT_MM);
+}
+
+#[test]
+fn the_bottom_and_transition_counts_come_from_the_profiles() {
+    let program = program(PRINTER_TOML, 20);
+    assert_eq!(program.bottom_layer_count, BOTTOM_LAYER_COUNT);
+    assert_eq!(program.transition_layer_count, TRANSITION_COUNT);
+}
+
+#[test]
+fn a_printer_declaring_no_transition_layers_carries_a_count_of_zero() {
+    let program = program(PRINTER_WITHOUT_TRANSITION_LAYERS_TOML, 20);
+    assert_eq!(program.transition_layer_count, 0);
+}
+
+#[test]
+fn the_counts_describe_the_exposures_the_records_carry() {
+    let program = program(PRINTER_TOML, 20);
+    let bottom = program.bottom_layer_count as usize;
+    let band_end = bottom + program.transition_layer_count as usize;
+
+    assert_eq!(
+        program.layers[bottom - 1].exposure_sec,
+        program.layers[0].exposure_sec,
+        "the layer before the count is still a bottom layer",
+    );
+    assert_ne!(
+        program.layers[bottom].exposure_sec, program.layers[0].exposure_sec,
+        "the layer at the count has left the bottom exposure",
+    );
+    assert_eq!(
+        program.layers[band_end].exposure_sec,
+        program.layers[program.layers.len() - 1].exposure_sec,
+        "the layer after the band already holds the normal exposure",
+    );
 }
 
 #[test]
@@ -280,7 +332,7 @@ fn a_layer_beyond_the_representable_height_names_itself() {
         PackingMode::None,
     );
 
-    let err = project_to_print_program(&config, &profile, "0.0.12").unwrap_err();
+    let err = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap_err();
     assert_eq!(err.layer_index, 1);
     assert!(!err.z_mm.is_finite(), "z_mm: {}", err.z_mm);
 }

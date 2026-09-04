@@ -50,5 +50,13 @@ pub struct PrintProgram {
     pub machine_name: NonEmptyString,
     pub material_name: NonEmptyString,
     pub layers: Vec<LayerProgram>,
+    /// Nominal slab thickness. The first slab may be thicker.
+    pub layer_height_mm: PositiveFiniteMm,
+    pub bottom_layer_count: u32,
+    /// How many layers step from the bottom exposure to the normal
+    /// one. The steps themselves are in the layer records.
+    pub transition_layer_count: u32,
+    /// Creation time, rendered the way the file records it.
+    pub created_at: NonEmptyString,
     pub slicer_version: &'static str,
 }
