@@ -33,4 +33,7 @@ network_protocol = "sdcp"
 format = "ctb"
 version = "v5enc"
 
+[[capabilities.output_formats]]
+format = "goo"
+
 [constraints]
