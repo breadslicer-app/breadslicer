@@ -16,11 +16,14 @@
 //!   from a chosen printer + material.
 //! - [`projection`] maps printer hardware and per-print parameters
 //!   onto the engine's profile type.
+//! - [`print_program`] maps a resolved configuration onto the
+//!   printer-file writers' input port.
 //! - [`fingerprint`] computes the slice-input token project files
 //!   use to revalidate persisted slices.
 
 pub mod fingerprint;
 pub mod prepare;
+pub mod print_program;
 pub mod projection;
 pub mod slice_plate;
 
@@ -31,6 +34,7 @@ pub use fingerprint::{
 pub use prepare::{
     UnsliceableScene, UnsliceableSelection, slice_profile_for_scene, slice_profile_for_selection,
 };
+pub use print_program::{SlabTopOutOfRange, project_to_print_program};
 pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,
@@ -43,6 +47,8 @@ pub use slice_plate::{
 mod tests_fingerprint;
 #[cfg(test)]
 mod tests_prepare;
+#[cfg(test)]
+mod tests_print_program;
 #[cfg(test)]
 mod tests_projection;
 #[cfg(test)]

@@ -18,6 +18,7 @@ sc-print-primitives = { workspace = true }
 sc-print-profiles = { workspace = true }
 sc-scene = { workspace = true }
 sc-sl1cer = { workspace = true }
+sc-sla-formats = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]

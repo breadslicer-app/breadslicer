@@ -1,0 +1,122 @@
+/*
+ * SPDX-FileCopyrightText: 2026 MyMiniFactory Ltd, 2026 CTRLback SCCL
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Projection from a resolved print configuration to the program a
+//! printer file hands the machine.
+
+use std::fmt;
+
+use sc_print_primitives::{LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec};
+use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
+use sc_sl1cer::profile::SliceProfile;
+use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
+
+/// Returned when a schedule places a layer's slab top outside the
+/// range a length can hold.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlabTopOutOfRange {
+    /// Position of the offending layer in the schedule.
+    pub layer_index: u32,
+    /// The offending slab top.
+    pub z_mm: f64,
+}
+
+impl fmt::Display for SlabTopOutOfRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "layer {} sits at z = {} mm, which is not a positive finite height",
+            self.layer_index, self.z_mm,
+        )
+    }
+}
+
+impl std::error::Error for SlabTopOutOfRange {}
+
+/// Build the [`PrintProgram`] for a resolved configuration, one
+/// record per layer of `profile`'s schedule.
+///
+/// `profile` must be the one the contours were sliced under.
+///
+/// # Errors
+///
+/// [`SlabTopOutOfRange`] when a scheduled layer has no representable
+/// height.
+pub fn project_to_print_program(
+    config: &ResolvedPrintConfig,
+    profile: &SliceProfile,
+    slicer_version: &'static str,
+) -> Result<PrintProgram, SlabTopOutOfRange> {
+    let material = &config.material_resolved;
+    let transition_count = config.printer.capabilities.transition_layers.unwrap_or(0);
+
+    let lift = MotionStage {
+        distance_mm: material.lift_distance_mm,
+        speed_mm_min: material.lift_speed_mm_min,
+    };
+    // The platform returns the distance it lifted, so the retract
+    // carries no distance of its own.
+    let retract = MotionStage {
+        distance_mm: material.lift_distance_mm,
+        speed_mm_min: material.retract_speed_mm_min,
+    };
+
+    let layers = (0u32..)
+        .zip(profile.layer_schedule().iter_slab_tops())
+        .map(|(layer_index, slab_top)| {
+            let slab_top_mm = PositiveFiniteMm::new(slab_top).map_err(|_| SlabTopOutOfRange {
+                layer_index,
+                z_mm: slab_top,
+            })?;
+            Ok(LayerProgram {
+                slab_top_mm,
+                exposure_sec: exposure_for(layer_index, transition_count, material),
+                wait_before_cure_sec: NonNegativeFiniteSec::ZERO,
+                wait_after_cure_sec: NonNegativeFiniteSec::ZERO,
+                wait_after_lift_sec: NonNegativeFiniteSec::ZERO,
+                lift,
+                retract,
+                second_lift: None,
+                second_retract: None,
+                light_pwm: LightPwm::FULL,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(PrintProgram {
+        raster: RasterSetup::from_profile(profile),
+        machine_name: config.printer.identity.name.clone(),
+        material_name: material.identity.name.clone(),
+        layers,
+        slicer_version,
+    })
+}
+
+/// Pick one layer's exposure: the bottom layers hold the bottom
+/// exposure, the transition band steps from it towards the normal
+/// exposure, and every layer after the band holds the normal
+/// exposure.
+fn exposure_for(
+    layer_index: u32,
+    transition_count: u32,
+    material: &MaterialResolved,
+) -> PositiveFiniteSec {
+    if layer_index < material.bottom_layer_count {
+        return material.bottom_exposure_sec;
+    }
+    let band_end = material.bottom_layer_count.saturating_add(transition_count);
+    if layer_index >= band_end {
+        return material.normal_exposure_sec;
+    }
+
+    let step = f64::from(layer_index - material.bottom_layer_count) + 1.0;
+    // Stepping over one more layer than the band holds keeps its last
+    // layer above the normal exposure, which the layer after the band
+    // is the first to carry.
+    let steps = f64::from(transition_count) + 1.0;
+    material
+        .bottom_exposure_sec
+        .interpolate_towards(material.normal_exposure_sec, step / steps)
+}

@@ -4830,6 +4830,7 @@ dependencies = [
  "sc-print-profiles",
  "sc-scene",
  "sc-sl1cer",
+ "sc-sla-formats",
  "sha2",
  "toml_edit",
 ]
