@@ -16,6 +16,7 @@ workspace = true
 sc-3mf.workspace = true
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
+sc-print-primitives.workspace = true
 sc-scene.workspace = true
 sc-sl1cer.workspace = true
 

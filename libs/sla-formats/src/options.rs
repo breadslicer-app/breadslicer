@@ -10,9 +10,8 @@
 //! `aa` and `min_alpha_pct`; PNG writers consume them); each writer
 //! reads the subset it actually needs and ignores the rest.
 
-use sc_sl1cer::profile::{
-    AaLevel, BuildVolume, LayerSchedule, Mirror, PixelResolution, SliceProfile,
-};
+use sc_print_primitives::{AaLevel, BuildVolume, Mirror, PixelResolution};
+use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
 
 use crate::raster_setup::RasterSetup;
 

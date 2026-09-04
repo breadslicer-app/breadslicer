@@ -17,11 +17,10 @@ use sc_3mf::package::{Package, PartName};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_fixtures::{cuboid_with_z_tunnel, unit_cube_mesh};
+use sc_print_primitives::{AaLevel, BuildVolume, Mirror, PixelResolution};
 use sc_scene::Scene;
 use sc_scene::node::LeafPayload;
-use sc_sl1cer::profile::{
-    AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
-};
+use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 use sc_sl1cer::{LeafSlices, slice_scene};
 use tempfile::tempdir;
 

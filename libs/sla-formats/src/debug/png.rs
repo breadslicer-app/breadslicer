@@ -26,8 +26,9 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use png::{BitDepth, ColorType, Encoder};
+use sc_print_primitives::AaLevel;
 use sc_sl1cer::contour::ContourStack;
-use sc_sl1cer::profile::{AaLevel, LayerSchedule};
+use sc_sl1cer::profile::LayerSchedule;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
 use sc_sl1cer::raster::rle::LayerRaster;
@@ -191,16 +192,16 @@ mod png_tests {
     use std::fs;
     use std::io::BufReader;
 
+    use sc_print_primitives::AaLevel;
+    use sc_print_primitives::BuildVolume;
+    use sc_print_primitives::Mirror;
+    use sc_print_primitives::PixelResolution;
     use sc_sl1cer::contour::ClosedRing;
     use sc_sl1cer::contour::ContourLayer;
     use sc_sl1cer::contour::Polygon;
     use sc_sl1cer::geom2d::Point2D;
-    use sc_sl1cer::profile::AaLevel;
-    use sc_sl1cer::profile::BuildVolume;
     use sc_sl1cer::profile::LayerSchedule;
-    use sc_sl1cer::profile::Mirror;
     use sc_sl1cer::profile::PackingMode;
-    use sc_sl1cer::profile::PixelResolution;
     use sc_sl1cer::profile::SliceProfile;
     use tempfile::tempdir;
 

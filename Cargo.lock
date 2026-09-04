@@ -4931,6 +4931,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
+ "sc-print-primitives",
  "sc-scene",
  "sc-sl1cer",
  "tempfile",

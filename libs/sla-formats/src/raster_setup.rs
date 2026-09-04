@@ -10,7 +10,8 @@
 //! keeps the debug writers and the printer-file writers on one
 //! projection rather than two that can drift apart.
 
-use sc_sl1cer::profile::{AaLevel, BuildVolume, Mirror, PixelResolution, SliceProfile};
+use sc_print_primitives::{AaLevel, BuildVolume, Mirror, PixelResolution};
+use sc_sl1cer::profile::SliceProfile;
 
 /// The plate geometry and sampling settings a rasteriser needs.
 #[derive(Clone, Debug, PartialEq)]

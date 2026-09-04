@@ -95,10 +95,9 @@ pub(crate) fn validate_output_path(output: &Path, format: Format) -> Result<(), 
 mod write_slice_tests {
     use std::fs::File;
 
+    use sc_print_primitives::{AaLevel, BuildVolume, Mirror, PixelResolution};
     use sc_sl1cer::contour::ContourStack;
-    use sc_sl1cer::profile::{
-        AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
-    };
+    use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
     use tempfile::tempdir;
 
     use super::*;

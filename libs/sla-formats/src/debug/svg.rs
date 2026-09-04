@@ -28,10 +28,10 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::path::Path;
 
+use sc_print_primitives::AaLevel;
 use sc_sl1cer::contour::ContourLayer;
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::geom2d::Point2D;
-use sc_sl1cer::profile::AaLevel;
 use sc_sl1cer::profile::LayerSchedule;
 
 use crate::error::WriterError;
@@ -216,16 +216,16 @@ fn aa_level_str(level: AaLevel) -> &'static str {
 mod svg_tests {
     use std::fs;
 
+    use sc_print_primitives::AaLevel;
+    use sc_print_primitives::BuildVolume;
+    use sc_print_primitives::Mirror;
+    use sc_print_primitives::PixelResolution;
     use sc_sl1cer::contour::ClosedRing;
     use sc_sl1cer::contour::ContourLayer;
     use sc_sl1cer::contour::Polygon;
     use sc_sl1cer::geom2d::Point2D;
-    use sc_sl1cer::profile::AaLevel;
-    use sc_sl1cer::profile::BuildVolume;
     use sc_sl1cer::profile::LayerSchedule;
-    use sc_sl1cer::profile::Mirror;
     use sc_sl1cer::profile::PackingMode;
-    use sc_sl1cer::profile::PixelResolution;
     use sc_sl1cer::profile::SliceProfile;
     use tempfile::tempdir;
 
