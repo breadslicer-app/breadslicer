@@ -21,6 +21,7 @@
 pub mod debug;
 pub mod error;
 pub mod format;
+pub mod goo;
 pub mod options;
 pub mod print_program;
 pub mod printer_file_format;

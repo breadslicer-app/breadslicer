@@ -25,4 +25,5 @@ png = "0.18.1"
 [dev-dependencies]
 sc-mesh-fixtures.workspace = true
 
+proptest.workspace = true
 tempfile = "3.23.0"
