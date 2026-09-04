@@ -15,10 +15,10 @@ workspace = true
 [dependencies]
 # Facade crate: the one thing the main app (SoulCrafted Slicer) depends on. Its own dependency line never doe snot need to change as this workspace's internal module boundaries change.
 # It only re-exports below modules. No code of its own.
-geom-ops-handler = { path = "geom-ops-handler" }
-sc-geom-transport-inprocess = { path = "sc-geom-transport-inprocess" }
-support-gen-trivial = { path = "support-gen-trivial" }
-support-gen-handler = { path = "support-gen-handler" }
+geom-ops-handler = { path = "geom-ops-handler", version = "0.0.1" }
+sc-geom-transport-inprocess = { path = "sc-geom-transport-inprocess", version = "0.0.1" }
+support-gen-trivial = { path = "support-gen-trivial", version = "0.0.2" }
+support-gen-handler = { path = "support-gen-handler", version = "0.0.1" }
 
 [dev-dependencies]
 

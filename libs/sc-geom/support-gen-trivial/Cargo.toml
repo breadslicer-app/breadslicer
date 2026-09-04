@@ -13,10 +13,10 @@ repository = "https://codeberg.org/SoulCrafted/Slicer"
 workspace = true
 
 [dependencies]
-sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess" }
-sc-mesh-core = { path = "../../mesh-core" }
-sc-mesh-spatial = { path = "../../mesh-spatial" }
-support-gen-handler = { path = "../support-gen-handler" }
+sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version = "0.0.1" }
+sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
+sc-mesh-spatial = { path = "../../mesh-spatial", version = "0.1.0" }
+support-gen-handler = { path = "../support-gen-handler", version = "0.0.1" }
 
 sha2 = "0.10"
 rand = "0.10.2"
