@@ -11,6 +11,8 @@
 pub mod chunk;
 pub mod header;
 pub mod payload;
+pub mod record;
+pub mod wire;
 
 #[cfg(test)]
 mod test_decode;
@@ -20,3 +22,5 @@ mod tests_chunk;
 mod tests_header;
 #[cfg(test)]
 mod tests_payload;
+#[cfg(test)]
+mod tests_record;

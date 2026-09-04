@@ -9,11 +9,13 @@
 //! black, which the machine's file browser shows as an empty
 //! thumbnail.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
-use sc_print_primitives::{AaLevel, LightPwm};
+use sc_print_primitives::AaLevel;
 
-use crate::print_program::{LayerProgram, PrintProgram};
+use super::record::LayerValues;
+use super::wire::{write_f32, write_flag, write_text, write_u16, write_u32, write_zeros};
+use crate::print_program::PrintProgram;
 
 /// Header length, and so the offset the first layer record sits at.
 pub const HEADER_SIZE: u32 = 195_477;
@@ -60,8 +62,8 @@ pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<
     })?;
     let raster = &program.raster;
     let plate = raster.build_volume();
-    let bottom = LayerSummary::of(program.layers.first());
-    let normal = LayerSummary::of(program.layers.last());
+    let bottom = LayerValues::of(program.layers.first());
+    let normal = LayerValues::of(program.layers.last());
 
     out.write_all(&FORMAT_VERSION)?;
     out.write_all(&FILE_MAGIC)?;
@@ -128,65 +130,6 @@ pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<
     write_u16(out, transition_count(program))
 }
 
-/// The header's copy of one layer's record, named as the header names
-/// its slots. A program with no layers summarises to zeros.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct LayerSummary {
-    exposure_sec: f32,
-    wait_before_lift_sec: f32,
-    wait_after_lift_sec: f32,
-    wait_after_retract_sec: f32,
-    lift_distance_mm: f32,
-    lift_speed_mm_min: f32,
-    retract_distance_mm: f32,
-    retract_speed_mm_min: f32,
-    second_lift_distance_mm: f32,
-    second_lift_speed_mm_min: f32,
-    second_retract_distance_mm: f32,
-    second_retract_speed_mm_min: f32,
-    light_pwm: u16,
-}
-
-impl LayerSummary {
-    fn of(layer: Option<&LayerProgram>) -> Self {
-        let Some(layer) = layer else {
-            return Self::default();
-        };
-        let (second_lift_distance_mm, second_lift_speed_mm_min) =
-            layer.second_lift.map_or((0.0, 0.0), |stage| {
-                (
-                    stage.distance_mm.value() as f32,
-                    stage.speed_mm_min.value() as f32,
-                )
-            });
-        let (second_retract_distance_mm, second_retract_speed_mm_min) =
-            layer.second_retract.map_or((0.0, 0.0), |stage| {
-                (
-                    stage.distance_mm.value() as f32,
-                    stage.speed_mm_min.value() as f32,
-                )
-            });
-
-        Self {
-            exposure_sec: layer.exposure_sec.value() as f32,
-            // The header names a wait by the motion it precedes or
-            // follows; a layer record names it by the exposure.
-            wait_before_lift_sec: layer.wait_after_cure_sec.value() as f32,
-            wait_after_lift_sec: layer.wait_after_lift_sec.value() as f32,
-            wait_after_retract_sec: layer.wait_before_cure_sec.value() as f32,
-            lift_distance_mm: layer.lift.distance_mm.value() as f32,
-            lift_speed_mm_min: layer.lift.speed_mm_min.value() as f32,
-            retract_distance_mm: layer.retract.distance_mm.value() as f32,
-            retract_speed_mm_min: layer.retract.speed_mm_min.value() as f32,
-            second_lift_distance_mm,
-            second_lift_speed_mm_min,
-            second_retract_distance_mm,
-            second_retract_speed_mm_min,
-            light_pwm: pwm_byte(layer.light_pwm),
-        }
-    }
-}
-
 /// Report the super-sampling factor the raster was produced at.
 fn anti_aliasing_factor(aa: AaLevel) -> u16 {
     match aa {
@@ -197,11 +140,6 @@ fn anti_aliasing_factor(aa: AaLevel) -> u16 {
     }
 }
 
-/// Convert a duty cycle to the 0..255 scale the header stores.
-fn pwm_byte(pwm: LightPwm) -> u16 {
-    (pwm.percent() / 100.0 * 255.0).round() as u16
-}
-
 /// Narrow a pixel count to the 16 bits the header gives an axis.
 fn resolution_axis(pixels: u32) -> u16 {
     u16::try_from(pixels).unwrap_or(u16::MAX)
@@ -209,36 +147,4 @@ fn resolution_axis(pixels: u32) -> u16 {
 
 fn transition_count(program: &PrintProgram) -> u16 {
     u16::try_from(program.transition_layer_count).unwrap_or(u16::MAX)
-}
-
-fn write_u16(out: &mut impl Write, value: u16) -> io::Result<()> {
-    out.write_all(&value.to_be_bytes())
-}
-
-fn write_u32(out: &mut impl Write, value: u32) -> io::Result<()> {
-    out.write_all(&value.to_be_bytes())
-}
-
-fn write_f32(out: &mut impl Write, value: f32) -> io::Result<()> {
-    out.write_all(&value.to_be_bytes())
-}
-
-fn write_flag(out: &mut impl Write, flag: bool) -> io::Result<()> {
-    out.write_all(&[u8::from(flag)])
-}
-
-/// Write `text` into a fixed-width slot, cut at a character boundary
-/// so at least one zero byte terminates it.
-fn write_text(out: &mut impl Write, text: &str, width: usize) -> io::Result<()> {
-    let mut end = text.len().min(width - 1);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    out.write_all(&text.as_bytes()[..end])?;
-    write_zeros(out, width - end)
-}
-
-fn write_zeros(out: &mut impl Write, count: usize) -> io::Result<()> {
-    io::copy(&mut io::repeat(0).take(count as u64), out)?;
-    Ok(())
 }
