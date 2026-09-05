@@ -4,8 +4,8 @@
  */
 
 use sc_print_primitives::{
-    LengthRange, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
-    ScaleCompensation, ScaleCompensationPercent, SpeedRangeMmPerMin,
+    LengthRange, LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
+    PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent, SpeedRangeMmPerMin,
 };
 
 use super::effective_material::EffectiveMaterial;
@@ -1949,6 +1949,85 @@ fn a_wait_nobody_calibrated_resolves_to_no_pause() {
     }
 }
 
+/// A resin that names a target energy density and drives the light
+/// at `pwm_percent` on the printer with a declared light intensity.
+fn material_at_light_pwm(pwm_percent: &str) -> EffectiveMaterial {
+    material(&format!(
+        r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_energy_density_mj_per_cm2 = 15.0
+
+[defaults]
+light_pwm = {pwm_percent}
+"#
+    ))
+}
+
+#[test]
+fn a_light_at_full_power_derives_the_exposure_the_intensity_alone_gives() {
+    let (picked, _, _) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material_at_light_pwm("100.0"),
+    );
+
+    assert_eq!(picked.normal_exposure_sec.map(|v| v.value()), Some(3.0));
+}
+
+#[test]
+fn halving_the_light_pwm_doubles_the_derived_normal_exposure() {
+    let (picked, _, _) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material_at_light_pwm("50.0"),
+    );
+
+    assert_eq!(picked.normal_exposure_sec.map(|v| v.value()), Some(6.0));
+}
+
+#[test]
+fn a_light_nobody_dialled_down_derives_at_full_power() {
+    let (picked, _, _) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material_at_light_pwm("100.0"),
+    );
+    let (unset, _, _) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material(
+            r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_energy_density_mj_per_cm2 = 15.0
+
+[defaults]
+"#,
+        ),
+    );
+
+    assert_eq!(unset.normal_exposure_sec, picked.normal_exposure_sec);
+}
+
+#[test]
+fn a_light_switched_off_leaves_the_exposure_underivable() {
+    let (picked, _, _) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material_at_light_pwm("0.0"),
+    );
+
+    assert!(picked.normal_exposure_sec.is_none());
+}
+
 #[test]
 fn calibrated_bottom_waits_reach_the_resolved_material() {
     let resolved = resolve_with_waits(
@@ -2060,6 +2139,129 @@ fn a_scene_override_on_a_normal_wait_carries_into_an_uncalibrated_bottom_wait() 
             .value(),
         3.0,
     );
+}
+
+/// A material that resolves fully against
+/// [`printer_without_light_intensity`], taking the light-PWM keys of
+/// its defaults block and of its per-printer block from the caller.
+fn material_with_pwm(defaults_pwm: &str, block_pwm: &str) -> EffectiveMaterial {
+    material(&format!(
+        r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+{defaults_pwm}
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.75
+bottom_exposure_sec = 35.0
+lift_distance_mm = 6.5
+lift_speed_mm_min = 70.0
+retract_speed_mm_min = 160.0
+{block_pwm}
+"#
+    ))
+}
+
+fn resolve_with_pwm(defaults_pwm: &str, block_pwm: &str) -> ResolvedPrintConfig {
+    resolve(
+        &printer_without_light_intensity(),
+        &material_with_pwm(defaults_pwm, block_pwm),
+        &SceneOverrides::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn calibrated_light_pwms_reach_the_resolved_material() {
+    let resolved = resolve_with_pwm("", "light_pwm = 80.0\nbottom_light_pwm = 60.0");
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.light_pwm.percent(), 80.0);
+    assert_eq!(values.bottom_light_pwm.percent(), 60.0);
+}
+
+#[test]
+fn a_light_pwm_missing_from_the_block_falls_back_to_the_material_default() {
+    let resolved = resolve_with_pwm("light_pwm = 70.0", "");
+
+    assert_eq!(resolved.material_resolved.light_pwm.percent(), 70.0);
+    assert!(
+        defaulted(&resolved.warnings, ResolvedField::LightPwm),
+        "warnings: {:?}",
+        resolved.warnings,
+    );
+}
+
+#[test]
+fn a_calibrated_light_pwm_outranks_the_material_default() {
+    let resolved = resolve_with_pwm("light_pwm = 70.0", "light_pwm = 80.0");
+
+    assert_eq!(resolved.material_resolved.light_pwm.percent(), 80.0);
+    assert!(!defaulted(&resolved.warnings, ResolvedField::LightPwm));
+}
+
+#[test]
+fn a_light_pwm_nobody_calibrated_resolves_to_full_power() {
+    let resolved = resolve_with_pwm("", "");
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.light_pwm, LightPwm::FULL);
+    assert_eq!(values.bottom_light_pwm, LightPwm::FULL);
+    for field in [ResolvedField::LightPwm, ResolvedField::BottomLightPwm] {
+        assert!(
+            !defaulted(&resolved.warnings, field),
+            "{field} is full power because nothing dialled it down, not by falling back",
+        );
+    }
+}
+
+#[test]
+fn the_bottom_light_pwm_does_not_follow_the_normal_one() {
+    let resolved = resolve_with_pwm("", "light_pwm = 40.0");
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.light_pwm.percent(), 40.0);
+    assert_eq!(values.bottom_light_pwm, LightPwm::FULL);
+}
+
+#[test]
+fn a_scene_override_replaces_a_calibrated_light_pwm_and_records_the_prior_value() {
+    let overrides = SceneOverrides {
+        light_pwm: Some(LightPwm::new(55.0).unwrap()),
+        ..Default::default()
+    };
+    let resolved = resolve(
+        &printer_without_light_intensity(),
+        &material_with_pwm("", "light_pwm = 80.0"),
+        &overrides,
+    )
+    .unwrap();
+
+    assert_eq!(resolved.material_resolved.light_pwm.percent(), 55.0);
+    let record = resolved
+        .overrides_applied
+        .iter()
+        .find(|record| {
+            record.field == ResolvedField::LightPwm && record.source == ValueSource::Override
+        })
+        .expect("the override should be recorded");
+    assert_eq!(record.prior_value, Some(80.0));
+    assert_eq!(record.final_value, 55.0);
 }
 
 #[test]

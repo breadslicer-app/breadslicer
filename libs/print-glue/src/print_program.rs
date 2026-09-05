@@ -86,7 +86,7 @@ pub fn project_to_print_program(
                 retract,
                 second_lift: None,
                 second_retract: None,
-                light_pwm: LightPwm::FULL,
+                light_pwm: light_pwm_for(layer_index, material),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -128,6 +128,18 @@ fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
             after_cure_sec: material.wait_after_cure_sec,
             after_lift_sec: material.wait_after_lift_sec,
         }
+    }
+}
+
+/// Pick how hard one layer drives the light: the bottom layers hold
+/// the bottom duty and every other layer the normal one. The
+/// transition band takes the normal duty, because only the exposure
+/// changes across it.
+fn light_pwm_for(layer_index: u32, material: &MaterialResolved) -> LightPwm {
+    if layer_index < material.bottom_layer_count {
+        material.bottom_light_pwm
+    } else {
+        material.light_pwm
     }
 }
 

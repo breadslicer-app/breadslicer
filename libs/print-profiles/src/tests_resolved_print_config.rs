@@ -4,8 +4,8 @@
  */
 
 use sc_print_primitives::{
-    MaterialId, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
-    PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
+    LightPwm, MaterialId, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
+    PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
 };
 use semver::Version;
 
@@ -68,6 +68,8 @@ fn sample_material_resolved() -> MaterialResolved {
         lift_distance_mm: PositiveFiniteMm::new(5.0).unwrap(),
         lift_speed_mm_min: PositiveFiniteMmPerMin::new(120.0).unwrap(),
         retract_speed_mm_min: PositiveFiniteMmPerMin::new(150.0).unwrap(),
+        light_pwm: LightPwm::FULL,
+        bottom_light_pwm: LightPwm::FULL,
         scale_compensation_pct: ScaleCompensation {
             x: ScaleCompensationPercent::new(0.5).unwrap(),
             y: ScaleCompensationPercent::new(0.5).unwrap(),

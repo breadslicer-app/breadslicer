@@ -153,6 +153,32 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
+/// The same resin again, driving the light at two different duties.
+const MATERIAL_WITH_LIGHT_PWM_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+light_pwm = 80.0
+bottom_light_pwm = 60.0
+"#;
+
 fn resolved_config(printer_toml: &str) -> ResolvedPrintConfig {
     resolved_config_for(printer_toml, MATERIAL_TOML)
 }
@@ -420,10 +446,25 @@ fn the_transition_band_holds_the_normal_waits_while_its_exposure_still_ramps() {
 }
 
 #[test]
-fn the_light_runs_at_full_power() {
+fn a_light_nobody_dialled_down_runs_at_full_power() {
     let program = program(PRINTER_TOML, 20);
     for layer in &program.layers {
         assert_eq!(layer.light_pwm, LightPwm::FULL);
+    }
+}
+
+#[test]
+fn the_bottom_light_pwm_stops_where_the_bottom_layers_do() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_LIGHT_PWM_TOML);
+    let profile = slice_profile(&config, 20);
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let bottom = BOTTOM_LAYER_COUNT as usize;
+
+    for layer in &program.layers[..bottom] {
+        assert_eq!(layer.light_pwm.percent(), 60.0);
+    }
+    for layer in &program.layers[bottom..] {
+        assert_eq!(layer.light_pwm.percent(), 80.0);
     }
 }
 

@@ -176,6 +176,8 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
         wait_before_cure_sec: None,
         wait_after_cure_sec: None,
         wait_after_lift_sec: None,
+        light_pwm: None,
+        bottom_light_pwm: None,
     };
 
     // DragonFruit carries the exposure and motion settings on the
@@ -194,6 +196,8 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
         lift_distance_mm: opt_mm(raw.lift_distance_mm, &raw_id, "liftDistanceMm")?,
         lift_speed_mm_min: opt_speed(raw.lift_speed_mm_min, &raw_id, "liftSpeedMmMin")?,
         retract_speed_mm_min: opt_speed(raw.retract_speed_mm_min, &raw_id, "retractSpeedMmMin")?,
+        light_pwm: None,
+        bottom_light_pwm: None,
     };
 
     let mut per_printer = BTreeMap::new();

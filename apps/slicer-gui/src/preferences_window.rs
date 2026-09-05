@@ -764,6 +764,8 @@ fn open_profile_editor(
         dialog.set_defaults_wait_before_cure_text(seeded.wait_before_cure_sec.into());
         dialog.set_defaults_wait_after_cure_text(seeded.wait_after_cure_sec.into());
         dialog.set_defaults_wait_after_lift_text(seeded.wait_after_lift_sec.into());
+        dialog.set_defaults_light_pwm_text(seeded.light_pwm.into());
+        dialog.set_defaults_bottom_light_pwm_text(seeded.bottom_light_pwm.into());
     }
     dialog.set_edit_target_labels(ModelRc::new(VecModel::from(
         targets
@@ -805,6 +807,8 @@ fn open_profile_editor(
             d.set_lift_distance_text(seeded.lift_distance_mm.into());
             d.set_lift_speed_text(seeded.lift_speed_mm_min.into());
             d.set_retract_speed_text(seeded.retract_speed_mm_min.into());
+            d.set_light_pwm_text(seeded.light_pwm.into());
+            d.set_bottom_light_pwm_text(seeded.bottom_light_pwm.into());
         }
     });
 
@@ -829,6 +833,8 @@ fn open_profile_editor(
                     wait_before_cure_sec: d.get_defaults_wait_before_cure_text().to_string(),
                     wait_after_cure_sec: d.get_defaults_wait_after_cure_text().to_string(),
                     wait_after_lift_sec: d.get_defaults_wait_after_lift_text().to_string(),
+                    light_pwm: d.get_defaults_light_pwm_text().to_string(),
+                    bottom_light_pwm: d.get_defaults_bottom_light_pwm_text().to_string(),
                 };
                 match parse_defaults_form(&input) {
                     Ok(defaults) => profile.defaults = defaults,
@@ -856,6 +862,8 @@ fn open_profile_editor(
                     lift_distance_mm: d.get_lift_distance_text().to_string(),
                     lift_speed_mm_min: d.get_lift_speed_text().to_string(),
                     retract_speed_mm_min: d.get_retract_speed_text().to_string(),
+                    light_pwm: d.get_light_pwm_text().to_string(),
+                    bottom_light_pwm: d.get_bottom_light_pwm_text().to_string(),
                 };
                 match parse_calibration_form(&input) {
                     Ok(block) => {
@@ -1139,6 +1147,8 @@ fn open_extend_dialog(
                 lift_distance_mm: d.get_lift_distance_text().to_string(),
                 lift_speed_mm_min: d.get_lift_speed_text().to_string(),
                 retract_speed_mm_min: d.get_retract_speed_text().to_string(),
+                light_pwm: d.get_light_pwm_text().to_string(),
+                bottom_light_pwm: d.get_bottom_light_pwm_text().to_string(),
             };
             let block = match parse_calibration_form(&input) {
                 Ok(block) => block,

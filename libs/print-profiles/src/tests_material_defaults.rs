@@ -4,7 +4,9 @@
  */
 
 use super::material_defaults::MaterialDefaults;
-use sc_print_primitives::{NonNegativeFiniteSec, ScaleCompensation, ScaleCompensationPercent};
+use sc_print_primitives::{
+    LightPwm, NonNegativeFiniteSec, ScaleCompensation, ScaleCompensationPercent,
+};
 
 const FULL_TOML: &str = r#"
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
@@ -12,6 +14,8 @@ bottom_layer_count = 6
 wait_before_cure_sec = 0.5
 wait_after_cure_sec = 1.0
 wait_after_lift_sec = 0.0
+light_pwm = 80.0
+bottom_light_pwm = 100.0
 "#;
 
 #[test]
@@ -25,6 +29,14 @@ fn deserialise_parses_every_field() {
     assert_eq!(parsed.wait_before_cure_sec.unwrap().value(), 0.5);
     assert_eq!(parsed.wait_after_cure_sec.unwrap().value(), 1.0);
     assert_eq!(parsed.wait_after_lift_sec.unwrap().value(), 0.0);
+    assert_eq!(parsed.light_pwm.unwrap().percent(), 80.0);
+    assert_eq!(parsed.bottom_light_pwm.unwrap().percent(), 100.0);
+}
+
+#[test]
+fn deserialise_rejects_a_light_pwm_beyond_full_power() {
+    let toml = "light_pwm = 101.0\n";
+    assert!(toml_edit::de::from_str::<MaterialDefaults>(toml).is_err());
 }
 
 #[test]
@@ -35,6 +47,8 @@ fn deserialise_empty_section_leaves_every_field_none() {
     assert!(parsed.wait_before_cure_sec.is_none());
     assert!(parsed.wait_after_cure_sec.is_none());
     assert!(parsed.wait_after_lift_sec.is_none());
+    assert!(parsed.light_pwm.is_none());
+    assert!(parsed.bottom_light_pwm.is_none());
 }
 
 #[test]
@@ -116,6 +130,8 @@ fn serialise_omits_each_unset_field() {
         "wait_before_cure_sec",
         "wait_after_cure_sec",
         "wait_after_lift_sec",
+        "light_pwm",
+        "bottom_light_pwm",
     ] {
         assert!(
             !serialised.contains(field),
@@ -136,6 +152,8 @@ fn programmatic_construction_round_trips() {
         wait_before_cure_sec: Some(NonNegativeFiniteSec::new(0.5).unwrap()),
         wait_after_cure_sec: None,
         wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
+        light_pwm: Some(LightPwm::new(80.0).unwrap()),
+        bottom_light_pwm: None,
     };
     let serialised = toml_edit::ser::to_string(&defaults).unwrap();
     let roundtripped: MaterialDefaults = toml_edit::de::from_str(&serialised).unwrap();

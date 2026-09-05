@@ -4,8 +4,8 @@
  */
 
 use sc_print_primitives::{
-    MaterialId, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
-    PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
+    LightPwm, MaterialId, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
+    PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
 };
 use semver::Version;
 
@@ -46,6 +46,8 @@ fn sample_resolved() -> MaterialResolved {
         lift_distance_mm: PositiveFiniteMm::new(5.0).unwrap(),
         lift_speed_mm_min: PositiveFiniteMmPerMin::new(120.0).unwrap(),
         retract_speed_mm_min: PositiveFiniteMmPerMin::new(150.0).unwrap(),
+        light_pwm: LightPwm::new(80.0).unwrap(),
+        bottom_light_pwm: LightPwm::FULL,
         scale_compensation_pct: sample_scale_compensation(),
     }
 }
@@ -67,6 +69,8 @@ fn constructed_value_carries_every_field() {
     assert_eq!(resolved.lift_distance_mm.value(), 5.0);
     assert_eq!(resolved.lift_speed_mm_min.value(), 120.0);
     assert_eq!(resolved.retract_speed_mm_min.value(), 150.0);
+    assert_eq!(resolved.light_pwm.percent(), 80.0);
+    assert_eq!(resolved.bottom_light_pwm, LightPwm::FULL);
     assert_eq!(resolved.scale_compensation_pct.x.value(), 0.5);
 }
 

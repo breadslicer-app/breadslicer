@@ -84,6 +84,8 @@ export component ProfileViewDialog inherits Window {
     in-out property <string> defaults-wait-before-cure-text;
     in-out property <string> defaults-wait-after-cure-text;
     in-out property <string> defaults-wait-after-lift-text;
+    in-out property <string> defaults-light-pwm-text;
+    in-out property <string> defaults-bottom-light-pwm-text;
 
     // One calibration pair per editing session: the picker lists the
     // profile's own blocks and the value fields appear once one is
@@ -102,6 +104,8 @@ export component ProfileViewDialog inherits Window {
     in-out property <string> lift-distance-text;
     in-out property <string> lift-speed-text;
     in-out property <string> retract-speed-text;
+    in-out property <string> light-pwm-text;
+    in-out property <string> bottom-light-pwm-text;
 
     callback edit-target-changed(int);
     callback save-requested();
@@ -238,6 +242,14 @@ export component ProfileViewDialog inherits Window {
                                 label: @tr("ProfileViewDialog" => "Wait after lift (s)");
                                 value <=> root.defaults-wait-after-lift-text;
                             }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Light power (%)");
+                                value <=> root.defaults-light-pwm-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Bottom light power (%)");
+                                value <=> root.defaults-bottom-light-pwm-text;
+                            }
                         }
                     }
 
@@ -313,6 +325,14 @@ export component ProfileViewDialog inherits Window {
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Retract speed (mm/min)");
                                     value <=> root.retract-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Light power (%)");
+                                    value <=> root.light-pwm-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom light power (%)");
+                                    value <=> root.bottom-light-pwm-text;
                                 }
                             }
                         }

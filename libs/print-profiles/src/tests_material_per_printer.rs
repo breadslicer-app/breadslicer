@@ -5,7 +5,7 @@
 
 use super::material_per_printer::MaterialPerPrinter;
 use sc_print_primitives::{
-    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
 };
 
 const FULL_TOML: &str = r#"
@@ -21,6 +21,8 @@ bottom_wait_after_lift_sec = 5.0
 lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
+light_pwm = 80.0
+bottom_light_pwm = 100.0
 "#;
 
 #[test]
@@ -47,6 +49,8 @@ fn deserialise_parses_all_fields() {
     assert_eq!(parsed.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(parsed.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(parsed.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
+    assert_eq!(parsed.light_pwm.map(|v| v.percent()), Some(80.0));
+    assert_eq!(parsed.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
 }
 
 #[test]
@@ -64,6 +68,8 @@ fn deserialise_empty_section_leaves_all_fields_none() {
     assert!(parsed.lift_distance_mm.is_none());
     assert!(parsed.lift_speed_mm_min.is_none());
     assert!(parsed.retract_speed_mm_min.is_none());
+    assert!(parsed.light_pwm.is_none());
+    assert!(parsed.bottom_light_pwm.is_none());
 }
 
 #[test]
@@ -99,6 +105,26 @@ bottom_wait_after_lift_sec = 5.0
 #[test]
 fn deserialise_rejects_a_negative_bottom_wait() {
     let toml = "bottom_wait_after_lift_sec = -1.0\n";
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
+}
+
+#[test]
+fn deserialise_reads_the_two_light_pwm_values_as_percentages() {
+    let toml = "light_pwm = 80.0\nbottom_light_pwm = 100.0\n";
+    let parsed: MaterialPerPrinter = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(parsed.light_pwm.map(|v| v.percent()), Some(80.0));
+    assert_eq!(parsed.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
+}
+
+#[test]
+fn deserialise_rejects_a_light_pwm_beyond_full_power() {
+    let toml = "light_pwm = 150.0\n";
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
+}
+
+#[test]
+fn deserialise_rejects_a_negative_light_pwm() {
+    let toml = "bottom_light_pwm = -1.0\n";
     assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
 }
 
@@ -195,6 +221,8 @@ fn serialise_omits_every_unset_field() {
         "lift_distance_mm",
         "lift_speed_mm_min",
         "retract_speed_mm_min",
+        "light_pwm",
+        "bottom_light_pwm",
     ] {
         assert!(
             !serialised.contains(field),
@@ -218,6 +246,8 @@ fn programmatic_construction_round_trips() {
         lift_distance_mm: Some(PositiveFiniteMm::new(6.0).unwrap()),
         lift_speed_mm_min: None,
         retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),
+        light_pwm: Some(LightPwm::new(80.0).unwrap()),
+        bottom_light_pwm: None,
     };
     let serialised = toml_edit::ser::to_string(&per_printer).unwrap();
     let roundtripped: MaterialPerPrinter = toml_edit::de::from_str(&serialised).unwrap();

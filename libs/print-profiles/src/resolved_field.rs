@@ -26,6 +26,8 @@ pub enum ResolvedField {
     LiftDistanceMm,
     LiftSpeedMmMin,
     RetractSpeedMmMin,
+    LightPwm,
+    BottomLightPwm,
     ScaleCompensationPct,
 }
 
@@ -45,6 +47,8 @@ impl ResolvedField {
             Self::LiftDistanceMm => "lift_distance_mm",
             Self::LiftSpeedMmMin => "lift_speed_mm_min",
             Self::RetractSpeedMmMin => "retract_speed_mm_min",
+            Self::LightPwm => "light_pwm",
+            Self::BottomLightPwm => "bottom_light_pwm",
             Self::ScaleCompensationPct => "scale_compensation_pct",
         }
     }

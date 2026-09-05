@@ -174,6 +174,14 @@ fn defaults_section(defaults: &MaterialDefaults) -> ProfileViewSection {
                 ctr!("ProfileViewDialog", "Wait after lift (s)"),
                 fmt_opt_f64(defaults.wait_after_lift_sec.map(|v| v.value())),
             ),
+            field(
+                ctr!("ProfileViewDialog", "Light power (%)"),
+                fmt_opt_f64(defaults.light_pwm.map(|v| v.percent())),
+            ),
+            field(
+                ctr!("ProfileViewDialog", "Bottom light power (%)"),
+                fmt_opt_f64(defaults.bottom_light_pwm.map(|v| v.percent())),
+            ),
         ],
     )
 }
@@ -342,6 +350,14 @@ fn calibration_fields(block: &MaterialPerPrinter) -> Vec<ProfileViewField> {
         field(
             ctr!("ProfileViewDialog", "Retract speed (mm/min)"),
             fmt_opt_f64(block.retract_speed_mm_min.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Light power (%)"),
+            fmt_opt_f64(block.light_pwm.map(|v| v.percent())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom light power (%)"),
+            fmt_opt_f64(block.bottom_light_pwm.map(|v| v.percent())),
         ),
     ]
 }

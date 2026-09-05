@@ -13,16 +13,16 @@
 //!   matched to the printer's id, else from its `generic-machine`
 //!   block (recorded as a warning), then fall back to material-level
 //!   defaults for fields that have defaults coverage
-//!   (`bottom_layer_count`, `scale_compensation_pct` and the three
-//!   normal-layer wait times; the bottom waits are calibrated per
-//!   printer or not at all).
+//!   (`bottom_layer_count`, `scale_compensation_pct`, the two light
+//!   PWMs and the three normal-layer wait times; the bottom waits
+//!   are calibrated per printer or not at all).
 //! - Derive from material intent where the prior layer left a
 //!   field unset and the intent has the inputs needed. Today only
 //!   `layer_height_mm` (intent passthrough from
 //!   `target_layer_height_mm`) and `normal_exposure_sec` (derived
 //!   from `target_energy_density_mj_per_cm2` divided by the
-//!   printer's declared `light_intensity_mw_per_cm2`) are
-//!   derivable.
+//!   printer's declared `light_intensity_mw_per_cm2` at the picked
+//!   `light_pwm` duty) are derivable.
 //! - Validate each picked value against the printer's constraints:
 //!   snap-to-multiple, snap-into-range, snap-at-max, or
 //!   reject-below-min per the policy table. Snaps that exceed the
@@ -35,8 +35,9 @@
 //!   still unset surfaces as
 //!   [`ResolveError::MissingRequiredField`]; a wait still unset
 //!   resolves to zero instead, which is what a resin naming no
-//!   pause is asking for, and a bottom wait still unset resolves to
-//!   its normal-layer counterpart.
+//!   pause is asking for, a bottom wait still unset resolves to its
+//!   normal-layer counterpart, and a light PWM still unset resolves
+//!   to full power.
 //!
 //! `bottom_exposure_sec` has no automatic derivation; it must be
 //! supplied via calibration or override. Inputs that are silently
@@ -47,7 +48,7 @@
 //! assembly-time required-field check.
 
 use sc_print_primitives::{
-    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
     ScaleCompensation,
 };
 
@@ -84,6 +85,8 @@ pub(crate) struct PickedValues {
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub light_pwm: Option<LightPwm>,
+    pub bottom_light_pwm: Option<LightPwm>,
     pub scale_compensation_pct: Option<ScaleCompensation>,
 }
 
@@ -231,6 +234,24 @@ fn apply_per_printer(
             final_value: value.value(),
         });
     }
+    if let Some(value) = per_printer.light_pwm {
+        picked.light_pwm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::LightPwm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_light_pwm {
+        picked.bottom_light_pwm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLightPwm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
 }
 
 fn apply_defaults(
@@ -295,6 +316,34 @@ fn apply_defaults(
             final_value: value.value(),
         });
     }
+    if picked.light_pwm.is_none()
+        && let Some(value) = defaults.light_pwm
+    {
+        picked.light_pwm = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::LightPwm,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::LightPwm,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
+    if picked.bottom_light_pwm.is_none()
+        && let Some(value) = defaults.bottom_light_pwm
+    {
+        picked.bottom_light_pwm = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::BottomLightPwm,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLightPwm,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.percent(),
+        });
+    }
     if picked.scale_compensation_pct.is_none()
         && let Some(value) = defaults.scale_compensation_pct
     {
@@ -332,7 +381,15 @@ fn apply_intent_derivation(
             intent.target_energy_density_mj_per_cm2,
             constraints.light_intensity_mw_per_cm2,
         )
-        && let Ok(typed) = PositiveFiniteSec::new(energy_density.value() / light_intensity.value())
+        // A duty cycle scales average optical power, so the panel
+        // delivers the intensity the printer declares only at full
+        // power. A duty of zero divides to a non-finite exposure and
+        // leaves the field unset, which the required-field check
+        // then reports.
+        && let Ok(typed) = PositiveFiniteSec::new(
+            energy_density.value()
+                / (light_intensity.value() * picked.light_pwm.unwrap_or(LightPwm::FULL).duty()),
+        )
     {
         picked.normal_exposure_sec = Some(typed);
         warnings.push(ResolveWarning::DerivedFromIntent {
@@ -604,6 +661,26 @@ pub(crate) fn apply_scene_overrides(
                 .expect("snapped retract speed stays positive-finite"),
         );
     }
+    if let Some(value) = overrides.light_pwm {
+        let prior = picked.light_pwm.map(|v| v.percent());
+        records.push(OverrideRecord {
+            field: ResolvedField::LightPwm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.percent(),
+        });
+        picked.light_pwm = Some(value);
+    }
+    if let Some(value) = overrides.bottom_light_pwm {
+        let prior = picked.bottom_light_pwm.map(|v| v.percent());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLightPwm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.percent(),
+        });
+        picked.bottom_light_pwm = Some(value);
+    }
     if let Some(value) = overrides.scale_compensation_pct {
         // Compound field: no OverrideRecord is emitted because the
         // scalar `final_value` field cannot represent the three
@@ -698,6 +775,8 @@ fn assemble(
             lift_distance_mm,
             lift_speed_mm_min,
             retract_speed_mm_min,
+            light_pwm: picked.light_pwm.unwrap_or(LightPwm::FULL),
+            bottom_light_pwm: picked.bottom_light_pwm.unwrap_or(LightPwm::FULL),
             scale_compensation_pct,
         },
         overrides_applied,

@@ -18,7 +18,7 @@
 //! `SceneOverrides { layer_height_mm: Some(value), ..Default::default() }`.
 
 use sc_print_primitives::{
-    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
     ScaleCompensation,
 };
 
@@ -37,5 +37,7 @@ pub struct SceneOverrides {
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub light_pwm: Option<LightPwm>,
+    pub bottom_light_pwm: Option<LightPwm>,
     pub scale_compensation_pct: Option<ScaleCompensation>,
 }

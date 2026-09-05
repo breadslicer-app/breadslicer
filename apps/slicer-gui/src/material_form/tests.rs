@@ -30,6 +30,8 @@ fn empty_calibration_fields_parse_to_an_all_unset_block() {
             lift_distance_mm: None,
             lift_speed_mm_min: None,
             retract_speed_mm_min: None,
+            light_pwm: None,
+            bottom_light_pwm: None,
         }
     );
 }
@@ -49,6 +51,8 @@ fn filled_calibration_fields_parse_to_typed_values() {
         lift_distance_mm: "6.0".to_owned(),
         lift_speed_mm_min: "60".to_owned(),
         retract_speed_mm_min: "150".to_owned(),
+        light_pwm: "80".to_owned(),
+        bottom_light_pwm: "100".to_owned(),
     };
     let block = parse_calibration_form(&input).unwrap();
     assert_eq!(block.normal_exposure_sec.map(|v| v.value()), Some(2.5));
@@ -72,6 +76,8 @@ fn filled_calibration_fields_parse_to_typed_values() {
     assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(block.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(block.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
+    assert_eq!(block.light_pwm.map(|v| v.percent()), Some(80.0));
+    assert_eq!(block.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
 }
 
 #[test]
@@ -138,6 +144,8 @@ fn all_three_scale_axes_parse_together() {
         wait_before_cure_sec: "0.5".to_owned(),
         wait_after_cure_sec: String::new(),
         wait_after_lift_sec: "2".to_owned(),
+        light_pwm: "80".to_owned(),
+        bottom_light_pwm: String::new(),
     };
     let defaults = parse_defaults_form(&input).unwrap();
     let scale = defaults.scale_compensation_pct.unwrap();
@@ -148,6 +156,24 @@ fn all_three_scale_axes_parse_together() {
     assert_eq!(defaults.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
     assert_eq!(defaults.wait_after_cure_sec, None);
     assert_eq!(defaults.wait_after_lift_sec.map(|v| v.value()), Some(2.0));
+    assert_eq!(defaults.light_pwm.map(|v| v.percent()), Some(80.0));
+    assert_eq!(defaults.bottom_light_pwm, None);
+}
+
+#[test]
+fn a_light_pwm_beyond_full_power_is_out_of_range() {
+    let input = CalibrationFormInput {
+        light_pwm: "150".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    let err = parse_calibration_form(&input).unwrap_err();
+    assert_eq!(
+        err,
+        InvalidFormValue::OutOfRange {
+            field: FormField::LightPwm
+        },
+    );
+    assert_eq!(err.user_message(), "Light power is out of range");
 }
 
 #[test]

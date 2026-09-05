@@ -4,7 +4,7 @@
  */
 
 use sc_print_primitives::{
-    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
     ScaleCompensation, ScaleCompensationPercent,
 };
 
@@ -17,6 +17,8 @@ fn default_value_has_every_field_unset() {
     assert!(overrides.normal_exposure_sec.is_none());
     assert!(overrides.bottom_exposure_sec.is_none());
     assert!(overrides.bottom_layer_count.is_none());
+    assert!(overrides.light_pwm.is_none());
+    assert!(overrides.bottom_light_pwm.is_none());
     assert!(overrides.wait_before_cure_sec.is_none());
     assert!(overrides.wait_after_cure_sec.is_none());
     assert!(overrides.wait_after_lift_sec.is_none());
@@ -53,6 +55,8 @@ fn every_field_is_independently_settable() {
         lift_distance_mm: Some(PositiveFiniteMm::new(5.0).unwrap()),
         lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(120.0).unwrap()),
         retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),
+        light_pwm: Some(LightPwm::new(80.0).unwrap()),
+        bottom_light_pwm: Some(LightPwm::FULL),
         scale_compensation_pct: Some(ScaleCompensation {
             x: ScaleCompensationPercent::new(0.5).unwrap(),
             y: ScaleCompensationPercent::new(0.5).unwrap(),
@@ -72,6 +76,8 @@ fn every_field_is_independently_settable() {
     assert_eq!(overrides.lift_distance_mm.unwrap().value(), 5.0);
     assert_eq!(overrides.lift_speed_mm_min.unwrap().value(), 120.0);
     assert_eq!(overrides.retract_speed_mm_min.unwrap().value(), 150.0);
+    assert_eq!(overrides.light_pwm.unwrap().percent(), 80.0);
+    assert_eq!(overrides.bottom_light_pwm, Some(LightPwm::FULL));
     let scale = overrides.scale_compensation_pct.unwrap();
     assert_eq!(scale.z.value(), 0.0);
 }

@@ -17,7 +17,7 @@ use std::path::Path;
 use slint::SharedString;
 
 use sc_print_primitives::{
-    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
     ScaleCompensation, ScaleCompensationPercent,
 };
 use sc_print_profiles::{
@@ -43,6 +43,8 @@ pub(crate) struct CalibrationFormInput {
     pub lift_distance_mm: String,
     pub lift_speed_mm_min: String,
     pub retract_speed_mm_min: String,
+    pub light_pwm: String,
+    pub bottom_light_pwm: String,
 }
 
 /// The raw texts of the defaults fields.
@@ -55,6 +57,8 @@ pub(crate) struct DefaultsFormInput {
     pub wait_before_cure_sec: String,
     pub wait_after_cure_sec: String,
     pub wait_after_lift_sec: String,
+    pub light_pwm: String,
+    pub bottom_light_pwm: String,
 }
 
 /// The editor field a form error refers to.
@@ -72,6 +76,8 @@ pub(crate) enum FormField {
     LiftDistance,
     LiftSpeed,
     RetractSpeed,
+    LightPwm,
+    BottomLightPwm,
     ScaleCompensationX,
     ScaleCompensationY,
     ScaleCompensationZ,
@@ -93,6 +99,8 @@ impl FormField {
             Self::LiftDistance => "Lift distance",
             Self::LiftSpeed => "Lift speed",
             Self::RetractSpeed => "Retract speed",
+            Self::LightPwm => "Light power",
+            Self::BottomLightPwm => "Bottom light power",
             Self::ScaleCompensationX => "Scale compensation x",
             Self::ScaleCompensationY => "Scale compensation y",
             Self::ScaleCompensationZ => "Scale compensation z",
@@ -114,6 +122,8 @@ impl FormField {
             Self::LiftDistance => ctr!("MaterialForm", "Lift distance"),
             Self::LiftSpeed => ctr!("MaterialForm", "Lift speed"),
             Self::RetractSpeed => ctr!("MaterialForm", "Retract speed"),
+            Self::LightPwm => ctr!("MaterialForm", "Light power"),
+            Self::BottomLightPwm => ctr!("MaterialForm", "Bottom light power"),
             Self::ScaleCompensationX => ctr!("MaterialForm", "Scale compensation x"),
             Self::ScaleCompensationY => ctr!("MaterialForm", "Scale compensation y"),
             Self::ScaleCompensationZ => ctr!("MaterialForm", "Scale compensation z"),
@@ -227,6 +237,8 @@ pub(crate) fn parse_calibration_form(
             FormField::RetractSpeed,
             &input.retract_speed_mm_min,
         )?,
+        light_pwm: parse_optional_pwm(FormField::LightPwm, &input.light_pwm)?,
+        bottom_light_pwm: parse_optional_pwm(FormField::BottomLightPwm, &input.bottom_light_pwm)?,
     })
 }
 
@@ -268,6 +280,8 @@ pub(crate) fn parse_defaults_form(
             FormField::WaitAfterLift,
             &input.wait_after_lift_sec,
         )?,
+        light_pwm: parse_optional_pwm(FormField::LightPwm, &input.light_pwm)?,
+        bottom_light_pwm: parse_optional_pwm(FormField::BottomLightPwm, &input.bottom_light_pwm)?,
     })
 }
 
@@ -293,6 +307,8 @@ pub(crate) fn calibration_form_from_block(block: &MaterialPerPrinter) -> Calibra
         lift_distance_mm: fmt_opt_f64(block.lift_distance_mm.map(|v| v.value())),
         lift_speed_mm_min: fmt_opt_f64(block.lift_speed_mm_min.map(|v| v.value())),
         retract_speed_mm_min: fmt_opt_f64(block.retract_speed_mm_min.map(|v| v.value())),
+        light_pwm: fmt_opt_f64(block.light_pwm.map(|v| v.percent())),
+        bottom_light_pwm: fmt_opt_f64(block.bottom_light_pwm.map(|v| v.percent())),
     }
 }
 
@@ -316,6 +332,8 @@ pub(crate) fn defaults_form_from(defaults: &MaterialDefaults) -> DefaultsFormInp
         wait_before_cure_sec: fmt_opt_f64(defaults.wait_before_cure_sec.map(|v| v.value())),
         wait_after_cure_sec: fmt_opt_f64(defaults.wait_after_cure_sec.map(|v| v.value())),
         wait_after_lift_sec: fmt_opt_f64(defaults.wait_after_lift_sec.map(|v| v.value())),
+        light_pwm: fmt_opt_f64(defaults.light_pwm.map(|v| v.percent())),
+        bottom_light_pwm: fmt_opt_f64(defaults.bottom_light_pwm.map(|v| v.percent())),
     }
 }
 
@@ -408,6 +426,15 @@ fn parse_optional_speed(
         return Ok(None);
     }
     PositiveFiniteMmPerMin::new(parse_f64(field, text)?)
+        .map(Some)
+        .map_err(|_| InvalidFormValue::OutOfRange { field })
+}
+
+fn parse_optional_pwm(field: FormField, text: &str) -> Result<Option<LightPwm>, InvalidFormValue> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    LightPwm::new(parse_f64(field, text)?)
         .map(Some)
         .map_err(|_| InvalidFormValue::OutOfRange { field })
 }

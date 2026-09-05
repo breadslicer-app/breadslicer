@@ -12,7 +12,7 @@
 //! this dimension". The resolver reads these values as-is and
 //! never derives them.
 
-use sc_print_primitives::{NonNegativeFiniteSec, ScaleCompensation};
+use sc_print_primitives::{LightPwm, NonNegativeFiniteSec, ScaleCompensation};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
@@ -30,4 +30,12 @@ pub struct MaterialDefaults {
     /// Pause at the top of the lift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
+    /// How hard the light is driven on a normal layer. Average
+    /// optical power is linear in it, so an exposure derived from a
+    /// target energy density scales with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_pwm: Option<LightPwm>,
+    /// How hard the light is driven on a bottom layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_light_pwm: Option<LightPwm>,
 }

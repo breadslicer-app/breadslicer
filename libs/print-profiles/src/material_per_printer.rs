@@ -15,7 +15,7 @@
 //! carries are the values the vendor stands behind for that printer.
 
 use sc_print_primitives::{
-    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,4 +54,12 @@ pub struct MaterialPerPrinter {
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    /// How hard the light is driven on a normal layer. Average
+    /// optical power is linear in it, so an exposure derived from a
+    /// target energy density scales with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_pwm: Option<LightPwm>,
+    /// How hard the light is driven on a bottom layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_light_pwm: Option<LightPwm>,
 }
