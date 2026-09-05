@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-26 15:00+0200\n"
+"POT-Creation-Date: 2026-09-05 16:12+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -32,62 +32,62 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:557 src/preferences_window.rs:1219
+#: src/preferences_window.rs:557 src/preferences_window.rs:1234
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:749 src/preferences_window.rs:1619
+#: src/preferences_window.rs:749 src/preferences_window.rs:1634
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:923
+#: src/preferences_window.rs:935
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1022
+#: src/preferences_window.rs:1034
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1201
+#: src/preferences_window.rs:1216
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1208
+#: src/preferences_window.rs:1223
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1213
+#: src/preferences_window.rs:1228
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1215
+#: src/preferences_window.rs:1230
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1412
+#: src/preferences_window.rs:1427
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1769
+#: src/preferences_window.rs:1784
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1795
+#: src/preferences_window.rs:1810
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -159,7 +159,7 @@ msgid "Failed to save"
 msgstr ""
 
 #: src/wiring.rs:608 src/wiring.rs:730 src/scene_loader.rs:580
-#: src/app_state.rs:738
+#: src/app_state.rs:745
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -333,179 +333,194 @@ msgctxt "AppearancePreferences"
 msgid "System"
 msgstr ""
 
-#: src/material_form.rs:84
+#: src/material_form.rs:96
 msgctxt "MaterialForm"
 msgid "Normal exposure"
 msgstr ""
 
-#: src/material_form.rs:85
+#: src/material_form.rs:97
 msgctxt "MaterialForm"
 msgid "Bottom exposure"
 msgstr ""
 
-#: src/material_form.rs:86
+#: src/material_form.rs:98
 msgctxt "MaterialForm"
 msgid "Bottom layer count"
 msgstr ""
 
-#: src/material_form.rs:87
+#: src/material_form.rs:99
+msgctxt "MaterialForm"
+msgid "Wait before cure"
+msgstr ""
+
+#: src/material_form.rs:100
+msgctxt "MaterialForm"
+msgid "Wait after cure"
+msgstr ""
+
+#: src/material_form.rs:101
+msgctxt "MaterialForm"
+msgid "Wait after lift"
+msgstr ""
+
+#: src/material_form.rs:102
 msgctxt "MaterialForm"
 msgid "Lift distance"
 msgstr ""
 
-#: src/material_form.rs:88
+#: src/material_form.rs:103
 msgctxt "MaterialForm"
 msgid "Lift speed"
 msgstr ""
 
-#: src/material_form.rs:89
+#: src/material_form.rs:104
 msgctxt "MaterialForm"
 msgid "Retract speed"
 msgstr ""
 
-#: src/material_form.rs:90
+#: src/material_form.rs:105
 msgctxt "MaterialForm"
 msgid "Scale compensation x"
 msgstr ""
 
-#: src/material_form.rs:91
+#: src/material_form.rs:106
 msgctxt "MaterialForm"
 msgid "Scale compensation y"
 msgstr ""
 
-#: src/material_form.rs:92
+#: src/material_form.rs:107
 msgctxt "MaterialForm"
 msgid "Scale compensation z"
 msgstr ""
 
-#: src/material_form.rs:120
+#: src/material_form.rs:135
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} must be a number"
 msgstr ""
 
-#: src/material_form.rs:127
+#: src/material_form.rs:142
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} is out of range"
 msgstr ""
 
-#: src/material_form.rs:133
+#: src/material_form.rs:148
 msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""
 
-#: src/app_state.rs:446 src/lib.rs:270
+#: src/app_state.rs:450 src/lib.rs:271
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
 
-#: src/app_state.rs:737
+#: src/app_state.rs:744
 msgctxt "ErrorDialog"
 msgid "Unsupported file type"
 msgstr ""
 
-#: src/app_state.rs:741
+#: src/app_state.rs:748
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "Only the following file types can be opened: {}"
 msgstr ""
 
-#: src/app_state.rs:989
+#: src/app_state.rs:996
 msgctxt "SaveDialog"
 msgid "Scene not replaced"
 msgstr ""
 
-#: src/app_state.rs:992
+#: src/app_state.rs:999
 msgctxt "SaveDialog"
 msgid ""
 "The scene changed while saving, so the file does not hold its current state. "
 "Nothing was replaced."
 msgstr ""
 
-#: src/repair_run.rs:179 src/repair_run.rs:213
+#: src/repair_run.rs:180 src/repair_run.rs:214
 msgctxt "RepairDialog"
 msgid "Repair failed"
 msgstr ""
 
-#: src/repair_run.rs:181
+#: src/repair_run.rs:182
 msgctxt "RepairDialog"
 msgid "The repair worker crashed."
 msgstr ""
 
-#: src/repair_run.rs:190
+#: src/repair_run.rs:191
 msgctxt "RepairDialog"
 msgid "Repair discarded"
 msgstr ""
 
-#: src/repair_run.rs:193
+#: src/repair_run.rs:194
 msgctxt "RepairDialog"
 msgid "The scene changed while repairing; nothing was applied."
 msgstr ""
 
-#: src/repair_run.rs:206
+#: src/repair_run.rs:207
 msgctxt "RepairDialog"
 msgid "Mesh repair"
 msgstr ""
 
-#: src/repair_run.rs:217
+#: src/repair_run.rs:218
 msgctxt "RepairDialog"
 msgid "The scene rejected the repair edit; nothing was changed."
 msgstr ""
 
-#: src/repair_run.rs:312
+#: src/repair_run.rs:313
 msgctxt "RepairDialog"
 msgid "No problems found."
 msgstr ""
 
-#: src/repair_run.rs:316
+#: src/repair_run.rs:317
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{} mesh(es) repaired"
 msgstr ""
 
-#: src/repair_run.rs:322
+#: src/repair_run.rs:323
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{} mesh(es) could not be fully repaired"
 msgstr ""
 
-#: src/repair_run.rs:332
+#: src/repair_run.rs:333
 #, rust-format
 msgctxt "RepairDialog"
 msgid "{} mesh(es) still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:362
+#: src/repair_run.rs:363
 #, rust-format
 msgctxt "RepairDialog"
 msgid "removed {} degenerate face(s)"
 msgstr ""
 
-#: src/repair_run.rs:366
+#: src/repair_run.rs:367
 #, rust-format
 msgctxt "RepairDialog"
 msgid "reoriented {} face(s)"
 msgstr ""
 
-#: src/repair_run.rs:369
+#: src/repair_run.rs:370
 #, rust-format
 msgctxt "RepairDialog"
 msgid "recomputed {} normal(s)"
 msgstr ""
 
-#: src/repair_run.rs:373
+#: src/repair_run.rs:374
 #, rust-format
 msgctxt "RepairDialog"
 msgid "could not be fully repaired: {}"
 msgstr ""
 
-#: src/repair_run.rs:377
+#: src/repair_run.rs:378
 msgctxt "RepairDialog"
 msgid "still not edge-manifold"
 msgstr ""
 
-#: src/repair_run.rs:408
+#: src/repair_run.rs:409
 #, rust-format
 msgctxt "RepairDialog"
 msgid "Mesh {}"
@@ -524,6 +539,41 @@ msgstr ""
 #: src/profile_forking.rs:57
 msgctxt "ForkDialog"
 msgid "Could not derive a free profile id from that name"
+msgstr ""
+
+#: src/support_gen_run.rs:150
+msgctxt "GenSupportDialog"
+msgid "Support generation failed"
+msgstr ""
+
+#: src/support_gen_run.rs:225 src/support_gen_run.rs:246
+msgctxt "GenSupportDialog"
+msgid "Support-structures generation failed"
+msgstr ""
+
+#: src/support_gen_run.rs:229
+msgctxt "GenSupportDialog"
+msgid ""
+"The scene rejected one or more generated support structures; nothing was "
+"changed for those."
+msgstr ""
+
+#: src/support_gen_run.rs:239
+msgctxt "GenSupportDialog"
+msgid "Support-structures generated"
+msgstr ""
+
+#: src/support_gen_run.rs:275
+#, rust-format
+msgctxt "GenSupportDialog"
+msgid ""
+"{} of {} Support structure(s) added to the scene. Estimated material: {} g."
+msgstr ""
+
+#: src/support_gen_run.rs:284
+#, rust-format
+msgctxt "GenSupportDialog"
+msgid "{} Support structure(s) added to the scene. Estimated material: {} g."
 msgstr ""
 
 #: src/graphics_status.rs:69
@@ -557,7 +607,7 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:275
+#: src/lib.rs:276
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."

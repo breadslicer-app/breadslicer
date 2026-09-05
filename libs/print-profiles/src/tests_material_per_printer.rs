@@ -4,12 +4,17 @@
  */
 
 use super::material_per_printer::MaterialPerPrinter;
-use sc_print_primitives::{PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec};
+use sc_print_primitives::{
+    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+};
 
 const FULL_TOML: &str = r#"
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 6
+wait_before_cure_sec = 0.5
+wait_after_cure_sec = 1.0
+wait_after_lift_sec = 0.0
 lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
@@ -21,6 +26,9 @@ fn deserialise_parses_all_fields() {
     assert_eq!(parsed.normal_exposure_sec.map(|v| v.value()), Some(2.5));
     assert_eq!(parsed.bottom_exposure_sec.map(|v| v.value()), Some(30.0));
     assert_eq!(parsed.bottom_layer_count, Some(6));
+    assert_eq!(parsed.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+    assert_eq!(parsed.wait_after_cure_sec.map(|v| v.value()), Some(1.0));
+    assert_eq!(parsed.wait_after_lift_sec.map(|v| v.value()), Some(0.0));
     assert_eq!(parsed.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(parsed.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(parsed.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
@@ -32,9 +40,18 @@ fn deserialise_empty_section_leaves_all_fields_none() {
     assert!(parsed.normal_exposure_sec.is_none());
     assert!(parsed.bottom_exposure_sec.is_none());
     assert!(parsed.bottom_layer_count.is_none());
+    assert!(parsed.wait_before_cure_sec.is_none());
+    assert!(parsed.wait_after_cure_sec.is_none());
+    assert!(parsed.wait_after_lift_sec.is_none());
     assert!(parsed.lift_distance_mm.is_none());
     assert!(parsed.lift_speed_mm_min.is_none());
     assert!(parsed.retract_speed_mm_min.is_none());
+}
+
+#[test]
+fn deserialise_rejects_a_negative_wait() {
+    let toml = "wait_before_cure_sec = -1.0\n";
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
 }
 
 #[test]
@@ -121,6 +138,9 @@ fn serialise_omits_every_unset_field() {
         "normal_exposure_sec",
         "bottom_exposure_sec",
         "bottom_layer_count",
+        "wait_before_cure_sec",
+        "wait_after_cure_sec",
+        "wait_after_lift_sec",
         "lift_distance_mm",
         "lift_speed_mm_min",
         "retract_speed_mm_min",
@@ -138,6 +158,9 @@ fn programmatic_construction_round_trips() {
         normal_exposure_sec: Some(PositiveFiniteSec::new(2.5).unwrap()),
         bottom_exposure_sec: Some(PositiveFiniteSec::new(30.0).unwrap()),
         bottom_layer_count: Some(6),
+        wait_before_cure_sec: Some(NonNegativeFiniteSec::new(0.5).unwrap()),
+        wait_after_cure_sec: None,
+        wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
         lift_distance_mm: Some(PositiveFiniteMm::new(6.0).unwrap()),
         lift_speed_mm_min: None,
         retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),

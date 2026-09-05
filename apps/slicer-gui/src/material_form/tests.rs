@@ -21,6 +21,9 @@ fn empty_calibration_fields_parse_to_an_all_unset_block() {
             normal_exposure_sec: None,
             bottom_exposure_sec: None,
             bottom_layer_count: None,
+            wait_before_cure_sec: None,
+            wait_after_cure_sec: None,
+            wait_after_lift_sec: None,
             lift_distance_mm: None,
             lift_speed_mm_min: None,
             retract_speed_mm_min: None,
@@ -34,6 +37,9 @@ fn filled_calibration_fields_parse_to_typed_values() {
         normal_exposure_sec: "2.5".to_owned(),
         bottom_exposure_sec: " 30 ".to_owned(),
         bottom_layer_count: "6".to_owned(),
+        wait_before_cure_sec: "0.5".to_owned(),
+        wait_after_cure_sec: " 1.5 ".to_owned(),
+        wait_after_lift_sec: "0".to_owned(),
         lift_distance_mm: "6.0".to_owned(),
         lift_speed_mm_min: "60".to_owned(),
         retract_speed_mm_min: "150".to_owned(),
@@ -42,6 +48,9 @@ fn filled_calibration_fields_parse_to_typed_values() {
     assert_eq!(block.normal_exposure_sec.map(|v| v.value()), Some(2.5));
     assert_eq!(block.bottom_exposure_sec.map(|v| v.value()), Some(30.0));
     assert_eq!(block.bottom_layer_count, Some(6));
+    assert_eq!(block.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+    assert_eq!(block.wait_after_cure_sec.map(|v| v.value()), Some(1.5));
+    assert_eq!(block.wait_after_lift_sec.map(|v| v.value()), Some(0.0));
     assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(block.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(block.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
@@ -98,8 +107,7 @@ fn a_negative_layer_count_is_not_a_number() {
 #[test]
 fn empty_defaults_fields_parse_to_all_unset() {
     let defaults = parse_defaults_form(&DefaultsFormInput::default()).unwrap();
-    assert_eq!(defaults.scale_compensation_pct, None);
-    assert_eq!(defaults.bottom_layer_count, None);
+    assert_eq!(defaults, MaterialDefaults::default());
 }
 
 #[test]
@@ -109,6 +117,9 @@ fn all_three_scale_axes_parse_together() {
         scale_y_pct: "-0.2".to_owned(),
         scale_z_pct: "0".to_owned(),
         bottom_layer_count: "5".to_owned(),
+        wait_before_cure_sec: "0.5".to_owned(),
+        wait_after_cure_sec: String::new(),
+        wait_after_lift_sec: "2".to_owned(),
     };
     let defaults = parse_defaults_form(&input).unwrap();
     let scale = defaults.scale_compensation_pct.unwrap();
@@ -116,6 +127,23 @@ fn all_three_scale_axes_parse_together() {
     assert_eq!(scale.y.value(), -0.2);
     assert_eq!(scale.z.value(), 0.0);
     assert_eq!(defaults.bottom_layer_count, Some(5));
+    assert_eq!(defaults.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+    assert_eq!(defaults.wait_after_cure_sec, None);
+    assert_eq!(defaults.wait_after_lift_sec.map(|v| v.value()), Some(2.0));
+}
+
+#[test]
+fn a_negative_wait_is_rejected_by_the_field_that_holds_it() {
+    let input = CalibrationFormInput {
+        wait_after_lift_sec: "-1".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    assert_eq!(
+        parse_calibration_form(&input).unwrap_err(),
+        InvalidFormValue::OutOfRange {
+            field: FormField::WaitAfterLift
+        },
+    );
 }
 
 #[test]
@@ -205,10 +233,7 @@ fn defaults_seeding_round_trips_through_the_parser() {
 
 #[test]
 fn unset_defaults_seed_to_empty_texts() {
-    let seeded = defaults_form_from(&MaterialDefaults {
-        scale_compensation_pct: None,
-        bottom_layer_count: None,
-    });
+    let seeded = defaults_form_from(&MaterialDefaults::default());
     assert_eq!(seeded, DefaultsFormInput::default());
 }
 

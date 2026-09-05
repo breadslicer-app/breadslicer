@@ -86,10 +86,7 @@ pub(crate) fn build_extension_update(
                 target_energy_density_mj_per_cm2: None,
                 target_layer_height_mm: None,
             },
-            defaults: MaterialDefaults {
-                scale_compensation_pct: None,
-                bottom_layer_count: None,
-            },
+            defaults: MaterialDefaults::default(),
             per_printer: BTreeMap::new(),
         },
     };

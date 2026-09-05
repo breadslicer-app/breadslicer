@@ -12,13 +12,22 @@
 //! this dimension". The resolver reads these values as-is and
 //! never derives them.
 
-use sc_print_primitives::ScaleCompensation;
+use sc_print_primitives::{NonNegativeFiniteSec, ScaleCompensation};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct MaterialDefaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_compensation_pct: Option<ScaleCompensation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bottom_layer_count: Option<u32>,
+    /// Pause after the platform returns, before the light comes on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    /// Pause after the light goes off, before the lift starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    /// Pause at the top of the lift.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
 }

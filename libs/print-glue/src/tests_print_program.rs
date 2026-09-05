@@ -95,9 +95,40 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
+/// The same resin, with every wait calibrated for the same printer.
+const MATERIAL_WITH_WAITS_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+wait_before_cure_sec = 0.4
+wait_after_cure_sec = 1.2
+wait_after_lift_sec = 2.5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+
 fn resolved_config(printer_toml: &str) -> ResolvedPrintConfig {
+    resolved_config_for(printer_toml, MATERIAL_TOML)
+}
+
+fn resolved_config_for(printer_toml: &str, material_toml: &str) -> ResolvedPrintConfig {
     let printer: PrinterProfile = toml_edit::de::from_str(printer_toml).unwrap();
-    let material: MaterialProfile = toml_edit::de::from_str(MATERIAL_TOML).unwrap();
+    let material: MaterialProfile = toml_edit::de::from_str(material_toml).unwrap();
     let material = EffectiveMaterial::from(material);
     sc_print_profiles::resolve(&printer, &material, &SceneOverrides::default()).unwrap()
 }
@@ -301,12 +332,32 @@ fn the_retract_repeats_the_lift_distance_at_its_own_speed() {
 }
 
 #[test]
-fn the_waits_are_absent_and_the_light_runs_at_full_power() {
+fn a_resin_naming_no_pause_leaves_every_record_at_zero() {
     let program = program(PRINTER_TOML, 20);
     for layer in &program.layers {
         assert_eq!(layer.wait_before_cure_sec, NonNegativeFiniteSec::ZERO);
         assert_eq!(layer.wait_after_cure_sec, NonNegativeFiniteSec::ZERO);
         assert_eq!(layer.wait_after_lift_sec, NonNegativeFiniteSec::ZERO);
+    }
+}
+
+#[test]
+fn the_calibrated_waits_reach_every_record() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_WAITS_TOML);
+    let profile = slice_profile(&config, 20);
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+
+    for layer in &program.layers {
+        assert_eq!(layer.wait_before_cure_sec.value(), 0.4);
+        assert_eq!(layer.wait_after_cure_sec.value(), 1.2);
+        assert_eq!(layer.wait_after_lift_sec.value(), 2.5);
+    }
+}
+
+#[test]
+fn the_light_runs_at_full_power() {
+    let program = program(PRINTER_TOML, 20);
+    for layer in &program.layers {
         assert_eq!(layer.light_pwm, LightPwm::FULL);
     }
 }

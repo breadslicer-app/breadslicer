@@ -4,8 +4,8 @@
  */
 
 use sc_print_primitives::{
-    LengthRange, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
-    ScaleCompensationPercent, SpeedRangeMmPerMin,
+    LengthRange, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    ScaleCompensation, ScaleCompensationPercent, SpeedRangeMmPerMin,
 };
 
 use super::effective_material::EffectiveMaterial;
@@ -15,6 +15,7 @@ use super::printer_profile::PrinterProfile;
 use super::resolve_error::ResolveError;
 use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
+use super::resolved_print_config::ResolvedPrintConfig;
 use super::resolver::{
     PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material, resolve,
     resolve_layer_height, snap_to_z_step,
@@ -1839,4 +1840,137 @@ retract_speed_mm_min = 150.0
         has_derived_from_intent,
         "expected at least one DerivedFromIntent warning",
     );
+}
+
+/// A material that resolves fully against
+/// [`printer_without_light_intensity`], taking the wait keys of its
+/// defaults block and of its per-printer block from the caller.
+fn material_with_waits(defaults_waits: &str, block_waits: &str) -> EffectiveMaterial {
+    material(&format!(
+        r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+{defaults_waits}
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.75
+bottom_exposure_sec = 35.0
+lift_distance_mm = 6.5
+lift_speed_mm_min = 70.0
+retract_speed_mm_min = 160.0
+{block_waits}
+"#
+    ))
+}
+
+fn resolve_with_waits(defaults_waits: &str, block_waits: &str) -> ResolvedPrintConfig {
+    resolve(
+        &printer_without_light_intensity(),
+        &material_with_waits(defaults_waits, block_waits),
+        &SceneOverrides::default(),
+    )
+    .unwrap()
+}
+
+fn defaulted(warnings: &[ResolveWarning], field: ResolvedField) -> bool {
+    warnings.iter().any(
+        |warning| matches!(warning, ResolveWarning::DefaultUsed { field: got } if *got == field),
+    )
+}
+
+#[test]
+fn calibrated_waits_reach_the_resolved_material() {
+    let resolved = resolve_with_waits(
+        "",
+        "wait_before_cure_sec = 0.5\nwait_after_cure_sec = 1.5\nwait_after_lift_sec = 2.0",
+    );
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.wait_before_cure_sec.value(), 0.5);
+    assert_eq!(values.wait_after_cure_sec.value(), 1.5);
+    assert_eq!(values.wait_after_lift_sec.value(), 2.0);
+}
+
+#[test]
+fn a_wait_missing_from_the_block_falls_back_to_the_material_default() {
+    let resolved = resolve_with_waits("wait_after_cure_sec = 1.25", "");
+
+    assert_eq!(resolved.material_resolved.wait_after_cure_sec.value(), 1.25);
+    assert!(
+        defaulted(&resolved.warnings, ResolvedField::WaitAfterCureSec),
+        "warnings: {:?}",
+        resolved.warnings,
+    );
+}
+
+#[test]
+fn a_calibrated_wait_outranks_the_material_default() {
+    let resolved = resolve_with_waits("wait_after_cure_sec = 1.25", "wait_after_cure_sec = 0.5");
+
+    assert_eq!(resolved.material_resolved.wait_after_cure_sec.value(), 0.5);
+    assert!(!defaulted(
+        &resolved.warnings,
+        ResolvedField::WaitAfterCureSec
+    ));
+}
+
+#[test]
+fn a_wait_nobody_calibrated_resolves_to_no_pause() {
+    let resolved = resolve_with_waits("", "");
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.wait_before_cure_sec.value(), 0.0);
+    assert_eq!(values.wait_after_cure_sec.value(), 0.0);
+    assert_eq!(values.wait_after_lift_sec.value(), 0.0);
+    for field in [
+        ResolvedField::WaitBeforeCureSec,
+        ResolvedField::WaitAfterCureSec,
+        ResolvedField::WaitAfterLiftSec,
+    ] {
+        assert!(
+            !defaulted(&resolved.warnings, field),
+            "{field} is zero because the resin asked for no pause, not by falling back",
+        );
+    }
+}
+
+#[test]
+fn a_scene_override_replaces_a_calibrated_wait_and_records_the_prior_value() {
+    let overrides = SceneOverrides {
+        wait_after_lift_sec: Some(NonNegativeFiniteSec::new(3.0).unwrap()),
+        ..Default::default()
+    };
+    let resolved = resolve(
+        &printer_without_light_intensity(),
+        &material_with_waits("", "wait_after_lift_sec = 2.0"),
+        &overrides,
+    )
+    .unwrap();
+
+    assert_eq!(resolved.material_resolved.wait_after_lift_sec.value(), 3.0);
+    let record = resolved
+        .overrides_applied
+        .iter()
+        .find(|record| {
+            record.field == ResolvedField::WaitAfterLiftSec
+                && record.source == ValueSource::Override
+        })
+        .expect("the override should be recorded");
+    assert_eq!(record.prior_value, Some(2.0));
+    assert_eq!(record.final_value, 3.0);
 }

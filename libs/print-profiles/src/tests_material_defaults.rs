@@ -4,28 +4,43 @@
  */
 
 use super::material_defaults::MaterialDefaults;
-use sc_print_primitives::{ScaleCompensation, ScaleCompensationPercent};
+use sc_print_primitives::{NonNegativeFiniteSec, ScaleCompensation, ScaleCompensationPercent};
 
 const FULL_TOML: &str = r#"
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 bottom_layer_count = 6
+wait_before_cure_sec = 0.5
+wait_after_cure_sec = 1.0
+wait_after_lift_sec = 0.0
 "#;
 
 #[test]
-fn deserialise_parses_both_fields() {
+fn deserialise_parses_every_field() {
     let parsed: MaterialDefaults = toml_edit::de::from_str(FULL_TOML).unwrap();
     let scale = parsed.scale_compensation_pct.unwrap();
     assert_eq!(scale.x.value(), 0.0);
     assert_eq!(scale.y.value(), 0.0);
     assert_eq!(scale.z.value(), 0.0);
     assert_eq!(parsed.bottom_layer_count, Some(6));
+    assert_eq!(parsed.wait_before_cure_sec.unwrap().value(), 0.5);
+    assert_eq!(parsed.wait_after_cure_sec.unwrap().value(), 1.0);
+    assert_eq!(parsed.wait_after_lift_sec.unwrap().value(), 0.0);
 }
 
 #[test]
-fn deserialise_empty_section_leaves_both_fields_none() {
+fn deserialise_empty_section_leaves_every_field_none() {
     let parsed: MaterialDefaults = toml_edit::de::from_str("").unwrap();
     assert!(parsed.scale_compensation_pct.is_none());
     assert!(parsed.bottom_layer_count.is_none());
+    assert!(parsed.wait_before_cure_sec.is_none());
+    assert!(parsed.wait_after_cure_sec.is_none());
+    assert!(parsed.wait_after_lift_sec.is_none());
+}
+
+#[test]
+fn deserialise_rejects_a_negative_wait() {
+    let toml = "wait_after_lift_sec = -0.5\n";
+    assert!(toml_edit::de::from_str::<MaterialDefaults>(toml).is_err());
 }
 
 #[test]
@@ -73,7 +88,7 @@ fn deserialise_rejects_negative_bottom_layer_count() {
 }
 
 #[test]
-fn roundtrip_with_both_fields_preserves_value() {
+fn roundtrip_with_every_field_preserves_value() {
     let original: MaterialDefaults = toml_edit::de::from_str(FULL_TOML).unwrap();
     let serialised = toml_edit::ser::to_string(&original).unwrap();
     let roundtripped: MaterialDefaults = toml_edit::de::from_str(&serialised).unwrap();
@@ -88,20 +103,25 @@ fn roundtrip_empty_section_preserves_all_none() {
     assert_eq!(original, roundtripped);
     assert!(roundtripped.scale_compensation_pct.is_none());
     assert!(roundtripped.bottom_layer_count.is_none());
+    assert!(roundtripped.wait_before_cure_sec.is_none());
 }
 
 #[test]
 fn serialise_omits_each_unset_field() {
     let parsed: MaterialDefaults = toml_edit::de::from_str("").unwrap();
     let serialised = toml_edit::ser::to_string(&parsed).unwrap();
-    assert!(
-        !serialised.contains("scale_compensation_pct"),
-        "should omit scale_compensation_pct: {serialised}"
-    );
-    assert!(
-        !serialised.contains("bottom_layer_count"),
-        "should omit bottom_layer_count: {serialised}"
-    );
+    for field in [
+        "scale_compensation_pct",
+        "bottom_layer_count",
+        "wait_before_cure_sec",
+        "wait_after_cure_sec",
+        "wait_after_lift_sec",
+    ] {
+        assert!(
+            !serialised.contains(field),
+            "should omit {field}: {serialised}"
+        );
+    }
 }
 
 #[test]
@@ -113,6 +133,9 @@ fn programmatic_construction_round_trips() {
             z: ScaleCompensationPercent::new(0.0).unwrap(),
         }),
         bottom_layer_count: Some(6),
+        wait_before_cure_sec: Some(NonNegativeFiniteSec::new(0.5).unwrap()),
+        wait_after_cure_sec: None,
+        wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
     };
     let serialised = toml_edit::ser::to_string(&defaults).unwrap();
     let roundtripped: MaterialDefaults = toml_edit::de::from_str(&serialised).unwrap();

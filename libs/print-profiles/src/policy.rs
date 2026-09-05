@@ -167,6 +167,9 @@ pub(crate) fn policies_for(
         ResolvedField::NormalExposureSec
         | ResolvedField::BottomExposureSec
         | ResolvedField::BottomLayerCount
+        | ResolvedField::WaitBeforeCureSec
+        | ResolvedField::WaitAfterCureSec
+        | ResolvedField::WaitAfterLiftSec
         | ResolvedField::ScaleCompensationPct => {}
     }
     out

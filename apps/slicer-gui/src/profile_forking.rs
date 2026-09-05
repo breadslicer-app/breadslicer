@@ -110,10 +110,7 @@ pub(crate) fn build_fork(
         defaults: if parts.defaults {
             source.defaults
         } else {
-            MaterialDefaults {
-                scale_compensation_pct: None,
-                bottom_layer_count: None,
-            }
+            MaterialDefaults::default()
         },
         per_printer: parts
             .blocks

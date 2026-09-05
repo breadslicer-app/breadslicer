@@ -8,9 +8,7 @@
 
 use std::fmt;
 
-use sc_print_primitives::{
-    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec,
-};
+use sc_print_primitives::{LightPwm, NonEmptyString, PositiveFiniteMm, PositiveFiniteSec};
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
@@ -78,9 +76,9 @@ pub fn project_to_print_program(
             Ok(LayerProgram {
                 slab_top_mm,
                 exposure_sec: exposure_for(layer_index, transition_count, material),
-                wait_before_cure_sec: NonNegativeFiniteSec::ZERO,
-                wait_after_cure_sec: NonNegativeFiniteSec::ZERO,
-                wait_after_lift_sec: NonNegativeFiniteSec::ZERO,
+                wait_before_cure_sec: material.wait_before_cure_sec,
+                wait_after_cure_sec: material.wait_after_cure_sec,
+                wait_after_lift_sec: material.wait_after_lift_sec,
                 lift,
                 retract,
                 second_lift: None,

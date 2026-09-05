@@ -81,15 +81,21 @@ export component ProfileViewDialog inherits Window {
     in-out property <string> scale-y-text;
     in-out property <string> scale-z-text;
     in-out property <string> defaults-bottom-count-text;
+    in-out property <string> defaults-wait-before-cure-text;
+    in-out property <string> defaults-wait-after-cure-text;
+    in-out property <string> defaults-wait-after-lift-text;
 
     // One calibration pair per editing session: the picker lists the
-    // profile's own blocks and the six value fields appear once one
-    // is picked.
+    // profile's own blocks and the value fields appear once one is
+    // picked.
     in property <[string]> edit-target-labels;
     in-out property <int> edit-target-index: -1;
     in-out property <string> normal-exposure-text;
     in-out property <string> bottom-exposure-text;
     in-out property <string> block-bottom-count-text;
+    in-out property <string> wait-before-cure-text;
+    in-out property <string> wait-after-cure-text;
+    in-out property <string> wait-after-lift-text;
     in-out property <string> lift-distance-text;
     in-out property <string> lift-speed-text;
     in-out property <string> retract-speed-text;
@@ -217,6 +223,18 @@ export component ProfileViewDialog inherits Window {
                                 label: @tr("ProfileViewDialog" => "Bottom layer count");
                                 value <=> root.defaults-bottom-count-text;
                             }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Wait before cure (s)");
+                                value <=> root.defaults-wait-before-cure-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Wait after cure (s)");
+                                value <=> root.defaults-wait-after-cure-text;
+                            }
+                            EditField {
+                                label: @tr("ProfileViewDialog" => "Wait after lift (s)");
+                                value <=> root.defaults-wait-after-lift-text;
+                            }
                         }
                     }
 
@@ -256,6 +274,18 @@ export component ProfileViewDialog inherits Window {
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Bottom layer count");
                                     value <=> root.block-bottom-count-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Wait before cure (s)");
+                                    value <=> root.wait-before-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Wait after cure (s)");
+                                    value <=> root.wait-after-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Wait after lift (s)");
+                                    value <=> root.wait-after-lift-text;
                                 }
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Lift distance (mm)");

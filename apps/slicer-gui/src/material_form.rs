@@ -17,8 +17,8 @@ use std::path::Path;
 use slint::SharedString;
 
 use sc_print_primitives::{
-    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
-    ScaleCompensationPercent,
+    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    ScaleCompensation, ScaleCompensationPercent,
 };
 use sc_print_profiles::{
     MaterialDefaults, MaterialPerPrinter, MaterialProfile, save_material_extension_to_library,
@@ -27,13 +27,16 @@ use sc_print_profiles::{
 
 use crate::i18n::ctr;
 
-/// The raw texts of the six calibration value fields, straight out of
-/// the editor inputs.
+/// The raw texts of the calibration value fields, straight out of the
+/// editor inputs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CalibrationFormInput {
     pub normal_exposure_sec: String,
     pub bottom_exposure_sec: String,
     pub bottom_layer_count: String,
+    pub wait_before_cure_sec: String,
+    pub wait_after_cure_sec: String,
+    pub wait_after_lift_sec: String,
     pub lift_distance_mm: String,
     pub lift_speed_mm_min: String,
     pub retract_speed_mm_min: String,
@@ -46,6 +49,9 @@ pub(crate) struct DefaultsFormInput {
     pub scale_y_pct: String,
     pub scale_z_pct: String,
     pub bottom_layer_count: String,
+    pub wait_before_cure_sec: String,
+    pub wait_after_cure_sec: String,
+    pub wait_after_lift_sec: String,
 }
 
 /// The editor field a form error refers to.
@@ -54,6 +60,9 @@ pub(crate) enum FormField {
     NormalExposure,
     BottomExposure,
     BottomLayerCount,
+    WaitBeforeCure,
+    WaitAfterCure,
+    WaitAfterLift,
     LiftDistance,
     LiftSpeed,
     RetractSpeed,
@@ -69,6 +78,9 @@ impl FormField {
             Self::NormalExposure => "Normal exposure",
             Self::BottomExposure => "Bottom exposure",
             Self::BottomLayerCount => "Bottom layer count",
+            Self::WaitBeforeCure => "Wait before cure",
+            Self::WaitAfterCure => "Wait after cure",
+            Self::WaitAfterLift => "Wait after lift",
             Self::LiftDistance => "Lift distance",
             Self::LiftSpeed => "Lift speed",
             Self::RetractSpeed => "Retract speed",
@@ -84,6 +96,9 @@ impl FormField {
             Self::NormalExposure => ctr!("MaterialForm", "Normal exposure"),
             Self::BottomExposure => ctr!("MaterialForm", "Bottom exposure"),
             Self::BottomLayerCount => ctr!("MaterialForm", "Bottom layer count"),
+            Self::WaitBeforeCure => ctr!("MaterialForm", "Wait before cure"),
+            Self::WaitAfterCure => ctr!("MaterialForm", "Wait after cure"),
+            Self::WaitAfterLift => ctr!("MaterialForm", "Wait after lift"),
             Self::LiftDistance => ctr!("MaterialForm", "Lift distance"),
             Self::LiftSpeed => ctr!("MaterialForm", "Lift speed"),
             Self::RetractSpeed => ctr!("MaterialForm", "Retract speed"),
@@ -151,7 +166,7 @@ impl fmt::Display for InvalidFormValue {
 
 impl std::error::Error for InvalidFormValue {}
 
-/// Parse the six calibration fields into a per-printer block. Empty
+/// Parse the calibration fields into a per-printer block. Empty
 /// fields stay unset; a block with every field empty is legal (the
 /// block's presence is itself the calibration assertion).
 pub(crate) fn parse_calibration_form(
@@ -169,6 +184,18 @@ pub(crate) fn parse_calibration_form(
         bottom_layer_count: parse_optional_count(
             FormField::BottomLayerCount,
             &input.bottom_layer_count,
+        )?,
+        wait_before_cure_sec: parse_optional_wait(
+            FormField::WaitBeforeCure,
+            &input.wait_before_cure_sec,
+        )?,
+        wait_after_cure_sec: parse_optional_wait(
+            FormField::WaitAfterCure,
+            &input.wait_after_cure_sec,
+        )?,
+        wait_after_lift_sec: parse_optional_wait(
+            FormField::WaitAfterLift,
+            &input.wait_after_lift_sec,
         )?,
         lift_distance_mm: parse_optional_mm(FormField::LiftDistance, &input.lift_distance_mm)?,
         lift_speed_mm_min: parse_optional_speed(FormField::LiftSpeed, &input.lift_speed_mm_min)?,
@@ -205,6 +232,18 @@ pub(crate) fn parse_defaults_form(
             FormField::BottomLayerCount,
             &input.bottom_layer_count,
         )?,
+        wait_before_cure_sec: parse_optional_wait(
+            FormField::WaitBeforeCure,
+            &input.wait_before_cure_sec,
+        )?,
+        wait_after_cure_sec: parse_optional_wait(
+            FormField::WaitAfterCure,
+            &input.wait_after_cure_sec,
+        )?,
+        wait_after_lift_sec: parse_optional_wait(
+            FormField::WaitAfterLift,
+            &input.wait_after_lift_sec,
+        )?,
     })
 }
 
@@ -215,6 +254,9 @@ pub(crate) fn calibration_form_from_block(block: &MaterialPerPrinter) -> Calibra
         normal_exposure_sec: fmt_opt_f64(block.normal_exposure_sec.map(|v| v.value())),
         bottom_exposure_sec: fmt_opt_f64(block.bottom_exposure_sec.map(|v| v.value())),
         bottom_layer_count: fmt_opt_u32(block.bottom_layer_count),
+        wait_before_cure_sec: fmt_opt_f64(block.wait_before_cure_sec.map(|v| v.value())),
+        wait_after_cure_sec: fmt_opt_f64(block.wait_after_cure_sec.map(|v| v.value())),
+        wait_after_lift_sec: fmt_opt_f64(block.wait_after_lift_sec.map(|v| v.value())),
         lift_distance_mm: fmt_opt_f64(block.lift_distance_mm.map(|v| v.value())),
         lift_speed_mm_min: fmt_opt_f64(block.lift_speed_mm_min.map(|v| v.value())),
         retract_speed_mm_min: fmt_opt_f64(block.retract_speed_mm_min.map(|v| v.value())),
@@ -238,6 +280,9 @@ pub(crate) fn defaults_form_from(defaults: &MaterialDefaults) -> DefaultsFormInp
         scale_y_pct: y,
         scale_z_pct: z,
         bottom_layer_count: fmt_opt_u32(defaults.bottom_layer_count),
+        wait_before_cure_sec: fmt_opt_f64(defaults.wait_before_cure_sec.map(|v| v.value())),
+        wait_after_cure_sec: fmt_opt_f64(defaults.wait_after_cure_sec.map(|v| v.value())),
+        wait_after_lift_sec: fmt_opt_f64(defaults.wait_after_lift_sec.map(|v| v.value())),
     }
 }
 
@@ -294,6 +339,18 @@ fn parse_optional_sec(
         return Ok(None);
     }
     PositiveFiniteSec::new(parse_f64(field, text)?)
+        .map(Some)
+        .map_err(|_| InvalidFormValue::OutOfRange { field })
+}
+
+fn parse_optional_wait(
+    field: FormField,
+    text: &str,
+) -> Result<Option<NonNegativeFiniteSec>, InvalidFormValue> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    NonNegativeFiniteSec::new(parse_f64(field, text)?)
         .map(Some)
         .map_err(|_| InvalidFormValue::OutOfRange { field })
 }

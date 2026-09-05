@@ -5,7 +5,7 @@
 
 //! Per-print overrides for the resolver's material-side outputs.
 //!
-//! [`SceneOverrides`] mirrors the eight scalar fields of
+//! [`SceneOverrides`] mirrors the scalar fields of
 //! [`crate::material_resolved::MaterialResolved`], each as an
 //! `Option<T>`. The deny list of fields that may not be overridden
 //! (printer hardware geometry, identity, printer constraints, and
@@ -18,7 +18,8 @@
 //! `SceneOverrides { layer_height_mm: Some(value), ..Default::default() }`.
 
 use sc_print_primitives::{
-    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
+    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    ScaleCompensation,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -27,6 +28,9 @@ pub struct SceneOverrides {
     pub normal_exposure_sec: Option<PositiveFiniteSec>,
     pub bottom_exposure_sec: Option<PositiveFiniteSec>,
     pub bottom_layer_count: Option<u32>,
+    pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    pub wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,

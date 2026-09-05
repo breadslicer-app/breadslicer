@@ -761,6 +761,9 @@ fn open_profile_editor(
         dialog.set_scale_y_text(seeded.scale_y_pct.into());
         dialog.set_scale_z_text(seeded.scale_z_pct.into());
         dialog.set_defaults_bottom_count_text(seeded.bottom_layer_count.into());
+        dialog.set_defaults_wait_before_cure_text(seeded.wait_before_cure_sec.into());
+        dialog.set_defaults_wait_after_cure_text(seeded.wait_after_cure_sec.into());
+        dialog.set_defaults_wait_after_lift_text(seeded.wait_after_lift_sec.into());
     }
     dialog.set_edit_target_labels(ModelRc::new(VecModel::from(
         targets
@@ -793,6 +796,9 @@ fn open_profile_editor(
             d.set_normal_exposure_text(seeded.normal_exposure_sec.into());
             d.set_bottom_exposure_text(seeded.bottom_exposure_sec.into());
             d.set_block_bottom_count_text(seeded.bottom_layer_count.into());
+            d.set_wait_before_cure_text(seeded.wait_before_cure_sec.into());
+            d.set_wait_after_cure_text(seeded.wait_after_cure_sec.into());
+            d.set_wait_after_lift_text(seeded.wait_after_lift_sec.into());
             d.set_lift_distance_text(seeded.lift_distance_mm.into());
             d.set_lift_speed_text(seeded.lift_speed_mm_min.into());
             d.set_retract_speed_text(seeded.retract_speed_mm_min.into());
@@ -817,6 +823,9 @@ fn open_profile_editor(
                     scale_y_pct: d.get_scale_y_text().to_string(),
                     scale_z_pct: d.get_scale_z_text().to_string(),
                     bottom_layer_count: d.get_defaults_bottom_count_text().to_string(),
+                    wait_before_cure_sec: d.get_defaults_wait_before_cure_text().to_string(),
+                    wait_after_cure_sec: d.get_defaults_wait_after_cure_text().to_string(),
+                    wait_after_lift_sec: d.get_defaults_wait_after_lift_text().to_string(),
                 };
                 match parse_defaults_form(&input) {
                     Ok(defaults) => profile.defaults = defaults,
@@ -835,6 +844,9 @@ fn open_profile_editor(
                     normal_exposure_sec: d.get_normal_exposure_text().to_string(),
                     bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
                     bottom_layer_count: d.get_block_bottom_count_text().to_string(),
+                    wait_before_cure_sec: d.get_wait_before_cure_text().to_string(),
+                    wait_after_cure_sec: d.get_wait_after_cure_text().to_string(),
+                    wait_after_lift_sec: d.get_wait_after_lift_text().to_string(),
                     lift_distance_mm: d.get_lift_distance_text().to_string(),
                     lift_speed_mm_min: d.get_lift_speed_text().to_string(),
                     retract_speed_mm_min: d.get_retract_speed_text().to_string(),
@@ -1112,6 +1124,9 @@ fn open_extend_dialog(
                 normal_exposure_sec: d.get_normal_exposure_text().to_string(),
                 bottom_exposure_sec: d.get_bottom_exposure_text().to_string(),
                 bottom_layer_count: d.get_bottom_count_text().to_string(),
+                wait_before_cure_sec: d.get_wait_before_cure_text().to_string(),
+                wait_after_cure_sec: d.get_wait_after_cure_text().to_string(),
+                wait_after_lift_sec: d.get_wait_after_lift_text().to_string(),
                 lift_distance_mm: d.get_lift_distance_text().to_string(),
                 lift_speed_mm_min: d.get_lift_speed_text().to_string(),
                 retract_speed_mm_min: d.get_retract_speed_text().to_string(),

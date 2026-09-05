@@ -173,6 +173,9 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
     let defaults = MaterialDefaults {
         scale_compensation_pct,
         bottom_layer_count: raw.bottom_layer_count,
+        wait_before_cure_sec: None,
+        wait_after_cure_sec: None,
+        wait_after_lift_sec: None,
     };
 
     // DragonFruit carries the exposure and motion settings on the
@@ -182,6 +185,9 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
         normal_exposure_sec: opt_sec(raw.normal_exposure_sec, &raw_id, "normalExposureSec")?,
         bottom_exposure_sec: opt_sec(raw.bottom_exposure_sec, &raw_id, "bottomExposureSec")?,
         bottom_layer_count: raw.bottom_layer_count,
+        wait_before_cure_sec: None,
+        wait_after_cure_sec: None,
+        wait_after_lift_sec: None,
         lift_distance_mm: opt_mm(raw.lift_distance_mm, &raw_id, "liftDistanceMm")?,
         lift_speed_mm_min: opt_speed(raw.lift_speed_mm_min, &raw_id, "liftSpeedMmMin")?,
         retract_speed_mm_min: opt_speed(raw.retract_speed_mm_min, &raw_id, "retractSpeedMmMin")?,

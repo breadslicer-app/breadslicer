@@ -13,7 +13,8 @@
 //!   matched to the printer's id, else from its `generic-machine`
 //!   block (recorded as a warning), then fall back to material-level
 //!   defaults for fields that have defaults coverage
-//!   (`bottom_layer_count` and `scale_compensation_pct`).
+//!   (`bottom_layer_count`, `scale_compensation_pct` and the three
+//!   wait times).
 //! - Derive from material intent where the prior layer left a
 //!   field unset and the intent has the inputs needed. Today only
 //!   `layer_height_mm` (intent passthrough from
@@ -31,7 +32,9 @@
 //!   that the override is itself constrained.
 //! - Assemble the resolved configuration. Any required field
 //!   still unset surfaces as
-//!   [`ResolveError::MissingRequiredField`].
+//!   [`ResolveError::MissingRequiredField`]; a wait still unset
+//!   resolves to zero instead, which is what a resin naming no
+//!   pause is asking for.
 //!
 //! `bottom_exposure_sec` has no automatic derivation; it must be
 //! supplied via calibration or override. Inputs that are silently
@@ -42,7 +45,8 @@
 //! assembly-time required-field check.
 
 use sc_print_primitives::{
-    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
+    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    ScaleCompensation,
 };
 
 use crate::effective_material::EffectiveMaterial;
@@ -69,6 +73,9 @@ pub(crate) struct PickedValues {
     pub normal_exposure_sec: Option<PositiveFiniteSec>,
     pub bottom_exposure_sec: Option<PositiveFiniteSec>,
     pub bottom_layer_count: Option<u32>,
+    pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    pub wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
@@ -138,6 +145,33 @@ fn apply_per_printer(
             final_value: f64::from(value),
         });
     }
+    if let Some(value) = per_printer.wait_before_cure_sec {
+        picked.wait_before_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitBeforeCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.wait_after_cure_sec {
+        picked.wait_after_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.wait_after_lift_sec {
+        picked.wait_after_lift_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
     if let Some(value) = per_printer.lift_distance_mm {
         picked.lift_distance_mm = Some(value);
         records.push(OverrideRecord {
@@ -185,6 +219,48 @@ fn apply_defaults(
             source: ValueSource::Default,
             prior_value: None,
             final_value: f64::from(value),
+        });
+    }
+    if picked.wait_before_cure_sec.is_none()
+        && let Some(value) = defaults.wait_before_cure_sec
+    {
+        picked.wait_before_cure_sec = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::WaitBeforeCureSec,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitBeforeCureSec,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if picked.wait_after_cure_sec.is_none()
+        && let Some(value) = defaults.wait_after_cure_sec
+    {
+        picked.wait_after_cure_sec = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::WaitAfterCureSec,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterCureSec,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if picked.wait_after_lift_sec.is_none()
+        && let Some(value) = defaults.wait_after_lift_sec
+    {
+        picked.wait_after_lift_sec = Some(value);
+        warnings.push(ResolveWarning::DefaultUsed {
+            field: ResolvedField::WaitAfterLiftSec,
+        });
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
         });
     }
     if picked.scale_compensation_pct.is_none()
@@ -381,6 +457,36 @@ pub(crate) fn apply_scene_overrides(
         });
         picked.bottom_layer_count = Some(value);
     }
+    if let Some(value) = overrides.wait_before_cure_sec {
+        let prior = picked.wait_before_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitBeforeCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.wait_before_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.wait_after_cure_sec {
+        let prior = picked.wait_after_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.wait_after_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.wait_after_lift_sec {
+        let prior = picked.wait_after_lift_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.wait_after_lift_sec = Some(value);
+    }
     if let Some(value) = overrides.lift_distance_mm {
         let prior = picked.lift_distance_mm.map(|v| v.value());
         records.push(OverrideRecord {
@@ -506,6 +612,15 @@ fn assemble(
             normal_exposure_sec,
             bottom_exposure_sec,
             bottom_layer_count,
+            wait_before_cure_sec: picked
+                .wait_before_cure_sec
+                .unwrap_or(NonNegativeFiniteSec::ZERO),
+            wait_after_cure_sec: picked
+                .wait_after_cure_sec
+                .unwrap_or(NonNegativeFiniteSec::ZERO),
+            wait_after_lift_sec: picked
+                .wait_after_lift_sec
+                .unwrap_or(NonNegativeFiniteSec::ZERO),
             lift_distance_mm,
             lift_speed_mm_min,
             retract_speed_mm_min,

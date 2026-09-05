@@ -8,9 +8,11 @@
 //! [`MaterialResolved`] is the output of the resolver's
 //! material-side composition: pick a calibrated value, fall back to
 //! a material default, derive from intent, or apply a scene
-//! override. Every field is required; the resolver errors with
+//! override. Most fields are required; the resolver errors with
 //! [`crate::resolve_error::ResolveError::MissingRequiredField`]
-//! when any resolution path fails to supply one.
+//! when no resolution path supplies one. The waits are the
+//! exception: an uncalibrated wait is a wait of zero, since a resin
+//! that names no pause is asking for none.
 //!
 //! Each field uses the per-unit primitive that carries the
 //! positive-finite invariant on the type, matching the section
@@ -18,7 +20,8 @@
 //! [`crate::material_defaults::MaterialDefaults`].
 
 use sc_print_primitives::{
-    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation,
+    NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    ScaleCompensation,
 };
 
 use crate::material_identity::MaterialIdentity;
@@ -30,6 +33,12 @@ pub struct MaterialResolved {
     pub normal_exposure_sec: PositiveFiniteSec,
     pub bottom_exposure_sec: PositiveFiniteSec,
     pub bottom_layer_count: u32,
+    /// Pause after the platform returns, before the light comes on.
+    pub wait_before_cure_sec: NonNegativeFiniteSec,
+    /// Pause after the light goes off, before the lift starts.
+    pub wait_after_cure_sec: NonNegativeFiniteSec,
+    /// Pause at the top of the lift.
+    pub wait_after_lift_sec: NonNegativeFiniteSec,
     pub lift_distance_mm: PositiveFiniteMm,
     pub lift_speed_mm_min: PositiveFiniteMmPerMin,
     pub retract_speed_mm_min: PositiveFiniteMmPerMin,
