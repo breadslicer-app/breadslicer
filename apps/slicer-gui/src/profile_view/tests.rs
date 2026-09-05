@@ -262,21 +262,25 @@ fn unset_optional_fields_render_the_not_set_text() {
     assert_eq!(intent[0].1, "not set");
     assert_eq!(intent[1].1, "0.05");
 
-    // Defaults: scale compensation unset, bottom layer count set.
+    // Defaults: scale compensation unset, bottom layer count set,
+    // the three waits unset.
     let defaults = fields(&sections[2]);
+    assert_eq!(defaults.len(), 5);
     assert_eq!(defaults[0].1, "not set");
     assert_eq!(defaults[1].1, "5");
+    for (label, value) in &defaults[2..] {
+        assert_eq!(value, "not set", "{label}");
+    }
 
-    // The default printer's block: two set values, four unset, all
-    // six rendered.
+    // The default printer's block: two set values, ten unset, all
+    // twelve rendered.
     let block = fields(&sections[3]);
-    assert_eq!(block.len(), 6);
+    assert_eq!(block.len(), 12);
     assert_eq!(block[0].1, "2.5");
     assert_eq!(block[1].1, "30");
-    assert_eq!(block[2].1, "not set");
-    assert_eq!(block[3].1, "not set");
-    assert_eq!(block[4].1, "not set");
-    assert_eq!(block[5].1, "not set");
+    for (label, value) in &block[2..] {
+        assert_eq!(value, "not set", "{label}");
+    }
 }
 
 #[test]

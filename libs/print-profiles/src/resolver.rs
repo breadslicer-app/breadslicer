@@ -14,7 +14,8 @@
 //!   block (recorded as a warning), then fall back to material-level
 //!   defaults for fields that have defaults coverage
 //!   (`bottom_layer_count`, `scale_compensation_pct` and the three
-//!   wait times).
+//!   normal-layer wait times; the bottom waits are calibrated per
+//!   printer or not at all).
 //! - Derive from material intent where the prior layer left a
 //!   field unset and the intent has the inputs needed. Today only
 //!   `layer_height_mm` (intent passthrough from
@@ -34,7 +35,8 @@
 //!   still unset surfaces as
 //!   [`ResolveError::MissingRequiredField`]; a wait still unset
 //!   resolves to zero instead, which is what a resin naming no
-//!   pause is asking for.
+//!   pause is asking for, and a bottom wait still unset resolves to
+//!   its normal-layer counterpart.
 //!
 //! `bottom_exposure_sec` has no automatic derivation; it must be
 //! supplied via calibration or override. Inputs that are silently
@@ -76,6 +78,9 @@ pub(crate) struct PickedValues {
     pub wait_before_cure_sec: Option<NonNegativeFiniteSec>,
     pub wait_after_cure_sec: Option<NonNegativeFiniteSec>,
     pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
+    pub bottom_wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    pub bottom_wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    pub bottom_wait_after_lift_sec: Option<NonNegativeFiniteSec>,
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
@@ -167,6 +172,33 @@ fn apply_per_printer(
         picked.wait_after_lift_sec = Some(value);
         records.push(OverrideRecord {
             field: ResolvedField::WaitAfterLiftSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_wait_before_cure_sec {
+        picked.bottom_wait_before_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitBeforeCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_wait_after_cure_sec {
+        picked.bottom_wait_after_cure_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterCureSec,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_wait_after_lift_sec {
+        picked.bottom_wait_after_lift_sec = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterLiftSec,
             source: ValueSource::Calibrated,
             prior_value: None,
             final_value: value.value(),
@@ -487,6 +519,36 @@ pub(crate) fn apply_scene_overrides(
         });
         picked.wait_after_lift_sec = Some(value);
     }
+    if let Some(value) = overrides.bottom_wait_before_cure_sec {
+        let prior = picked.bottom_wait_before_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitBeforeCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_wait_before_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_wait_after_cure_sec {
+        let prior = picked.bottom_wait_after_cure_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterCureSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_wait_after_cure_sec = Some(value);
+    }
+    if let Some(value) = overrides.bottom_wait_after_lift_sec {
+        let prior = picked.bottom_wait_after_lift_sec.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomWaitAfterLiftSec,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        picked.bottom_wait_after_lift_sec = Some(value);
+    }
     if let Some(value) = overrides.lift_distance_mm {
         let prior = picked.lift_distance_mm.map(|v| v.value());
         records.push(OverrideRecord {
@@ -603,6 +665,15 @@ fn assemble(
             .ok_or(ResolveError::MissingRequiredField {
                 field: ResolvedField::ScaleCompensationPct,
             })?;
+    let wait_before_cure_sec = picked
+        .wait_before_cure_sec
+        .unwrap_or(NonNegativeFiniteSec::ZERO);
+    let wait_after_cure_sec = picked
+        .wait_after_cure_sec
+        .unwrap_or(NonNegativeFiniteSec::ZERO);
+    let wait_after_lift_sec = picked
+        .wait_after_lift_sec
+        .unwrap_or(NonNegativeFiniteSec::ZERO);
 
     Ok(ResolvedPrintConfig {
         printer,
@@ -612,15 +683,18 @@ fn assemble(
             normal_exposure_sec,
             bottom_exposure_sec,
             bottom_layer_count,
-            wait_before_cure_sec: picked
-                .wait_before_cure_sec
-                .unwrap_or(NonNegativeFiniteSec::ZERO),
-            wait_after_cure_sec: picked
-                .wait_after_cure_sec
-                .unwrap_or(NonNegativeFiniteSec::ZERO),
-            wait_after_lift_sec: picked
-                .wait_after_lift_sec
-                .unwrap_or(NonNegativeFiniteSec::ZERO),
+            wait_before_cure_sec,
+            wait_after_cure_sec,
+            wait_after_lift_sec,
+            bottom_wait_before_cure_sec: picked
+                .bottom_wait_before_cure_sec
+                .unwrap_or(wait_before_cure_sec),
+            bottom_wait_after_cure_sec: picked
+                .bottom_wait_after_cure_sec
+                .unwrap_or(wait_after_cure_sec),
+            bottom_wait_after_lift_sec: picked
+                .bottom_wait_after_lift_sec
+                .unwrap_or(wait_after_lift_sec),
             lift_distance_mm,
             lift_speed_mm_min,
             retract_speed_mm_min,

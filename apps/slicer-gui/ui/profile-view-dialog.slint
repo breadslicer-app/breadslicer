@@ -96,6 +96,9 @@ export component ProfileViewDialog inherits Window {
     in-out property <string> wait-before-cure-text;
     in-out property <string> wait-after-cure-text;
     in-out property <string> wait-after-lift-text;
+    in-out property <string> bottom-wait-before-cure-text;
+    in-out property <string> bottom-wait-after-cure-text;
+    in-out property <string> bottom-wait-after-lift-text;
     in-out property <string> lift-distance-text;
     in-out property <string> lift-speed-text;
     in-out property <string> retract-speed-text;
@@ -286,6 +289,18 @@ export component ProfileViewDialog inherits Window {
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Wait after lift (s)");
                                     value <=> root.wait-after-lift-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom wait before cure (s)");
+                                    value <=> root.bottom-wait-before-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom wait after cure (s)");
+                                    value <=> root.bottom-wait-after-cure-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom wait after lift (s)");
+                                    value <=> root.bottom-wait-after-lift-text;
                                 }
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Lift distance (mm)");

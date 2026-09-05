@@ -8,7 +8,9 @@
 
 use std::fmt;
 
-use sc_print_primitives::{LightPwm, NonEmptyString, PositiveFiniteMm, PositiveFiniteSec};
+use sc_print_primitives::{
+    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec,
+};
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
@@ -73,12 +75,13 @@ pub fn project_to_print_program(
                 layer_index,
                 z_mm: slab_top,
             })?;
+            let waits = waits_for(layer_index, material);
             Ok(LayerProgram {
                 slab_top_mm,
                 exposure_sec: exposure_for(layer_index, transition_count, material),
-                wait_before_cure_sec: material.wait_before_cure_sec,
-                wait_after_cure_sec: material.wait_after_cure_sec,
-                wait_after_lift_sec: material.wait_after_lift_sec,
+                wait_before_cure_sec: waits.before_cure_sec,
+                wait_after_cure_sec: waits.after_cure_sec,
+                wait_after_lift_sec: waits.after_lift_sec,
                 lift,
                 retract,
                 second_lift: None,
@@ -99,6 +102,33 @@ pub fn project_to_print_program(
         created_at,
         slicer_version,
     })
+}
+
+/// The three pauses one layer's record carries.
+#[derive(Clone, Copy, Debug)]
+struct LayerWaits {
+    before_cure_sec: NonNegativeFiniteSec,
+    after_cure_sec: NonNegativeFiniteSec,
+    after_lift_sec: NonNegativeFiniteSec,
+}
+
+/// Pick one layer's pauses: the bottom layers hold the bottom waits
+/// and every other layer the normal ones. The transition band takes
+/// the normal waits, because only the exposure changes across it.
+fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
+    if layer_index < material.bottom_layer_count {
+        LayerWaits {
+            before_cure_sec: material.bottom_wait_before_cure_sec,
+            after_cure_sec: material.bottom_wait_after_cure_sec,
+            after_lift_sec: material.bottom_wait_after_lift_sec,
+        }
+    } else {
+        LayerWaits {
+            before_cure_sec: material.wait_before_cure_sec,
+            after_cure_sec: material.wait_after_cure_sec,
+            after_lift_sec: material.wait_after_lift_sec,
+        }
+    }
 }
 
 /// Pick one layer's exposure: the bottom layers hold the bottom

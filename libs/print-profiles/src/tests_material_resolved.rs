@@ -40,6 +40,9 @@ fn sample_resolved() -> MaterialResolved {
         wait_before_cure_sec: NonNegativeFiniteSec::new(0.5).unwrap(),
         wait_after_cure_sec: NonNegativeFiniteSec::new(1.0).unwrap(),
         wait_after_lift_sec: NonNegativeFiniteSec::ZERO,
+        bottom_wait_before_cure_sec: NonNegativeFiniteSec::new(3.0).unwrap(),
+        bottom_wait_after_cure_sec: NonNegativeFiniteSec::new(4.0).unwrap(),
+        bottom_wait_after_lift_sec: NonNegativeFiniteSec::ZERO,
         lift_distance_mm: PositiveFiniteMm::new(5.0).unwrap(),
         lift_speed_mm_min: PositiveFiniteMmPerMin::new(120.0).unwrap(),
         retract_speed_mm_min: PositiveFiniteMmPerMin::new(150.0).unwrap(),
@@ -58,6 +61,9 @@ fn constructed_value_carries_every_field() {
     assert_eq!(resolved.wait_before_cure_sec.value(), 0.5);
     assert_eq!(resolved.wait_after_cure_sec.value(), 1.0);
     assert_eq!(resolved.wait_after_lift_sec.value(), 0.0);
+    assert_eq!(resolved.bottom_wait_before_cure_sec.value(), 3.0);
+    assert_eq!(resolved.bottom_wait_after_cure_sec.value(), 4.0);
+    assert_eq!(resolved.bottom_wait_after_lift_sec.value(), 0.0);
     assert_eq!(resolved.lift_distance_mm.value(), 5.0);
     assert_eq!(resolved.lift_speed_mm_min.value(), 120.0);
     assert_eq!(resolved.retract_speed_mm_min.value(), 150.0);

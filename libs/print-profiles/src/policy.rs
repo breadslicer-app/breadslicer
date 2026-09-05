@@ -170,6 +170,9 @@ pub(crate) fn policies_for(
         | ResolvedField::WaitBeforeCureSec
         | ResolvedField::WaitAfterCureSec
         | ResolvedField::WaitAfterLiftSec
+        | ResolvedField::BottomWaitBeforeCureSec
+        | ResolvedField::BottomWaitAfterCureSec
+        | ResolvedField::BottomWaitAfterLiftSec
         | ResolvedField::ScaleCompensationPct => {}
     }
     out

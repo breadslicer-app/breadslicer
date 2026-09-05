@@ -15,6 +15,9 @@ bottom_layer_count = 6
 wait_before_cure_sec = 0.5
 wait_after_cure_sec = 1.0
 wait_after_lift_sec = 0.0
+bottom_wait_before_cure_sec = 3.0
+bottom_wait_after_cure_sec = 4.0
+bottom_wait_after_lift_sec = 5.0
 lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
@@ -29,6 +32,18 @@ fn deserialise_parses_all_fields() {
     assert_eq!(parsed.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
     assert_eq!(parsed.wait_after_cure_sec.map(|v| v.value()), Some(1.0));
     assert_eq!(parsed.wait_after_lift_sec.map(|v| v.value()), Some(0.0));
+    assert_eq!(
+        parsed.bottom_wait_before_cure_sec.map(|v| v.value()),
+        Some(3.0)
+    );
+    assert_eq!(
+        parsed.bottom_wait_after_cure_sec.map(|v| v.value()),
+        Some(4.0)
+    );
+    assert_eq!(
+        parsed.bottom_wait_after_lift_sec.map(|v| v.value()),
+        Some(5.0)
+    );
     assert_eq!(parsed.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(parsed.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(parsed.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
@@ -43,6 +58,9 @@ fn deserialise_empty_section_leaves_all_fields_none() {
     assert!(parsed.wait_before_cure_sec.is_none());
     assert!(parsed.wait_after_cure_sec.is_none());
     assert!(parsed.wait_after_lift_sec.is_none());
+    assert!(parsed.bottom_wait_before_cure_sec.is_none());
+    assert!(parsed.bottom_wait_after_cure_sec.is_none());
+    assert!(parsed.bottom_wait_after_lift_sec.is_none());
     assert!(parsed.lift_distance_mm.is_none());
     assert!(parsed.lift_speed_mm_min.is_none());
     assert!(parsed.retract_speed_mm_min.is_none());
@@ -51,6 +69,36 @@ fn deserialise_empty_section_leaves_all_fields_none() {
 #[test]
 fn deserialise_rejects_a_negative_wait() {
     let toml = "wait_before_cure_sec = -1.0\n";
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
+}
+
+#[test]
+fn deserialise_parses_the_bottom_waits_apart_from_the_normal_ones() {
+    let toml = r#"
+wait_before_cure_sec = 0.5
+bottom_wait_before_cure_sec = 3.0
+bottom_wait_after_cure_sec = 4.0
+bottom_wait_after_lift_sec = 5.0
+"#;
+    let parsed: MaterialPerPrinter = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(parsed.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+    assert_eq!(
+        parsed.bottom_wait_before_cure_sec.map(|v| v.value()),
+        Some(3.0)
+    );
+    assert_eq!(
+        parsed.bottom_wait_after_cure_sec.map(|v| v.value()),
+        Some(4.0)
+    );
+    assert_eq!(
+        parsed.bottom_wait_after_lift_sec.map(|v| v.value()),
+        Some(5.0)
+    );
+}
+
+#[test]
+fn deserialise_rejects_a_negative_bottom_wait() {
+    let toml = "bottom_wait_after_lift_sec = -1.0\n";
     assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
 }
 
@@ -141,6 +189,9 @@ fn serialise_omits_every_unset_field() {
         "wait_before_cure_sec",
         "wait_after_cure_sec",
         "wait_after_lift_sec",
+        "bottom_wait_before_cure_sec",
+        "bottom_wait_after_cure_sec",
+        "bottom_wait_after_lift_sec",
         "lift_distance_mm",
         "lift_speed_mm_min",
         "retract_speed_mm_min",
@@ -161,6 +212,9 @@ fn programmatic_construction_round_trips() {
         wait_before_cure_sec: Some(NonNegativeFiniteSec::new(0.5).unwrap()),
         wait_after_cure_sec: None,
         wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
+        bottom_wait_before_cure_sec: Some(NonNegativeFiniteSec::new(3.0).unwrap()),
+        bottom_wait_after_cure_sec: None,
+        bottom_wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
         lift_distance_mm: Some(PositiveFiniteMm::new(6.0).unwrap()),
         lift_speed_mm_min: None,
         retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),

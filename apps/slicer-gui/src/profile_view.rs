@@ -162,6 +162,18 @@ fn defaults_section(defaults: &MaterialDefaults) -> ProfileViewSection {
                 ctr!("ProfileViewDialog", "Bottom layer count"),
                 fmt_opt_u32(defaults.bottom_layer_count),
             ),
+            field(
+                ctr!("ProfileViewDialog", "Wait before cure (s)"),
+                fmt_opt_f64(defaults.wait_before_cure_sec.map(|v| v.value())),
+            ),
+            field(
+                ctr!("ProfileViewDialog", "Wait after cure (s)"),
+                fmt_opt_f64(defaults.wait_after_cure_sec.map(|v| v.value())),
+            ),
+            field(
+                ctr!("ProfileViewDialog", "Wait after lift (s)"),
+                fmt_opt_f64(defaults.wait_after_lift_sec.map(|v| v.value())),
+            ),
         ],
     )
 }
@@ -294,6 +306,30 @@ fn calibration_fields(block: &MaterialPerPrinter) -> Vec<ProfileViewField> {
         field(
             ctr!("ProfileViewDialog", "Bottom layer count"),
             fmt_opt_u32(block.bottom_layer_count),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Wait before cure (s)"),
+            fmt_opt_f64(block.wait_before_cure_sec.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Wait after cure (s)"),
+            fmt_opt_f64(block.wait_after_cure_sec.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Wait after lift (s)"),
+            fmt_opt_f64(block.wait_after_lift_sec.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom wait before cure (s)"),
+            fmt_opt_f64(block.bottom_wait_before_cure_sec.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom wait after cure (s)"),
+            fmt_opt_f64(block.bottom_wait_after_cure_sec.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom wait after lift (s)"),
+            fmt_opt_f64(block.bottom_wait_after_lift_sec.map(|v| v.value())),
         ),
         field(
             ctr!("ProfileViewDialog", "Lift distance (mm)"),

@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-09-05 15:36+0000\n"
+"POT-Creation-Date: 2026-09-05 19:55+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -380,82 +380,97 @@ msgctxt "ProfileViewDialog"
 msgid "Resin profile"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:206
+#: ui/profile-view-dialog.slint:209
 msgctxt "ProfileViewDialog"
 msgid "Defaults"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:211
+#: ui/profile-view-dialog.slint:214
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation x (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:215
+#: ui/profile-view-dialog.slint:218
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation y (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:219
+#: ui/profile-view-dialog.slint:222
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation z (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:223 ui/profile-view-dialog.slint:275
+#: ui/profile-view-dialog.slint:226 ui/profile-view-dialog.slint:278
 msgctxt "ProfileViewDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:227 ui/profile-view-dialog.slint:279
+#: ui/profile-view-dialog.slint:230 ui/profile-view-dialog.slint:282
 msgctxt "ProfileViewDialog"
 msgid "Wait before cure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:231 ui/profile-view-dialog.slint:283
+#: ui/profile-view-dialog.slint:234 ui/profile-view-dialog.slint:286
 msgctxt "ProfileViewDialog"
 msgid "Wait after cure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:235 ui/profile-view-dialog.slint:287
+#: ui/profile-view-dialog.slint:238 ui/profile-view-dialog.slint:290
 msgctxt "ProfileViewDialog"
 msgid "Wait after lift (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:253
+#: ui/profile-view-dialog.slint:256
 msgctxt "ProfileViewDialog"
 msgid "Edit calibration values"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:267
+#: ui/profile-view-dialog.slint:270
 msgctxt "ProfileViewDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:271
+#: ui/profile-view-dialog.slint:274
 msgctxt "ProfileViewDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:291
+#: ui/profile-view-dialog.slint:294
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait before cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:298
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after cure (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:302
+msgctxt "ProfileViewDialog"
+msgid "Bottom wait after lift (s)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:306
 msgctxt "ProfileViewDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:295
+#: ui/profile-view-dialog.slint:310
 msgctxt "ProfileViewDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:299
+#: ui/profile-view-dialog.slint:314
 msgctxt "ProfileViewDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:320
+#: ui/profile-view-dialog.slint:335
 msgctxt "ProfileViewDialog"
 msgid "Save"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:327
+#: ui/profile-view-dialog.slint:342
 msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr ""
@@ -742,67 +757,82 @@ msgctxt "ExtendDialog"
 msgid "Extend resin profile"
 msgstr ""
 
-#: ui/extend-dialog.slint:69
+#: ui/extend-dialog.slint:72
 msgctxt "ExtendDialog"
 msgid "Extend {}"
 msgstr ""
 
-#: ui/extend-dialog.slint:76
+#: ui/extend-dialog.slint:79
 msgctxt "ExtendDialog"
 msgid "Add calibration values for a target this resin does not cover yet."
 msgstr ""
 
-#: ui/extend-dialog.slint:95
+#: ui/extend-dialog.slint:98
 msgctxt "ExtendDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:99
+#: ui/extend-dialog.slint:102
 msgctxt "ExtendDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:103
+#: ui/extend-dialog.slint:106
 msgctxt "ExtendDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: ui/extend-dialog.slint:107
+#: ui/extend-dialog.slint:110
 msgctxt "ExtendDialog"
 msgid "Wait before cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:111
+#: ui/extend-dialog.slint:114
 msgctxt "ExtendDialog"
 msgid "Wait after cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:115
+#: ui/extend-dialog.slint:118
 msgctxt "ExtendDialog"
 msgid "Wait after lift (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:119
+#: ui/extend-dialog.slint:122
+msgctxt "ExtendDialog"
+msgid "Bottom wait before cure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:126
+msgctxt "ExtendDialog"
+msgid "Bottom wait after cure (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:130
+msgctxt "ExtendDialog"
+msgid "Bottom wait after lift (s)"
+msgstr ""
+
+#: ui/extend-dialog.slint:134
 msgctxt "ExtendDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: ui/extend-dialog.slint:123
+#: ui/extend-dialog.slint:138
 msgctxt "ExtendDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:127
+#: ui/extend-dialog.slint:142
 msgctxt "ExtendDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:145
+#: ui/extend-dialog.slint:160
 msgctxt "ExtendDialog"
 msgid "Save"
 msgstr ""
 
-#: ui/extend-dialog.slint:153
+#: ui/extend-dialog.slint:168
 msgctxt "ExtendDialog"
 msgid "Cancel"
 msgstr ""

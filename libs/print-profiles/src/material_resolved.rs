@@ -12,7 +12,9 @@
 //! [`crate::resolve_error::ResolveError::MissingRequiredField`]
 //! when no resolution path supplies one. The waits are the
 //! exception: an uncalibrated wait is a wait of zero, since a resin
-//! that names no pause is asking for none.
+//! that names no pause is asking for none. An uncalibrated bottom
+//! wait takes the normal-layer value, since a resin that draws no
+//! distinction between the two wants one pause everywhere.
 //!
 //! Each field uses the per-unit primitive that carries the
 //! positive-finite invariant on the type, matching the section
@@ -39,6 +41,12 @@ pub struct MaterialResolved {
     pub wait_after_cure_sec: NonNegativeFiniteSec,
     /// Pause at the top of the lift.
     pub wait_after_lift_sec: NonNegativeFiniteSec,
+    /// The bottom layers' pause before the light comes on.
+    pub bottom_wait_before_cure_sec: NonNegativeFiniteSec,
+    /// The bottom layers' pause after the light goes off.
+    pub bottom_wait_after_cure_sec: NonNegativeFiniteSec,
+    /// The bottom layers' pause at the top of the lift.
+    pub bottom_wait_after_lift_sec: NonNegativeFiniteSec,
     pub lift_distance_mm: PositiveFiniteMm,
     pub lift_speed_mm_min: PositiveFiniteMmPerMin,
     pub retract_speed_mm_min: PositiveFiniteMmPerMin,

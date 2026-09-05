@@ -36,6 +36,18 @@ pub struct MaterialPerPrinter {
     /// Pause at the top of the lift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_after_lift_sec: Option<NonNegativeFiniteSec>,
+    /// The bottom layers' pause before the light comes on; absent
+    /// means they hold the same pause as the normal layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_wait_before_cure_sec: Option<NonNegativeFiniteSec>,
+    /// The bottom layers' pause after the light goes off; absent
+    /// means they hold the same pause as the normal layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_wait_after_cure_sec: Option<NonNegativeFiniteSec>,
+    /// The bottom layers' pause at the top of the lift; absent means
+    /// they hold the same pause as the normal layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_wait_after_lift_sec: Option<NonNegativeFiniteSec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

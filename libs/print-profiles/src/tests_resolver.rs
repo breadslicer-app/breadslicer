@@ -1950,6 +1950,119 @@ fn a_wait_nobody_calibrated_resolves_to_no_pause() {
 }
 
 #[test]
+fn calibrated_bottom_waits_reach_the_resolved_material() {
+    let resolved = resolve_with_waits(
+        "",
+        "bottom_wait_before_cure_sec = 3.0\n\
+         bottom_wait_after_cure_sec = 4.0\n\
+         bottom_wait_after_lift_sec = 5.0",
+    );
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.bottom_wait_before_cure_sec.value(), 3.0);
+    assert_eq!(values.bottom_wait_after_cure_sec.value(), 4.0);
+    assert_eq!(values.bottom_wait_after_lift_sec.value(), 5.0);
+}
+
+#[test]
+fn an_uncalibrated_bottom_wait_takes_the_calibrated_normal_one() {
+    let resolved = resolve_with_waits("", "wait_after_lift_sec = 2.0");
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.wait_after_lift_sec.value(), 2.0);
+    assert_eq!(values.bottom_wait_after_lift_sec.value(), 2.0);
+}
+
+#[test]
+fn an_uncalibrated_bottom_wait_follows_the_normal_one_down_to_the_material_default() {
+    let resolved = resolve_with_waits("wait_after_cure_sec = 1.25", "");
+
+    assert_eq!(
+        resolved
+            .material_resolved
+            .bottom_wait_after_cure_sec
+            .value(),
+        1.25,
+    );
+}
+
+#[test]
+fn a_bottom_wait_nobody_calibrated_at_all_resolves_to_no_pause() {
+    let resolved = resolve_with_waits("", "");
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.bottom_wait_before_cure_sec.value(), 0.0);
+    assert_eq!(values.bottom_wait_after_cure_sec.value(), 0.0);
+    assert_eq!(values.bottom_wait_after_lift_sec.value(), 0.0);
+}
+
+#[test]
+fn a_calibrated_bottom_wait_stands_apart_from_the_normal_one() {
+    let resolved = resolve_with_waits(
+        "",
+        "wait_after_cure_sec = 0.5\nbottom_wait_after_cure_sec = 4.0",
+    );
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.wait_after_cure_sec.value(), 0.5);
+    assert_eq!(values.bottom_wait_after_cure_sec.value(), 4.0);
+}
+
+#[test]
+fn a_scene_override_replaces_a_calibrated_bottom_wait_and_records_the_prior_value() {
+    let overrides = SceneOverrides {
+        bottom_wait_before_cure_sec: Some(NonNegativeFiniteSec::new(6.0).unwrap()),
+        ..Default::default()
+    };
+    let resolved = resolve(
+        &printer_without_light_intensity(),
+        &material_with_waits("", "bottom_wait_before_cure_sec = 3.0"),
+        &overrides,
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved
+            .material_resolved
+            .bottom_wait_before_cure_sec
+            .value(),
+        6.0,
+    );
+    let record = resolved
+        .overrides_applied
+        .iter()
+        .find(|record| {
+            record.field == ResolvedField::BottomWaitBeforeCureSec
+                && record.source == ValueSource::Override
+        })
+        .expect("the override should be recorded");
+    assert_eq!(record.prior_value, Some(3.0));
+    assert_eq!(record.final_value, 6.0);
+}
+
+#[test]
+fn a_scene_override_on_a_normal_wait_carries_into_an_uncalibrated_bottom_wait() {
+    let overrides = SceneOverrides {
+        wait_after_lift_sec: Some(NonNegativeFiniteSec::new(3.0).unwrap()),
+        ..Default::default()
+    };
+    let resolved = resolve(
+        &printer_without_light_intensity(),
+        &material_with_waits("", "wait_after_lift_sec = 2.0"),
+        &overrides,
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved
+            .material_resolved
+            .bottom_wait_after_lift_sec
+            .value(),
+        3.0,
+    );
+}
+
+#[test]
 fn a_scene_override_replaces_a_calibrated_wait_and_records_the_prior_value() {
     let overrides = SceneOverrides {
         wait_after_lift_sec: Some(NonNegativeFiniteSec::new(3.0).unwrap()),

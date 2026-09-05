@@ -122,6 +122,37 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
+/// The same resin again, with the bottom layers' waits calibrated
+/// apart from the normal ones.
+const MATERIAL_WITH_BOTTOM_WAITS_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+wait_before_cure_sec = 0.4
+wait_after_cure_sec = 1.2
+wait_after_lift_sec = 2.5
+bottom_wait_before_cure_sec = 6.0
+bottom_wait_after_cure_sec = 7.0
+bottom_wait_after_lift_sec = 8.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+
 fn resolved_config(printer_toml: &str) -> ResolvedPrintConfig {
     resolved_config_for(printer_toml, MATERIAL_TOML)
 }
@@ -348,6 +379,40 @@ fn the_calibrated_waits_reach_every_record() {
     let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
 
     for layer in &program.layers {
+        assert_eq!(layer.wait_before_cure_sec.value(), 0.4);
+        assert_eq!(layer.wait_after_cure_sec.value(), 1.2);
+        assert_eq!(layer.wait_after_lift_sec.value(), 2.5);
+    }
+}
+
+#[test]
+fn the_bottom_waits_stop_where_the_bottom_layers_do() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
+    let profile = slice_profile(&config, 20);
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let bottom = BOTTOM_LAYER_COUNT as usize;
+
+    for layer in &program.layers[..bottom] {
+        assert_eq!(layer.wait_before_cure_sec.value(), 6.0);
+        assert_eq!(layer.wait_after_cure_sec.value(), 7.0);
+        assert_eq!(layer.wait_after_lift_sec.value(), 8.0);
+    }
+    for layer in &program.layers[bottom..] {
+        assert_eq!(layer.wait_before_cure_sec.value(), 0.4);
+        assert_eq!(layer.wait_after_cure_sec.value(), 1.2);
+        assert_eq!(layer.wait_after_lift_sec.value(), 2.5);
+    }
+}
+
+#[test]
+fn the_transition_band_holds_the_normal_waits_while_its_exposure_still_ramps() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
+    let profile = slice_profile(&config, 20);
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let band = BOTTOM_LAYER_COUNT as usize..(BOTTOM_LAYER_COUNT + TRANSITION_COUNT) as usize;
+
+    for layer in &program.layers[band] {
+        assert!(layer.exposure_sec.value() > NORMAL_EXPOSURE_SEC);
         assert_eq!(layer.wait_before_cure_sec.value(), 0.4);
         assert_eq!(layer.wait_after_cure_sec.value(), 1.2);
         assert_eq!(layer.wait_after_lift_sec.value(), 2.5);

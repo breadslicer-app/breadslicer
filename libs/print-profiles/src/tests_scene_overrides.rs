@@ -47,6 +47,9 @@ fn every_field_is_independently_settable() {
         wait_before_cure_sec: Some(NonNegativeFiniteSec::new(0.5).unwrap()),
         wait_after_cure_sec: Some(NonNegativeFiniteSec::new(1.0).unwrap()),
         wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
+        bottom_wait_before_cure_sec: Some(NonNegativeFiniteSec::new(3.0).unwrap()),
+        bottom_wait_after_cure_sec: Some(NonNegativeFiniteSec::new(4.0).unwrap()),
+        bottom_wait_after_lift_sec: Some(NonNegativeFiniteSec::ZERO),
         lift_distance_mm: Some(PositiveFiniteMm::new(5.0).unwrap()),
         lift_speed_mm_min: Some(PositiveFiniteMmPerMin::new(120.0).unwrap()),
         retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),
@@ -63,6 +66,9 @@ fn every_field_is_independently_settable() {
     assert_eq!(overrides.wait_before_cure_sec.unwrap().value(), 0.5);
     assert_eq!(overrides.wait_after_cure_sec.unwrap().value(), 1.0);
     assert_eq!(overrides.wait_after_lift_sec.unwrap().value(), 0.0);
+    assert_eq!(overrides.bottom_wait_before_cure_sec.unwrap().value(), 3.0);
+    assert_eq!(overrides.bottom_wait_after_cure_sec.unwrap().value(), 4.0);
+    assert_eq!(overrides.bottom_wait_after_lift_sec.unwrap().value(), 0.0);
     assert_eq!(overrides.lift_distance_mm.unwrap().value(), 5.0);
     assert_eq!(overrides.lift_speed_mm_min.unwrap().value(), 120.0);
     assert_eq!(overrides.retract_speed_mm_min.unwrap().value(), 150.0);

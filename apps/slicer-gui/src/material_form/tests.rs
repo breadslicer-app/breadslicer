@@ -24,6 +24,9 @@ fn empty_calibration_fields_parse_to_an_all_unset_block() {
             wait_before_cure_sec: None,
             wait_after_cure_sec: None,
             wait_after_lift_sec: None,
+            bottom_wait_before_cure_sec: None,
+            bottom_wait_after_cure_sec: None,
+            bottom_wait_after_lift_sec: None,
             lift_distance_mm: None,
             lift_speed_mm_min: None,
             retract_speed_mm_min: None,
@@ -40,6 +43,9 @@ fn filled_calibration_fields_parse_to_typed_values() {
         wait_before_cure_sec: "0.5".to_owned(),
         wait_after_cure_sec: " 1.5 ".to_owned(),
         wait_after_lift_sec: "0".to_owned(),
+        bottom_wait_before_cure_sec: "3".to_owned(),
+        bottom_wait_after_cure_sec: " 4 ".to_owned(),
+        bottom_wait_after_lift_sec: "5".to_owned(),
         lift_distance_mm: "6.0".to_owned(),
         lift_speed_mm_min: "60".to_owned(),
         retract_speed_mm_min: "150".to_owned(),
@@ -51,6 +57,18 @@ fn filled_calibration_fields_parse_to_typed_values() {
     assert_eq!(block.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
     assert_eq!(block.wait_after_cure_sec.map(|v| v.value()), Some(1.5));
     assert_eq!(block.wait_after_lift_sec.map(|v| v.value()), Some(0.0));
+    assert_eq!(
+        block.bottom_wait_before_cure_sec.map(|v| v.value()),
+        Some(3.0)
+    );
+    assert_eq!(
+        block.bottom_wait_after_cure_sec.map(|v| v.value()),
+        Some(4.0)
+    );
+    assert_eq!(
+        block.bottom_wait_after_lift_sec.map(|v| v.value()),
+        Some(5.0)
+    );
     assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(block.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(block.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
@@ -144,6 +162,22 @@ fn a_negative_wait_is_rejected_by_the_field_that_holds_it() {
             field: FormField::WaitAfterLift
         },
     );
+}
+
+#[test]
+fn a_negative_bottom_wait_is_rejected_apart_from_its_normal_counterpart() {
+    let input = CalibrationFormInput {
+        bottom_wait_after_lift_sec: "-1".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    let err = parse_calibration_form(&input).unwrap_err();
+    assert_eq!(
+        err,
+        InvalidFormValue::OutOfRange {
+            field: FormField::BottomWaitAfterLift
+        },
+    );
+    assert_eq!(err.user_message(), "Bottom wait after lift is out of range");
 }
 
 #[test]
