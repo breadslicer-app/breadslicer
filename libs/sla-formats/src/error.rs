@@ -19,6 +19,8 @@ use sc_scene::SceneError;
 use sc_scene::node::NodeId;
 
 use crate::format::Format;
+use crate::goo::v3_0::file::WriteFailure;
+use crate::printer_file_format::PrinterFileFormat;
 
 #[derive(Debug)]
 pub enum WriterError {
@@ -26,6 +28,15 @@ pub enum WriterError {
     /// [`Format`] starts here and is replaced by a working writer
     /// in a follow-on commit.
     NotImplemented { format: Format },
+    /// The printer format's writer has not yet landed.
+    PrinterFormatNotImplemented { format: PrinterFileFormat },
+    /// The print program and the contour stack handed to
+    /// [`write_printer_file`](crate::write_printer_file) describe
+    /// different numbers of layers.
+    ProgramLayerCountMismatch {
+        program_layers: usize,
+        stack_layers: usize,
+    },
     /// An underlying filesystem operation failed.
     Io(io::Error),
     /// The output path is unsuitable for the chosen format and the
@@ -70,6 +81,17 @@ impl fmt::Display for WriterError {
             Self::NotImplemented { format } => {
                 write!(f, "writer for format \"{format}\" is not yet implemented")
             }
+            Self::PrinterFormatNotImplemented { format } => write!(
+                f,
+                "writer for printer format \"{format}\" is not yet implemented",
+            ),
+            Self::ProgramLayerCountMismatch {
+                program_layers,
+                stack_layers,
+            } => write!(
+                f,
+                "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
+            ),
             Self::Io(err) => write!(f, "filesystem operation failed: {err}"),
             Self::OutputPathInvalid { reason } => {
                 write!(f, "output path is invalid: {reason}")
@@ -125,6 +147,8 @@ impl std::error::Error for WriterError {
             Self::ModelSerializationFailed(err) => Some(err),
             Self::PackageWriteFailed(err) => Some(err),
             Self::NotImplemented { .. }
+            | Self::PrinterFormatNotImplemented { .. }
+            | Self::ProgramLayerCountMismatch { .. }
             | Self::OutputPathInvalid { .. }
             | Self::OutputPathExistsAndIsNotADirectory { .. }
             | Self::OutputPathExistsAndIsNotEmpty { .. }
@@ -139,6 +163,21 @@ impl std::error::Error for WriterError {
 impl From<io::Error> for WriterError {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
+    }
+}
+
+impl From<WriteFailure> for WriterError {
+    fn from(err: WriteFailure) -> Self {
+        match err {
+            WriteFailure::LayerCountMismatch {
+                program_layers,
+                stack_layers,
+            } => Self::ProgramLayerCountMismatch {
+                program_layers,
+                stack_layers,
+            },
+            WriteFailure::Io(err) => Self::Io(err),
+        }
     }
 }
 
@@ -158,6 +197,8 @@ impl From<PackageWriteError> for WriterError {
 mod writer_error_tests {
     use std::error::Error as _;
 
+    use crate::printer_file_format::{CtbVariant, GooVersion};
+
     use super::*;
 
     #[test]
@@ -170,6 +211,50 @@ mod writer_error_tests {
         );
         assert!(msg.contains("svg-per-layer"), "msg: {msg}");
         assert!(msg.contains("not yet"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_printer_format_not_implemented_names_the_revision() {
+        let msg = format!(
+            "{}",
+            WriterError::PrinterFormatNotImplemented {
+                format: PrinterFileFormat::Ctb(CtbVariant::PlainV5),
+            },
+        );
+        assert!(msg.contains("ctb@v5"), "msg: {msg}");
+        assert!(msg.contains("not yet"), "msg: {msg}");
+    }
+
+    #[test]
+    fn display_program_layer_count_mismatch_reports_both_counts() {
+        let msg = format!(
+            "{}",
+            WriterError::ProgramLayerCountMismatch {
+                program_layers: 4,
+                stack_layers: 7,
+            },
+        );
+        assert!(msg.contains("4 layer(s)"), "msg: {msg}");
+        assert!(msg.contains("stack 7"), "msg: {msg}");
+    }
+
+    #[test]
+    fn a_goo_write_failure_keeps_its_shape() {
+        let mismatch = WriteFailure::LayerCountMismatch {
+            program_layers: 4,
+            stack_layers: 7,
+        };
+        assert!(matches!(
+            WriterError::from(mismatch),
+            WriterError::ProgramLayerCountMismatch {
+                program_layers: 4,
+                stack_layers: 7,
+            },
+        ));
+        assert!(matches!(
+            WriterError::from(WriteFailure::Io(io::Error::other("disk full"))),
+            WriterError::Io(_),
+        ));
     }
 
     #[test]
@@ -259,6 +344,21 @@ mod writer_error_tests {
             WriterError::EncodingFailed {
                 format: Format::PngPerLayer,
                 reason: "x".into(),
+            }
+            .source()
+            .is_none(),
+        );
+        assert!(
+            WriterError::PrinterFormatNotImplemented {
+                format: PrinterFileFormat::Goo(GooVersion::V5_1),
+            }
+            .source()
+            .is_none(),
+        );
+        assert!(
+            WriterError::ProgramLayerCountMismatch {
+                program_layers: 1,
+                stack_layers: 0,
             }
             .source()
             .is_none(),

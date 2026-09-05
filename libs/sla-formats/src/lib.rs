@@ -15,8 +15,9 @@
 //! live under [`debug`]. Printer-format writers live at the crate
 //! root in their own modules: 3MF Slice Extension packages under
 //! [`threemf`] (whose [`write_scene_slices`] takes the scene and the
-//! per-leaf stacks instead of the merged one); SL1, CTB and GOO are
-//! still to come.
+//! per-leaf stacks instead of the merged one), and GOO under [`goo`],
+//! reached through [`write_printer_file`] with the machine program
+//! beside the geometry. SL1 and CTB are still to come.
 
 pub mod debug;
 pub mod error;
@@ -30,6 +31,8 @@ pub mod threemf;
 pub mod write;
 
 #[cfg(test)]
+mod tests_printer_file;
+#[cfg(test)]
 mod tests_threemf;
 
 pub use error::WriterError;
@@ -39,4 +42,4 @@ pub use print_program::{LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding};
 pub use raster_setup::RasterSetup;
 pub use threemf::write_scene_slices;
-pub use write::write_slice;
+pub use write::{write_printer_file, write_slice};

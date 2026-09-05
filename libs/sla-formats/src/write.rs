@@ -3,27 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Public dispatch entry point.
-//!
-//! [`write_slice`] validates the output path against the chosen
-//! [`Format`]'s expectations (file vs directory, exists vs absent)
-//! and routes to the matching writer. Every writer that has not
-//! landed yet returns [`WriterError::NotImplemented`]. The 3MF
-//! slice format needs the scene and the per-leaf stacks and is
-//! served by [`write_scene_slices`](crate::write_scene_slices)
-//! instead; requesting it here returns
-//! [`WriterError::SceneContextRequired`].
+//! Public dispatch entry points: which writer a chosen format
+//! reaches.
 
-use std::fs;
+use std::fmt;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use sc_sl1cer::contour::ContourStack;
 
 use crate::error::WriterError;
 use crate::format::Format;
+use crate::goo::v3_0;
 use crate::options::WriterOptions;
+use crate::print_program::PrintProgram;
+use crate::printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat};
 
 /// Write a sliced contour stack to disk using `format`'s writer.
+///
+/// [`Format::ThreeMf`] is not written here: it fails with
+/// [`WriterError::SceneContextRequired`], and
+/// [`write_scene_slices`](crate::write_scene_slices) writes it
+/// instead.
 ///
 /// The output path's role depends on `format`:
 ///
@@ -55,6 +57,46 @@ pub fn write_slice(
     }
 }
 
+/// Write a sliced contour stack as the printer file `format` names,
+/// running the schedule in `program`.
+///
+/// `output` is a regular file path, which is left untouched unless
+/// the whole file can be attempted: an unwritable format, a path
+/// that is an existing directory, and a program whose layers do not
+/// pair with the stack's are all refused before the file is opened.
+///
+/// # Errors
+///
+/// [`WriterError::PrinterFormatNotImplemented`] for a format whose
+/// writer has not landed, [`WriterError::ProgramLayerCountMismatch`]
+/// when the program and the stack disagree on the layer count, and
+/// [`WriterError::OutputPathInvalid`] when `output` is a directory.
+pub fn write_printer_file(
+    stack: &ContourStack,
+    output: &Path,
+    format: PrinterFileFormat,
+    program: &PrintProgram,
+) -> Result<(), WriterError> {
+    match format {
+        PrinterFileFormat::Goo(GooVersion::V3_0) => {}
+        PrinterFileFormat::Goo(GooVersion::V5_1)
+        | PrinterFileFormat::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => {
+            return Err(WriterError::PrinterFormatNotImplemented { format });
+        }
+    }
+    if program.layers.len() != stack.layers().len() {
+        return Err(WriterError::ProgramLayerCountMismatch {
+            program_layers: program.layers.len(),
+            stack_layers: stack.layers().len(),
+        });
+    }
+    validate_file_output_path(output, format)?;
+
+    let mut out = BufWriter::new(File::create(output)?);
+    v3_0::file::write_file(program, stack, &mut out)?;
+    out.flush().map_err(WriterError::Io)
+}
+
 pub(crate) fn validate_output_path(output: &Path, format: Format) -> Result<(), WriterError> {
     if format.is_directory_format() {
         match fs::metadata(output) {
@@ -77,17 +119,21 @@ pub(crate) fn validate_output_path(output: &Path, format: Format) -> Result<(), 
             Err(err) => Err(WriterError::Io(err)),
         }
     } else {
-        match fs::metadata(output) {
-            Ok(meta) if meta.is_dir() => Err(WriterError::OutputPathInvalid {
-                reason: format!(
-                    "format \"{format}\" writes a single file, but the output path \"{}\" is an existing directory",
-                    output.display(),
-                ),
-            }),
-            Ok(_) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(WriterError::Io(err)),
-        }
+        validate_file_output_path(output, format)
+    }
+}
+
+fn validate_file_output_path(output: &Path, format: impl fmt::Display) -> Result<(), WriterError> {
+    match fs::metadata(output) {
+        Ok(meta) if meta.is_dir() => Err(WriterError::OutputPathInvalid {
+            reason: format!(
+                "format \"{format}\" writes a single file, but the output path \"{}\" is an existing directory",
+                output.display(),
+            ),
+        }),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(WriterError::Io(err)),
     }
 }
 

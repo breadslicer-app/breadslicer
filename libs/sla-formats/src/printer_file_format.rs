@@ -37,6 +37,19 @@ pub enum CtbVariant {
     EncryptedV5,
 }
 
+impl fmt::Display for PrinterFileFormat {
+    /// Render the format the way a profile binding spells it.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let version = match self {
+            Self::Goo(GooVersion::V3_0) => "v3.0",
+            Self::Goo(GooVersion::V5_1) => "v5.1",
+            Self::Ctb(CtbVariant::PlainV5) => "v5",
+            Self::Ctb(CtbVariant::EncryptedV5) => "v5enc",
+        };
+        write!(f, "{}@{version}", self.extension())
+    }
+}
+
 /// Returned when a binding does not name a printer file this crate
 /// knows.
 #[derive(Clone, Debug, PartialEq)]
@@ -212,6 +225,27 @@ mod printer_file_format_tests {
     fn an_unknown_version_failure_names_the_version() {
         let err = resolve(FormatKind::Goo, Some("v9.9")).unwrap_err();
         assert!(err.contains("v9.9"), "message: {err}");
+    }
+
+    #[test]
+    fn a_rendered_format_resolves_back_from_a_binding() {
+        for format in [
+            PrinterFileFormat::Goo(GooVersion::V3_0),
+            PrinterFileFormat::Goo(GooVersion::V5_1),
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5),
+            PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
+        ] {
+            let rendered = format.to_string();
+            let (family, version) = rendered.split_once('@').unwrap();
+            let kind = match family {
+                "goo" => FormatKind::Goo,
+                "ctb" => FormatKind::Ctb,
+                other => panic!("unexpected family \"{other}\""),
+            };
+
+            assert_eq!(family, format.extension());
+            assert_eq!(resolve(kind, Some(version)), Ok(format), "{rendered}");
+        }
     }
 
     #[test]
