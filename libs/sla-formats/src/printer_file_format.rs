@@ -13,6 +13,7 @@
 //! settings block is encrypted.
 
 use std::fmt;
+use std::path::Path;
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding};
 
@@ -104,6 +105,22 @@ impl PrinterFileFormat {
             Self::Goo(_) => "goo",
             Self::Ctb(_) => "ctb",
         }
+    }
+}
+
+/// Name the printer file an output path's extension asks for.
+///
+/// An extension names a container family, not a revision: `.goo` is
+/// shared by V3.0 and V5.1, and `.ctb` by the plain and the encrypted
+/// variant. `.goo` therefore resolves only because one GOO revision
+/// has a writer here, while `.ctb` resolves to nothing: its two
+/// variants are told apart by a binding's version string, which a
+/// file name does not carry.
+pub fn printer_file_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "goo" => Some(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        _ => None,
     }
 }
 
@@ -246,6 +263,38 @@ mod printer_file_format_tests {
             assert_eq!(family, format.extension());
             assert_eq!(resolve(kind, Some(version)), Ok(format), "{rendered}");
         }
+    }
+
+    #[test]
+    fn a_dot_goo_path_names_the_revision_this_build_writes() {
+        assert_eq!(
+            printer_file_format_from_path(Path::new("plate.goo")),
+            Some(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        );
+    }
+
+    #[test]
+    fn extension_matching_ignores_case() {
+        assert_eq!(
+            printer_file_format_from_path(Path::new("PLATE.GOO")),
+            Some(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        );
+    }
+
+    #[test]
+    fn a_dot_ctb_path_names_no_variant() {
+        assert_eq!(printer_file_format_from_path(Path::new("plate.ctb")), None);
+    }
+
+    #[test]
+    fn a_path_carrying_another_extension_names_no_printer_file() {
+        assert_eq!(printer_file_format_from_path(Path::new("plate.svg")), None);
+        assert_eq!(printer_file_format_from_path(Path::new("plate.3mf")), None);
+    }
+
+    #[test]
+    fn a_path_without_an_extension_names_no_printer_file() {
+        assert_eq!(printer_file_format_from_path(Path::new("plate")), None);
     }
 
     #[test]

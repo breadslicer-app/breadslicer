@@ -6,3 +6,4 @@
 pub(crate) mod cmd_options;
 pub(crate) mod profile_libraries;
 pub(crate) mod profile_ref;
+pub(crate) mod target_format;

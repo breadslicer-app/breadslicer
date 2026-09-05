@@ -4946,6 +4946,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bpaf",
+ "chrono",
  "png 0.18.1",
  "predicates",
  "sc-3mf",

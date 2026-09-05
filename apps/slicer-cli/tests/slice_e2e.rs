@@ -922,3 +922,216 @@ fn project_only_warnings_print_nothing() {
         .stdout(predicate::str::contains("Sliced 1 model: 30 layers"))
         .stderr(predicate::str::is_empty());
 }
+
+// The GOO V3.0 offsets and constants below are the specification's,
+// written out here instead of imported from the writer, so that a
+// change on either side has to be made on both.
+
+const GOO_HEADER_SIZE: usize = 195_477;
+const GOO_MAGIC: [u8; 8] = [0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00];
+const GOO_DELIMITER: [u8; 2] = [0x0D, 0x0A];
+const GOO_FOOTER: [u8; 11] = [
+    0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00,
+];
+const GOO_PAYLOAD_MAGIC: u8 = 0x55;
+const E2E_LAYER_HEIGHT_MM: f32 = 0.2;
+
+fn be_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap())
+}
+
+fn be_f32(bytes: &[u8], at: usize) -> f32 {
+    f32::from_be_bytes(bytes[at..at + 4].try_into().unwrap())
+}
+
+/// Slice the cube fixture to `target`, naming the format explicitly
+/// only when `format` carries one, and read back what was written.
+fn slice_cube_to_goo(target: &Path, format: Option<&str>) -> Vec<u8> {
+    let mut command = Command::cargo_bin("sc-slicer-cli").unwrap();
+    command
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(target)
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir());
+    if let Some(format) = format {
+        command.arg("--target-format").arg(format);
+    }
+    command.assert().success();
+    fs::read(target).unwrap()
+}
+
+/// Walk the layer section by the format's own stride rule, returning
+/// one offset per layer record and failing unless the walk lands
+/// exactly on the footer.
+fn goo_layer_offsets(bytes: &[u8]) -> Vec<usize> {
+    let footer_at = bytes.len() - GOO_FOOTER.len();
+    let mut offsets = Vec::new();
+    let mut at = GOO_HEADER_SIZE;
+    while at < footer_at {
+        assert!(at + 70 <= footer_at, "a record at {at} runs past the file");
+        assert_eq!(
+            bytes[at + 64..at + 66],
+            GOO_DELIMITER,
+            "record delimiter at {at}",
+        );
+        let data_size = be_u32(bytes, at + 66) as usize;
+        assert!(
+            at + 72 + data_size <= bytes.len(),
+            "the payload at {at} runs past the file",
+        );
+        assert_eq!(
+            bytes[at + 70 + data_size..at + 72 + data_size],
+            GOO_DELIMITER,
+            "payload delimiter at {at}",
+        );
+        offsets.push(at);
+        at += 72 + data_size;
+    }
+    assert_eq!(at, footer_at, "the layer walk missed the footer");
+    offsets
+}
+
+#[test]
+fn a_goo_target_writes_a_file_that_walks_onto_its_footer() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    let bytes = slice_cube_to_goo(&target, Some("goo"));
+
+    assert_eq!(&bytes[0..4], b"V3.0");
+    assert_eq!(bytes[4..12], GOO_MAGIC);
+    assert_eq!(bytes[27_106..27_108], GOO_DELIMITER);
+    assert_eq!(bytes[195_308..195_310], GOO_DELIMITER);
+    assert_eq!(be_u32(&bytes, 195_470) as usize, GOO_HEADER_SIZE);
+    assert_eq!(bytes[bytes.len() - GOO_FOOTER.len()..], GOO_FOOTER);
+
+    assert_eq!(goo_layer_offsets(&bytes).len(), 5);
+    assert_eq!(be_u32(&bytes, 195_310), 5, "declared layer count");
+}
+
+#[test]
+fn every_goo_payload_carries_its_own_checksum() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    let bytes = slice_cube_to_goo(&target, Some("goo"));
+
+    for at in goo_layer_offsets(&bytes) {
+        let data_size = be_u32(&bytes, at + 66) as usize;
+        let payload = &bytes[at + 70..at + 70 + data_size];
+        assert_eq!(payload[0], GOO_PAYLOAD_MAGIC, "payload magic at {at}");
+        let sum = payload[1..payload.len() - 1]
+            .iter()
+            .fold(0_u8, |sum, byte| sum.wrapping_add(*byte));
+        assert_eq!(payload[payload.len() - 1], !sum, "checksum at {at}");
+    }
+}
+
+#[test]
+fn the_goo_records_carry_the_schedule_the_slice_ran() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    let bytes = slice_cube_to_goo(&target, Some("goo"));
+
+    let thickness = be_f32(&bytes, 195_332);
+    assert!(
+        (thickness - E2E_LAYER_HEIGHT_MM).abs() < 1e-6,
+        "header thickness {thickness}",
+    );
+    for (index, at) in goo_layer_offsets(&bytes).into_iter().enumerate() {
+        let slab_top = E2E_LAYER_HEIGHT_MM * (index + 1) as f32;
+        let z = be_f32(&bytes, at + 6);
+        assert!(
+            (z - slab_top).abs() < 1e-5,
+            "layer {index} sits at {z}, expected the slab top {slab_top}",
+        );
+    }
+}
+
+#[test]
+fn a_dot_goo_target_needs_no_explicit_format() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    let bytes = slice_cube_to_goo(&target, None);
+
+    assert_eq!(&bytes[0..4], b"V3.0");
+    assert_eq!(goo_layer_offsets(&bytes).len(), 5);
+}
+
+#[test]
+fn a_material_without_print_calibration_cannot_be_written_as_goo() {
+    // The same pairing slices geometry (see
+    // `a_material_without_print_calibration_slices_geometry`): a
+    // printer file additionally needs the exposures, which this
+    // resin carries for no printer.
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(&target)
+        .arg("--target-format")
+        .arg("goo")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin-extendable")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "could not resolve the print configuration",
+        ));
+    assert!(!target.exists(), "a refused export writes no file");
+}
+
+#[test]
+fn an_unwritable_target_format_is_refused_at_the_flag() {
+    let dir = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(dir.path().join("plate.ctb"))
+        .arg("--target-format")
+        .arg("ctb")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ctb"));
+}
+
+#[test]
+fn a_target_extension_no_writer_claims_is_reported() {
+    let dir = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(dir.path().join("plate.ctb"))
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "could not infer target format from path",
+        ));
+}

@@ -24,6 +24,7 @@ sc-sl1cer.workspace = true
 sc-sla-formats.workspace = true
 
 anyhow.workspace = true
+chrono.workspace = true
 
 bpaf = "0.9.24"
 

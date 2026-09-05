@@ -39,7 +39,9 @@ pub use error::WriterError;
 pub use format::Format;
 pub use options::WriterOptions;
 pub use print_program::{LayerProgram, MotionStage, PrintProgram};
-pub use printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding};
+pub use printer_file_format::{
+    CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding, printer_file_format_from_path,
+};
 pub use raster_setup::RasterSetup;
 pub use threemf::write_scene_slices;
 pub use write::{write_printer_file, write_slice};

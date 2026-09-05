@@ -11,26 +11,31 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use chrono::Local;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
-    SlicePlateError, SliceRun, SlicingParams, UnsliceableScene, UnsliceableSelection, slice_plate,
+    SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene, UnsliceableSelection,
+    project_to_print_program, slice_plate,
 };
-use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
+use sc_print_primitives::{AaLevel, BuildVolume, NonEmptyString, PositiveFiniteMm};
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
-    load_material_profile_from_path, load_printer_profile_from_path,
+    EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries, SceneOverrides,
+    load_material_profile_from_path, load_printer_profile_from_path, resolve,
 };
 use sc_project_formats::{ReadProjectWarning, load_scene};
 use sc_scene::Scene;
+use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneError};
 use sc_sl1cer::{CancelToken, VERSION};
-use sc_sla_formats::format::format_from_path;
-use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
+use sc_sla_formats::{
+    Format, PrintProgram, WriterOptions, write_printer_file, write_scene_slices, write_slice,
+};
 
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
+use crate::config::target_format::{ACCEPTED_TARGET_FORMATS, TargetFormat};
 use crate::filesystem::{
     ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
 };
@@ -42,7 +47,7 @@ use crate::filesystem::{
 pub(crate) struct SliceArgs {
     pub source: OsString,
     pub target: OsString,
-    pub target_format: Option<Format>,
+    pub target_format: Option<TargetFormat>,
     pub printer_profile: PrinterProfileRef,
     pub material_profile: MaterialProfileRef,
     pub layer_height: Option<PositiveFiniteMm>,
@@ -59,9 +64,9 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
 
     let target_format = match args.target_format {
         Some(f) => f,
-        None => format_from_path(&requested_target).ok_or_else(|| {
+        None => TargetFormat::from_path(&requested_target).ok_or_else(|| {
             anyhow!(
-                "could not infer target format from path \"{}\"; pass --target-format with one of: svg-per-layer, svg-combined, png-per-layer, 3mf",
+                "could not infer target format from path \"{}\"; pass --target-format with one of: {ACCEPTED_TARGET_FORMATS}",
                 requested_target.display(),
             )
         })?,
@@ -154,16 +159,19 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
 
     let options = WriterOptions::from_profile(plate.profile(), VERSION);
     match target_format {
-        Format::ThreeMf => {
+        TargetFormat::Slices(Format::ThreeMf) => {
             write_scene_slices(&scene, plate.leaves(), &target_path, &options)?;
         }
-        Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer => {
-            let stack = plate.merge().map_err(|err| {
-                anyhow!(
-                    "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
-                )
-            })?;
-            write_slice(&stack, &target_path, target_format, &options)?;
+        TargetFormat::Slices(
+            format @ (Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer),
+        ) => {
+            let stack = merge_plate(plate)?;
+            write_slice(&stack, &target_path, format, &options)?;
+        }
+        TargetFormat::PrinterFile(format) => {
+            let program = print_program_for(&plate, &printer, &material, args.layer_height)?;
+            let stack = merge_plate(plate)?;
+            write_printer_file(&stack, &target_path, format, &program)?;
         }
     }
 
@@ -173,6 +181,42 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         target_path.display(),
     );
     Ok(())
+}
+
+/// Merge the plate's per-leaf stacks into the one stack a file
+/// target is written from.
+fn merge_plate(plate: SlicedPlate) -> Result<ContourStack> {
+    plate.merge().map_err(|err| {
+        anyhow!(
+            "internal error: stacks sliced under one schedule disagree on the layer grid: {err:?}"
+        )
+    })
+}
+
+/// Build the machine program the printer-file writers run.
+///
+/// This is where the full print configuration is required, so a
+/// pairing that sliced geometry fine can still fail here for want of
+/// an exposure.
+fn print_program_for(
+    plate: &SlicedPlate,
+    printer: &PrinterProfile,
+    material: &EffectiveMaterial,
+    layer_height: Option<PositiveFiniteMm>,
+) -> Result<PrintProgram> {
+    // The plate was sliced under this same request, so overriding
+    // here keeps the program's nominal thickness on the grid the
+    // layers were actually cut on.
+    let overrides = SceneOverrides {
+        layer_height_mm: layer_height,
+        ..Default::default()
+    };
+    let config = resolve(printer, material, &overrides)
+        .map_err(|err| anyhow!("could not resolve the print configuration: {err}"))?;
+    let created_at = NonEmptyString::new(&Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
+        .expect("a formatted timestamp is never empty");
+    project_to_print_program(&config, plate.profile(), created_at, VERSION)
+        .map_err(|err| anyhow!("cannot describe this print to the machine: {err}"))
 }
 
 /// Loads the effective printer for `profile_ref`. It reads directly

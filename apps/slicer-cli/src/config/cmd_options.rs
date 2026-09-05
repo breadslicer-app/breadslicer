@@ -10,9 +10,9 @@ use bpaf::{OptionParser, Parser, construct, long, positional, short};
 use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_formats::filetypes::MeshFileType;
 use sc_sl1cer::profile::{AaLevel, PositiveFiniteMm};
-use sc_sla_formats::Format;
 
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
+use crate::config::target_format::{ACCEPTED_TARGET_FORMATS, TargetFormat};
 
 /// Which kinds of profile a `profiles list` invocation lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +102,7 @@ pub(crate) enum CmdOptions {
     Slice {
         source: OsString,
         target: OsString,
-        target_format: Option<Format>,
+        target_format: Option<TargetFormat>,
         printer_profile: PrinterProfileRef,
         material_profile: MaterialProfileRef,
         layer_height: Option<PositiveFiniteMm>,
@@ -242,11 +242,12 @@ fn get_slice_options() -> impl Parser<CmdOptions> {
         )
         .argument::<OsString>("TARGET_PATH");
 
+    let target_format_help = format!(
+        "Specify the output format. Accepted values: {ACCEPTED_TARGET_FORMATS}. Inferred from the target file extension when omitted.",
+    );
     let target_format = long("target-format")
-        .help(
-            "Specify the output format. Accepted values: svg-per-layer, svg-combined, png-per-layer, 3mf. Inferred from the target file extension when omitted.",
-        )
-        .argument::<Format>("TARGET_FORMAT")
+        .help(target_format_help.as_str())
+        .argument::<TargetFormat>("TARGET_FORMAT")
         .optional();
 
     let printer_profile = long("printer-profile")
