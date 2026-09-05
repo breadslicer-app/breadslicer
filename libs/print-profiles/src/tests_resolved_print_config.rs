@@ -68,6 +68,9 @@ fn sample_material_resolved() -> MaterialResolved {
         lift_distance_mm: PositiveFiniteMm::new(5.0).unwrap(),
         lift_speed_mm_min: PositiveFiniteMmPerMin::new(120.0).unwrap(),
         retract_speed_mm_min: PositiveFiniteMmPerMin::new(150.0).unwrap(),
+        bottom_lift_distance_mm: PositiveFiniteMm::new(5.0).unwrap(),
+        bottom_lift_speed_mm_min: PositiveFiniteMmPerMin::new(120.0).unwrap(),
+        bottom_retract_speed_mm_min: PositiveFiniteMmPerMin::new(150.0).unwrap(),
         light_pwm: LightPwm::FULL,
         bottom_light_pwm: LightPwm::FULL,
         scale_compensation_pct: ScaleCompensation {

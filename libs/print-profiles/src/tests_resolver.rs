@@ -104,6 +104,37 @@ has_camera = false
 z_step_mm = 0.05
 "#;
 
+const PRINTER_WITH_MOTION_BOUNDS: &str = r#"
+[identity]
+id = "elegoo-saturn-4-ultra"
+manufacturer = "ELEGOO"
+family = "Saturn"
+name = "Saturn 4 Ultra"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+supports_grayscale = true
+two_stage_lift = true
+has_camera = false
+
+[constraints]
+z_step_mm = 0.01
+lift_distance_max_mm = 10.0
+lift_speed_range_mm_min = { min = 60.0, max = 300.0 }
+retract_speed_range_mm_min = { min = 60.0, max = 300.0 }
+"#;
+
+fn printer_with_motion_bounds() -> PrinterProfile {
+    toml_edit::de::from_str(PRINTER_WITH_MOTION_BOUNDS).unwrap()
+}
+
 fn printer_with_coarse_z_step() -> PrinterProfile {
     toml_edit::de::from_str(PRINTER_WITH_COARSE_Z_STEP).unwrap()
 }
@@ -2138,6 +2169,114 @@ fn a_scene_override_on_a_normal_wait_carries_into_an_uncalibrated_bottom_wait() 
             .bottom_wait_after_lift_sec
             .value(),
         3.0,
+    );
+}
+
+/// A material that resolves fully against
+/// [`printer_without_light_intensity`], taking the bottom-motion keys
+/// of its per-printer block from the caller.
+fn material_with_bottom_motion(block_motion: &str) -> EffectiveMaterial {
+    material(&format!(
+        r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.75
+bottom_exposure_sec = 35.0
+lift_distance_mm = 6.5
+lift_speed_mm_min = 70.0
+retract_speed_mm_min = 160.0
+{block_motion}
+"#
+    ))
+}
+
+#[test]
+fn calibrated_bottom_motion_reaches_the_resolved_material() {
+    let resolved = resolve(
+        &printer_without_light_intensity(),
+        &material_with_bottom_motion(
+            "bottom_lift_distance_mm = 8.0\n\
+             bottom_lift_speed_mm_min = 40.0\n\
+             bottom_retract_speed_mm_min = 90.0",
+        ),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.bottom_lift_distance_mm.value(), 8.0);
+    assert_eq!(values.bottom_lift_speed_mm_min.value(), 40.0);
+    assert_eq!(values.bottom_retract_speed_mm_min.value(), 90.0);
+}
+
+#[test]
+fn uncalibrated_bottom_motion_takes_the_normal_layer_travel() {
+    let resolved = resolve(
+        &printer_without_light_intensity(),
+        &material_with_bottom_motion(""),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+    let values = &resolved.material_resolved;
+
+    assert_eq!(values.bottom_lift_distance_mm, values.lift_distance_mm);
+    assert_eq!(values.bottom_lift_speed_mm_min, values.lift_speed_mm_min);
+    assert_eq!(
+        values.bottom_retract_speed_mm_min,
+        values.retract_speed_mm_min
+    );
+}
+
+#[test]
+fn a_bottom_lift_speed_below_the_printer_minimum_is_rejected() {
+    let error = resolve(
+        &printer_with_motion_bounds(),
+        &material_with_bottom_motion("bottom_lift_speed_mm_min = 1.0"),
+        &SceneOverrides::default(),
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            ResolveError::RejectedBelowMinimum {
+                field: ResolvedField::BottomLiftSpeedMmMin,
+                ..
+            }
+        ),
+        "error: {error:?}",
+    );
+}
+
+#[test]
+fn a_bottom_lift_distance_above_the_printer_maximum_snaps_down() {
+    let resolved = resolve(
+        &printer_with_motion_bounds(),
+        &material_with_bottom_motion("bottom_lift_distance_mm = 500.0"),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved.material_resolved.bottom_lift_distance_mm.value(),
+        10.0,
     );
 }
 

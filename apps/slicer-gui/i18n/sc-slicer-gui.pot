@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-09-05 21:10+0000\n"
+"POT-Creation-Date: 2026-09-05 21:40+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -380,107 +380,122 @@ msgctxt "ProfileViewDialog"
 msgid "Resin profile"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:213
+#: ui/profile-view-dialog.slint:216
 msgctxt "ProfileViewDialog"
 msgid "Defaults"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:218
+#: ui/profile-view-dialog.slint:221
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation x (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:222
+#: ui/profile-view-dialog.slint:225
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation y (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:226
+#: ui/profile-view-dialog.slint:229
 msgctxt "ProfileViewDialog"
 msgid "Scale compensation z (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:230 ui/profile-view-dialog.slint:290
+#: ui/profile-view-dialog.slint:233 ui/profile-view-dialog.slint:293
 msgctxt "ProfileViewDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:234 ui/profile-view-dialog.slint:294
+#: ui/profile-view-dialog.slint:237 ui/profile-view-dialog.slint:297
 msgctxt "ProfileViewDialog"
 msgid "Wait before cure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:238 ui/profile-view-dialog.slint:298
+#: ui/profile-view-dialog.slint:241 ui/profile-view-dialog.slint:301
 msgctxt "ProfileViewDialog"
 msgid "Wait after cure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:242 ui/profile-view-dialog.slint:302
+#: ui/profile-view-dialog.slint:245 ui/profile-view-dialog.slint:305
 msgctxt "ProfileViewDialog"
 msgid "Wait after lift (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:246 ui/profile-view-dialog.slint:330
+#: ui/profile-view-dialog.slint:249 ui/profile-view-dialog.slint:345
 msgctxt "ProfileViewDialog"
 msgid "Light power (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:250 ui/profile-view-dialog.slint:334
+#: ui/profile-view-dialog.slint:253 ui/profile-view-dialog.slint:349
 msgctxt "ProfileViewDialog"
 msgid "Bottom light power (%)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:268
+#: ui/profile-view-dialog.slint:271
 msgctxt "ProfileViewDialog"
 msgid "Edit calibration values"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:282
+#: ui/profile-view-dialog.slint:285
 msgctxt "ProfileViewDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:286
+#: ui/profile-view-dialog.slint:289
 msgctxt "ProfileViewDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:306
+#: ui/profile-view-dialog.slint:309
 msgctxt "ProfileViewDialog"
 msgid "Bottom wait before cure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:310
+#: ui/profile-view-dialog.slint:313
 msgctxt "ProfileViewDialog"
 msgid "Bottom wait after cure (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:314
+#: ui/profile-view-dialog.slint:317
 msgctxt "ProfileViewDialog"
 msgid "Bottom wait after lift (s)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:318
+#: ui/profile-view-dialog.slint:321
 msgctxt "ProfileViewDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:322
+#: ui/profile-view-dialog.slint:325
 msgctxt "ProfileViewDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:326
+#: ui/profile-view-dialog.slint:329
 msgctxt "ProfileViewDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:355
+#: ui/profile-view-dialog.slint:333
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:337
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:341
+msgctxt "ProfileViewDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
+#: ui/profile-view-dialog.slint:370
 msgctxt "ProfileViewDialog"
 msgid "Save"
 msgstr ""
 
-#: ui/profile-view-dialog.slint:362
+#: ui/profile-view-dialog.slint:377
 msgctxt "ProfileViewDialog"
 msgid "Close"
 msgstr ""
@@ -767,92 +782,107 @@ msgctxt "ExtendDialog"
 msgid "Extend resin profile"
 msgstr ""
 
-#: ui/extend-dialog.slint:74
+#: ui/extend-dialog.slint:77
 msgctxt "ExtendDialog"
 msgid "Extend {}"
 msgstr ""
 
-#: ui/extend-dialog.slint:81
+#: ui/extend-dialog.slint:84
 msgctxt "ExtendDialog"
 msgid "Add calibration values for a target this resin does not cover yet."
 msgstr ""
 
-#: ui/extend-dialog.slint:100
+#: ui/extend-dialog.slint:103
 msgctxt "ExtendDialog"
 msgid "Normal exposure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:104
+#: ui/extend-dialog.slint:107
 msgctxt "ExtendDialog"
 msgid "Bottom exposure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:108
+#: ui/extend-dialog.slint:111
 msgctxt "ExtendDialog"
 msgid "Bottom layer count"
 msgstr ""
 
-#: ui/extend-dialog.slint:112
+#: ui/extend-dialog.slint:115
 msgctxt "ExtendDialog"
 msgid "Wait before cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:116
+#: ui/extend-dialog.slint:119
 msgctxt "ExtendDialog"
 msgid "Wait after cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:120
+#: ui/extend-dialog.slint:123
 msgctxt "ExtendDialog"
 msgid "Wait after lift (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:124
+#: ui/extend-dialog.slint:127
 msgctxt "ExtendDialog"
 msgid "Bottom wait before cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:128
+#: ui/extend-dialog.slint:131
 msgctxt "ExtendDialog"
 msgid "Bottom wait after cure (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:132
+#: ui/extend-dialog.slint:135
 msgctxt "ExtendDialog"
 msgid "Bottom wait after lift (s)"
 msgstr ""
 
-#: ui/extend-dialog.slint:136
+#: ui/extend-dialog.slint:139
 msgctxt "ExtendDialog"
 msgid "Lift distance (mm)"
 msgstr ""
 
-#: ui/extend-dialog.slint:140
+#: ui/extend-dialog.slint:143
 msgctxt "ExtendDialog"
 msgid "Lift speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:144
+#: ui/extend-dialog.slint:147
 msgctxt "ExtendDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
 
-#: ui/extend-dialog.slint:148
+#: ui/extend-dialog.slint:151
+msgctxt "ExtendDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: ui/extend-dialog.slint:155
+msgctxt "ExtendDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:159
+msgctxt "ExtendDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
+#: ui/extend-dialog.slint:163
 msgctxt "ExtendDialog"
 msgid "Light power (%)"
 msgstr ""
 
-#: ui/extend-dialog.slint:152
+#: ui/extend-dialog.slint:167
 msgctxt "ExtendDialog"
 msgid "Bottom light power (%)"
 msgstr ""
 
-#: ui/extend-dialog.slint:170
+#: ui/extend-dialog.slint:185
 msgctxt "ExtendDialog"
 msgid "Save"
 msgstr ""
 
-#: ui/extend-dialog.slint:178
+#: ui/extend-dialog.slint:193
 msgctxt "ExtendDialog"
 msgid "Cancel"
 msgstr ""
@@ -956,57 +986,57 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:557 src/preferences_window.rs:1253
+#: src/preferences_window.rs:557 src/preferences_window.rs:1262
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:749 src/preferences_window.rs:1653
+#: src/preferences_window.rs:749 src/preferences_window.rs:1662
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:949
+#: src/preferences_window.rs:955
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1048
+#: src/preferences_window.rs:1054
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1235
+#: src/preferences_window.rs:1244
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1242
+#: src/preferences_window.rs:1251
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1247
+#: src/preferences_window.rs:1256
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1249
+#: src/preferences_window.rs:1258
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1446
+#: src/preferences_window.rs:1455
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1803
+#: src/preferences_window.rs:1812
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
@@ -1212,104 +1242,119 @@ msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr ""
 
-#: src/material_form.rs:113
+#: src/material_form.rs:122
 msgctxt "MaterialForm"
 msgid "Normal exposure"
 msgstr ""
 
-#: src/material_form.rs:114
+#: src/material_form.rs:123
 msgctxt "MaterialForm"
 msgid "Bottom exposure"
 msgstr ""
 
-#: src/material_form.rs:115
+#: src/material_form.rs:124
 msgctxt "MaterialForm"
 msgid "Bottom layer count"
 msgstr ""
 
-#: src/material_form.rs:116
+#: src/material_form.rs:125
 msgctxt "MaterialForm"
 msgid "Wait before cure"
 msgstr ""
 
-#: src/material_form.rs:117
+#: src/material_form.rs:126
 msgctxt "MaterialForm"
 msgid "Wait after cure"
 msgstr ""
 
-#: src/material_form.rs:118
+#: src/material_form.rs:127
 msgctxt "MaterialForm"
 msgid "Wait after lift"
 msgstr ""
 
-#: src/material_form.rs:119
+#: src/material_form.rs:128
 msgctxt "MaterialForm"
 msgid "Bottom wait before cure"
 msgstr ""
 
-#: src/material_form.rs:120
+#: src/material_form.rs:129
 msgctxt "MaterialForm"
 msgid "Bottom wait after cure"
 msgstr ""
 
-#: src/material_form.rs:121
+#: src/material_form.rs:130
 msgctxt "MaterialForm"
 msgid "Bottom wait after lift"
 msgstr ""
 
-#: src/material_form.rs:122
+#: src/material_form.rs:131
 msgctxt "MaterialForm"
 msgid "Lift distance"
 msgstr ""
 
-#: src/material_form.rs:123
+#: src/material_form.rs:132
 msgctxt "MaterialForm"
 msgid "Lift speed"
 msgstr ""
 
-#: src/material_form.rs:124
+#: src/material_form.rs:133
 msgctxt "MaterialForm"
 msgid "Retract speed"
 msgstr ""
 
-#: src/material_form.rs:125
+#: src/material_form.rs:134
+msgctxt "MaterialForm"
+msgid "Bottom lift distance"
+msgstr ""
+
+#: src/material_form.rs:135
+msgctxt "MaterialForm"
+msgid "Bottom lift speed"
+msgstr ""
+
+#: src/material_form.rs:136
+msgctxt "MaterialForm"
+msgid "Bottom retract speed"
+msgstr ""
+
+#: src/material_form.rs:137
 msgctxt "MaterialForm"
 msgid "Light power"
 msgstr ""
 
-#: src/material_form.rs:126
+#: src/material_form.rs:138
 msgctxt "MaterialForm"
 msgid "Bottom light power"
 msgstr ""
 
-#: src/material_form.rs:127
+#: src/material_form.rs:139
 msgctxt "MaterialForm"
 msgid "Scale compensation x"
 msgstr ""
 
-#: src/material_form.rs:128
+#: src/material_form.rs:140
 msgctxt "MaterialForm"
 msgid "Scale compensation y"
 msgstr ""
 
-#: src/material_form.rs:129
+#: src/material_form.rs:141
 msgctxt "MaterialForm"
 msgid "Scale compensation z"
 msgstr ""
 
-#: src/material_form.rs:157
+#: src/material_form.rs:169
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} must be a number"
 msgstr ""
 
-#: src/material_form.rs:164
+#: src/material_form.rs:176
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} is out of range"
 msgstr ""
 
-#: src/material_form.rs:170
+#: src/material_form.rs:182
 msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""

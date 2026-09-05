@@ -14,9 +14,10 @@
 //! PWMs are the exceptions: an uncalibrated wait is a wait of zero,
 //! since a resin that names no pause is asking for none, and an
 //! uncalibrated PWM is full power, since a resin that names no duty
-//! cycle is asking for all of it. An uncalibrated bottom wait takes
-//! the normal-layer value, since a resin that draws no distinction
-//! between the two wants one pause everywhere.
+//! cycle is asking for all of it. An uncalibrated bottom wait or
+//! bottom motion takes the normal-layer value, since a resin that
+//! draws no distinction between the two wants one pause and one
+//! movement everywhere.
 //!
 //! Each field uses the per-unit primitive that carries the
 //! positive-finite invariant on the type, matching the section
@@ -52,6 +53,12 @@ pub struct MaterialResolved {
     pub lift_distance_mm: PositiveFiniteMm,
     pub lift_speed_mm_min: PositiveFiniteMmPerMin,
     pub retract_speed_mm_min: PositiveFiniteMmPerMin,
+    /// How far the platform rises off a bottom layer.
+    pub bottom_lift_distance_mm: PositiveFiniteMm,
+    /// How fast the platform rises off a bottom layer.
+    pub bottom_lift_speed_mm_min: PositiveFiniteMmPerMin,
+    /// How fast the platform returns onto a bottom layer.
+    pub bottom_retract_speed_mm_min: PositiveFiniteMmPerMin,
     /// How hard the light is driven on a normal layer.
     pub light_pwm: LightPwm,
     /// How hard the light is driven on a bottom layer.

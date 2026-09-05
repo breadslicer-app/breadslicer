@@ -272,10 +272,10 @@ fn unset_optional_fields_render_the_not_set_text() {
         assert_eq!(value, "not set", "{label}");
     }
 
-    // The default printer's block: two set values, twelve unset, all
-    // fourteen rendered.
+    // The default printer's block: two set values, fifteen unset, all
+    // seventeen rendered.
     let block = fields(&sections[3]);
-    assert_eq!(block.len(), 14);
+    assert_eq!(block.len(), 17);
     assert_eq!(block[0].1, "2.5");
     assert_eq!(block[1].1, "30");
     for (label, value) in &block[2..] {

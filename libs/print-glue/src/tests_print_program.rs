@@ -153,6 +153,34 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
+/// The same resin again, with the bottom layers' travel calibrated
+/// apart from the normal one.
+const MATERIAL_WITH_BOTTOM_MOTION_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 90.0
+"#;
+
 /// The same resin again, driving the light at two different duties.
 const MATERIAL_WITH_LIGHT_PWM_TOML: &str = r#"
 [identity]
@@ -381,6 +409,27 @@ fn the_counts_describe_the_exposures_the_records_carry() {
 fn the_retract_repeats_the_lift_distance_at_its_own_speed() {
     let program = program(PRINTER_TOML, 20);
     for layer in &program.layers {
+        assert_eq!(layer.lift.distance_mm.value(), 5.0);
+        assert_eq!(layer.lift.speed_mm_min.value(), 120.0);
+        assert_eq!(layer.retract.distance_mm.value(), 5.0);
+        assert_eq!(layer.retract.speed_mm_min.value(), 150.0);
+    }
+}
+
+#[test]
+fn the_bottom_motion_stops_where_the_bottom_layers_do() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_MOTION_TOML);
+    let profile = slice_profile(&config, 20);
+    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let bottom = BOTTOM_LAYER_COUNT as usize;
+
+    for layer in &program.layers[..bottom] {
+        assert_eq!(layer.lift.distance_mm.value(), 8.0);
+        assert_eq!(layer.lift.speed_mm_min.value(), 40.0);
+        assert_eq!(layer.retract.distance_mm.value(), 8.0);
+        assert_eq!(layer.retract.speed_mm_min.value(), 90.0);
+    }
+    for layer in &program.layers[bottom..] {
         assert_eq!(layer.lift.distance_mm.value(), 5.0);
         assert_eq!(layer.lift.speed_mm_min.value(), 120.0);
         assert_eq!(layer.retract.distance_mm.value(), 5.0);

@@ -352,6 +352,18 @@ fn calibration_fields(block: &MaterialPerPrinter) -> Vec<ProfileViewField> {
             fmt_opt_f64(block.retract_speed_mm_min.map(|v| v.value())),
         ),
         field(
+            ctr!("ProfileViewDialog", "Bottom lift distance (mm)"),
+            fmt_opt_f64(block.bottom_lift_distance_mm.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom lift speed (mm/min)"),
+            fmt_opt_f64(block.bottom_lift_speed_mm_min.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom retract speed (mm/min)"),
+            fmt_opt_f64(block.bottom_retract_speed_mm_min.map(|v| v.value())),
+        ),
+        field(
             ctr!("ProfileViewDialog", "Light power (%)"),
             fmt_opt_f64(block.light_pwm.map(|v| v.percent())),
         ),

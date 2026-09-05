@@ -15,7 +15,8 @@
 //!   defaults for fields that have defaults coverage
 //!   (`bottom_layer_count`, `scale_compensation_pct`, the two light
 //!   PWMs and the three normal-layer wait times; the bottom waits
-//!   are calibrated per printer or not at all).
+//!   and the bottom motion are calibrated per printer or not at
+//!   all).
 //! - Derive from material intent where the prior layer left a
 //!   field unset and the intent has the inputs needed. Today only
 //!   `layer_height_mm` (intent passthrough from
@@ -35,9 +36,9 @@
 //!   still unset surfaces as
 //!   [`ResolveError::MissingRequiredField`]; a wait still unset
 //!   resolves to zero instead, which is what a resin naming no
-//!   pause is asking for, a bottom wait still unset resolves to its
-//!   normal-layer counterpart, and a light PWM still unset resolves
-//!   to full power.
+//!   pause is asking for, a bottom wait or bottom motion still unset
+//!   resolves to its normal-layer counterpart, and a light PWM still
+//!   unset resolves to full power.
 //!
 //! `bottom_exposure_sec` has no automatic derivation; it must be
 //! supplied via calibration or override. Inputs that are silently
@@ -85,6 +86,9 @@ pub(crate) struct PickedValues {
     pub lift_distance_mm: Option<PositiveFiniteMm>,
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub bottom_lift_distance_mm: Option<PositiveFiniteMm>,
+    pub bottom_lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    pub bottom_retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     pub light_pwm: Option<LightPwm>,
     pub bottom_light_pwm: Option<LightPwm>,
     pub scale_compensation_pct: Option<ScaleCompensation>,
@@ -229,6 +233,33 @@ fn apply_per_printer(
         picked.retract_speed_mm_min = Some(value);
         records.push(OverrideRecord {
             field: ResolvedField::RetractSpeedMmMin,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_lift_distance_mm {
+        picked.bottom_lift_distance_mm = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftDistanceMm,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_lift_speed_mm_min {
+        picked.bottom_lift_speed_mm_min = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftSpeedMmMin,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value.value(),
+        });
+    }
+    if let Some(value) = per_printer.bottom_retract_speed_mm_min {
+        picked.bottom_retract_speed_mm_min = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomRetractSpeedMmMin,
             source: ValueSource::Calibrated,
             prior_value: None,
             final_value: value.value(),
@@ -455,6 +486,42 @@ pub(crate) fn apply_constraints(
                 .expect("snapped retract speed stays positive-finite"),
         );
     }
+    if let Some(value) = picked.bottom_lift_distance_mm {
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped)
+                .expect("snapped bottom lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.bottom_lift_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = picked.bottom_retract_speed_mm_min {
+        let snapped = apply_field_policies(
+            ResolvedField::BottomRetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom retract speed stays positive-finite"),
+        );
+    }
     Ok(())
 }
 
@@ -661,6 +728,63 @@ pub(crate) fn apply_scene_overrides(
                 .expect("snapped retract speed stays positive-finite"),
         );
     }
+    if let Some(value) = overrides.bottom_lift_distance_mm {
+        let prior = picked.bottom_lift_distance_mm.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftDistanceMm,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftDistanceMm,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_distance_mm = Some(
+            PositiveFiniteMm::new(snapped)
+                .expect("snapped bottom lift distance stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.bottom_lift_speed_mm_min {
+        let prior = picked.bottom_lift_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomLiftSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::BottomLiftSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_lift_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom lift speed stays positive-finite"),
+        );
+    }
+    if let Some(value) = overrides.bottom_retract_speed_mm_min {
+        let prior = picked.bottom_retract_speed_mm_min.map(|v| v.value());
+        records.push(OverrideRecord {
+            field: ResolvedField::BottomRetractSpeedMmMin,
+            source: ValueSource::Override,
+            prior_value: prior,
+            final_value: value.value(),
+        });
+        let snapped = apply_field_policies(
+            ResolvedField::BottomRetractSpeedMmMin,
+            value.value(),
+            constraints,
+            warnings,
+        )?;
+        picked.bottom_retract_speed_mm_min = Some(
+            PositiveFiniteMmPerMin::new(snapped)
+                .expect("snapped bottom retract speed stays positive-finite"),
+        );
+    }
     if let Some(value) = overrides.light_pwm {
         let prior = picked.light_pwm.map(|v| v.percent());
         records.push(OverrideRecord {
@@ -775,6 +899,11 @@ fn assemble(
             lift_distance_mm,
             lift_speed_mm_min,
             retract_speed_mm_min,
+            bottom_lift_distance_mm: picked.bottom_lift_distance_mm.unwrap_or(lift_distance_mm),
+            bottom_lift_speed_mm_min: picked.bottom_lift_speed_mm_min.unwrap_or(lift_speed_mm_min),
+            bottom_retract_speed_mm_min: picked
+                .bottom_retract_speed_mm_min
+                .unwrap_or(retract_speed_mm_min),
             light_pwm: picked.light_pwm.unwrap_or(LightPwm::FULL),
             bottom_light_pwm: picked.bottom_light_pwm.unwrap_or(LightPwm::FULL),
             scale_compensation_pct,

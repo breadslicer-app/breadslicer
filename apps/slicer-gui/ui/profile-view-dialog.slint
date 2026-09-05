@@ -104,6 +104,9 @@ export component ProfileViewDialog inherits Window {
     in-out property <string> lift-distance-text;
     in-out property <string> lift-speed-text;
     in-out property <string> retract-speed-text;
+    in-out property <string> bottom-lift-distance-text;
+    in-out property <string> bottom-lift-speed-text;
+    in-out property <string> bottom-retract-speed-text;
     in-out property <string> light-pwm-text;
     in-out property <string> bottom-light-pwm-text;
 
@@ -325,6 +328,18 @@ export component ProfileViewDialog inherits Window {
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Retract speed (mm/min)");
                                     value <=> root.retract-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom lift distance (mm)");
+                                    value <=> root.bottom-lift-distance-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom lift speed (mm/min)");
+                                    value <=> root.bottom-lift-speed-text;
+                                }
+                                EditField {
+                                    label: @tr("ProfileViewDialog" => "Bottom retract speed (mm/min)");
+                                    value <=> root.bottom-retract-speed-text;
                                 }
                                 EditField {
                                     label: @tr("ProfileViewDialog" => "Light power (%)");

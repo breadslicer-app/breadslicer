@@ -57,17 +57,6 @@ pub fn project_to_print_program(
     let material = &config.material_resolved;
     let transition_count = config.printer.capabilities.transition_layers.unwrap_or(0);
 
-    let lift = MotionStage {
-        distance_mm: material.lift_distance_mm,
-        speed_mm_min: material.lift_speed_mm_min,
-    };
-    // The platform returns the distance it lifted, so the retract
-    // carries no distance of its own.
-    let retract = MotionStage {
-        distance_mm: material.lift_distance_mm,
-        speed_mm_min: material.retract_speed_mm_min,
-    };
-
     let layers = (0u32..)
         .zip(profile.layer_schedule().iter_slab_tops())
         .map(|(layer_index, slab_top)| {
@@ -76,14 +65,15 @@ pub fn project_to_print_program(
                 z_mm: slab_top,
             })?;
             let waits = waits_for(layer_index, material);
+            let motion = motion_for(layer_index, material);
             Ok(LayerProgram {
                 slab_top_mm,
                 exposure_sec: exposure_for(layer_index, transition_count, material),
                 wait_before_cure_sec: waits.before_cure_sec,
                 wait_after_cure_sec: waits.after_cure_sec,
                 wait_after_lift_sec: waits.after_lift_sec,
-                lift,
-                retract,
+                lift: motion.lift,
+                retract: motion.retract,
                 second_lift: None,
                 second_retract: None,
                 light_pwm: light_pwm_for(layer_index, material),
@@ -128,6 +118,47 @@ fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
             after_cure_sec: material.wait_after_cure_sec,
             after_lift_sec: material.wait_after_lift_sec,
         }
+    }
+}
+
+/// The platform travel one layer's record carries.
+#[derive(Clone, Copy, Debug)]
+struct LayerMotion {
+    lift: MotionStage,
+    retract: MotionStage,
+}
+
+/// Pick one layer's platform travel: the bottom layers hold the
+/// bottom distance and speeds and every other layer the normal ones.
+/// The transition band takes the normal travel, because only the
+/// exposure changes across it.
+///
+/// The platform returns the distance it rose, so the retract repeats
+/// the lift's distance at its own speed.
+fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
+    let (distance_mm, lift_speed_mm_min, retract_speed_mm_min) =
+        if layer_index < material.bottom_layer_count {
+            (
+                material.bottom_lift_distance_mm,
+                material.bottom_lift_speed_mm_min,
+                material.bottom_retract_speed_mm_min,
+            )
+        } else {
+            (
+                material.lift_distance_mm,
+                material.lift_speed_mm_min,
+                material.retract_speed_mm_min,
+            )
+        };
+    LayerMotion {
+        lift: MotionStage {
+            distance_mm,
+            speed_mm_min: lift_speed_mm_min,
+        },
+        retract: MotionStage {
+            distance_mm,
+            speed_mm_min: retract_speed_mm_min,
+        },
     }
 }
 

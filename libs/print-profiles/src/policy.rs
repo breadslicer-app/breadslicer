@@ -22,6 +22,9 @@
 //! - `RetractSpeedMmMin`: same shape as lift speed, keyed by
 //!   `retract_speed_range_mm_min`.
 //! - `LiftDistanceMm`: snap to `lift_distance_max_mm` if above.
+//! - The bottom-layer lift distance and the two bottom-layer speeds:
+//!   the same bounds as their normal-layer counterparts, because a
+//!   printer constraint bounds an axis rather than a kind of layer.
 //! - Other fields: no constraint applies today.
 
 use crate::printer_constraints::PrinterConstraints;
@@ -143,7 +146,7 @@ pub(crate) fn policies_for(
                 out.push(ConstraintPolicy::SnapToMultiple { step: step.value() });
             }
         }
-        ResolvedField::LiftSpeedMmMin => {
+        ResolvedField::LiftSpeedMmMin | ResolvedField::BottomLiftSpeedMmMin => {
             if let Some(range) = constraints.lift_speed_range_mm_min {
                 out.push(ConstraintPolicy::RejectBelowMinSnapAtMaximum {
                     min: range.min().value(),
@@ -151,7 +154,7 @@ pub(crate) fn policies_for(
                 });
             }
         }
-        ResolvedField::RetractSpeedMmMin => {
+        ResolvedField::RetractSpeedMmMin | ResolvedField::BottomRetractSpeedMmMin => {
             if let Some(range) = constraints.retract_speed_range_mm_min {
                 out.push(ConstraintPolicy::RejectBelowMinSnapAtMaximum {
                     min: range.min().value(),
@@ -159,7 +162,7 @@ pub(crate) fn policies_for(
                 });
             }
         }
-        ResolvedField::LiftDistanceMm => {
+        ResolvedField::LiftDistanceMm | ResolvedField::BottomLiftDistanceMm => {
             if let Some(max) = constraints.lift_distance_max_mm {
                 out.push(ConstraintPolicy::SnapAtMaximum { max: max.value() });
             }

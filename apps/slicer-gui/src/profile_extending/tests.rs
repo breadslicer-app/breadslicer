@@ -105,6 +105,9 @@ fn sample_block() -> MaterialPerPrinter {
         lift_distance_mm: None,
         lift_speed_mm_min: None,
         retract_speed_mm_min: None,
+        bottom_lift_distance_mm: None,
+        bottom_lift_speed_mm_min: None,
+        bottom_retract_speed_mm_min: None,
         light_pwm: None,
         bottom_light_pwm: None,
     }

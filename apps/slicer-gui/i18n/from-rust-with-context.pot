@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-05 23:10+0200\n"
+"POT-Creation-Date: 2026-09-05 23:40+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -32,62 +32,62 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:557 src/preferences_window.rs:1253
+#: src/preferences_window.rs:557 src/preferences_window.rs:1262
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:749 src/preferences_window.rs:1653
+#: src/preferences_window.rs:749 src/preferences_window.rs:1662
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:949
+#: src/preferences_window.rs:955
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1048
+#: src/preferences_window.rs:1054
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1235
+#: src/preferences_window.rs:1244
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1242
+#: src/preferences_window.rs:1251
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1247
+#: src/preferences_window.rs:1256
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1249
+#: src/preferences_window.rs:1258
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1446
+#: src/preferences_window.rs:1455
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1803
+#: src/preferences_window.rs:1812
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1829
+#: src/preferences_window.rs:1838
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -302,12 +302,12 @@ msgctxt "ProfileViewDialog"
 msgid "Wait after lift (s)"
 msgstr ""
 
-#: src/profile_view.rs:178 src/profile_view.rs:355
+#: src/profile_view.rs:178 src/profile_view.rs:367
 msgctxt "ProfileViewDialog"
 msgid "Light power (%)"
 msgstr ""
 
-#: src/profile_view.rs:182 src/profile_view.rs:359
+#: src/profile_view.rs:182 src/profile_view.rs:371
 msgctxt "ProfileViewDialog"
 msgid "Bottom light power (%)"
 msgstr ""
@@ -368,109 +368,139 @@ msgctxt "ProfileViewDialog"
 msgid "Retract speed (mm/min)"
 msgstr ""
 
+#: src/profile_view.rs:355
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift distance (mm)"
+msgstr ""
+
+#: src/profile_view.rs:359
+msgctxt "ProfileViewDialog"
+msgid "Bottom lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view.rs:363
+msgctxt "ProfileViewDialog"
+msgid "Bottom retract speed (mm/min)"
+msgstr ""
+
 #: src/language.rs:79
 msgctxt "AppearancePreferences"
 msgid "System"
 msgstr ""
 
-#: src/material_form.rs:113
+#: src/material_form.rs:122
 msgctxt "MaterialForm"
 msgid "Normal exposure"
 msgstr ""
 
-#: src/material_form.rs:114
+#: src/material_form.rs:123
 msgctxt "MaterialForm"
 msgid "Bottom exposure"
 msgstr ""
 
-#: src/material_form.rs:115
+#: src/material_form.rs:124
 msgctxt "MaterialForm"
 msgid "Bottom layer count"
 msgstr ""
 
-#: src/material_form.rs:116
+#: src/material_form.rs:125
 msgctxt "MaterialForm"
 msgid "Wait before cure"
 msgstr ""
 
-#: src/material_form.rs:117
+#: src/material_form.rs:126
 msgctxt "MaterialForm"
 msgid "Wait after cure"
 msgstr ""
 
-#: src/material_form.rs:118
+#: src/material_form.rs:127
 msgctxt "MaterialForm"
 msgid "Wait after lift"
 msgstr ""
 
-#: src/material_form.rs:119
+#: src/material_form.rs:128
 msgctxt "MaterialForm"
 msgid "Bottom wait before cure"
 msgstr ""
 
-#: src/material_form.rs:120
+#: src/material_form.rs:129
 msgctxt "MaterialForm"
 msgid "Bottom wait after cure"
 msgstr ""
 
-#: src/material_form.rs:121
+#: src/material_form.rs:130
 msgctxt "MaterialForm"
 msgid "Bottom wait after lift"
 msgstr ""
 
-#: src/material_form.rs:122
+#: src/material_form.rs:131
 msgctxt "MaterialForm"
 msgid "Lift distance"
 msgstr ""
 
-#: src/material_form.rs:123
+#: src/material_form.rs:132
 msgctxt "MaterialForm"
 msgid "Lift speed"
 msgstr ""
 
-#: src/material_form.rs:124
+#: src/material_form.rs:133
 msgctxt "MaterialForm"
 msgid "Retract speed"
 msgstr ""
 
-#: src/material_form.rs:125
+#: src/material_form.rs:134
+msgctxt "MaterialForm"
+msgid "Bottom lift distance"
+msgstr ""
+
+#: src/material_form.rs:135
+msgctxt "MaterialForm"
+msgid "Bottom lift speed"
+msgstr ""
+
+#: src/material_form.rs:136
+msgctxt "MaterialForm"
+msgid "Bottom retract speed"
+msgstr ""
+
+#: src/material_form.rs:137
 msgctxt "MaterialForm"
 msgid "Light power"
 msgstr ""
 
-#: src/material_form.rs:126
+#: src/material_form.rs:138
 msgctxt "MaterialForm"
 msgid "Bottom light power"
 msgstr ""
 
-#: src/material_form.rs:127
+#: src/material_form.rs:139
 msgctxt "MaterialForm"
 msgid "Scale compensation x"
 msgstr ""
 
-#: src/material_form.rs:128
+#: src/material_form.rs:140
 msgctxt "MaterialForm"
 msgid "Scale compensation y"
 msgstr ""
 
-#: src/material_form.rs:129
+#: src/material_form.rs:141
 msgctxt "MaterialForm"
 msgid "Scale compensation z"
 msgstr ""
 
-#: src/material_form.rs:157
+#: src/material_form.rs:169
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} must be a number"
 msgstr ""
 
-#: src/material_form.rs:164
+#: src/material_form.rs:176
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} is out of range"
 msgstr ""
 
-#: src/material_form.rs:170
+#: src/material_form.rs:182
 msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""

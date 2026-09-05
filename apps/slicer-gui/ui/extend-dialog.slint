@@ -33,6 +33,9 @@ export component ExtendDialog inherits Window {
     in-out property <string> lift-distance-text;
     in-out property <string> lift-speed-text;
     in-out property <string> retract-speed-text;
+    in-out property <string> bottom-lift-distance-text;
+    in-out property <string> bottom-lift-speed-text;
+    in-out property <string> bottom-retract-speed-text;
     in-out property <string> light-pwm-text;
     in-out property <string> bottom-light-pwm-text;
     in property <string> error-message;
@@ -143,6 +146,18 @@ export component ExtendDialog inherits Window {
                     EditField {
                         label: @tr("ExtendDialog" => "Retract speed (mm/min)");
                         value <=> root.retract-speed-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom lift distance (mm)");
+                        value <=> root.bottom-lift-distance-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom lift speed (mm/min)");
+                        value <=> root.bottom-lift-speed-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom retract speed (mm/min)");
+                        value <=> root.bottom-retract-speed-text;
                     }
                     EditField {
                         label: @tr("ExtendDialog" => "Light power (%)");

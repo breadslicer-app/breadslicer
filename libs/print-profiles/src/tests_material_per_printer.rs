@@ -21,6 +21,9 @@ bottom_wait_after_lift_sec = 5.0
 lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 90.0
 light_pwm = 80.0
 bottom_light_pwm = 100.0
 "#;
@@ -49,6 +52,15 @@ fn deserialise_parses_all_fields() {
     assert_eq!(parsed.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(parsed.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(parsed.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
+    assert_eq!(parsed.bottom_lift_distance_mm.map(|v| v.value()), Some(8.0));
+    assert_eq!(
+        parsed.bottom_lift_speed_mm_min.map(|v| v.value()),
+        Some(40.0)
+    );
+    assert_eq!(
+        parsed.bottom_retract_speed_mm_min.map(|v| v.value()),
+        Some(90.0)
+    );
     assert_eq!(parsed.light_pwm.map(|v| v.percent()), Some(80.0));
     assert_eq!(parsed.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
 }
@@ -68,6 +80,9 @@ fn deserialise_empty_section_leaves_all_fields_none() {
     assert!(parsed.lift_distance_mm.is_none());
     assert!(parsed.lift_speed_mm_min.is_none());
     assert!(parsed.retract_speed_mm_min.is_none());
+    assert!(parsed.bottom_lift_distance_mm.is_none());
+    assert!(parsed.bottom_lift_speed_mm_min.is_none());
+    assert!(parsed.bottom_retract_speed_mm_min.is_none());
     assert!(parsed.light_pwm.is_none());
     assert!(parsed.bottom_light_pwm.is_none());
 }
@@ -105,6 +120,33 @@ bottom_wait_after_lift_sec = 5.0
 #[test]
 fn deserialise_rejects_a_negative_bottom_wait() {
     let toml = "bottom_wait_after_lift_sec = -1.0\n";
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
+}
+
+#[test]
+fn deserialise_parses_the_bottom_motion_apart_from_the_normal_one() {
+    let toml = r#"
+lift_distance_mm = 6.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 90.0
+"#;
+    let parsed: MaterialPerPrinter = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(parsed.lift_distance_mm.map(|v| v.value()), Some(6.0));
+    assert_eq!(parsed.bottom_lift_distance_mm.map(|v| v.value()), Some(8.0));
+    assert_eq!(
+        parsed.bottom_lift_speed_mm_min.map(|v| v.value()),
+        Some(40.0)
+    );
+    assert_eq!(
+        parsed.bottom_retract_speed_mm_min.map(|v| v.value()),
+        Some(90.0)
+    );
+}
+
+#[test]
+fn deserialise_rejects_a_non_positive_bottom_lift_speed() {
+    let toml = "bottom_lift_speed_mm_min = 0.0\n";
     assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
 }
 
@@ -221,6 +263,9 @@ fn serialise_omits_every_unset_field() {
         "lift_distance_mm",
         "lift_speed_mm_min",
         "retract_speed_mm_min",
+        "bottom_lift_distance_mm",
+        "bottom_lift_speed_mm_min",
+        "bottom_retract_speed_mm_min",
         "light_pwm",
         "bottom_light_pwm",
     ] {
@@ -246,6 +291,9 @@ fn programmatic_construction_round_trips() {
         lift_distance_mm: Some(PositiveFiniteMm::new(6.0).unwrap()),
         lift_speed_mm_min: None,
         retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),
+        bottom_lift_distance_mm: Some(PositiveFiniteMm::new(8.0).unwrap()),
+        bottom_lift_speed_mm_min: None,
+        bottom_retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(90.0).unwrap()),
         light_pwm: Some(LightPwm::new(80.0).unwrap()),
         bottom_light_pwm: None,
     };

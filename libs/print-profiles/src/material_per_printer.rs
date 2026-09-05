@@ -54,6 +54,18 @@ pub struct MaterialPerPrinter {
     pub lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    /// How far the platform rises off a bottom layer; absent means
+    /// it rises as far as it does off a normal one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_lift_distance_mm: Option<PositiveFiniteMm>,
+    /// How fast the platform rises off a bottom layer; absent means
+    /// it rises as fast as it does off a normal one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    /// How fast the platform returns onto a bottom layer; absent
+    /// means it returns as fast as it does onto a normal one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     /// How hard the light is driven on a normal layer. Average
     /// optical power is linear in it, so an exposure derived from a
     /// target energy density scales with it.

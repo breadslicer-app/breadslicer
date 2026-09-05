@@ -30,6 +30,9 @@ fn empty_calibration_fields_parse_to_an_all_unset_block() {
             lift_distance_mm: None,
             lift_speed_mm_min: None,
             retract_speed_mm_min: None,
+            bottom_lift_distance_mm: None,
+            bottom_lift_speed_mm_min: None,
+            bottom_retract_speed_mm_min: None,
             light_pwm: None,
             bottom_light_pwm: None,
         }
@@ -51,6 +54,9 @@ fn filled_calibration_fields_parse_to_typed_values() {
         lift_distance_mm: "6.0".to_owned(),
         lift_speed_mm_min: "60".to_owned(),
         retract_speed_mm_min: "150".to_owned(),
+        bottom_lift_distance_mm: "8".to_owned(),
+        bottom_lift_speed_mm_min: "40".to_owned(),
+        bottom_retract_speed_mm_min: "90".to_owned(),
         light_pwm: "80".to_owned(),
         bottom_light_pwm: "100".to_owned(),
     };
@@ -76,6 +82,15 @@ fn filled_calibration_fields_parse_to_typed_values() {
     assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(6.0));
     assert_eq!(block.lift_speed_mm_min.map(|v| v.value()), Some(60.0));
     assert_eq!(block.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
+    assert_eq!(block.bottom_lift_distance_mm.map(|v| v.value()), Some(8.0));
+    assert_eq!(
+        block.bottom_lift_speed_mm_min.map(|v| v.value()),
+        Some(40.0)
+    );
+    assert_eq!(
+        block.bottom_retract_speed_mm_min.map(|v| v.value()),
+        Some(90.0)
+    );
     assert_eq!(block.light_pwm.map(|v| v.percent()), Some(80.0));
     assert_eq!(block.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
 }

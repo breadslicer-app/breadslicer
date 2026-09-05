@@ -196,6 +196,9 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
         lift_distance_mm: opt_mm(raw.lift_distance_mm, &raw_id, "liftDistanceMm")?,
         lift_speed_mm_min: opt_speed(raw.lift_speed_mm_min, &raw_id, "liftSpeedMmMin")?,
         retract_speed_mm_min: opt_speed(raw.retract_speed_mm_min, &raw_id, "retractSpeedMmMin")?,
+        bottom_lift_distance_mm: None,
+        bottom_lift_speed_mm_min: None,
+        bottom_retract_speed_mm_min: None,
         light_pwm: None,
         bottom_light_pwm: None,
     };
