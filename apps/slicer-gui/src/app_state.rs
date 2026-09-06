@@ -277,6 +277,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_default_resin(snap.default_resin.clone());
     settings.set_favourite_printers(snap.favourite_printers.clone());
     settings.set_favourite_resins(snap.favourite_resins.clone());
+    settings.set_output_format_by_printer(snap.output_format_by_printer.clone());
     settings.set_aa_level(snap.aa_level);
     settings.set_object_list_visible(snap.object_list_visible);
     settings.set_object_list_anchor_right(snap.object_list_anchor_right);
@@ -350,6 +351,7 @@ impl AppState {
             default_resin,
             favourite_printers: settings.favourite_printers(),
             favourite_resins: settings.favourite_resins(),
+            output_format_by_printer: settings.output_format_by_printer(),
             aa_level: settings.aa_level(),
             build_volume,
             object_list_visible: settings.object_list_visible(),
@@ -1416,7 +1418,7 @@ mod context_menu_policy_tests {
 
 #[cfg(test)]
 mod settings_saver_tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use sc_print_primitives::{MaterialId, PrinterId};
 
@@ -1435,6 +1437,7 @@ mod settings_saver_tests {
             default_resin: None,
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
+            output_format_by_printer: BTreeMap::new(),
             aa_level: AaLevel::Off,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
@@ -1476,6 +1479,28 @@ mod settings_saver_tests {
 
         assert!(settings.favourite_printers().contains(&printer));
         assert!(settings.favourite_resins().contains(&resin));
+    }
+
+    #[test]
+    fn apply_snapshot_copies_the_per_printer_output_format_into_settings() {
+        use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding};
+
+        let mut snap = snapshot_with(ThemePreference::System);
+        let printer = PrinterId::new("elegoo-mars-5-goo").unwrap();
+        let binding = OutputFormatBinding {
+            format: FormatKind::Goo,
+            version: Some(NonEmptyString::new("v3.0").unwrap()),
+        };
+        snap.output_format_by_printer
+            .insert(printer.clone(), binding.clone());
+
+        let mut settings = AppSettings::default();
+        apply_snapshot_to_settings(&mut settings, &snap);
+
+        assert_eq!(
+            settings.output_format_by_printer().get(&printer),
+            Some(&binding),
+        );
     }
 
     #[test]
@@ -1565,6 +1590,7 @@ mod settings_saver_tests {
                 default_resin: None,
                 favourite_printers: BTreeSet::new(),
                 favourite_resins: BTreeSet::new(),
+                output_format_by_printer: BTreeMap::new(),
                 aa_level: AaLevel::Off,
                 build_volume: bv,
                 object_list_visible: true,

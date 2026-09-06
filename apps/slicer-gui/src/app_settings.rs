@@ -10,13 +10,13 @@
 //! (pre-alpha policy: bump [`APP_SETTINGS_SCHEMA_VERSION`] when the schema
 //! changes, no migration code).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 use serde::{Deserialize, Serialize};
 
 use crate::language::LanguagePreference;
@@ -301,6 +301,13 @@ pub(crate) struct AppSettings {
     /// The user's favourite resins, by id. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     favourite_resins: BTreeSet<MaterialId>,
+    /// The printer file last chosen for each printer, so switching
+    /// printers restores that machine's own choice instead of carrying
+    /// another one's. Holds the binding as the printer profile spells
+    /// it; an entry naming a format the profile no longer declares is
+    /// ignored rather than pruned. Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    output_format_by_printer: BTreeMap<PrinterId, OutputFormatBinding>,
     /// The app-wide anti-aliasing level applied when rasterizing slices.
     /// Omitted in TOML while it holds the default (`Off`).
     #[serde(
@@ -336,6 +343,7 @@ impl Default for AppSettings {
             default_resin: None,
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
+            output_format_by_printer: BTreeMap::new(),
             aa_level: default_aa_level(),
             object_list: ObjectListSettings::default(),
             slice_panel: SliceControlPanelSettings::default(),
@@ -469,6 +477,17 @@ impl AppSettings {
 
     pub(crate) fn set_favourite_resins(&mut self, ids: BTreeSet<MaterialId>) {
         self.favourite_resins = ids;
+    }
+
+    pub(crate) fn output_format_by_printer(&self) -> BTreeMap<PrinterId, OutputFormatBinding> {
+        self.output_format_by_printer.clone()
+    }
+
+    pub(crate) fn set_output_format_by_printer(
+        &mut self,
+        formats: BTreeMap<PrinterId, OutputFormatBinding>,
+    ) {
+        self.output_format_by_printer = formats;
     }
 
     pub(crate) fn aa_level(&self) -> AaLevel {
@@ -1022,6 +1041,52 @@ mod app_settings_tests {
         assert_eq!(
             loaded.default_printer(),
             Some(PrinterId::new("anycubic-photon-m3-pm3").unwrap())
+        );
+    }
+
+    #[test]
+    fn the_per_printer_output_format_round_trips() {
+        use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding};
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        let printer = PrinterId::new("elegoo-mars-5-goo").unwrap();
+        let chosen: BTreeMap<PrinterId, OutputFormatBinding> = [(
+            printer.clone(),
+            OutputFormatBinding {
+                format: FormatKind::Goo,
+                version: Some(NonEmptyString::new("v3.0").unwrap()),
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        let mut s = AppSettings::default();
+        s.set_output_format_by_printer(chosen.clone());
+        s.save_to_path(&path).unwrap();
+
+        assert_eq!(
+            AppSettings::load_from_path(&path).output_format_by_printer(),
+            chosen,
+        );
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("[output_format_by_printer.elegoo-mars-5-goo]"),
+            "got:\n{written}",
+        );
+    }
+
+    #[test]
+    fn saved_toml_omits_an_empty_per_printer_output_format_map() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.toml");
+        AppSettings::default().save_to_path(&path).unwrap();
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("output_format_by_printer"),
+            "an empty map should not serialise, got:\n{written}",
         );
     }
 

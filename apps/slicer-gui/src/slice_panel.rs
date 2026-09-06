@@ -40,6 +40,9 @@ pub(crate) struct SlicePanelBridge {
     // The same for the print-format selector, whose handle is the
     // printer profile's own binding.
     print_format_bindings: RefCell<Vec<OutputFormatBinding>>,
+    // The printer the panel is currently showing, which is the one a
+    // format pick is remembered against.
+    shown_printer: RefCell<Option<PrinterId>>,
     // RAII subscriptions kept alive for the window's lifetime; dropping
     // the bridge unsubscribes both.
     document_sub: RefCell<Option<SceneSubscription>>,
@@ -65,6 +68,7 @@ impl SlicePanelBridge {
             printer_ids: RefCell::new(Vec::new()),
             resin_ids: RefCell::new(Vec::new()),
             print_format_bindings: RefCell::new(Vec::new()),
+            shown_printer: RefCell::new(None),
             document_sub: RefCell::new(None),
             bus_sub: RefCell::new(None),
         });
@@ -145,11 +149,20 @@ impl SlicePanelBridge {
             self.document.selected_resin().as_ref(),
         );
 
-        let declared = resolve(&printer.options, printer.selected)
-            .and_then(|option| catalog.printer_index(&option.id))
+        let shown_printer = resolve(&printer.options, printer.selected).map(|option| option.id);
+        let declared = shown_printer
+            .as_ref()
+            .and_then(|id| catalog.printer_index(id))
             .map(|index| catalog.printers()[index].output_formats.clone());
+        // The scene's own choice comes first; failing that, whatever
+        // was last picked for this printer.
+        let remembered = self.document.selected_output_format().or_else(|| {
+            shown_printer
+                .as_ref()
+                .and_then(|id| snapshot.output_format_by_printer.get(id).cloned())
+        });
         let formats = declared.map_or_else(PrintFormatModel::nothing_declared, |declared| {
-            print_format_model(&declared, self.document.selected_output_format().as_ref())
+            print_format_model(&declared, remembered.as_ref())
         });
         let format_labels: Vec<SharedString> = formats
             .options
@@ -174,6 +187,7 @@ impl SlicePanelBridge {
         *self.resin_ids.borrow_mut() = resin.options.into_iter().map(|o| o.id).collect();
         *self.print_format_bindings.borrow_mut() =
             formats.options.into_iter().map(|o| o.binding).collect();
+        *self.shown_printer.borrow_mut() = shown_printer;
     }
 
     fn on_printer_picked(&self, index: i32) {
@@ -194,12 +208,20 @@ impl SlicePanelBridge {
         }
     }
 
-    /// Records the picked printer file on the document. The choice is
-    /// the scene's, so it travels into the project file on save.
+    /// Records the picked printer file on the document, so it travels
+    /// into the project file on save, and against the printer it was
+    /// picked for, so selecting that printer again restores it.
     fn on_print_format_picked(&self, index: i32) {
         let Some(binding) = resolve(&self.print_format_bindings.borrow(), index) else {
             return;
         };
+        if let Some(printer) = self.shown_printer.borrow().clone() {
+            let binding = binding.clone();
+            self.bus.update(move |snapshot| {
+                snapshot.output_format_by_printer.insert(printer, binding);
+                PreferencesChange::OutputFormat
+            });
+        }
         if self.document.set_selected_output_format(Some(binding)) {
             self.refresh();
         }

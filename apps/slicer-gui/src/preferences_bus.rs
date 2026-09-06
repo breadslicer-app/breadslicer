@@ -24,11 +24,11 @@
 //! automatically removed when the window is closed.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
-use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
+use sc_print_primitives::{AaLevel, MaterialId, OutputFormatBinding, PrinterId};
 
 use crate::build_volume::BuildVolume;
 use crate::language::LanguagePreference;
@@ -53,6 +53,10 @@ pub(crate) struct PreferencesSnapshot {
     /// selected profiles. Toggled from the Preferences window.
     pub favourite_printers: BTreeSet<PrinterId>,
     pub favourite_resins: BTreeSet<MaterialId>,
+    /// The printer file last chosen for each printer, so the Slice
+    /// panel can restore a machine's own choice when it is selected
+    /// again. Written by the panel, persisted like the rest.
+    pub output_format_by_printer: BTreeMap<PrinterId, OutputFormatBinding>,
     /// App-wide anti-aliasing level applied when rasterizing slices.
     /// Set from the Slicing Preferences section; the slicing flow reads
     /// it when a slice is produced.
@@ -123,6 +127,7 @@ pub(crate) enum PreferencesChange {
     DefaultPrinter,
     DefaultResin,
     Favourites,
+    OutputFormat,
     AaLevel,
     ObjectListPanel,
     SliceControlPanel,
@@ -279,6 +284,7 @@ mod preferences_bus_tests {
             default_resin: None,
             favourite_printers: BTreeSet::new(),
             favourite_resins: BTreeSet::new(),
+            output_format_by_printer: BTreeMap::new(),
             aa_level: AaLevel::Off,
             build_volume: HARDCODED_DEFAULT_BUILD_VOLUME,
             object_list_visible: true,
@@ -644,6 +650,43 @@ mod preferences_bus_tests {
         assert_eq!(got_printer, Some(new_printer));
         assert_eq!(got_bv, new_bv);
         assert_eq!(got_change, PreferencesChange::DefaultPrinter);
+    }
+
+    #[test]
+    fn a_per_printer_output_format_change_propagates() {
+        use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding};
+
+        type Captured = Option<(BTreeMap<PrinterId, OutputFormatBinding>, PreferencesChange)>;
+
+        let bus = PreferencesBus::new(initial());
+        let captured: Rc<RefCell<Captured>> = Rc::new(RefCell::new(None));
+        let _sub = {
+            let captured = captured.clone();
+            bus.subscribe(move |snap, change| {
+                *captured.borrow_mut() = Some((snap.output_format_by_printer.clone(), *change));
+            })
+        };
+
+        let printer = PrinterId::new("elegoo-mars-5-goo").unwrap();
+        let binding = OutputFormatBinding {
+            format: FormatKind::Goo,
+            version: Some(NonEmptyString::new("v3.0").unwrap()),
+        };
+        bus.update({
+            let printer = printer.clone();
+            let binding = binding.clone();
+            move |snap| {
+                snap.output_format_by_printer.insert(printer, binding);
+                PreferencesChange::OutputFormat
+            }
+        });
+
+        let (got_formats, got_change) = captured
+            .borrow()
+            .clone()
+            .expect("listener must have fired and captured the payload");
+        assert_eq!(got_formats.get(&printer), Some(&binding));
+        assert_eq!(got_change, PreferencesChange::OutputFormat);
     }
 
     #[test]
