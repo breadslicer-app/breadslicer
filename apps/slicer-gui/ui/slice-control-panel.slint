@@ -25,6 +25,14 @@ export component SliceControlPanel inherits Rectangle {
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
     in-out property <int> resin-current-index: -1;
+    // The printer files the selected printer declares it takes.
+    in property <[string]> print-format-options;
+    in-out property <int> print-format-current-index: -1;
+
+    // Whether the export action can run. Computed on the Rust side,
+    // which is the only place that knows whether a slice is held and
+    // whether the chosen format has a writer.
+    in property <bool> export-enabled;
 
     // The scene's first-layer height, as the millimetre text shown in
     // the field. Empty when no per-print height is set.
@@ -44,11 +52,15 @@ export component SliceControlPanel inherits Rectangle {
     // index into the matching options model.
     callback printer-picked(int);
     callback resin-picked(int);
+    callback print-format-picked(int);
     // A first-layer-height edit; carries the field's current text. The
     // Rust side parses it (millimetres) and ignores invalid input.
     callback first-layer-height-edited(string);
     // The Slice action: build the slice profile and run the engine.
     callback slice-requested();
+    // The export action: write the held slice as the selected printer
+    // file.
+    callback export-requested();
 
     // External updates (a scene's own value on install/refresh) must be
     // pushed back into the LineEdit explicitly: its text binding breaks
@@ -66,9 +78,9 @@ export component SliceControlPanel inherits Rectangle {
     property <length> edge-margin: 12px;
     property <length> panel-min-width: 200px;
     property <length> panel-max-width: 420px;
-    // Room for the two labelled pickers, the first-layer-height field,
-    // plus the body paddings.
-    property <length> body-height: 210px;
+    // Room for the three labelled pickers, the first-layer-height
+    // field, the two buttons, plus the body paddings.
+    property <length> body-height: 380px;
     property <length> panel-min-height: root.title-bar-height + root.body-height;
     property <length> panel-max-height: Math.max(root.panel-min-height, root.available-height - 2 * root.edge-margin);
 
@@ -291,6 +303,31 @@ export component SliceControlPanel inherits Rectangle {
                     && !root.slicing-in-progress;
                 clicked => {
                     root.slice-requested();
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("SlicePanel" => "Print format");
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                }
+                print-format-combo := ComboBox {
+                    model: root.print-format-options;
+                    current-index <=> root.print-format-current-index;
+                    enabled: root.print-format-options.length > 0;
+                    selected => {
+                        root.print-format-picked(print-format-combo.current-index);
+                    }
+                }
+            }
+
+            Button {
+                text: @tr("SlicePanel" => "Export for printer");
+                enabled: root.export-enabled;
+                clicked => {
+                    root.export-requested();
                 }
             }
         }
