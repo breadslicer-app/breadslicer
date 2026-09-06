@@ -184,6 +184,7 @@ mod reloaded_slices_tests {
             printer: None,
             resin: None,
             first_layer_height: None,
+            output_format: None,
             embedded: Vec::new(),
         }
     }
@@ -362,6 +363,7 @@ mod reloaded_slices_tests {
             printer: Some(printer.clone()),
             resin: Some(resin.clone()),
             first_layer_height: None,
+            output_format: None,
             embedded: Vec::new(),
         };
 

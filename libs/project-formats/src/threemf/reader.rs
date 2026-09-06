@@ -107,12 +107,14 @@ fn extract_payload(
             printer,
             resin,
             first_layer_height,
+            output_format,
             slice_fingerprint,
         } => Ok((
             Some(ProjectPayload {
                 printer,
                 resin,
                 first_layer_height,
+                output_format,
                 embedded: collect_embedded(package, warnings),
             }),
             slice_fingerprint,

@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::SceneSpatial;
-use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 use sc_project_formats::{EmbeddedProfile, PlateSlices, ProjectPayload};
 #[cfg(test)]
 use sc_scene::Scene;
@@ -167,6 +167,7 @@ struct PrintSelection {
     printer: Option<PrinterId>,
     resin: Option<MaterialId>,
     first_layer_height: Option<PositiveFiniteMm>,
+    output_format: Option<OutputFormatBinding>,
 }
 
 impl PrintSelection {
@@ -177,6 +178,7 @@ impl PrintSelection {
             printer,
             resin,
             first_layer_height,
+            output_format,
             embedded,
         } = payload;
         (
@@ -184,6 +186,7 @@ impl PrintSelection {
                 printer,
                 resin,
                 first_layer_height,
+                output_format,
             },
             embedded,
         )
@@ -439,6 +442,7 @@ impl SceneDocument {
             printer: selection.printer.clone().or(default_printer),
             resin: selection.resin.clone().or(default_resin),
             first_layer_height: selection.first_layer_height,
+            output_format: selection.output_format.clone(),
             embedded: self.embedded_profiles.borrow().clone(),
         }
     }

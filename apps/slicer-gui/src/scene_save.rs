@@ -292,6 +292,7 @@ mod scene_save_tests {
             printer: Some(printer_id("held-printer")),
             resin: Some(material_id("held-resin")),
             first_layer_height: None,
+            output_format: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer_id("held-printer"),
                 bytes: b"kind = \"printer\"".to_vec(),

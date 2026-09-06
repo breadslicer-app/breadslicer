@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{
+    FormatKind, MaterialId, NonEmptyString, OutputFormatBinding, PositiveFiniteMm, PrinterId,
+};
 
 use crate::payload::ProjectPayload;
 use crate::threemf::payload_part::{PayloadParseOutcome, parse_payload, serialize_payload};
@@ -12,8 +14,16 @@ fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).expect("test length is positive and finite")
 }
 
+fn goo_v3_0() -> OutputFormatBinding {
+    OutputFormatBinding {
+        format: FormatKind::Goo,
+        version: Some(NonEmptyString::new("v3.0").expect("test version is non-empty")),
+    }
+}
+
 const PAYLOAD_V1_FULL: &str = include_str!("fixtures/payload-v1-full.toml");
 const PAYLOAD_V1_UNKNOWN_KEYS: &str = include_str!("fixtures/payload-v1-unknown-keys.toml");
+const PAYLOAD_V1_PRINT_FORMAT: &str = include_str!("fixtures/payload-v1-print-format.toml");
 const PAYLOAD_V2: &str = include_str!("fixtures/payload-v2.toml");
 
 fn printer_id(raw: &str) -> PrinterId {
@@ -33,6 +43,7 @@ mod serialize_tests {
             printer: Some(printer_id("test-printer")),
             resin: Some(material_id("test-resin")),
             first_layer_height: None,
+            output_format: None,
             embedded: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
@@ -42,6 +53,7 @@ mod serialize_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                output_format: None,
                 slice_fingerprint: None,
             },
         );
@@ -61,9 +73,40 @@ mod serialize_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: Some(mm(0.05)),
+                output_format: None,
                 slice_fingerprint: None,
             },
         );
+    }
+
+    #[test]
+    fn the_output_format_round_trips_through_the_print_section() {
+        let payload = ProjectPayload {
+            output_format: Some(goo_v3_0()),
+            ..ProjectPayload::default()
+        };
+        let text = serialize_payload(&payload, None).expect("the output format serializes");
+        assert!(
+            text.contains(r#"output_format = { format = "goo", version = "v3.0" }"#),
+            "got:\n{text}",
+        );
+        assert_eq!(
+            parse_payload(&text).expect("serialized payload parses"),
+            PayloadParseOutcome::V1 {
+                printer: None,
+                resin: None,
+                first_layer_height: None,
+                output_format: Some(goo_v3_0()),
+                slice_fingerprint: None,
+            },
+        );
+    }
+
+    #[test]
+    fn an_absent_output_format_is_omitted_from_the_document() {
+        let text =
+            serialize_payload(&ProjectPayload::default(), None).expect("empty payload serializes");
+        assert!(!text.contains("output_format"), "got:\n{text}");
     }
 
     #[test]
@@ -86,6 +129,7 @@ mod serialize_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: None,
+                output_format: None,
                 slice_fingerprint: None,
             },
         );
@@ -97,6 +141,7 @@ mod serialize_tests {
             printer: Some(printer_id("test-printer")),
             resin: None,
             first_layer_height: None,
+            output_format: None,
             embedded: vec![crate::payload::EmbeddedProfile::Printer {
                 id: printer_id("test-printer"),
                 bytes: b"marker-not-expected-in-part = true".to_vec(),
@@ -117,6 +162,7 @@ mod serialize_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: None,
+                output_format: None,
                 slice_fingerprint: Some("cafef00d".to_string()),
             },
         );
@@ -142,6 +188,21 @@ mod parse_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                output_format: None,
+                slice_fingerprint: None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_document_naming_a_print_format_parses_it_beside_the_other_print_settings() {
+        assert_eq!(
+            parse_payload(PAYLOAD_V1_PRINT_FORMAT).expect("the fixture parses"),
+            PayloadParseOutcome::V1 {
+                printer: Some(printer_id("test-printer")),
+                resin: None,
+                first_layer_height: Some(mm(0.05)),
+                output_format: Some(goo_v3_0()),
                 slice_fingerprint: None,
             },
         );
@@ -155,6 +216,7 @@ mod parse_tests {
                 printer: Some(printer_id("test-printer")),
                 resin: Some(material_id("test-resin")),
                 first_layer_height: None,
+                output_format: None,
                 slice_fingerprint: None,
             },
         );
@@ -176,6 +238,7 @@ mod parse_tests {
                 printer: None,
                 resin: None,
                 first_layer_height: None,
+                output_format: None,
                 slice_fingerprint: None,
             },
         );

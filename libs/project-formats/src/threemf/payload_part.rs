@@ -12,7 +12,7 @@
 //! Unknown keys inside a known version are ignored, so additive
 //! changes do not need a version bump.
 
-use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 use serde::{Deserialize, Serialize};
 
 use crate::payload::ProjectPayload;
@@ -50,11 +50,13 @@ struct ProfilesSection {
 struct PrintSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     first_layer_height_mm: Option<PositiveFiniteMm>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_format: Option<OutputFormatBinding>,
 }
 
 impl PrintSection {
     fn is_empty(&self) -> bool {
-        self.first_layer_height_mm.is_none()
+        self.first_layer_height_mm.is_none() && self.output_format.is_none()
     }
 }
 
@@ -88,6 +90,7 @@ pub(crate) enum PayloadParseOutcome {
         printer: Option<PrinterId>,
         resin: Option<MaterialId>,
         first_layer_height: Option<PositiveFiniteMm>,
+        output_format: Option<OutputFormatBinding>,
         slice_fingerprint: Option<String>,
     },
     /// The document declares a version this build does not
@@ -111,6 +114,7 @@ pub(crate) fn serialize_payload(
         },
         print: PrintSection {
             first_layer_height_mm: payload.first_layer_height,
+            output_format: payload.output_format.clone(),
         },
         slices: SlicesSection {
             fingerprint: slice_fingerprint.map(str::to_string),
@@ -131,6 +135,7 @@ pub(crate) fn parse_payload(text: &str) -> Result<PayloadParseOutcome, toml_edit
         printer: doc.profiles.printer,
         resin: doc.profiles.resin,
         first_layer_height: doc.print.first_layer_height_mm,
+        output_format: doc.print.output_format,
         slice_fingerprint: doc.slices.fingerprint,
     })
 }

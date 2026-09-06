@@ -11,7 +11,7 @@
 //! crate never parses profile content, it only transports it (the
 //! same way profile packages carry raw on-disk TOML bytes).
 
-use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
+use sc_print_primitives::{MaterialId, OutputFormatBinding, PositiveFiniteMm, PrinterId};
 
 use crate::messages::ProfileRefWarning;
 
@@ -26,6 +26,11 @@ pub struct ProjectPayload {
     /// The per-print first-layer height chosen for the project, if
     /// set. `None` means "use the resolved material's layer height".
     pub first_layer_height: Option<PositiveFiniteMm>,
+    /// The printer file the project is exported as, spelled the way
+    /// the printer profile declares it rather than as a writer
+    /// identity, so a project outlives the set of writers a build
+    /// happens to carry. `None` until a format is chosen.
+    pub output_format: Option<OutputFormatBinding>,
     /// Embedded profile documents carried by the file, in file
     /// order. Held opaquely: re-saving a project writes these bytes
     /// back unchanged.

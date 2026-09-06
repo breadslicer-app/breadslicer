@@ -383,7 +383,9 @@ mod dirty_changed_event_tests {
 /// save must clear it.
 mod unsaved_project_state_tests {
     use super::*;
-    use sc_print_primitives::{MaterialId, PositiveFiniteMm, PrinterId};
+    use sc_print_primitives::{
+        FormatKind, MaterialId, NonEmptyString, OutputFormatBinding, PositiveFiniteMm, PrinterId,
+    };
     use sc_project_formats::ProjectPayload;
 
     fn printer(id: &str) -> PrinterId {
@@ -516,6 +518,7 @@ mod unsaved_project_state_tests {
                 printer: Some(printer("anycubic-photon")),
                 resin: None,
                 first_layer_height: None,
+                output_format: None,
                 embedded: Vec::new(),
             }
         );
@@ -542,6 +545,7 @@ mod unsaved_project_state_tests {
             printer: Some(printer("anycubic-photon")),
             resin: None,
             first_layer_height: Some(mm(0.1)),
+            output_format: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer("anycubic-photon"),
                 bytes: b"kind = \"printer\"".to_vec(),
@@ -569,6 +573,31 @@ mod unsaved_project_state_tests {
         doc.clear_scene();
         assert_eq!(doc.selected_printer(), None);
         assert_eq!(doc.selected_first_layer_height(), None);
+    }
+
+    #[test]
+    fn a_loaded_output_format_survives_back_into_the_composed_payload() {
+        let loaded = ProjectPayload {
+            output_format: Some(OutputFormatBinding {
+                format: FormatKind::Goo,
+                version: Some(NonEmptyString::new("v3.0").expect("non-empty version")),
+            }),
+            ..ProjectPayload::default()
+        };
+        let doc = SceneDocument::new();
+        doc.install_project_graph(
+            graph_with_one_object(),
+            PathBuf::from("/tmp/plate.3mf"),
+            loaded.clone(),
+        );
+
+        assert_eq!(
+            doc.compose_project_payload(None, None).output_format,
+            loaded.output_format,
+        );
+
+        doc.clear_scene();
+        assert_eq!(doc.compose_project_payload(None, None).output_format, None);
     }
 
     #[test]

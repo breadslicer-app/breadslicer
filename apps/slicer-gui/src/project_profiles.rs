@@ -149,6 +149,7 @@ mod project_profiles_tests {
             printer: Some(printer_id("shared")),
             resin: None,
             first_layer_height: None,
+            output_format: None,
             embedded: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
@@ -169,6 +170,7 @@ mod project_profiles_tests {
             printer: Some(printer_id("nowhere")),
             resin: Some(material_id("nowhere")),
             first_layer_height: None,
+            output_format: None,
             embedded: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
@@ -192,6 +194,7 @@ mod project_profiles_tests {
             printer: None,
             resin: Some(material_id("resin")),
             first_layer_height: None,
+            output_format: None,
             embedded: Vec::new(),
         };
         complete_embedded_documents(&mut payload, &libraries);
@@ -229,6 +232,7 @@ mod project_profiles_tests {
             printer: Some(printer_id("printer")),
             resin: Some(material_id("resin")),
             first_layer_height: None,
+            output_format: None,
             embedded: vec![EmbeddedProfile::Printer {
                 id: printer_id("printer"),
                 bytes: b"kind = \"held-printer\"".to_vec(),
