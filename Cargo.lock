@@ -4993,6 +4993,7 @@ dependencies = [
  "sc-scene",
  "sc-scene-edit",
  "sc-sl1cer",
+ "sc-sla-formats",
  "serde",
  "slint",
  "slint-build",

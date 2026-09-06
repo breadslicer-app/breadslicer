@@ -15,11 +15,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, OutputFormatBinding, PrinterId};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::MainWindow;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
+use crate::print_format::{PrintFormatModel, print_format_model};
 use crate::profile_catalog::ProfileCatalog;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
 use crate::slice_selection::{
@@ -36,6 +37,9 @@ pub(crate) struct SlicePanelBridge {
     // resolves back to a profile id.
     printer_ids: RefCell<Vec<PrinterId>>,
     resin_ids: RefCell<Vec<MaterialId>>,
+    // The same for the print-format selector, whose handle is the
+    // printer profile's own binding.
+    print_format_bindings: RefCell<Vec<OutputFormatBinding>>,
     // RAII subscriptions kept alive for the window's lifetime; dropping
     // the bridge unsubscribes both.
     document_sub: RefCell<Option<SceneSubscription>>,
@@ -60,6 +64,7 @@ impl SlicePanelBridge {
             ui: ui.as_weak(),
             printer_ids: RefCell::new(Vec::new()),
             resin_ids: RefCell::new(Vec::new()),
+            print_format_bindings: RefCell::new(Vec::new()),
             document_sub: RefCell::new(None),
             bus_sub: RefCell::new(None),
         });
@@ -71,6 +76,10 @@ impl SlicePanelBridge {
         {
             let bridge = bridge.clone();
             ui.on_slice_resin_picked(move |index| bridge.on_resin_picked(index));
+        }
+        {
+            let bridge = bridge.clone();
+            ui.on_slice_print_format_picked(move |index| bridge.on_print_format_picked(index));
         }
         {
             let bridge = bridge.clone();
@@ -136,18 +145,35 @@ impl SlicePanelBridge {
             self.document.selected_resin().as_ref(),
         );
 
+        let declared = resolve(&printer.options, printer.selected)
+            .and_then(|option| catalog.printer_index(&option.id))
+            .map(|index| catalog.printers()[index].output_formats.clone());
+        let formats = declared.map_or_else(PrintFormatModel::nothing_declared, |declared| {
+            print_format_model(&declared, self.document.selected_output_format().as_ref())
+        });
+        let format_labels: Vec<SharedString> = formats
+            .options
+            .iter()
+            .map(|option| SharedString::from(option.label.as_str()))
+            .collect();
+
         // Options before index: writing a fresh model can clamp the
         // two-way-bound index, so the explicit index write must follow.
         ui.set_slice_printer_options(labels_model(&printer));
         ui.set_slice_printer_current_index(printer.selected);
         ui.set_slice_resin_options(labels_model(&resin));
         ui.set_slice_resin_current_index(resin.selected);
+        ui.set_slice_print_format_options(ModelRc::new(VecModel::from(format_labels)));
+        ui.set_slice_print_format_current_index(formats.selected);
+        ui.set_slice_print_format_note(formats.refusals.join("\n").into());
         ui.set_slice_first_layer_height_text(
             format_first_layer_height(self.document.selected_first_layer_height()).into(),
         );
 
         *self.printer_ids.borrow_mut() = printer.options.into_iter().map(|o| o.id).collect();
         *self.resin_ids.borrow_mut() = resin.options.into_iter().map(|o| o.id).collect();
+        *self.print_format_bindings.borrow_mut() =
+            formats.options.into_iter().map(|o| o.binding).collect();
     }
 
     fn on_printer_picked(&self, index: i32) {
@@ -164,6 +190,17 @@ impl SlicePanelBridge {
             return;
         };
         if self.document.set_selected_resin(Some(id)) {
+            self.refresh();
+        }
+    }
+
+    /// Records the picked printer file on the document. The choice is
+    /// the scene's, so it travels into the project file on save.
+    fn on_print_format_picked(&self, index: i32) {
+        let Some(binding) = resolve(&self.print_format_bindings.borrow(), index) else {
+            return;
+        };
+        if self.document.set_selected_output_format(Some(binding)) {
             self.refresh();
         }
     }

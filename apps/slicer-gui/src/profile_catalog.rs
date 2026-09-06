@@ -23,7 +23,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use sc_print_primitives::{BuildVolume, MaterialId, PrinterId};
+use sc_print_primitives::{BuildVolume, MaterialId, OutputFormatBindings, PrinterId};
 pub use sc_print_profiles::{CalibrationCoverage, ProfileSource};
 use sc_print_profiles::{
     CalibrationTarget, MaterialProfile, PrinterProfile, ProfileLibraries, generic_printer_id,
@@ -39,6 +39,10 @@ pub struct PrinterCatalogEntry {
     pub manufacturer: String,
     pub name: String,
     pub build_volume: BuildVolume,
+    /// The printer files the profile declares, in the order it
+    /// declares them. Which of them this build can actually write is a
+    /// separate question, answered in [`crate::print_format`].
+    pub output_formats: OutputFormatBindings,
     /// Absolute path to the printer's thumbnail, or `None` when the
     /// profile carries no image or the referenced file is missing.
     pub image_path: Option<PathBuf>,
@@ -347,6 +351,7 @@ fn printer_entry(
     profile: PrinterProfile,
 ) -> PrinterCatalogEntry {
     let build_volume = profile.hardware.build_volume();
+    let output_formats = profile.capabilities.output_formats;
     let identity = profile.identity;
     // Keep the image path only when the file is really there.
     let image_path = identity.image_asset_path.as_ref().and_then(|reference| {
@@ -359,6 +364,7 @@ fn printer_entry(
         manufacturer: identity.manufacturer.as_str().to_owned(),
         name: identity.name.as_str().to_owned(),
         build_volume,
+        output_formats,
         image_path,
         source,
     }

@@ -181,6 +181,7 @@ export component MainWindow inherits Window {
     in-out property <int> slice-resin-current-index: -1;
     in property <[string]> slice-print-format-options: [];
     in-out property <int> slice-print-format-current-index: -1;
+    in property <string> slice-print-format-note;
     in property <bool> slice-export-enabled: false;
     in-out property <string> slice-first-layer-height-text;
     // Slice run state, driving the Slice button's disabled state and the
@@ -753,6 +754,7 @@ export component MainWindow inherits Window {
         resin-current-index <=> root.slice-resin-current-index;
         print-format-options: root.slice-print-format-options;
         print-format-current-index <=> root.slice-print-format-current-index;
+        print-format-note: root.slice-print-format-note;
         export-enabled: root.slice-export-enabled;
         first-layer-height-text <=> root.slice-first-layer-height-text;
         slicing-in-progress: root.slicing-in-progress;

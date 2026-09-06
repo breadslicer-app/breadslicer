@@ -28,6 +28,7 @@ sc-project-formats = { workspace = true }
 sc-scene = { workspace = true }
 sc-scene-edit = { workspace = true }
 sc-sl1cer = { workspace = true }
+sc-sla-formats = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }

@@ -39,6 +39,7 @@ mod pending_load;
 mod picking;
 mod preferences_bus;
 mod preferences_window;
+mod print_format;
 pub mod profile_catalog;
 mod profile_extending;
 mod profile_forking;

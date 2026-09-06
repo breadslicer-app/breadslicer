@@ -1369,7 +1369,7 @@ msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""
 
-#: src/app_state.rs:450 src/lib.rs:271
+#: src/app_state.rs:450 src/lib.rs:272
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
@@ -1535,6 +1535,31 @@ msgctxt "GenSupportDialog"
 msgid "{} Support structure(s) added to the scene. Estimated material: {} g."
 msgstr ""
 
+#: src/print_format.rs:75
+msgctxt "SlicePanel"
+msgid "this build cannot write it yet"
+msgstr ""
+
+#: src/print_format.rs:101
+msgctxt "SlicePanel"
+msgid ".goo (V3.0)"
+msgstr ""
+
+#: src/print_format.rs:102
+msgctxt "SlicePanel"
+msgid ".goo (V5.1)"
+msgstr ""
+
+#: src/print_format.rs:103
+msgctxt "SlicePanel"
+msgid ".ctb (v5)"
+msgstr ""
+
+#: src/print_format.rs:105
+msgctxt "SlicePanel"
+msgid ".ctb (v5 encrypted)"
+msgstr ""
+
 #: src/graphics_status.rs:69
 msgctxt "ErrorDialog"
 msgid "The 3D view is still starting up. Please try again in a moment."
@@ -1566,7 +1591,7 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:276
+#: src/lib.rs:277
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."

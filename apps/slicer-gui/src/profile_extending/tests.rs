@@ -5,7 +5,9 @@
 
 use std::fs;
 
-use sc_print_primitives::BuildVolume;
+use sc_print_primitives::{
+    BuildVolume, FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings,
+};
 use sc_print_profiles::load_material_profile_from_path;
 
 use crate::profile_catalog::ProfileSource;
@@ -69,6 +71,10 @@ fn printer_entry(id: &str, name: &str) -> PrinterCatalogEntry {
         manufacturer: "Maker".to_owned(),
         name: name.to_owned(),
         build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
+        output_formats: OutputFormatBindings::new(OutputFormatBinding {
+            format: FormatKind::Goo,
+            version: Some(NonEmptyString::new("v3.0").unwrap()),
+        }),
         image_path: None,
         source: ProfileSource::Bundled,
     }

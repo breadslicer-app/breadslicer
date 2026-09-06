@@ -2048,7 +2048,10 @@ mod apply_thumbnails_tests {
 mod derive_resin_view_tests {
     use std::collections::BTreeSet;
 
-    use sc_print_primitives::{BuildVolume, MaterialId};
+    use sc_print_primitives::{
+        BuildVolume, FormatKind, MaterialId, NonEmptyString, OutputFormatBinding,
+        OutputFormatBindings,
+    };
 
     use super::*;
 
@@ -2087,6 +2090,10 @@ mod derive_resin_view_tests {
             manufacturer: "Maker".to_owned(),
             name: name.to_owned(),
             build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
+            output_formats: OutputFormatBindings::new(OutputFormatBinding {
+                format: FormatKind::Goo,
+                version: Some(NonEmptyString::new("v3.0").unwrap()),
+            }),
             image_path: None,
             source: ProfileSource::Bundled,
         }
@@ -2518,7 +2525,10 @@ mod derive_resin_view_tests {
 mod build_card_data_tests {
     use std::collections::BTreeSet;
 
-    use sc_print_primitives::{BuildVolume, PrinterId};
+    use sc_print_primitives::{
+        BuildVolume, FormatKind, NonEmptyString, OutputFormatBinding, OutputFormatBindings,
+        PrinterId,
+    };
 
     use super::*;
 
@@ -2528,6 +2538,10 @@ mod build_card_data_tests {
             manufacturer: "Maker".to_owned(),
             name: id.to_owned(),
             build_volume: BuildVolume::new(100.0, 60.0, 80.0).unwrap(),
+            output_formats: OutputFormatBindings::new(OutputFormatBinding {
+                format: FormatKind::Goo,
+                version: Some(NonEmptyString::new("v3.0").unwrap()),
+            }),
             image_path: None,
             source: ProfileSource::Bundled,
         }

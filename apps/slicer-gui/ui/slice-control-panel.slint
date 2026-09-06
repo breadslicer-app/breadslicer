@@ -25,9 +25,14 @@ export component SliceControlPanel inherits Rectangle {
     in-out property <int> printer-current-index: -1;
     in property <[string]> resin-options;
     in-out property <int> resin-current-index: -1;
-    // The printer files the selected printer declares it takes.
+    // The printer files the selected printer declares it takes and
+    // this build can write.
     in property <[string]> print-format-options;
     in-out property <int> print-format-current-index: -1;
+    // One line per declared printer file that is not on offer, saying
+    // why. Empty when the printer declares nothing beyond what the
+    // dropdown holds.
+    in property <string> print-format-note;
 
     // Whether the export action can run. Computed on the Rust side,
     // which is the only place that knows whether a slice is held and
@@ -79,8 +84,10 @@ export component SliceControlPanel inherits Rectangle {
     property <length> panel-min-width: 200px;
     property <length> panel-max-width: 420px;
     // Room for the three labelled pickers, the first-layer-height
-    // field, the two buttons, plus the body paddings.
-    property <length> body-height: 380px;
+    // field, the two buttons, a print-format note of up to three
+    // lines, plus the body paddings. A longer note is clipped rather
+    // than pushing the export button out of the panel.
+    property <length> body-height: 430px;
     property <length> panel-min-height: root.title-bar-height + root.body-height;
     property <length> panel-max-height: Math.max(root.panel-min-height, root.available-height - 2 * root.edge-margin);
 
@@ -320,6 +327,12 @@ export component SliceControlPanel inherits Rectangle {
                     selected => {
                         root.print-format-picked(print-format-combo.current-index);
                     }
+                }
+                if root.print-format-note != "": Text {
+                    text: root.print-format-note;
+                    font-size: 0.8rem;
+                    color: Palette.foreground.transparentize(0.3);
+                    wrap: word-wrap;
                 }
             }
 

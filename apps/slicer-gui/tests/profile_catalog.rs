@@ -11,7 +11,7 @@
 use std::fs;
 use std::path::Path;
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{FormatKind, MaterialId, NonEmptyString, PrinterId};
 use sc_print_profiles::{CalibrationTarget, ProfileLibraries};
 use sc_slicer_gui::build_volume::{BuildVolume, HARDCODED_DEFAULT_BUILD_VOLUME};
 use sc_slicer_gui::profile_catalog::{
@@ -315,6 +315,28 @@ fn build_volume_is_captured_from_the_profile() {
     assert_eq!(bv.x_mm(), 192.0);
     assert_eq!(bv.y_mm(), 120.0);
     assert_eq!(bv.z_mm(), 200.0);
+}
+
+#[test]
+fn the_declared_output_formats_are_captured_from_the_profile() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_printer(
+        bundled.path(),
+        "formats",
+        "Maker",
+        "Model",
+        (100.0, 60.0, 80.0),
+        None,
+    );
+
+    let catalog = catalog_from(None, bundled.path());
+    let declared: Vec<_> = catalog.printers()[0].output_formats.iter().collect();
+    assert_eq!(declared.len(), 1);
+    assert_eq!(declared[0].format, FormatKind::Unknown("aff".to_owned()));
+    assert_eq!(
+        declared[0].version.as_ref().map(NonEmptyString::as_str),
+        Some("pm3"),
+    );
 }
 
 #[test]
