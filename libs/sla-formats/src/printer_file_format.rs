@@ -95,6 +95,16 @@ impl PrinterFileFormat {
         }
     }
 
+    /// Report whether this build carries a writer for the format.
+    ///
+    /// Identifying a revision and encoding it are separate: a profile
+    /// may declare a format this crate names but cannot yet write, and
+    /// callers that offer a choice need to tell the two apart before
+    /// [`write_printer_file`](crate::write_printer_file) refuses.
+    pub fn has_writer(self) -> bool {
+        matches!(self, Self::Goo(GooVersion::V3_0))
+    }
+
     /// Report the file extension this format is written with, without
     /// a leading dot.
     ///
@@ -295,6 +305,18 @@ mod printer_file_format_tests {
     #[test]
     fn a_path_without_an_extension_names_no_printer_file() {
         assert_eq!(printer_file_format_from_path(Path::new("plate")), None);
+    }
+
+    #[test]
+    fn goo_v3_0_is_the_one_format_this_build_writes() {
+        assert!(PrinterFileFormat::Goo(GooVersion::V3_0).has_writer());
+        for format in [
+            PrinterFileFormat::Goo(GooVersion::V5_1),
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5),
+            PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
+        ] {
+            assert!(!format.has_writer(), "{format}");
+        }
     }
 
     #[test]

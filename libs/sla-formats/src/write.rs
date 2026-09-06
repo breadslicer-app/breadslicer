@@ -18,7 +18,7 @@ use crate::format::Format;
 use crate::goo::v3_0;
 use crate::options::WriterOptions;
 use crate::print_program::PrintProgram;
-use crate::printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat};
+use crate::printer_file_format::PrinterFileFormat;
 
 /// Write a sliced contour stack to disk using `format`'s writer.
 ///
@@ -77,12 +77,8 @@ pub fn write_printer_file(
     format: PrinterFileFormat,
     program: &PrintProgram,
 ) -> Result<(), WriterError> {
-    match format {
-        PrinterFileFormat::Goo(GooVersion::V3_0) => {}
-        PrinterFileFormat::Goo(GooVersion::V5_1)
-        | PrinterFileFormat::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => {
-            return Err(WriterError::PrinterFormatNotImplemented { format });
-        }
+    if !format.has_writer() {
+        return Err(WriterError::PrinterFormatNotImplemented { format });
     }
     if program.layers.len() != stack.layers().len() {
         return Err(WriterError::ProgramLayerCountMismatch {
