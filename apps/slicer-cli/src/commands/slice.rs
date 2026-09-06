@@ -16,12 +16,13 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_e
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
     SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene, UnsliceableSelection,
-    project_to_print_program, slice_plate,
+    fallbacks_used, project_to_print_program, slice_plate,
 };
 use sc_print_primitives::{AaLevel, BuildVolume, NonEmptyString, PositiveFiniteMm};
 use sc_print_profiles::{
-    EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries, SceneOverrides,
-    load_material_profile_from_path, load_printer_profile_from_path, resolve,
+    EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
+    ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
+    load_printer_profile_from_path, resolve,
 };
 use sc_project_formats::{ReadProjectWarning, load_scene};
 use sc_scene::Scene;
@@ -169,7 +170,9 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             write_slice(&stack, &target_path, format, &options)?;
         }
         TargetFormat::PrinterFile(format) => {
-            let program = print_program_for(&plate, &printer, &material, args.layer_height)?;
+            let config = resolve_print_config(&printer, &material, args.layer_height)?;
+            report_fallbacks(&config, &mut std::io::stderr());
+            let program = print_program_for(&config, &plate)?;
             let stack = merge_plate(plate)?;
             write_printer_file(&stack, &target_path, format, &program)?;
         }
@@ -193,17 +196,15 @@ fn merge_plate(plate: SlicedPlate) -> Result<ContourStack> {
     })
 }
 
-/// Build the machine program the printer-file writers run.
+/// Resolve the full print configuration a printer file needs.
 ///
-/// This is where the full print configuration is required, so a
-/// pairing that sliced geometry fine can still fail here for want of
-/// an exposure.
-fn print_program_for(
-    plate: &SlicedPlate,
+/// A pairing that sliced geometry fine can still fail here for want
+/// of an exposure: geometry needs the layer height alone.
+fn resolve_print_config(
     printer: &PrinterProfile,
     material: &EffectiveMaterial,
     layer_height: Option<PositiveFiniteMm>,
-) -> Result<PrintProgram> {
+) -> Result<ResolvedPrintConfig> {
     // The plate was sliced under this same request, so overriding
     // here keeps the program's nominal thickness on the grid the
     // layers were actually cut on.
@@ -211,11 +212,33 @@ fn print_program_for(
         layer_height_mm: layer_height,
         ..Default::default()
     };
-    let config = resolve(printer, material, &overrides)
-        .map_err(|err| anyhow!("could not resolve the print configuration: {err}"))?;
+    resolve(printer, material, &overrides)
+        .map_err(|err| anyhow!("could not resolve the print configuration: {err}"))
+}
+
+/// Write the values the machine will run that no profile chose, so
+/// they are seen before the file is written rather than after the
+/// print fails.
+fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
+    let used = fallbacks_used(config);
+    if used.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "warning: {} print values are not calibrated for this printer:",
+        used.len(),
+    );
+    for fallback in used {
+        let _ = writeln!(out, "  {fallback}");
+    }
+}
+
+/// Build the machine program the printer-file writers run.
+fn print_program_for(config: &ResolvedPrintConfig, plate: &SlicedPlate) -> Result<PrintProgram> {
     let created_at = NonEmptyString::new(&Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
         .expect("a formatted timestamp is never empty");
-    project_to_print_program(&config, plate.profile(), created_at, VERSION)
+    project_to_print_program(config, plate.profile(), created_at, VERSION)
         .map_err(|err| anyhow!("cannot describe this print to the machine: {err}"))
 }
 

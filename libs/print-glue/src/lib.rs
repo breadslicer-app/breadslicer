@@ -20,13 +20,17 @@
 //!   printer-file writers' input port.
 //! - [`fingerprint`] computes the slice-input token project files
 //!   use to revalidate persisted slices.
+//! - [`fallback_report`] lists the resolved values no profile
+//!   supplied, for a frontend to show before it writes a file.
 
+pub mod fallback_report;
 pub mod fingerprint;
 pub mod prepare;
 pub mod print_program;
 pub mod projection;
 pub mod slice_plate;
 
+pub use fallback_report::{FallbackKind, FallbackUsed, fallbacks_used};
 pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
     slice_input_fingerprint, validate_persisted_slices,
@@ -43,6 +47,8 @@ pub use slice_plate::{
     SlicePlateError, SliceRun, SlicedPlate, SlicingParams, schedule_for_selection, slice_plate,
 };
 
+#[cfg(test)]
+mod tests_fallback_report;
 #[cfg(test)]
 mod tests_fingerprint;
 #[cfg(test)]

@@ -1093,6 +1093,64 @@ fn a_material_without_print_calibration_cannot_be_written_as_goo() {
 }
 
 #[test]
+fn an_uncalibrated_resin_reports_what_it_left_to_the_resolver() {
+    // The e2e resin names the 7 values resolution requires and none
+    // of the optional ones, so every optional value is a fallback.
+    let dir = tempdir().unwrap();
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(dir.path().join("plate.goo"))
+        .arg("--target-format")
+        .arg("goo")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: 11 print values are not calibrated for this printer:",
+        ))
+        .stderr(predicate::str::contains(
+            "  wait_after_cure_sec: no calibrated value, using 0 (no pause)",
+        ))
+        .stderr(predicate::str::contains(
+            "  bottom_light_pwm: no calibrated value, using 100 (full power)",
+        ));
+}
+
+#[test]
+fn a_fully_calibrated_resin_reports_nothing_and_still_writes() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.goo");
+    Command::cargo_bin("sc-slicer-cli")
+        .unwrap()
+        .arg("slice")
+        .arg("--source")
+        .arg(fixture_path("cube.stl"))
+        .arg("--target")
+        .arg(&target)
+        .arg("--target-format")
+        .arg("goo")
+        .arg("--printer-profile")
+        .arg("slicer-cli-e2e-test")
+        .arg("--material-profile")
+        .arg("slicer-cli-e2e-test-resin-calibrated")
+        .env("SC_SLICER_ASSETS_DIR", profiles_dir())
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+
+    let bytes = fs::read(&target).unwrap();
+    assert_eq!(goo_layer_offsets(&bytes).len(), 5);
+}
+
+#[test]
 fn an_unwritable_target_format_is_refused_at_the_flag() {
     let dir = tempdir().unwrap();
     Command::cargo_bin("sc-slicer-cli")
