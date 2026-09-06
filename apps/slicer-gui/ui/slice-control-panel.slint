@@ -39,6 +39,10 @@ export component SliceControlPanel inherits Rectangle {
     // whether the chosen format has a writer.
     in property <bool> export-enabled;
 
+    // True while a printer file or a project is being written: both
+    // go through the same worker and the same progress panel.
+    in property <bool> export-in-progress;
+
     // The scene's first-layer height, as the millimetre text shown in
     // the field. Empty when no per-print height is set.
     in-out property <string> first-layer-height-text;
@@ -338,7 +342,9 @@ export component SliceControlPanel inherits Rectangle {
 
             Button {
                 text: @tr("SlicePanel" => "Export for printer");
-                enabled: root.export-enabled;
+                enabled: root.export-enabled
+                    && !root.slicing-in-progress
+                    && !root.export-in-progress;
                 clicked => {
                     root.export-requested();
                 }

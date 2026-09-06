@@ -16,13 +16,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use sc_print_primitives::{MaterialId, OutputFormatBinding, PrinterId};
+use sc_sla_formats::PrinterFileFormat;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::MainWindow;
+use crate::export_print_file::export_button_enabled;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::print_format::{PrintFormatModel, print_format_model};
 use crate::profile_catalog::ProfileCatalog;
 use crate::scene_document::{SceneDocument, SceneEvent, SceneSubscription};
+use crate::slice_result::SliceParams;
 use crate::slice_selection::{
     FirstLayerHeightInput, PickerModel, format_first_layer_height, parse_first_layer_height,
     picker_model, printer_candidates, resin_candidates,
@@ -40,6 +43,9 @@ pub(crate) struct SlicePanelBridge {
     // The same for the print-format selector, whose handle is the
     // printer profile's own binding.
     print_format_bindings: RefCell<Vec<OutputFormatBinding>>,
+    // The printer file the selected row names, which is what an
+    // export writes. `None` when the dropdown offers nothing.
+    selected_format: RefCell<Option<PrinterFileFormat>>,
     // The printer the panel is currently showing, which is the one a
     // format pick is remembered against.
     shown_printer: RefCell<Option<PrinterId>>,
@@ -68,6 +74,7 @@ impl SlicePanelBridge {
             printer_ids: RefCell::new(Vec::new()),
             resin_ids: RefCell::new(Vec::new()),
             print_format_bindings: RefCell::new(Vec::new()),
+            selected_format: RefCell::new(None),
             shown_printer: RefCell::new(None),
             document_sub: RefCell::new(None),
             bus_sub: RefCell::new(None),
@@ -93,31 +100,43 @@ impl SlicePanelBridge {
         }
 
         // Rebuild when a scene is installed (its own choice, if any,
-        // becomes the prefill) or cleared.
+        // becomes the prefill) or cleared. A committed edit and a
+        // stored slice leave the pickers alone but change whether the
+        // held slice still describes the plate.
         {
             let weak = Rc::downgrade(&bridge);
             let sub = bridge.document.subscribe(move |event| {
-                if matches!(event, SceneEvent::Installed | SceneEvent::Cleared)
-                    && let Some(bridge) = weak.upgrade()
-                {
-                    bridge.refresh();
+                let Some(bridge) = weak.upgrade() else {
+                    return;
+                };
+                match event {
+                    SceneEvent::Installed | SceneEvent::Cleared => bridge.refresh(),
+                    SceneEvent::Mutated | SceneEvent::Restructured | SceneEvent::SliceChanged => {
+                        bridge.refresh_export_enabled()
+                    }
+                    SceneEvent::SelectionChanged
+                    | SceneEvent::UndoStackChanged
+                    | SceneEvent::DirtyChanged => {}
                 }
             });
             *bridge.document_sub.borrow_mut() = Some(sub);
         }
 
         // Rebuild when the favourites or the global default change.
+        // The anti-aliasing level is part of what a slice ran with,
+        // so it moves the export gate without touching the pickers.
         {
             let weak = Rc::downgrade(&bridge);
             let sub = bridge.bus.subscribe(move |_snap, change| {
-                if matches!(
-                    change,
+                let Some(bridge) = weak.upgrade() else {
+                    return;
+                };
+                match change {
                     PreferencesChange::Favourites
-                        | PreferencesChange::DefaultPrinter
-                        | PreferencesChange::DefaultResin
-                ) && let Some(bridge) = weak.upgrade()
-                {
-                    bridge.refresh();
+                    | PreferencesChange::DefaultPrinter
+                    | PreferencesChange::DefaultResin => bridge.refresh(),
+                    PreferencesChange::AaLevel => bridge.refresh_export_enabled(),
+                    _ => {}
                 }
             });
             *bridge.bus_sub.borrow_mut() = Some(sub);
@@ -169,6 +188,10 @@ impl SlicePanelBridge {
             .iter()
             .map(|option| SharedString::from(option.label.as_str()))
             .collect();
+        let selected_format = usize::try_from(formats.selected)
+            .ok()
+            .and_then(|index| formats.options.get(index))
+            .map(|option| option.format);
 
         // Options before index: writing a fresh model can clamp the
         // two-way-bound index, so the explicit index write must follow.
@@ -187,7 +210,54 @@ impl SlicePanelBridge {
         *self.resin_ids.borrow_mut() = resin.options.into_iter().map(|o| o.id).collect();
         *self.print_format_bindings.borrow_mut() =
             formats.options.into_iter().map(|o| o.binding).collect();
+        *self.selected_format.borrow_mut() = selected_format;
         *self.shown_printer.borrow_mut() = shown_printer;
+
+        self.refresh_export_enabled();
+    }
+
+    /// Recomputes whether the export action can run and pushes it to
+    /// the window. Reads the held slice and the current selection
+    /// only, so it can run on signals that leave the pickers alone.
+    fn refresh_export_enabled(&self) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let snapshot = self.bus.snapshot();
+        // The same resolution the Slice button makes: the scene's own
+        // choice, else the app-wide default the pickers prefill with.
+        let printer = self
+            .document
+            .selected_printer()
+            .or_else(|| snapshot.default_printer.clone());
+        let resin = self
+            .document
+            .selected_resin()
+            .or_else(|| snapshot.default_resin.clone());
+        let current = printer.zip(resin).map(|(printer, resin)| SliceParams {
+            printer,
+            resin,
+            first_layer_height: self.document.selected_first_layer_height(),
+            aa_level: snapshot.aa_level,
+            geometry: self.document.scene_revision(),
+        });
+        let held = self.document.slice_params();
+        let geometry_changed = held
+            .as_ref()
+            .is_some_and(|held| self.document.slice_geometry_changed(held.geometry));
+
+        ui.set_slice_export_enabled(export_button_enabled(
+            held.as_ref(),
+            current.as_ref(),
+            geometry_changed,
+            self.selected_format.borrow().is_some(),
+        ));
+    }
+
+    /// The printer file the panel currently offers to write, or `None`
+    /// when the selected printer declares none this build can write.
+    pub(crate) fn selected_print_format(&self) -> Option<PrinterFileFormat> {
+        *self.selected_format.borrow()
     }
 
     fn on_printer_picked(&self, index: i32) {
@@ -230,17 +300,20 @@ impl SlicePanelBridge {
     /// Applies a first-layer-height edit to the document. An empty field
     /// clears the per-print override; a valid millimetre value sets it;
     /// invalid input is ignored so a partly-typed number is not lost.
-    /// Does not refresh: the field already holds the user's text, and
-    /// re-pushing a reformatted value mid-edit would disrupt typing.
+    /// Does not rebuild the pickers: the field already holds the user's
+    /// text, and re-pushing a reformatted value mid-edit would disrupt
+    /// typing. The export gate does move, since a new first-layer
+    /// height is a height the held slice was not cut at.
     fn on_first_layer_height_edited(&self, text: &str) {
-        match parse_first_layer_height(text) {
-            FirstLayerHeightInput::Clear => {
-                self.document.set_selected_first_layer_height(None);
-            }
+        let changed = match parse_first_layer_height(text) {
+            FirstLayerHeightInput::Clear => self.document.set_selected_first_layer_height(None),
             FirstLayerHeightInput::Set(height) => {
-                self.document.set_selected_first_layer_height(Some(height));
+                self.document.set_selected_first_layer_height(Some(height))
             }
-            FirstLayerHeightInput::Invalid => {}
+            FirstLayerHeightInput::Invalid => false,
+        };
+        if changed {
+            self.refresh_export_enabled();
         }
     }
 }

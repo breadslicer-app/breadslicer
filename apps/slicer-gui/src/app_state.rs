@@ -556,6 +556,7 @@ impl AppState {
             self.prefs.clone(),
             ctrl.document(),
         );
+        crate::export_print_file::wire_export_print_file(&ui, ctrl.clone(), slice_panel.clone());
         let slice_run = SliceRun::install(&ui, self.prefs.clone(), ctrl.document(), ctrl.dialogs());
         let repair_run = RepairRun::install(&ui, ctrl.document(), ctrl.dialogs());
         let support_gen_run =

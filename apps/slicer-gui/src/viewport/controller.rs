@@ -305,6 +305,7 @@ impl ViewportController {
                 }
                 self.mark_dirty();
             }
+            SceneEvent::SliceChanged => self.mirror_slice_layer_count_to_ui(),
             SceneEvent::UndoStackChanged => self.mirror_undo_state_to_ui(),
             SceneEvent::DirtyChanged => self.mirror_dirty_state_to_ui(),
         }
@@ -598,15 +599,12 @@ impl ViewportController {
         // A reopened project's revalidated slices become the held result
         // now, after install has cleared any previous one, so the viewer
         // opens on them without a re-slice. The fresh scene's revision is
-        // the in-sync baseline the write guard compares against, and the
-        // layer count is re-mirrored since a stored result fires no
-        // scene event.
+        // the in-sync baseline the write guard compares against.
         if let Some(reloaded) = reloaded_slices {
             let geometry = self.session.document().scene_revision();
             self.session
                 .document()
                 .set_slice_result(reloaded.into_slice_result(geometry));
-            self.mirror_slice_layer_count_to_ui();
         }
 
         // A freshly loaded scene opens in Transform when its meshes are

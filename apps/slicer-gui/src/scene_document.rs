@@ -125,6 +125,11 @@ pub(crate) enum SceneEvent {
     /// a re-upload to mirror the new arena shape, so listeners
     /// schedule that on top of the usual redraw.
     Restructured,
+    /// The held slice result changed: a run finished, or a reopened
+    /// project's revalidated slices landed. The scene itself is
+    /// untouched; listeners that mirror slice state to the UI react
+    /// here.
+    SliceChanged,
     /// The undo or redo stack changed (push, undo, redo, or
     /// install/clear when the stacks were non-empty). Listeners that
     /// only care about scene contents can ignore this; the controller
@@ -605,6 +610,15 @@ impl SceneDocument {
         self.evicted_since_slice.set(false);
         self.slice_generation
             .set(self.slice_generation.get().wrapping_add(1));
+        self.notify(SceneEvent::SliceChanged);
+    }
+
+    /// The held slice, or `None` when the current scene has not been
+    /// sliced. Clones the contours, so this is the accessor for
+    /// handing the slice to a worker rather than for reading one
+    /// layer (see [`Self::with_slice_layer`]).
+    pub(crate) fn held_slice(&self) -> Option<SliceResult> {
+        self.slice_result.borrow().clone()
     }
 
     /// Returns the parameters the held slice ran with, or `None` when
