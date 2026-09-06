@@ -12,7 +12,7 @@ use sc_print_profiles::{
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
 use sc_sla_formats::PrintProgram;
 
-use super::print_program::{SlabTopOutOfRange, project_to_print_program};
+use super::print_program::{SlabTopOutOfRange, creation_time_now, project_to_print_program};
 use super::projection::project_to_slice_profile;
 
 const BOTTOM_LAYER_COUNT: u32 = 8;
@@ -541,6 +541,32 @@ fn a_layer_beyond_the_representable_height_names_itself() {
     let err = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap_err();
     assert_eq!(err.layer_index, 1);
     assert!(!err.z_mm.is_finite(), "z_mm: {}", err.z_mm);
+}
+
+#[test]
+fn the_creation_time_renders_as_a_date_and_a_wall_clock_time() {
+    const SEPARATORS: [(usize, char); 5] = [(4, '-'), (7, '-'), (10, ' '), (13, ':'), (16, ':')];
+
+    let rendered = creation_time_now();
+    let text = rendered.as_str();
+
+    assert_eq!(text.len(), 19, "text: {text}");
+    for (index, separator) in SEPARATORS {
+        assert_eq!(
+            text.chars().nth(index),
+            Some(separator),
+            "position {index} of {text}",
+        );
+    }
+    for (index, character) in text.char_indices() {
+        if SEPARATORS.iter().any(|(at, _)| *at == index) {
+            continue;
+        }
+        assert!(
+            character.is_ascii_digit(),
+            "position {index} of {text} should be a digit",
+        );
+    }
 }
 
 #[test]

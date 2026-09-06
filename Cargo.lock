@@ -4824,6 +4824,7 @@ dependencies = [
 name = "sc-print-glue"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-print-primitives",
@@ -4946,7 +4947,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "bpaf",
- "chrono",
  "png 0.18.1",
  "predicates",
  "sc-3mf",

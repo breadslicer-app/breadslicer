@@ -8,6 +8,7 @@
 
 use std::fmt;
 
+use chrono::Local;
 use sc_print_primitives::{
     LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec,
 };
@@ -92,6 +93,17 @@ pub fn project_to_print_program(
         created_at,
         slicer_version,
     })
+}
+
+/// Render the current local time as a printer file's creation time.
+///
+/// These formats carry the creation time as a free-form string, so its
+/// shape is the writer's to choose. This is the one this workspace
+/// writes, and the rendering [`project_to_print_program`] expects
+/// `created_at` to arrive in.
+pub fn creation_time_now() -> NonEmptyString {
+    let rendered = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    NonEmptyString::new(&rendered).expect("a formatted timestamp is never empty")
 }
 
 /// The three pauses one layer's record carries.

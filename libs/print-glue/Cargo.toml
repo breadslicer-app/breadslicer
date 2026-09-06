@@ -19,6 +19,7 @@ sc-print-profiles = { workspace = true }
 sc-scene = { workspace = true }
 sc-sl1cer = { workspace = true }
 sc-sla-formats = { workspace = true }
+chrono = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]

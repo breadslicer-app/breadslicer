@@ -11,14 +11,13 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use chrono::Local;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
     SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene, UnsliceableSelection,
-    fallbacks_used, project_to_print_program, slice_plate,
+    creation_time_now, fallbacks_used, project_to_print_program, slice_plate,
 };
-use sc_print_primitives::{AaLevel, BuildVolume, NonEmptyString, PositiveFiniteMm};
+use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialExtensionIssue, PrinterProfile, ProfileLibraries,
     ResolvedPrintConfig, SceneOverrides, load_material_profile_from_path,
@@ -236,9 +235,7 @@ fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
 
 /// Build the machine program the printer-file writers run.
 fn print_program_for(config: &ResolvedPrintConfig, plate: &SlicedPlate) -> Result<PrintProgram> {
-    let created_at = NonEmptyString::new(&Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
-        .expect("a formatted timestamp is never empty");
-    project_to_print_program(config, plate.profile(), created_at, VERSION)
+    project_to_print_program(config, plate.profile(), creation_time_now(), VERSION)
         .map_err(|err| anyhow!("cannot describe this print to the machine: {err}"))
 }
 
