@@ -137,3 +137,23 @@ pub fn fallbacks_used(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
         })
         .collect()
 }
+
+/// Render the uncalibrated values as the block a frontend shows
+/// before it writes a printer file: a counting header, then one
+/// indented line per value.
+///
+/// Empty when nothing fell back, so a caller writes every line it
+/// gets without testing for the nothing-to-say case.
+pub fn fallback_report_lines(config: &ResolvedPrintConfig) -> Vec<String> {
+    let used = fallbacks_used(config);
+    if used.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = Vec::with_capacity(used.len() + 1);
+    lines.push(format!(
+        "warning: {} print values are not calibrated for this printer:",
+        used.len(),
+    ));
+    lines.extend(used.iter().map(|fallback| format!("  {fallback}")));
+    lines
+}

@@ -15,7 +15,7 @@ use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_e
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use sc_print_glue::{
     SlicePlateError, SliceRun, SlicedPlate, SlicingParams, UnsliceableScene, UnsliceableSelection,
-    creation_time_now, fallbacks_used, project_to_print_program, slice_plate,
+    creation_time_now, fallback_report_lines, project_to_print_program, slice_plate,
 };
 use sc_print_primitives::{AaLevel, BuildVolume, PositiveFiniteMm};
 use sc_print_profiles::{
@@ -219,17 +219,8 @@ fn resolve_print_config(
 /// they are seen before the file is written rather than after the
 /// print fails.
 fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
-    let used = fallbacks_used(config);
-    if used.is_empty() {
-        return;
-    }
-    let _ = writeln!(
-        out,
-        "warning: {} print values are not calibrated for this printer:",
-        used.len(),
-    );
-    for fallback in used {
-        let _ = writeln!(out, "  {fallback}");
+    for line in fallback_report_lines(config) {
+        let _ = writeln!(out, "{line}");
     }
 }
 

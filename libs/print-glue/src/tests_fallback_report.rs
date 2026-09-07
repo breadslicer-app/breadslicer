@@ -8,7 +8,7 @@ use sc_print_profiles::{
     SceneOverrides,
 };
 
-use super::fallback_report::{FallbackKind, fallbacks_used};
+use super::fallback_report::{FallbackKind, fallback_report_lines, fallbacks_used};
 
 const PRINTER_TOML: &str = r#"
 [identity]
@@ -256,4 +256,31 @@ fn an_override_counts_as_a_supplied_value() {
         !reported.contains(&ResolvedField::WaitAfterLiftSec),
         "the override supplied it: {reported:?}",
     );
+}
+
+#[test]
+fn the_report_heads_the_uncalibrated_values_with_their_count() {
+    let lines = fallback_report_lines(&config(BARE_MATERIAL_TOML));
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("warning: 11 print values are not calibrated for this printer:"),
+    );
+    assert_eq!(lines.len(), 12, "lines: {lines:?}");
+    for line in &lines[1..] {
+        assert!(line.starts_with("  "), "line: {line}");
+    }
+}
+
+#[test]
+fn the_report_gives_each_value_a_line_of_its_own() {
+    let lines = fallback_report_lines(&config(BARE_MATERIAL_TOML));
+    assert!(
+        lines.contains(&"  light_pwm: no calibrated value, using 100 (full power)".to_string()),
+        "lines: {lines:?}",
+    );
+}
+
+#[test]
+fn a_fully_calibrated_resin_reports_no_lines_at_all() {
+    assert!(fallback_report_lines(&config(FULLY_CALIBRATED_MATERIAL_TOML)).is_empty());
 }

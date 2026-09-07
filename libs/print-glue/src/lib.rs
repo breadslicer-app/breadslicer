@@ -30,7 +30,7 @@ pub mod print_program;
 pub mod projection;
 pub mod slice_plate;
 
-pub use fallback_report::{FallbackKind, FallbackUsed, fallbacks_used};
+pub use fallback_report::{FallbackKind, FallbackUsed, fallback_report_lines, fallbacks_used};
 pub use fingerprint::{
     PersistedSliceValidity, SliceInputFingerprint, SliceInputFingerprintError,
     slice_input_fingerprint, validate_persisted_slices,
