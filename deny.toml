@@ -61,9 +61,9 @@ exceptions = [
 
     # Temporary licensing allowance
     { allow = ["AGPL-3.0-only"], crate = "sc-geom" },
-    { allow = ["AGPL-3.0-only"], crate = "geom-ops-handler" },
+    { allow = ["AGPL-3.0-only"], crate = "generic-geom-alg-family-dispatch" },
     { allow = ["AGPL-3.0-only"], crate = "sc-geom-transport-inprocess" },
-    { allow = ["AGPL-3.0-only"], crate = "support-gen-handler" },
+    { allow = ["AGPL-3.0-only"], crate = "support-gen-family-dispatch" },
     { allow = ["AGPL-3.0-only"], crate = "support-gen-trivial" },
 ]
 
