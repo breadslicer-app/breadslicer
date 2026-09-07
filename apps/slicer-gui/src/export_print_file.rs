@@ -24,7 +24,8 @@ use std::rc::Rc;
 
 use futures_channel::oneshot;
 use sc_print_glue::{
-    SlabTopOutOfRange, creation_time_now, project_to_print_program, slice_profile_for_selection,
+    SlabTopOutOfRange, creation_time_now, fallback_report_lines, project_to_print_program,
+    slice_profile_for_selection,
 };
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, ResolveError, SceneOverrides, resolve};
 use sc_scene::Scene;
@@ -90,12 +91,14 @@ impl fmt::Display for ExportFailure {
 }
 
 /// A prepared export: the plate to rasterise, the program the machine
-/// runs it under, and the file both are written as.
+/// runs it under, the file both are written as, and the report of the
+/// values in that program nobody calibrated.
 #[derive(Debug)]
 struct ExportJob {
     stack: ContourStack,
     program: PrintProgram,
     format: PrinterFileFormat,
+    fallback_report: Vec<String>,
 }
 
 /// Whether the export action can run: a writable format is selected
@@ -171,6 +174,7 @@ fn export_job(
         stack: held.merged,
         program,
         format,
+        fallback_report: fallback_report_lines(&config),
     })
 }
 
@@ -216,6 +220,11 @@ async fn run_export_flow(
             return;
         }
     };
+    // Also before the dialog: cancelling it is the last point at which
+    // the user can act on what the warning says.
+    for line in &job.fallback_report {
+        eprintln!("{line}");
+    }
     let Some(target) = pick_printer_file_target(default_stem, format).await else {
         return;
     };
@@ -515,6 +524,23 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
         assert_eq!(job.program.machine_name.as_str(), "Mars 5");
         assert_eq!(job.program.material_name.as_str(), "Blu");
+    }
+
+    #[test]
+    fn the_job_reports_the_values_the_resin_left_to_the_resolver() {
+        // The fixture resin names what resolution requires and none of
+        // the optional values, so the whole optional set falls back.
+        let (printer, material) = profiles(MATERIAL_TOML);
+        let scene = cube_scene();
+        let held = held_slice(derived_schedule(&scene, &printer, &material));
+
+        let job = export_job(held, &scene, &printer, &material, GOO).expect("the export prepares");
+
+        assert_eq!(
+            job.fallback_report.first().map(String::as_str),
+            Some("warning: 11 print values are not calibrated for this printer:"),
+        );
+        assert_eq!(job.fallback_report.len(), 12, "{:?}", job.fallback_report);
     }
 
     #[test]
