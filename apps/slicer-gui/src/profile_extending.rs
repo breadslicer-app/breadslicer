@@ -65,6 +65,47 @@ pub(crate) fn uncovered_targets(
         .collect()
 }
 
+/// A calibration block the resin already carries, offered as a
+/// starting point for the one being added.
+pub(crate) struct CalibrationCopySource {
+    pub label: SharedString,
+    pub values: MaterialPerPrinter,
+}
+
+/// List the resin's existing calibration blocks as starting points for
+/// a new one, the generic machine's first and then the printers' by
+/// id. Labels a block keyed by a printer the catalog does not list
+/// with that printer's id.
+///
+/// Carries the blocks as written, not resolved values: the extension
+/// inherits the base's defaults, so a field the source leaves unset
+/// stays unset in the copy.
+pub(crate) fn copy_sources(
+    material: &EffectiveMaterial,
+    printers: &[PrinterCatalogEntry],
+) -> Vec<CalibrationCopySource> {
+    material
+        .per_printer()
+        .iter()
+        .map(|(target, values)| {
+            let label = match target {
+                CalibrationTarget::Generic => ctr!("ExtendDialog", "Generic"),
+                CalibrationTarget::Printer(id) => printers
+                    .iter()
+                    .find(|printer| &printer.id == id.as_printer_id())
+                    .map_or_else(
+                        || SharedString::from(target.as_str()),
+                        |printer| SharedString::from(printer.name.as_str()),
+                    ),
+            };
+            CalibrationCopySource {
+                label,
+                values: *values,
+            }
+        })
+        .collect()
+}
+
 /// The extension profile to write after adding a block for `target`.
 /// Appends to `existing_extension` when the resin already has one;
 /// otherwise starts a fresh extension from the base's identity. A base

@@ -21,6 +21,10 @@ export component ExtendDialog inherits Window {
     in property <string> source-name;
     in property <[string]> target-labels;
     in-out property <int> target-index: -1;
+    // The resin's existing calibration blocks, to start a new one
+    // from instead of typing all the values again.
+    in property <[string]> copy-source-labels;
+    in-out property <int> copy-source-index: -1;
     in-out property <string> normal-exposure-text;
     in-out property <string> bottom-exposure-text;
     in-out property <string> bottom-count-text;
@@ -40,6 +44,7 @@ export component ExtendDialog inherits Window {
     in-out property <string> bottom-light-pwm-text;
     in property <string> error-message;
 
+    callback copy-requested(int);
     callback save-requested();
     callback cancel-requested();
 
@@ -99,6 +104,21 @@ export component ExtendDialog inherits Window {
 
                 if root.target-index >= 0: VerticalLayout {
                     spacing: 6px;
+                    if root.copy-source-labels.length > 0: VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: @tr("ExtendDialog" => "Copy values from");
+                            font-size: 0.85rem;
+                            color: Palette.foreground.transparentize(0.3);
+                        }
+                        ComboBox {
+                            model: root.copy-source-labels;
+                            current-index <=> root.copy-source-index;
+                            selected => {
+                                root.copy-requested(self.current-index);
+                            }
+                        }
+                    }
                     EditField {
                         label: @tr("ExtendDialog" => "Normal exposure (s)");
                         value <=> root.normal-exposure-text;

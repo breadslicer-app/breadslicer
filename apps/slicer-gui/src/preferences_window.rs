@@ -36,7 +36,7 @@ use crate::profile_catalog::{
     MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry, ProfileCatalog,
     ProfileSource, has_active_matcher,
 };
-use crate::profile_extending::{build_extension_update, uncovered_targets};
+use crate::profile_extending::{build_extension_update, copy_sources, uncovered_targets};
 use crate::profile_forking::{ForkParts, build_fork};
 use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
@@ -1093,7 +1093,8 @@ fn open_extend_dialog(
     let snapshot = bus.snapshot();
     let default_printer = catalog.effective_default_printer(snapshot.default_printer.as_ref());
     // The dialog writes to the raw files, so `base` and `extension`
-    // stay around; the composed view only feeds the target complement.
+    // stay around; the composed view feeds the target complement and
+    // the blocks a new one can be copied from.
     let (material, issues) = EffectiveMaterial::compose(base.clone(), extension.clone());
     for issue in &issues {
         eprintln!("warning: {issue}");
@@ -1102,6 +1103,7 @@ fn open_extend_dialog(
     if targets.is_empty() {
         return;
     }
+    let sources = copy_sources(&material, catalog.printers());
 
     let dialog = match ExtendDialog::new() {
         Ok(dialog) => dialog,
@@ -1119,11 +1121,50 @@ fn open_extend_dialog(
             .collect::<Vec<_>>(),
     )));
     dialog.set_target_index(-1);
+    dialog.set_copy_source_labels(ModelRc::new(VecModel::from(
+        sources
+            .iter()
+            .map(|source| source.label.clone())
+            .collect::<Vec<_>>(),
+    )));
+    dialog.set_copy_source_index(-1);
 
     let base = Rc::new(base);
     let extension = Rc::new(extension);
     let targets = Rc::new(targets);
+    let sources = Rc::new(sources);
     let dialog_weak = dialog.as_weak();
+
+    dialog.on_copy_requested({
+        let dialog_weak = dialog_weak.clone();
+        let sources = sources.clone();
+        move |picked| {
+            let Some(d) = dialog_weak.upgrade() else {
+                return;
+            };
+            let Some(source) = sources.get(picked as usize) else {
+                return;
+            };
+            let seeded = calibration_form_from_block(&source.values);
+            d.set_normal_exposure_text(seeded.normal_exposure_sec.into());
+            d.set_bottom_exposure_text(seeded.bottom_exposure_sec.into());
+            d.set_bottom_count_text(seeded.bottom_layer_count.into());
+            d.set_wait_before_cure_text(seeded.wait_before_cure_sec.into());
+            d.set_wait_after_cure_text(seeded.wait_after_cure_sec.into());
+            d.set_wait_after_lift_text(seeded.wait_after_lift_sec.into());
+            d.set_bottom_wait_before_cure_text(seeded.bottom_wait_before_cure_sec.into());
+            d.set_bottom_wait_after_cure_text(seeded.bottom_wait_after_cure_sec.into());
+            d.set_bottom_wait_after_lift_text(seeded.bottom_wait_after_lift_sec.into());
+            d.set_lift_distance_text(seeded.lift_distance_mm.into());
+            d.set_lift_speed_text(seeded.lift_speed_mm_min.into());
+            d.set_retract_speed_text(seeded.retract_speed_mm_min.into());
+            d.set_bottom_lift_distance_text(seeded.bottom_lift_distance_mm.into());
+            d.set_bottom_lift_speed_text(seeded.bottom_lift_speed_mm_min.into());
+            d.set_bottom_retract_speed_text(seeded.bottom_retract_speed_mm_min.into());
+            d.set_light_pwm_text(seeded.light_pwm.into());
+            d.set_bottom_light_pwm_text(seeded.bottom_light_pwm.into());
+        }
+    });
 
     dialog.on_save_requested({
         let dialog_weak = dialog_weak.clone();

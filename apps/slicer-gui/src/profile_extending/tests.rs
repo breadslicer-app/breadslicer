@@ -50,6 +50,38 @@ profile_version = \"1.2.0\"
 normal_exposure_sec = 2.2
 ";
 
+const GENERIC_AND_UNKNOWN_TOML: &str = "\
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"1.2.0\"
+
+[intent]
+
+[defaults]
+
+[per_printer.generic-machine]
+normal_exposure_sec = 3.0
+
+[per_printer.printer-unlisted]
+normal_exposure_sec = 2.8
+";
+
+const BLOCKLESS_TOML: &str = "\
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"1.2.0\"
+
+[intent]
+
+[defaults]
+";
+
 fn parse(toml: &str) -> MaterialProfile {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("profile.toml");
@@ -169,6 +201,48 @@ fn full_coverage_leaves_nothing_to_extend() {
     let material = effective(parse(BASE_TOML), None);
     let subset = vec![printer_entry("printer-a", "Printer A")];
     assert!(uncovered_targets(&material, &subset, None).is_empty());
+}
+
+#[test]
+fn the_copy_sources_span_the_base_and_the_extension_blocks() {
+    let material = effective(parse(BASE_TOML), Some(parse(EXTENSION_TOML)));
+    let sources = copy_sources(&material, &printers());
+
+    let labels: Vec<&str> = sources.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["Printer A", "Printer B"]);
+    assert_eq!(
+        sources[0].values.normal_exposure_sec.map(|v| v.value()),
+        Some(2.5)
+    );
+    assert_eq!(
+        sources[1].values.normal_exposure_sec.map(|v| v.value()),
+        Some(2.2)
+    );
+}
+
+#[test]
+fn a_copied_block_leaves_the_fields_it_does_not_set_unset() {
+    let material = effective(parse(BASE_TOML), None);
+    let sources = copy_sources(&material, &printers());
+
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].values.bottom_layer_count, None);
+    assert_eq!(sources[0].values.lift_distance_mm, None);
+}
+
+#[test]
+fn the_generic_block_is_labelled_and_offered_first() {
+    let material = effective(parse(GENERIC_AND_UNKNOWN_TOML), None);
+    let sources = copy_sources(&material, &printers());
+
+    let labels: Vec<&str> = sources.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["Generic", "printer-unlisted"]);
+}
+
+#[test]
+fn a_resin_with_no_blocks_offers_nothing_to_copy() {
+    let material = effective(parse(BLOCKLESS_TOML), None);
+    assert!(copy_sources(&material, &printers()).is_empty());
 }
 
 #[test]
