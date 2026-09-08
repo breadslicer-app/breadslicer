@@ -31,6 +31,7 @@ pub mod pixel_size;
 pub mod scale_compensation;
 pub mod speed;
 pub mod time;
+pub mod volume;
 
 pub use aa_level::{AaLevel, UnknownAaLevel};
 pub use build_volume::{AxisOutOfRange, BuildVolume};
@@ -56,6 +57,7 @@ pub use speed::{
     SpeedRangeMmPerMinBoundsInverted,
 };
 pub use time::{NegativeDuration, NonNegativeFiniteSec, PositiveFiniteSec, SecOutOfRange};
+pub use volume::{VolumeMm3, VolumeOutOfRange};
 
 #[cfg(test)]
 mod tests_aa_level;
@@ -89,3 +91,5 @@ mod tests_scale_compensation;
 mod tests_speed;
 #[cfg(test)]
 mod tests_time;
+#[cfg(test)]
+mod tests_volume;
