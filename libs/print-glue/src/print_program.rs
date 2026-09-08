@@ -131,8 +131,8 @@ pub fn project_to_print_program(
                 wait_after_lift_sec: waits.after_lift_sec,
                 lift: motion.lift,
                 retract: motion.retract,
-                second_lift: None,
-                second_retract: None,
+                second_lift: motion.second_lift,
+                second_retract: motion.second_retract,
                 light_pwm: light_pwm_for(layer_index, material),
             })
         })
@@ -253,6 +253,8 @@ fn waits_for(layer_index: u32, material: &MaterialResolved) -> LayerWaits {
 struct LayerMotion {
     lift: MotionStage,
     retract: MotionStage,
+    second_lift: Option<MotionStage>,
+    second_retract: Option<MotionStage>,
 }
 
 /// Pick one layer's platform travel: the bottom layers hold the
@@ -260,32 +262,61 @@ struct LayerMotion {
 /// The transition band takes the normal travel, because only the
 /// exposure changes across it.
 ///
-/// The platform returns the distance it rose, so the retract repeats
-/// the lift's distance at its own speed.
+/// The platform returns the distance it rose. One stage returns it in
+/// a single move; a split travel returns the 2 parts in reverse order,
+/// so the retract carries the second lift's distance and the second
+/// retract carries the first lift's.
 fn motion_for(layer_index: u32, material: &MaterialResolved) -> LayerMotion {
-    let (distance_mm, lift_speed_mm_min, retract_speed_mm_min) =
+    let (distance_mm, lift_speed_mm_min, retract_speed_mm_min, second) =
         if layer_index < material.bottom_layer_count {
             (
                 material.bottom_lift_distance_mm,
                 material.bottom_lift_speed_mm_min,
                 material.bottom_retract_speed_mm_min,
+                material.bottom_second_travel,
             )
         } else {
             (
                 material.lift_distance_mm,
                 material.lift_speed_mm_min,
                 material.retract_speed_mm_min,
+                material.second_travel,
             )
         };
+    let lift = MotionStage {
+        distance_mm,
+        speed_mm_min: lift_speed_mm_min,
+    };
+    let Some(second) = second else {
+        return LayerMotion {
+            lift,
+            retract: MotionStage {
+                distance_mm,
+                speed_mm_min: retract_speed_mm_min,
+            },
+            second_lift: None,
+            second_retract: None,
+        };
+    };
+    // The platform covers the same 2 distances on the way down in
+    // reverse order, so the first part of the return is the second
+    // lift's distance and the last part is the first lift's. Each
+    // stage states its own return speed; none is derived from a lift
+    // speed.
     LayerMotion {
-        lift: MotionStage {
-            distance_mm,
-            speed_mm_min: lift_speed_mm_min,
-        },
+        lift,
         retract: MotionStage {
+            distance_mm: second.lift_distance_mm,
+            speed_mm_min: second.retract_speed_mm_min,
+        },
+        second_lift: Some(MotionStage {
+            distance_mm: second.lift_distance_mm,
+            speed_mm_min: second.lift_speed_mm_min,
+        }),
+        second_retract: Some(MotionStage {
             distance_mm,
             speed_mm_min: retract_speed_mm_min,
-        },
+        }),
     }
 }
 

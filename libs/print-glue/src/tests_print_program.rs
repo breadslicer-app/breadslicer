@@ -190,6 +190,67 @@ bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 90.0
 "#;
 
+/// A resin whose travel splits in two, carrying the numbers ELEGOO's
+/// own slicer wrote for the normal layers of a Mars 5 and Lychee
+/// wrote for its bottom layers.
+const MATERIAL_WITH_SPLIT_TRAVEL_TOML: &str = r#"
+[identity]
+id = "elegoo-standard-grey"
+brand = "ELEGOO"
+family = "standard"
+name = "Standard Grey"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 32.0
+bottom_layer_count = 8
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+bottom_lift_distance_mm = 3.0
+bottom_lift_speed_mm_min = 60.0
+bottom_retract_speed_mm_min = 60.0
+bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 120.0 }
+"#;
+
+/// The same split travel with round numbers, so a 2 layer schedule
+/// adds up by hand.
+const MATERIAL_WITH_SPLIT_TRAVEL_TIMING_TOML: &str = r#"
+[identity]
+id = "elegoo-standard-grey"
+brand = "ELEGOO"
+family = "standard"
+name = "Standard Grey"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5"]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 30.0
+bottom_layer_count = 1
+lift_distance_mm = 2.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 120.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
+bottom_lift_distance_mm = 4.0
+bottom_lift_speed_mm_min = 120.0
+bottom_retract_speed_mm_min = 120.0
+bottom_second_travel = { lift_distance_mm = 2.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 120.0 }
+"#;
+
 /// The same resin again, driving the light at two different duties.
 const MATERIAL_WITH_LIGHT_PWM_TOML: &str = r#"
 [identity]
@@ -512,6 +573,81 @@ fn the_bottom_motion_stops_where_the_bottom_layers_do() {
 }
 
 #[test]
+fn a_split_travel_lands_as_the_vendor_files_record_it() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+
+    for layer in &program.layers[BOTTOM_LAYER_COUNT as usize..] {
+        assert_eq!(layer.lift.distance_mm.value(), 2.0);
+        assert_eq!(layer.lift.speed_mm_min.value(), 75.0);
+        let second_lift = layer.second_lift.expect("the travel splits in two");
+        assert_eq!(second_lift.distance_mm.value(), 3.0);
+        assert_eq!(second_lift.speed_mm_min.value(), 230.0);
+        assert_eq!(layer.retract.distance_mm.value(), 3.0);
+        assert_eq!(layer.retract.speed_mm_min.value(), 230.0);
+        let second_retract = layer.second_retract.expect("the return splits in two");
+        assert_eq!(second_retract.distance_mm.value(), 2.0);
+        assert_eq!(second_retract.speed_mm_min.value(), 75.0);
+    }
+}
+
+#[test]
+fn a_split_travel_rises_and_returns_the_same_distance() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+
+    for layer in &program.layers {
+        let up = layer.lift.distance_mm.value()
+            + layer.second_lift.expect("a split lift").distance_mm.value();
+        let down = layer.retract.distance_mm.value()
+            + layer
+                .second_retract
+                .expect("a split return")
+                .distance_mm
+                .value();
+        assert_eq!(up, down, "the platform would drift");
+    }
+}
+
+#[test]
+fn the_bottom_layers_take_their_own_split_travel() {
+    let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_SPLIT_TRAVEL_TOML);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+
+    for layer in &program.layers[..BOTTOM_LAYER_COUNT as usize] {
+        assert_eq!(layer.lift.distance_mm.value(), 3.0);
+        assert_eq!(layer.lift.speed_mm_min.value(), 60.0);
+        let second_lift = layer.second_lift.expect("the travel splits in two");
+        assert_eq!(second_lift.distance_mm.value(), 3.0);
+        assert_eq!(second_lift.speed_mm_min.value(), 120.0);
+        assert_eq!(layer.retract.speed_mm_min.value(), 120.0);
+        assert_eq!(
+            layer
+                .second_retract
+                .expect("the return splits in two")
+                .speed_mm_min
+                .value(),
+            60.0,
+        );
+    }
+}
+
+#[test]
+fn a_resin_that_moves_in_one_stage_leaves_the_split_travel_empty() {
+    let program = program(PRINTER_TOML, 20);
+    for layer in &program.layers {
+        assert!(layer.second_lift.is_none());
+        assert!(layer.second_retract.is_none());
+    }
+}
+
+#[test]
 fn a_resin_naming_no_pause_leaves_every_record_at_zero() {
     let program = program(PRINTER_TOML, 20);
     for layer in &program.layers {
@@ -687,6 +823,28 @@ fn an_uncalibrated_printer_reports_what_the_schedule_itself_asks_for() {
         .value();
     assert!(
         (reported - SCHEDULE_SEC).abs() < 1e-9,
+        "print time: {reported}",
+    );
+}
+
+/// What [`MATERIAL_WITH_SPLIT_TRAVEL_TIMING_TOML`] asks of a 2 layer
+/// schedule: 30 seconds of light and 6 of travel for the bottom
+/// layer, 2 and 4 for the normal one.
+const SPLIT_TRAVEL_SCHEDULE_SEC: f64 = 36.0 + 6.0;
+
+#[test]
+fn the_reported_time_counts_both_halves_of_a_split_travel() {
+    let config = resolved_config_for(
+        PRINTER_WITHOUT_TRANSITION_LAYERS_TOML,
+        MATERIAL_WITH_SPLIT_TRAVEL_TIMING_TOML,
+    );
+    let profile = slice_profile(&config, 2);
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+
+    let reported = program.print_time_sec.value();
+    assert!(
+        (reported - SPLIT_TRAVEL_SCHEDULE_SEC).abs() < 1e-9,
         "print time: {reported}",
     );
 }
