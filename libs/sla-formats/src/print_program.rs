@@ -9,8 +9,8 @@
 //! light settings on every layer.
 
 use sc_print_primitives::{
-    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
-    PositiveFiniteSec, VolumeMm3,
+    LightPwm, MassG, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
+    PositiveFiniteMmPerMin, PositiveFiniteSec, VolumeMm3,
 };
 
 use crate::raster_setup::RasterSetup;
@@ -60,6 +60,8 @@ pub struct PrintProgram {
     /// the machine's own display; nothing the machine does depends on
     /// it.
     pub volume_mm3: VolumeMm3,
+    /// What that material weighs once cured, likewise for display.
+    pub mass_g: MassG,
     /// Creation time, rendered the way the file records it.
     pub created_at: NonEmptyString,
     pub slicer_version: &'static str,

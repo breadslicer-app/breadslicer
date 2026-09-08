@@ -10,8 +10,8 @@ use std::fmt;
 
 use chrono::Local;
 use sc_print_primitives::{
-    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec, VolumeMm3,
-    VolumeOutOfRange,
+    LightPwm, MassOutOfRange, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
+    PositiveFiniteSec, VolumeMm3, VolumeOutOfRange,
 };
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_scene::Scene;
@@ -50,6 +50,8 @@ pub enum UnprojectablePrint {
     Scene(SceneError),
     /// The traversal's total is not a volume.
     Volume(VolumeOutOfRange),
+    /// That volume at the resin's density is not a mass.
+    Mass(MassOutOfRange),
 }
 
 impl fmt::Display for UnprojectablePrint {
@@ -58,6 +60,7 @@ impl fmt::Display for UnprojectablePrint {
             Self::SlabTop(err) => err.fmt(f),
             Self::Scene(err) => write!(f, "cannot measure what the scene encloses: {err}"),
             Self::Volume(err) => err.fmt(f),
+            Self::Mass(err) => err.fmt(f),
         }
     }
 }
@@ -68,6 +71,7 @@ impl std::error::Error for UnprojectablePrint {
             Self::SlabTop(err) => Some(err),
             Self::Scene(err) => Some(err),
             Self::Volume(err) => Some(err),
+            Self::Mass(err) => Some(err),
         }
     }
 }
@@ -80,12 +84,14 @@ impl std::error::Error for UnprojectablePrint {
 /// rendered the way the target file records a creation time.
 ///
 /// The reported volume is everything `scene` encloses, so geometry
-/// the machine will not reach still counts towards it.
+/// the machine will not reach still counts towards it, and the
+/// reported weight is that volume at the resin's cured density, which
+/// is what the print's resin weighs rather than what pouring it costs.
 ///
 /// # Errors
 ///
 /// [`UnprojectablePrint`] when a scheduled layer has no representable
-/// height, or when the scene yields no volume.
+/// height, or when the scene yields no volume to weigh.
 pub fn project_to_print_program(
     scene: &Scene,
     config: &ResolvedPrintConfig,
@@ -122,6 +128,12 @@ pub fn project_to_print_program(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    let volume_mm3 = plate_volume(scene)?;
+    let mass_g = material
+        .cured_density_g_per_cm3
+        .mass_of(volume_mm3)
+        .map_err(UnprojectablePrint::Mass)?;
+
     Ok(PrintProgram {
         raster: RasterSetup::from_profile(profile),
         machine_name: config.printer.identity.name.clone(),
@@ -130,7 +142,8 @@ pub fn project_to_print_program(
         layer_height_mm: material.layer_height_mm,
         bottom_layer_count: material.bottom_layer_count,
         transition_layer_count: transition_count,
-        volume_mm3: plate_volume(scene)?,
+        volume_mm3,
+        mass_g,
         created_at,
         slicer_version,
     })

@@ -4,8 +4,8 @@
  */
 
 use sc_print_primitives::{
-    AaLevel, BuildVolume, LightPwm, Mirror, NonEmptyString, NonNegativeFiniteSec, PixelResolution,
-    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, VolumeMm3,
+    AaLevel, BuildVolume, LightPwm, MassG, Mirror, NonEmptyString, NonNegativeFiniteSec,
+    PixelResolution, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, VolumeMm3,
 };
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
@@ -22,6 +22,8 @@ const LAYER_HEIGHT_MM: f64 = 0.05;
 /// Exactly representable in the `f32` the field holds, so a test can
 /// assert equality rather than a tolerance.
 const VOLUME_MM3: f64 = 11_701.25;
+/// Likewise exactly representable in `f32`.
+const MASS_G: f64 = 13.75;
 
 fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).unwrap()
@@ -84,6 +86,7 @@ fn program(layers: Vec<LayerProgram>) -> PrintProgram {
         bottom_layer_count: 8,
         transition_layer_count: 5,
         volume_mm3: VolumeMm3::new(VOLUME_MM3).unwrap(),
+        mass_g: MassG::new(MASS_G).unwrap(),
         created_at: NonEmptyString::new("2026-09-04 17:31:02").unwrap(),
         slicer_version: "0.0.12",
     }
@@ -304,7 +307,6 @@ fn the_display_only_totals_are_zero() {
     let bytes = header_of(&two_layer_program());
     assert_eq!(bytes[195_445], 0);
     assert_eq!(u32_at(&bytes, 195_446), 0);
-    assert_eq!(f32_at(&bytes, 195_454), 0.0);
     assert_eq!(f32_at(&bytes, 195_458), 0.0);
     assert_eq!(text_at(&bytes, 195_462, 8), "");
 }
@@ -320,6 +322,19 @@ fn an_empty_plate_reports_no_volume() {
     let mut empty = two_layer_program();
     empty.volume_mm3 = VolumeMm3::ZERO;
     assert_eq!(f32_at(&header_of(&empty), 195_450), 0.0);
+}
+
+#[test]
+fn the_total_weight_comes_from_the_program() {
+    let bytes = header_of(&two_layer_program());
+    assert_eq!(f32_at(&bytes, 195_454), MASS_G as f32);
+}
+
+#[test]
+fn an_empty_plate_reports_no_weight() {
+    let mut empty = two_layer_program();
+    empty.mass_g = MassG::ZERO;
+    assert_eq!(f32_at(&header_of(&empty), 195_454), 0.0);
 }
 
 #[test]

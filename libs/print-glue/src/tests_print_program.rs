@@ -600,6 +600,41 @@ fn the_program_reports_the_material_the_plate_encloses() {
 }
 
 #[test]
+fn the_program_weighs_that_material_at_the_resins_cured_density() {
+    // The fixture resin states none, so the resolver's typical
+    // photopolymer stands in: 14.44 mm3 at 1.17 g/cm3.
+    let program = program(PRINTER_TOML, 20);
+    let expected = SCENE_VOLUME_MM3 / 1_000.0 * 1.17;
+    let mass = program.mass_g.value();
+    assert!((mass - expected).abs() < 1e-9, "mass: {mass}");
+}
+
+#[test]
+fn a_denser_resin_weighs_more_for_the_same_plate() {
+    let dense = MATERIAL_TOML.replace(
+        "[intent]",
+        "[physical]\ncured_density_g_per_cm3 = 2.0\n\n[intent]",
+    );
+    let config = resolved_config_for(PRINTER_TOML, &dense);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
+
+    let expected = SCENE_VOLUME_MM3 / 1_000.0 * 2.0;
+    let mass = program.mass_g.value();
+    assert!((mass - expected).abs() < 1e-9, "mass: {mass}");
+}
+
+#[test]
+fn an_empty_plate_weighs_nothing() {
+    let config = resolved_config(PRINTER_TOML);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(&plate_of([]), &config, &profile, created_at(), "0.0.12").unwrap();
+    assert_eq!(program.mass_g.value(), 0.0);
+}
+
+#[test]
 fn an_empty_plate_encloses_nothing() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
