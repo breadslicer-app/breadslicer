@@ -2029,3 +2029,92 @@ fn a_preview_draws_the_models() {
         "the model should be visible in its own preview",
     );
 }
+
+/// 290 is the size a GOO file's large preview fixes, and 290 * 4 =
+/// 1160 bytes per row, which is not a multiple of the 256-byte copy
+/// stride. The readback has to pad and unpad around that, so the
+/// pixels have to come back tightly packed anyway.
+#[test]
+fn a_preview_at_an_unaligned_width_reads_back_tightly_packed() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device");
+    let (width, height) = (290u32, 290u32);
+    let graph =
+        triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 50.0]));
+    renderer.upload_scene(&graph).expect("upload the triangle");
+    let camera = camera_framing_the_scene(&renderer);
+
+    let frame = renderer
+        .preview_pixels(&graph, TEST_BV, &camera, width, height)
+        .expect("the preview is not refused")
+        .expect("a sized preview produces pixels");
+
+    assert_eq!(frame.width, width);
+    assert_eq!(frame.height, height);
+    assert_eq!(frame.rgba.len(), (width * height * 4) as usize);
+    assert!(
+        count_drawn_pixels(&frame.rgba) > 0,
+        "the model should be visible in its own preview",
+    );
+}
+
+/// Every row must carry its own pixels, not the padding the copy
+/// stride inserts: a run of background bytes at a row boundary would
+/// show up as a black band.
+#[test]
+fn a_read_back_preview_has_no_padding_left_between_its_rows() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device");
+    let (width, height) = (116u32, 116u32);
+    let (centre, radius) = TEST_BV.framing(None);
+    let camera = OrbitCamera::new(centre, radius);
+    let (graph, _) = graph_with_group_root();
+
+    let frame = renderer
+        .preview_pixels(&graph, TEST_BV, &camera, width, height)
+        .expect("the preview is not refused")
+        .expect("a sized preview produces pixels");
+
+    // An empty plate previews as background everywhere, and the
+    // staging buffer's padding is zeroed, so any padding left in
+    // would read as a fully black pixel.
+    assert_eq!(frame.rgba.len(), (width * height * 4) as usize);
+    assert_eq!(count_drawn_pixels(&frame.rgba), 0);
+}
+
+#[test]
+fn a_zero_sized_preview_produces_no_pixels() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        .expect("Renderer::new under the test device");
+    let (centre, radius) = TEST_BV.framing(None);
+    let camera = OrbitCamera::new(centre, radius);
+    let (graph, _) = graph_with_group_root();
+
+    let frame = renderer
+        .preview_pixels(&graph, TEST_BV, &camera, 0, 290)
+        .expect("a zero-sized preview is not an error");
+
+    assert!(frame.is_none());
+}

@@ -26,6 +26,7 @@ mod gizmo_entries;
 #[cfg(test)]
 pub(crate) mod mock;
 mod pipelines;
+mod readback;
 mod render_size;
 mod renderer_trait;
 pub mod scene_upload;
@@ -48,6 +49,7 @@ use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
+pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
 pub(crate) use scene_upload::GpuScene;
@@ -600,6 +602,32 @@ impl Renderer {
             height,
             FrameContents::ModelsOnly,
         )
+    }
+
+    /// Draw the models alone and copy the frame off the GPU, for a
+    /// picture that is not going on screen. `Ok(None)` for a
+    /// zero-sized request.
+    ///
+    /// The frame can come back smaller than asked when the size
+    /// exceeds what the device can hold, so the caller checks the
+    /// size it got.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError`] when the frame cannot be drawn, or when the
+    /// device refuses or never finishes the copy back.
+    pub fn preview_pixels(
+        &mut self,
+        graph: &Scene,
+        build_volume: BuildVolume,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<FramePixels>, RenderError> {
+        let Some(texture) = self.render_preview(graph, build_volume, camera, width, height)? else {
+            return Ok(None);
+        };
+        readback::read_target_rgba(&self.core.device, &self.core.queue, &texture).map(Some)
     }
 
     fn render_frame(

@@ -66,6 +66,7 @@ pub enum RenderAllocation {
     MsaaTargets,
     ColourTargets,
     CapTexture,
+    ReadbackBuffer,
 }
 
 impl fmt::Display for RenderAllocation {
@@ -75,6 +76,7 @@ impl fmt::Display for RenderAllocation {
             Self::MsaaTargets => "multisample buffers",
             Self::ColourTargets => "output image",
             Self::CapTexture => "slice cap texture",
+            Self::ReadbackBuffer => "image readback buffer",
         })
     }
 }
@@ -89,6 +91,8 @@ pub enum RenderError {
     },
     /// The device is gone; nothing was attempted.
     DeviceLost,
+    /// A drawn frame never made it back to the CPU.
+    ReadbackFailed { reason: String },
 }
 
 impl fmt::Display for RenderError {
@@ -100,6 +104,9 @@ impl fmt::Display for RenderError {
                 one_line(source)
             ),
             Self::DeviceLost => f.write_str("The graphics device was lost."),
+            Self::ReadbackFailed { reason } => {
+                write!(f, "The rendered image could not be read back: {reason}")
+            }
         }
     }
 }
@@ -108,7 +115,7 @@ impl std::error::Error for RenderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::DeviceRefused { source, .. } => Some(source),
-            Self::DeviceLost => None,
+            Self::DeviceLost | Self::ReadbackFailed { .. } => None,
         }
     }
 }
