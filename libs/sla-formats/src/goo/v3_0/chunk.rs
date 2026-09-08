@@ -9,12 +9,23 @@
 //! colour, `SS` counts the length bytes that follow, and `CCCC` holds
 //! the run length's low nibble. The length bytes carry the rest of it,
 //! most significant first.
+//!
+//! The delta type reads the same tag differently: after `TT`, one bit
+//! gives the step's sign, the next says whether a run length byte
+//! follows, and `CCCC` is the step's magnitude rather than a length.
 
-/// Chunk type bits, occupying the tag byte's top 2 bits. The fourth
-/// type, a delta from the previous pixel, is never emitted.
+/// Chunk type bits, occupying the tag byte's top 2 bits.
 const TYPE_BLACK_RUN: u8 = 0b0000_0000;
 const TYPE_GREY_RUN: u8 = 0b0100_0000;
+const TYPE_DELTA_RUN: u8 = 0b1000_0000;
 const TYPE_WHITE_RUN: u8 = 0b1100_0000;
+
+/// Set on a delta chunk whose step goes down.
+const DELTA_NEGATIVE: u8 = 0b0010_0000;
+/// Set on a delta chunk carrying its run length in a second byte.
+const DELTA_RUN_BYTE: u8 = 0b0001_0000;
+/// Widest step a delta chunk's magnitude nibble expresses.
+const MAX_DELTA_MAGNITUDE: u8 = 0x0F;
 
 const BLACK: u8 = 0x00;
 const WHITE: u8 = 0xFF;
@@ -39,14 +50,68 @@ impl RunEncoder {
         let mut remaining = length;
         while remaining > 0 {
             let chunk_length = remaining.min(MAX_RUN_LENGTH);
-            encode_chunk(value, chunk_length, out);
+            match self.shorter_delta(value, chunk_length) {
+                Some(delta) => delta.push(out),
+                None => push_absolute_chunk(value, chunk_length, out),
+            }
             self.previous = Some(value);
             remaining -= chunk_length;
         }
     }
+
+    /// Build the delta chunk for this run, when one can express it and
+    /// is strictly shorter than the black, grey or white chunk would
+    /// be. Ties go to the other form, which keeps the emitted stream
+    /// matching what the format's own producers write.
+    fn shorter_delta(&self, value: u8, length: u32) -> Option<DeltaChunk> {
+        // Black and white have chunk types of their own that a delta
+        // can never beat, so only a grey run is worth pricing.
+        if !is_grey(value) {
+            return None;
+        }
+        let previous = self.previous?;
+        let magnitude = value.abs_diff(previous);
+        if magnitude > MAX_DELTA_MAGNITUDE {
+            return None;
+        }
+        let run = match length {
+            1 => None,
+            _ => Some(u8::try_from(length).ok()?),
+        };
+        let delta_len = if run.is_some() { 2 } else { 1 };
+        (delta_len < absolute_chunk_len(value, length)).then_some(DeltaChunk {
+            negative: value < previous,
+            magnitude,
+            run,
+        })
+    }
 }
 
-fn encode_chunk(value: u8, length: u32, out: &mut Vec<u8>) {
+/// A step from the previous pixel, with the run length when that
+/// needs a byte of its own.
+struct DeltaChunk {
+    negative: bool,
+    magnitude: u8,
+    run: Option<u8>,
+}
+
+impl DeltaChunk {
+    fn push(&self, out: &mut Vec<u8>) {
+        let mut tag = TYPE_DELTA_RUN | self.magnitude;
+        if self.negative {
+            tag |= DELTA_NEGATIVE;
+        }
+        match self.run {
+            Some(run) => {
+                out.push(tag | DELTA_RUN_BYTE);
+                out.push(run);
+            }
+            None => out.push(tag),
+        }
+    }
+}
+
+fn push_absolute_chunk(value: u8, length: u32, out: &mut Vec<u8>) {
     let length_bytes = length_byte_count(length);
     let tag_tail = (length_bytes << 4) | ((length & 0x0F) as u8);
 
@@ -63,6 +128,15 @@ fn encode_chunk(value: u8, length: u32, out: &mut Vec<u8>) {
         let shift = 4 + 8 * u32::from(position);
         out.push(((length >> shift) & 0xFF) as u8);
     }
+}
+
+/// Count the bytes the black, grey or white chunk for this run takes.
+fn absolute_chunk_len(value: u8, length: u32) -> usize {
+    1 + usize::from(length_byte_count(length)) + usize::from(is_grey(value))
+}
+
+fn is_grey(value: u8) -> bool {
+    value != BLACK && value != WHITE
 }
 
 /// Count the length bytes a run needs beyond the tag byte's nibble.

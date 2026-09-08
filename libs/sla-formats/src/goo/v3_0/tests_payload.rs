@@ -87,6 +87,33 @@ fn the_runs_survive_the_frame() {
 }
 
 #[test]
+fn a_delta_chunk_shortens_a_run_close_to_the_one_before_it() {
+    let runs = [run(0x40, 1), run(0x41, 100)];
+    let bytes = payload(&runs);
+    assert_eq!(
+        decode_chunks(&bytes[1..bytes.len() - 1]),
+        vec![(0x40, 1), (0x41, 100)],
+    );
+    // Magic, the leading grey chunk's 2 bytes, the delta chunk's 2,
+    // then the checksum. Without the delta the second run would need
+    // a 3-byte grey chunk.
+    assert_eq!(bytes.len(), 6);
+}
+
+#[test]
+fn no_pixel_value_carries_from_one_payload_into_the_next() {
+    // A delta is defined against the pixel before it, so a payload
+    // whose first run is close to the previous payload's last must
+    // still open with an absolute chunk.
+    let first = payload(&[run(0x40, 1)]);
+    let mut both = first.clone();
+    encode_payload(&[run(0x41, 1)], &mut both);
+
+    assert_eq!(&both[..first.len()], &first[..]);
+    assert_eq!(both[first.len()..], *payload(&[run(0x41, 1)]));
+}
+
+#[test]
 fn a_payload_leaves_what_the_buffer_already_held() {
     let mut out = vec![0xDE, 0xAD];
     encode_payload(&[run(0xFF, 5)], &mut out);
