@@ -23,7 +23,7 @@ use sc_print_primitives::{
 };
 use sc_print_profiles::{
     CalibrationTarget, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
-    MaterialProfile,
+    MaterialPhysical, MaterialProfile,
 };
 use semver::Version;
 use serde::Deserialize;
@@ -225,6 +225,8 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
         },
         intent,
         defaults,
+        // The source format publishes no densities.
+        physical: MaterialPhysical::default(),
         per_printer,
     })
 }

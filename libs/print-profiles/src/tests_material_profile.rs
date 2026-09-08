@@ -6,6 +6,7 @@
 use sc_print_primitives::PrinterId;
 
 use super::calibration_target::CalibrationTarget;
+use super::material_physical::MaterialPhysical;
 use super::material_profile::{MaterialProfile, MaterialProfileReservedSection};
 
 fn target(raw: &str) -> CalibrationTarget {
@@ -78,6 +79,33 @@ fn deserialise_parses_profile_with_per_printer_entries() {
     let saturn = target("elegoo-saturn-4");
     let entry = parsed.per_printer.get(&saturn).unwrap();
     assert_eq!(entry.normal_exposure_sec.map(|v| v.value()), Some(2.8));
+}
+
+#[test]
+fn a_profile_written_before_the_physical_section_still_parses() {
+    let parsed: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
+    assert_eq!(parsed.physical, MaterialPhysical::default());
+}
+
+#[test]
+fn deserialise_parses_the_physical_section() {
+    let toml = format!("{MINIMAL_TOML}\n[physical]\ncured_density_g_per_cm3 = 1.15\n");
+    let parsed: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    assert_eq!(
+        parsed.physical.cured_density_g_per_cm3.map(|d| d.value()),
+        Some(1.15),
+    );
+}
+
+#[test]
+fn roundtrip_preserves_the_physical_section() {
+    let toml = format!(
+        "{MINIMAL_TOML}\n[physical]\nliquid_density_g_per_cm3 = 1.1\ncured_density_g_per_cm3 = 1.15\n",
+    );
+    let original: MaterialProfile = toml_edit::de::from_str(&toml).unwrap();
+    let rendered = toml_edit::ser::to_string(&original).unwrap();
+    let parsed: MaterialProfile = toml_edit::de::from_str(&rendered).unwrap();
+    assert_eq!(parsed, original);
 }
 
 #[test]

@@ -112,6 +112,9 @@ pub(crate) fn build_fork(
         } else {
             MaterialDefaults::default()
         },
+        // The fork is the same liquid under another name, so the
+        // measured constants come along whatever else is copied.
+        physical: source.physical,
         per_printer: parts
             .blocks
             .iter()

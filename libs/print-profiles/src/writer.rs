@@ -349,16 +349,16 @@ impl std::error::Error for SaveMaterialExtensionError {
     }
 }
 
-/// Comment attached above the empty `[intent]` and `[defaults]`
-/// sections of a written extension file.
+/// Comment attached above the empty inherited sections of a written
+/// extension file.
 const INHERITED_SECTION_COMMENT: &str = "# Values are inherited from the parent profile.";
 
 /// Write an extension profile into a library directory at
 /// `<library_dir>/materials/extensions/<id>.toml`, creating the
 /// subdirectory when absent. Rejects profiles whose `extension` flag
-/// is false. When the `[intent]` or `[defaults]` section is empty, a
-/// comment explaining that the values are inherited from the parent
-/// profile is attached above it.
+/// is false. When the `[intent]`, `[defaults]` or `[physical]`
+/// section is empty, a comment explaining that the values are
+/// inherited from the parent profile is attached above it.
 pub fn save_material_extension_to_library(
     library_dir: &Path,
     profile: &MaterialProfile,
@@ -386,6 +386,7 @@ pub fn save_material_extension_to_library(
             })?;
     annotate_inherited_section(&mut doc, "intent");
     annotate_inherited_section(&mut doc, "defaults");
+    annotate_inherited_section(&mut doc, "physical");
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| SaveMaterialExtensionError {
             path: parent.to_owned(),

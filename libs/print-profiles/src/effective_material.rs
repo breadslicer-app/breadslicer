@@ -29,6 +29,7 @@ use crate::material_defaults::MaterialDefaults;
 use crate::material_identity::MaterialIdentity;
 use crate::material_intent::MaterialIntent;
 use crate::material_per_printer::MaterialPerPrinter;
+use crate::material_physical::MaterialPhysical;
 use crate::material_profile::MaterialProfile;
 
 /// A material with its extension's calibration pairs folded into the
@@ -44,6 +45,7 @@ pub struct EffectiveMaterial {
     identity: MaterialIdentity,
     intent: MaterialIntent,
     defaults: MaterialDefaults,
+    physical: MaterialPhysical,
     per_printer: BTreeMap<CalibrationTarget, MaterialPerPrinter>,
 }
 
@@ -59,12 +61,12 @@ impl EffectiveMaterial {
     ///   base's is excluded whole (one issue, nothing else checked);
     /// - a calibration pair for a printer the base already covers is
     ///   excluded on its own; the extension's other pairs still land;
-    /// - values in the extension's `[intent]` or `[defaults]`
-    ///   sections are ignored (those sections are inherited from the
-    ///   base) and reported.
+    /// - values in the extension's `[intent]`, `[defaults]` or
+    ///   `[physical]` sections are ignored (those sections are
+    ///   inherited from the base) and reported.
     ///
     /// Issues are emitted in a deterministic order: intent, defaults,
-    /// then overlapping pairs in printer-id order.
+    /// physical, then overlapping pairs in printer-id order.
     pub fn compose(
         base: MaterialProfile,
         extension: Option<MaterialProfile>,
@@ -97,6 +99,9 @@ impl EffectiveMaterial {
         {
             issues.push(MaterialExtensionIssue::InheritedDefaultsCarryValues);
         }
+        if extension.physical != MaterialPhysical::default() {
+            issues.push(MaterialExtensionIssue::InheritedPhysicalCarriesValues);
+        }
 
         let mut effective = Self::from(base);
         for (target, block) in extension.per_printer {
@@ -126,6 +131,10 @@ impl EffectiveMaterial {
         &self.defaults
     }
 
+    pub fn physical(&self) -> &MaterialPhysical {
+        &self.physical
+    }
+
     /// The effective per-printer calibration blocks: the base's own
     /// plus the pairs the extension added.
     pub fn per_printer(&self) -> &BTreeMap<CalibrationTarget, MaterialPerPrinter> {
@@ -152,6 +161,7 @@ impl From<MaterialProfile> for EffectiveMaterial {
             identity: profile.identity,
             intent: profile.intent,
             defaults: profile.defaults,
+            physical: profile.physical,
             per_printer: profile.per_printer,
         }
     }
@@ -189,6 +199,10 @@ pub enum MaterialExtensionIssue {
     /// The extension's `[defaults]` section carries values; defaults
     /// are inherited from the base, so they were ignored.
     InheritedDefaultsCarryValues,
+    /// The extension's `[physical]` section carries values; the
+    /// resin's measured constants are inherited from the base, so
+    /// they were ignored.
+    InheritedPhysicalCarriesValues,
 }
 
 impl fmt::Display for MaterialExtensionIssue {
@@ -222,6 +236,10 @@ impl fmt::Display for MaterialExtensionIssue {
             Self::InheritedDefaultsCarryValues => write!(
                 f,
                 "the extension's [defaults] section carries values; defaults are inherited from the base profile, so they were ignored",
+            ),
+            Self::InheritedPhysicalCarriesValues => write!(
+                f,
+                "the extension's [physical] section carries values; the resin's measured constants are inherited from the base profile, so they were ignored",
             ),
         }
     }

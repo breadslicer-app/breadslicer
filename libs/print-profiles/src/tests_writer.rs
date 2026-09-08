@@ -358,7 +358,7 @@ fn save_extension_round_trips_through_the_extension_loader() {
 }
 
 #[test]
-fn save_extension_annotates_empty_intent_and_defaults_sections() {
+fn save_extension_annotates_every_empty_inherited_section() {
     let dir = tempfile::tempdir().unwrap();
     let original = parse(EXTENSION_TOML);
 
@@ -373,7 +373,7 @@ fn save_extension_annotates_empty_intent_and_defaults_sections() {
     .unwrap();
     let comment = "# Values are inherited from the parent profile.";
     let occurrences = written.matches(comment).count();
-    assert_eq!(occurrences, 2, "written file:\n{written}");
+    assert_eq!(occurrences, 3, "written file:\n{written}");
     let intent_pos = written.find("[intent]").unwrap();
     let comment_pos = written.find(comment).unwrap();
     assert!(comment_pos < intent_pos, "written file:\n{written}");
@@ -383,7 +383,9 @@ fn save_extension_annotates_empty_intent_and_defaults_sections() {
 fn save_extension_does_not_annotate_populated_sections() {
     let dir = tempfile::tempdir().unwrap();
     // Full sections, still flagged as an extension: no comment applies.
-    let toml = format!("extension = true\n{WITH_PER_PRINTER_TOML}");
+    let toml = format!(
+        "extension = true\n{WITH_PER_PRINTER_TOML}\n[physical]\ncured_density_g_per_cm3 = 1.15\n",
+    );
     let original = parse(&toml);
 
     save_material_extension_to_library(dir.path(), &original).unwrap();

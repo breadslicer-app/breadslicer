@@ -30,6 +30,7 @@ use crate::material_defaults::MaterialDefaults;
 use crate::material_identity::MaterialIdentity;
 use crate::material_intent::MaterialIntent;
 use crate::material_per_printer::MaterialPerPrinter;
+use crate::material_physical::MaterialPhysical;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(try_from = "RawMaterialProfile")]
@@ -43,6 +44,11 @@ pub struct MaterialProfile {
     pub identity: MaterialIdentity,
     pub intent: MaterialIntent,
     pub defaults: MaterialDefaults,
+    /// Measured constants of the resin. Absent in profiles written
+    /// before the section existed, and in those describing no real
+    /// product.
+    #[serde(default)]
+    pub physical: MaterialPhysical,
     /// Calibration blocks by target; the generic machine's block, when
     /// present, orders first.
     pub per_printer: BTreeMap<CalibrationTarget, MaterialPerPrinter>,
@@ -55,6 +61,8 @@ struct RawMaterialProfile {
     identity: MaterialIdentity,
     intent: MaterialIntent,
     defaults: MaterialDefaults,
+    #[serde(default)]
+    physical: MaterialPhysical,
     #[serde(default)]
     per_printer: BTreeMap<CalibrationTarget, RawPerPrinterEntry>,
     #[serde(default)]
@@ -124,6 +132,7 @@ impl TryFrom<RawMaterialProfile> for MaterialProfile {
             identity: raw.identity,
             intent: raw.intent,
             defaults: raw.defaults,
+            physical: raw.physical,
             per_printer,
         })
     }

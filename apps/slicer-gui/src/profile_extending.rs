@@ -8,8 +8,8 @@
 //! Extending adds a calibration block for a target the resin does not
 //! cover yet. The block goes into the resin's same-id extension file:
 //! created on the first extend (identity copied verbatim from the
-//! base, extension flag set, intent and defaults left empty since
-//! they are inherited from the base), appended to on later ones. The
+//! base, extension flag set, the inherited sections left empty since
+//! they come from the base), appended to on later ones. The
 //! dialog wiring lives in the preferences window.
 
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use sc_print_primitives::PrinterId;
 use sc_print_profiles::{
     CalibrationTarget, EffectiveMaterial, MaterialDefaults, MaterialIntent, MaterialPerPrinter,
-    MaterialProfile,
+    MaterialPhysical, MaterialProfile,
 };
 use slint::SharedString;
 
@@ -128,6 +128,7 @@ pub(crate) fn build_extension_update(
                 target_layer_height_mm: None,
             },
             defaults: MaterialDefaults::default(),
+            physical: MaterialPhysical::default(),
             per_printer: BTreeMap::new(),
         },
     };

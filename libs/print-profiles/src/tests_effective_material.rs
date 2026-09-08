@@ -264,6 +264,71 @@ normal_exposure_sec = 3.0
 }
 
 #[test]
+fn inherited_physical_values_are_ignored_and_reported() {
+    let base = r#"
+[identity]
+id = "test-resin"
+brand = "Test"
+family = "standard"
+name = "Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[physical]
+cured_density_g_per_cm3 = 1.15
+
+[per_printer."printer-a"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+"#;
+    let extension = r#"
+extension = true
+
+[identity]
+id = "test-resin"
+brand = "Test"
+family = "standard"
+name = "Test Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+
+[physical]
+cured_density_g_per_cm3 = 1.9
+
+[per_printer."printer-b"]
+normal_exposure_sec = 3.0
+"#;
+    let (effective, issues) = EffectiveMaterial::compose(profile(base), Some(profile(extension)));
+
+    assert_eq!(
+        issues,
+        vec![MaterialExtensionIssue::InheritedPhysicalCarriesValues],
+    );
+    assert_eq!(
+        effective
+            .physical()
+            .cured_density_g_per_cm3
+            .map(|d| d.value()),
+        Some(1.15),
+    );
+}
+
+#[test]
+fn an_extension_stating_no_physical_values_raises_no_issue() {
+    let (_, issues) = EffectiveMaterial::compose(profile(BASE), Some(profile(EXTENSION_NEW_PAIRS)));
+    assert!(
+        !issues.contains(&MaterialExtensionIssue::InheritedPhysicalCarriesValues),
+        "issues: {issues:?}",
+    );
+}
+
+#[test]
 fn issues_accumulate_in_deterministic_order() {
     let base = r#"
 [identity]
