@@ -263,6 +263,8 @@ pub(crate) fn parse_calibration_form(
         )?,
         light_pwm: parse_optional_pwm(FormField::LightPwm, &input.light_pwm)?,
         bottom_light_pwm: parse_optional_pwm(FormField::BottomLightPwm, &input.bottom_light_pwm)?,
+        second_travel: None,
+        bottom_second_travel: None,
     })
 }
 

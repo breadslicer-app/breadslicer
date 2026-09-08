@@ -4,6 +4,7 @@
  */
 
 use super::material_per_printer::MaterialPerPrinter;
+use super::second_travel_stage::SecondTravelStage;
 use sc_print_primitives::{
     LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
 };
@@ -26,6 +27,16 @@ bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 90.0
 light_pwm = 80.0
 bottom_light_pwm = 100.0
+
+[second_travel]
+lift_distance_mm = 3.0
+lift_speed_mm_min = 230.0
+retract_speed_mm_min = 230.0
+
+[bottom_second_travel]
+lift_distance_mm = 4.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 180.0
 "#;
 
 #[test]
@@ -63,6 +74,14 @@ fn deserialise_parses_all_fields() {
     );
     assert_eq!(parsed.light_pwm.map(|v| v.percent()), Some(80.0));
     assert_eq!(parsed.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
+    let second = parsed.second_travel.unwrap();
+    assert_eq!(second.lift_distance_mm.value(), 3.0);
+    assert_eq!(second.lift_speed_mm_min.value(), 230.0);
+    assert_eq!(second.retract_speed_mm_min.value(), 230.0);
+    let bottom_second = parsed.bottom_second_travel.unwrap();
+    assert_eq!(bottom_second.lift_distance_mm.value(), 4.0);
+    assert_eq!(bottom_second.lift_speed_mm_min.value(), 65.0);
+    assert_eq!(bottom_second.retract_speed_mm_min.value(), 180.0);
 }
 
 #[test]
@@ -85,6 +104,8 @@ fn deserialise_empty_section_leaves_all_fields_none() {
     assert!(parsed.bottom_retract_speed_mm_min.is_none());
     assert!(parsed.light_pwm.is_none());
     assert!(parsed.bottom_light_pwm.is_none());
+    assert!(parsed.second_travel.is_none());
+    assert!(parsed.bottom_second_travel.is_none());
 }
 
 #[test]
@@ -268,6 +289,8 @@ fn serialise_omits_every_unset_field() {
         "bottom_retract_speed_mm_min",
         "light_pwm",
         "bottom_light_pwm",
+        "second_travel",
+        "bottom_second_travel",
     ] {
         assert!(
             !serialised.contains(field),
@@ -296,8 +319,77 @@ fn programmatic_construction_round_trips() {
         bottom_retract_speed_mm_min: Some(PositiveFiniteMmPerMin::new(90.0).unwrap()),
         light_pwm: Some(LightPwm::new(80.0).unwrap()),
         bottom_light_pwm: None,
+        second_travel: Some(SecondTravelStage {
+            lift_distance_mm: PositiveFiniteMm::new(3.0).unwrap(),
+            lift_speed_mm_min: PositiveFiniteMmPerMin::new(230.0).unwrap(),
+            retract_speed_mm_min: PositiveFiniteMmPerMin::new(230.0).unwrap(),
+        }),
+        bottom_second_travel: None,
     };
     let serialised = toml_edit::ser::to_string(&per_printer).unwrap();
     let roundtripped: MaterialPerPrinter = toml_edit::de::from_str(&serialised).unwrap();
     assert_eq!(per_printer, roundtripped);
+}
+
+#[test]
+fn deserialise_reads_a_second_stage_for_the_bottom_layers_apart_from_the_normal_one() {
+    let toml = r#"
+lift_distance_mm = 2.0
+
+[second_travel]
+lift_distance_mm = 3.0
+lift_speed_mm_min = 230.0
+retract_speed_mm_min = 230.0
+
+[bottom_second_travel]
+lift_distance_mm = 4.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 180.0
+"#;
+    let parsed: MaterialPerPrinter = toml_edit::de::from_str(toml).unwrap();
+    assert_eq!(
+        parsed.second_travel.map(|s| s.lift_distance_mm.value()),
+        Some(3.0)
+    );
+    assert_eq!(
+        parsed
+            .bottom_second_travel
+            .map(|s| s.lift_distance_mm.value()),
+        Some(4.0)
+    );
+}
+
+#[test]
+fn deserialise_rejects_a_second_stage_that_states_a_distance_without_its_speeds() {
+    let toml = "[second_travel]\nlift_distance_mm = 3.0\n";
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
+}
+
+#[test]
+fn deserialise_rejects_a_non_positive_second_lift_distance() {
+    let toml = r#"
+[second_travel]
+lift_distance_mm = 0.0
+lift_speed_mm_min = 230.0
+retract_speed_mm_min = 230.0
+"#;
+    assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
+}
+
+#[test]
+fn serialise_writes_a_second_stage_as_one_inline_table() {
+    let parsed: MaterialPerPrinter = toml_edit::de::from_str(FULL_TOML).unwrap();
+    let serialised = toml_edit::ser::to_string(&parsed).unwrap();
+    assert!(
+        serialised.contains(
+            "second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }"
+        ),
+        "{serialised}"
+    );
+    assert!(
+        serialised.contains(
+            "bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 180.0 }"
+        ),
+        "{serialised}"
+    );
 }

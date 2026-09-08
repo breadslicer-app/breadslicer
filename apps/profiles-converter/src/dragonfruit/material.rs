@@ -201,6 +201,8 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
         bottom_retract_speed_mm_min: None,
         light_pwm: None,
         bottom_light_pwm: None,
+        second_travel: None,
+        bottom_second_travel: None,
     };
 
     let mut per_printer = BTreeMap::new();

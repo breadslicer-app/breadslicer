@@ -218,6 +218,52 @@ fn roundtrip_with_per_printer_entries_preserves_value() {
 }
 
 #[test]
+fn roundtrip_keeps_a_second_travel_stage_inside_the_block_that_declared_it() {
+    let toml = r#"
+[identity]
+id = "elegoo-standard-grey"
+brand = "ELEGOO"
+name = "Standard Grey"
+family = "standard"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 2
+
+[per_printer."elegoo-mars-5"]
+normal_exposure_sec = 2.5
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer."elegoo-mars-3"]
+normal_exposure_sec = 2.8
+lift_distance_mm = 5.0
+"#;
+    let original: MaterialProfile = toml_edit::de::from_str(toml).unwrap();
+    let serialised = toml_edit::ser::to_string(&original).unwrap();
+    let roundtripped: MaterialProfile = toml_edit::de::from_str(&serialised).unwrap();
+    assert_eq!(original, roundtripped);
+    let two_stage = roundtripped
+        .per_printer
+        .get(&target("elegoo-mars-5"))
+        .unwrap();
+    assert_eq!(
+        two_stage.second_travel.map(|s| s.lift_speed_mm_min.value()),
+        Some(230.0)
+    );
+    let single_stage = roundtripped
+        .per_printer
+        .get(&target("elegoo-mars-3"))
+        .unwrap();
+    assert!(single_stage.second_travel.is_none());
+}
+
+#[test]
 fn roundtrip_minimal_preserves_value() {
     let original: MaterialProfile = toml_edit::de::from_str(MINIMAL_TOML).unwrap();
     let serialised = toml_edit::ser::to_string(&original).unwrap();

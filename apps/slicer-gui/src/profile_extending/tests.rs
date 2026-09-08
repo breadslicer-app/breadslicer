@@ -148,6 +148,8 @@ fn sample_block() -> MaterialPerPrinter {
         bottom_retract_speed_mm_min: None,
         light_pwm: None,
         bottom_light_pwm: None,
+        second_travel: None,
+        bottom_second_travel: None,
     }
 }
 

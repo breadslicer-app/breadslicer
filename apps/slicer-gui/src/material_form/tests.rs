@@ -35,6 +35,8 @@ fn empty_calibration_fields_parse_to_an_all_unset_block() {
             bottom_retract_speed_mm_min: None,
             light_pwm: None,
             bottom_light_pwm: None,
+            second_travel: None,
+            bottom_second_travel: None,
         }
     );
 }

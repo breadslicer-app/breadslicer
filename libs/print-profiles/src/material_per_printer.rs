@@ -19,6 +19,8 @@ use sc_print_primitives::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::second_travel_stage::SecondTravelStage;
+
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MaterialPerPrinter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -74,4 +76,12 @@ pub struct MaterialPerPrinter {
     /// How hard the light is driven on a bottom layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bottom_light_pwm: Option<LightPwm>,
+    /// The second stage of the travel over a normal layer; absent
+    /// means the platform moves in one stage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second_travel: Option<SecondTravelStage>,
+    /// The second stage of the travel over a bottom layer; absent
+    /// means the bottom layers travel like the normal ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_second_travel: Option<SecondTravelStage>,
 }

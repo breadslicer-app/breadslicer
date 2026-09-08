@@ -55,6 +55,7 @@ pub mod resolved_field;
 pub mod resolved_print_config;
 mod resolver;
 pub mod scene_overrides;
+pub mod second_travel_stage;
 pub mod value_source;
 pub mod writer;
 
@@ -101,6 +102,7 @@ pub use resolved_field::ResolvedField;
 pub use resolved_print_config::ResolvedPrintConfig;
 pub use resolver::{resolve, resolve_layer_height, snap_to_z_step};
 pub use scene_overrides::SceneOverrides;
+pub use second_travel_stage::SecondTravelStage;
 pub use value_source::ValueSource;
 pub use writer::{
     DeleteMaterialFileError, SaveMaterialExtensionError, SaveMaterialExtensionErrorKind,
