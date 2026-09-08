@@ -2428,3 +2428,101 @@ fn a_scene_override_replaces_a_calibrated_wait_and_records_the_prior_value() {
     assert_eq!(record.prior_value, Some(2.0));
     assert_eq!(record.final_value, 3.0);
 }
+
+/// A resin calibrated for the test printer, with `[physical]` left to
+/// the caller so a test can vary just that section.
+fn material_with_physical(physical: &str) -> EffectiveMaterial {
+    material(&format!(
+        r#"
+[identity]
+id = "standard-405"
+brand = "Default"
+family = "standard"
+name = "Standard 405nm"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = {{ x = 0.0, y = 0.0, z = 0.0 }}
+
+{physical}
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.75
+bottom_exposure_sec = 35.0
+bottom_layer_count = 7
+lift_distance_mm = 6.5
+lift_speed_mm_min = 70.0
+retract_speed_mm_min = 160.0
+"#,
+    ))
+}
+
+fn resolve_with_physical(physical: &str) -> ResolvedPrintConfig {
+    resolve(
+        &printer_without_light_intensity(),
+        &material_with_physical(physical),
+        &SceneOverrides::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_resin_stating_no_cured_density_resolves_to_a_typical_photopolymer() {
+    let resolved = resolve_with_physical("");
+    assert_eq!(
+        resolved.material_resolved.cured_density_g_per_cm3.value(),
+        1.17,
+    );
+}
+
+#[test]
+fn a_stated_cured_density_resolves_to_itself() {
+    let resolved = resolve_with_physical("[physical]\ncured_density_g_per_cm3 = 1.6");
+    assert_eq!(
+        resolved.material_resolved.cured_density_g_per_cm3.value(),
+        1.6,
+    );
+}
+
+#[test]
+fn a_stated_cured_density_is_recorded_as_the_profile_s_own() {
+    let resolved = resolve_with_physical("[physical]\ncured_density_g_per_cm3 = 1.15");
+    let record = resolved
+        .overrides_applied
+        .iter()
+        .find(|record| record.field == ResolvedField::CuredDensityGPerCm3)
+        .expect("the stated density should be recorded");
+    assert_eq!(record.final_value, 1.15);
+    assert_eq!(record.source, ValueSource::Default);
+}
+
+#[test]
+fn an_unstated_cured_density_leaves_no_record_behind() {
+    let resolved = resolve_with_physical("");
+    assert!(
+        !resolved
+            .overrides_applied
+            .iter()
+            .any(|record| record.field == ResolvedField::CuredDensityGPerCm3),
+        "records: {:?}",
+        resolved.overrides_applied,
+    );
+}
+
+#[test]
+fn a_stated_cured_density_raises_no_warning() {
+    let resolved = resolve_with_physical("[physical]\ncured_density_g_per_cm3 = 1.15");
+    assert!(
+        !resolved.warnings.iter().any(|warning| matches!(
+            warning,
+            ResolveWarning::DefaultUsed {
+                field: ResolvedField::CuredDensityGPerCm3
+            }
+        )),
+        "warnings: {:?}",
+        resolved.warnings,
+    );
+}

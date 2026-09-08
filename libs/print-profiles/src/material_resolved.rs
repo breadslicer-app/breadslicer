@@ -25,8 +25,8 @@
 //! [`crate::material_defaults::MaterialDefaults`].
 
 use sc_print_primitives::{
-    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
-    ScaleCompensation,
+    DensityGPerCm3, LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
+    PositiveFiniteSec, ScaleCompensation,
 };
 
 use crate::material_identity::MaterialIdentity;
@@ -64,4 +64,8 @@ pub struct MaterialResolved {
     /// How hard the light is driven on a bottom layer.
     pub bottom_light_pwm: LightPwm,
     pub scale_compensation_pct: ScaleCompensation,
+    /// Density of the cured part, which turns a sliced volume into
+    /// the weight a printer file reports. Nothing the machine does
+    /// depends on it.
+    pub cured_density_g_per_cm3: DensityGPerCm3,
 }

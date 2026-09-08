@@ -121,7 +121,7 @@ impl DensityGPerCm3 {
     /// when the value is zero, negative, or non-finite (`NaN` / +/-
     /// infinity). Nothing pourable weighs nothing, so zero is
     /// rejected rather than treated as an unstated density.
-    pub fn new(value: f64) -> Result<Self, DensityOutOfRange> {
+    pub const fn new(value: f64) -> Result<Self, DensityOutOfRange> {
         if value.is_finite() && value > 0.0 {
             Ok(Self(value))
         } else {

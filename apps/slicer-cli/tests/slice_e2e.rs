@@ -1115,13 +1115,16 @@ fn an_uncalibrated_resin_reports_what_it_left_to_the_resolver() {
         .assert()
         .success()
         .stderr(predicate::str::contains(
-            "warning: 11 print values are not calibrated for this printer:",
+            "warning: 12 values for this print were chosen by no profile:",
         ))
         .stderr(predicate::str::contains(
             "  wait_after_cure_sec: no calibrated value, using 0 (no pause)",
         ))
         .stderr(predicate::str::contains(
             "  bottom_light_pwm: no calibrated value, using 100 (full power)",
+        ))
+        .stderr(predicate::str::contains(
+            "  cured_density_g_per_cm3: no published figure, using 1.17 (a typical photopolymer)",
         ));
 }
 

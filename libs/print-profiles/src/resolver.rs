@@ -49,14 +49,15 @@
 //! assembly-time required-field check.
 
 use sc_print_primitives::{
-    LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
-    ScaleCompensation,
+    DensityGPerCm3, LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
+    PositiveFiniteSec, ScaleCompensation,
 };
 
 use crate::effective_material::EffectiveMaterial;
 use crate::material_defaults::MaterialDefaults;
 use crate::material_intent::MaterialIntent;
 use crate::material_per_printer::MaterialPerPrinter;
+use crate::material_physical::MaterialPhysical;
 use crate::material_resolved::MaterialResolved;
 use crate::override_record::OverrideRecord;
 use crate::policy::{
@@ -70,6 +71,15 @@ use crate::resolved_field::ResolvedField;
 use crate::resolved_print_config::ResolvedPrintConfig;
 use crate::scene_overrides::SceneOverrides;
 use crate::value_source::ValueSource;
+
+/// Cured density assumed when no profile states one: the median of
+/// the figures resin vendors publish for their unfilled photopolymers,
+/// which cluster tightly enough that the assumption is worth more than
+/// reporting nothing. Filled resins run heavier and need stating.
+const TYPICAL_CURED_DENSITY: DensityGPerCm3 = match DensityGPerCm3::new(1.17) {
+    Ok(density) => density,
+    Err(_) => panic!("1.17 g/cm^3 is a density"),
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct PickedValues {
@@ -92,6 +102,7 @@ pub(crate) struct PickedValues {
     pub light_pwm: Option<LightPwm>,
     pub bottom_light_pwm: Option<LightPwm>,
     pub scale_compensation_pct: Option<ScaleCompensation>,
+    pub cured_density_g_per_cm3: Option<DensityGPerCm3>,
 }
 
 pub(crate) fn pick_and_derive_material(
@@ -114,6 +125,7 @@ pub(crate) fn pick_and_derive_material(
         &mut warnings,
         &mut records,
     );
+    apply_physical(material.physical(), &mut picked, &mut records);
     apply_intent_derivation(
         material.intent(),
         &printer.constraints,
@@ -281,6 +293,26 @@ fn apply_per_printer(
             source: ValueSource::Calibrated,
             prior_value: None,
             final_value: value.percent(),
+        });
+    }
+}
+
+/// Take the resin's measured constants as stated. There is no layer
+/// below this one to derive them from and no per-printer variant of
+/// them, so a record is emitted without a warning: nothing was left
+/// uncalibrated, the vendor either published the figure or did not.
+fn apply_physical(
+    physical: &MaterialPhysical,
+    picked: &mut PickedValues,
+    records: &mut Vec<OverrideRecord>,
+) {
+    if let Some(value) = physical.cured_density_g_per_cm3 {
+        picked.cured_density_g_per_cm3 = Some(value);
+        records.push(OverrideRecord {
+            field: ResolvedField::CuredDensityGPerCm3,
+            source: ValueSource::Default,
+            prior_value: None,
+            final_value: value.value(),
         });
     }
 }
@@ -907,6 +939,9 @@ fn assemble(
             light_pwm: picked.light_pwm.unwrap_or(LightPwm::FULL),
             bottom_light_pwm: picked.bottom_light_pwm.unwrap_or(LightPwm::FULL),
             scale_compensation_pct,
+            cured_density_g_per_cm3: picked
+                .cured_density_g_per_cm3
+                .unwrap_or(TYPICAL_CURED_DENSITY),
         },
         overrides_applied,
         warnings,

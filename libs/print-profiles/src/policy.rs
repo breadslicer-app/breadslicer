@@ -178,7 +178,8 @@ pub(crate) fn policies_for(
         | ResolvedField::BottomWaitAfterLiftSec
         | ResolvedField::LightPwm
         | ResolvedField::BottomLightPwm
-        | ResolvedField::ScaleCompensationPct => {}
+        | ResolvedField::ScaleCompensationPct
+        | ResolvedField::CuredDensityGPerCm3 => {}
     }
     out
 }

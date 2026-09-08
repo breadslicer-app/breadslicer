@@ -32,6 +32,7 @@ pub enum ResolvedField {
     LightPwm,
     BottomLightPwm,
     ScaleCompensationPct,
+    CuredDensityGPerCm3,
 }
 
 impl ResolvedField {
@@ -56,6 +57,7 @@ impl ResolvedField {
             Self::LightPwm => "light_pwm",
             Self::BottomLightPwm => "bottom_light_pwm",
             Self::ScaleCompensationPct => "scale_compensation_pct",
+            Self::CuredDensityGPerCm3 => "cured_density_g_per_cm3",
         }
     }
 }

@@ -59,6 +59,61 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
+/// The same resin, with the density its vendor publishes.
+const MATERIAL_WITH_PHYSICAL_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+cured_density_g_per_cm3 = 1.15
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+
+/// The same resin again, published with only the vat figure.
+const MATERIAL_WITH_LIQUID_DENSITY_ONLY_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 8
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+"#;
+
 /// The same resin with every optional value calibrated.
 const FULLY_CALIBRATED_MATERIAL_TOML: &str = r#"
 [identity]
@@ -73,6 +128,9 @@ target_layer_height_mm = 0.05
 
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[physical]
+cured_density_g_per_cm3 = 1.15
 
 [per_printer."elegoo-mars-5-goo"]
 normal_exposure_sec = 2.5
@@ -151,6 +209,7 @@ fn a_bare_calibration_falls_back_on_every_optional_value_in_a_fixed_order() {
             ResolvedField::BottomRetractSpeedMmMin,
             ResolvedField::LightPwm,
             ResolvedField::BottomLightPwm,
+            ResolvedField::CuredDensityGPerCm3,
         ],
     );
 }
@@ -263,9 +322,9 @@ fn the_report_heads_the_uncalibrated_values_with_their_count() {
     let lines = fallback_report_lines(&config(BARE_MATERIAL_TOML));
     assert_eq!(
         lines.first().map(String::as_str),
-        Some("warning: 11 print values are not calibrated for this printer:"),
+        Some("warning: 12 values for this print were chosen by no profile:"),
     );
-    assert_eq!(lines.len(), 12, "lines: {lines:?}");
+    assert_eq!(lines.len(), 13, "lines: {lines:?}");
     for line in &lines[1..] {
         assert!(line.starts_with("  "), "line: {line}");
     }
@@ -283,4 +342,34 @@ fn the_report_gives_each_value_a_line_of_its_own() {
 #[test]
 fn a_fully_calibrated_resin_reports_no_lines_at_all() {
     assert!(fallback_report_lines(&config(FULLY_CALIBRATED_MATERIAL_TOML)).is_empty());
+}
+
+#[test]
+fn a_resin_with_no_published_density_says_which_figure_stood_in() {
+    let lines = fallback_report_lines(&config(BARE_MATERIAL_TOML));
+    assert!(
+        lines.contains(
+            &"  cured_density_g_per_cm3: no published figure, using 1.17 (a typical photopolymer)"
+                .to_string()
+        ),
+        "lines: {lines:?}",
+    );
+}
+
+#[test]
+fn a_resin_stating_its_cured_density_does_not_report_one() {
+    let reported = reported_fields(MATERIAL_WITH_PHYSICAL_TOML);
+    assert!(
+        !reported.contains(&ResolvedField::CuredDensityGPerCm3),
+        "the physical block supplied it: {reported:?}",
+    );
+}
+
+#[test]
+fn a_stated_liquid_density_alone_does_not_supply_the_cured_one() {
+    let reported = reported_fields(MATERIAL_WITH_LIQUID_DENSITY_ONLY_TOML);
+    assert!(
+        reported.contains(&ResolvedField::CuredDensityGPerCm3),
+        "one density does not derive the other: {reported:?}",
+    );
 }

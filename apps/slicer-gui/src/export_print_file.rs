@@ -538,9 +538,9 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
         assert_eq!(
             job.fallback_report.first().map(String::as_str),
-            Some("warning: 11 print values are not calibrated for this printer:"),
+            Some("warning: 12 values for this print were chosen by no profile:"),
         );
-        assert_eq!(job.fallback_report.len(), 12, "{:?}", job.fallback_report);
+        assert_eq!(job.fallback_report.len(), 13, "{:?}", job.fallback_report);
     }
 
     #[test]

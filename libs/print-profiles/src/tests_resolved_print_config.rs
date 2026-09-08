@@ -4,7 +4,7 @@
  */
 
 use sc_print_primitives::{
-    LightPwm, MaterialId, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
+    DensityGPerCm3, LightPwm, MaterialId, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
     PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
 };
 use semver::Version;
@@ -78,6 +78,7 @@ fn sample_material_resolved() -> MaterialResolved {
             y: ScaleCompensationPercent::new(0.5).unwrap(),
             z: ScaleCompensationPercent::new(0.0).unwrap(),
         },
+        cured_density_g_per_cm3: DensityGPerCm3::new(1.15).unwrap(),
     }
 }
 

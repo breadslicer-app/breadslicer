@@ -18,6 +18,9 @@ pub enum FallbackKind {
     FullPower,
     /// The bottom layers take the normal layers' value.
     NormalCounterpart,
+    /// The resin's vendor published no figure, so a value typical of
+    /// the material class stands in.
+    TypicalResin,
 }
 
 impl fmt::Display for FallbackKind {
@@ -26,6 +29,7 @@ impl fmt::Display for FallbackKind {
             Self::NoDwell => "no pause",
             Self::FullPower => "full power",
             Self::NormalCounterpart => "the normal-layer value",
+            Self::TypicalResin => "a typical photopolymer",
         })
     }
 }
@@ -41,12 +45,27 @@ pub struct FallbackUsed {
     pub kind: FallbackKind,
 }
 
+impl FallbackKind {
+    /// Say what was looked for and not found, which is calibration for
+    /// a machine setting but a published figure for a resin's own
+    /// properties.
+    fn nothing_found(self) -> &'static str {
+        match self {
+            Self::NoDwell | Self::FullPower | Self::NormalCounterpart => "no calibrated value",
+            Self::TypicalResin => "no published figure",
+        }
+    }
+}
+
 impl fmt::Display for FallbackUsed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}: no calibrated value, using {} ({})",
-            self.field, self.resolved_to, self.kind,
+            "{}: {}, using {} ({})",
+            self.field,
+            self.kind.nothing_found(),
+            self.resolved_to,
+            self.kind,
         )
     }
 }
@@ -55,10 +74,10 @@ type ResolvedValue = fn(&MaterialResolved) -> f64;
 
 /// Every value the resolver is willing to substitute, in the order
 /// a report lists them: the normal-layer pauses, the bottom-layer
-/// pauses, the bottom-layer travel, then the two duties. The
-/// required fields are absent because resolution fails outright
-/// without them.
-const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 11] = [
+/// pauses, the bottom-layer travel, the two duties, then the resin's
+/// own properties. The required fields are absent because resolution
+/// fails outright without them.
+const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 12] = [
     (
         ResolvedField::WaitBeforeCureSec,
         FallbackKind::NoDwell,
@@ -114,6 +133,11 @@ const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 11] = [
         FallbackKind::FullPower,
         |material| material.bottom_light_pwm.percent(),
     ),
+    (
+        ResolvedField::CuredDensityGPerCm3,
+        FallbackKind::TypicalResin,
+        |material| material.cured_density_g_per_cm3.value(),
+    ),
 ];
 
 /// List the values this print will run that no profile chose.
@@ -151,7 +175,7 @@ pub fn fallback_report_lines(config: &ResolvedPrintConfig) -> Vec<String> {
     }
     let mut lines = Vec::with_capacity(used.len() + 1);
     lines.push(format!(
-        "warning: {} print values are not calibrated for this printer:",
+        "warning: {} values for this print were chosen by no profile:",
         used.len(),
     ));
     lines.extend(used.iter().map(|fallback| format!("  {fallback}")));
