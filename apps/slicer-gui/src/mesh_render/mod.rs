@@ -79,6 +79,16 @@ pub struct SceneRender<'a> {
     pub clip_z: Option<f32>,
 }
 
+/// What a frame draws around the models.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FrameContents {
+    /// The machine's workspace: the plate, its cage and envelope, and
+    /// the slice cap when one is installed.
+    Workspace,
+    /// The models by themselves.
+    ModelsOnly,
+}
+
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// Format for the gizmo pass's private depth attachment. Stencil is
 /// not used by the gizmo pipeline, so a plain `Depth32Float` (default-
@@ -551,6 +561,56 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Option<wgpu::Texture>, RenderError> {
+        self.render_frame(
+            scene_render,
+            build_volume,
+            camera,
+            width,
+            height,
+            FrameContents::Workspace,
+        )
+    }
+
+    /// Draws the models alone against the clear colour, for a picture
+    /// of the print rather than of the workspace: no plate, no
+    /// envelope, no slice cap, and none of the editing overlays.
+    ///
+    /// `camera` frames the whole model, so a caller wanting the
+    /// printed object in view builds one from the scene's bounds
+    /// rather than passing the viewport's.
+    pub fn render_preview(
+        &mut self,
+        graph: &Scene,
+        build_volume: BuildVolume,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<wgpu::Texture>, RenderError> {
+        let scene_render = SceneRender {
+            graph,
+            selection: None,
+            gizmo: None,
+            clip_z: None,
+        };
+        self.render_frame(
+            Some(scene_render),
+            build_volume,
+            camera,
+            width,
+            height,
+            FrameContents::ModelsOnly,
+        )
+    }
+
+    fn render_frame(
+        &mut self,
+        scene_render: Option<SceneRender<'_>>,
+        build_volume: BuildVolume,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+        contents: FrameContents,
+    ) -> Result<Option<wgpu::Texture>, RenderError> {
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
         }
@@ -702,18 +762,21 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            self.record_plate_solid(&mut pass, plate_buffers);
-            self.record_plate_top(&mut pass, plate_buffers);
-            self.record_cage(&mut pass, plate_buffers);
+            if contents == FrameContents::Workspace {
+                self.record_plate_solid(&mut pass, plate_buffers);
+                self.record_plate_top(&mut pass, plate_buffers);
+                self.record_cage(&mut pass, plate_buffers);
+            }
 
             if scene_for_draws && let Some(inst) = installed {
                 self.record_mesh_objects(&mut pass, inst, selection);
             }
 
-            self.record_cap(&mut pass);
-
-            self.record_envelope_walls(&mut pass, plate_buffers);
-            self.record_plate_bottom(&mut pass, plate_buffers);
+            if contents == FrameContents::Workspace {
+                self.record_cap(&mut pass);
+                self.record_envelope_walls(&mut pass, plate_buffers);
+                self.record_plate_bottom(&mut pass, plate_buffers);
+            }
         }
         if selection.is_some() && scene_for_draws {
             self.record_outline_post_pass(&mut encoder, &target_view, msaa);

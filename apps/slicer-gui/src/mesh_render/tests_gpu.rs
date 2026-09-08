@@ -1934,3 +1934,98 @@ fn invalidate_sizing_keeps_the_installed_scene() {
     let bounds_after = renderer.scene_bounds().expect("bounds preserved");
     assert_eq!(bounds_before, bounds_after);
 }
+
+/// Counts pixels that differ from the mesh pass's clear colour, the
+/// near-black neutral quantised to `Rgba8Unorm`. Every surface the
+/// renderer draws lands well outside the tolerance.
+fn count_drawn_pixels(rgba: &[u8]) -> usize {
+    const BACKGROUND: [i32; 3] = [31, 31, 33];
+    const TOLERANCE: i32 = 2;
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| {
+            (0..3).any(|channel| (pixel[channel] as i32 - BACKGROUND[channel]).abs() > TOLERANCE)
+        })
+        .count()
+}
+
+/// A camera that holds the whole installed scene, the framing a file
+/// preview asks for.
+fn camera_framing_the_scene(renderer: &Renderer) -> OrbitCamera {
+    let (min, max) = renderer.scene_bounds().expect("a scene is installed");
+    let radius = ((max - min).length() * 0.5).max(1.0);
+    OrbitCamera::new((min + max) * 0.5, radius)
+}
+
+/// A preview shows the print, not the machine: with no models on the
+/// plate it has nothing to draw, where the viewport's own frame still
+/// shows the plate and its cage.
+#[test]
+fn a_preview_of_a_scene_without_models_draws_nothing() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device");
+    // 64 * 4 = 256 bytes per row, which the readback's copy
+    // alignment already satisfies.
+    let (width, height) = (64u32, 64u32);
+    let (centre, radius) = TEST_BV.framing(None);
+    let camera = OrbitCamera::new(centre, radius);
+    let (graph, _) = graph_with_group_root();
+
+    let preview = renderer
+        .render_preview(&graph, TEST_BV, &camera, width, height)
+        .expect("preview is not refused")
+        .expect("a sized preview produces a texture");
+    let preview_pixels = read_target_back(&device, &queue, &preview, width, height);
+    assert_eq!(count_drawn_pixels(&preview_pixels), 0);
+
+    let workspace = renderer
+        .render(None, TEST_BV, &camera, width, height)
+        .expect("render is not refused")
+        .expect("a sized viewport produces a texture");
+    let workspace_pixels = read_target_back(&device, &queue, &workspace, width, height);
+    assert!(
+        count_drawn_pixels(&workspace_pixels) > 0,
+        "the viewport's own frame should still show the plate",
+    );
+}
+
+#[test]
+fn a_preview_draws_the_models() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(
+        device.clone(),
+        DeviceToken::next(),
+        queue.clone(),
+        DeviceLoss::default(),
+    )
+    .expect("Renderer::new under the test device");
+    let (width, height) = (64u32, 64u32);
+    let graph =
+        triangle_graph_with_translation(AffineTransform3D::from_translation([0.0, 0.0, 50.0]));
+    renderer.upload_scene(&graph).expect("upload the triangle");
+    let camera = camera_framing_the_scene(&renderer);
+
+    let preview = renderer
+        .render_preview(&graph, TEST_BV, &camera, width, height)
+        .expect("preview is not refused")
+        .expect("a sized preview produces a texture");
+
+    let pixels = read_target_back(&device, &queue, &preview, width, height);
+    assert!(
+        count_drawn_pixels(&pixels) > 0,
+        "the model should be visible in its own preview",
+    );
+}
