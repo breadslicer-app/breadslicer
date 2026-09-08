@@ -146,7 +146,10 @@ pub(crate) fn policies_for(
                 out.push(ConstraintPolicy::SnapToMultiple { step: step.value() });
             }
         }
-        ResolvedField::LiftSpeedMmMin | ResolvedField::BottomLiftSpeedMmMin => {
+        ResolvedField::LiftSpeedMmMin
+        | ResolvedField::BottomLiftSpeedMmMin
+        | ResolvedField::SecondLiftSpeedMmMin
+        | ResolvedField::BottomSecondLiftSpeedMmMin => {
             if let Some(range) = constraints.lift_speed_range_mm_min {
                 out.push(ConstraintPolicy::RejectBelowMinSnapAtMaximum {
                     min: range.min().value(),
@@ -154,7 +157,10 @@ pub(crate) fn policies_for(
                 });
             }
         }
-        ResolvedField::RetractSpeedMmMin | ResolvedField::BottomRetractSpeedMmMin => {
+        ResolvedField::RetractSpeedMmMin
+        | ResolvedField::BottomRetractSpeedMmMin
+        | ResolvedField::SecondRetractSpeedMmMin
+        | ResolvedField::BottomSecondRetractSpeedMmMin => {
             if let Some(range) = constraints.retract_speed_range_mm_min {
                 out.push(ConstraintPolicy::RejectBelowMinSnapAtMaximum {
                     min: range.min().value(),
@@ -167,7 +173,12 @@ pub(crate) fn policies_for(
                 out.push(ConstraintPolicy::SnapAtMaximum { max: max.value() });
             }
         }
-        ResolvedField::NormalExposureSec
+        // A second stage adds to the first, so the lift ceiling
+        // bounds the pair, not this distance on its own; the resolver
+        // clamps it against what the first stage leaves.
+        ResolvedField::SecondLiftDistanceMm
+        | ResolvedField::BottomSecondLiftDistanceMm
+        | ResolvedField::NormalExposureSec
         | ResolvedField::BottomExposureSec
         | ResolvedField::BottomLayerCount
         | ResolvedField::WaitBeforeCureSec

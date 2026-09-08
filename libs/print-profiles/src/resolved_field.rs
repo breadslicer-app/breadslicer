@@ -8,8 +8,9 @@
 //!
 //! Used as the key for warnings, errors, the per-field provenance
 //! table, and the constraint policy table. The `as_str`
-//! representation is stable and matches the TOML field name on the
-//! corresponding profile section.
+//! representation is stable and matches the TOML key on the
+//! corresponding profile section, dotted for a value that lives
+//! inside a section's own table.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ResolvedField {
@@ -29,6 +30,12 @@ pub enum ResolvedField {
     BottomLiftDistanceMm,
     BottomLiftSpeedMmMin,
     BottomRetractSpeedMmMin,
+    SecondLiftDistanceMm,
+    SecondLiftSpeedMmMin,
+    SecondRetractSpeedMmMin,
+    BottomSecondLiftDistanceMm,
+    BottomSecondLiftSpeedMmMin,
+    BottomSecondRetractSpeedMmMin,
     LightPwm,
     BottomLightPwm,
     ScaleCompensationPct,
@@ -54,6 +61,12 @@ impl ResolvedField {
             Self::BottomLiftDistanceMm => "bottom_lift_distance_mm",
             Self::BottomLiftSpeedMmMin => "bottom_lift_speed_mm_min",
             Self::BottomRetractSpeedMmMin => "bottom_retract_speed_mm_min",
+            Self::SecondLiftDistanceMm => "second_travel.lift_distance_mm",
+            Self::SecondLiftSpeedMmMin => "second_travel.lift_speed_mm_min",
+            Self::SecondRetractSpeedMmMin => "second_travel.retract_speed_mm_min",
+            Self::BottomSecondLiftDistanceMm => "bottom_second_travel.lift_distance_mm",
+            Self::BottomSecondLiftSpeedMmMin => "bottom_second_travel.lift_speed_mm_min",
+            Self::BottomSecondRetractSpeedMmMin => "bottom_second_travel.retract_speed_mm_min",
             Self::LightPwm => "light_pwm",
             Self::BottomLightPwm => "bottom_light_pwm",
             Self::ScaleCompensationPct => "scale_compensation_pct",

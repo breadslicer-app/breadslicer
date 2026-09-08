@@ -27,7 +27,10 @@
 //! - Validate each picked value against the printer's constraints:
 //!   snap-to-multiple, snap-into-range, snap-at-max, or
 //!   reject-below-min per the policy table. Snaps that exceed the
-//!   warning threshold emit an `Autosnap` warning.
+//!   warning threshold emit an `Autosnap` warning. A second travel
+//!   stage adds to the first, so its distance is clamped against
+//!   what the lift ceiling leaves, and a ceiling the first stage
+//!   already fills drops the stage.
 //! - Apply per-print scene overrides. Each override overwrites
 //!   the picked value, emits an `OverrideRecord` with the prior
 //!   value captured, and re-runs the per-field policy chain so
@@ -70,6 +73,7 @@ use crate::resolve_warning::{IntentSource, ResolveWarning};
 use crate::resolved_field::ResolvedField;
 use crate::resolved_print_config::ResolvedPrintConfig;
 use crate::scene_overrides::SceneOverrides;
+use crate::second_travel_stage::SecondTravelStage;
 use crate::value_source::ValueSource;
 
 /// Cured density assumed when no profile states one: the median of
@@ -103,6 +107,8 @@ pub(crate) struct PickedValues {
     pub bottom_light_pwm: Option<LightPwm>,
     pub scale_compensation_pct: Option<ScaleCompensation>,
     pub cured_density_g_per_cm3: Option<DensityGPerCm3>,
+    pub second_travel: Option<SecondTravelStage>,
+    pub bottom_second_travel: Option<SecondTravelStage>,
 }
 
 pub(crate) fn pick_and_derive_material(
@@ -295,6 +301,14 @@ fn apply_per_printer(
             final_value: value.percent(),
         });
     }
+    // No record for either: one carries a single number and a stage
+    // carries 3. The bottom layers inherit the normal stage here
+    // rather than at assembly, so each stage is clamped against the
+    // lift ceiling its own first stage leaves.
+    if let Some(value) = per_printer.second_travel {
+        picked.second_travel = Some(value);
+    }
+    picked.bottom_second_travel = per_printer.bottom_second_travel.or(picked.second_travel);
 }
 
 /// Take the resin's measured constants as stated. There is no layer
@@ -554,6 +568,24 @@ pub(crate) fn apply_constraints(
                 .expect("snapped bottom retract speed stays positive-finite"),
         );
     }
+    if let Some(stage) = picked.second_travel {
+        picked.second_travel = constrain_second_stage(
+            stage,
+            picked.lift_distance_mm,
+            &NORMAL_SECOND_STAGE,
+            constraints,
+            warnings,
+        )?;
+    }
+    if let Some(stage) = picked.bottom_second_travel {
+        picked.bottom_second_travel = constrain_second_stage(
+            stage,
+            picked.bottom_lift_distance_mm.or(picked.lift_distance_mm),
+            &BOTTOM_SECOND_STAGE,
+            constraints,
+            warnings,
+        )?;
+    }
     Ok(())
 }
 
@@ -565,29 +597,106 @@ fn apply_field_policies(
 ) -> Result<f64, ResolveError> {
     let mut current = initial;
     for policy in policies_for(field, constraints) {
-        match policy.apply(current) {
-            ApplyResult::Unchanged => {}
-            ApplyResult::Snapped { snapped, reason } => {
-                if relative_delta_exceeds(current, snapped, AUTOSNAP_WARNING_THRESHOLD) {
-                    warnings.push(ResolveWarning::Autosnap {
-                        field,
-                        requested: current,
-                        snapped,
-                        reason,
-                    });
-                }
-                current = snapped;
-            }
-            ApplyResult::RejectedBelow { minimum } => {
-                return Err(ResolveError::RejectedBelowMinimum {
-                    field,
-                    value: current,
-                    minimum,
-                });
-            }
-        }
+        current = apply_policy(field, current, policy, warnings)?;
     }
     Ok(current)
+}
+
+fn apply_policy(
+    field: ResolvedField,
+    value: f64,
+    policy: ConstraintPolicy,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<f64, ResolveError> {
+    match policy.apply(value) {
+        ApplyResult::Unchanged => Ok(value),
+        ApplyResult::Snapped { snapped, reason } => {
+            if relative_delta_exceeds(value, snapped, AUTOSNAP_WARNING_THRESHOLD) {
+                warnings.push(ResolveWarning::Autosnap {
+                    field,
+                    requested: value,
+                    snapped,
+                    reason,
+                });
+            }
+            Ok(snapped)
+        }
+        ApplyResult::RejectedBelow { minimum } => Err(ResolveError::RejectedBelowMinimum {
+            field,
+            value,
+            minimum,
+        }),
+    }
+}
+
+/// The field ids one second stage answers to, so the normal and the
+/// bottom stage share the clamping and still name themselves in a
+/// warning.
+struct SecondStageFields {
+    lift_distance: ResolvedField,
+    lift_speed: ResolvedField,
+    retract_speed: ResolvedField,
+}
+
+const NORMAL_SECOND_STAGE: SecondStageFields = SecondStageFields {
+    lift_distance: ResolvedField::SecondLiftDistanceMm,
+    lift_speed: ResolvedField::SecondLiftSpeedMmMin,
+    retract_speed: ResolvedField::SecondRetractSpeedMmMin,
+};
+
+const BOTTOM_SECOND_STAGE: SecondStageFields = SecondStageFields {
+    lift_distance: ResolvedField::BottomSecondLiftDistanceMm,
+    lift_speed: ResolvedField::BottomSecondLiftSpeedMmMin,
+    retract_speed: ResolvedField::BottomSecondRetractSpeedMmMin,
+};
+
+/// Bring a second stage inside the printer's limits: its speeds
+/// against the same ranges the first stage answers to, its distance
+/// against what the lift ceiling leaves once the first stage has
+/// taken its share.
+///
+/// Returns `None` when the ceiling leaves the stage no distance, so
+/// the platform makes the whole move in one stage.
+fn constrain_second_stage(
+    stage: SecondTravelStage,
+    first_stage_distance_mm: Option<PositiveFiniteMm>,
+    fields: &SecondStageFields,
+    constraints: &PrinterConstraints,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<Option<SecondTravelStage>, ResolveError> {
+    let lift_speed = apply_field_policies(
+        fields.lift_speed,
+        stage.lift_speed_mm_min.value(),
+        constraints,
+        warnings,
+    )?;
+    let retract_speed = apply_field_policies(
+        fields.retract_speed,
+        stage.retract_speed_mm_min.value(),
+        constraints,
+        warnings,
+    )?;
+    let distance = match (constraints.lift_distance_max_mm, first_stage_distance_mm) {
+        (Some(max), Some(first)) => apply_policy(
+            fields.lift_distance,
+            stage.lift_distance_mm.value(),
+            ConstraintPolicy::SnapAtMaximum {
+                max: max.value() - first.value(),
+            },
+            warnings,
+        )?,
+        _ => stage.lift_distance_mm.value(),
+    };
+    let Ok(lift_distance_mm) = PositiveFiniteMm::new(distance) else {
+        return Ok(None);
+    };
+    Ok(Some(SecondTravelStage {
+        lift_distance_mm,
+        lift_speed_mm_min: PositiveFiniteMmPerMin::new(lift_speed)
+            .expect("snapped second lift speed stays positive-finite"),
+        retract_speed_mm_min: PositiveFiniteMmPerMin::new(retract_speed)
+            .expect("snapped second retract speed stays positive-finite"),
+    }))
 }
 
 pub(crate) fn apply_scene_overrides(
@@ -936,6 +1045,8 @@ fn assemble(
             bottom_retract_speed_mm_min: picked
                 .bottom_retract_speed_mm_min
                 .unwrap_or(retract_speed_mm_min),
+            second_travel: picked.second_travel,
+            bottom_second_travel: picked.bottom_second_travel,
             light_pwm: picked.light_pwm.unwrap_or(LightPwm::FULL),
             bottom_light_pwm: picked.bottom_light_pwm.unwrap_or(LightPwm::FULL),
             scale_compensation_pct,

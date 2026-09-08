@@ -79,6 +79,8 @@ fn sample_material_resolved() -> MaterialResolved {
             z: ScaleCompensationPercent::new(0.0).unwrap(),
         },
         cured_density_g_per_cm3: DensityGPerCm3::new(1.15).unwrap(),
+        second_travel: None,
+        bottom_second_travel: None,
     }
 }
 

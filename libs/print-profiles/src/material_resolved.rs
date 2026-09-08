@@ -17,7 +17,9 @@
 //! cycle is asking for all of it. An uncalibrated bottom wait or
 //! bottom motion takes the normal-layer value, since a resin that
 //! draws no distinction between the two wants one pause and one
-//! movement everywhere.
+//! movement everywhere. The travel's second stage is optional
+//! throughout: a machine that moves in one stage has none to
+//! resolve.
 //!
 //! Each field uses the per-unit primitive that carries the
 //! positive-finite invariant on the type, matching the section
@@ -30,6 +32,7 @@ use sc_print_primitives::{
 };
 
 use crate::material_identity::MaterialIdentity;
+use crate::second_travel_stage::SecondTravelStage;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialResolved {
@@ -59,6 +62,11 @@ pub struct MaterialResolved {
     pub bottom_lift_speed_mm_min: PositiveFiniteMmPerMin,
     /// How fast the platform returns onto a bottom layer.
     pub bottom_retract_speed_mm_min: PositiveFiniteMmPerMin,
+    /// The second stage of the travel over a normal layer; absent
+    /// means the platform moves in one stage.
+    pub second_travel: Option<SecondTravelStage>,
+    /// The second stage of the travel over a bottom layer.
+    pub bottom_second_travel: Option<SecondTravelStage>,
     /// How hard the light is driven on a normal layer.
     pub light_pwm: LightPwm,
     /// How hard the light is driven on a bottom layer.

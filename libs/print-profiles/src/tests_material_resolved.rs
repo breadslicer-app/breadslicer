@@ -11,6 +11,7 @@ use semver::Version;
 
 use super::material_identity::MaterialIdentity;
 use super::material_resolved::MaterialResolved;
+use super::second_travel_stage::SecondTravelStage;
 
 fn sample_identity() -> MaterialIdentity {
     MaterialIdentity {
@@ -53,6 +54,16 @@ fn sample_resolved() -> MaterialResolved {
         bottom_light_pwm: LightPwm::FULL,
         scale_compensation_pct: sample_scale_compensation(),
         cured_density_g_per_cm3: DensityGPerCm3::new(1.15).unwrap(),
+        second_travel: Some(SecondTravelStage {
+            lift_distance_mm: PositiveFiniteMm::new(3.0).unwrap(),
+            lift_speed_mm_min: PositiveFiniteMmPerMin::new(230.0).unwrap(),
+            retract_speed_mm_min: PositiveFiniteMmPerMin::new(230.0).unwrap(),
+        }),
+        bottom_second_travel: Some(SecondTravelStage {
+            lift_distance_mm: PositiveFiniteMm::new(4.0).unwrap(),
+            lift_speed_mm_min: PositiveFiniteMmPerMin::new(65.0).unwrap(),
+            retract_speed_mm_min: PositiveFiniteMmPerMin::new(180.0).unwrap(),
+        }),
     }
 }
 
@@ -79,6 +90,14 @@ fn constructed_value_carries_every_field() {
     assert_eq!(resolved.light_pwm.percent(), 80.0);
     assert_eq!(resolved.bottom_light_pwm, LightPwm::FULL);
     assert_eq!(resolved.scale_compensation_pct.x.value(), 0.5);
+    let second = resolved.second_travel.unwrap();
+    assert_eq!(second.lift_distance_mm.value(), 3.0);
+    assert_eq!(second.lift_speed_mm_min.value(), 230.0);
+    assert_eq!(second.retract_speed_mm_min.value(), 230.0);
+    let bottom_second = resolved.bottom_second_travel.unwrap();
+    assert_eq!(bottom_second.lift_distance_mm.value(), 4.0);
+    assert_eq!(bottom_second.lift_speed_mm_min.value(), 65.0);
+    assert_eq!(bottom_second.retract_speed_mm_min.value(), 180.0);
 }
 
 #[test]

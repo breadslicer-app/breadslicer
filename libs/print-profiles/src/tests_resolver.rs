@@ -21,6 +21,7 @@ use super::resolver::{
     resolve_layer_height, snap_to_z_step,
 };
 use super::scene_overrides::SceneOverrides;
+use super::second_travel_stage::SecondTravelStage;
 use super::value_source::ValueSource;
 
 const PRINTER_WITH_LIGHT_INTENSITY: &str = r#"
@@ -1252,6 +1253,186 @@ fn apply_constraints_snaps_lift_speed_above_max() {
     )));
 }
 
+fn speed(value: f64) -> PositiveFiniteMmPerMin {
+    PositiveFiniteMmPerMin::new(value).expect("test speeds are positive finite")
+}
+
+fn speed_range(min: f64, max: f64) -> SpeedRangeMmPerMin {
+    SpeedRangeMmPerMin::new(speed(min), speed(max)).expect("test ranges are ordered")
+}
+
+fn second_stage(distance_mm: f64, lift_speed: f64, retract_speed: f64) -> SecondTravelStage {
+    SecondTravelStage {
+        lift_distance_mm: mm(distance_mm),
+        lift_speed_mm_min: speed(lift_speed),
+        retract_speed_mm_min: speed(retract_speed),
+    }
+}
+
+#[test]
+fn apply_constraints_snaps_a_second_lift_speed_above_max() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(2.0)),
+        second_travel: Some(second_stage(3.0, 1000.0, 230.0)),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_speed_range_mm_min: Some(speed_range(60.0, 300.0)),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    let stage = picked.second_travel.unwrap();
+    assert_eq!(stage.lift_speed_mm_min.value(), 300.0);
+    assert_eq!(stage.lift_distance_mm.value(), 3.0);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::SecondLiftSpeedMmMin,
+            reason: SnapReason::ClampedAtMaximum { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_snaps_a_second_retract_speed_above_max() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(2.0)),
+        second_travel: Some(second_stage(3.0, 230.0, 1000.0)),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        retract_speed_range_mm_min: Some(speed_range(60.0, 300.0)),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(
+        picked.second_travel.unwrap().retract_speed_mm_min.value(),
+        300.0
+    );
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::SecondRetractSpeedMmMin,
+            reason: SnapReason::ClampedAtMaximum { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_rejects_a_second_lift_speed_below_minimum() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(2.0)),
+        second_travel: Some(second_stage(3.0, 30.0, 230.0)),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_speed_range_mm_min: Some(speed_range(60.0, 300.0)),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    let err = apply_constraints(&mut picked, &constraints, &mut warnings).unwrap_err();
+
+    assert!(matches!(
+        err,
+        ResolveError::RejectedBelowMinimum {
+            field: ResolvedField::SecondLiftSpeedMmMin,
+            value: 30.0,
+            minimum: 60.0,
+        },
+    ));
+}
+
+#[test]
+fn apply_constraints_clamps_a_second_stage_to_what_the_lift_ceiling_leaves() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(4.0)),
+        second_travel: Some(second_stage(9.0, 230.0, 230.0)),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_distance_max_mm: Some(mm(10.0)),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.lift_distance_mm.unwrap().value(), 4.0);
+    assert_eq!(picked.second_travel.unwrap().lift_distance_mm.value(), 6.0);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        ResolveWarning::Autosnap {
+            field: ResolvedField::SecondLiftDistanceMm,
+            reason: SnapReason::ClampedAtMaximum { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn apply_constraints_drops_a_second_stage_when_the_first_fills_the_lift_ceiling() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(10.0)),
+        second_travel: Some(second_stage(3.0, 230.0, 230.0)),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_distance_max_mm: Some(mm(10.0)),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert!(picked.second_travel.is_none());
+}
+
+#[test]
+fn apply_constraints_leaves_a_second_stage_alone_without_declared_limits() {
+    let stage = second_stage(3.0, 1000.0, 1000.0);
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(2.0)),
+        second_travel: Some(stage),
+        ..PickedValues::default()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &empty_constraints(), &mut warnings).unwrap();
+
+    assert_eq!(picked.second_travel, Some(stage));
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn apply_constraints_measures_a_bottom_stage_against_the_bottom_lift_distance() {
+    let mut picked = PickedValues {
+        lift_distance_mm: Some(mm(2.0)),
+        bottom_lift_distance_mm: Some(mm(9.0)),
+        second_travel: Some(second_stage(3.0, 230.0, 230.0)),
+        bottom_second_travel: Some(second_stage(3.0, 230.0, 230.0)),
+        ..PickedValues::default()
+    };
+    let constraints = PrinterConstraints {
+        lift_distance_max_mm: Some(mm(10.0)),
+        ..empty_constraints()
+    };
+    let mut warnings = Vec::new();
+    apply_constraints(&mut picked, &constraints, &mut warnings).unwrap();
+
+    assert_eq!(picked.second_travel.unwrap().lift_distance_mm.value(), 3.0);
+    assert_eq!(
+        picked
+            .bottom_second_travel
+            .unwrap()
+            .lift_distance_mm
+            .value(),
+        1.0
+    );
+}
+
 #[test]
 fn apply_constraints_snaps_lift_distance_above_max() {
     let mut picked = PickedValues {
@@ -1610,6 +1791,89 @@ fn resolve_assembles_fully_populated_config_from_per_printer_block() {
         0.0
     );
     assert_eq!(resolved.printer, printer);
+}
+
+const TWO_STAGE_MATERIAL: &str = r#"
+[identity]
+id = "elegoo-standard-grey"
+brand = "ELEGOO"
+family = "standard"
+name = "Standard Grey"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-saturn-4-ultra"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 32.0
+bottom_layer_count = 2
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+"#;
+
+#[test]
+fn resolve_carries_a_calibrated_second_stage_into_the_config() {
+    let printer = printer_with_light_intensity();
+    let material = material(TWO_STAGE_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    let second = resolved.material_resolved.second_travel.unwrap();
+    assert_eq!(second.lift_distance_mm.value(), 3.0);
+    assert_eq!(second.lift_speed_mm_min.value(), 230.0);
+    assert_eq!(second.retract_speed_mm_min.value(), 230.0);
+}
+
+#[test]
+fn resolve_leaves_the_second_stage_unset_when_the_block_names_none() {
+    let printer = printer_with_light_intensity();
+    let material = material(FULLY_CALIBRATED_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert!(resolved.material_resolved.second_travel.is_none());
+    assert!(resolved.material_resolved.bottom_second_travel.is_none());
+}
+
+#[test]
+fn resolve_gives_the_bottom_layers_the_normal_second_stage_when_they_have_none() {
+    let printer = printer_with_light_intensity();
+    let material = material(TWO_STAGE_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert_eq!(
+        resolved.material_resolved.bottom_second_travel,
+        resolved.material_resolved.second_travel
+    );
+}
+
+#[test]
+fn resolve_keeps_a_calibrated_bottom_second_stage_apart_from_the_normal_one() {
+    let toml = format!(
+        "{TWO_STAGE_MATERIAL}bottom_second_travel = {{ lift_distance_mm = 4.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 180.0 }}\n"
+    );
+    let printer = printer_with_light_intensity();
+    let material = material(&toml);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    let bottom = resolved.material_resolved.bottom_second_travel.unwrap();
+    assert_eq!(bottom.lift_distance_mm.value(), 4.0);
+    assert_eq!(bottom.lift_speed_mm_min.value(), 65.0);
+    assert_eq!(bottom.retract_speed_mm_min.value(), 180.0);
+    let second = resolved.material_resolved.second_travel.unwrap();
+    assert_eq!(second.lift_distance_mm.value(), 3.0);
 }
 
 #[test]
