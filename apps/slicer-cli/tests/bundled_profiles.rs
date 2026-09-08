@@ -73,3 +73,47 @@ fn every_bundled_material_loads_and_re_saves_byte_identically() {
         );
     }
 }
+
+/// Widest span the published photopolymer densities occupy, with room
+/// either side: the lightest sheet read was 1.06 and the heaviest 1.6,
+/// both cured figures included.
+const PLAUSIBLE_DENSITY_G_PER_CM3: std::ops::RangeInclusive<f64> = 0.9..=2.0;
+
+#[test]
+fn every_stated_bundled_density_is_a_plausible_resin_density() {
+    for path in toml_files(&bundled_profiles_dir().join("materials")) {
+        let profile = load_material_profile_from_path(&path).unwrap();
+        for (label, density) in [
+            ("liquid", profile.physical.liquid_density_g_per_cm3),
+            ("cured", profile.physical.cured_density_g_per_cm3),
+        ] {
+            let Some(density) = density else { continue };
+            assert!(
+                PLAUSIBLE_DENSITY_G_PER_CM3.contains(&density.value()),
+                "{}: {label} density {} is outside {PLAUSIBLE_DENSITY_G_PER_CM3:?}",
+                path.display(),
+                density.value(),
+            );
+        }
+    }
+}
+
+#[test]
+fn no_bundled_resin_claims_to_expand_as_it_cures() {
+    for path in toml_files(&bundled_profiles_dir().join("materials")) {
+        let profile = load_material_profile_from_path(&path).unwrap();
+        let (Some(liquid), Some(cured)) = (
+            profile.physical.liquid_density_g_per_cm3,
+            profile.physical.cured_density_g_per_cm3,
+        ) else {
+            continue;
+        };
+        assert!(
+            cured.value() >= liquid.value(),
+            "{}: cured {} is lighter than liquid {}",
+            path.display(),
+            cured.value(),
+            liquid.value(),
+        );
+    }
+}

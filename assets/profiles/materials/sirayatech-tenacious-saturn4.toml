@@ -17,6 +17,8 @@ y = 0.0
 z = 0.0
 
 [physical]
+liquid_density_g_per_cm3 = 1.1
+cured_density_g_per_cm3 = 1.15
 
 [per_printer.elegoo-saturn-4-ctb]
 normal_exposure_sec = 3.5
