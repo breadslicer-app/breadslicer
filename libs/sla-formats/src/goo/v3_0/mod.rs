@@ -27,3 +27,5 @@ mod tests_header;
 mod tests_payload;
 #[cfg(test)]
 mod tests_record;
+#[cfg(test)]
+mod tests_vendor_layer;
