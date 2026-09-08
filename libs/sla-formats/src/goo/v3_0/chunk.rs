@@ -22,14 +22,27 @@ const WHITE: u8 = 0xFF;
 /// Longest pixel run a single chunk expresses.
 pub const MAX_RUN_LENGTH: u32 = 0x0FFF_FFFF;
 
-/// Append the chunks covering `length` pixels of `value` to `out`,
-/// splitting a run longer than [`MAX_RUN_LENGTH`].
-pub fn encode_run(value: u8, length: u32, out: &mut Vec<u8>) {
-    let mut remaining = length;
-    while remaining > 0 {
-        let chunk_length = remaining.min(MAX_RUN_LENGTH);
-        encode_chunk(value, chunk_length, out);
-        remaining -= chunk_length;
+/// Encoder for one layer image's chunk stream, tracking the value the
+/// last chunk carried.
+///
+/// One instance per image: no chunk may encode relative to a pixel of
+/// a different image, so the tracked value must not outlive one.
+#[derive(Debug, Default)]
+pub struct RunEncoder {
+    previous: Option<u8>,
+}
+
+impl RunEncoder {
+    /// Append the chunks covering `length` pixels of `value` to
+    /// `out`, splitting a run longer than [`MAX_RUN_LENGTH`].
+    pub fn push_run(&mut self, value: u8, length: u32, out: &mut Vec<u8>) {
+        let mut remaining = length;
+        while remaining > 0 {
+            let chunk_length = remaining.min(MAX_RUN_LENGTH);
+            encode_chunk(value, chunk_length, out);
+            self.previous = Some(value);
+            remaining -= chunk_length;
+        }
     }
 }
 

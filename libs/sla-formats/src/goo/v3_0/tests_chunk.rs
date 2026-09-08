@@ -5,12 +5,13 @@
 
 use proptest::prelude::*;
 
-use super::chunk::{MAX_RUN_LENGTH, encode_run};
+use super::chunk::{MAX_RUN_LENGTH, RunEncoder};
 use super::test_decode::decode_chunks as decode;
 
+/// Encode a single run into a fresh image's chunk stream.
 fn encoded(value: u8, length: u32) -> Vec<u8> {
     let mut out = Vec::new();
-    encode_run(value, length, &mut out);
+    RunEncoder::default().push_run(value, length, &mut out);
     out
 }
 
@@ -110,8 +111,9 @@ proptest! {
         runs in prop::collection::vec((0_u8..=255, 1_u32..=MAX_RUN_LENGTH), 0..64)
     ) {
         let mut bytes = Vec::new();
+        let mut encoder = RunEncoder::default();
         for (value, length) in &runs {
-            encode_run(*value, *length, &mut bytes);
+            encoder.push_run(*value, *length, &mut bytes);
         }
         prop_assert_eq!(decode(&bytes), runs);
     }

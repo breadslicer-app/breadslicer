@@ -7,7 +7,7 @@
 
 use sc_sl1cer::raster::rle::RleRun;
 
-use super::chunk::encode_run;
+use super::chunk::RunEncoder;
 
 /// Byte that opens a layer image.
 const PAYLOAD_MAGIC: u8 = 0x55;
@@ -17,8 +17,9 @@ const PAYLOAD_MAGIC: u8 = 0x55;
 pub fn encode_payload(runs: &[RleRun], out: &mut Vec<u8>) {
     out.push(PAYLOAD_MAGIC);
     let body = out.len();
+    let mut encoder = RunEncoder::default();
     for run in runs {
-        encode_run(run.value, run.length, out);
+        encoder.push_run(run.value, run.length, out);
     }
     let sum = out[body..]
         .iter()
