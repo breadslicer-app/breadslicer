@@ -4,6 +4,7 @@
  */
 
 use super::printer_profile::PrinterProfile;
+use super::printer_time_calibration::PrinterTimeCalibration;
 
 const VALID_TOML: &str = r#"
 [identity]
@@ -28,6 +29,36 @@ has_camera = false
 [constraints]
 z_step_mm = 0.01
 "#;
+
+#[test]
+fn a_profile_written_before_the_time_calibration_section_still_parses() {
+    let parsed: PrinterProfile = toml_edit::de::from_str(VALID_TOML).unwrap();
+    assert_eq!(parsed.time_calibration, PrinterTimeCalibration::default());
+}
+
+#[test]
+fn deserialise_parses_the_time_calibration_section() {
+    let toml = format!("{VALID_TOML}\n[time_calibration]\nprint_time_multiplier = 1.322\n");
+    let parsed: PrinterProfile = toml_edit::de::from_str(&toml).unwrap();
+    assert_eq!(
+        parsed
+            .time_calibration
+            .print_time_multiplier
+            .map(|v| v.value()),
+        Some(1.322),
+    );
+}
+
+#[test]
+fn roundtrip_preserves_the_time_calibration_section() {
+    let toml = format!(
+        "{VALID_TOML}\n[time_calibration]\nprint_time_multiplier = 1.322\nprint_time_offset_sec = -15.0\n",
+    );
+    let original: PrinterProfile = toml_edit::de::from_str(&toml).unwrap();
+    let rendered = toml_edit::ser::to_string(&original).unwrap();
+    let parsed: PrinterProfile = toml_edit::de::from_str(&rendered).unwrap();
+    assert_eq!(parsed, original);
+}
 
 #[test]
 fn deserialise_parses_all_section_blocks() {

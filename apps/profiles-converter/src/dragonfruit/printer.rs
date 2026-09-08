@@ -22,7 +22,7 @@ use sc_print_primitives::{
 };
 use sc_print_profiles::{
     EnvelopeAxisMismatch, PrinterCapabilities, PrinterConstraints, PrinterHardware,
-    PrinterIdentity, PrinterProfile,
+    PrinterIdentity, PrinterProfile, PrinterTimeCalibration,
 };
 use semver::Version;
 use serde::Deserialize;
@@ -267,6 +267,7 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
             lift_distance_max_mm: None,
             light_intensity_mw_per_cm2: None,
         },
+        time_calibration: PrinterTimeCalibration::default(),
     };
     Ok(MappedPrinter { profile, image_ref })
 }

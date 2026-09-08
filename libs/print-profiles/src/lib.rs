@@ -47,6 +47,7 @@ pub mod printer_constraints;
 pub mod printer_hardware;
 pub mod printer_identity;
 pub mod printer_profile;
+pub mod printer_time_calibration;
 pub mod profile_libraries;
 pub mod resolve_error;
 pub mod resolve_warning;
@@ -92,6 +93,7 @@ pub use printer_constraints::PrinterConstraints;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection};
+pub use printer_time_calibration::PrinterTimeCalibration;
 pub use profile_libraries::{ProfileLibraries, ProfileSource};
 pub use resolve_error::ResolveError;
 pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
@@ -154,6 +156,8 @@ mod tests_printer_hardware;
 mod tests_printer_identity;
 #[cfg(test)]
 mod tests_printer_profile;
+#[cfg(test)]
+mod tests_printer_time_calibration;
 #[cfg(test)]
 mod tests_profile_libraries;
 #[cfg(test)]

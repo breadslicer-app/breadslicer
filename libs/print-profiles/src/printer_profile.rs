@@ -21,6 +21,7 @@ use crate::printer_capabilities::PrinterCapabilities;
 use crate::printer_constraints::PrinterConstraints;
 use crate::printer_hardware::PrinterHardware;
 use crate::printer_identity::PrinterIdentity;
+use crate::printer_time_calibration::PrinterTimeCalibration;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(try_from = "RawPrinterProfile")]
@@ -29,6 +30,11 @@ pub struct PrinterProfile {
     pub hardware: PrinterHardware,
     pub capabilities: PrinterCapabilities,
     pub constraints: PrinterConstraints,
+    /// How far this machine's real timing departs from the schedule
+    /// it is handed. Absent in profiles written before the section
+    /// existed, and in those nobody has calibrated.
+    #[serde(default)]
+    pub time_calibration: PrinterTimeCalibration,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +43,8 @@ struct RawPrinterProfile {
     hardware: PrinterHardware,
     capabilities: PrinterCapabilities,
     constraints: PrinterConstraints,
+    #[serde(default)]
+    time_calibration: PrinterTimeCalibration,
     #[serde(default)]
     instance: Option<serde::de::IgnoredAny>,
 }
@@ -69,6 +77,7 @@ impl TryFrom<RawPrinterProfile> for PrinterProfile {
             hardware: raw.hardware,
             capabilities: raw.capabilities,
             constraints: raw.constraints,
+            time_calibration: raw.time_calibration,
         })
     }
 }
