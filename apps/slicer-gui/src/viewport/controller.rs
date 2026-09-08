@@ -51,11 +51,13 @@ use crate::mesh_loader::start_load_with_ticket;
 use crate::mesh_render::{DeviceLoss, RenderError, RendererInitError, SceneRender};
 use crate::pending_load::PendingLoad;
 use crate::picking;
+use crate::print_file_preview;
 use crate::save_progress_panel::SaveProgressPanel;
 use crate::scene_document::{SceneDocument, SceneEvent};
 use crate::scene_loader::{PreparedScene, SceneLoader};
 use crate::selection::{LeafId, Selection};
 use sc_scene::SceneError;
+use sc_sla_formats::{PrintPreviews, PrinterFileFormat};
 
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
@@ -439,6 +441,33 @@ impl ViewportController {
     /// time so the worker can drop the parsed scene onto the plate.
     pub(crate) fn build_volume(&self) -> BuildVolume {
         self.session.build_volume()
+    }
+
+    /// Draw the previews a printer file of `format` carries, framed
+    /// on the models rather than on wherever the viewport's camera
+    /// happens to be pointing.
+    ///
+    /// `None` when the format carries no previews, when no scene is
+    /// loaded, or when the device cannot draw them.
+    pub(crate) fn print_file_previews(&self, format: PrinterFileFormat) -> Option<PrintPreviews> {
+        // TODO: this draws 2 frames and waits for the GPU to hand
+        // them back, all on the UI thread, so the window stops
+        // repainting for as long as that takes. Doing it on a worker
+        // needs a second renderer on the same device, and today that
+        // would upload the scene's geometry all over again; letting 2
+        // renderers share the installed buffers is the missing piece.
+        let sizes = format.preview_sizes()?;
+        let build_volume = self.build_volume();
+        let mut cell = self.render.renderer_cell().borrow_mut();
+        let renderer = cell.as_mut()?;
+        self.session.document().with_scene(|spatial| {
+            print_file_preview::render_previews(
+                renderer.as_mut(),
+                spatial.graph(),
+                build_volume,
+                sizes,
+            )
+        })?
     }
 
     pub(crate) fn set_build_volume(&self, bv: BuildVolume) {

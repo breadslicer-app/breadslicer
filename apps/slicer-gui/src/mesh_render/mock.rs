@@ -25,7 +25,7 @@ use sc_scene::node::NodeId;
 use slint::wgpu_29::wgpu;
 
 use super::scene_upload::GpuScene;
-use super::{MeshRenderer, RenderError, SceneRender};
+use super::{FramePixels, MeshRenderer, RenderError, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::slice_cap::CapRaster;
@@ -45,6 +45,15 @@ pub(crate) struct MockRenderArgs {
     /// `true` when `SceneRender::gizmo` was `Some(_)` for this call.
     pub(crate) gizmo_present: bool,
     pub(crate) build_volume: BuildVolume,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+/// Recorded arguments of a single [`MockRenderer::preview_pixels`]
+/// call: the size asked for, which is what callers of the preview
+/// path are checked on.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MockPreviewArgs {
     pub(crate) width: u32,
     pub(crate) height: u32,
 }
@@ -74,6 +83,11 @@ pub(crate) struct MockRendererState {
     /// returns it as `Err`; an empty queue (the default) renders
     /// `Ok(None)` (the mock cannot construct a `wgpu::Texture`).
     pub(crate) next_render_errors: VecDeque<RenderError>,
+    pub(crate) preview_calls: Vec<MockPreviewArgs>,
+    /// Queue of `preview_pixels` results: each call pops the front.
+    /// An empty queue (the default) returns `Ok(None)`, the answer
+    /// of a renderer with nothing to draw.
+    pub(crate) next_preview_frames: VecDeque<Result<Option<FramePixels>, RenderError>>,
 }
 
 impl MockRendererState {
@@ -88,6 +102,8 @@ impl MockRendererState {
             install_scene_returns: true,
             next_upload_results: VecDeque::new(),
             next_render_errors: VecDeque::new(),
+            preview_calls: Vec::new(),
+            next_preview_frames: VecDeque::new(),
         }))
     }
 }
@@ -168,6 +184,19 @@ impl MeshRenderer for MockRenderer {
             Some(err) => Err(err),
             None => Ok(None),
         }
+    }
+
+    fn preview_pixels(
+        &mut self,
+        _graph: &Scene,
+        _build_volume: BuildVolume,
+        _camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<FramePixels>, RenderError> {
+        let mut s = self.state.borrow_mut();
+        s.preview_calls.push(MockPreviewArgs { width, height });
+        s.next_preview_frames.pop_front().unwrap_or(Ok(None))
     }
 }
 

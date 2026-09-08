@@ -15,7 +15,7 @@ use sc_scene::Scene;
 use slint::wgpu_29::wgpu;
 
 use super::scene_upload::GpuScene;
-use super::{RenderError, Renderer, SceneRender};
+use super::{FramePixels, RenderError, Renderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::slice_cap::CapRaster;
@@ -64,6 +64,18 @@ pub(crate) trait MeshRenderer {
         width: u32,
         height: u32,
     ) -> Result<Option<wgpu::Texture>, RenderError>;
+
+    /// Draw the models alone and copy the frame off the GPU, for a
+    /// picture that is not going on screen, such as the one a printer
+    /// file carries. Returns `Ok(None)` for a zero-sized request.
+    fn preview_pixels(
+        &mut self,
+        graph: &Scene,
+        build_volume: BuildVolume,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<FramePixels>, RenderError>;
 }
 
 impl MeshRenderer for Renderer {
@@ -104,5 +116,16 @@ impl MeshRenderer for Renderer {
         height: u32,
     ) -> Result<Option<wgpu::Texture>, RenderError> {
         Renderer::render(self, scene_render, build_volume, camera, width, height)
+    }
+
+    fn preview_pixels(
+        &mut self,
+        graph: &Scene,
+        build_volume: BuildVolume,
+        camera: &OrbitCamera,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<FramePixels>, RenderError> {
+        Renderer::preview_pixels(self, graph, build_volume, camera, width, height)
     }
 }

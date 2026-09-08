@@ -32,7 +32,9 @@ use sc_scene::Scene;
 use sc_sl1cer::VERSION;
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::profile::PackingMode;
-use sc_sla_formats::{PrintProgram, PrinterFileFormat, WriterError, write_printer_file};
+use sc_sla_formats::{
+    PrintPreviews, PrintProgram, PrinterFileFormat, WriterError, write_printer_file,
+};
 
 use crate::MainWindow;
 use crate::error_dialog::DialogManager;
@@ -193,23 +195,36 @@ pub(crate) fn wire_export_print_file(
         let dialogs = ctrl.dialogs();
         let export_progress = ctrl.export_progress();
         let default_stem = scene_export::default_export_stem(&document);
+        let previews_from = ctrl.clone();
         if let Err(err) = slint::spawn_local(async move {
-            run_export_flow(document, dialogs, export_progress, format, default_stem).await;
+            run_export_flow(
+                document,
+                dialogs,
+                export_progress,
+                format,
+                default_stem,
+                move |format| previews_from.print_file_previews(format),
+            )
+            .await;
         }) {
             eprintln!("Failed to spawn printer-file export task: {err}");
         }
     });
 }
 
-/// Runs one export: prepare and check, ask for the target, then write
-/// on a worker thread. Every refusal and failure surfaces its own
-/// dialog.
+/// Runs one export: prepare and check, ask for the target, draw what
+/// the machine will show for the file, then write on a worker thread.
+/// Every refusal and failure surfaces its own dialog.
+///
+/// `previews_for` runs once the target is settled, so a cancelled
+/// export draws nothing.
 async fn run_export_flow(
     document: Rc<SceneDocument>,
     dialogs: Rc<DialogManager>,
     export_progress: Rc<ExportProgressPanel>,
     format: PrinterFileFormat,
     default_stem: Option<String>,
+    previews_for: impl FnOnce(PrinterFileFormat) -> Option<PrintPreviews>,
 ) {
     // Before the dialog: asking for a filename and refusing afterwards
     // is the ordering to avoid.
@@ -228,6 +243,7 @@ async fn run_export_flow(
     let Some(target) = pick_printer_file_target(default_stem, format).await else {
         return;
     };
+    let previews = previews_for(format);
 
     export_progress.begin();
     let sink = export_progress.sink();
@@ -238,9 +254,14 @@ async fn run_export_flow(
             // The writer reports no progress of its own, so the panel
             // names the phase and nothing finer.
             sink.set(ExportPhase::Write, 0, 1);
-            let written =
-                write_printer_file(&job.stack, &worker_target, job.format, &job.program, None)
-                    .map_err(ExportFailure::Write);
+            let written = write_printer_file(
+                &job.stack,
+                &worker_target,
+                job.format,
+                &job.program,
+                previews.as_ref(),
+            )
+            .map_err(ExportFailure::Write);
             sink.set(ExportPhase::Write, 1, 1);
             written
         }))

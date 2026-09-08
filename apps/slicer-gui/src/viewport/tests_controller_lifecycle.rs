@@ -131,3 +131,34 @@ fn handle_rendering_teardown_drops_the_renderer_and_clears_redraw_owed() {
     assert!(!ctrl.renderer_installed_for_test());
     assert!(!ctrl.frame_state_for_test().redraw_owed());
 }
+
+/// The sizes a GOO V3.0 file fixes for its previews. The controller
+/// asks the format rather than carrying them itself.
+#[test]
+fn the_previews_for_a_printer_file_are_drawn_at_the_sizes_that_format_fixes() {
+    use sc_sla_formats::{GooVersion, PrinterFileFormat};
+
+    let (ctrl, state) = fixture();
+    state.borrow_mut().scene_bounds_value = Some((glam::Vec3::ZERO, glam::Vec3::splat(10.0)));
+    ctrl.install_graph_for_test(Scene::new());
+
+    let _ = ctrl.print_file_previews(PrinterFileFormat::Goo(GooVersion::V3_0));
+
+    let calls = &state.borrow().preview_calls;
+    assert_eq!(calls.len(), 1, "the mock gives no frame, so it stops there");
+    assert_eq!((calls[0].width, calls[0].height), (116, 116));
+}
+
+#[test]
+fn a_format_this_build_cannot_write_asks_for_no_previews() {
+    use sc_sla_formats::{CtbVariant, PrinterFileFormat};
+
+    let (ctrl, state) = fixture();
+    state.borrow_mut().scene_bounds_value = Some((glam::Vec3::ZERO, glam::Vec3::splat(10.0)));
+    ctrl.install_graph_for_test(Scene::new());
+
+    let previews = ctrl.print_file_previews(PrinterFileFormat::Ctb(CtbVariant::PlainV5));
+
+    assert!(previews.is_none());
+    assert!(state.borrow().preview_calls.is_empty());
+}

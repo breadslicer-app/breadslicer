@@ -40,6 +40,7 @@ mod pending_load;
 mod picking;
 mod preferences_bus;
 mod preferences_window;
+mod print_file_preview;
 mod print_format;
 pub mod profile_catalog;
 mod profile_extending;
@@ -65,6 +66,8 @@ mod slice_selection;
 mod support_gen_run;
 #[cfg(test)]
 mod tests_mesh_loader;
+#[cfg(test)]
+mod tests_print_file_preview;
 #[cfg(test)]
 mod tests_scene_dirty;
 #[cfg(test)]
