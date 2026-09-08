@@ -11,8 +11,11 @@ use std::fmt;
 use chrono::Local;
 use sc_print_primitives::{
     LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec, VolumeMm3,
+    VolumeOutOfRange,
 };
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
+use sc_scene::Scene;
+use sc_scene::SceneError;
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
 
@@ -38,32 +41,69 @@ impl fmt::Display for SlabTopOutOfRange {
 
 impl std::error::Error for SlabTopOutOfRange {}
 
-/// Build the [`PrintProgram`] for a resolved configuration, one
-/// record per layer of `profile`'s schedule.
+/// Why a scene and its resolved configuration yield no print program.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnprojectablePrint {
+    /// A scheduled layer has no representable height.
+    SlabTop(SlabTopOutOfRange),
+    /// The scene could not be traversed for the material it encloses.
+    Scene(SceneError),
+    /// The traversal's total is not a volume.
+    Volume(VolumeOutOfRange),
+}
+
+impl fmt::Display for UnprojectablePrint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SlabTop(err) => err.fmt(f),
+            Self::Scene(err) => write!(f, "cannot measure what the scene encloses: {err}"),
+            Self::Volume(err) => err.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for UnprojectablePrint {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SlabTop(err) => Some(err),
+            Self::Scene(err) => Some(err),
+            Self::Volume(err) => Some(err),
+        }
+    }
+}
+
+/// Build the [`PrintProgram`] for a scene under a resolved
+/// configuration, one record per layer of `profile`'s schedule.
 ///
-/// `profile` must be the one the contours were sliced under, and
-/// `created_at` must already be rendered the way the target file
-/// records a creation time.
+/// `scene` must be the one that was sliced, `profile` the one the
+/// contours were sliced under, and `created_at` must already be
+/// rendered the way the target file records a creation time.
+///
+/// The reported volume is everything `scene` encloses, so geometry
+/// the machine will not reach still counts towards it.
 ///
 /// # Errors
 ///
-/// [`SlabTopOutOfRange`] when a scheduled layer has no representable
-/// height.
+/// [`UnprojectablePrint`] when a scheduled layer has no representable
+/// height, or when the scene yields no volume.
 pub fn project_to_print_program(
+    scene: &Scene,
     config: &ResolvedPrintConfig,
     profile: &SliceProfile,
     created_at: NonEmptyString,
     slicer_version: &'static str,
-) -> Result<PrintProgram, SlabTopOutOfRange> {
+) -> Result<PrintProgram, UnprojectablePrint> {
     let material = &config.material_resolved;
     let transition_count = config.printer.capabilities.transition_layers.unwrap_or(0);
 
     let layers = (0u32..)
         .zip(profile.layer_schedule().iter_slab_tops())
         .map(|(layer_index, slab_top)| {
-            let slab_top_mm = PositiveFiniteMm::new(slab_top).map_err(|_| SlabTopOutOfRange {
-                layer_index,
-                z_mm: slab_top,
+            let slab_top_mm = PositiveFiniteMm::new(slab_top).map_err(|_| {
+                UnprojectablePrint::SlabTop(SlabTopOutOfRange {
+                    layer_index,
+                    z_mm: slab_top,
+                })
             })?;
             let waits = waits_for(layer_index, material);
             let motion = motion_for(layer_index, material);
@@ -90,10 +130,19 @@ pub fn project_to_print_program(
         layer_height_mm: material.layer_height_mm,
         bottom_layer_count: material.bottom_layer_count,
         transition_layer_count: transition_count,
-        volume_mm3: VolumeMm3::ZERO,
+        volume_mm3: plate_volume(scene)?,
         created_at,
         slicer_version,
     })
+}
+
+/// Measure the material a scene encloses, as the validated volume a
+/// printer file carries.
+fn plate_volume(scene: &Scene) -> Result<VolumeMm3, UnprojectablePrint> {
+    let total = scene
+        .world_volume_mm3()
+        .map_err(UnprojectablePrint::Scene)?;
+    VolumeMm3::new(total).map_err(UnprojectablePrint::Volume)
 }
 
 /// Render the current local time as a printer file's creation time.

@@ -24,7 +24,7 @@ use std::rc::Rc;
 
 use futures_channel::oneshot;
 use sc_print_glue::{
-    SlabTopOutOfRange, creation_time_now, fallback_report_lines, project_to_print_program,
+    UnprojectablePrint, creation_time_now, fallback_report_lines, project_to_print_program,
     slice_profile_for_selection,
 };
 use sc_print_profiles::{EffectiveMaterial, PrinterProfile, ResolveError, SceneOverrides, resolve};
@@ -63,7 +63,7 @@ pub(crate) enum ExportFailure {
     /// exposures, the waits and the motion.
     Resolve(ResolveError),
     /// A scheduled layer sits at a height the program cannot record.
-    Program(SlabTopOutOfRange),
+    Program(UnprojectablePrint),
     /// The writer refused, or the file could not be written.
     Write(WriterError),
     /// The writing worker panicked. Carries the panic message.
@@ -168,7 +168,7 @@ fn export_job(
     if profile.layer_schedule() != &held.schedule {
         return Err(ExportFailure::Stale);
     }
-    let program = project_to_print_program(&config, &profile, creation_time_now(), VERSION)
+    let program = project_to_print_program(scene, &config, &profile, creation_time_now(), VERSION)
         .map_err(ExportFailure::Program)?;
     Ok(ExportJob {
         stack: held.merged,

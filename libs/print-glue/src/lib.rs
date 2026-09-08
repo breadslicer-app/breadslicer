@@ -38,7 +38,9 @@ pub use fingerprint::{
 pub use prepare::{
     UnsliceableScene, UnsliceableSelection, slice_profile_for_scene, slice_profile_for_selection,
 };
-pub use print_program::{SlabTopOutOfRange, creation_time_now, project_to_print_program};
+pub use print_program::{
+    SlabTopOutOfRange, UnprojectablePrint, creation_time_now, project_to_print_program,
+};
 pub use projection::{
     UnschedulableHeight, project_hardware_to_slice_profile, project_to_slice_profile,
     total_layers_for_height,

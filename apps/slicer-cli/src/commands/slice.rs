@@ -171,7 +171,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
         TargetFormat::PrinterFile(format) => {
             let config = resolve_print_config(&printer, &material, args.layer_height)?;
             report_fallbacks(&config, &mut std::io::stderr());
-            let program = print_program_for(&config, &plate)?;
+            let program = print_program_for(&scene, &config, &plate)?;
             let stack = merge_plate(plate)?;
             write_printer_file(&stack, &target_path, format, &program)?;
         }
@@ -225,8 +225,12 @@ fn report_fallbacks(config: &ResolvedPrintConfig, out: &mut dyn Write) {
 }
 
 /// Build the machine program the printer-file writers run.
-fn print_program_for(config: &ResolvedPrintConfig, plate: &SlicedPlate) -> Result<PrintProgram> {
-    project_to_print_program(config, plate.profile(), creation_time_now(), VERSION)
+fn print_program_for(
+    scene: &Scene,
+    config: &ResolvedPrintConfig,
+    plate: &SlicedPlate,
+) -> Result<PrintProgram> {
+    project_to_print_program(scene, config, plate.profile(), creation_time_now(), VERSION)
         .map_err(|err| anyhow!("cannot describe this print to the machine: {err}"))
 }
 

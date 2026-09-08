@@ -4,15 +4,24 @@
  */
 
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
+use sc_mesh_core::indexed_mesh::IndexedMesh;
+use sc_mesh_core::primitives::{IndexedTriangle, Normal};
+use sc_mesh_core::transform::Transform3D;
+use sc_mesh_fixtures::{cuboid_with_y_tunnel, cuboid_with_z_tunnel, unit_cube_mesh};
 use sc_print_primitives::{LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm};
 use sc_print_profiles::{
     EffectiveMaterial, MaterialProfile, PrinterProfile, ResolvedPrintConfig, SceneOverrides,
 };
+use sc_scene::node::LeafPayload;
+use sc_scene::{Scene, SceneError};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
 use sc_sla_formats::PrintProgram;
 
-use super::print_program::{SlabTopOutOfRange, creation_time_now, project_to_print_program};
+use super::print_program::{
+    SlabTopOutOfRange, UnprojectablePrint, creation_time_now, project_to_print_program,
+};
 use super::projection::project_to_slice_profile;
 
 const BOTTOM_LAYER_COUNT: u32 = 8;
@@ -228,6 +237,33 @@ fn slice_profile(config: &ResolvedPrintConfig, total_layers: u32) -> SliceProfil
     )
 }
 
+/// The 3 fixture solids together: a unit cube, plus 2 prisms of 8
+/// mm3 each holding a 0.8 x 0.8 x 2 tunnel.
+const SCENE_VOLUME_MM3: f64 = 1.0 + 2.0 * (8.0 - 1.28);
+
+fn plate_of(meshes: impl IntoIterator<Item = IndexedMesh>) -> Scene {
+    let mut scene = Scene::new();
+    for mesh in meshes {
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .expect("add leaf");
+        scene.add_root(leaf).expect("leaf as root");
+    }
+    scene
+}
+
+fn scene() -> Scene {
+    plate_of([
+        unit_cube_mesh(),
+        cuboid_with_z_tunnel(),
+        cuboid_with_y_tunnel(),
+    ])
+}
+
 const CREATED_AT: &str = "2026-09-04 17:31:02";
 
 fn created_at() -> NonEmptyString {
@@ -237,7 +273,7 @@ fn created_at() -> NonEmptyString {
 fn program(printer_toml: &str, total_layers: u32) -> PrintProgram {
     let config = resolved_config(printer_toml);
     let profile = slice_profile(&config, total_layers);
-    project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap()
+    project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap()
 }
 
 fn exposures(program: &PrintProgram) -> Vec<f64> {
@@ -325,7 +361,8 @@ fn a_schedule_shorter_than_the_bottom_layers_is_all_bottom_layers() {
 fn every_layer_records_its_slab_top() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
 
     let scheduled: Vec<f64> = profile.layer_schedule().iter_slab_tops().collect();
     let recorded: Vec<f64> = program
@@ -340,7 +377,8 @@ fn every_layer_records_its_slab_top() {
 fn the_raster_setup_comes_from_the_slice_profile() {
     let config = resolved_config(PRINTER_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
 
     assert_eq!(program.raster.build_volume(), profile.build_volume());
     assert_eq!(
@@ -420,7 +458,8 @@ fn the_retract_repeats_the_lift_distance_at_its_own_speed() {
 fn the_bottom_motion_stops_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_MOTION_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
@@ -451,7 +490,8 @@ fn a_resin_naming_no_pause_leaves_every_record_at_zero() {
 fn the_calibrated_waits_reach_every_record() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_WAITS_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
 
     for layer in &program.layers {
         assert_eq!(layer.wait_before_cure_sec.value(), 0.4);
@@ -464,7 +504,8 @@ fn the_calibrated_waits_reach_every_record() {
 fn the_bottom_waits_stop_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
@@ -483,7 +524,8 @@ fn the_bottom_waits_stop_where_the_bottom_layers_do() {
 fn the_transition_band_holds_the_normal_waits_while_its_exposure_still_ramps() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_BOTTOM_WAITS_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
     let band = BOTTOM_LAYER_COUNT as usize..(BOTTOM_LAYER_COUNT + TRANSITION_COUNT) as usize;
 
     for layer in &program.layers[band] {
@@ -506,7 +548,8 @@ fn a_light_nobody_dialled_down_runs_at_full_power() {
 fn the_bottom_light_pwm_stops_where_the_bottom_layers_do() {
     let config = resolved_config_for(PRINTER_TOML, MATERIAL_WITH_LIGHT_PWM_TOML);
     let profile = slice_profile(&config, 20);
-    let program = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap();
+    let program =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap();
     let bottom = BOTTOM_LAYER_COUNT as usize;
 
     for layer in &program.layers[..bottom] {
@@ -538,9 +581,50 @@ fn a_layer_beyond_the_representable_height_names_itself() {
         PackingMode::None,
     );
 
-    let err = project_to_print_program(&config, &profile, created_at(), "0.0.12").unwrap_err();
-    assert_eq!(err.layer_index, 1);
-    assert!(!err.z_mm.is_finite(), "z_mm: {}", err.z_mm);
+    let err =
+        project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap_err();
+    match err {
+        UnprojectablePrint::SlabTop(err) => {
+            assert_eq!(err.layer_index, 1);
+            assert!(!err.z_mm.is_finite(), "z_mm: {}", err.z_mm);
+        }
+        other => panic!("expected a slab top failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_program_reports_the_material_the_plate_encloses() {
+    let program = program(PRINTER_TOML, 20);
+    let volume = program.volume_mm3.value();
+    assert!((volume - SCENE_VOLUME_MM3).abs() < 1e-6, "volume: {volume}",);
+}
+
+#[test]
+fn an_empty_plate_encloses_nothing() {
+    let config = resolved_config(PRINTER_TOML);
+    let profile = slice_profile(&config, 20);
+    let program =
+        project_to_print_program(&plate_of([]), &config, &profile, created_at(), "0.0.12").unwrap();
+    assert_eq!(program.volume_mm3.value(), 0.0);
+}
+
+#[test]
+fn a_scene_that_cannot_be_measured_stops_the_projection() {
+    let mut mesh = unit_cube_mesh();
+    mesh.faces[0] = IndexedTriangle::from_raw_indices(Normal::new([0.0, 0.0, 1.0]), [0, 1, 99]);
+    let scene = plate_of([mesh]);
+    let config = resolved_config(PRINTER_TOML);
+    let profile = slice_profile(&config, 20);
+
+    let err =
+        project_to_print_program(&scene, &config, &profile, created_at(), "0.0.12").unwrap_err();
+    assert!(
+        matches!(
+            err,
+            UnprojectablePrint::Scene(SceneError::InvalidMeshFaces { .. })
+        ),
+        "err: {err:?}",
+    );
 }
 
 #[test]
