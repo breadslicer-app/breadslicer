@@ -179,6 +179,32 @@ lift_speed_mm_min = 120.0
 retract_speed_mm_min = 150.0
 "#;
 
+/// The travel split in two, as ELEGOO's table gives it, with nothing
+/// said about the bottom layers.
+const MATERIAL_WITH_SECOND_STAGE_TOML: &str = r#"
+[identity]
+id = "elegoo-standard-grey"
+brand = "ELEGOO"
+family = "standard"
+name = "Standard Grey"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 32.0
+bottom_layer_count = 2
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+"#;
+
 fn config(material_toml: &str) -> ResolvedPrintConfig {
     let printer: PrinterProfile = toml_edit::de::from_str(PRINTER_TOML).unwrap();
     let material: MaterialProfile = toml_edit::de::from_str(material_toml).unwrap();
@@ -269,6 +295,72 @@ fn an_uncalibrated_bottom_value_resolves_to_its_normal_counterpart() {
         .expect("an uncalibrated bottom distance is reported");
     assert_eq!(travel.kind, FallbackKind::NormalCounterpart);
     assert_eq!(travel.resolved_to, 5.0, "the calibrated lift distance");
+}
+
+#[test]
+fn an_inherited_bottom_second_stage_is_reported_with_the_numbers_it_took() {
+    let used = fallbacks_used(&config(MATERIAL_WITH_SECOND_STAGE_TOML));
+    let stage: Vec<(ResolvedField, f64)> = used
+        .iter()
+        .filter(|used| used.field.as_str().starts_with("bottom_second_travel."))
+        .map(|used| (used.field, used.resolved_to))
+        .collect();
+
+    assert_eq!(
+        stage,
+        vec![
+            (ResolvedField::BottomSecondLiftDistanceMm, 3.0),
+            (ResolvedField::BottomSecondLiftSpeedMmMin, 230.0),
+            (ResolvedField::BottomSecondRetractSpeedMmMin, 230.0),
+        ],
+        "the normal stage's own numbers: {used:?}",
+    );
+    assert!(
+        used.iter()
+            .filter(|used| used.field.as_str().starts_with("bottom_second_travel."))
+            .all(|used| used.kind == FallbackKind::NormalCounterpart)
+    );
+}
+
+#[test]
+fn a_calibrated_bottom_second_stage_is_not_a_fallback() {
+    let toml = format!(
+        "{MATERIAL_WITH_SECOND_STAGE_TOML}bottom_second_travel = {{ lift_distance_mm = 4.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 180.0 }}\n"
+    );
+    let reported = reported_fields(&toml);
+
+    assert!(
+        !reported
+            .iter()
+            .any(|field| field.as_str().starts_with("bottom_second_travel.")),
+        "{reported:?}",
+    );
+}
+
+#[test]
+fn a_normal_second_stage_is_never_a_fallback() {
+    // Nothing stands in for it: either the resin calibrates the
+    // stage or the machine is asked for a single move.
+    let reported = reported_fields(MATERIAL_WITH_SECOND_STAGE_TOML);
+
+    assert!(
+        !reported
+            .iter()
+            .any(|field| field.as_str().starts_with("second_travel.")),
+        "{reported:?}",
+    );
+}
+
+#[test]
+fn a_print_that_moves_in_one_stage_reports_nothing_about_a_second() {
+    let reported = reported_fields(BARE_MATERIAL_TOML);
+
+    assert!(
+        !reported
+            .iter()
+            .any(|field| field.as_str().contains("second_travel.")),
+        "{reported:?}",
+    );
 }
 
 #[test]

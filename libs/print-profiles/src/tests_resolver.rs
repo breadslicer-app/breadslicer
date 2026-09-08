@@ -10,6 +10,7 @@ use sc_print_primitives::{
 
 use super::effective_material::EffectiveMaterial;
 use super::material_profile::MaterialProfile;
+use super::override_record::OverrideRecord;
 use super::printer_constraints::PrinterConstraints;
 use super::printer_profile::PrinterProfile;
 use super::resolve_error::ResolveError;
@@ -1874,6 +1875,60 @@ fn resolve_keeps_a_calibrated_bottom_second_stage_apart_from_the_normal_one() {
     assert_eq!(bottom.retract_speed_mm_min.value(), 180.0);
     let second = resolved.material_resolved.second_travel.unwrap();
     assert_eq!(second.lift_distance_mm.value(), 3.0);
+}
+
+fn recorded_under(records: &[OverrideRecord], prefix: &str) -> Vec<(ResolvedField, f64)> {
+    records
+        .iter()
+        .filter(|record| record.field.as_str().starts_with(prefix))
+        .map(|record| (record.field, record.final_value))
+        .collect()
+}
+
+#[test]
+fn picking_a_second_stage_records_each_of_its_numbers() {
+    let (_, _, records) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material(TWO_STAGE_MATERIAL),
+    );
+
+    assert_eq!(
+        recorded_under(&records, "second_travel."),
+        vec![
+            (ResolvedField::SecondLiftDistanceMm, 3.0),
+            (ResolvedField::SecondLiftSpeedMmMin, 230.0),
+            (ResolvedField::SecondRetractSpeedMmMin, 230.0),
+        ],
+    );
+}
+
+#[test]
+fn an_inherited_bottom_second_stage_leaves_no_record() {
+    let (picked, _, records) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material(TWO_STAGE_MATERIAL),
+    );
+
+    assert!(picked.bottom_second_travel.is_some());
+    assert!(recorded_under(&records, "bottom_second_travel.").is_empty());
+}
+
+#[test]
+fn a_declared_bottom_second_stage_records_each_of_its_numbers() {
+    let toml = format!(
+        "{TWO_STAGE_MATERIAL}bottom_second_travel = {{ lift_distance_mm = 4.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 180.0 }}\n"
+    );
+    let (_, _, records) =
+        pick_and_derive_material(&printer_with_light_intensity(), &material(&toml));
+
+    assert_eq!(
+        recorded_under(&records, "bottom_second_travel."),
+        vec![
+            (ResolvedField::BottomSecondLiftDistanceMm, 4.0),
+            (ResolvedField::BottomSecondLiftSpeedMmMin, 65.0),
+            (ResolvedField::BottomSecondRetractSpeedMmMin, 180.0),
+        ],
+    );
 }
 
 #[test]

@@ -70,73 +70,103 @@ impl fmt::Display for FallbackUsed {
     }
 }
 
-type ResolvedValue = fn(&MaterialResolved) -> f64;
+/// Reads the value a field resolved to, or `None` when the print
+/// carries no such value at all, as a machine moving in one stage
+/// carries no second one.
+type ResolvedValue = fn(&MaterialResolved) -> Option<f64>;
 
 /// Every value the resolver is willing to substitute, in the order
 /// a report lists them: the normal-layer pauses, the bottom-layer
-/// pauses, the bottom-layer travel, the two duties, then the resin's
-/// own properties. The required fields are absent because resolution
-/// fails outright without them.
-const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 12] = [
+/// pauses, the bottom-layer travel including its second stage, the
+/// two duties, then the resin's own properties. The required fields
+/// are absent because resolution fails outright without them.
+const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 15] = [
     (
         ResolvedField::WaitBeforeCureSec,
         FallbackKind::NoDwell,
-        |material| material.wait_before_cure_sec.value(),
+        |material| Some(material.wait_before_cure_sec.value()),
     ),
     (
         ResolvedField::WaitAfterCureSec,
         FallbackKind::NoDwell,
-        |material| material.wait_after_cure_sec.value(),
+        |material| Some(material.wait_after_cure_sec.value()),
     ),
     (
         ResolvedField::WaitAfterLiftSec,
         FallbackKind::NoDwell,
-        |material| material.wait_after_lift_sec.value(),
+        |material| Some(material.wait_after_lift_sec.value()),
     ),
     (
         ResolvedField::BottomWaitBeforeCureSec,
         FallbackKind::NormalCounterpart,
-        |material| material.bottom_wait_before_cure_sec.value(),
+        |material| Some(material.bottom_wait_before_cure_sec.value()),
     ),
     (
         ResolvedField::BottomWaitAfterCureSec,
         FallbackKind::NormalCounterpart,
-        |material| material.bottom_wait_after_cure_sec.value(),
+        |material| Some(material.bottom_wait_after_cure_sec.value()),
     ),
     (
         ResolvedField::BottomWaitAfterLiftSec,
         FallbackKind::NormalCounterpart,
-        |material| material.bottom_wait_after_lift_sec.value(),
+        |material| Some(material.bottom_wait_after_lift_sec.value()),
     ),
     (
         ResolvedField::BottomLiftDistanceMm,
         FallbackKind::NormalCounterpart,
-        |material| material.bottom_lift_distance_mm.value(),
+        |material| Some(material.bottom_lift_distance_mm.value()),
     ),
     (
         ResolvedField::BottomLiftSpeedMmMin,
         FallbackKind::NormalCounterpart,
-        |material| material.bottom_lift_speed_mm_min.value(),
+        |material| Some(material.bottom_lift_speed_mm_min.value()),
     ),
     (
         ResolvedField::BottomRetractSpeedMmMin,
         FallbackKind::NormalCounterpart,
-        |material| material.bottom_retract_speed_mm_min.value(),
+        |material| Some(material.bottom_retract_speed_mm_min.value()),
+    ),
+    (
+        ResolvedField::BottomSecondLiftDistanceMm,
+        FallbackKind::NormalCounterpart,
+        |material| {
+            material
+                .bottom_second_travel
+                .map(|stage| stage.lift_distance_mm.value())
+        },
+    ),
+    (
+        ResolvedField::BottomSecondLiftSpeedMmMin,
+        FallbackKind::NormalCounterpart,
+        |material| {
+            material
+                .bottom_second_travel
+                .map(|stage| stage.lift_speed_mm_min.value())
+        },
+    ),
+    (
+        ResolvedField::BottomSecondRetractSpeedMmMin,
+        FallbackKind::NormalCounterpart,
+        |material| {
+            material
+                .bottom_second_travel
+                .map(|stage| stage.retract_speed_mm_min.value())
+        },
     ),
     (
         ResolvedField::LightPwm,
         FallbackKind::FullPower,
-        |material| material.light_pwm.percent(),
+        |material| Some(material.light_pwm.percent()),
     ),
     (
         ResolvedField::BottomLightPwm,
         FallbackKind::FullPower,
-        |material| material.bottom_light_pwm.percent(),
+        |material| Some(material.bottom_light_pwm.percent()),
     ),
     (
         ResolvedField::CuredDensityGPerCm3,
         FallbackKind::TypicalResin,
-        |material| material.cured_density_g_per_cm3.value(),
+        |material| Some(material.cured_density_g_per_cm3.value()),
     ),
 ];
 
@@ -154,10 +184,12 @@ pub fn fallbacks_used(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
                 .iter()
                 .any(|record| record.field == *field)
         })
-        .map(|(field, kind, resolved_value)| FallbackUsed {
-            field,
-            resolved_to: resolved_value(&config.material_resolved),
-            kind,
+        .filter_map(|(field, kind, resolved_value)| {
+            Some(FallbackUsed {
+                field,
+                resolved_to: resolved_value(&config.material_resolved)?,
+                kind,
+            })
         })
         .collect()
 }

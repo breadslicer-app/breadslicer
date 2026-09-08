@@ -301,14 +301,41 @@ fn apply_per_printer(
             final_value: value.percent(),
         });
     }
-    // No record for either: one carries a single number and a stage
-    // carries 3. The bottom layers inherit the normal stage here
-    // rather than at assembly, so each stage is clamped against the
-    // lift ceiling its own first stage leaves.
     if let Some(value) = per_printer.second_travel {
         picked.second_travel = Some(value);
+        record_second_stage(value, &NORMAL_SECOND_STAGE, records);
+    }
+    // The bottom layers inherit the normal stage here rather than at
+    // assembly, so each stage is clamped against the lift ceiling its
+    // own first stage leaves. Only a stage the block declares is
+    // recorded: an inherited one is a substitution, and the absence
+    // of a record is what says so.
+    if let Some(value) = per_printer.bottom_second_travel {
+        record_second_stage(value, &BOTTOM_SECOND_STAGE, records);
     }
     picked.bottom_second_travel = per_printer.bottom_second_travel.or(picked.second_travel);
+}
+
+/// Note where each of a stage's 3 numbers came from, since a record
+/// carries one number and the report that reads them works field by
+/// field.
+fn record_second_stage(
+    stage: SecondTravelStage,
+    fields: &SecondStageFields,
+    records: &mut Vec<OverrideRecord>,
+) {
+    for (field, value) in [
+        (fields.lift_distance, stage.lift_distance_mm.value()),
+        (fields.lift_speed, stage.lift_speed_mm_min.value()),
+        (fields.retract_speed, stage.retract_speed_mm_min.value()),
+    ] {
+        records.push(OverrideRecord {
+            field,
+            source: ValueSource::Calibrated,
+            prior_value: None,
+            final_value: value,
+        });
+    }
 }
 
 /// Take the resin's measured constants as stated. There is no layer
