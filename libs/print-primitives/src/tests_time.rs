@@ -3,7 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::time::{NegativeDuration, NonNegativeFiniteSec, PositiveFiniteSec, SecOutOfRange};
+use super::time::{
+    NegativeDuration, NonNegativeFiniteSec, PositiveFiniteSec, SecOutOfRange, TimeMultiplier,
+    TimeMultiplierOutOfRange, TimeOffsetOutOfRange, TimeOffsetSec,
+};
 
 #[test]
 fn positive_finite_sec_new_accepts_positive_finite_value() {
@@ -274,4 +277,153 @@ fn non_negative_finite_sec_roundtrip_preserves_value() {
     let serialised = toml_edit::ser::to_string(&original).unwrap();
     let roundtripped: Wrap = toml_edit::de::from_str(&serialised).unwrap();
     assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn time_multiplier_new_accepts_positive_finite_value() {
+    assert_eq!(TimeMultiplier::new(1.322).unwrap().value(), 1.322);
+}
+
+#[test]
+fn time_multiplier_new_rejects_zero() {
+    let err = TimeMultiplier::new(0.0).unwrap_err();
+    assert_eq!(err, TimeMultiplierOutOfRange { value: 0.0 });
+}
+
+#[test]
+fn time_multiplier_new_rejects_negative() {
+    assert!(TimeMultiplier::new(-1.0).is_err());
+}
+
+#[test]
+fn time_multiplier_new_rejects_nan() {
+    assert!(TimeMultiplier::new(f64::NAN).is_err());
+}
+
+#[test]
+fn time_multiplier_new_rejects_positive_infinity() {
+    assert!(TimeMultiplier::new(f64::INFINITY).is_err());
+}
+
+#[test]
+fn time_multiplier_identity_matches_one() {
+    assert_eq!(TimeMultiplier::IDENTITY, TimeMultiplier::new(1.0).unwrap());
+}
+
+#[test]
+fn time_multiplier_out_of_range_display_mentions_the_value() {
+    let msg = TimeMultiplierOutOfRange { value: -2.5 }.to_string();
+    assert!(msg.contains("-2.5"), "msg: {msg}");
+    assert!(msg.contains("multiplier"), "msg: {msg}");
+}
+
+#[test]
+fn time_multiplier_try_from_f64_round_trips_to_f64() {
+    let m: TimeMultiplier = 1.5.try_into().unwrap();
+    let back: f64 = m.into();
+    assert_eq!(back, 1.5);
+}
+
+#[test]
+fn time_multiplier_display_formats_inner_value() {
+    assert!(
+        TimeMultiplier::new(1.25)
+            .unwrap()
+            .to_string()
+            .contains("1.25"),
+    );
+}
+
+#[test]
+fn time_offset_sec_accepts_a_negative_value() {
+    assert_eq!(TimeOffsetSec::new(-30.0).unwrap().value(), -30.0);
+}
+
+#[test]
+fn time_offset_sec_accepts_zero_and_positive_values() {
+    assert_eq!(TimeOffsetSec::new(0.0).unwrap().value(), 0.0);
+    assert_eq!(TimeOffsetSec::new(45.5).unwrap().value(), 45.5);
+}
+
+#[test]
+fn time_offset_sec_rejects_nan() {
+    let err = TimeOffsetSec::new(f64::NAN).unwrap_err();
+    assert!(err.value.is_nan());
+}
+
+#[test]
+fn time_offset_sec_rejects_infinities() {
+    assert!(TimeOffsetSec::new(f64::INFINITY).is_err());
+    assert!(TimeOffsetSec::new(f64::NEG_INFINITY).is_err());
+}
+
+#[test]
+fn time_offset_sec_zero_matches_the_constructed_zero() {
+    assert_eq!(TimeOffsetSec::ZERO, TimeOffsetSec::new(0.0).unwrap());
+}
+
+#[test]
+fn time_offset_out_of_range_display_mentions_unit_and_value() {
+    let msg = TimeOffsetOutOfRange {
+        value: f64::INFINITY,
+    }
+    .to_string();
+    assert!(msg.contains("inf"), "msg: {msg}");
+    assert!(msg.contains(" s"), "msg: {msg}");
+}
+
+#[test]
+fn time_offset_sec_try_from_f64_round_trips_to_f64() {
+    let o: TimeOffsetSec = (-12.5).try_into().unwrap();
+    let back: f64 = o.into();
+    assert_eq!(back, -12.5);
+}
+
+#[test]
+fn time_offset_sec_display_formats_inner_value() {
+    assert!(
+        TimeOffsetSec::new(-7.5)
+            .unwrap()
+            .to_string()
+            .contains("-7.5")
+    );
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn time_multiplier_deserialise_rejects_zero() {
+    #[derive(serde::Deserialize)]
+    struct Wrap {
+        #[allow(dead_code)]
+        value: TimeMultiplier,
+    }
+    assert!(toml_edit::de::from_str::<Wrap>("value = 0.0\n").is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn time_offset_sec_deserialises_a_negative_value() {
+    #[derive(serde::Deserialize)]
+    struct Wrap {
+        value: TimeOffsetSec,
+    }
+    let parsed: Wrap = toml_edit::de::from_str("value = -30.0\n").unwrap();
+    assert_eq!(parsed.value.value(), -30.0);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn the_correction_pair_roundtrips_through_toml() {
+    #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct Wrap {
+        multiplier: TimeMultiplier,
+        offset: TimeOffsetSec,
+    }
+    let original = Wrap {
+        multiplier: TimeMultiplier::new(1.322).unwrap(),
+        offset: TimeOffsetSec::new(-15.0).unwrap(),
+    };
+    let rendered = toml_edit::ser::to_string(&original).unwrap();
+    let parsed: Wrap = toml_edit::de::from_str(&rendered).unwrap();
+    assert_eq!(parsed, original);
 }

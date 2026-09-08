@@ -58,7 +58,10 @@ pub use speed::{
     PositiveFiniteMmPerMin, SpeedMmPerMinOutOfRange, SpeedRangeMmPerMin,
     SpeedRangeMmPerMinBoundsInverted,
 };
-pub use time::{NegativeDuration, NonNegativeFiniteSec, PositiveFiniteSec, SecOutOfRange};
+pub use time::{
+    NegativeDuration, NonNegativeFiniteSec, PositiveFiniteSec, SecOutOfRange, TimeMultiplier,
+    TimeMultiplierOutOfRange, TimeOffsetOutOfRange, TimeOffsetSec,
+};
 pub use volume::{VolumeMm3, VolumeOutOfRange};
 
 #[cfg(test)]
