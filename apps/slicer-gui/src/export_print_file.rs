@@ -238,8 +238,9 @@ async fn run_export_flow(
             // The writer reports no progress of its own, so the panel
             // names the phase and nothing finer.
             sink.set(ExportPhase::Write, 0, 1);
-            let written = write_printer_file(&job.stack, &worker_target, job.format, &job.program)
-                .map_err(ExportFailure::Write);
+            let written =
+                write_printer_file(&job.stack, &worker_target, job.format, &job.program, None)
+                    .map_err(ExportFailure::Write);
             sink.set(ExportPhase::Write, 1, 1);
             written
         }))

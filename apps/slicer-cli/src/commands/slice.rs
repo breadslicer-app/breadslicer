@@ -173,7 +173,7 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
             report_fallbacks(&config, &mut std::io::stderr());
             let program = print_program_for(&scene, &config, &plate)?;
             let stack = merge_plate(plate)?;
-            write_printer_file(&stack, &target_path, format, &program)?;
+            write_printer_file(&stack, &target_path, format, &program, None)?;
         }
     }
 

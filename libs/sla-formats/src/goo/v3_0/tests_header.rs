@@ -9,7 +9,8 @@ use sc_print_primitives::{
 };
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
-use super::header::{FILE_MAGIC, HEADER_SIZE, write_header};
+use super::header::{FILE_MAGIC, HEADER_SIZE, SizedPreviews, write_header};
+use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::{LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;
 
@@ -105,7 +106,33 @@ fn two_layer_program() -> PrintProgram {
 
 fn header_of(program: &PrintProgram) -> Vec<u8> {
     let mut out = Vec::new();
-    write_header(program, &mut out).unwrap();
+    write_header(program, None, &mut out).unwrap();
+    out
+}
+
+const SMALL_PREVIEW_AT: usize = 194;
+const SMALL_PREVIEW_BYTES: usize = 116 * 116 * 2;
+const LARGE_PREVIEW_AT: usize = SMALL_PREVIEW_AT + SMALL_PREVIEW_BYTES + 2;
+const LARGE_PREVIEW_BYTES: usize = 290 * 290 * 2;
+
+/// An image of one colour, at the size this container fixes for the
+/// slot it goes in.
+fn filled(width: u32, height: u32, rgb: [u8; 3]) -> PreviewImage {
+    let pixels = (width * height) as usize;
+    PreviewImage::new(width, height, rgb.repeat(pixels)).unwrap()
+}
+
+fn previews(small: [u8; 3], large: [u8; 3]) -> PrintPreviews {
+    PrintPreviews {
+        small: filled(116, 116, small),
+        large: filled(290, 290, large),
+    }
+}
+
+fn header_with(program: &PrintProgram, previews: &PrintPreviews) -> Vec<u8> {
+    let sized = SizedPreviews::check(previews).unwrap();
+    let mut out = Vec::new();
+    write_header(program, Some(sized), &mut out).unwrap();
     out
 }
 
@@ -296,6 +323,75 @@ fn a_second_stage_reaches_its_slots() {
     assert_eq!(f32_at(&bytes, 195_413), 60.0);
     assert_eq!(f32_at(&bytes, 195_425), 2.0);
     assert_eq!(f32_at(&bytes, 195_429), 60.0);
+}
+
+#[test]
+fn without_previews_both_images_are_black() {
+    let bytes = header_of(&two_layer_program());
+
+    let small = &bytes[SMALL_PREVIEW_AT..SMALL_PREVIEW_AT + SMALL_PREVIEW_BYTES];
+    let large = &bytes[LARGE_PREVIEW_AT..LARGE_PREVIEW_AT + LARGE_PREVIEW_BYTES];
+    assert!(small.iter().all(|byte| *byte == 0));
+    assert!(large.iter().all(|byte| *byte == 0));
+}
+
+#[test]
+fn a_supplied_preview_fills_its_slot_as_rgb565() {
+    let bytes = header_with(&two_layer_program(), &previews([0xFF, 0, 0], [0, 0xFF, 0]));
+
+    let small = &bytes[SMALL_PREVIEW_AT..SMALL_PREVIEW_AT + SMALL_PREVIEW_BYTES];
+    let large = &bytes[LARGE_PREVIEW_AT..LARGE_PREVIEW_AT + LARGE_PREVIEW_BYTES];
+    assert!(
+        small
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [0xF8, 0x00])
+    );
+    assert!(
+        large
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [0x07, 0xE0])
+    );
+}
+
+#[test]
+fn the_channels_drop_the_bits_rgb565_has_no_room_for() {
+    // 0x12 keeps its top 5 bits, 0x34 its top 6 and 0x56 its top 5,
+    // which pack to 0b00010_001101_01010.
+    let bytes = header_with(
+        &two_layer_program(),
+        &previews([0x12, 0x34, 0x56], [0, 0, 0]),
+    );
+
+    assert_eq!(&bytes[SMALL_PREVIEW_AT..SMALL_PREVIEW_AT + 2], [0x11, 0xAA],);
+}
+
+#[test]
+fn the_delimiters_still_close_both_images() {
+    let bytes = header_with(&two_layer_program(), &previews([0xFF, 0, 0], [0, 0xFF, 0]));
+
+    assert_eq!(
+        &bytes[SMALL_PREVIEW_AT + SMALL_PREVIEW_BYTES..LARGE_PREVIEW_AT],
+        [0x0D, 0x0A],
+    );
+    let after_large = LARGE_PREVIEW_AT + LARGE_PREVIEW_BYTES;
+    assert_eq!(&bytes[after_large..after_large + 2], [0x0D, 0x0A]);
+}
+
+#[test]
+fn a_preview_of_another_size_is_refused_for_its_slot() {
+    let wrong = PrintPreviews {
+        small: filled(116, 116, [0, 0, 0]),
+        large: filled(290, 289, [0, 0, 0]),
+    };
+
+    let err = SizedPreviews::check(&wrong).unwrap_err();
+    assert_eq!(err.expected_width, 290);
+    assert_eq!(err.expected_height, 290);
+    assert_eq!(err.actual_height, 289);
 }
 
 #[test]

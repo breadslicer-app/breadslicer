@@ -17,6 +17,7 @@ use crate::error::WriterError;
 use crate::format::Format;
 use crate::goo::v3_0;
 use crate::options::WriterOptions;
+use crate::preview::PrintPreviews;
 use crate::print_program::PrintProgram;
 use crate::printer_file_format::PrinterFileFormat;
 
@@ -65,17 +66,25 @@ pub fn write_slice(
 /// that is an existing directory, and a program whose layers do not
 /// pair with the stack's are all refused before the file is opened.
 ///
+/// `previews` are the images the machine shows for the file. Each
+/// container fixes their sizes and refuses any other, so rendering
+/// them means asking the format first; without them the machine
+/// shows an empty thumbnail.
+///
 /// # Errors
 ///
 /// [`WriterError::PrinterFormatNotImplemented`] for a format whose
 /// writer has not landed, [`WriterError::ProgramLayerCountMismatch`]
-/// when the program and the stack disagree on the layer count, and
-/// [`WriterError::OutputPathInvalid`] when `output` is a directory.
+/// when the program and the stack disagree on the layer count,
+/// [`WriterError::PreviewSizeMismatch`] when a preview is the wrong
+/// size, and [`WriterError::OutputPathInvalid`] when `output` is a
+/// directory.
 pub fn write_printer_file(
     stack: &ContourStack,
     output: &Path,
     format: PrinterFileFormat,
     program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
 ) -> Result<(), WriterError> {
     if !format.has_writer() {
         return Err(WriterError::PrinterFormatNotImplemented { format });
@@ -89,7 +98,7 @@ pub fn write_printer_file(
     validate_file_output_path(output, format)?;
 
     let mut out = BufWriter::new(File::create(output)?);
-    v3_0::file::write_file(program, stack, &mut out)?;
+    v3_0::file::write_file(program, previews, stack, &mut out)?;
     out.flush().map_err(WriterError::Io)
 }
 

@@ -20,6 +20,7 @@ use sc_scene::node::NodeId;
 
 use crate::format::Format;
 use crate::goo::v3_0::file::WriteFailure;
+use crate::preview::PreviewSizeMismatch;
 use crate::printer_file_format::PrinterFileFormat;
 
 #[derive(Debug)]
@@ -37,6 +38,10 @@ pub enum WriterError {
         program_layers: usize,
         stack_layers: usize,
     },
+    /// A preview handed to
+    /// [`write_printer_file`](crate::write_printer_file) is not the
+    /// size the chosen container fixes.
+    PreviewSizeMismatch(PreviewSizeMismatch),
     /// An underlying filesystem operation failed.
     Io(io::Error),
     /// The output path is unsuitable for the chosen format and the
@@ -92,6 +97,7 @@ impl fmt::Display for WriterError {
                 f,
                 "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
             ),
+            Self::PreviewSizeMismatch(err) => err.fmt(f),
             Self::Io(err) => write!(f, "filesystem operation failed: {err}"),
             Self::OutputPathInvalid { reason } => {
                 write!(f, "output path is invalid: {reason}")
@@ -146,6 +152,7 @@ impl std::error::Error for WriterError {
             Self::SceneBakeFailed(err) => Some(err),
             Self::ModelSerializationFailed(err) => Some(err),
             Self::PackageWriteFailed(err) => Some(err),
+            Self::PreviewSizeMismatch(err) => Some(err),
             Self::NotImplemented { .. }
             | Self::PrinterFormatNotImplemented { .. }
             | Self::ProgramLayerCountMismatch { .. }
@@ -176,6 +183,7 @@ impl From<WriteFailure> for WriterError {
                 program_layers,
                 stack_layers,
             },
+            WriteFailure::PreviewSize(err) => Self::PreviewSizeMismatch(err),
             WriteFailure::Io(err) => Self::Io(err),
         }
     }

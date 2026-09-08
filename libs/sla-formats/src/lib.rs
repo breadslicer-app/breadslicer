@@ -17,19 +17,24 @@
 //! [`threemf`] (whose [`write_scene_slices`] takes the scene and the
 //! per-leaf stacks instead of the merged one), and GOO under [`goo`],
 //! reached through [`write_printer_file`] with the machine program
-//! beside the geometry. SL1 and CTB are still to come.
+//! beside the geometry, and the [`preview`] images the machine
+//! displays when the caller has rendered them. SL1 and CTB are still
+//! to come.
 
 pub mod debug;
 pub mod error;
 pub mod format;
 pub mod goo;
 pub mod options;
+pub mod preview;
 pub mod print_program;
 pub mod printer_file_format;
 pub mod raster_setup;
 pub mod threemf;
 pub mod write;
 
+#[cfg(test)]
+mod tests_preview;
 #[cfg(test)]
 mod tests_printer_file;
 #[cfg(test)]
@@ -38,6 +43,7 @@ mod tests_threemf;
 pub use error::WriterError;
 pub use format::Format;
 pub use options::WriterOptions;
+pub use preview::{PixelCountMismatch, PreviewImage, PreviewSizeMismatch, PrintPreviews};
 pub use print_program::{LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{
     CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding, printer_file_format_from_path,

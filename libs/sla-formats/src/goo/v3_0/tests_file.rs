@@ -17,6 +17,7 @@ use super::file::{WriteFailure, write_file};
 use super::header::{FILE_MAGIC, HEADER_SIZE};
 use super::record::RECORD_SIZE;
 use super::test_decode::decode_chunks;
+use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::{LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;
 
@@ -105,7 +106,7 @@ fn three_layer_case() -> (PrintProgram, ContourStack) {
 
 fn written(program: &PrintProgram, stack: &ContourStack) -> Vec<u8> {
     let mut out = Vec::new();
-    write_file(program, stack, &mut out).unwrap();
+    write_file(program, None, stack, &mut out).unwrap();
     out
 }
 
@@ -287,11 +288,48 @@ fn an_empty_program_writes_a_header_and_a_footer() {
 }
 
 #[test]
+fn a_preview_of_another_size_is_refused_before_anything_is_written() {
+    let (program, stack) = three_layer_case();
+    let wrong = PrintPreviews {
+        small: PreviewImage::new(116, 116, vec![0; 116 * 116 * 3]).unwrap(),
+        large: PreviewImage::new(64, 64, vec![0; 64 * 64 * 3]).unwrap(),
+    };
+    let mut out = Vec::new();
+
+    let failure = write_file(&program, Some(&wrong), &stack, &mut out).unwrap_err();
+
+    assert!(
+        matches!(failure, WriteFailure::PreviewSize(err) if err.actual_width == 64),
+        "failure: {failure:?}",
+    );
+    assert!(out.is_empty(), "{} bytes were written", out.len());
+}
+
+#[test]
+fn a_supplied_preview_reaches_the_file_without_moving_anything_after_it() {
+    let (program, stack) = three_layer_case();
+    let previews = PrintPreviews {
+        small: PreviewImage::new(116, 116, [0xFF, 0xFF, 0xFF].repeat(116 * 116)).unwrap(),
+        large: PreviewImage::new(290, 290, [0xFF, 0xFF, 0xFF].repeat(290 * 290)).unwrap(),
+    };
+    let mut with_preview = Vec::new();
+    write_file(&program, Some(&previews), &stack, &mut with_preview).unwrap();
+
+    let black = written(&program, &stack);
+    assert_eq!(with_preview.len(), black.len());
+    assert_eq!(
+        with_preview[HEADER_SIZE as usize..],
+        black[HEADER_SIZE as usize..],
+    );
+    assert_eq!(&with_preview[194..196], [0xFF, 0xFF]);
+}
+
+#[test]
 fn a_stack_that_does_not_match_the_program_is_refused() {
     let (_, stack) = three_layer_case();
     let short = program(vec![layer(0.1, 2.5), layer(0.2, 2.5)]);
     let mut out = Vec::new();
-    let failure = write_file(&short, &stack, &mut out).unwrap_err();
+    let failure = write_file(&short, None, &stack, &mut out).unwrap_err();
 
     assert!(
         matches!(

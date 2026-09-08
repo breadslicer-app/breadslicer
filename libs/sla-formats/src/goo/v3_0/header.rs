@@ -5,9 +5,9 @@
 
 //! The fixed-size header every GOO V3.0 file opens with.
 //!
-//! The two previews account for 195,112 of its bytes and are written
-//! black, which the machine's file browser shows as an empty
-//! thumbnail.
+//! The 2 previews account for 195,112 of its bytes. A caller with
+//! nothing rendered leaves them black, which the machine's file
+//! browser shows as an empty thumbnail.
 
 use std::io::{self, Write};
 
@@ -15,6 +15,7 @@ use sc_print_primitives::AaLevel;
 
 use super::record::LayerValues;
 use super::wire::{write_f32, write_flag, write_text, write_u16, write_u32, write_zeros};
+use crate::preview::{PreviewImage, PreviewSizeMismatch, PrintPreviews};
 use crate::print_program::PrintProgram;
 
 /// Header length, and so the offset the first layer record sits at.
@@ -26,8 +27,20 @@ pub const FILE_MAGIC: [u8; 8] = [0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00]
 const FORMAT_VERSION: [u8; 4] = *b"V3.0";
 const DELIMITER: [u8; 2] = [0x0D, 0x0A];
 
-const SMALL_PREVIEW_BYTES: usize = 116 * 116 * 2;
-const LARGE_PREVIEW_BYTES: usize = 290 * 290 * 2;
+/// Width of the preview the machine's file browser lists.
+pub const SMALL_PREVIEW_WIDTH: u32 = 116;
+/// Height of the preview the machine's file browser lists.
+pub const SMALL_PREVIEW_HEIGHT: u32 = 116;
+/// Width of the preview that list entry opens.
+pub const LARGE_PREVIEW_WIDTH: u32 = 290;
+/// Height of the preview that list entry opens.
+pub const LARGE_PREVIEW_HEIGHT: u32 = 290;
+
+const RGB565_BYTES: usize = 2;
+const SMALL_PREVIEW_BYTES: usize =
+    (SMALL_PREVIEW_WIDTH * SMALL_PREVIEW_HEIGHT) as usize * RGB565_BYTES;
+const LARGE_PREVIEW_BYTES: usize =
+    (LARGE_PREVIEW_WIDTH * LARGE_PREVIEW_HEIGHT) as usize * RGB565_BYTES;
 
 const SOFTWARE_NAME: &str = "SoulCrafted Slicer";
 
@@ -44,13 +57,57 @@ const PRICE_UNIT: &str = "";
 /// Pixel values span the whole byte, rather than the low nibble.
 const GREY_SCALE_LEVEL: u8 = 1;
 
-/// Write the whole header for `program`, previews included.
+/// The renderings this container will accept, checked once so that
+/// writing them cannot fail on their size.
+#[derive(Clone, Copy, Debug)]
+pub struct SizedPreviews<'a> {
+    small: &'a PreviewImage,
+    large: &'a PreviewImage,
+}
+
+impl<'a> SizedPreviews<'a> {
+    /// Accept a rendered pair for this container.
+    ///
+    /// # Errors
+    ///
+    /// [`PreviewSizeMismatch`] for the first rendering whose size is
+    /// not the one the container fixes. Resampling belongs to
+    /// whoever rendered the image, so a near miss is refused.
+    pub fn check(previews: &'a PrintPreviews) -> Result<Self, PreviewSizeMismatch> {
+        check_size(&previews.small, SMALL_PREVIEW_WIDTH, SMALL_PREVIEW_HEIGHT)?;
+        check_size(&previews.large, LARGE_PREVIEW_WIDTH, LARGE_PREVIEW_HEIGHT)?;
+        Ok(Self {
+            small: &previews.small,
+            large: &previews.large,
+        })
+    }
+}
+
+fn check_size(image: &PreviewImage, width: u32, height: u32) -> Result<(), PreviewSizeMismatch> {
+    if image.width() == width && image.height() == height {
+        return Ok(());
+    }
+    Err(PreviewSizeMismatch {
+        expected_width: width,
+        expected_height: height,
+        actual_width: image.width(),
+        actual_height: image.height(),
+    })
+}
+
+/// Write the whole header for `program`, previews included. Without
+/// `previews` both images are written black, which the machine shows
+/// as an empty thumbnail.
 ///
 /// # Errors
 ///
 /// Propagates `out`'s failures, and rejects a program holding more
 /// layers than the header's count can express.
-pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<()> {
+pub fn write_header(
+    program: &PrintProgram,
+    previews: Option<SizedPreviews<'_>>,
+    out: &mut impl Write,
+) -> io::Result<()> {
     let layer_count = u32::try_from(program.layers.len()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -73,9 +130,15 @@ pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<
     write_u16(out, anti_aliasing_factor(raster.aa()))?;
     write_u16(out, GREY_LEVEL)?;
     write_u16(out, BLUR_LEVEL)?;
-    write_zeros(out, SMALL_PREVIEW_BYTES)?;
+    match previews {
+        Some(previews) => write_preview(out, previews.small)?,
+        None => write_zeros(out, SMALL_PREVIEW_BYTES)?,
+    }
     out.write_all(&DELIMITER)?;
-    write_zeros(out, LARGE_PREVIEW_BYTES)?;
+    match previews {
+        Some(previews) => write_preview(out, previews.large)?,
+        None => write_zeros(out, LARGE_PREVIEW_BYTES)?,
+    }
     out.write_all(&DELIMITER)?;
 
     write_u32(out, layer_count)?;
@@ -125,6 +188,18 @@ pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<
     write_u32(out, HEADER_SIZE)?;
     out.write_all(&[GREY_SCALE_LEVEL])?;
     write_u16(out, transition_count(program))
+}
+
+/// Pack one rendering as RGB565, dropping the low bits of each
+/// channel.
+fn write_preview(out: &mut impl Write, image: &PreviewImage) -> io::Result<()> {
+    for [red, green, blue] in image.rgb().as_chunks::<3>().0 {
+        let red = u16::from(red >> 3);
+        let green = u16::from(green >> 2);
+        let blue = u16::from(blue >> 3);
+        write_u16(out, red << 11 | green << 5 | blue)?;
+    }
+    Ok(())
 }
 
 /// Report the super-sampling factor the raster was produced at.

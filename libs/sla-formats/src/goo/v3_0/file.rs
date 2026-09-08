@@ -15,9 +15,10 @@ use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
 
-use super::header::{FILE_MAGIC, write_header};
+use super::header::{FILE_MAGIC, SizedPreviews, write_header};
 use super::payload::encode_payload;
 use super::record::write_layer;
+use crate::preview::{PreviewSizeMismatch, PrintPreviews};
 use crate::print_program::PrintProgram;
 
 /// Precedes the magic that closes the file.
@@ -31,13 +32,18 @@ const FOOTER_PADDING: [u8; 3] = [0x00, 0x00, 0x00];
 /// setup's mirror flags, which the header declares, are what turns an
 /// image around.
 ///
+/// Without `previews` the machine displays an empty thumbnail for the
+/// file.
+///
 /// # Errors
 ///
 /// [`WriteFailure::LayerCountMismatch`] when the program and the
-/// stack describe different numbers of layers, before any byte is
-/// written.
+/// stack describe different numbers of layers, and
+/// [`WriteFailure::PreviewSize`] when a rendering is not the size
+/// this container fixes. Both are raised before any byte is written.
 pub fn write_file(
     program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
     stack: &ContourStack,
     out: &mut impl Write,
 ) -> Result<(), WriteFailure> {
@@ -48,6 +54,7 @@ pub fn write_file(
             stack_layers,
         });
     }
+    let previews = previews.map(SizedPreviews::check).transpose()?;
 
     let raster = &program.raster;
     let plate = raster.build_volume();
@@ -59,7 +66,7 @@ pub fn write_file(
     );
     let park_z_mm = plate.z_mm() as f32;
 
-    write_header(program, out)?;
+    write_header(program, previews, out)?;
     let mut image = Vec::new();
     for (layer, contours) in program.layers.iter().zip(stack.layers()) {
         let pixels = rasterize_layer(contours, &pixel_map, raster.aa(), raster.min_alpha_pct());
@@ -80,6 +87,8 @@ pub enum WriteFailure {
         program_layers: usize,
         stack_layers: usize,
     },
+    /// A supplied preview is not the size this container fixes.
+    PreviewSize(PreviewSizeMismatch),
     Io(io::Error),
 }
 
@@ -93,6 +102,7 @@ impl fmt::Display for WriteFailure {
                 f,
                 "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
             ),
+            Self::PreviewSize(err) => err.fmt(f),
             Self::Io(err) => write!(f, "writing the file failed: {err}"),
         }
     }
@@ -102,6 +112,7 @@ impl std::error::Error for WriteFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
+            Self::PreviewSize(err) => Some(err),
             Self::LayerCountMismatch { .. } => None,
         }
     }
@@ -110,5 +121,11 @@ impl std::error::Error for WriteFailure {
 impl From<io::Error> for WriteFailure {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
+    }
+}
+
+impl From<PreviewSizeMismatch> for WriteFailure {
+    fn from(err: PreviewSizeMismatch) -> Self {
+        Self::PreviewSize(err)
     }
 }

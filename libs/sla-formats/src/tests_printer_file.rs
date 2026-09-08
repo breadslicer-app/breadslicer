@@ -100,7 +100,7 @@ fn stack(layer_count: usize) -> ContourStack {
 fn goo_v3_0_writes_a_file_bounded_by_the_magic() {
     let dir = tempdir().unwrap();
     let out = dir.path().join("job.goo");
-    write_printer_file(&stack(2), &out, GOO_V3_0, &program(2)).unwrap();
+    write_printer_file(&stack(2), &out, GOO_V3_0, &program(2), None).unwrap();
     let bytes = fs::read(&out).unwrap();
 
     assert_eq!(&bytes[0..4], b"V3.0");
@@ -114,7 +114,7 @@ fn goo_v3_0_overwrites_a_file_that_is_already_there() {
     let dir = tempdir().unwrap();
     let out = dir.path().join("job.goo");
     fs::write(&out, b"stale").unwrap();
-    write_printer_file(&stack(1), &out, GOO_V3_0, &program(1)).unwrap();
+    write_printer_file(&stack(1), &out, GOO_V3_0, &program(1), None).unwrap();
 
     assert_eq!(&fs::read(&out).unwrap()[0..4], b"V3.0");
 }
@@ -128,7 +128,7 @@ fn a_format_without_a_writer_is_refused_and_writes_nothing() {
         PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
     ] {
         let out = dir.path().join(format!("{format}.out"));
-        let err = write_printer_file(&stack(1), &out, format, &program(1)).unwrap_err();
+        let err = write_printer_file(&stack(1), &out, format, &program(1), None).unwrap_err();
 
         assert!(
             matches!(err, WriterError::PrinterFormatNotImplemented { format: refused } if refused == format),
@@ -143,7 +143,7 @@ fn a_program_that_does_not_match_the_stack_leaves_the_target_alone() {
     let dir = tempdir().unwrap();
     let out = dir.path().join("job.goo");
     fs::write(&out, b"precious").unwrap();
-    let err = write_printer_file(&stack(3), &out, GOO_V3_0, &program(2)).unwrap_err();
+    let err = write_printer_file(&stack(3), &out, GOO_V3_0, &program(2), None).unwrap_err();
 
     assert!(
         matches!(
@@ -161,7 +161,7 @@ fn a_program_that_does_not_match_the_stack_leaves_the_target_alone() {
 #[test]
 fn a_directory_as_the_output_path_is_refused() {
     let dir = tempdir().unwrap();
-    let err = write_printer_file(&stack(1), dir.path(), GOO_V3_0, &program(1)).unwrap_err();
+    let err = write_printer_file(&stack(1), dir.path(), GOO_V3_0, &program(1), None).unwrap_err();
 
     assert!(
         matches!(err, WriterError::OutputPathInvalid { .. }),
@@ -172,7 +172,7 @@ fn a_directory_as_the_output_path_is_refused() {
 #[test]
 fn the_refusal_names_the_format_a_profile_would_declare() {
     let dir = tempdir().unwrap();
-    let err = write_printer_file(&stack(1), dir.path(), GOO_V3_0, &program(1)).unwrap_err();
+    let err = write_printer_file(&stack(1), dir.path(), GOO_V3_0, &program(1), None).unwrap_err();
 
     assert!(err.to_string().contains("goo@v3.0"), "{err}");
 }
@@ -181,7 +181,7 @@ fn the_refusal_names_the_format_a_profile_would_declare() {
 fn an_empty_program_writes_a_header_and_a_footer() {
     let dir = tempdir().unwrap();
     let out = dir.path().join("empty.goo");
-    write_printer_file(&stack(0), &out, GOO_V3_0, &program(0)).unwrap();
+    write_printer_file(&stack(0), &out, GOO_V3_0, &program(0), None).unwrap();
 
     assert_eq!(fs::metadata(&out).unwrap().len() as usize, HEADER_SIZE + 11);
 }
