@@ -74,6 +74,7 @@ fn program(layer_count: usize) -> PrintProgram {
         transition_layer_count: 0,
         volume_mm3: VolumeMm3::ZERO,
         mass_g: MassG::ZERO,
+        print_time_sec: NonNegativeFiniteSec::ZERO,
         created_at: NonEmptyString::new("2026-09-04 21:07:00").unwrap(),
         slicer_version: "0.0.12",
     }

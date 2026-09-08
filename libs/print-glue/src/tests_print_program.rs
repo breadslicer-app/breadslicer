@@ -216,6 +216,41 @@ light_pwm = 80.0
 bottom_light_pwm = 60.0
 "#;
 
+/// The same resin again, with a single bottom layer and every pause
+/// and travel calibrated apart, so a 2 layer schedule adds up by
+/// hand.
+const MATERIAL_FOR_TIMING_TOML: &str = r#"
+[identity]
+id = "sirayatech-blu"
+brand = "Siraya Tech"
+family = "standard"
+name = "Blu"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
+
+[per_printer."elegoo-mars-5-goo"]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+bottom_layer_count = 1
+wait_before_cure_sec = 0.4
+wait_after_cure_sec = 1.2
+wait_after_lift_sec = 2.5
+bottom_wait_before_cure_sec = 6.0
+bottom_wait_after_cure_sec = 7.0
+bottom_wait_after_lift_sec = 8.0
+lift_distance_mm = 5.0
+lift_speed_mm_min = 120.0
+retract_speed_mm_min = 150.0
+bottom_lift_distance_mm = 8.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 96.0
+"#;
+
 fn resolved_config(printer_toml: &str) -> ResolvedPrintConfig {
     resolved_config_for(printer_toml, MATERIAL_TOML)
 }
@@ -632,6 +667,45 @@ fn an_empty_plate_weighs_nothing() {
     let program =
         project_to_print_program(&plate_of([]), &config, &profile, created_at(), "0.0.12").unwrap();
     assert_eq!(program.mass_g.value(), 0.0);
+}
+
+/// What [`MATERIAL_FOR_TIMING_TOML`] asks of a 2 layer schedule:
+/// 30 + 21 + 12 + 5 seconds for the bottom layer, 2.5 + 4.1 + 2.5 + 2
+/// for the normal one.
+const SCHEDULE_SEC: f64 = 68.0 + 11.1;
+
+fn timed_program(printer_toml: &str) -> PrintProgram {
+    let config = resolved_config_for(printer_toml, MATERIAL_FOR_TIMING_TOML);
+    let profile = slice_profile(&config, 2);
+    project_to_print_program(&scene(), &config, &profile, created_at(), "0.0.12").unwrap()
+}
+
+#[test]
+fn an_uncalibrated_printer_reports_what_the_schedule_itself_asks_for() {
+    let reported = timed_program(PRINTER_WITHOUT_TRANSITION_LAYERS_TOML)
+        .print_time_sec
+        .value();
+    assert!(
+        (reported - SCHEDULE_SEC).abs() < 1e-9,
+        "print time: {reported}",
+    );
+}
+
+#[test]
+fn a_calibrated_printer_reports_the_corrected_schedule() {
+    let calibrated = format!(
+        "{PRINTER_WITHOUT_TRANSITION_LAYERS_TOML}\n[time_calibration]\nprint_time_multiplier = 1.5\nprint_time_offset_sec = 30.0\n",
+    );
+    let reported = timed_program(&calibrated).print_time_sec.value();
+    assert!((reported - 148.65).abs() < 1e-9, "print time: {reported}");
+}
+
+#[test]
+fn a_calibration_that_subtracts_more_than_the_print_takes_reports_no_time() {
+    let calibrated = format!(
+        "{PRINTER_WITHOUT_TRANSITION_LAYERS_TOML}\n[time_calibration]\nprint_time_offset_sec = -1000.0\n",
+    );
+    assert_eq!(timed_program(&calibrated).print_time_sec.value(), 0.0);
 }
 
 #[test]

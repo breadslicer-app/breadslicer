@@ -39,7 +39,6 @@ const DELAY_MODE_WAIT_TIMES: u8 = 1;
 /// not select.
 const LIGHT_OFF_SEC: f32 = 0.0;
 const ADVANCE_MODE: u8 = 0;
-const PRINT_TIME_SEC: u32 = 0;
 const TOTAL_PRICE: f32 = 0.0;
 const PRICE_UNIT: &str = "";
 /// Pixel values span the whole byte, rather than the low nibble.
@@ -118,7 +117,7 @@ pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<
     write_u16(out, bottom.light_pwm)?;
     write_u16(out, normal.light_pwm)?;
     out.write_all(&[ADVANCE_MODE])?;
-    write_u32(out, PRINT_TIME_SEC)?;
+    write_u32(out, program.print_time_sec.value() as u32)?;
     write_f32(out, program.volume_mm3.value() as f32)?;
     write_f32(out, program.mass_g.value() as f32)?;
     write_f32(out, TOTAL_PRICE)?;

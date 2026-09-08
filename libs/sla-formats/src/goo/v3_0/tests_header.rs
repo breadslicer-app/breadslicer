@@ -24,6 +24,8 @@ const LAYER_HEIGHT_MM: f64 = 0.05;
 const VOLUME_MM3: f64 = 11_701.25;
 /// Likewise exactly representable in `f32`.
 const MASS_G: f64 = 13.75;
+/// Fractional, since the header field counts whole seconds.
+const PRINT_TIME_SEC: f64 = 7_883.5;
 
 fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).unwrap()
@@ -87,6 +89,7 @@ fn program(layers: Vec<LayerProgram>) -> PrintProgram {
         transition_layer_count: 5,
         volume_mm3: VolumeMm3::new(VOLUME_MM3).unwrap(),
         mass_g: MassG::new(MASS_G).unwrap(),
+        print_time_sec: wait(PRINT_TIME_SEC),
         created_at: NonEmptyString::new("2026-09-04 17:31:02").unwrap(),
         slicer_version: "0.0.12",
     }
@@ -306,9 +309,21 @@ fn the_light_pwm_is_scaled_to_the_byte_range() {
 fn the_display_only_totals_are_zero() {
     let bytes = header_of(&two_layer_program());
     assert_eq!(bytes[195_445], 0);
-    assert_eq!(u32_at(&bytes, 195_446), 0);
     assert_eq!(f32_at(&bytes, 195_458), 0.0);
     assert_eq!(text_at(&bytes, 195_462, 8), "");
+}
+
+#[test]
+fn the_print_time_comes_from_the_program_truncated_to_whole_seconds() {
+    let bytes = header_of(&two_layer_program());
+    assert_eq!(u32_at(&bytes, 195_446), 7_883);
+}
+
+#[test]
+fn a_print_time_beyond_the_field_reports_its_largest_value() {
+    let mut long = two_layer_program();
+    long.print_time_sec = wait(1e12);
+    assert_eq!(u32_at(&header_of(&long), 195_446), u32::MAX);
 }
 
 #[test]

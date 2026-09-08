@@ -10,14 +10,16 @@ use std::fmt;
 
 use chrono::Local;
 use sc_print_primitives::{
-    LightPwm, MassOutOfRange, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm,
-    PositiveFiniteSec, VolumeMm3, VolumeOutOfRange,
+    LightPwm, MassOutOfRange, NegativeDuration, NonEmptyString, NonNegativeFiniteSec,
+    PositiveFiniteMm, PositiveFiniteSec, VolumeMm3, VolumeOutOfRange,
 };
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_scene::Scene;
 use sc_scene::SceneError;
 use sc_sl1cer::profile::SliceProfile;
 use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
+
+const SEC_PER_MIN: f64 = 60.0;
 
 /// Returned when a schedule places a layer's slab top outside the
 /// range a length can hold.
@@ -52,6 +54,9 @@ pub enum UnprojectablePrint {
     Volume(VolumeOutOfRange),
     /// That volume at the resin's density is not a mass.
     Mass(MassOutOfRange),
+    /// The schedule, once the printer's calibration is applied, is
+    /// not a duration.
+    PrintTime(NegativeDuration),
 }
 
 impl fmt::Display for UnprojectablePrint {
@@ -61,6 +66,7 @@ impl fmt::Display for UnprojectablePrint {
             Self::Scene(err) => write!(f, "cannot measure what the scene encloses: {err}"),
             Self::Volume(err) => err.fmt(f),
             Self::Mass(err) => err.fmt(f),
+            Self::PrintTime(err) => write!(f, "the print takes no expressible time: {err}"),
         }
     }
 }
@@ -72,6 +78,7 @@ impl std::error::Error for UnprojectablePrint {
             Self::Scene(err) => Some(err),
             Self::Volume(err) => Some(err),
             Self::Mass(err) => Some(err),
+            Self::PrintTime(err) => Some(err),
         }
     }
 }
@@ -87,11 +94,14 @@ impl std::error::Error for UnprojectablePrint {
 /// the machine will not reach still counts towards it, and the
 /// reported weight is that volume at the resin's cured density, which
 /// is what the print's resin weighs rather than what pouring it costs.
+/// The reported duration is what the layer schedule adds up to under
+/// the printer's own time calibration.
 ///
 /// # Errors
 ///
 /// [`UnprojectablePrint`] when a scheduled layer has no representable
-/// height, or when the scene yields no volume to weigh.
+/// height, when the scene yields no volume to weigh, or when the
+/// calibrated schedule overflows a duration.
 pub fn project_to_print_program(
     scene: &Scene,
     config: &ResolvedPrintConfig,
@@ -133,6 +143,12 @@ pub fn project_to_print_program(
         .cured_density_g_per_cm3
         .mass_of(volume_mm3)
         .map_err(UnprojectablePrint::Mass)?;
+    let corrected = config
+        .printer
+        .time_calibration
+        .corrected_sec(schedule_duration_sec(&layers));
+    let print_time_sec =
+        NonNegativeFiniteSec::new(corrected).map_err(UnprojectablePrint::PrintTime)?;
 
     Ok(PrintProgram {
         raster: RasterSetup::from_profile(profile),
@@ -144,6 +160,7 @@ pub fn project_to_print_program(
         transition_layer_count: transition_count,
         volume_mm3,
         mass_g,
+        print_time_sec,
         created_at,
         slicer_version,
     })
@@ -156,6 +173,41 @@ fn plate_volume(scene: &Scene) -> Result<VolumeMm3, UnprojectablePrint> {
         .world_volume_mm3()
         .map_err(UnprojectablePrint::Scene)?;
     VolumeMm3::new(total).map_err(UnprojectablePrint::Volume)
+}
+
+/// Add up what the layer records ask for: light, pauses and travel,
+/// second stages included.
+///
+/// A real machine takes longer, spending time on ramps and per-layer
+/// overhead that no record carries. The printer's time calibration is
+/// what adds those back.
+fn schedule_duration_sec(layers: &[LayerProgram]) -> f64 {
+    layers.iter().map(layer_duration_sec).sum()
+}
+
+fn layer_duration_sec(layer: &LayerProgram) -> f64 {
+    let travel: f64 = [
+        Some(layer.lift),
+        Some(layer.retract),
+        layer.second_lift,
+        layer.second_retract,
+    ]
+    .into_iter()
+    .flatten()
+    .map(travel_duration_sec)
+    .sum();
+
+    layer.exposure_sec.value()
+        + layer.wait_before_cure_sec.value()
+        + layer.wait_after_cure_sec.value()
+        + layer.wait_after_lift_sec.value()
+        + travel
+}
+
+/// Time one stage of platform travel takes, from the per-minute
+/// speed these files record.
+fn travel_duration_sec(stage: MotionStage) -> f64 {
+    stage.distance_mm.value() / stage.speed_mm_min.value() * SEC_PER_MIN
 }
 
 /// Render the current local time as a printer file's creation time.
@@ -274,4 +326,66 @@ fn exposure_for(
     material
         .bottom_exposure_sec
         .interpolate_towards(material.normal_exposure_sec, step / steps)
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use sc_print_primitives::PositiveFiniteMmPerMin;
+
+    use super::*;
+
+    fn stage(distance_mm: f64, speed_mm_min: f64) -> MotionStage {
+        MotionStage {
+            distance_mm: PositiveFiniteMm::new(distance_mm).unwrap(),
+            speed_mm_min: PositiveFiniteMmPerMin::new(speed_mm_min).unwrap(),
+        }
+    }
+
+    /// A layer costing 2.5 s of light, 4.1 s of pauses, a 5 mm lift
+    /// at 120 mm/min and a 5 mm retract at 150 mm/min, so 2.5 s and
+    /// 2 s of travel.
+    fn layer() -> LayerProgram {
+        LayerProgram {
+            slab_top_mm: PositiveFiniteMm::new(0.05).unwrap(),
+            exposure_sec: PositiveFiniteSec::new(2.5).unwrap(),
+            wait_before_cure_sec: NonNegativeFiniteSec::new(0.4).unwrap(),
+            wait_after_cure_sec: NonNegativeFiniteSec::new(1.2).unwrap(),
+            wait_after_lift_sec: NonNegativeFiniteSec::new(2.5).unwrap(),
+            lift: stage(5.0, 120.0),
+            retract: stage(5.0, 150.0),
+            second_lift: None,
+            second_retract: None,
+            light_pwm: LightPwm::FULL,
+        }
+    }
+
+    const LAYER_SEC: f64 = 11.1;
+
+    #[test]
+    fn a_layer_costs_its_light_its_pauses_and_its_travel() {
+        let total = schedule_duration_sec(&[layer()]);
+        assert!((total - LAYER_SEC).abs() < 1e-9, "total: {total}");
+    }
+
+    #[test]
+    fn every_layer_adds_to_the_schedule() {
+        let total = schedule_duration_sec(&[layer(), layer(), layer()]);
+        assert!((total - 3.0 * LAYER_SEC).abs() < 1e-9, "total: {total}");
+    }
+
+    #[test]
+    fn a_split_travel_adds_both_of_its_stages() {
+        let mut split = layer();
+        split.second_lift = Some(stage(2.0, 60.0));
+        split.second_retract = Some(stage(2.0, 40.0));
+
+        // 2 mm at 60 mm/min takes 2 s, and at 40 mm/min 3 s.
+        let total = schedule_duration_sec(&[split]);
+        assert!((total - (LAYER_SEC + 5.0)).abs() < 1e-9, "total: {total}");
+    }
+
+    #[test]
+    fn an_empty_schedule_takes_no_time() {
+        assert_eq!(schedule_duration_sec(&[]), 0.0);
+    }
 }

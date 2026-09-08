@@ -62,6 +62,9 @@ pub struct PrintProgram {
     pub volume_mm3: VolumeMm3,
     /// What that material weighs once cured, likewise for display.
     pub mass_g: MassG,
+    /// How long the whole print is expected to take, likewise for
+    /// display.
+    pub print_time_sec: NonNegativeFiniteSec,
     /// Creation time, rendered the way the file records it.
     pub created_at: NonEmptyString,
     pub slicer_version: &'static str,
