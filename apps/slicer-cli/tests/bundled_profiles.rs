@@ -8,9 +8,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sc_print_primitives::PrinterId;
 use sc_print_profiles::{
-    load_material_profile_from_path, load_printer_profile_from_path, save_material_profile_to_path,
-    save_printer_profile_to_path,
+    CalibrationTarget, EffectiveMaterial, PrinterProfile, SceneOverrides,
+    load_material_profile_from_path, load_printer_profile_from_path, resolve,
+    save_material_profile_to_path, save_printer_profile_to_path,
 };
 
 fn bundled_profiles_dir() -> PathBuf {
@@ -114,6 +116,99 @@ fn no_bundled_resin_claims_to_expand_as_it_cures() {
             path.display(),
             cured.value(),
             liquid.value(),
+        );
+    }
+}
+
+/// Load every bundled printer profile, so a caller can match against
+/// the id each one declares rather than against its file name: the two
+/// need not agree, and calibration blocks are keyed by the id.
+fn bundled_printers() -> Vec<PrinterProfile> {
+    toml_files(&bundled_profiles_dir().join("printers"))
+        .iter()
+        .map(|path| {
+            load_printer_profile_from_path(path)
+                .unwrap_or_else(|err| panic!("bundled printer failed to load: {err}"))
+        })
+        .collect()
+}
+
+#[test]
+fn every_bundled_calibration_block_names_a_printer_we_ship() {
+    let known: Vec<PrinterId> = bundled_printers()
+        .into_iter()
+        .map(|printer| printer.identity.id)
+        .collect();
+
+    for path in toml_files(&bundled_profiles_dir().join("materials")) {
+        let profile = load_material_profile_from_path(&path).unwrap();
+        for target in profile.per_printer.keys() {
+            if *target == CalibrationTarget::Generic {
+                continue;
+            }
+            assert!(
+                known.contains(target.printer_id()),
+                "{}: calibration block \"{target}\" names no bundled printer",
+                path.display(),
+            );
+        }
+    }
+}
+
+#[test]
+fn every_bundled_resin_resolves_on_the_printers_it_is_calibrated_for() {
+    let printers = bundled_printers();
+
+    for path in toml_files(&bundled_profiles_dir().join("materials")) {
+        let profile = load_material_profile_from_path(&path).unwrap();
+        let targets: Vec<CalibrationTarget> = profile.per_printer.keys().cloned().collect();
+        let material = EffectiveMaterial::from(profile);
+
+        for target in targets {
+            let Some(printer) = printers
+                .iter()
+                .find(|printer| printer.identity.id == *target.printer_id())
+            else {
+                continue;
+            };
+            resolve(printer, &material, &SceneOverrides::default()).unwrap_or_else(|err| {
+                panic!(
+                    "{} on {}: {err}",
+                    path.display(),
+                    printer.identity.id.as_str(),
+                )
+            });
+        }
+    }
+}
+
+/// The slug a machine's own manufacturer and model make, which is what
+/// the converter derives a printer id from.
+fn slug_of(manufacturer: &str, name: &str) -> String {
+    format!("{manufacturer} {name}")
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+#[test]
+fn every_bundled_printer_id_is_the_machine_it_names() {
+    for printer in bundled_printers() {
+        let id = printer.identity.id.as_str();
+        // The generic machine is our own stand-in rather than a
+        // catalogued model, and its id is reserved in code.
+        if id == "generic-machine" {
+            continue;
+        }
+        assert_eq!(
+            id,
+            slug_of(
+                printer.identity.manufacturer.as_str(),
+                printer.identity.name.as_str(),
+            ),
+            "a printer id must be the machine it names and nothing else",
         );
     }
 }

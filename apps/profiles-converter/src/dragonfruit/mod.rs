@@ -21,7 +21,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use sc_print_primitives::MaterialId;
+use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::MaterialProfile;
 use serde_json::Value;
 
@@ -71,6 +71,9 @@ pub enum DragonFruitError {
         id: String,
         conflict: MaterialConflict,
     },
+    /// Two printer records describe one machine but disagree on more
+    /// than the container it writes.
+    ConflictingPrinter { id: String },
 }
 
 /// Why two material records that share an id could not be merged.
@@ -128,6 +131,10 @@ impl fmt::Display for DragonFruitError {
             Self::ConflictingMaterial { id, conflict } => {
                 write!(f, "material {id:?}: {conflict}")
             }
+            Self::ConflictingPrinter { id } => write!(
+                f,
+                "printer {id:?}: records describe one machine but disagree beyond the container it writes",
+            ),
         }
     }
 }
@@ -142,6 +149,7 @@ impl std::error::Error for DragonFruitError {
             Self::MapMaterial { source, .. } => Some(source),
             Self::UnrecognisedRecord { .. } => None,
             Self::ConflictingMaterial { .. } => None,
+            Self::ConflictingPrinter { .. } => None,
         }
     }
 }
@@ -156,11 +164,11 @@ impl ProfileReader for DragonFruitReader {
                 read_file(&file, &mut profiles)?;
             }
         }
-        merge_materials(profiles)
+        merge_records(profiles)
     }
 }
 
-/// Fold material profiles that share an id into one.
+/// Fold records that describe the same thing into one profile.
 ///
 /// DragonFruit ships a single resin as several records, one per target
 /// printer and often in separate files (the same resin calibrated for
@@ -169,16 +177,27 @@ impl ProfileReader for DragonFruitReader {
 /// with the same id into one profile that carries every per-printer
 /// block. Records that share an id but disagree on the resin's shared
 /// fields, or on the settings for a printer they both target, are a
-/// conflict rather than a silent overwrite. Printers pass through
-/// untouched.
-fn merge_materials(
+/// conflict rather than a silent overwrite.
+///
+/// It keys its presets by output container too, so one machine arrives
+/// once per container it writes. Those records describe the same
+/// machine, so they fold into one profile that declares every one of
+/// those containers.
+fn merge_records(
     profiles: Vec<ConvertedProfile>,
 ) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
-    let mut printers = Vec::new();
+    let mut printers: BTreeMap<PrinterId, ConvertedPrinter> = BTreeMap::new();
     let mut materials: BTreeMap<MaterialId, MaterialProfile> = BTreeMap::new();
     for profile in profiles {
         match profile {
-            ConvertedProfile::Printer(_) => printers.push(profile),
+            ConvertedProfile::Printer(incoming) => {
+                match printers.entry(incoming.profile.identity.id.clone()) {
+                    Entry::Vacant(slot) => {
+                        slot.insert(incoming);
+                    }
+                    Entry::Occupied(mut slot) => merge_printer_into(slot.get_mut(), incoming)?,
+                }
+            }
             ConvertedProfile::Material(incoming) => {
                 match materials.entry(incoming.identity.id.clone()) {
                     Entry::Vacant(slot) => {
@@ -189,9 +208,46 @@ fn merge_materials(
             }
         }
     }
-    let mut merged = printers;
+    let mut merged: Vec<ConvertedProfile> = printers
+        .into_values()
+        .map(ConvertedProfile::Printer)
+        .collect();
     merged.extend(materials.into_values().map(ConvertedProfile::Material));
     Ok(merged)
+}
+
+/// Merge `incoming` into `existing`, which name one machine, or report
+/// them as a conflict.
+///
+/// The containers a machine writes are the one field 2 records for it
+/// are expected to differ in; anything else means the 2 records are not
+/// describing the same machine after all.
+fn merge_printer_into(
+    existing: &mut ConvertedPrinter,
+    incoming: ConvertedPrinter,
+) -> Result<(), DragonFruitError> {
+    let mut probe = existing.profile.clone();
+    probe.capabilities.output_formats = incoming.profile.capabilities.output_formats.clone();
+    if probe != incoming.profile {
+        return Err(DragonFruitError::ConflictingPrinter {
+            id: existing.profile.identity.id.as_str().to_owned(),
+        });
+    }
+    for binding in incoming.profile.capabilities.output_formats {
+        if !existing
+            .profile
+            .capabilities
+            .output_formats
+            .iter()
+            .any(|held| *held == binding)
+        {
+            existing.profile.capabilities.output_formats.push(binding);
+        }
+    }
+    if existing.image_source.is_none() {
+        existing.image_source = incoming.image_source;
+    }
+    Ok(())
 }
 
 /// Merge `incoming` into `existing`, which share a material id, or report
@@ -348,6 +404,7 @@ fn resolve_image(base: &Path, reference: &str) -> PathBuf {
 mod tests {
     use std::fs;
 
+    use sc_print_primitives::FormatKind;
     use tempfile::tempdir;
 
     use super::*;
@@ -387,7 +444,10 @@ mod tests {
         .unwrap();
 
         let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
-        assert_eq!(ids(&profiles), vec!["printer-a", "printer-b"]);
+        assert_eq!(
+            ids(&profiles),
+            vec!["testcorp-printer-a", "testcorp-printer-b"],
+        );
     }
 
     #[test]
@@ -406,7 +466,10 @@ mod tests {
         fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
 
         let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
-        assert_eq!(ids(&profiles), vec!["printer-a", "printer-b"]);
+        assert_eq!(
+            ids(&profiles),
+            vec!["testcorp-printer-a", "testcorp-printer-b"],
+        );
     }
 
     #[test]
@@ -426,12 +489,15 @@ mod tests {
     fn a_record_that_cannot_map_is_reported_with_its_index() {
         let dir = tempdir().unwrap();
         let file = dir.path().join("printers.json");
-        // Second record has an invalid preset id.
-        fs::write(
-            &file,
-            format!("[{}, {}]", record("printer-a"), record("Bad_Id")),
-        )
-        .unwrap();
+        // The second record names no manufacturer, so no machine.
+        let nameless = r#"{
+            "presetId": "printer-b", "profileVersion": 1,
+            "manufacturer": "", "family": "Series", "name": "printer-b",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        fs::write(&file, format!("[{}, {nameless}]", record("printer-a"))).unwrap();
 
         let err = DragonFruitReader::new()
             .read(&[file.as_path()])
@@ -440,6 +506,73 @@ mod tests {
             DragonFruitError::MapPrinter { index, .. } => assert_eq!(index, 1),
             other => panic!("expected MapPrinter, got {other}"),
         }
+    }
+
+    /// The same machine as the source ships it for 2 containers: one
+    /// preset per container, identical in everything else.
+    fn record_for_container(container: &str) -> String {
+        format!(
+            r#"{{
+                "presetId": "elegoo-saturn-4-{container}", "profileVersion": 1,
+                "manufacturer": "ELEGOO", "family": "Saturn", "name": "Saturn 4",
+                "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                "display": {{
+                    "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".{container}"
+                }}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn one_machine_shipped_per_container_becomes_one_profile_declaring_both() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        fs::write(
+            &file,
+            format!(
+                "[{}, {}]",
+                record_for_container("goo"),
+                record_for_container("ctb"),
+            ),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+
+        assert_eq!(ids(&profiles), vec!["elegoo-saturn-4"]);
+        let ConvertedProfile::Printer(printer) = &profiles[0] else {
+            panic!("expected a printer");
+        };
+        let declared: Vec<FormatKind> = printer
+            .profile
+            .capabilities
+            .output_formats
+            .iter()
+            .map(|binding| binding.format.clone())
+            .collect();
+        assert_eq!(declared, vec![FormatKind::Goo, FormatKind::Ctb]);
+    }
+
+    #[test]
+    fn two_machines_of_one_name_that_differ_in_hardware_are_a_conflict() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        let taller = record_for_container("ctb").replace("\"height\": 40.0", "\"height\": 90.0");
+        fs::write(
+            &file,
+            format!("[{}, {taller}]", record_for_container("goo")),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, DragonFruitError::ConflictingPrinter { id } if id == "elegoo-saturn-4"),
+            "err: {err}",
+        );
     }
 
     fn material_record(template_id: &str) -> String {

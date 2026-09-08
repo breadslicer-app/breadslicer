@@ -32,7 +32,7 @@ const LAYER_HEIGHT_MM: f64 = 0.05;
 
 const PRINTER_TOML: &str = r#"
 [identity]
-id = "elegoo-mars-5-goo"
+id = "elegoo-mars-5"
 manufacturer = "ELEGOO"
 family = "Mars"
 name = "Mars 5"
@@ -58,7 +58,7 @@ light_intensity_mw_per_cm2 = 5.0
 
 const PRINTER_WITHOUT_TRANSITION_LAYERS_TOML: &str = r#"
 [identity]
-id = "elegoo-mars-5-goo"
+id = "elegoo-mars-5"
 manufacturer = "ELEGOO"
 family = "Mars"
 name = "Mars 5"
@@ -95,7 +95,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -119,7 +119,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -147,7 +147,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -178,7 +178,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -205,7 +205,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -233,7 +233,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 1

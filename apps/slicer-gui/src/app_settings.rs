@@ -934,7 +934,7 @@ mod app_settings_tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let mut s = AppSettings::default();
-        let printer = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let printer = PrinterId::new("anycubic-photon-m3").unwrap();
         let resin = MaterialId::new("abs-like-405").unwrap();
         s.set_default_printer(Some(printer.clone()));
         s.set_default_resin(Some(resin.clone()));
@@ -948,7 +948,7 @@ mod app_settings_tests {
         // hand-edit can find them.
         let written = fs::read_to_string(&path).unwrap();
         assert!(
-            written.contains("default_printer = \"anycubic-photon-m3-pm3\""),
+            written.contains("default_printer = \"anycubic-photon-m3\""),
             "got:\n{written}"
         );
         assert!(
@@ -986,7 +986,7 @@ mod app_settings_tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
         let mut s = AppSettings::default();
-        let p1 = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let p1 = PrinterId::new("anycubic-photon-m3").unwrap();
         let p2 = PrinterId::new("elegoo-mars-4-ultra").unwrap();
         let r1 = MaterialId::new("abs-like-405").unwrap();
         let printers: BTreeSet<PrinterId> = [p1, p2].into_iter().collect();
@@ -1032,7 +1032,7 @@ mod app_settings_tests {
         // version rather than reset to defaults.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
-        fs::write(&path, "default_printer = \"anycubic-photon-m3-pm3\"\n").unwrap();
+        fs::write(&path, "default_printer = \"anycubic-photon-m3\"\n").unwrap();
 
         let loaded = AppSettings::load_from_path(&path);
         assert!(loaded.favourite_printers().is_empty());
@@ -1040,7 +1040,7 @@ mod app_settings_tests {
         assert_eq!(loaded.version, APP_SETTINGS_SCHEMA_VERSION);
         assert_eq!(
             loaded.default_printer(),
-            Some(PrinterId::new("anycubic-photon-m3-pm3").unwrap())
+            Some(PrinterId::new("anycubic-photon-m3").unwrap())
         );
     }
 
@@ -1050,7 +1050,7 @@ mod app_settings_tests {
 
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("settings.toml");
-        let printer = PrinterId::new("elegoo-mars-5-goo").unwrap();
+        let printer = PrinterId::new("elegoo-mars-5").unwrap();
         let chosen: BTreeMap<PrinterId, OutputFormatBinding> = [(
             printer.clone(),
             OutputFormatBinding {
@@ -1072,7 +1072,7 @@ mod app_settings_tests {
 
         let written = fs::read_to_string(&path).unwrap();
         assert!(
-            written.contains("[output_format_by_printer.elegoo-mars-5-goo]"),
+            written.contains("[output_format_by_printer.elegoo-mars-5]"),
             "got:\n{written}",
         );
     }

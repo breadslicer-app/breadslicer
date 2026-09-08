@@ -32,10 +32,15 @@ pub struct WriteReport {
     pub images: usize,
 }
 
-/// Returned by [`write_profiles`] when one of the library save
-/// operations fails; each variant wraps that operation's error.
+/// Returned by [`write_profiles`] when the set cannot be written:
+/// 2 profiles claim one id, or a library save operation fails.
 #[derive(Debug)]
 pub enum WriteError {
+    /// 2 printer profiles carry this id. A library holds one file per
+    /// id, so writing both would leave whichever came last.
+    DuplicatePrinterId(String),
+    /// 2 material profiles carry this id.
+    DuplicateMaterialId(String),
     Printer(SavePrinterProfileError),
     Material(SaveMaterialProfileError),
     Image(SavePrinterImageError),
@@ -44,6 +49,12 @@ pub enum WriteError {
 impl fmt::Display for WriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DuplicatePrinterId(id) => {
+                write!(f, "2 printer profiles claim the id {id:?}")
+            }
+            Self::DuplicateMaterialId(id) => {
+                write!(f, "2 material profiles claim the id {id:?}")
+            }
             Self::Printer(err) => err.fmt(f),
             Self::Material(err) => err.fmt(f),
             Self::Image(err) => err.fmt(f),
@@ -54,6 +65,7 @@ impl fmt::Display for WriteError {
 impl std::error::Error for WriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::DuplicatePrinterId(_) | Self::DuplicateMaterialId(_) => None,
             Self::Printer(err) => Some(err),
             Self::Material(err) => Some(err),
             Self::Image(err) => Some(err),
@@ -61,13 +73,40 @@ impl std::error::Error for WriteError {
     }
 }
 
+/// Report the first id that 2 profiles of one kind both claim.
+fn first_repeated(ids: impl IntoIterator<Item = String>) -> Option<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    ids.into_iter().find(|id| !seen.insert(id.clone()))
+}
+
 /// Write every profile into the library rooted at `out_dir`, creating
 /// its subdirectories as needed. Returns the per-kind counts.
+///
+/// # Errors
+///
+/// [`WriteError::DuplicatePrinterId`] or
+/// [`WriteError::DuplicateMaterialId`] when 2 profiles of a kind claim
+/// one id, checked before anything is written so a collision cannot
+/// half-write a library. Source collections that key a machine by its
+/// output format produce exactly that once the format leaves the id.
 pub fn write_profiles(
     profiles: &[ConvertedProfile],
     out_dir: &Path,
     copy_images: bool,
 ) -> Result<WriteReport, WriteError> {
+    if let Some(id) = first_repeated(profiles.iter().filter_map(|profile| match profile {
+        ConvertedProfile::Printer(printer) => Some(printer.profile.identity.id.as_str().to_owned()),
+        ConvertedProfile::Material(_) => None,
+    })) {
+        return Err(WriteError::DuplicatePrinterId(id));
+    }
+    if let Some(id) = first_repeated(profiles.iter().filter_map(|profile| match profile {
+        ConvertedProfile::Material(material) => Some(material.identity.id.as_str().to_owned()),
+        ConvertedProfile::Printer(_) => None,
+    })) {
+        return Err(WriteError::DuplicateMaterialId(id));
+    }
+
     let mut report = WriteReport::default();
     for profile in profiles {
         match profile {
@@ -175,6 +214,49 @@ retract_speed_mm_min = 150.0
             profile,
             image_source,
         })
+    }
+
+    #[test]
+    fn two_printers_claiming_one_id_are_refused_before_anything_is_written() {
+        let dir = tempdir().unwrap();
+        let profile = sample_printer();
+
+        let err = write_profiles(
+            &[printer(profile.clone(), None), printer(profile, None)],
+            dir.path(),
+            false,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, WriteError::DuplicatePrinterId(id) if id == "test-printer"),
+            "err: {err:?}",
+        );
+        assert!(
+            !dir.path().join("printers").exists(),
+            "the refusal must not create the library",
+        );
+    }
+
+    #[test]
+    fn two_materials_claiming_one_id_are_refused() {
+        let dir = tempdir().unwrap();
+        let material = sample_material();
+
+        let err = write_profiles(
+            &[
+                ConvertedProfile::Material(material.clone()),
+                ConvertedProfile::Material(material),
+            ],
+            dir.path(),
+            false,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, WriteError::DuplicateMaterialId(id) if id == "test-resin"),
+            "err: {err:?}",
+        );
     }
 
     #[test]

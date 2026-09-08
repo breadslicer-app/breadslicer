@@ -97,7 +97,7 @@ mod tests {
         let report = run(&request(vec![input], out.clone(), false)).unwrap();
 
         assert_eq!(report.printers, 1);
-        assert!(out.join("printers").join("e2e-printer.toml").is_file());
+        assert!(out.join("printers").join("testcorp-e2e.toml").is_file());
     }
 
     #[test]

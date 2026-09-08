@@ -18,9 +18,9 @@ match this repository's printer profile ids.
 Upstream has no dedicated photo for 3 of the bundled printer
 variants; their files are copies of a sibling model's image:
 
-- `elegoo-mars-3-pro-ctb.png` reuses the Mars 3 image.
-- `elegoo-saturn-2-14k-ctb.png` reuses the Saturn 2 image.
-- `elegoo-mars-4-dlp-goo.png` reuses the Mars 4 Max image.
+- `elegoo-mars-3-pro.png` reuses the Mars 3 image.
+- `elegoo-saturn-2-14k.png` reuses the Saturn 2 image.
+- `elegoo-mars-4-dlp.png` reuses the Mars 4 Max image.
 
 The photos depict hardware by Anycubic and Elegoo; product names are
 trademarks of their respective owners.

@@ -20,7 +20,7 @@ z = 0.0
 liquid_density_g_per_cm3 = 1.11
 cured_density_g_per_cm3 = 1.2
 
-[per_printer.elegoo-saturn-4-ctb]
+[per_printer.elegoo-saturn-4]
 normal_exposure_sec = 4.0
 bottom_exposure_sec = 40.0
 bottom_layer_count = 6
@@ -28,7 +28,7 @@ lift_distance_mm = 8.0
 lift_speed_mm_min = 40.0
 retract_speed_mm_min = 100.0
 
-[per_printer.elegoo-saturn-4-ultra-16k-ctb]
+[per_printer.elegoo-saturn-4-ultra]
 normal_exposure_sec = 4.0
 bottom_exposure_sec = 40.0
 bottom_layer_count = 6
@@ -36,7 +36,7 @@ lift_distance_mm = 8.0
 lift_speed_mm_min = 40.0
 retract_speed_mm_min = 100.0
 
-[per_printer.elegoo-saturn-4-ultra-ctb]
+[per_printer.elegoo-saturn-4-ultra-16k]
 normal_exposure_sec = 4.0
 bottom_exposure_sec = 40.0
 bottom_layer_count = 6

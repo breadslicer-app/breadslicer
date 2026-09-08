@@ -1470,7 +1470,7 @@ mod settings_saver_tests {
     #[test]
     fn apply_snapshot_copies_favourites_into_settings() {
         let mut snap = snapshot_with(ThemePreference::System);
-        let printer = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let printer = PrinterId::new("anycubic-photon-m3").unwrap();
         let resin = MaterialId::new("abs-like-405").unwrap();
         snap.favourite_printers.insert(printer.clone());
         snap.favourite_resins.insert(resin.clone());
@@ -1487,7 +1487,7 @@ mod settings_saver_tests {
         use sc_print_primitives::{FormatKind, NonEmptyString, OutputFormatBinding};
 
         let mut snap = snapshot_with(ThemePreference::System);
-        let printer = PrinterId::new("elegoo-mars-5-goo").unwrap();
+        let printer = PrinterId::new("elegoo-mars-5").unwrap();
         let binding = OutputFormatBinding {
             format: FormatKind::Goo,
             version: Some(NonEmptyString::new("v3.0").unwrap()),

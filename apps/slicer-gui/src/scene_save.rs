@@ -736,7 +736,7 @@ mod scene_save_tests {
             let source = dir.path().join("widget.stl");
             let target = dir.path().join("widget.3mf");
 
-            let printer = printer_id("elegoo-mars-5-goo");
+            let printer = printer_id("elegoo-mars-5");
             let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
 
             let doc = SceneDocument::new();
@@ -795,7 +795,7 @@ mod scene_save_tests {
             let source = dir.path().join("widget.stl");
             let target = dir.path().join("widget.3mf");
 
-            let printer = printer_id("elegoo-mars-5-goo");
+            let printer = printer_id("elegoo-mars-5");
             let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
 
             let doc = SceneDocument::new();

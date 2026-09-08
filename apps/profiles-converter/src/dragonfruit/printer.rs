@@ -168,10 +168,6 @@ pub(crate) struct MappedPrinter {
 
 /// Convert one DragonFruit printer record into a [`MappedPrinter`].
 pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapError> {
-    let id = PrinterId::new(&raw.preset_id).map_err(|source| PrinterMapError::InvalidId {
-        id: raw.preset_id.clone(),
-        source,
-    })?;
     let raw_id = raw.preset_id;
 
     let image_ref = raw.image_asset_path.as_ref().and_then(|value| {
@@ -181,6 +177,12 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
 
     let manufacturer = non_empty(&raw.manufacturer, &raw_id, "manufacturer")?;
     let name = non_empty(&raw.name, &raw_id, "name")?;
+    let id = printer_id_of(manufacturer.as_str(), name.as_str()).map_err(|source| {
+        PrinterMapError::InvalidId {
+            id: format!("{manufacturer} {name}"),
+            source,
+        }
+    })?;
     let family = match raw.family {
         Some(ref value) if !value.is_empty() => non_empty(value, &raw_id, "family")?,
         _ => name.clone(),
@@ -307,6 +309,27 @@ fn resolve_axis(
     }
 }
 
+/// Derive a printer's id from the machine it describes.
+///
+/// The id names a machine, so it is built from the machine's own
+/// manufacturer and model and from nothing else. Source collections key
+/// their presets however they like, container included; deriving here
+/// keeps that out of our identities rather than editing it back out of
+/// theirs.
+///
+/// A model whose name carries nothing a slug can hold yields an empty
+/// id, which is refused.
+fn printer_id_of(manufacturer: &str, name: &str) -> Result<PrinterId, InvalidProfileId> {
+    let parts = format!("{manufacturer} {name}");
+    let slug = parts
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-");
+    PrinterId::new(&slug)
+}
+
 /// Map a DragonFruit `outputFormat` extension and `formatVersion` into
 /// an output-format binding. A known SLA extension maps to its typed
 /// [`FormatKind`]; anything else is preserved verbatim as
@@ -365,6 +388,72 @@ mod tests {
     }
 
     #[test]
+    fn the_id_names_the_machine_whatever_the_source_keyed_its_preset_by() {
+        let json = r#"{
+            "presetId": "some-vendor-key-goo", "profileVersion": 1,
+            "manufacturer": "ELEGOO", "family": "Saturn", "name": "Saturn 4",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+        assert_eq!(mapped.profile.identity.id.as_str(), "elegoo-saturn-4");
+    }
+
+    #[test]
+    fn one_machine_offered_in_two_containers_derives_one_id() {
+        let record = |format: &str| {
+            format!(
+                r#"{{
+                    "presetId": "elegoo-saturn-4-{format}", "profileVersion": 1,
+                    "manufacturer": "ELEGOO", "family": "Saturn", "name": "Saturn 4",
+                    "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                    "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                    "display": {{
+                        "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".{format}"
+                    }}
+                }}"#
+            )
+        };
+        let goo = map_printer(serde_json::from_str(&record("goo")).unwrap()).unwrap();
+        let ctb = map_printer(serde_json::from_str(&record("ctb")).unwrap()).unwrap();
+
+        assert_eq!(goo.profile.identity.id, ctb.profile.identity.id);
+    }
+
+    #[test]
+    fn a_model_name_slugifies_down_to_what_an_id_may_hold() {
+        let json = r#"{
+            "presetId": "x", "profileVersion": 1,
+            "manufacturer": "Anycubic", "family": "Photon", "name": "Photon Mono X 6K/M3 Plus",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".pwmb" }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+        assert_eq!(
+            mapped.profile.identity.id.as_str(),
+            "anycubic-photon-mono-x-6k-m3-plus",
+        );
+    }
+
+    #[test]
+    fn a_model_name_holding_nothing_an_id_can_carry_is_refused() {
+        let json = r#"{
+            "presetId": "x", "profileVersion": 1,
+            "manufacturer": "\u30a8\u30ec\u30b0", "family": "S", "name": "\u30d7\u30ea\u30f3\u30bf",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        let refused = map_printer(serde_json::from_str(json).unwrap());
+        assert!(
+            matches!(refused, Err(PrinterMapError::InvalidId { .. })),
+            "a name with no slug in it must be refused",
+        );
+    }
+
+    #[test]
     fn no_image_reference_when_absent_or_blank() {
         let json = r#"{
             "presetId": "no-image", "profileVersion": 1,
@@ -402,7 +491,10 @@ mod tests {
     fn maps_every_field_of_a_full_record() {
         let profile = map(FULL).unwrap();
 
-        assert_eq!(profile.identity.id, PrinterId::new("test-printer").unwrap());
+        assert_eq!(
+            profile.identity.id,
+            PrinterId::new("testcorp-test-printer").unwrap(),
+        );
         assert_eq!(profile.identity.manufacturer.as_str(), "TestCorp");
         assert_eq!(profile.identity.family.as_str(), "Series");
         assert_eq!(profile.identity.name.as_str(), "Test Printer");
@@ -583,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_preset_id_is_rejected() {
+    fn a_source_key_our_ids_would_refuse_is_no_obstacle() {
         let json = r#"{
             "presetId": "Bad_Id", "profileVersion": 1,
             "manufacturer": "TestCorp", "family": "Series", "name": "Bad",
@@ -591,9 +683,6 @@ mod tests {
             "pixelSize": { "x": 100.0, "y": 100.0 },
             "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
         }"#;
-        assert!(matches!(
-            map(json).unwrap_err(),
-            PrinterMapError::InvalidId { .. },
-        ));
+        assert_eq!(map(json).unwrap().identity.id.as_str(), "testcorp-bad");
     }
 }

@@ -632,7 +632,7 @@ mod preferences_bus_tests {
             })
         };
 
-        let new_printer = PrinterId::new("anycubic-photon-m3-pm3").unwrap();
+        let new_printer = PrinterId::new("anycubic-photon-m3").unwrap();
         let new_bv = BuildVolume::new(150.0, 80.0, 160.0);
         bus.update({
             let new_printer = new_printer.clone();
@@ -667,7 +667,7 @@ mod preferences_bus_tests {
             })
         };
 
-        let printer = PrinterId::new("elegoo-mars-5-goo").unwrap();
+        let printer = PrinterId::new("elegoo-mars-5").unwrap();
         let binding = OutputFormatBinding {
             format: FormatKind::Goo,
             version: Some(NonEmptyString::new("v3.0").unwrap()),

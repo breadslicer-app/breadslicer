@@ -34,7 +34,7 @@ library and then in the profiles the installation ships:
 sc-slicer-cli slice \
   --source model.stl \
   --target model.slices.3mf \
-  --printer-profile elegoo-saturn-4-ultra-ctb \
+  --printer-profile elegoo-saturn-4-ultra \
   --material-profile sirayatech-blu-saturn4
 ```
 

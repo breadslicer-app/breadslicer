@@ -18,7 +18,7 @@ z = 0.0
 
 [physical]
 
-[per_printer.elegoo-saturn-4-ctb]
+[per_printer.elegoo-saturn-4]
 normal_exposure_sec = 3.0
 bottom_exposure_sec = 35.0
 bottom_layer_count = 6
@@ -26,7 +26,7 @@ lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
 
-[per_printer.elegoo-saturn-4-ultra-16k-ctb]
+[per_printer.elegoo-saturn-4-ultra]
 normal_exposure_sec = 3.0
 bottom_exposure_sec = 35.0
 bottom_layer_count = 6
@@ -34,7 +34,7 @@ lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
 
-[per_printer.elegoo-saturn-4-ultra-ctb]
+[per_printer.elegoo-saturn-4-ultra-16k]
 normal_exposure_sec = 3.0
 bottom_exposure_sec = 35.0
 bottom_layer_count = 6

@@ -317,7 +317,7 @@ mod export_button_enabled_tests {
 
     fn params() -> SliceParams {
         SliceParams {
-            printer: PrinterId::new("elegoo-mars-5-goo").expect("valid id"),
+            printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
             resin: MaterialId::new("standard-405").expect("valid id"),
             first_layer_height: None,
             aa_level: AaLevel::Off,
@@ -398,7 +398,7 @@ mod export_job_tests {
 
     const PRINTER_TOML: &str = r#"
 [identity]
-id = "elegoo-mars-5-goo"
+id = "elegoo-mars-5"
 manufacturer = "ELEGOO"
 family = "Mars"
 name = "Mars 5"
@@ -436,7 +436,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -515,7 +515,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
             schedule,
             token: String::new(),
             params: SliceParams {
-                printer: PrinterId::new("elegoo-mars-5-goo").expect("valid id"),
+                printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
                 resin: MaterialId::new("sirayatech-blu").expect("valid id"),
                 first_layer_height: None,
                 aa_level: AaLevel::Off,
@@ -636,7 +636,7 @@ mod prepare_export_tests {
             schedule: LayerSchedule::uniform(0.05, 0.05, 1).expect("a one-layer schedule"),
             token: String::new(),
             params: SliceParams {
-                printer: PrinterId::new("elegoo-mars-5-goo").expect("valid id"),
+                printer: PrinterId::new("elegoo-mars-5").expect("valid id"),
                 resin: MaterialId::new("sirayatech-blu").expect("valid id"),
                 first_layer_height: None,
                 aa_level: AaLevel::Off,

@@ -105,7 +105,7 @@ if let Some(library) = libraries.user_library_dir() {
     }
 }
 
-let id = "elegoo-saturn-4-ultra-ctb".parse()?;
+let id = "elegoo-saturn-4-ultra".parse()?;
 let printer = libraries.load_printer_by_id(&id)?;
 ```
 

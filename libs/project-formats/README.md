@@ -83,11 +83,11 @@ use std::fs::File;
 use sc_project_formats::{EmbedProfiles, EmbeddedProfile, ProjectFileType, ProjectPayload, write_project};
 
 let payload = ProjectPayload {
-    printer: Some("elegoo-saturn-4-ultra-ctb".parse()?),
+    printer: Some("elegoo-saturn-4-ultra".parse()?),
     resin: Some("sirayatech-blu-saturn4".parse()?),
     first_layer_height: None,
     embedded: vec![EmbeddedProfile::Printer {
-        id: "elegoo-saturn-4-ultra-ctb".parse()?,
+        id: "elegoo-saturn-4-ultra".parse()?,
         bytes: std::fs::read("elegoo-saturn-4-ultra.toml")?,
     }],
 };

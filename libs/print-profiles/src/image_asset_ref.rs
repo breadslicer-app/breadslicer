@@ -7,7 +7,7 @@
 //!
 //! [`ImageAssetRef`] is the value stored in a printer profile's
 //! `image_asset_path` field: a `/`-separated relative path such as
-//! `images/elegoo-saturn-4-goo.png`, resolved against the root of the
+//! `images/elegoo-saturn-4.png`, resolved against the root of the
 //! library the profile was loaded from. Construction refuses empty
 //! strings, absolute paths, and any `.` / `..` / empty component, so a
 //! stored reference can never point outside its library.

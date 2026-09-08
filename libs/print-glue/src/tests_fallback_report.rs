@@ -12,7 +12,7 @@ use super::fallback_report::{FallbackKind, fallback_report_lines, fallbacks_used
 
 const PRINTER_TOML: &str = r#"
 [identity]
-id = "elegoo-mars-5-goo"
+id = "elegoo-mars-5"
 manufacturer = "ELEGOO"
 family = "Mars"
 name = "Mars 5"
@@ -50,7 +50,7 @@ target_layer_height_mm = 0.05
 [defaults]
 scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -78,7 +78,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 liquid_density_g_per_cm3 = 1.1
 cured_density_g_per_cm3 = 1.15
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -105,7 +105,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 [physical]
 liquid_density_g_per_cm3 = 1.1
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -132,7 +132,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 [physical]
 cured_density_g_per_cm3 = 1.15
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
@@ -170,7 +170,7 @@ scale_compensation_pct = { x = 0.0, y = 0.0, z = 0.0 }
 wait_before_cure_sec = 0.5
 light_pwm = 70.0
 
-[per_printer."elegoo-mars-5-goo"]
+[per_printer."elegoo-mars-5"]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 bottom_layer_count = 8
