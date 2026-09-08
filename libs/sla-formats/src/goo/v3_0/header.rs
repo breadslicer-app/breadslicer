@@ -15,7 +15,7 @@ use sc_print_primitives::AaLevel;
 
 use super::record::LayerValues;
 use super::wire::{write_f32, write_flag, write_text, write_u16, write_u32, write_zeros};
-use crate::preview::{PreviewImage, PreviewSizeMismatch, PrintPreviews};
+use crate::preview::{PreviewImage, PreviewSize, PreviewSizeMismatch, PreviewSizes, PrintPreviews};
 use crate::print_program::PrintProgram;
 
 /// Header length, and so the offset the first layer record sits at.
@@ -27,20 +27,24 @@ pub const FILE_MAGIC: [u8; 8] = [0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00]
 const FORMAT_VERSION: [u8; 4] = *b"V3.0";
 const DELIMITER: [u8; 2] = [0x0D, 0x0A];
 
-/// Width of the preview the machine's file browser lists.
-pub const SMALL_PREVIEW_WIDTH: u32 = 116;
-/// Height of the preview the machine's file browser lists.
-pub const SMALL_PREVIEW_HEIGHT: u32 = 116;
-/// Width of the preview that list entry opens.
-pub const LARGE_PREVIEW_WIDTH: u32 = 290;
-/// Height of the preview that list entry opens.
-pub const LARGE_PREVIEW_HEIGHT: u32 = 290;
+/// Sizes this container fixes for the preview its file browser
+/// lists and the one that entry opens.
+pub const PREVIEW_SIZES: PreviewSizes = PreviewSizes {
+    small: PreviewSize {
+        width: 116,
+        height: 116,
+    },
+    large: PreviewSize {
+        width: 290,
+        height: 290,
+    },
+};
 
 const RGB565_BYTES: usize = 2;
 const SMALL_PREVIEW_BYTES: usize =
-    (SMALL_PREVIEW_WIDTH * SMALL_PREVIEW_HEIGHT) as usize * RGB565_BYTES;
+    (PREVIEW_SIZES.small.width * PREVIEW_SIZES.small.height) as usize * RGB565_BYTES;
 const LARGE_PREVIEW_BYTES: usize =
-    (LARGE_PREVIEW_WIDTH * LARGE_PREVIEW_HEIGHT) as usize * RGB565_BYTES;
+    (PREVIEW_SIZES.large.width * PREVIEW_SIZES.large.height) as usize * RGB565_BYTES;
 
 const SOFTWARE_NAME: &str = "SoulCrafted Slicer";
 
@@ -74,8 +78,8 @@ impl<'a> SizedPreviews<'a> {
     /// not the one the container fixes. Resampling belongs to
     /// whoever rendered the image, so a near miss is refused.
     pub fn check(previews: &'a PrintPreviews) -> Result<Self, PreviewSizeMismatch> {
-        check_size(&previews.small, SMALL_PREVIEW_WIDTH, SMALL_PREVIEW_HEIGHT)?;
-        check_size(&previews.large, LARGE_PREVIEW_WIDTH, LARGE_PREVIEW_HEIGHT)?;
+        check_size(&previews.small, PREVIEW_SIZES.small)?;
+        check_size(&previews.large, PREVIEW_SIZES.large)?;
         Ok(Self {
             small: &previews.small,
             large: &previews.large,
@@ -83,13 +87,13 @@ impl<'a> SizedPreviews<'a> {
     }
 }
 
-fn check_size(image: &PreviewImage, width: u32, height: u32) -> Result<(), PreviewSizeMismatch> {
-    if image.width() == width && image.height() == height {
+fn check_size(image: &PreviewImage, size: PreviewSize) -> Result<(), PreviewSizeMismatch> {
+    if image.width() == size.width && image.height() == size.height {
         return Ok(());
     }
     Err(PreviewSizeMismatch {
-        expected_width: width,
-        expected_height: height,
+        expected_width: size.width,
+        expected_height: size.height,
         actual_width: image.width(),
         actual_height: image.height(),
     })

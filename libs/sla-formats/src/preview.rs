@@ -17,6 +17,20 @@ use std::fmt;
 /// Channels per pixel of a [`PreviewImage`].
 const CHANNELS: usize = 3;
 
+/// One preview slot's size in pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreviewSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The sizes a container fixes for the 2 previews it carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreviewSizes {
+    pub small: PreviewSize,
+    pub large: PreviewSize,
+}
+
 /// One rendering of the plate, 8 bits per channel, rows top to
 /// bottom.
 #[derive(Clone, Debug, PartialEq)]

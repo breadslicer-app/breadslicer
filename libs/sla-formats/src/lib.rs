@@ -43,7 +43,9 @@ mod tests_threemf;
 pub use error::WriterError;
 pub use format::Format;
 pub use options::WriterOptions;
-pub use preview::{PixelCountMismatch, PreviewImage, PreviewSizeMismatch, PrintPreviews};
+pub use preview::{
+    PixelCountMismatch, PreviewImage, PreviewSize, PreviewSizeMismatch, PreviewSizes, PrintPreviews,
+};
 pub use print_program::{LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{
     CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding, printer_file_format_from_path,

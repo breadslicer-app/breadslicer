@@ -17,6 +17,9 @@ use std::path::Path;
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding};
 
+use crate::goo::v3_0::header::PREVIEW_SIZES as GOO_V3_0_PREVIEW_SIZES;
+use crate::preview::PreviewSizes;
+
 /// A printer-file format this crate targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrinterFileFormat {
@@ -105,6 +108,18 @@ impl PrinterFileFormat {
         matches!(self, Self::Goo(GooVersion::V3_0))
     }
 
+    /// Report the sizes this format fixes for the previews it
+    /// carries, so a caller renders at a size the writer accepts.
+    ///
+    /// `None` for a format with no writer in this build: the sizes
+    /// belong to the container's layout, which arrives with it.
+    pub fn preview_sizes(self) -> Option<PreviewSizes> {
+        match self {
+            Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
+            Self::Goo(GooVersion::V5_1) | Self::Ctb(_) => None,
+        }
+    }
+
     /// Report the file extension this format is written with, without
     /// a leading dot.
     ///
@@ -139,6 +154,7 @@ mod printer_file_format_tests {
     use sc_print_primitives::NonEmptyString;
 
     use super::*;
+    use crate::preview::PreviewSize;
 
     fn binding(format: FormatKind, version: Option<&str>) -> OutputFormatBinding {
         OutputFormatBinding {
@@ -330,6 +346,39 @@ mod printer_file_format_tests {
         assert_eq!(
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5).extension(),
             "ctb",
+        );
+    }
+
+    #[test]
+    fn goo_v3_0_declares_the_preview_sizes_its_header_reserves() {
+        let sizes = PrinterFileFormat::Goo(GooVersion::V3_0)
+            .preview_sizes()
+            .expect("the v3.0 writer carries previews");
+        assert_eq!(
+            sizes.small,
+            PreviewSize {
+                width: 116,
+                height: 116
+            }
+        );
+        assert_eq!(
+            sizes.large,
+            PreviewSize {
+                width: 290,
+                height: 290
+            }
+        );
+    }
+
+    #[test]
+    fn a_format_without_a_writer_declares_no_preview_sizes() {
+        assert_eq!(
+            PrinterFileFormat::Goo(GooVersion::V5_1).preview_sizes(),
+            None,
+        );
+        assert_eq!(
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5).preview_sizes(),
+            None,
         );
     }
 }
