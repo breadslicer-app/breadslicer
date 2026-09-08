@@ -16,6 +16,8 @@ pub mod validated;
 mod tests_diagnose;
 #[cfg(test)]
 mod tests_repair;
+#[cfg(test)]
+mod tests_volume;
 
 pub use diagnose::{FaceDiagnosis, MeshDiagnosis};
 pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_variant};

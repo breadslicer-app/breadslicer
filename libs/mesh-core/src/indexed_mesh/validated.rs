@@ -164,6 +164,34 @@ impl<'a> ValidatedFaces<'a> {
         validate_edge_manifold_impl(self.mesh)?;
         Ok(ValidatedEdgeManifoldMesh::new_unchecked(self.mesh))
     }
+
+    /// Compute the volume in cubic millimetres the mesh encloses,
+    /// signed by its winding: positive when faces wind outward,
+    /// negative when they wind inward.
+    ///
+    /// Only a closed surface encloses anything. An open one still
+    /// returns a number, whatever its boundary leaves unbalanced, so
+    /// callers wanting a physical volume should establish closure
+    /// first through [`Self::validated_edge_manifold`].
+    ///
+    /// Vertices are `f32` but the sum is taken in `f64`, since each
+    /// term scales with the mesh's distance from the origin while the
+    /// total does not.
+    pub fn signed_volume_mm3(&self) -> f64 {
+        self.mesh
+            .faces
+            .iter()
+            .map(|face| {
+                // In range by this witness's invariant.
+                let [i0, i1, i2] = face.vertices.map(usize::from);
+                let v0 = self.mesh.vertices[i0].to_f64();
+                let v1 = self.mesh.vertices[i1].to_f64();
+                let v2 = self.mesh.vertices[i2].to_f64();
+                v0.dot_product(&v1.cross_product(&v2))
+            })
+            .sum::<f64>()
+            / 6.0
+    }
 }
 
 /// Read-only witness that the underlying `IndexedMesh` is
