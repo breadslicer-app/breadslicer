@@ -28,6 +28,7 @@ mod scene;
 pub mod shared_vertices;
 pub mod traverse;
 pub mod validate;
+pub mod volume;
 
 pub use crate::bake::{bake_leaf_to_world, bake_mesh_to_world};
 pub use crate::error::SceneError;
@@ -43,3 +44,5 @@ pub use crate::traverse::ReferencePolicy;
 mod tests_error;
 #[cfg(test)]
 mod tests_traverse;
+#[cfg(test)]
+mod tests_volume;

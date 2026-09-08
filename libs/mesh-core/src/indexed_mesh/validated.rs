@@ -285,7 +285,7 @@ impl<'a> ValidatedFacesMut<'a> {
     }
 }
 
-/// Body of `validate_normal_vectors`, factored out so both
+/// Carry out `validate_normal_vectors`, factored out so both
 /// `ValidatedFaces` and `ValidatedFacesMut` can call it. The
 /// in-range invariant is what makes the unguarded `self.vertices[i]`
 /// indexing inside this routine safe; both witness types only call
@@ -348,7 +348,7 @@ fn validate_normal_vectors_impl(mesh: &IndexedMesh) -> Result<(), Vec<MeshNormal
     }
 }
 
-/// Body of `validate_edge_manifold`. Strictly speaking this routine never
+/// Carry out `validate_edge_manifold`. Strictly speaking this routine never
 /// indexes into `mesh.vertices` (it only uses `face.vertices` values
 /// as half-edge keys), so the in-range invariant is not a soundness
 /// requirement here: the witness gates this method only for API
@@ -504,7 +504,7 @@ mod indexed_mesh_validated_faces_tests {
         let _ = witness.expect_err("post-removal mesh still has out-of-range index");
     }
 
-    /// Hand-rolled closed-tetrahedron mesh with consistent outward
+    /// Build a closed tetrahedron with consistent outward
     /// winding, mirroring the helper in
     /// `indexed_mesh_validate_edge_manifold_tests`.
     fn closed_tetrahedron() -> IndexedMesh {

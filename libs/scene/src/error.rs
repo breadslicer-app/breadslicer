@@ -10,6 +10,7 @@
 use std::fmt;
 
 use crate::node::{MeshResourceId, NodeId, SubtreeResourceId};
+use sc_mesh_core::indexed_mesh::MeshFaceError;
 use sc_mesh_core::transform::TransformError;
 
 /// Failure modes of [`Scene`](Scene) mutators,
@@ -82,6 +83,12 @@ pub enum SceneError {
     /// A structural walk that refuses references met a `Reference`
     /// node it was not allowed to follow.
     UnexpandedReference { node_id: NodeId },
+    /// A query that must index vertices by face index met a leaf
+    /// whose mesh fails `validate_faces`.
+    InvalidMeshFaces {
+        node_id: NodeId,
+        errors: Vec<MeshFaceError>,
+    },
     /// A transform operation in the bake path failed.
     Transform(TransformError),
 }
@@ -180,6 +187,12 @@ impl fmt::Display for SceneError {
             Self::UnexpandedReference { node_id } => {
                 write!(f, "unexpanded Reference node {}", node_id.get())
             }
+            Self::InvalidMeshFaces { node_id, errors } => write!(
+                f,
+                "the mesh at node {} has {} invalid face(s)",
+                node_id.get(),
+                errors.len(),
+            ),
             Self::Transform(err) => write!(f, "transform error: {err}"),
         }
     }

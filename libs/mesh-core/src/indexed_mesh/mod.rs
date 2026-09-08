@@ -96,7 +96,7 @@ impl IndexedMesh {
         self.meta = meta;
     }
 
-    /// Object-space AABB of `self.vertices`. Uncached: each call
+    /// Bound `self.vertices` in object space. Uncached: each call
     /// walks the vertex array. Callers that hammer this should hold
     /// a `SceneSpatial` from `sc-mesh-spatial` instead, which caches
     /// the result. Returns `None` for an empty mesh.
@@ -119,7 +119,8 @@ impl IndexedMesh {
         Ok(ValidatedFaces::new_unchecked(self))
     }
 
-    /// Mutable counterpart of [`validated_faces`]. The returned
+    /// Validate face indices as [`validated_faces`] does, returning a
+    /// witness that also permits mutation. The returned
     /// witness exposes only mutations that preserve the in-range
     /// invariant (winding flips, normal recomputes, etc.); operations
     /// that could invalidate it (e.g. removing whole faces) live on
