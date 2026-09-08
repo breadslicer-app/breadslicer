@@ -40,7 +40,6 @@ const DELAY_MODE_WAIT_TIMES: u8 = 1;
 const LIGHT_OFF_SEC: f32 = 0.0;
 const ADVANCE_MODE: u8 = 0;
 const PRINT_TIME_SEC: u32 = 0;
-const TOTAL_VOLUME_MM3: f32 = 0.0;
 const TOTAL_WEIGHT_G: f32 = 0.0;
 const TOTAL_PRICE: f32 = 0.0;
 const PRICE_UNIT: &str = "";
@@ -121,7 +120,7 @@ pub fn write_header(program: &PrintProgram, out: &mut impl Write) -> io::Result<
     write_u16(out, normal.light_pwm)?;
     out.write_all(&[ADVANCE_MODE])?;
     write_u32(out, PRINT_TIME_SEC)?;
-    write_f32(out, TOTAL_VOLUME_MM3)?;
+    write_f32(out, program.volume_mm3.value() as f32)?;
     write_f32(out, TOTAL_WEIGHT_G)?;
     write_f32(out, TOTAL_PRICE)?;
     write_text(out, PRICE_UNIT, 8)?;

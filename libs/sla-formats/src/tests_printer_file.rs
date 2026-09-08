@@ -7,7 +7,7 @@ use std::fs;
 
 use sc_print_primitives::{
     AaLevel, BuildVolume, LightPwm, Mirror, NonEmptyString, NonNegativeFiniteSec, PixelResolution,
-    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
+    PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec, VolumeMm3,
 };
 use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
@@ -72,6 +72,7 @@ fn program(layer_count: usize) -> PrintProgram {
         layer_height_mm: mm(0.1),
         bottom_layer_count: 1,
         transition_layer_count: 0,
+        volume_mm3: VolumeMm3::ZERO,
         created_at: NonEmptyString::new("2026-09-04 21:07:00").unwrap(),
         slicer_version: "0.0.12",
     }

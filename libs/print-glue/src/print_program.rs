@@ -10,7 +10,7 @@ use std::fmt;
 
 use chrono::Local;
 use sc_print_primitives::{
-    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec,
+    LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteSec, VolumeMm3,
 };
 use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_sl1cer::profile::SliceProfile;
@@ -90,6 +90,7 @@ pub fn project_to_print_program(
         layer_height_mm: material.layer_height_mm,
         bottom_layer_count: material.bottom_layer_count,
         transition_layer_count: transition_count,
+        volume_mm3: VolumeMm3::ZERO,
         created_at,
         slicer_version,
     })

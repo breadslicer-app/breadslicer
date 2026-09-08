@@ -10,7 +10,7 @@
 
 use sc_print_primitives::{
     LightPwm, NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
-    PositiveFiniteSec,
+    PositiveFiniteSec, VolumeMm3,
 };
 
 use crate::raster_setup::RasterSetup;
@@ -56,6 +56,10 @@ pub struct PrintProgram {
     /// How many layers step from the bottom exposure to the normal
     /// one. The steps themselves are in the layer records.
     pub transition_layer_count: u32,
+    /// Material the whole plate encloses. These formats carry it for
+    /// the machine's own display; nothing the machine does depends on
+    /// it.
+    pub volume_mm3: VolumeMm3,
     /// Creation time, rendered the way the file records it.
     pub created_at: NonEmptyString,
     pub slicer_version: &'static str,
