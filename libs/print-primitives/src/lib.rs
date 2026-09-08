@@ -23,6 +23,7 @@ pub mod identity;
 pub mod length;
 pub mod light_intensity;
 pub mod light_pwm;
+pub mod mass;
 pub mod mirror;
 pub mod network;
 pub mod non_empty_string;
@@ -44,6 +45,7 @@ pub use length::{
 };
 pub use light_intensity::{MwPerCm2OutOfRange, PositiveFiniteMwPerCm2};
 pub use light_pwm::{LightPwm, LightPwmOutOfRange};
+pub use mass::{DensityGPerCm3, DensityOutOfRange, MassG, MassOutOfRange};
 pub use mirror::Mirror;
 pub use network::NetworkProtocol;
 pub use non_empty_string::{EmptyStringError, NonEmptyString};
@@ -75,6 +77,8 @@ mod tests_length;
 mod tests_light_intensity;
 #[cfg(test)]
 mod tests_light_pwm;
+#[cfg(test)]
+mod tests_mass;
 #[cfg(test)]
 mod tests_mirror;
 #[cfg(test)]
