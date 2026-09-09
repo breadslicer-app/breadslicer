@@ -82,6 +82,35 @@ fn printer_without_light_intensity() -> PrinterProfile {
     toml_edit::de::from_str(PRINTER_WITHOUT_LIGHT_INTENSITY).unwrap()
 }
 
+const PRINTER_WITHOUT_SPLIT_TRAVEL: &str = r#"
+[identity]
+id = "elegoo-saturn-4-ultra"
+manufacturer = "ELEGOO"
+family = "Saturn"
+name = "Saturn 4 Ultra"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 153.36, y_mm = 77.76, z_mm = 165.0 }
+pixel_resolution = { x = 8520, y = 4320 }
+pixel_size_microns = { x = 18.0, y = 18.0 }
+mirror = { x = true, y = false }
+
+[capabilities]
+output_formats = [{ format = "ctb", version = "4" }]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[constraints]
+z_step_mm = 0.01
+light_intensity_mw_per_cm2 = 5.0
+"#;
+
+fn printer_without_split_travel() -> PrinterProfile {
+    toml_edit::de::from_str(PRINTER_WITHOUT_SPLIT_TRAVEL).unwrap()
+}
+
 const PRINTER_WITH_COARSE_Z_STEP: &str = r#"
 [identity]
 id = "coarse-axis-printer"
@@ -1875,6 +1904,72 @@ fn resolve_keeps_a_calibrated_bottom_second_stage_apart_from_the_normal_one() {
     assert_eq!(bottom.retract_speed_mm_min.value(), 180.0);
     let second = resolved.material_resolved.second_travel.unwrap();
     assert_eq!(second.lift_distance_mm.value(), 3.0);
+}
+
+#[test]
+fn a_printer_that_does_not_split_its_travel_drops_the_second_stage() {
+    let printer = printer_without_split_travel();
+    let material = material(TWO_STAGE_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert!(resolved.material_resolved.second_travel.is_none());
+    assert!(resolved.material_resolved.bottom_second_travel.is_none());
+    assert!(
+        resolved
+            .warnings
+            .contains(&ResolveWarning::SecondTravelStageUnsupported),
+        "{:?}",
+        resolved.warnings,
+    );
+}
+
+#[test]
+fn dropping_the_second_stage_leaves_the_first_one_as_calibrated() {
+    let printer = printer_without_split_travel();
+    let material = material(TWO_STAGE_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert_eq!(resolved.material_resolved.lift_distance_mm.value(), 2.0);
+    assert_eq!(resolved.material_resolved.lift_speed_mm_min.value(), 75.0);
+    assert_eq!(
+        resolved.material_resolved.retract_speed_mm_min.value(),
+        75.0
+    );
+}
+
+#[test]
+fn a_printer_that_splits_its_travel_keeps_the_second_stage_unremarked() {
+    let printer = printer_with_light_intensity();
+    let material = material(TWO_STAGE_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert!(resolved.material_resolved.second_travel.is_some());
+    assert!(
+        !resolved
+            .warnings
+            .contains(&ResolveWarning::SecondTravelStageUnsupported),
+    );
+}
+
+#[test]
+fn a_resin_that_moves_in_one_stage_draws_no_warning_from_a_single_stage_printer() {
+    let printer = printer_without_split_travel();
+    let material = material(FULLY_CALIBRATED_MATERIAL);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    assert!(
+        !resolved
+            .warnings
+            .contains(&ResolveWarning::SecondTravelStageUnsupported),
+    );
 }
 
 fn recorded_under(records: &[OverrideRecord], prefix: &str) -> Vec<(ResolvedField, f64)> {

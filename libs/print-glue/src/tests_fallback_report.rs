@@ -27,7 +27,7 @@ mirror = { x = true, y = false }
 [capabilities]
 output_formats = [{ format = "goo", version = "v3.0" }]
 supports_grayscale = true
-two_stage_lift = false
+two_stage_lift = true
 has_camera = false
 
 [constraints]

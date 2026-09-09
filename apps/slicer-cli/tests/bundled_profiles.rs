@@ -193,6 +193,64 @@ fn slug_of(manufacturer: &str, name: &str) -> String {
         .join("-")
 }
 
+/// The ELEGOO machines whose own manufacturer publishes a 2 stage
+/// move for them, in the resin settings it hands its customers.
+///
+/// Listed here because the converter that writes these profiles has
+/// no manufacturer data for the capability and defaults it to false,
+/// so a re-import would silently take it away again.
+const ELEGOO_PRINTERS_THAT_SPLIT_THEIR_TRAVEL: [&str; 11] = [
+    "elegoo-jupiter",
+    "elegoo-jupiter-se",
+    "elegoo-mars-4",
+    "elegoo-mars-4-dlp",
+    "elegoo-mars-4-max",
+    "elegoo-mars-4-ultra",
+    "elegoo-mars-5",
+    "elegoo-saturn-2",
+    "elegoo-saturn-3",
+    "elegoo-saturn-3-ultra",
+    "elegoo-saturn-4",
+];
+
+/// The machines that release the part by tilting the vat, which have
+/// no lift for a second stage to extend.
+const ELEGOO_TILTING_VAT_PRINTERS: [&str; 3] = [
+    "elegoo-mars-5-ultra",
+    "elegoo-saturn-4-ultra",
+    "elegoo-saturn-4-ultra-16k",
+];
+
+#[test]
+fn every_tilting_vat_printer_declares_no_split_travel() {
+    let printers = bundled_printers();
+    for id in ELEGOO_TILTING_VAT_PRINTERS {
+        let printer = printers
+            .iter()
+            .find(|printer| printer.identity.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} is a printer we ship"));
+        assert!(
+            !printer.capabilities.two_stage_lift,
+            "{id} tilts its vat instead of lifting, so it has no second stage",
+        );
+    }
+}
+
+#[test]
+fn every_printer_the_vendor_splits_the_travel_for_declares_it() {
+    let printers = bundled_printers();
+    for id in ELEGOO_PRINTERS_THAT_SPLIT_THEIR_TRAVEL {
+        let printer = printers
+            .iter()
+            .find(|printer| printer.identity.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} is a printer we ship"));
+        assert!(
+            printer.capabilities.two_stage_lift,
+            "{id} runs the 2 stage move its own manufacturer publishes",
+        );
+    }
+}
+
 #[test]
 fn every_bundled_printer_id_is_the_machine_it_names() {
     for printer in bundled_printers() {

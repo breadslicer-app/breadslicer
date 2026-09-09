@@ -25,7 +25,7 @@ y = false
 
 [capabilities]
 supports_grayscale = true
-two_stage_lift = false
+two_stage_lift = true
 has_camera = false
 network_protocol = "sdcp"
 

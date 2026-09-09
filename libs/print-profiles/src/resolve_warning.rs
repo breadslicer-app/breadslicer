@@ -11,8 +11,9 @@
 //! resolved value: autosnap when a constraint snapped a value and
 //! the relative delta exceeded the warning threshold, derivation
 //! from material intent when no calibrated value was available, a
-//! material-default fallback, and the use of the generic machine's
-//! calibration block in place of one for the printer itself.
+//! material-default fallback, the use of the generic machine's
+//! calibration block in place of one for the printer itself, and a
+//! calibrated value the printer cannot act on.
 
 use crate::resolved_field::ResolvedField;
 
@@ -34,6 +35,10 @@ pub enum ResolveWarning {
     /// The material has no calibration block for the printer; the
     /// values came from its `generic-machine` block.
     GenericCalibrationUsed,
+    /// The material calibrates a second travel stage for a printer
+    /// that does not split its travel, so the stage was dropped and
+    /// the platform makes the whole move at once.
+    SecondTravelStageUnsupported,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,6 +107,9 @@ impl std::fmt::Display for ResolveWarning {
             }
             Self::GenericCalibrationUsed => f.write_str(
                 "no calibration block for this printer; the generic machine block was used",
+            ),
+            Self::SecondTravelStageUnsupported => f.write_str(
+                "this printer does not split its travel; the calibrated second stage was dropped",
             ),
         }
     }

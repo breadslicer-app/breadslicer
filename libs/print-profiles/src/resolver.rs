@@ -24,6 +24,10 @@
 //!   from `target_energy_density_mj_per_cm2` divided by the
 //!   printer's declared `light_intensity_mw_per_cm2` at the picked
 //!   `light_pwm` duty) are derivable.
+//! - Drop what the printer cannot act on: a machine that does not
+//!   split its travel loses the calibrated second stage, with a
+//!   warning, so a resin calibrated for a machine that does stays
+//!   usable on one that does not.
 //! - Validate each picked value against the printer's constraints:
 //!   snap-to-multiple, snap-into-range, snap-at-max, or
 //!   reject-below-min per the policy table. Snaps that exceed the
@@ -66,6 +70,7 @@ use crate::override_record::OverrideRecord;
 use crate::policy::{
     AUTOSNAP_WARNING_THRESHOLD, ApplyResult, ConstraintPolicy, policies_for, relative_delta_exceeds,
 };
+use crate::printer_capabilities::PrinterCapabilities;
 use crate::printer_constraints::PrinterConstraints;
 use crate::printer_profile::PrinterProfile;
 use crate::resolve_error::ResolveError;
@@ -506,6 +511,23 @@ fn apply_intent_derivation(
             prior_value: None,
             final_value: typed.value(),
         });
+    }
+}
+
+/// Drop what the printer cannot act on, so a resin calibrated for a
+/// machine that splits its travel stays usable on one that does not.
+pub(crate) fn apply_capabilities(
+    capabilities: &PrinterCapabilities,
+    picked: &mut PickedValues,
+    warnings: &mut Vec<ResolveWarning>,
+) {
+    if capabilities.two_stage_lift {
+        return;
+    }
+    let normal = picked.second_travel.take();
+    let bottom = picked.bottom_second_travel.take();
+    if normal.is_some() || bottom.is_some() {
+        warnings.push(ResolveWarning::SecondTravelStageUnsupported);
     }
 }
 
@@ -1101,6 +1123,7 @@ pub fn resolve(
     overrides: &SceneOverrides,
 ) -> Result<ResolvedPrintConfig, ResolveError> {
     let (mut picked, mut warnings, mut records) = pick_and_derive_material(printer, material);
+    apply_capabilities(&printer.capabilities, &mut picked, &mut warnings);
     apply_constraints(&mut picked, &printer.constraints, &mut warnings)?;
     apply_scene_overrides(
         overrides,
