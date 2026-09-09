@@ -16,8 +16,10 @@
 pub mod cli;
 pub mod dragonfruit;
 pub mod format;
+pub mod printer_library;
 pub mod profile;
 pub mod reader;
 pub mod request;
 pub mod run;
+pub mod source_note;
 pub mod writer;

@@ -28,6 +28,7 @@ pub struct ConversionRequest {
     inputs: NEVec<PathBuf>,
     out: PathBuf,
     with_images: bool,
+    printer_library: Option<PathBuf>,
 }
 
 /// Returned by [`ConversionRequest::from_raw`] when no input path was
@@ -53,6 +54,7 @@ impl ConversionRequest {
             inputs,
             out: raw.out,
             with_images: raw.with_images,
+            printer_library: raw.printer_library,
         })
     }
 
@@ -76,10 +78,20 @@ impl ConversionRequest {
         self.with_images
     }
 
+    /// The profile library to consult for what each machine can do, if
+    /// one was given.
+    pub fn printer_library(&self) -> Option<&Path> {
+        self.printer_library.as_deref()
+    }
+
     /// A one-line human-facing description of what this request covers.
     pub fn summary(&self) -> String {
+        let printers = match &self.printer_library {
+            Some(path) => path.display().to_string(),
+            None => "none".to_owned(),
+        };
         format!(
-            "format: {}; inputs: {}; output: {}; images: {}",
+            "format: {}; inputs: {}; output: {}; images: {}; printer library: {printers}",
             self.format,
             self.inputs.iter().count(),
             self.out.display(),
@@ -98,6 +110,7 @@ mod tests {
             inputs: Vec::new(),
             out: PathBuf::from("/dst"),
             with_images: false,
+            printer_library: None,
         }
     }
 
@@ -117,8 +130,23 @@ mod tests {
         .unwrap();
         assert_eq!(
             request.summary(),
-            "format: dragonfruit; inputs: 2; output: /dst; images: off",
+            "format: dragonfruit; inputs: 2; output: /dst; images: off; printer library: none",
         );
+    }
+
+    #[test]
+    fn summary_names_the_printer_library_when_one_is_given() {
+        let request = ConversionRequest::from_raw(RawCliArgs {
+            inputs: vec![PathBuf::from("/src/a.json")],
+            printer_library: Some(PathBuf::from("/lib")),
+            ..raw()
+        })
+        .unwrap();
+        assert_eq!(
+            request.summary(),
+            "format: dragonfruit; inputs: 1; output: /dst; images: off; printer library: /lib",
+        );
+        assert_eq!(request.printer_library(), Some(Path::new("/lib")));
     }
 
     #[test]
@@ -131,7 +159,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             request.summary(),
-            "format: dragonfruit; inputs: 1; output: /dst; images: on",
+            "format: dragonfruit; inputs: 1; output: /dst; images: on; printer library: none",
         );
     }
 }

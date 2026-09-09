@@ -16,15 +16,18 @@ use std::path::{Path, PathBuf};
 
 use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
 use crate::format::SourceFormat;
+use crate::printer_library::{PrinterLibrary, PrinterLibraryError};
 use crate::reader::ProfileReader;
 use crate::request::ConversionRequest;
+use crate::source_note::SourceNote;
 use crate::writer::{WriteError, WriteReport, write_profiles};
 
-/// Returned by [`run`] when reading a source or writing the library
-/// fails.
+/// Returned by [`run`] when reading a source, opening the printer
+/// library, or writing the output fails.
 #[derive(Debug)]
 pub enum RunError {
     Read(DragonFruitError),
+    PrinterLibrary(PrinterLibraryError),
     Write(WriteError),
 }
 
@@ -32,6 +35,7 @@ impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read(err) => write!(f, "{err}"),
+            Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::Write(err) => write!(f, "{err}"),
         }
     }
@@ -41,21 +45,44 @@ impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Read(err) => Some(err),
+            Self::PrinterLibrary(err) => Some(err),
             Self::Write(err) => Some(err),
         }
     }
 }
 
+/// What one conversion produced: the per-kind counts of what was
+/// written, and what the reader wants the operator to know.
+#[derive(Debug)]
+pub struct RunReport {
+    pub written: WriteReport,
+    pub notes: Vec<SourceNote>,
+}
+
 /// Convert the request's inputs and write the result into its output
-/// root, returning the per-kind counts.
-pub fn run(request: &ConversionRequest) -> Result<WriteReport, RunError> {
+/// root.
+pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
     let paths: Vec<&Path> = request.inputs().iter().map(PathBuf::as_path).collect();
-    let profiles = match request.format() {
-        SourceFormat::DragonFruit => DragonFruitReader::new()
-            .read(&paths)
-            .map_err(RunError::Read)?,
+    let printers = request
+        .printer_library()
+        .map(PrinterLibrary::open)
+        .transpose()
+        .map_err(RunError::PrinterLibrary)?;
+    let reading = match request.format() {
+        SourceFormat::DragonFruit => {
+            let reader = match printers {
+                Some(printers) => DragonFruitReader::consulting(printers),
+                None => DragonFruitReader::new(),
+            };
+            reader.read(&paths).map_err(RunError::Read)?
+        }
     };
-    write_profiles(&profiles, request.out(), request.with_images()).map_err(RunError::Write)
+    let written = write_profiles(&reading.profiles, request.out(), request.with_images())
+        .map_err(RunError::Write)?;
+    Ok(RunReport {
+        written,
+        notes: reading.notes,
+    })
 }
 
 #[cfg(test)]
@@ -73,6 +100,23 @@ mod tests {
             inputs,
             out,
             with_images,
+            printer_library: None,
+        })
+        .unwrap()
+    }
+
+    /// The same request, converting against a printer library.
+    fn request_consulting(
+        inputs: Vec<PathBuf>,
+        out: PathBuf,
+        printer_library: PathBuf,
+    ) -> ConversionRequest {
+        ConversionRequest::from_raw(RawCliArgs {
+            format: SourceFormat::DragonFruit,
+            inputs,
+            out,
+            with_images: false,
+            printer_library: Some(printer_library),
         })
         .unwrap()
     }
@@ -96,8 +140,9 @@ mod tests {
 
         let report = run(&request(vec![input], out.clone(), false)).unwrap();
 
-        assert_eq!(report.printers, 1);
+        assert_eq!(report.written.printers, 1);
         assert!(out.join("printers").join("testcorp-e2e.toml").is_file());
+        assert_eq!(report.notes, vec![SourceNote::NoPrinterLibrary]);
     }
 
     /// A printer record and a resin record in the shape the source
@@ -229,6 +274,99 @@ bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 210.0
 ",
+        );
+    }
+
+    /// Convert the same pair against a library that says the machine
+    /// splits its travel, which is the only thing that puts a second
+    /// stage into a resin's block.
+    #[test]
+    fn a_library_that_declares_the_split_puts_the_stages_in_the_resin() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        let out = dir.path().join("library");
+
+        // A first pass writes the printer profile; the flag is the one
+        // value the converter does not take from the source, so it is
+        // set here as a curator would.
+        run(&request(vec![printers.clone()], out.clone(), false)).unwrap();
+        let profile_path = out.join("printers").join("testcorp-e2e.toml");
+        let declared = fs::read_to_string(&profile_path)
+            .unwrap()
+            .replace("two_stage_lift = false", "two_stage_lift = true");
+        fs::write(&profile_path, declared).unwrap();
+
+        let report = run(&request_consulting(
+            vec![printers, materials],
+            out.clone(),
+            out.clone(),
+        ))
+        .unwrap();
+
+        assert!(report.notes.is_empty(), "notes: {:?}", report.notes);
+        let material_toml =
+            fs::read_to_string(out.join("materials").join("testcorp-resin-e2e.toml")).unwrap();
+        assert_eq!(
+            material_toml,
+            "\
+[identity]
+id = \"testcorp-resin-e2e\"
+brand = \"TestCorp\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"2.0.0\"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[physical]
+
+[per_printer.testcorp-e2e]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 3.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 60.0
+
+[per_printer.testcorp-e2e.second_travel]
+lift_distance_mm = 4.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 240.0
+
+[per_printer.testcorp-e2e.bottom_second_travel]
+lift_distance_mm = 4.0
+lift_speed_mm_min = 240.0
+retract_speed_mm_min = 210.0
+",
+        );
+    }
+
+    #[test]
+    fn a_machine_the_library_does_not_hold_is_reported() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        let library = dir.path().join("empty-library");
+        fs::create_dir_all(library.join("printers")).unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_consulting(vec![printers], out, library)).unwrap();
+
+        assert_eq!(
+            report.notes,
+            vec![SourceNote::MachineOutsideTheLibrary {
+                printer: sc_print_primitives::PrinterId::new("testcorp-e2e").unwrap(),
+            }],
         );
     }
 

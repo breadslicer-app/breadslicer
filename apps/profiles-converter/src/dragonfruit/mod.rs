@@ -26,19 +26,32 @@ use sc_print_primitives::{MaterialId, PrinterId};
 use sc_print_profiles::MaterialProfile;
 use serde_json::Value;
 
+use crate::printer_library::PrinterLibrary;
 use crate::profile::{ConvertedPrinter, ConvertedProfile};
-use crate::reader::ProfileReader;
+use crate::reader::{ProfileReader, SourceReading};
+use crate::source_note::SourceNote;
 use material::{MaterialMapError, RawMaterial, map_material};
 use preset_index::{Preset, PresetIndex};
 use printer::{PrinterMapError, RawPrinter, map_printer};
 
 /// Reads DragonFruit plugin JSON into our domain profiles.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DragonFruitReader;
+#[derive(Clone, Debug, Default)]
+pub struct DragonFruitReader {
+    printers: Option<PrinterLibrary>,
+}
 
 impl DragonFruitReader {
+    /// A reader with no printer library, which cannot tell which
+    /// machines split their travel and so splits no calibration block.
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// A reader that consults `printers` for what each machine can do.
+    pub fn consulting(printers: PrinterLibrary) -> Self {
+        Self {
+            printers: Some(printers),
+        }
     }
 }
 
@@ -178,11 +191,19 @@ impl std::error::Error for DragonFruitError {
 impl ProfileReader for DragonFruitReader {
     type Error = DragonFruitError;
 
-    fn read(&self, inputs: &[&Path]) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+    fn read(&self, inputs: &[&Path]) -> Result<SourceReading, DragonFruitError> {
         let collected = collect_records(inputs)?;
-        let (mut profiles, presets) = map_printers(collected.printers)?;
-        profiles.extend(map_materials(collected.materials, &presets)?);
-        merge_records(profiles)
+        let printers = map_printers(collected.printers, self.printers.as_ref())?;
+        let mut profiles = printers.profiles;
+        profiles.extend(map_materials(collected.materials, &printers.presets)?);
+        let mut notes = printers.notes;
+        if self.printers.is_none() {
+            notes.insert(0, SourceNote::NoPrinterLibrary);
+        }
+        Ok(SourceReading {
+            profiles: merge_records(profiles)?,
+            notes,
+        })
     }
 }
 
@@ -215,17 +236,29 @@ fn collect_records(inputs: &[&Path]) -> Result<Collected, DragonFruitError> {
     Ok(collected)
 }
 
+/// What the printer phase produced: the profiles, the presets a
+/// material resolves through, and what it could not settle.
+struct MappedPrinters {
+    profiles: Vec<ConvertedProfile>,
+    presets: PresetIndex,
+    notes: Vec<SourceNote>,
+}
+
 /// Map every collected printer record, resolving each one's image
 /// reference against the directory of the file it came from, and index
 /// the machines by the preset id each record carries.
 ///
 /// The indexed id is the one the profile itself carries, so a material
-/// block cannot end up keyed to an id no written printer has.
+/// block cannot end up keyed to an id no written printer has. Whether
+/// the machine splits its travel comes from `library`, our own word on
+/// the hardware, and is `false` for a machine it does not hold.
 fn map_printers(
     records: Vec<CollectedRecord<RawPrinter>>,
-) -> Result<(Vec<ConvertedProfile>, PresetIndex), DragonFruitError> {
+    library: Option<&PrinterLibrary>,
+) -> Result<MappedPrinters, DragonFruitError> {
     let mut profiles = Vec::with_capacity(records.len());
     let mut presets = PresetIndex::default();
+    let mut notes = Vec::new();
     for CollectedRecord {
         record,
         path,
@@ -237,11 +270,25 @@ fn map_printers(
             index,
             source,
         })?;
+        let printer = mapped.profile.identity.id.clone();
+        let splits_travel = match library {
+            None => false,
+            Some(library) => library.splits_travel(&printer).unwrap_or_else(|| {
+                let note = SourceNote::MachineOutsideTheLibrary {
+                    printer: printer.clone(),
+                };
+                if !notes.contains(&note) {
+                    notes.push(note);
+                }
+                false
+            }),
+        };
         presets.insert(
             &mapped.preset_id,
             Preset {
-                printer: mapped.profile.identity.id.clone(),
+                printer,
                 container: mapped.container,
+                splits_travel,
             },
         );
         let base = path.parent().unwrap_or_else(|| Path::new(""));
@@ -254,7 +301,11 @@ fn map_printers(
             image_source,
         }));
     }
-    Ok((profiles, presets))
+    Ok(MappedPrinters {
+        profiles,
+        presets,
+        notes,
+    })
 }
 
 /// Map every collected material record against the machines the run's
@@ -568,7 +619,10 @@ mod tests {
         )
         .unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
         assert_eq!(
             ids(&profiles),
             vec!["testcorp-printer-a", "testcorp-printer-b"],
@@ -590,7 +644,10 @@ mod tests {
         .unwrap();
         fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
         assert_eq!(
             ids(&profiles),
             vec!["testcorp-printer-a", "testcorp-printer-b"],
@@ -693,7 +750,10 @@ mod tests {
         )
         .unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
 
         assert_eq!(ids(&profiles), vec!["elegoo-saturn-4"]);
         let ConvertedProfile::Printer(printer) = &profiles[0] else {
@@ -748,7 +808,10 @@ mod tests {
         let file = dir.path().join("materials.json");
         fs::write(&file, format!("[{}]", material_record("standard-405"))).unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
         match profiles.as_slice() {
             [ConvertedProfile::Material(material)] => {
                 assert_eq!(material.identity.id.as_str(), "standard-405");
@@ -771,7 +834,10 @@ mod tests {
         )
         .unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
         let printers = profiles
             .iter()
             .filter(|p| matches!(p, ConvertedProfile::Printer(_)))
@@ -817,7 +883,10 @@ mod tests {
         )
         .unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
         match profiles.as_slice() {
             [
                 ConvertedProfile::Printer(printer),
@@ -867,7 +936,10 @@ mod tests {
         let file = dir.path().join("empty.json");
         fs::write(&file, "[]").unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
         assert!(profiles.is_empty());
     }
 
@@ -885,7 +957,10 @@ mod tests {
         }]"#;
         fs::write(&file, json).unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap()
+            .profiles;
         match profiles.as_slice() {
             [ConvertedProfile::Printer(printer)] => {
                 assert_eq!(
@@ -957,7 +1032,10 @@ mod tests {
         )
         .unwrap();
 
-        let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
         match profiles.as_slice() {
             [_, _, ConvertedProfile::Material(material)] => {
                 assert_eq!(material.identity.id.as_str(), "blu");

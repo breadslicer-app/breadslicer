@@ -14,6 +14,15 @@
 use std::path::Path;
 
 use crate::profile::ConvertedProfile;
+use crate::source_note::SourceNote;
+
+/// What one read produced: the profiles, and what the reader wants the
+/// operator to know about how it read them.
+#[derive(Debug, Default)]
+pub struct SourceReading {
+    pub profiles: Vec<ConvertedProfile>,
+    pub notes: Vec<SourceNote>,
+}
 
 /// A reader for one source profile format.
 pub trait ProfileReader {
@@ -23,5 +32,5 @@ pub trait ProfileReader {
 
     /// Read every input path and return the profiles they contain. A
     /// path may be a single file or a directory the reader walks.
-    fn read(&self, inputs: &[&Path]) -> Result<Vec<ConvertedProfile>, Self::Error>;
+    fn read(&self, inputs: &[&Path]) -> Result<SourceReading, Self::Error>;
 }

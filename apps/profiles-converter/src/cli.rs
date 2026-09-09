@@ -28,6 +28,7 @@ pub struct RawCliArgs {
     pub inputs: Vec<PathBuf>,
     pub out: PathBuf,
     pub with_images: bool,
+    pub printer_library: Option<PathBuf>,
 }
 
 /// Build the parser for the converter's command line.
@@ -50,12 +51,19 @@ pub fn cli_parser() -> OptionParser<RawCliArgs> {
     let with_images = long("with-images")
         .help("Copy referenced preview images into `<out>/images/` and wire the profiles to them.")
         .switch();
+    let printer_library = long("printer-library")
+        .help(
+            "Profile library root whose printer profiles say what each machine can do. Without it, no calibration block carries a second travel stage.",
+        )
+        .argument::<PathBuf>("DIR")
+        .optional();
 
     construct!(RawCliArgs {
         format,
         inputs,
         out,
         with_images,
+        printer_library,
     })
     .to_options()
     .descr(
@@ -92,6 +100,7 @@ mod tests {
                 inputs: vec![PathBuf::from("/src/a.json")],
                 out: PathBuf::from("/dst"),
                 with_images: false,
+                printer_library: None,
             },
         );
     }
@@ -106,6 +115,8 @@ mod tests {
             "-i",
             "/src/dir",
             "--with-images",
+            "--printer-library",
+            "/lib",
             "-o",
             "/dst",
         ])
@@ -117,6 +128,7 @@ mod tests {
                 inputs: vec![PathBuf::from("/src/a.json"), PathBuf::from("/src/dir")],
                 out: PathBuf::from("/dst"),
                 with_images: true,
+                printer_library: Some(PathBuf::from("/lib")),
             },
         );
     }

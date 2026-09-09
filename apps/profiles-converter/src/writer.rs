@@ -154,7 +154,7 @@ mod tests {
 
     use super::*;
     use crate::profile::ConvertedPrinter;
-    use crate::reader::ProfileReader;
+    use crate::reader::{ProfileReader, SourceReading};
 
     const PRINTER_TOML: &str = r#"
 [identity]
@@ -441,8 +441,11 @@ retract_speed_mm_min = 150.0
     impl ProfileReader for FixedReader {
         type Error = Infallible;
 
-        fn read(&self, _inputs: &[&Path]) -> Result<Vec<ConvertedProfile>, Self::Error> {
-            Ok(self.0.clone())
+        fn read(&self, _inputs: &[&Path]) -> Result<SourceReading, Self::Error> {
+            Ok(SourceReading {
+                profiles: self.0.clone(),
+                notes: Vec::new(),
+            })
         }
     }
 
@@ -454,8 +457,8 @@ retract_speed_mm_min = 150.0
             ConvertedProfile::Material(sample_material()),
         ]);
 
-        let profiles = reader.read(&[]).unwrap();
-        let report = write_profiles(&profiles, dir.path(), false).unwrap();
+        let reading = reader.read(&[]).unwrap();
+        let report = write_profiles(&reading.profiles, dir.path(), false).unwrap();
         assert_eq!(
             report,
             WriteReport {

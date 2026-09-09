@@ -17,12 +17,17 @@ use std::collections::BTreeMap;
 
 use sc_print_primitives::PrinterId;
 
-/// What one preset id names: the machine, under our id, and the
-/// container that preset writes.
+/// What one preset id names: the machine, under our id, the container
+/// that preset writes, and whether the machine splits its travel.
+///
+/// The first 2 come from the source's own record. The third comes from
+/// our printer library, since what the hardware does is not a claim we
+/// take from a source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Preset {
     pub printer: PrinterId,
     pub container: String,
+    pub splits_travel: bool,
 }
 
 /// The presets the run's printer records carry.
@@ -56,6 +61,7 @@ mod tests {
         Preset {
             printer: PrinterId::new(id).unwrap(),
             container: container.to_owned(),
+            splits_travel: false,
         }
     }
 

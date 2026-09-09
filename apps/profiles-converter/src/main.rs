@@ -22,11 +22,14 @@ fn main() -> Result<()> {
     eprintln!("{}", request.summary());
 
     let report = run(&request)?;
+    for note in &report.notes {
+        eprintln!("note: {note}");
+    }
     eprintln!(
         "converted {} printer(s), {} material(s), {} image(s) into {}",
-        report.printers,
-        report.materials,
-        report.images,
+        report.written.printers,
+        report.written.materials,
+        report.written.images,
         request.out().display(),
     );
     Ok(())

@@ -24,7 +24,7 @@ use sc_print_primitives::{
 };
 use sc_print_profiles::{
     CalibrationTarget, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
-    MaterialPhysical, MaterialProfile,
+    MaterialPhysical, MaterialProfile, SecondTravelStage,
 };
 use semver::Version;
 use serde::Deserialize;
@@ -79,17 +79,83 @@ struct RawOverride {
     lift_distance_2_mm: Option<f64>,
     #[serde(rename = "liftSpeedMmMin", default)]
     lift_speed_mm_min: Option<f64>,
+    #[serde(rename = "liftSpeed2MmMin", default)]
+    lift_speed_2_mm_min: Option<f64>,
     #[serde(rename = "retractSpeedMmMin", default)]
     retract_speed_mm_min: Option<f64>,
+    #[serde(rename = "retractSpeed2MmMin", default)]
+    retract_speed_2_mm_min: Option<f64>,
     #[serde(rename = "bottomLiftDistanceMm", default)]
     bottom_lift_distance_mm: Option<f64>,
     #[serde(rename = "bottomLiftDistance2Mm", default)]
     bottom_lift_distance_2_mm: Option<f64>,
     #[serde(rename = "bottomLiftSpeedMmMin", default)]
     bottom_lift_speed_mm_min: Option<f64>,
+    #[serde(rename = "bottomLiftSpeed2MmMin", default)]
+    bottom_lift_speed_2_mm_min: Option<f64>,
     #[serde(rename = "bottomRetractSpeedMmMin", default)]
     bottom_retract_speed_mm_min: Option<f64>,
+    #[serde(rename = "bottomRetractSpeed2MmMin", default)]
+    bottom_retract_speed_2_mm_min: Option<f64>,
 }
+
+/// One quantity's numbers as the source states them: the 2 lift stages
+/// and the 2 retract speeds, in the source's own order.
+struct RawStages {
+    lift_distance: Option<f64>,
+    lift_distance_2: Option<f64>,
+    lift_speed: Option<f64>,
+    lift_speed_2: Option<f64>,
+    retract_speed: Option<f64>,
+    retract_speed_2: Option<f64>,
+}
+
+impl RawOverride {
+    /// The numbers for the layers printed at the normal exposure.
+    fn normal_stages(&self) -> RawStages {
+        RawStages {
+            lift_distance: self.lift_distance_mm,
+            lift_distance_2: self.lift_distance_2_mm,
+            lift_speed: self.lift_speed_mm_min,
+            lift_speed_2: self.lift_speed_2_mm_min,
+            retract_speed: self.retract_speed_mm_min,
+            retract_speed_2: self.retract_speed_2_mm_min,
+        }
+    }
+
+    /// The numbers for the bottom layers.
+    fn bottom_stages(&self) -> RawStages {
+        RawStages {
+            lift_distance: self.bottom_lift_distance_mm,
+            lift_distance_2: self.bottom_lift_distance_2_mm,
+            lift_speed: self.bottom_lift_speed_mm_min,
+            lift_speed_2: self.bottom_lift_speed_2_mm_min,
+            retract_speed: self.bottom_retract_speed_mm_min,
+            retract_speed_2: self.bottom_retract_speed_2_mm_min,
+        }
+    }
+}
+
+/// The source keys one quantity's numbers come from, so a rejected value
+/// names the key it was written under.
+#[derive(Clone, Copy)]
+struct StageKeys {
+    distance: &'static str,
+    lift_speed: &'static str,
+    retract_speed: &'static str,
+}
+
+const NORMAL_KEYS: StageKeys = StageKeys {
+    distance: "liftDistanceMm",
+    lift_speed: "liftSpeedMmMin",
+    retract_speed: "retractSpeedMmMin",
+};
+
+const BOTTOM_KEYS: StageKeys = StageKeys {
+    distance: "bottomLiftDistanceMm",
+    lift_speed: "bottomLiftSpeedMmMin",
+    retract_speed: "bottomRetractSpeedMmMin",
+};
 
 #[derive(Debug, Deserialize)]
 struct RawScaleCompensation {
@@ -114,6 +180,12 @@ pub enum MaterialMapError {
     UnknownPreset {
         id: String,
         preset: String,
+    },
+    /// The record gives a container a second travel stage to cross but
+    /// no speed to cross it at.
+    SplitWithoutItsSpeeds {
+        id: String,
+        field: &'static str,
     },
     Length {
         id: String,
@@ -150,6 +222,10 @@ impl fmt::Display for MaterialMapError {
                 f,
                 "material {id:?}: printer preset {preset:?} is not among the printers being converted",
             ),
+            Self::SplitWithoutItsSpeeds { id, field } => write!(
+                f,
+                "material {id:?}: a second travel stage to cross, but no {field:?} to cross it at",
+            ),
             Self::Length { id, field, source } => {
                 write!(f, "material {id:?}: field {field:?}: {source}")
             }
@@ -177,6 +253,7 @@ impl std::error::Error for MaterialMapError {
             Self::ScaleCompensation { source, .. } => Some(source),
             Self::EmptyField { .. } => None,
             Self::UnknownPreset { .. } => None,
+            Self::SplitWithoutItsSpeeds { .. } => None,
         }
     }
 }
@@ -259,6 +336,7 @@ pub(crate) fn map_material(
         let motion = Motion::of(
             &raw,
             raw.local_settings_by_output.get(&entry.container),
+            entry.splits_travel,
             &raw_id,
         )?;
         per_printer.insert(
@@ -290,60 +368,54 @@ pub(crate) fn map_material(
 /// per container under `localSettingsByOutput`, where the bottom layers
 /// get their own set. The container's is the one a machine follows.
 struct Motion {
+    normal: Stages,
+    bottom: Stages,
+}
+
+/// One quantity as a calibration block carries it: the move, plus the
+/// second stage when the machine splits its travel.
+#[derive(Default)]
+struct Stages {
     lift_distance_mm: Option<PositiveFiniteMm>,
     lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
     retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
-    bottom_lift_distance_mm: Option<PositiveFiniteMm>,
-    bottom_lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
-    bottom_retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    second: Option<SecondTravelStage>,
 }
 
 impl Motion {
     /// Read the motion for the container `over` applies to, falling back
     /// to the record's flat fields when the record states none for it.
     ///
-    /// A distance here is the whole rise. The source splits it into the
-    /// slow peel and the fast remainder, which add up: its own flat
-    /// `liftDistanceMm` equals the sum of the 2, and a machine that moves
-    /// in one go writes a second distance of 0.
+    /// `splits_travel` picks which of the source's 2 views is taken: the
+    /// machine's own split, or the whole move in one stage.
     fn of(
         raw: &RawMaterial,
         over: Option<&RawOverride>,
+        splits_travel: bool,
         id: &str,
     ) -> Result<Self, MaterialMapError> {
         let Some(over) = over else {
             return Ok(Self {
-                lift_distance_mm: opt_mm(raw.lift_distance_mm, id, "liftDistanceMm")?,
-                lift_speed_mm_min: opt_speed(raw.lift_speed_mm_min, id, "liftSpeedMmMin")?,
-                retract_speed_mm_min: opt_speed(raw.retract_speed_mm_min, id, "retractSpeedMmMin")?,
-                bottom_lift_distance_mm: None,
-                bottom_lift_speed_mm_min: None,
-                bottom_retract_speed_mm_min: None,
+                normal: Stages {
+                    lift_distance_mm: opt_mm(raw.lift_distance_mm, id, NORMAL_KEYS.distance)?,
+                    lift_speed_mm_min: opt_speed(
+                        raw.lift_speed_mm_min,
+                        id,
+                        NORMAL_KEYS.lift_speed,
+                    )?,
+                    retract_speed_mm_min: opt_speed(
+                        raw.retract_speed_mm_min,
+                        id,
+                        NORMAL_KEYS.retract_speed,
+                    )?,
+                    second: None,
+                },
+                bottom: Stages::default(),
             });
         };
         Ok(Self {
-            lift_distance_mm: opt_mm(
-                total(over.lift_distance_mm, over.lift_distance_2_mm),
-                id,
-                "liftDistanceMm",
-            )?,
-            lift_speed_mm_min: opt_speed(over.lift_speed_mm_min, id, "liftSpeedMmMin")?,
-            retract_speed_mm_min: opt_speed(over.retract_speed_mm_min, id, "retractSpeedMmMin")?,
-            bottom_lift_distance_mm: opt_mm(
-                total(over.bottom_lift_distance_mm, over.bottom_lift_distance_2_mm),
-                id,
-                "bottomLiftDistanceMm",
-            )?,
-            bottom_lift_speed_mm_min: opt_speed(
-                over.bottom_lift_speed_mm_min,
-                id,
-                "bottomLiftSpeedMmMin",
-            )?,
-            bottom_retract_speed_mm_min: opt_speed(
-                over.bottom_retract_speed_mm_min,
-                id,
-                "bottomRetractSpeedMmMin",
-            )?,
+            normal: Stages::of(over.normal_stages(), NORMAL_KEYS, splits_travel, id)?,
+            bottom: Stages::of(over.bottom_stages(), BOTTOM_KEYS, splits_travel, id)?,
         })
     }
 
@@ -351,15 +423,87 @@ impl Motion {
     /// does not change.
     fn into_block(self, block: MaterialPerPrinter) -> MaterialPerPrinter {
         MaterialPerPrinter {
-            lift_distance_mm: self.lift_distance_mm,
-            lift_speed_mm_min: self.lift_speed_mm_min,
-            retract_speed_mm_min: self.retract_speed_mm_min,
-            bottom_lift_distance_mm: self.bottom_lift_distance_mm,
-            bottom_lift_speed_mm_min: self.bottom_lift_speed_mm_min,
-            bottom_retract_speed_mm_min: self.bottom_retract_speed_mm_min,
+            lift_distance_mm: self.normal.lift_distance_mm,
+            lift_speed_mm_min: self.normal.lift_speed_mm_min,
+            retract_speed_mm_min: self.normal.retract_speed_mm_min,
+            second_travel: self.normal.second,
+            bottom_lift_distance_mm: self.bottom.lift_distance_mm,
+            bottom_lift_speed_mm_min: self.bottom.lift_speed_mm_min,
+            bottom_retract_speed_mm_min: self.bottom.retract_speed_mm_min,
+            bottom_second_travel: self.bottom.second,
             ..block
         }
     }
+}
+
+impl Stages {
+    /// Resolve one quantity's numbers into what a block carries.
+    ///
+    /// A machine that splits keeps the source's 2 stages, and its
+    /// retract speeds cross over: the source's first speed covers the
+    /// second stage's distance on the way down, so it belongs to the
+    /// stage, while its second is the final approach. A machine that
+    /// does not split gets the whole rise in one, which is the 2
+    /// distances added, as the record's own flat field is.
+    fn of(
+        raw: RawStages,
+        keys: StageKeys,
+        splits_travel: bool,
+        id: &str,
+    ) -> Result<Self, MaterialMapError> {
+        let second = if splits_travel {
+            second_stage(&raw, keys, id)?
+        } else {
+            None
+        };
+        let Some(second) = second else {
+            return Ok(Self {
+                lift_distance_mm: opt_mm(
+                    total(raw.lift_distance, raw.lift_distance_2),
+                    id,
+                    keys.distance,
+                )?,
+                lift_speed_mm_min: opt_speed(raw.lift_speed, id, keys.lift_speed)?,
+                retract_speed_mm_min: opt_speed(raw.retract_speed, id, keys.retract_speed)?,
+                second: None,
+            });
+        };
+        Ok(Self {
+            lift_distance_mm: opt_mm(raw.lift_distance, id, keys.distance)?,
+            lift_speed_mm_min: opt_speed(raw.lift_speed, id, keys.lift_speed)?,
+            retract_speed_mm_min: opt_speed(raw.retract_speed_2, id, keys.retract_speed)?,
+            second: Some(second),
+        })
+    }
+}
+
+/// Build the second stage the record states, or `None` when its distance
+/// is 0, which is how a machine that moves in one go is written.
+///
+/// A positive second distance with no speed to cross it is a record that
+/// splits the travel without saying how, so it is refused rather than
+/// quietly flattened.
+fn second_stage(
+    raw: &RawStages,
+    keys: StageKeys,
+    id: &str,
+) -> Result<Option<SecondTravelStage>, MaterialMapError> {
+    let Some(distance) = raw.lift_distance_2.filter(|value| *value > 0.0) else {
+        return Ok(None);
+    };
+    let missing = |field: &'static str| MaterialMapError::SplitWithoutItsSpeeds {
+        id: id.to_owned(),
+        field,
+    };
+    let lift_speed = raw.lift_speed_2.ok_or_else(|| missing(keys.lift_speed))?;
+    let retract_speed = raw
+        .retract_speed
+        .ok_or_else(|| missing(keys.retract_speed))?;
+    Ok(Some(SecondTravelStage {
+        lift_distance_mm: mm(distance, id, keys.distance)?,
+        lift_speed_mm_min: speed(lift_speed, id, keys.lift_speed)?,
+        retract_speed_mm_min: speed(retract_speed, id, keys.retract_speed)?,
+    }))
 }
 
 /// Add a quantity's 2 stages, treating an absent stage as 0 and an
@@ -383,21 +527,22 @@ fn non_empty(
     })
 }
 
+/// Map a millimetre value, reporting an out-of-range one.
+fn mm(value: f64, id: &str, field: &'static str) -> Result<PositiveFiniteMm, MaterialMapError> {
+    PositiveFiniteMm::new(value).map_err(|source| MaterialMapError::Length {
+        id: id.to_owned(),
+        field,
+        source,
+    })
+}
+
 /// Map an optional millimetre value, reporting an out-of-range one.
 fn opt_mm(
     value: Option<f64>,
     id: &str,
     field: &'static str,
 ) -> Result<Option<PositiveFiniteMm>, MaterialMapError> {
-    value
-        .map(|raw| {
-            PositiveFiniteMm::new(raw).map_err(|source| MaterialMapError::Length {
-                id: id.to_owned(),
-                field,
-                source,
-            })
-        })
-        .transpose()
+    value.map(|raw| mm(raw, id, field)).transpose()
 }
 
 /// Map an optional exposure-seconds value, reporting an out-of-range one.
@@ -417,21 +562,26 @@ fn opt_sec(
         .transpose()
 }
 
+/// Map a speed value, reporting an out-of-range one.
+fn speed(
+    value: f64,
+    id: &str,
+    field: &'static str,
+) -> Result<PositiveFiniteMmPerMin, MaterialMapError> {
+    PositiveFiniteMmPerMin::new(value).map_err(|source| MaterialMapError::Speed {
+        id: id.to_owned(),
+        field,
+        source,
+    })
+}
+
 /// Map an optional speed value, reporting an out-of-range one.
 fn opt_speed(
     value: Option<f64>,
     id: &str,
     field: &'static str,
 ) -> Result<Option<PositiveFiniteMmPerMin>, MaterialMapError> {
-    value
-        .map(|raw| {
-            PositiveFiniteMmPerMin::new(raw).map_err(|source| MaterialMapError::Speed {
-                id: id.to_owned(),
-                field,
-                source,
-            })
-        })
-        .transpose()
+    value.map(|raw| speed(raw, id, field)).transpose()
 }
 
 /// Map the three scale-compensation axes.
@@ -472,11 +622,25 @@ mod tests {
         Preset {
             printer: PrinterId::new(id).unwrap(),
             container: container.to_owned(),
+            splits_travel: false,
+        }
+    }
+
+    /// The same preset, for a machine our library says splits its
+    /// travel.
+    fn splitting_preset(id: &str, container: &str) -> Preset {
+        Preset {
+            splits_travel: true,
+            ..preset(id, container)
         }
     }
 
     fn map(json: &str) -> Result<MaterialProfile, MaterialMapError> {
-        map_material(serde_json::from_str(json).unwrap(), &presets())
+        map_with(json, &presets())
+    }
+
+    fn map_with(json: &str, presets: &PresetIndex) -> Result<MaterialProfile, MaterialMapError> {
+        map_material(serde_json::from_str(json).unwrap(), presets)
     }
 
     const FULL: &str = r#"{
@@ -577,7 +741,8 @@ mod tests {
                 "liftSpeedMmMin": 45.0, "liftSpeed2MmMin": 240.0,
                 "retractSpeedMmMin": 240.0, "retractSpeed2MmMin": 60.0,
                 "bottomLiftDistanceMm": 3.0, "bottomLiftDistance2Mm": 4.0,
-                "bottomLiftSpeedMmMin": 40.0, "bottomRetractSpeedMmMin": 210.0
+                "bottomLiftSpeedMmMin": 40.0, "bottomLiftSpeed2MmMin": 220.0,
+                "bottomRetractSpeedMmMin": 210.0, "bottomRetractSpeed2MmMin": 50.0
             },
             ".ctb": {
                 "liftDistanceMm": 8.0, "liftDistance2Mm": 0.0,
@@ -617,6 +782,72 @@ mod tests {
             ctb.bottom_retract_speed_mm_min.map(|v| v.value()),
             Some(180.0)
         );
+    }
+
+    #[test]
+    fn a_machine_that_splits_its_travel_keeps_the_2_stages() {
+        let mut presets = presets();
+        presets.insert("printer-a-goo", splitting_preset("printer-a", ".goo"));
+
+        let profile = map_with(WITH_OVERRIDES, &presets).unwrap();
+        let block = block_of(&profile, "printer-a");
+
+        // Up: the slow peel, then the rest of the rise.
+        assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(3.0));
+        assert_eq!(block.lift_speed_mm_min.map(|v| v.value()), Some(45.0));
+        let second = block.second_travel.unwrap();
+        assert_eq!(second.lift_distance_mm.value(), 4.0);
+        assert_eq!(second.lift_speed_mm_min.value(), 240.0);
+        // Down: the second stage's distance first, at the speed the
+        // source writes first, then the peel at the one it writes
+        // second. The 2 cross over between their model and ours.
+        assert_eq!(second.retract_speed_mm_min.value(), 240.0);
+        assert_eq!(block.retract_speed_mm_min.map(|v| v.value()), Some(60.0));
+
+        let bottom = block.bottom_second_travel.unwrap();
+        assert_eq!(block.bottom_lift_distance_mm.map(|v| v.value()), Some(3.0));
+        assert_eq!(bottom.lift_distance_mm.value(), 4.0);
+        assert_eq!(bottom.lift_speed_mm_min.value(), 220.0);
+        assert_eq!(bottom.retract_speed_mm_min.value(), 210.0);
+        assert_eq!(
+            block.bottom_retract_speed_mm_min.map(|v| v.value()),
+            Some(50.0)
+        );
+    }
+
+    #[test]
+    fn a_machine_that_does_not_split_gets_no_stage_at_all() {
+        let profile = map(WITH_OVERRIDES).unwrap();
+        let block = block_of(&profile, "printer-a");
+
+        assert_eq!(block.lift_distance_mm.map(|v| v.value()), Some(7.0));
+        assert_eq!(block.second_travel, None);
+        assert_eq!(block.bottom_second_travel, None);
+    }
+
+    #[test]
+    fn a_split_the_record_states_no_speed_for_is_refused() {
+        let json = r#"{
+            "templateId": "half-split", "profileVersion": 1,
+            "name": "Half", "brand": "TestResin", "resinFamily": "standard",
+            "validForPresets": ["printer-a-goo"],
+            "liftDistanceMm": 7.0, "liftSpeedMmMin": 45.0, "retractSpeedMmMin": 240.0,
+            "localSettingsByOutput": {
+                ".goo": {
+                    "liftDistanceMm": 3.0, "liftDistance2Mm": 4.0,
+                    "liftSpeedMmMin": 45.0, "retractSpeedMmMin": 240.0
+                }
+            }
+        }"#;
+        let mut presets = presets();
+        presets.insert("printer-a-goo", splitting_preset("printer-a", ".goo"));
+
+        match map_with(json, &presets).unwrap_err() {
+            MaterialMapError::SplitWithoutItsSpeeds { field, .. } => {
+                assert_eq!(field, "liftSpeedMmMin");
+            }
+            other => panic!("expected SplitWithoutItsSpeeds, got {other}"),
+        }
     }
 
     #[test]
