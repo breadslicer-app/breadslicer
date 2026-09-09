@@ -17,9 +17,8 @@ use std::fmt;
 
 use sc_print_primitives::{
     InvalidProfileId, LengthOutOfRange, MaterialId, NonEmptyString, PositiveFiniteMm,
-    PositiveFiniteMmPerMin, PositiveFiniteSec, PrinterId, ScaleCompensation,
-    ScaleCompensationPercent, ScaleCompensationPercentOutOfBound, SecOutOfRange,
-    SpeedMmPerMinOutOfRange,
+    PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
+    ScaleCompensationPercentOutOfBound, SecOutOfRange, SpeedMmPerMinOutOfRange,
 };
 use sc_print_profiles::{
     CalibrationTarget, MaterialDefaults, MaterialIdentity, MaterialIntent, MaterialPerPrinter,
@@ -27,6 +26,8 @@ use sc_print_profiles::{
 };
 use semver::Version;
 use serde::Deserialize;
+
+use crate::dragonfruit::preset_index::PresetIndex;
 
 /// A DragonFruit material record, as it appears in the source JSON.
 /// Only the fields we map are declared; the rest are ignored.
@@ -78,10 +79,11 @@ pub enum MaterialMapError {
         id: String,
         field: &'static str,
     },
-    InvalidPresetId {
+    /// The record names a printer preset no printer record of the same
+    /// run carries, so which machine it means is unknown.
+    UnknownPreset {
         id: String,
         preset: String,
-        source: InvalidProfileId,
     },
     Length {
         id: String,
@@ -114,9 +116,9 @@ impl fmt::Display for MaterialMapError {
             Self::EmptyField { id, field } => {
                 write!(f, "material {id:?}: field {field:?} is empty")
             }
-            Self::InvalidPresetId { id, preset, source } => write!(
+            Self::UnknownPreset { id, preset } => write!(
                 f,
-                "material {id:?}: invalid printer preset {preset:?}: {source}",
+                "material {id:?}: printer preset {preset:?} is not among the printers being converted",
             ),
             Self::Length { id, field, source } => {
                 write!(f, "material {id:?}: field {field:?}: {source}")
@@ -139,18 +141,27 @@ impl std::error::Error for MaterialMapError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidId { source, .. } => Some(source),
-            Self::InvalidPresetId { source, .. } => Some(source),
             Self::Length { source, .. } => Some(source),
             Self::Exposure { source, .. } => Some(source),
             Self::Speed { source, .. } => Some(source),
             Self::ScaleCompensation { source, .. } => Some(source),
             Self::EmptyField { .. } => None,
+            Self::UnknownPreset { .. } => None,
         }
     }
 }
 
-/// Convert one DragonFruit material record into a [`MaterialProfile`].
-pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, MaterialMapError> {
+/// Convert one DragonFruit material record into a [`MaterialProfile`],
+/// keying its calibration blocks to the machines `presets` names.
+///
+/// The record points at printers by the source's preset ids, which carry
+/// the output container the preset writes; ours name the machine alone.
+/// So a record whose presets are absent from `presets` cannot be mapped,
+/// rather than being keyed to an id no printer has.
+pub(crate) fn map_material(
+    raw: RawMaterial,
+    presets: &PresetIndex,
+) -> Result<MaterialProfile, MaterialMapError> {
     let id = MaterialId::new(&raw.template_id).map_err(|source| MaterialMapError::InvalidId {
         id: raw.template_id.clone(),
         source,
@@ -208,12 +219,16 @@ pub(crate) fn map_material(raw: RawMaterial) -> Result<MaterialProfile, Material
     let mut per_printer = BTreeMap::new();
     for preset in &raw.valid_for_presets {
         let printer_id =
-            PrinterId::new(preset).map_err(|source| MaterialMapError::InvalidPresetId {
-                id: raw_id.clone(),
-                preset: preset.clone(),
-                source,
-            })?;
-        per_printer.insert(CalibrationTarget::from(printer_id), per_printer_settings);
+            presets
+                .printer(preset)
+                .ok_or_else(|| MaterialMapError::UnknownPreset {
+                    id: raw_id.clone(),
+                    preset: preset.clone(),
+                })?;
+        per_printer.insert(
+            CalibrationTarget::from(printer_id.clone()),
+            per_printer_settings,
+        );
     }
 
     Ok(MaterialProfile {
@@ -314,10 +329,22 @@ fn map_scale(raw: RawScaleCompensation, id: &str) -> Result<ScaleCompensation, M
 
 #[cfg(test)]
 mod tests {
+    use sc_print_primitives::PrinterId;
+
     use super::*;
 
+    /// The machines the fixtures' presets name, as a run's printer
+    /// records describe them: one preset per container it writes,
+    /// resolving to the machine alone.
+    fn presets() -> PresetIndex {
+        let mut presets = PresetIndex::default();
+        presets.insert("printer-a-goo", PrinterId::new("printer-a").unwrap());
+        presets.insert("printer-b-ctb", PrinterId::new("printer-b").unwrap());
+        presets
+    }
+
     fn map(json: &str) -> Result<MaterialProfile, MaterialMapError> {
-        map_material(serde_json::from_str(json).unwrap())
+        map_material(serde_json::from_str(json).unwrap(), &presets())
     }
 
     const FULL: &str = r#"{
@@ -326,7 +353,7 @@ mod tests {
         "name": "Standard 405",
         "brand": "TestResin",
         "resinFamily": "standard",
-        "validForPresets": ["printer-a", "printer-b"],
+        "validForPresets": ["printer-a-goo", "printer-b-ctb"],
         "currencyCode": "USD", "bottlePrice": 24.99, "bottleCapacityMl": 1000,
         "scaleCompensationPct": { "x": 0.5, "y": -0.5, "z": 1.0 },
         "layerHeightMm": 0.05,
@@ -427,15 +454,15 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_preset_id_is_rejected() {
+    fn a_preset_no_printer_record_covers_is_rejected() {
         let json = r#"{
             "templateId": "resin", "profileVersion": 1,
             "name": "Resin", "brand": "Default", "resinFamily": "standard",
-            "validForPresets": ["Bad_Preset"]
+            "validForPresets": ["printer-z-goo"]
         }"#;
         match map(json).unwrap_err() {
-            MaterialMapError::InvalidPresetId { preset, .. } => assert_eq!(preset, "Bad_Preset"),
-            other => panic!("expected InvalidPresetId, got {other}"),
+            MaterialMapError::UnknownPreset { preset, .. } => assert_eq!(preset, "printer-z-goo"),
+            other => panic!("expected UnknownPreset, got {other}"),
         }
     }
 

@@ -139,9 +139,8 @@ mod tests {
     /// the reader's shape that alters an emitted value cannot pass
     /// unnoticed.
     ///
-    /// The material's block is keyed by the source's preset id, which
-    /// names no printer we ship: a defect this oracle records rather
-    /// than endorses, so that correcting it shows up here as a diff.
+    /// The resin's block is keyed by the machine the preset names, under
+    /// our own id, so the block reaches the printer the library ships.
     #[test]
     fn a_printer_and_a_resin_convert_to_these_exact_files() {
         let dir = tempdir().unwrap();
@@ -216,7 +215,7 @@ bottom_layer_count = 5
 
 [physical]
 
-[per_printer.testcorp-e2e-goo]
+[per_printer.testcorp-e2e]
 normal_exposure_sec = 2.0
 bottom_exposure_sec = 25.0
 bottom_layer_count = 5

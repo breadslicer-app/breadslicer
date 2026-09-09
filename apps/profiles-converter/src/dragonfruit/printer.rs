@@ -158,12 +158,14 @@ impl std::error::Error for PrinterMapError {
     }
 }
 
-/// The outcome of mapping a printer record: the domain profile plus the
+/// The outcome of mapping a printer record: the domain profile, the
 /// record's raw `imageAssetPath` (still relative to the source file, for
-/// the caller to resolve), if any.
+/// the caller to resolve) if any, and the source's own id for the record,
+/// which is what a material's `validForPresets` names.
 pub(crate) struct MappedPrinter {
     pub profile: PrinterProfile,
     pub image_ref: Option<String>,
+    pub preset_id: String,
 }
 
 /// Convert one DragonFruit printer record into a [`MappedPrinter`].
@@ -271,7 +273,11 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
         },
         time_calibration: PrinterTimeCalibration::default(),
     };
-    Ok(MappedPrinter { profile, image_ref })
+    Ok(MappedPrinter {
+        profile,
+        image_ref,
+        preset_id: raw_id,
+    })
 }
 
 /// Build a non-empty string for `field`, or report it empty.

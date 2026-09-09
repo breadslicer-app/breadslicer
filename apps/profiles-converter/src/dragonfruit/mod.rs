@@ -12,6 +12,7 @@
 //! DragonFruit schema; the rest of the crate stays format-agnostic.
 
 pub mod material;
+mod preset_index;
 pub mod printer;
 
 use std::collections::BTreeMap;
@@ -28,6 +29,7 @@ use serde_json::Value;
 use crate::profile::{ConvertedPrinter, ConvertedProfile};
 use crate::reader::ProfileReader;
 use material::{MaterialMapError, RawMaterial, map_material};
+use preset_index::PresetIndex;
 use printer::{PrinterMapError, RawPrinter, map_printer};
 
 /// Reads DragonFruit plugin JSON into our domain profiles.
@@ -178,8 +180,8 @@ impl ProfileReader for DragonFruitReader {
 
     fn read(&self, inputs: &[&Path]) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
         let collected = collect_records(inputs)?;
-        let mut profiles = map_printers(collected.printers)?;
-        profiles.extend(map_materials(collected.materials)?);
+        let (mut profiles, presets) = map_printers(collected.printers)?;
+        profiles.extend(map_materials(collected.materials, &presets)?);
         merge_records(profiles)
     }
 }
@@ -214,11 +216,16 @@ fn collect_records(inputs: &[&Path]) -> Result<Collected, DragonFruitError> {
 }
 
 /// Map every collected printer record, resolving each one's image
-/// reference against the directory of the file it came from.
+/// reference against the directory of the file it came from, and index
+/// the machines by the preset id each record carries.
+///
+/// The indexed id is the one the profile itself carries, so a material
+/// block cannot end up keyed to an id no written printer has.
 fn map_printers(
     records: Vec<CollectedRecord<RawPrinter>>,
-) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+) -> Result<(Vec<ConvertedProfile>, PresetIndex), DragonFruitError> {
     let mut profiles = Vec::with_capacity(records.len());
+    let mut presets = PresetIndex::default();
     for CollectedRecord {
         record,
         path,
@@ -230,6 +237,7 @@ fn map_printers(
             index,
             source,
         })?;
+        presets.insert(&mapped.preset_id, mapped.profile.identity.id.clone());
         let base = path.parent().unwrap_or_else(|| Path::new(""));
         let image_source = mapped
             .image_ref
@@ -240,12 +248,14 @@ fn map_printers(
             image_source,
         }));
     }
-    Ok(profiles)
+    Ok((profiles, presets))
 }
 
-/// Map every collected material record.
+/// Map every collected material record against the machines the run's
+/// printer records describe.
 fn map_materials(
     records: Vec<CollectedRecord<RawMaterial>>,
+    presets: &PresetIndex,
 ) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
     records
         .into_iter()
@@ -255,7 +265,7 @@ fn map_materials(
                  path,
                  index,
              }| {
-                map_material(record)
+                map_material(record, presets)
                     .map(ConvertedProfile::Material)
                     .map_err(|source| DragonFruitError::MapMaterial {
                         path,
@@ -895,8 +905,41 @@ mod tests {
     }
 
     #[test]
+    fn a_material_converted_without_its_printers_is_refused() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("materials.json");
+        fs::write(
+            &file,
+            format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        match err {
+            DragonFruitError::MapMaterial {
+                source: MaterialMapError::UnknownPreset { preset, .. },
+                ..
+            } => assert_eq!(preset, "printer-a"),
+            other => panic!("expected an unknown preset, got {other}"),
+        }
+    }
+
+    /// The printer records for the presets `material_for` names, which a
+    /// material can only be mapped against.
+    fn printers_for_both_presets(dir: &Path) {
+        fs::write(
+            dir.join("printers.json"),
+            format!("[{}, {}]", record("printer-a"), record("printer-b")),
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn material_records_sharing_an_id_merge_their_per_printer_blocks() {
         let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
         fs::write(
             dir.path().join("a.json"),
             format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
@@ -910,19 +953,20 @@ mod tests {
 
         let profiles = DragonFruitReader::new().read(&[dir.path()]).unwrap();
         match profiles.as_slice() {
-            [ConvertedProfile::Material(material)] => {
+            [_, _, ConvertedProfile::Material(material)] => {
                 assert_eq!(material.identity.id.as_str(), "blu");
                 let printers: Vec<&str> =
                     material.per_printer.keys().map(|id| id.as_str()).collect();
-                assert_eq!(printers, vec!["printer-a", "printer-b"]);
+                assert_eq!(printers, vec!["testcorp-printer-a", "testcorp-printer-b"]);
             }
-            other => panic!("expected one merged material, got {other:?}"),
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
         }
     }
 
     #[test]
     fn materials_sharing_an_id_but_disagreeing_on_shared_fields_conflict() {
         let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
         fs::write(
             dir.path().join("a.json"),
             format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
@@ -947,6 +991,7 @@ mod tests {
     #[test]
     fn materials_disagreeing_on_a_shared_printer_block_conflict() {
         let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
         // Same id, same shared fields, same target printer, but the
         // per-printer exposure differs.
         fs::write(
