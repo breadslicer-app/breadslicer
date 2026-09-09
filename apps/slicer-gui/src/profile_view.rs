@@ -352,6 +352,18 @@ fn calibration_fields(block: &MaterialPerPrinter) -> Vec<ProfileViewField> {
             fmt_opt_f64(block.retract_speed_mm_min.map(|v| v.value())),
         ),
         field(
+            ctr!("ProfileViewDialog", "Second lift distance (mm)"),
+            fmt_opt_f64(block.second_travel.map(|s| s.lift_distance_mm.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Second lift speed (mm/min)"),
+            fmt_opt_f64(block.second_travel.map(|s| s.lift_speed_mm_min.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Second retract speed (mm/min)"),
+            fmt_opt_f64(block.second_travel.map(|s| s.retract_speed_mm_min.value())),
+        ),
+        field(
             ctr!("ProfileViewDialog", "Bottom lift distance (mm)"),
             fmt_opt_f64(block.bottom_lift_distance_mm.map(|v| v.value())),
         ),
@@ -362,6 +374,30 @@ fn calibration_fields(block: &MaterialPerPrinter) -> Vec<ProfileViewField> {
         field(
             ctr!("ProfileViewDialog", "Bottom retract speed (mm/min)"),
             fmt_opt_f64(block.bottom_retract_speed_mm_min.map(|v| v.value())),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom second lift distance (mm)"),
+            fmt_opt_f64(
+                block
+                    .bottom_second_travel
+                    .map(|s| s.lift_distance_mm.value()),
+            ),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom second lift speed (mm/min)"),
+            fmt_opt_f64(
+                block
+                    .bottom_second_travel
+                    .map(|s| s.lift_speed_mm_min.value()),
+            ),
+        ),
+        field(
+            ctr!("ProfileViewDialog", "Bottom second retract speed (mm/min)"),
+            fmt_opt_f64(
+                block
+                    .bottom_second_travel
+                    .map(|s| s.retract_speed_mm_min.value()),
+            ),
         ),
         field(
             ctr!("ProfileViewDialog", "Light power (%)"),

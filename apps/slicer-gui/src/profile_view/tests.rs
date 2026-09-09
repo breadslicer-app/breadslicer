@@ -278,15 +278,59 @@ fn unset_optional_fields_render_the_not_set_text() {
         assert_eq!(value, "not set", "{label}");
     }
 
-    // The default printer's block: two set values, fifteen unset, all
-    // seventeen rendered.
+    // The default printer's block: two set values, twenty-one unset,
+    // all twenty-three rendered.
     let block = fields(&sections[3]);
-    assert_eq!(block.len(), 17);
+    assert_eq!(block.len(), 23);
     assert_eq!(block[0].1, "2.5");
     assert_eq!(block[1].1, "30");
     for (label, value) in &block[2..] {
         assert_eq!(value, "not set", "{label}");
     }
+}
+
+#[test]
+fn a_declared_second_travel_stage_renders_its_three_numbers() {
+    let toml = "\
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"1.2.0\"
+
+[intent]
+
+[defaults]
+
+[per_printer.printer-a]
+lift_distance_mm = 2.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 75.0 }
+";
+    let material = effective(parse(toml), None);
+    let sections = build_profile_view_model(
+        &material,
+        &printers(),
+        Some(&printer("printer-a")),
+        ProfileSource::Bundled,
+    );
+
+    let block = fields(&sections[3]);
+    let value_of = |label: &str| -> String {
+        block
+            .iter()
+            .find(|(field_label, _)| field_label == label)
+            .map(|(_, value)| value.clone())
+            .unwrap_or_else(|| panic!("no field labelled {label}"))
+    };
+    assert_eq!(value_of("Second lift distance (mm)"), "3");
+    assert_eq!(value_of("Second lift speed (mm/min)"), "230");
+    assert_eq!(value_of("Second retract speed (mm/min)"), "75");
+    // The bottom stage is a separate value, not an inheritance the
+    // viewer performs: the resolver is what substitutes one.
+    assert_eq!(value_of("Bottom second lift distance (mm)"), "not set");
+    assert_eq!(value_of("Bottom second lift speed (mm/min)"), "not set");
+    assert_eq!(value_of("Bottom second retract speed (mm/min)"), "not set");
 }
 
 #[test]

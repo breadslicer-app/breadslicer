@@ -1001,12 +1001,12 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:557 src/preferences_window.rs:1262
+#: src/preferences_window.rs:557 src/preferences_window.rs:1303
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:749 src/preferences_window.rs:1662
+#: src/preferences_window.rs:749 src/preferences_window.rs:1703
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
@@ -1024,64 +1024,64 @@ msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1244
+#: src/preferences_window.rs:1285
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1251
+#: src/preferences_window.rs:1292
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1256
+#: src/preferences_window.rs:1297
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1258
+#: src/preferences_window.rs:1299
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1455
+#: src/preferences_window.rs:1496
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1812
+#: src/preferences_window.rs:1853
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/viewport/controller.rs:757
+#: src/viewport/controller.rs:786
 msgctxt "ErrorDialog"
 msgid "Edit failed"
 msgstr ""
 
-#: src/viewport/controller.rs:761
+#: src/viewport/controller.rs:790
 msgctxt "ErrorDialog"
 msgid "The scene rejected the last edit; nothing was changed."
 msgstr ""
 
-#: src/viewport/controller.rs:1132
+#: src/viewport/controller.rs:1161
 msgctxt "ErrorDialog"
 msgid "The 3D view could not start"
 msgstr ""
 
-#: src/viewport/controller.rs:1133
+#: src/viewport/controller.rs:1162
 msgctxt "ErrorDialog"
 msgid "Files cannot be opened in this window."
 msgstr ""
 
-#: src/viewport/controller.rs:1460
+#: src/viewport/controller.rs:1489
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1464
+#: src/viewport/controller.rs:1493
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -1123,7 +1123,7 @@ msgid "Failed to save"
 msgstr ""
 
 #: src/wiring.rs:608 src/wiring.rs:730 src/scene_loader.rs:580
-#: src/app_state.rs:748 src/export_print_file.rs:258
+#: src/app_state.rs:748 src/export_print_file.rs:289
 #, rust-format
 msgctxt "ErrorDialog"
 msgid "File: {}"
@@ -1257,6 +1257,36 @@ msgctxt "ProfileViewDialog"
 msgid "Calibration: {}"
 msgstr ""
 
+#: src/profile_view.rs:355
+msgctxt "ProfileViewDialog"
+msgid "Second lift distance (mm)"
+msgstr ""
+
+#: src/profile_view.rs:359
+msgctxt "ProfileViewDialog"
+msgid "Second lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view.rs:363
+msgctxt "ProfileViewDialog"
+msgid "Second retract speed (mm/min)"
+msgstr ""
+
+#: src/profile_view.rs:379
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift distance (mm)"
+msgstr ""
+
+#: src/profile_view.rs:387
+msgctxt "ProfileViewDialog"
+msgid "Bottom second lift speed (mm/min)"
+msgstr ""
+
+#: src/profile_view.rs:395
+msgctxt "ProfileViewDialog"
+msgid "Bottom second retract speed (mm/min)"
+msgstr ""
+
 #: src/material_form.rs:122
 msgctxt "MaterialForm"
 msgid "Normal exposure"
@@ -1374,7 +1404,7 @@ msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
 msgstr ""
 
-#: src/app_state.rs:452 src/lib.rs:273
+#: src/app_state.rs:452 src/lib.rs:276
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
@@ -1510,31 +1540,31 @@ msgctxt "GenSupportDialog"
 msgid "Support generation failed"
 msgstr ""
 
-#: src/support_gen_run.rs:225 src/support_gen_run.rs:246
+#: src/support_gen_run.rs:222 src/support_gen_run.rs:243
 msgctxt "GenSupportDialog"
 msgid "Support-structures generation failed"
 msgstr ""
 
-#: src/support_gen_run.rs:229
+#: src/support_gen_run.rs:226
 msgctxt "GenSupportDialog"
 msgid ""
 "The scene rejected one or more generated support structures; nothing was "
 "changed for those."
 msgstr ""
 
-#: src/support_gen_run.rs:239
+#: src/support_gen_run.rs:236
 msgctxt "GenSupportDialog"
 msgid "Support-structures generated"
 msgstr ""
 
-#: src/support_gen_run.rs:275
+#: src/support_gen_run.rs:272
 #, rust-format
 msgctxt "GenSupportDialog"
 msgid ""
 "{} of {} Support structure(s) added to the scene. Estimated material: {} g."
 msgstr ""
 
-#: src/support_gen_run.rs:284
+#: src/support_gen_run.rs:281
 #, rust-format
 msgctxt "GenSupportDialog"
 msgid "{} Support structure(s) added to the scene. Estimated material: {} g."
@@ -1596,23 +1626,23 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:278
+#: src/lib.rs:281
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."
 msgstr ""
 
-#: src/export_print_file.rs:257
+#: src/export_print_file.rs:288
 msgctxt "ErrorDialog"
 msgid "Cannot export for the printer"
 msgstr ""
 
-#: src/export_print_file.rs:271
+#: src/export_print_file.rs:302
 msgctxt "FileDialog"
 msgid "Printer files"
 msgstr ""
 
-#: src/profile_extending.rs:60
+#: src/profile_extending.rs:60 src/profile_extending.rs:92
 msgctxt "ExtendDialog"
 msgid "Generic"
 msgstr ""
