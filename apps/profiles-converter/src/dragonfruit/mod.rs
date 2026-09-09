@@ -64,8 +64,15 @@ pub enum DragonFruitError {
         index: usize,
         source: MaterialMapError,
     },
-    /// A file's records are neither printers nor materials.
-    UnrecognisedRecord { path: PathBuf },
+    /// A record announced its kind but did not deserialise as one.
+    ParseRecord {
+        path: PathBuf,
+        index: usize,
+        kind: RecordKind,
+        source: serde_json::Error,
+    },
+    /// A record is neither a printer nor a material.
+    UnrecognisedRecord { path: PathBuf, index: usize },
     /// Two material records share an id but cannot be merged.
     ConflictingMaterial {
         id: String,
@@ -123,9 +130,20 @@ impl fmt::Display for DragonFruitError {
                 index,
                 source,
             } => write!(f, "{}: record #{index}: {source}", path.display()),
-            Self::UnrecognisedRecord { path } => write!(
+            Self::ParseRecord {
+                path,
+                index,
+                kind,
+                source,
+            } => write!(
                 f,
-                "{}: records are neither printers nor materials",
+                "{}: record #{index}: not a valid {} record: {source}",
+                path.display(),
+                kind.name(),
+            ),
+            Self::UnrecognisedRecord { path, index } => write!(
+                f,
+                "{}: record #{index}: neither a printer nor a material",
                 path.display(),
             ),
             Self::ConflictingMaterial { id, conflict } => {
@@ -145,6 +163,7 @@ impl std::error::Error for DragonFruitError {
             Self::ReadFile { source, .. } => Some(source),
             Self::ReadDir { source, .. } => Some(source),
             Self::ParseJson { source, .. } => Some(source),
+            Self::ParseRecord { source, .. } => Some(source),
             Self::MapPrinter { source, .. } => Some(source),
             Self::MapMaterial { source, .. } => Some(source),
             Self::UnrecognisedRecord { .. } => None,
@@ -312,16 +331,46 @@ fn json_files(path: &Path) -> Result<Vec<PathBuf>, DragonFruitError> {
     Ok(files)
 }
 
-/// Which DragonFruit record kind a file holds.
-enum RecordKind {
+/// Which kind of record a DragonFruit value announces.
+#[derive(Clone, Copy, Debug)]
+pub enum RecordKind {
     Printer,
     Material,
 }
 
-/// Parse one DragonFruit file (an array of records), classify it by the
-/// schema of its records, and append the converted profiles. An empty
-/// array contributes nothing; a file whose records are neither kind is
-/// an error.
+impl RecordKind {
+    /// Read the kind a record announces through the id field it carries,
+    /// or `None` when it carries neither.
+    ///
+    /// The discriminant is the id field alone, never how much of a
+    /// struct the record happens to satisfy: both shapes are mostly
+    /// optional fields, so a printer record with a misspelled key would
+    /// otherwise deserialise as an all-absent material.
+    fn of(value: &Value) -> Option<Self> {
+        if value.get("presetId").is_some() {
+            Some(Self::Printer)
+        } else if value.get("templateId").is_some() {
+            Some(Self::Material)
+        } else {
+            None
+        }
+    }
+
+    /// Name this kind for a message.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Printer => "printer",
+            Self::Material => "material",
+        }
+    }
+}
+
+/// Parse one DragonFruit file (an array of records) and append the
+/// profiles its records convert to. An empty array contributes nothing;
+/// a record that announces neither kind is an error naming its position.
+///
+/// Every record is classified on its own, so one file may hold both
+/// kinds.
 fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), DragonFruitError> {
     let bytes = fs::read(path).map_err(|source| DragonFruitError::ReadFile {
         path: path.to_owned(),
@@ -332,22 +381,11 @@ fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), Dr
             path: path.to_owned(),
             source,
         })?;
-    let kind = match values.first() {
-        None => return Ok(()),
-        Some(value) if value.get("presetId").is_some() => RecordKind::Printer,
-        Some(value) if value.get("templateId").is_some() => RecordKind::Material,
-        Some(_) => {
-            return Err(DragonFruitError::UnrecognisedRecord {
-                path: path.to_owned(),
-            });
-        }
-    };
-
-    match kind {
-        RecordKind::Printer => {
-            let base = path.parent().unwrap_or_else(|| Path::new(""));
-            let records: Vec<RawPrinter> = parse_records(&bytes, path)?;
-            for (index, record) in records.into_iter().enumerate() {
+    let base = path.parent().unwrap_or_else(|| Path::new(""));
+    for (index, value) in values.into_iter().enumerate() {
+        match RecordKind::of(&value) {
+            Some(kind @ RecordKind::Printer) => {
+                let record: RawPrinter = parse_record(value, path, index, kind)?;
                 let mapped =
                     map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
                         path: path.to_owned(),
@@ -363,10 +401,8 @@ fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), Dr
                     image_source,
                 }));
             }
-        }
-        RecordKind::Material => {
-            let records: Vec<RawMaterial> = parse_records(&bytes, path)?;
-            for (index, record) in records.into_iter().enumerate() {
+            Some(kind @ RecordKind::Material) => {
+                let record: RawMaterial = parse_record(value, path, index, kind)?;
                 let profile =
                     map_material(record).map_err(|source| DragonFruitError::MapMaterial {
                         path: path.to_owned(),
@@ -375,19 +411,29 @@ fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), Dr
                     })?;
                 profiles.push(ConvertedProfile::Material(profile));
             }
+            None => {
+                return Err(DragonFruitError::UnrecognisedRecord {
+                    path: path.to_owned(),
+                    index,
+                });
+            }
         }
     }
     Ok(())
 }
 
-/// Deserialise a file's bytes into a typed record array, tagging a
-/// failure with the file path.
-fn parse_records<T: serde::de::DeserializeOwned>(
-    bytes: &[u8],
+/// Deserialise one classified record, tagging a failure with the file,
+/// the record's position and the kind it announced.
+fn parse_record<T: serde::de::DeserializeOwned>(
+    value: Value,
     path: &Path,
-) -> Result<Vec<T>, DragonFruitError> {
-    serde_json::from_slice(bytes).map_err(|source| DragonFruitError::ParseJson {
+    index: usize,
+    kind: RecordKind,
+) -> Result<T, DragonFruitError> {
+    serde_json::from_value(value).map_err(|source| DragonFruitError::ParseRecord {
         path: path.to_owned(),
+        index,
+        kind,
         source,
     })
 }
@@ -629,15 +675,81 @@ mod tests {
     }
 
     #[test]
-    fn records_that_are_neither_kind_are_rejected() {
+    fn a_record_of_neither_kind_is_rejected_by_its_position() {
         let dir = tempdir().unwrap();
         let file = dir.path().join("mystery.json");
-        fs::write(&file, r#"[{ "somethingElse": true }]"#).unwrap();
+        fs::write(
+            &file,
+            format!("[{}, {{ \"somethingElse\": true }}]", record("printer-a")),
+        )
+        .unwrap();
 
         let err = DragonFruitReader::new()
             .read(&[file.as_path()])
             .unwrap_err();
-        assert!(matches!(err, DragonFruitError::UnrecognisedRecord { .. }));
+        assert!(matches!(
+            err,
+            DragonFruitError::UnrecognisedRecord { index: 1, .. }
+        ));
+        assert!(err.to_string().contains("record #1"), "{err}");
+    }
+
+    #[test]
+    fn one_file_holding_both_kinds_maps_each_record_as_itself() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("mixed.json");
+        fs::write(
+            &file,
+            format!(
+                "[{}, {}]",
+                record("printer-a"),
+                material_record("standard-405")
+            ),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new().read(&[file.as_path()]).unwrap();
+        match profiles.as_slice() {
+            [
+                ConvertedProfile::Printer(printer),
+                ConvertedProfile::Material(material),
+            ] => {
+                assert_eq!(printer.profile.identity.id.as_str(), "testcorp-printer-a");
+                assert_eq!(material.identity.id.as_str(), "standard-405");
+            }
+            other => panic!("expected one printer and one material, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_record_that_announces_a_kind_but_does_not_fit_it_names_both() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("printers.json");
+        // A printer record with no build volume: it announces its kind
+        // through `presetId` and then fails to deserialise as one.
+        fs::write(
+            &file,
+            format!(
+                "[{}, {{ \"presetId\": \"printer-b\", \"profileVersion\": 1 }}]",
+                record("printer-a")
+            ),
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new()
+            .read(&[file.as_path()])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DragonFruitError::ParseRecord {
+                index: 1,
+                kind: RecordKind::Printer,
+                ..
+            }
+        ));
+        let message = err.to_string();
+        assert!(message.contains("record #1"), "{message}");
+        assert!(message.contains("printer record"), "{message}");
     }
 
     #[test]
