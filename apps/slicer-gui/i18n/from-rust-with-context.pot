@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-09 11:50+0200\n"
+"POT-Creation-Date: 2026-09-09 12:12+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -32,62 +32,62 @@ msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:557 src/preferences_window.rs:1303
+#: src/preferences_window.rs:557 src/preferences_window.rs:1341
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:749 src/preferences_window.rs:1703
+#: src/preferences_window.rs:749 src/preferences_window.rs:1741
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:955
+#: src/preferences_window.rs:975
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1054
+#: src/preferences_window.rs:1074
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1285
+#: src/preferences_window.rs:1323
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1292
+#: src/preferences_window.rs:1330
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1297
+#: src/preferences_window.rs:1335
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1299
+#: src/preferences_window.rs:1337
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1496
+#: src/preferences_window.rs:1534
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/preferences_window.rs:1853
+#: src/preferences_window.rs:1891
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1879
+#: src/preferences_window.rs:1917
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -418,121 +418,167 @@ msgctxt "AppearancePreferences"
 msgid "System"
 msgstr ""
 
-#: src/material_form.rs:122
+#: src/material_form.rs:141
 msgctxt "MaterialForm"
 msgid "Normal exposure"
 msgstr ""
 
-#: src/material_form.rs:123
+#: src/material_form.rs:142
 msgctxt "MaterialForm"
 msgid "Bottom exposure"
 msgstr ""
 
-#: src/material_form.rs:124
+#: src/material_form.rs:143
 msgctxt "MaterialForm"
 msgid "Bottom layer count"
 msgstr ""
 
-#: src/material_form.rs:125
+#: src/material_form.rs:144
 msgctxt "MaterialForm"
 msgid "Wait before cure"
 msgstr ""
 
-#: src/material_form.rs:126
+#: src/material_form.rs:145
 msgctxt "MaterialForm"
 msgid "Wait after cure"
 msgstr ""
 
-#: src/material_form.rs:127
+#: src/material_form.rs:146
 msgctxt "MaterialForm"
 msgid "Wait after lift"
 msgstr ""
 
-#: src/material_form.rs:128
+#: src/material_form.rs:147
 msgctxt "MaterialForm"
 msgid "Bottom wait before cure"
 msgstr ""
 
-#: src/material_form.rs:129
+#: src/material_form.rs:148
 msgctxt "MaterialForm"
 msgid "Bottom wait after cure"
 msgstr ""
 
-#: src/material_form.rs:130
+#: src/material_form.rs:149
 msgctxt "MaterialForm"
 msgid "Bottom wait after lift"
 msgstr ""
 
-#: src/material_form.rs:131
+#: src/material_form.rs:150
 msgctxt "MaterialForm"
 msgid "Lift distance"
 msgstr ""
 
-#: src/material_form.rs:132
+#: src/material_form.rs:151
 msgctxt "MaterialForm"
 msgid "Lift speed"
 msgstr ""
 
-#: src/material_form.rs:133
+#: src/material_form.rs:152
 msgctxt "MaterialForm"
 msgid "Retract speed"
 msgstr ""
 
-#: src/material_form.rs:134
+#: src/material_form.rs:153
+msgctxt "MaterialForm"
+msgid "Second lift distance"
+msgstr ""
+
+#: src/material_form.rs:154
+msgctxt "MaterialForm"
+msgid "Second lift speed"
+msgstr ""
+
+#: src/material_form.rs:155
+msgctxt "MaterialForm"
+msgid "Second retract speed"
+msgstr ""
+
+#: src/material_form.rs:156
 msgctxt "MaterialForm"
 msgid "Bottom lift distance"
 msgstr ""
 
-#: src/material_form.rs:135
+#: src/material_form.rs:157
 msgctxt "MaterialForm"
 msgid "Bottom lift speed"
 msgstr ""
 
-#: src/material_form.rs:136
+#: src/material_form.rs:158
 msgctxt "MaterialForm"
 msgid "Bottom retract speed"
 msgstr ""
 
-#: src/material_form.rs:137
+#: src/material_form.rs:160
+msgctxt "MaterialForm"
+msgid "Bottom second lift distance"
+msgstr ""
+
+#: src/material_form.rs:162
+msgctxt "MaterialForm"
+msgid "Bottom second lift speed"
+msgstr ""
+
+#: src/material_form.rs:164
+msgctxt "MaterialForm"
+msgid "Bottom second retract speed"
+msgstr ""
+
+#: src/material_form.rs:166
 msgctxt "MaterialForm"
 msgid "Light power"
 msgstr ""
 
-#: src/material_form.rs:138
+#: src/material_form.rs:167
 msgctxt "MaterialForm"
 msgid "Bottom light power"
 msgstr ""
 
-#: src/material_form.rs:139
+#: src/material_form.rs:168
 msgctxt "MaterialForm"
 msgid "Scale compensation x"
 msgstr ""
 
-#: src/material_form.rs:140
+#: src/material_form.rs:169
 msgctxt "MaterialForm"
 msgid "Scale compensation y"
 msgstr ""
 
-#: src/material_form.rs:141
+#: src/material_form.rs:170
 msgctxt "MaterialForm"
 msgid "Scale compensation z"
 msgstr ""
 
-#: src/material_form.rs:169
+#: src/material_form.rs:211
+msgctxt "MaterialForm"
+msgid "the second travel stage"
+msgstr ""
+
+#: src/material_form.rs:212
+msgctxt "MaterialForm"
+msgid "the bottom second travel stage"
+msgstr ""
+
+#: src/material_form.rs:246
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} must be a number"
 msgstr ""
 
-#: src/material_form.rs:176
+#: src/material_form.rs:253
 #, rust-format
 msgctxt "MaterialForm"
 msgid "{} is out of range"
 msgstr ""
 
-#: src/material_form.rs:182
+#: src/material_form.rs:259
 msgctxt "MaterialForm"
 msgid "Fill all three scale compensation axes, or leave all three empty"
+msgstr ""
+
+#: src/material_form.rs:263
+#, rust-format
+msgctxt "MaterialForm"
+msgid "Fill all three values of {}, or leave all three empty"
 msgstr ""
 
 #: src/app_state.rs:452 src/lib.rs:276

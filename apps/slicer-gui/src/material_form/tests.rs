@@ -56,9 +56,15 @@ fn filled_calibration_fields_parse_to_typed_values() {
         lift_distance_mm: "6.0".to_owned(),
         lift_speed_mm_min: "60".to_owned(),
         retract_speed_mm_min: "150".to_owned(),
+        second_lift_distance_mm: "3".to_owned(),
+        second_lift_speed_mm_min: " 230 ".to_owned(),
+        second_retract_speed_mm_min: "75".to_owned(),
         bottom_lift_distance_mm: "8".to_owned(),
         bottom_lift_speed_mm_min: "40".to_owned(),
         bottom_retract_speed_mm_min: "90".to_owned(),
+        bottom_second_lift_distance_mm: "4".to_owned(),
+        bottom_second_lift_speed_mm_min: "120".to_owned(),
+        bottom_second_retract_speed_mm_min: "60".to_owned(),
         light_pwm: "80".to_owned(),
         bottom_light_pwm: "100".to_owned(),
     };
@@ -95,6 +101,69 @@ fn filled_calibration_fields_parse_to_typed_values() {
     );
     assert_eq!(block.light_pwm.map(|v| v.percent()), Some(80.0));
     assert_eq!(block.bottom_light_pwm.map(|v| v.percent()), Some(100.0));
+    let second = block.second_travel.unwrap();
+    assert_eq!(second.lift_distance_mm.value(), 3.0);
+    assert_eq!(second.lift_speed_mm_min.value(), 230.0);
+    assert_eq!(second.retract_speed_mm_min.value(), 75.0);
+    let bottom_second = block.bottom_second_travel.unwrap();
+    assert_eq!(bottom_second.lift_distance_mm.value(), 4.0);
+    assert_eq!(bottom_second.lift_speed_mm_min.value(), 120.0);
+    assert_eq!(bottom_second.retract_speed_mm_min.value(), 60.0);
+}
+
+#[test]
+fn a_partially_filled_second_travel_stage_is_rejected() {
+    let input = CalibrationFormInput {
+        second_lift_distance_mm: "3".to_owned(),
+        second_lift_speed_mm_min: "230".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    let err = parse_calibration_form(&input).unwrap_err();
+    assert_eq!(
+        err,
+        InvalidFormValue::PartialSecondTravelStage {
+            stage: SecondStage::Normal
+        }
+    );
+    assert_eq!(
+        err.user_message(),
+        "Fill all three values of the second travel stage, or leave all three empty",
+    );
+}
+
+#[test]
+fn a_partially_filled_bottom_second_travel_stage_names_the_bottom_stage() {
+    let input = CalibrationFormInput {
+        bottom_second_retract_speed_mm_min: "60".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    let err = parse_calibration_form(&input).unwrap_err();
+    assert_eq!(
+        err,
+        InvalidFormValue::PartialSecondTravelStage {
+            stage: SecondStage::Bottom
+        }
+    );
+    assert_eq!(
+        err.user_message(),
+        "Fill all three values of the bottom second travel stage, or leave all three empty",
+    );
+}
+
+#[test]
+fn a_non_positive_second_stage_value_names_its_own_field() {
+    let input = CalibrationFormInput {
+        second_lift_distance_mm: "3".to_owned(),
+        second_lift_speed_mm_min: "230".to_owned(),
+        second_retract_speed_mm_min: "0".to_owned(),
+        ..CalibrationFormInput::default()
+    };
+    assert_eq!(
+        parse_calibration_form(&input).unwrap_err(),
+        InvalidFormValue::OutOfRange {
+            field: FormField::SecondRetractSpeed
+        },
+    );
 }
 
 #[test]
@@ -275,6 +344,7 @@ z = 0.0
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
 lift_distance_mm = 6.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 75.0 }
 ";
 
 fn parse_profile(toml: &str) -> MaterialProfile {
@@ -292,6 +362,10 @@ fn calibration_seeding_round_trips_through_the_parser() {
     assert_eq!(seeded.normal_exposure_sec, "2.5");
     assert_eq!(seeded.bottom_exposure_sec, "30");
     assert_eq!(seeded.bottom_layer_count, "");
+    assert_eq!(seeded.second_lift_distance_mm, "3");
+    assert_eq!(seeded.second_lift_speed_mm_min, "230");
+    assert_eq!(seeded.second_retract_speed_mm_min, "75");
+    assert_eq!(seeded.bottom_second_lift_distance_mm, "");
     let reparsed = parse_calibration_form(&seeded).unwrap();
     assert_eq!(&reparsed, block);
 }

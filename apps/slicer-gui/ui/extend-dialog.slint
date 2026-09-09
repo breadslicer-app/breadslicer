@@ -9,8 +9,8 @@ import { ThemePreference } from "preferences/appearance.slint";
 
 // Extend dialog: adds one calibration block to a resin's extension
 // file. The target picker lists only the targets the resin does not
-// cover yet (derived on the Rust side); the six value fields appear
-// once a target is picked, and partial values are allowed.
+// cover yet (derived on the Rust side); the value fields appear once a
+// target is picked, and partial values are allowed.
 export component ExtendDialog inherits Window {
     title: @tr("ExtendDialog" => "Extend resin profile");
     icon: @image-url("../assets/images/soulcrafted.svg");
@@ -37,9 +37,15 @@ export component ExtendDialog inherits Window {
     in-out property <string> lift-distance-text;
     in-out property <string> lift-speed-text;
     in-out property <string> retract-speed-text;
+    in-out property <string> second-lift-distance-text;
+    in-out property <string> second-lift-speed-text;
+    in-out property <string> second-retract-speed-text;
     in-out property <string> bottom-lift-distance-text;
     in-out property <string> bottom-lift-speed-text;
     in-out property <string> bottom-retract-speed-text;
+    in-out property <string> bottom-second-lift-distance-text;
+    in-out property <string> bottom-second-lift-speed-text;
+    in-out property <string> bottom-second-retract-speed-text;
     in-out property <string> light-pwm-text;
     in-out property <string> bottom-light-pwm-text;
     in property <string> error-message;
@@ -168,6 +174,18 @@ export component ExtendDialog inherits Window {
                         value <=> root.retract-speed-text;
                     }
                     EditField {
+                        label: @tr("ExtendDialog" => "Second lift distance (mm)");
+                        value <=> root.second-lift-distance-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Second lift speed (mm/min)");
+                        value <=> root.second-lift-speed-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Second retract speed (mm/min)");
+                        value <=> root.second-retract-speed-text;
+                    }
+                    EditField {
                         label: @tr("ExtendDialog" => "Bottom lift distance (mm)");
                         value <=> root.bottom-lift-distance-text;
                     }
@@ -178,6 +196,18 @@ export component ExtendDialog inherits Window {
                     EditField {
                         label: @tr("ExtendDialog" => "Bottom retract speed (mm/min)");
                         value <=> root.bottom-retract-speed-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom second lift distance (mm)");
+                        value <=> root.bottom-second-lift-distance-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom second lift speed (mm/min)");
+                        value <=> root.bottom-second-lift-speed-text;
+                    }
+                    EditField {
+                        label: @tr("ExtendDialog" => "Bottom second retract speed (mm/min)");
+                        value <=> root.bottom-second-retract-speed-text;
                     }
                     EditField {
                         label: @tr("ExtendDialog" => "Light power (%)");

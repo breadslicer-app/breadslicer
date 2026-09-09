@@ -807,9 +807,17 @@ fn open_profile_editor(
             d.set_lift_distance_text(seeded.lift_distance_mm.into());
             d.set_lift_speed_text(seeded.lift_speed_mm_min.into());
             d.set_retract_speed_text(seeded.retract_speed_mm_min.into());
+            d.set_second_lift_distance_text(seeded.second_lift_distance_mm.into());
+            d.set_second_lift_speed_text(seeded.second_lift_speed_mm_min.into());
+            d.set_second_retract_speed_text(seeded.second_retract_speed_mm_min.into());
             d.set_bottom_lift_distance_text(seeded.bottom_lift_distance_mm.into());
             d.set_bottom_lift_speed_text(seeded.bottom_lift_speed_mm_min.into());
             d.set_bottom_retract_speed_text(seeded.bottom_retract_speed_mm_min.into());
+            d.set_bottom_second_lift_distance_text(seeded.bottom_second_lift_distance_mm.into());
+            d.set_bottom_second_lift_speed_text(seeded.bottom_second_lift_speed_mm_min.into());
+            d.set_bottom_second_retract_speed_text(
+                seeded.bottom_second_retract_speed_mm_min.into(),
+            );
             d.set_light_pwm_text(seeded.light_pwm.into());
             d.set_bottom_light_pwm_text(seeded.bottom_light_pwm.into());
         }
@@ -865,9 +873,21 @@ fn open_profile_editor(
                     lift_distance_mm: d.get_lift_distance_text().to_string(),
                     lift_speed_mm_min: d.get_lift_speed_text().to_string(),
                     retract_speed_mm_min: d.get_retract_speed_text().to_string(),
+                    second_lift_distance_mm: d.get_second_lift_distance_text().to_string(),
+                    second_lift_speed_mm_min: d.get_second_lift_speed_text().to_string(),
+                    second_retract_speed_mm_min: d.get_second_retract_speed_text().to_string(),
                     bottom_lift_distance_mm: d.get_bottom_lift_distance_text().to_string(),
                     bottom_lift_speed_mm_min: d.get_bottom_lift_speed_text().to_string(),
                     bottom_retract_speed_mm_min: d.get_bottom_retract_speed_text().to_string(),
+                    bottom_second_lift_distance_mm: d
+                        .get_bottom_second_lift_distance_text()
+                        .to_string(),
+                    bottom_second_lift_speed_mm_min: d
+                        .get_bottom_second_lift_speed_text()
+                        .to_string(),
+                    bottom_second_retract_speed_mm_min: d
+                        .get_bottom_second_retract_speed_text()
+                        .to_string(),
                     light_pwm: d.get_light_pwm_text().to_string(),
                     bottom_light_pwm: d.get_bottom_light_pwm_text().to_string(),
                 };
@@ -1158,9 +1178,17 @@ fn open_extend_dialog(
             d.set_lift_distance_text(seeded.lift_distance_mm.into());
             d.set_lift_speed_text(seeded.lift_speed_mm_min.into());
             d.set_retract_speed_text(seeded.retract_speed_mm_min.into());
+            d.set_second_lift_distance_text(seeded.second_lift_distance_mm.into());
+            d.set_second_lift_speed_text(seeded.second_lift_speed_mm_min.into());
+            d.set_second_retract_speed_text(seeded.second_retract_speed_mm_min.into());
             d.set_bottom_lift_distance_text(seeded.bottom_lift_distance_mm.into());
             d.set_bottom_lift_speed_text(seeded.bottom_lift_speed_mm_min.into());
             d.set_bottom_retract_speed_text(seeded.bottom_retract_speed_mm_min.into());
+            d.set_bottom_second_lift_distance_text(seeded.bottom_second_lift_distance_mm.into());
+            d.set_bottom_second_lift_speed_text(seeded.bottom_second_lift_speed_mm_min.into());
+            d.set_bottom_second_retract_speed_text(
+                seeded.bottom_second_retract_speed_mm_min.into(),
+            );
             d.set_light_pwm_text(seeded.light_pwm.into());
             d.set_bottom_light_pwm_text(seeded.bottom_light_pwm.into());
         }
@@ -1194,9 +1222,19 @@ fn open_extend_dialog(
                 lift_distance_mm: d.get_lift_distance_text().to_string(),
                 lift_speed_mm_min: d.get_lift_speed_text().to_string(),
                 retract_speed_mm_min: d.get_retract_speed_text().to_string(),
+                second_lift_distance_mm: d.get_second_lift_distance_text().to_string(),
+                second_lift_speed_mm_min: d.get_second_lift_speed_text().to_string(),
+                second_retract_speed_mm_min: d.get_second_retract_speed_text().to_string(),
                 bottom_lift_distance_mm: d.get_bottom_lift_distance_text().to_string(),
                 bottom_lift_speed_mm_min: d.get_bottom_lift_speed_text().to_string(),
                 bottom_retract_speed_mm_min: d.get_bottom_retract_speed_text().to_string(),
+                bottom_second_lift_distance_mm: d
+                    .get_bottom_second_lift_distance_text()
+                    .to_string(),
+                bottom_second_lift_speed_mm_min: d.get_bottom_second_lift_speed_text().to_string(),
+                bottom_second_retract_speed_mm_min: d
+                    .get_bottom_second_retract_speed_text()
+                    .to_string(),
                 light_pwm: d.get_light_pwm_text().to_string(),
                 bottom_light_pwm: d.get_bottom_light_pwm_text().to_string(),
             };
