@@ -69,6 +69,45 @@ lift_speed_mm_min = 60.0
 retract_speed_mm_min = 150.0
 ";
 
+/// A block with both travel stages, written the long way round, which
+/// is the shape the loader also accepts.
+const WITH_SECOND_STAGE_TOML: &str = "\
+[identity]
+id = \"brand-resin\"
+brand = \"Brand\"
+family = \"other\"
+name = \"Resin\"
+profile_version = \"1.0.0\"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[per_printer.elegoo-saturn-4-ctb]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+lift_distance_mm = 3.0
+lift_speed_mm_min = 60.0
+retract_speed_mm_min = 150.0
+
+[per_printer.elegoo-saturn-4-ctb.second_travel]
+lift_distance_mm = 4.0
+lift_speed_mm_min = 230.0
+retract_speed_mm_min = 230.0
+
+[per_printer.elegoo-saturn-4-ctb.bottom_second_travel]
+lift_distance_mm = 5.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 180.0
+";
+
 fn parse(toml: &str) -> MaterialProfile {
     toml_edit::de::from_str(toml).unwrap()
 }
@@ -113,6 +152,60 @@ fn save_to_path_writes_sectioned_toml() {
     assert!(
         !written.contains("identity = {"),
         "top-level structs must not be inline:\n{written}"
+    );
+}
+
+#[test]
+fn save_to_path_keeps_a_calibration_block_in_one_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let original = parse(WITH_SECOND_STAGE_TOML);
+
+    save_material_profile_to_path(&path, &original).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        written.matches("[per_printer.elegoo-saturn-4-ctb").count(),
+        1,
+        "one machine, one table:\n{written}"
+    );
+    assert!(
+        written.contains(
+            "second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }"
+        ),
+        "written file:\n{written}"
+    );
+    assert!(
+        written.contains(
+            "bottom_second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 180.0 }"
+        ),
+        "written file:\n{written}"
+    );
+}
+
+#[test]
+fn save_to_path_round_trips_a_second_stage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let original = parse(WITH_SECOND_STAGE_TOML);
+
+    save_material_profile_to_path(&path, &original).unwrap();
+    let loaded = load_material_profile_from_path(&path).unwrap();
+    assert_eq!(loaded, original);
+}
+
+#[test]
+fn save_to_path_leaves_the_profile_own_sections_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let original = parse(WITH_SECOND_STAGE_TOML);
+
+    save_material_profile_to_path(&path, &original).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains("[defaults.scale_compensation_pct]"),
+        "written file:\n{written}"
     );
 }
 
@@ -401,6 +494,45 @@ fn save_extension_does_not_annotate_populated_sections() {
         !written.contains("inherited from the parent profile"),
         "written file:\n{written}"
     );
+}
+
+#[test]
+fn save_extension_keeps_a_calibration_block_in_one_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = parse(&format!("extension = true\n{WITH_SECOND_STAGE_TOML}"));
+
+    save_material_extension_to_library(dir.path(), &original).unwrap();
+
+    let written = std::fs::read_to_string(
+        dir.path()
+            .join("materials")
+            .join("extensions")
+            .join("brand-resin.toml"),
+    )
+    .unwrap();
+    assert_eq!(
+        written.matches("[per_printer.elegoo-saturn-4-ctb").count(),
+        1,
+        "one machine, one table:\n{written}"
+    );
+    assert!(
+        written.contains(
+            "second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }"
+        ),
+        "written file:\n{written}"
+    );
+}
+
+#[test]
+fn save_extension_round_trips_a_second_stage() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = parse(&format!("extension = true\n{WITH_SECOND_STAGE_TOML}"));
+
+    save_material_extension_to_library(dir.path(), &original).unwrap();
+
+    let id = MaterialId::new("brand-resin").unwrap();
+    let loaded = load_material_extension_from_library(dir.path(), &id).unwrap();
+    assert_eq!(loaded, original);
 }
 
 #[test]

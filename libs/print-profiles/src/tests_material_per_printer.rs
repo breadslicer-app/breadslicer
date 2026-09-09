@@ -375,21 +375,3 @@ retract_speed_mm_min = 230.0
 "#;
     assert!(toml_edit::de::from_str::<MaterialPerPrinter>(toml).is_err());
 }
-
-#[test]
-fn serialise_writes_a_second_stage_as_one_inline_table() {
-    let parsed: MaterialPerPrinter = toml_edit::de::from_str(FULL_TOML).unwrap();
-    let serialised = toml_edit::ser::to_string(&parsed).unwrap();
-    assert!(
-        serialised.contains(
-            "second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }"
-        ),
-        "{serialised}"
-    );
-    assert!(
-        serialised.contains(
-            "bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 180.0 }"
-        ),
-        "{serialised}"
-    );
-}

@@ -337,16 +337,8 @@ retract_speed_mm_min = 60.0
 bottom_lift_distance_mm = 3.0
 bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 60.0
-
-[per_printer.testcorp-e2e.second_travel]
-lift_distance_mm = 4.0
-lift_speed_mm_min = 240.0
-retract_speed_mm_min = 240.0
-
-[per_printer.testcorp-e2e.bottom_second_travel]
-lift_distance_mm = 4.0
-lift_speed_mm_min = 240.0
-retract_speed_mm_min = 210.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 240.0 }
+bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 210.0 }
 ",
         );
     }

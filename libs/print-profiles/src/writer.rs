@@ -13,7 +13,9 @@
 //! library directory instead: `<library_dir>/printers/<id>.toml` or
 //! `<library_dir>/materials/<id>.toml`. Written files lay every nested
 //! struct out as a `[section]` table and load back equal through the
-//! loaders in [`crate::loader`].
+//! loaders in [`crate::loader`]. The exception is a per-printer
+//! calibration block, which stays one table: its composite values are
+//! written inline.
 //!
 //! [`save_material_extension_to_library`] places extension-flagged
 //! profiles at `<library_dir>/materials/extensions/<id>.toml` and
@@ -57,6 +59,9 @@ pub struct SaveMaterialProfileError {
 pub enum SaveMaterialProfileErrorKind {
     Io(io::Error),
     TomlSerialize(toml_edit::ser::Error),
+    /// Reparsing the serialised profile to lay out its calibration
+    /// blocks failed.
+    TomlReparse(toml_edit::TomlError),
 }
 
 impl fmt::Display for SaveMaterialProfileError {
@@ -75,6 +80,7 @@ impl fmt::Display for SaveMaterialProfileErrorKind {
         match self {
             Self::Io(err) => write!(f, "{err}"),
             Self::TomlSerialize(err) => write!(f, "{err}"),
+            Self::TomlReparse(err) => write!(f, "{err}"),
         }
     }
 }
@@ -84,6 +90,7 @@ impl std::error::Error for SaveMaterialProfileError {
         match &self.kind {
             SaveMaterialProfileErrorKind::Io(err) => Some(err),
             SaveMaterialProfileErrorKind::TomlSerialize(err) => Some(err),
+            SaveMaterialProfileErrorKind::TomlReparse(err) => Some(err),
         }
     }
 }
@@ -94,6 +101,63 @@ fn sectioned_toml<T: serde::Serialize>(value: &T) -> Result<String, toml_edit::s
     toml_edit::ser::to_string_pretty(value)
 }
 
+/// Either step of building a material profile's document can fail.
+enum BuildDocumentError {
+    Serialize(toml_edit::ser::Error),
+    Reparse(toml_edit::TomlError),
+}
+
+impl From<BuildDocumentError> for SaveMaterialProfileErrorKind {
+    fn from(err: BuildDocumentError) -> Self {
+        match err {
+            BuildDocumentError::Serialize(err) => Self::TomlSerialize(err),
+            BuildDocumentError::Reparse(err) => Self::TomlReparse(err),
+        }
+    }
+}
+
+/// Build the document written for a material profile, in the shape
+/// both material writers put on disk.
+fn material_document(
+    profile: &MaterialProfile,
+) -> Result<toml_edit::DocumentMut, BuildDocumentError> {
+    // ser::to_document yields an editable document directly, but in the
+    // inline-table shape; only to_string_pretty emits sections, hence
+    // serialise-then-reparse.
+    let serialised = sectioned_toml(profile).map_err(BuildDocumentError::Serialize)?;
+    let mut doc: toml_edit::DocumentMut =
+        serialised.parse().map_err(BuildDocumentError::Reparse)?;
+    inline_calibration_composites(&mut doc);
+    Ok(doc)
+}
+
+/// Fold every sub-table of a calibration block into an inline value,
+/// so one machine's settings stay under one `[per_printer.<id>]`
+/// header. The rule is structural, so a composite added to the block
+/// later needs no change here.
+fn inline_calibration_composites(doc: &mut toml_edit::DocumentMut) {
+    let Some(blocks) = doc
+        .get_mut("per_printer")
+        .and_then(toml_edit::Item::as_table_mut)
+    else {
+        return;
+    };
+    for (_, block) in blocks.iter_mut() {
+        let Some(block) = block.as_table_mut() else {
+            continue;
+        };
+        for (mut key, item) in block.iter_mut() {
+            if let Some(composite) = item.as_table() {
+                let inline = composite.clone().into_inline_table();
+                *item = toml_edit::Item::Value(toml_edit::Value::InlineTable(inline));
+                // The key was written as a section header, whose spacing
+                // is not a key-value line's.
+                key.leaf_decor_mut().clear();
+            }
+        }
+    }
+}
+
 /// Serialise `profile` to TOML and write it to `path`, creating the
 /// parent directory when it does not exist. Returns
 /// [`SaveMaterialProfileError`] when serialisation or the write fails.
@@ -101,9 +165,9 @@ pub fn save_material_profile_to_path(
     path: &Path,
     profile: &MaterialProfile,
 ) -> Result<(), SaveMaterialProfileError> {
-    let contents = sectioned_toml(profile).map_err(|err| SaveMaterialProfileError {
+    let doc = material_document(profile).map_err(|err| SaveMaterialProfileError {
         path: path.to_owned(),
-        kind: SaveMaterialProfileErrorKind::TomlSerialize(err),
+        kind: err.into(),
     })?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| SaveMaterialProfileError {
@@ -111,7 +175,7 @@ pub fn save_material_profile_to_path(
             kind: SaveMaterialProfileErrorKind::Io(err),
         })?;
     }
-    fs::write(path, contents).map_err(|err| SaveMaterialProfileError {
+    fs::write(path, doc.to_string()).map_err(|err| SaveMaterialProfileError {
         path: path.to_owned(),
         kind: SaveMaterialProfileErrorKind::Io(err),
     })
@@ -309,9 +373,18 @@ pub enum SaveMaterialExtensionErrorKind {
     NotAnExtension,
     Io(io::Error),
     TomlSerialize(toml_edit::ser::Error),
-    /// Reparsing the serialised profile to attach the section
-    /// comments failed.
+    /// Reparsing the serialised profile to lay out its calibration
+    /// blocks and attach the section comments failed.
     TomlReparse(toml_edit::TomlError),
+}
+
+impl From<BuildDocumentError> for SaveMaterialExtensionErrorKind {
+    fn from(err: BuildDocumentError) -> Self {
+        match err {
+            BuildDocumentError::Serialize(err) => Self::TomlSerialize(err),
+            BuildDocumentError::Reparse(err) => Self::TomlReparse(err),
+        }
+    }
 }
 
 impl fmt::Display for SaveMaterialExtensionError {
@@ -370,20 +443,10 @@ pub fn save_material_extension_to_library(
             kind: SaveMaterialExtensionErrorKind::NotAnExtension,
         });
     }
-    // Attaching comments needs an editable document. ser::to_document yields
-    // one directly but in the inline-table shape; only to_string_pretty emits
-    // sections, hence serialise-then-reparse.
-    let serialised = sectioned_toml(profile).map_err(|err| SaveMaterialExtensionError {
+    let mut doc = material_document(profile).map_err(|err| SaveMaterialExtensionError {
         path: path.clone(),
-        kind: SaveMaterialExtensionErrorKind::TomlSerialize(err),
+        kind: err.into(),
     })?;
-    let mut doc: toml_edit::DocumentMut =
-        serialised
-            .parse()
-            .map_err(|err| SaveMaterialExtensionError {
-                path: path.clone(),
-                kind: SaveMaterialExtensionErrorKind::TomlReparse(err),
-            })?;
     annotate_inherited_section(&mut doc, "intent");
     annotate_inherited_section(&mut doc, "defaults");
     annotate_inherited_section(&mut doc, "physical");
