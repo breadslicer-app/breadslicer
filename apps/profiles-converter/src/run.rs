@@ -100,6 +100,133 @@ mod tests {
         assert!(out.join("printers").join("testcorp-e2e.toml").is_file());
     }
 
+    /// A printer record and a resin record in the shape the source
+    /// publishes: the preset id carries the output container, and the
+    /// resin's motion detail sits in a per-container override next to
+    /// the flat values.
+    const PRINTER_JSON: &str = r#"[{
+        "presetId": "testcorp-e2e-goo", "profileVersion": 1,
+        "manufacturer": "TestCorp", "family": "Series", "name": "E2E",
+        "antiAliasing": true, "hasCamera": false,
+        "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+        "pixelSize": { "x": 100.0, "y": 100.0 },
+        "display": {
+            "resolutionX": 1000, "resolutionY": 1000,
+            "outputFormat": ".goo", "settingsMode": "twostage",
+            "mirrorX": true, "mirrorY": false
+        }
+    }]"#;
+
+    const MATERIAL_JSON: &str = r#"[{
+        "templateId": "testcorp-resin-e2e", "profileVersion": 2,
+        "name": "Resin", "brand": "TestCorp", "resinFamily": "standard",
+        "validForPresets": ["testcorp-e2e-goo"],
+        "layerHeightMm": 0.05,
+        "normalExposureSec": 2.0, "bottomExposureSec": 25.0, "bottomLayerCount": 5,
+        "liftDistanceMm": 7.0, "liftSpeedMmMin": 45.0, "retractSpeedMmMin": 240.0,
+        "localSettingsByOutput": {
+            ".goo": {
+                "liftDistanceMm": 3.0, "liftDistance2Mm": 4.0,
+                "liftSpeedMmMin": 45.0, "liftSpeed2MmMin": 240.0,
+                "retractSpeedMmMin": 240.0, "retractSpeed2MmMin": 60.0,
+                "waitTimeBeforeCureSec": 0.0, "waitTimeAfterCureSec": 2.0,
+                "waitTimeAfterLiftSec": 0.0, "projectorPwmPercent": 100
+            }
+        }
+    }]"#;
+
+    /// Freezes the exact TOML the pair above converts to, so a change of
+    /// the reader's shape that alters an emitted value cannot pass
+    /// unnoticed.
+    ///
+    /// The material's block is keyed by the source's preset id, which
+    /// names no printer we ship: a defect this oracle records rather
+    /// than endorses, so that correcting it shows up here as a diff.
+    #[test]
+    fn a_printer_and_a_resin_convert_to_these_exact_files() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        let out = dir.path().join("library");
+
+        run(&request(vec![printers, materials], out.clone(), false)).unwrap();
+
+        let printer_toml =
+            fs::read_to_string(out.join("printers").join("testcorp-e2e.toml")).unwrap();
+        assert_eq!(
+            printer_toml,
+            "\
+[identity]
+id = \"testcorp-e2e\"
+manufacturer = \"TestCorp\"
+family = \"Series\"
+name = \"E2E\"
+profile_version = \"1.0.0\"
+
+[hardware.build_volume]
+x_mm = 100.0
+y_mm = 100.0
+z_mm = 40.0
+
+[hardware.pixel_resolution]
+x = 1000
+y = 1000
+
+[hardware.pixel_size_microns]
+x = 100.0
+y = 100.0
+
+[hardware.mirror]
+x = true
+y = false
+
+[capabilities]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[[capabilities.output_formats]]
+format = \"goo\"
+
+[constraints]
+
+[time_calibration]
+",
+        );
+
+        let material_toml =
+            fs::read_to_string(out.join("materials").join("testcorp-resin-e2e.toml")).unwrap();
+        assert_eq!(
+            material_toml,
+            "\
+[identity]
+id = \"testcorp-resin-e2e\"
+brand = \"TestCorp\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"2.0.0\"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[physical]
+
+[per_printer.testcorp-e2e-goo]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+lift_distance_mm = 7.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 240.0
+",
+        );
+    }
+
     #[test]
     fn reports_a_read_error_from_a_broken_input() {
         let dir = tempdir().unwrap();
