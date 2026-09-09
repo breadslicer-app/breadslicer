@@ -11,15 +11,17 @@
 //! material itself; we write one calibration block per entry in
 //! `validForPresets`. The exposures are the same for every machine, the
 //! motion is not: the record states it per output container, and only
-//! there does it state the bottom layers' own. A record with no presets
-//! converts to a template with an empty per-printer map.
+//! there does it state the bottom layers' own motion, the pauses around
+//! a layer and the light power. A record with no presets converts to a
+//! template with an empty per-printer map.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use sc_print_primitives::{
-    InvalidProfileId, LengthOutOfRange, MaterialId, NonEmptyString, PositiveFiniteMm,
-    PositiveFiniteMmPerMin, PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
+    InvalidProfileId, LengthOutOfRange, LightPwm, LightPwmOutOfRange, MaterialId, NegativeDuration,
+    NonEmptyString, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin,
+    PositiveFiniteSec, ScaleCompensation, ScaleCompensationPercent,
     ScaleCompensationPercentOutOfBound, SecOutOfRange, SpeedMmPerMinOutOfRange,
 };
 use sc_print_profiles::{
@@ -70,7 +72,8 @@ pub(crate) struct RawMaterial {
 ///
 /// The record's flat fields carry one number per quantity; these carry
 /// the machine's own split of it, a first stage and a second, with a
-/// second distance of 0 when the machine moves in one go.
+/// second distance of 0 when the machine moves in one go. The pauses
+/// and the light power are stated here alone.
 #[derive(Debug, Deserialize)]
 struct RawOverride {
     #[serde(rename = "liftDistanceMm", default)]
@@ -97,6 +100,14 @@ struct RawOverride {
     bottom_retract_speed_mm_min: Option<f64>,
     #[serde(rename = "bottomRetractSpeed2MmMin", default)]
     bottom_retract_speed_2_mm_min: Option<f64>,
+    #[serde(rename = "waitTimeBeforeCureSec", default)]
+    wait_time_before_cure_sec: Option<f64>,
+    #[serde(rename = "waitTimeAfterCureSec", default)]
+    wait_time_after_cure_sec: Option<f64>,
+    #[serde(rename = "waitTimeAfterLiftSec", default)]
+    wait_time_after_lift_sec: Option<f64>,
+    #[serde(rename = "projectorPwmPercent", default)]
+    projector_pwm_percent: Option<f64>,
 }
 
 /// One quantity's numbers as the source states them: the 2 lift stages
@@ -202,6 +213,16 @@ pub enum MaterialMapError {
         field: &'static str,
         source: SpeedMmPerMinOutOfRange,
     },
+    Wait {
+        id: String,
+        field: &'static str,
+        source: NegativeDuration,
+    },
+    LightPower {
+        id: String,
+        field: &'static str,
+        source: LightPwmOutOfRange,
+    },
     ScaleCompensation {
         id: String,
         axis: &'static str,
@@ -235,6 +256,12 @@ impl fmt::Display for MaterialMapError {
             Self::Speed { id, field, source } => {
                 write!(f, "material {id:?}: field {field:?}: {source}")
             }
+            Self::Wait { id, field, source } => {
+                write!(f, "material {id:?}: field {field:?}: {source}")
+            }
+            Self::LightPower { id, field, source } => {
+                write!(f, "material {id:?}: field {field:?}: {source}")
+            }
             Self::ScaleCompensation { id, axis, source } => write!(
                 f,
                 "material {id:?}: scale compensation {axis} axis: {source}",
@@ -250,6 +277,8 @@ impl std::error::Error for MaterialMapError {
             Self::Length { source, .. } => Some(source),
             Self::Exposure { source, .. } => Some(source),
             Self::Speed { source, .. } => Some(source),
+            Self::Wait { source, .. } => Some(source),
+            Self::LightPower { source, .. } => Some(source),
             Self::ScaleCompensation { source, .. } => Some(source),
             Self::EmptyField { .. } => None,
             Self::UnknownPreset { .. } => None,
@@ -333,15 +362,11 @@ pub(crate) fn map_material(
                 id: raw_id.clone(),
                 preset: preset.clone(),
             })?;
-        let motion = Motion::of(
-            &raw,
-            raw.local_settings_by_output.get(&entry.container),
-            entry.splits_travel,
-            &raw_id,
-        )?;
+        let over = raw.local_settings_by_output.get(&entry.container);
+        let motion = Motion::of(&raw, over, entry.splits_travel, &raw_id)?;
         per_printer.insert(
             CalibrationTarget::from(entry.printer.clone()),
-            motion.into_block(shared),
+            with_pauses_and_light(motion.into_block(shared), over, &raw_id)?,
         );
     }
 
@@ -477,6 +502,33 @@ impl Stages {
     }
 }
 
+/// Put the pauses around a layer and the light power into `block`.
+///
+/// The record states these per container and nowhere else, so a machine
+/// whose container the record says nothing about takes none of them. The
+/// bottom layers get their own only where the source states them, which
+/// it never does for these.
+fn with_pauses_and_light(
+    block: MaterialPerPrinter,
+    over: Option<&RawOverride>,
+    id: &str,
+) -> Result<MaterialPerPrinter, MaterialMapError> {
+    let Some(over) = over else {
+        return Ok(block);
+    };
+    Ok(MaterialPerPrinter {
+        wait_before_cure_sec: opt_wait(
+            over.wait_time_before_cure_sec,
+            id,
+            "waitTimeBeforeCureSec",
+        )?,
+        wait_after_cure_sec: opt_wait(over.wait_time_after_cure_sec, id, "waitTimeAfterCureSec")?,
+        wait_after_lift_sec: opt_wait(over.wait_time_after_lift_sec, id, "waitTimeAfterLiftSec")?,
+        light_pwm: opt_light_pwm(over.projector_pwm_percent, id, "projectorPwmPercent")?,
+        ..block
+    })
+}
+
 /// Build the second stage the record states, or `None` when its distance
 /// is 0, which is how a machine that moves in one go is written.
 ///
@@ -554,6 +606,40 @@ fn opt_sec(
     value
         .map(|raw| {
             PositiveFiniteSec::new(raw).map_err(|source| MaterialMapError::Exposure {
+                id: id.to_owned(),
+                field,
+                source,
+            })
+        })
+        .transpose()
+}
+
+/// Map an optional pause, reporting one that is not a duration.
+fn opt_wait(
+    value: Option<f64>,
+    id: &str,
+    field: &'static str,
+) -> Result<Option<NonNegativeFiniteSec>, MaterialMapError> {
+    value
+        .map(|raw| {
+            NonNegativeFiniteSec::new(raw).map_err(|source| MaterialMapError::Wait {
+                id: id.to_owned(),
+                field,
+                source,
+            })
+        })
+        .transpose()
+}
+
+/// Map an optional light power, reporting one outside the panel's range.
+fn opt_light_pwm(
+    value: Option<f64>,
+    id: &str,
+    field: &'static str,
+) -> Result<Option<LightPwm>, MaterialMapError> {
+    value
+        .map(|raw| {
+            LightPwm::new(raw).map_err(|source| MaterialMapError::LightPower {
                 id: id.to_owned(),
                 field,
                 source,
@@ -742,13 +828,17 @@ mod tests {
                 "retractSpeedMmMin": 240.0, "retractSpeed2MmMin": 60.0,
                 "bottomLiftDistanceMm": 3.0, "bottomLiftDistance2Mm": 4.0,
                 "bottomLiftSpeedMmMin": 40.0, "bottomLiftSpeed2MmMin": 220.0,
-                "bottomRetractSpeedMmMin": 210.0, "bottomRetractSpeed2MmMin": 50.0
+                "bottomRetractSpeedMmMin": 210.0, "bottomRetractSpeed2MmMin": 50.0,
+                "waitTimeBeforeCureSec": 0.5, "waitTimeAfterCureSec": 2.0,
+                "waitTimeAfterLiftSec": 0.0, "projectorPwmPercent": 100
             },
             ".ctb": {
                 "liftDistanceMm": 8.0, "liftDistance2Mm": 0.0,
                 "liftSpeedMmMin": 50.0, "retractSpeedMmMin": 200.0,
                 "bottomLiftDistanceMm": 8.0, "bottomLiftDistance2Mm": 0.0,
-                "bottomLiftSpeedMmMin": 35.0, "bottomRetractSpeedMmMin": 180.0
+                "bottomLiftSpeedMmMin": 35.0, "bottomRetractSpeedMmMin": 180.0,
+                "waitTimeBeforeCureSec": 1.5, "waitTimeAfterCureSec": 3.0,
+                "waitTimeAfterLiftSec": 0.25, "projectorPwmPercent": 80
             }
         }
     }"#;
@@ -862,6 +952,87 @@ mod tests {
         assert_eq!(pwmx.bottom_lift_distance_mm, None);
         assert_eq!(pwmx.bottom_lift_speed_mm_min, None);
         assert_eq!(pwmx.bottom_retract_speed_mm_min, None);
+    }
+
+    #[test]
+    fn each_machine_takes_the_pauses_and_light_power_of_its_container() {
+        let profile = map(WITH_OVERRIDES).unwrap();
+
+        let goo = block_of(&profile, "printer-a");
+        assert_eq!(goo.wait_before_cure_sec.map(|v| v.value()), Some(0.5));
+        assert_eq!(goo.wait_after_cure_sec.map(|v| v.value()), Some(2.0));
+        assert_eq!(goo.wait_after_lift_sec.map(|v| v.value()), Some(0.0));
+        assert_eq!(goo.light_pwm.map(|v| v.percent()), Some(100.0));
+
+        let ctb = block_of(&profile, "printer-b");
+        assert_eq!(ctb.wait_before_cure_sec.map(|v| v.value()), Some(1.5));
+        assert_eq!(ctb.wait_after_cure_sec.map(|v| v.value()), Some(3.0));
+        assert_eq!(ctb.wait_after_lift_sec.map(|v| v.value()), Some(0.25));
+        assert_eq!(ctb.light_pwm.map(|v| v.percent()), Some(80.0));
+    }
+
+    /// The source states one set of pauses and one light power per
+    /// container, with nothing said about the bottom layers.
+    #[test]
+    fn the_bottom_layers_get_no_pauses_and_no_light_power_of_their_own() {
+        let profile = map(WITH_OVERRIDES).unwrap();
+        let goo = block_of(&profile, "printer-a");
+
+        assert_eq!(goo.bottom_wait_before_cure_sec, None);
+        assert_eq!(goo.bottom_wait_after_cure_sec, None);
+        assert_eq!(goo.bottom_wait_after_lift_sec, None);
+        assert_eq!(goo.bottom_light_pwm, None);
+    }
+
+    /// The flat fields carry no pause and no light power, so a container
+    /// the record says nothing about has none to take.
+    #[test]
+    fn a_container_the_record_says_nothing_about_gets_no_pauses() {
+        let profile = map(WITH_OVERRIDES).unwrap();
+        let pwmx = block_of(&profile, "printer-c");
+
+        assert_eq!(pwmx.wait_before_cure_sec, None);
+        assert_eq!(pwmx.wait_after_cure_sec, None);
+        assert_eq!(pwmx.wait_after_lift_sec, None);
+        assert_eq!(pwmx.light_pwm, None);
+    }
+
+    #[test]
+    fn a_negative_pause_is_rejected() {
+        let json = r#"{
+            "templateId": "resin", "profileVersion": 1,
+            "name": "Resin", "brand": "Default", "resinFamily": "standard",
+            "validForPresets": ["printer-a-goo"],
+            "localSettingsByOutput": {
+                ".goo": { "waitTimeAfterCureSec": -1.0 }
+            }
+        }"#;
+        assert!(matches!(
+            map(json).unwrap_err(),
+            MaterialMapError::Wait {
+                field: "waitTimeAfterCureSec",
+                ..
+            },
+        ));
+    }
+
+    #[test]
+    fn a_light_power_beyond_full_is_rejected() {
+        let json = r#"{
+            "templateId": "resin", "profileVersion": 1,
+            "name": "Resin", "brand": "Default", "resinFamily": "standard",
+            "validForPresets": ["printer-a-goo"],
+            "localSettingsByOutput": {
+                ".goo": { "projectorPwmPercent": 150 }
+            }
+        }"#;
+        assert!(matches!(
+            map(json).unwrap_err(),
+            MaterialMapError::LightPower {
+                field: "projectorPwmPercent",
+                ..
+            },
+        ));
     }
 
     #[test]

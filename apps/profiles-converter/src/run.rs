@@ -267,12 +267,16 @@ bottom_layer_count = 5
 normal_exposure_sec = 2.0
 bottom_exposure_sec = 25.0
 bottom_layer_count = 5
+wait_before_cure_sec = 0.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 0.0
 lift_distance_mm = 7.0
 lift_speed_mm_min = 45.0
 retract_speed_mm_min = 240.0
 bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 210.0
+light_pwm = 100.0
 ",
         );
     }
@@ -331,12 +335,16 @@ bottom_layer_count = 5
 normal_exposure_sec = 2.0
 bottom_exposure_sec = 25.0
 bottom_layer_count = 5
+wait_before_cure_sec = 0.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 0.0
 lift_distance_mm = 3.0
 lift_speed_mm_min = 45.0
 retract_speed_mm_min = 60.0
 bottom_lift_distance_mm = 3.0
 bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 60.0
+light_pwm = 100.0
 second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 240.0 }
 bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 210.0 }
 ",
