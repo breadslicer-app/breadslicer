@@ -29,7 +29,7 @@ use serde_json::Value;
 use crate::profile::{ConvertedPrinter, ConvertedProfile};
 use crate::reader::ProfileReader;
 use material::{MaterialMapError, RawMaterial, map_material};
-use preset_index::PresetIndex;
+use preset_index::{Preset, PresetIndex};
 use printer::{PrinterMapError, RawPrinter, map_printer};
 
 /// Reads DragonFruit plugin JSON into our domain profiles.
@@ -237,7 +237,13 @@ fn map_printers(
             index,
             source,
         })?;
-        presets.insert(&mapped.preset_id, mapped.profile.identity.id.clone());
+        presets.insert(
+            &mapped.preset_id,
+            Preset {
+                printer: mapped.profile.identity.id.clone(),
+                container: mapped.container,
+            },
+        );
         let base = path.parent().unwrap_or_else(|| Path::new(""));
         let image_source = mapped
             .image_ref

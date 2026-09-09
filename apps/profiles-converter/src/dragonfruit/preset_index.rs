@@ -7,33 +7,43 @@
 //!
 //! DragonFruit names a printer by preset id, and ships one preset per
 //! machine and output container, so `elegoo-saturn-4-goo` and
-//! `elegoo-saturn-4-ctb` are the same machine. Our ids name the machine
-//! alone. A material record points at presets, so mapping one needs the
-//! printer records of the same run to say which machine each preset is.
+//! `elegoo-saturn-4-ctb` are the same machine writing 2 containers. Our
+//! ids name the machine alone. A material record points at presets and
+//! keeps its settings per container, so mapping one needs the printer
+//! records of the same run to say which machine each preset is and which
+//! container it writes.
 
 use std::collections::BTreeMap;
 
 use sc_print_primitives::PrinterId;
 
-/// The machines the run's printer records describe, by the preset id
-/// each record carries.
+/// What one preset id names: the machine, under our id, and the
+/// container that preset writes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Preset {
+    pub printer: PrinterId,
+    pub container: String,
+}
+
+/// The presets the run's printer records carry.
 #[derive(Debug, Default)]
 pub(crate) struct PresetIndex {
-    by_preset: BTreeMap<String, PrinterId>,
+    by_preset: BTreeMap<String, Preset>,
 }
 
 impl PresetIndex {
-    /// Record that `preset` names `printer`.
+    /// Record what `preset` names.
     ///
     /// Several presets name one machine, one per container it writes, so
-    /// entries agree rather than being unique, and the last one wins.
-    pub(crate) fn insert(&mut self, preset: &str, printer: PrinterId) {
-        self.by_preset.insert(preset.to_owned(), printer);
+    /// entries agree on the machine rather than being unique, and the
+    /// last one wins.
+    pub(crate) fn insert(&mut self, preset: &str, entry: Preset) {
+        self.by_preset.insert(preset.to_owned(), entry);
     }
 
-    /// Find the machine `preset` names, or `None` when no printer record
-    /// of this run carries that preset id.
-    pub(crate) fn printer(&self, preset: &str) -> Option<&PrinterId> {
+    /// Find what `preset` names, or `None` when no printer record of this
+    /// run carries that preset id.
+    pub(crate) fn get(&self, preset: &str) -> Option<&Preset> {
         self.by_preset.get(preset)
     }
 }
@@ -42,39 +52,45 @@ impl PresetIndex {
 mod tests {
     use super::*;
 
-    fn printer(id: &str) -> PrinterId {
-        PrinterId::new(id).unwrap()
+    fn preset(id: &str, container: &str) -> Preset {
+        Preset {
+            printer: PrinterId::new(id).unwrap(),
+            container: container.to_owned(),
+        }
     }
 
     #[test]
-    fn a_preset_resolves_to_the_machine_it_was_recorded_with() {
+    fn a_preset_resolves_to_the_machine_and_container_it_was_recorded_with() {
         let mut index = PresetIndex::default();
-        index.insert("elegoo-saturn-4-goo", printer("elegoo-saturn-4"));
+        index.insert("elegoo-saturn-4-goo", preset("elegoo-saturn-4", ".goo"));
 
         assert_eq!(
-            index.printer("elegoo-saturn-4-goo"),
-            Some(&printer("elegoo-saturn-4")),
+            index.get("elegoo-saturn-4-goo"),
+            Some(&preset("elegoo-saturn-4", ".goo")),
         );
     }
 
     #[test]
-    fn the_containers_of_one_machine_resolve_to_the_same_id() {
+    fn the_presets_of_one_machine_share_its_id_and_differ_in_container() {
         let mut index = PresetIndex::default();
-        index.insert("elegoo-mars-3-ctb", printer("elegoo-mars-3"));
-        index.insert("elegoo-mars-3-goo", printer("elegoo-mars-3"));
+        index.insert("elegoo-mars-3-ctb", preset("elegoo-mars-3", ".ctb"));
+        index.insert("elegoo-mars-3-goo", preset("elegoo-mars-3", ".goo"));
 
+        let ctb = index.get("elegoo-mars-3-ctb").unwrap();
+        let goo = index.get("elegoo-mars-3-goo").unwrap();
+        assert_eq!(ctb.printer, goo.printer);
         assert_eq!(
-            index.printer("elegoo-mars-3-ctb"),
-            index.printer("elegoo-mars-3-goo"),
+            (ctb.container.as_str(), goo.container.as_str()),
+            (".ctb", ".goo")
         );
     }
 
     #[test]
     fn an_unrecorded_preset_resolves_to_nothing() {
         let mut index = PresetIndex::default();
-        index.insert("elegoo-saturn-4-goo", printer("elegoo-saturn-4"));
+        index.insert("elegoo-saturn-4-goo", preset("elegoo-saturn-4", ".goo"));
 
-        assert_eq!(index.printer("elegoo-saturn-4-ctb"), None);
-        assert_eq!(index.printer(""), None);
+        assert_eq!(index.get("elegoo-saturn-4-ctb"), None);
+        assert_eq!(index.get(""), None);
     }
 }

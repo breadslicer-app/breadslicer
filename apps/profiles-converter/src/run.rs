@@ -129,6 +129,9 @@ mod tests {
                 "liftDistanceMm": 3.0, "liftDistance2Mm": 4.0,
                 "liftSpeedMmMin": 45.0, "liftSpeed2MmMin": 240.0,
                 "retractSpeedMmMin": 240.0, "retractSpeed2MmMin": 60.0,
+                "bottomLiftDistanceMm": 3.0, "bottomLiftDistance2Mm": 4.0,
+                "bottomLiftSpeedMmMin": 40.0, "bottomLiftSpeed2MmMin": 240.0,
+                "bottomRetractSpeedMmMin": 210.0, "bottomRetractSpeed2MmMin": 60.0,
                 "waitTimeBeforeCureSec": 0.0, "waitTimeAfterCureSec": 2.0,
                 "waitTimeAfterLiftSec": 0.0, "projectorPwmPercent": 100
             }
@@ -222,6 +225,9 @@ bottom_layer_count = 5
 lift_distance_mm = 7.0
 lift_speed_mm_min = 45.0
 retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 7.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 210.0
 ",
         );
     }

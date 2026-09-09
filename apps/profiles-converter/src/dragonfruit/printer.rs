@@ -160,12 +160,14 @@ impl std::error::Error for PrinterMapError {
 
 /// The outcome of mapping a printer record: the domain profile, the
 /// record's raw `imageAssetPath` (still relative to the source file, for
-/// the caller to resolve) if any, and the source's own id for the record,
-/// which is what a material's `validForPresets` names.
+/// the caller to resolve) if any, and what a material needs to place its
+/// settings, which is the source's own id for the record and the
+/// container token it names, both as written.
 pub(crate) struct MappedPrinter {
     pub profile: PrinterProfile,
     pub image_ref: Option<String>,
     pub preset_id: String,
+    pub container: String,
 }
 
 /// Convert one DragonFruit printer record into a [`MappedPrinter`].
@@ -241,7 +243,8 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
             }
         })?;
 
-    let output_binding = map_output_format(&raw.display.output_format, raw.display.format_version)
+    let container = raw.display.output_format;
+    let output_binding = map_output_format(&container, raw.display.format_version)
         .ok_or_else(|| PrinterMapError::EmptyOutputFormat { id: raw_id.clone() })?;
     let capabilities = PrinterCapabilities {
         output_formats: NEVec::new(output_binding),
@@ -277,6 +280,7 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
         profile,
         image_ref,
         preset_id: raw_id,
+        container,
     })
 }
 

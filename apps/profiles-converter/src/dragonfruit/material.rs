@@ -8,9 +8,11 @@
 //! The record is deserialised into [`RawMaterial`], a thin mirror of
 //! DragonFruit's schema, then [`map_material`] constructs our domain
 //! type. DragonFruit keeps the exposure and motion settings on the
-//! material itself; we apply them per printer, once for each entry in
-//! `validForPresets`. A record with no presets converts to a template
-//! with an empty per-printer map.
+//! material itself; we write one calibration block per entry in
+//! `validForPresets`. The exposures are the same for every machine, the
+//! motion is not: the record states it per output container, and only
+//! there does it state the bottom layers' own. A record with no presets
+//! converts to a template with an empty per-printer map.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -59,6 +61,34 @@ pub(crate) struct RawMaterial {
     lift_speed_mm_min: Option<f64>,
     #[serde(rename = "retractSpeedMmMin", default)]
     retract_speed_mm_min: Option<f64>,
+    #[serde(rename = "localSettingsByOutput", default)]
+    local_settings_by_output: BTreeMap<String, RawOverride>,
+}
+
+/// A DragonFruit per-container settings override, keyed in the record by
+/// the container it applies to.
+///
+/// The record's flat fields carry one number per quantity; these carry
+/// the machine's own split of it, a first stage and a second, with a
+/// second distance of 0 when the machine moves in one go.
+#[derive(Debug, Deserialize)]
+struct RawOverride {
+    #[serde(rename = "liftDistanceMm", default)]
+    lift_distance_mm: Option<f64>,
+    #[serde(rename = "liftDistance2Mm", default)]
+    lift_distance_2_mm: Option<f64>,
+    #[serde(rename = "liftSpeedMmMin", default)]
+    lift_speed_mm_min: Option<f64>,
+    #[serde(rename = "retractSpeedMmMin", default)]
+    retract_speed_mm_min: Option<f64>,
+    #[serde(rename = "bottomLiftDistanceMm", default)]
+    bottom_lift_distance_mm: Option<f64>,
+    #[serde(rename = "bottomLiftDistance2Mm", default)]
+    bottom_lift_distance_2_mm: Option<f64>,
+    #[serde(rename = "bottomLiftSpeedMmMin", default)]
+    bottom_lift_speed_mm_min: Option<f64>,
+    #[serde(rename = "bottomRetractSpeedMmMin", default)]
+    bottom_retract_speed_mm_min: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,7 +196,7 @@ pub(crate) fn map_material(
         id: raw.template_id.clone(),
         source,
     })?;
-    let raw_id = raw.template_id;
+    let raw_id = raw.template_id.clone();
 
     let brand = non_empty(&raw.brand, &raw_id, "brand")?;
     let name = non_empty(&raw.name, &raw_id, "name")?;
@@ -177,7 +207,7 @@ pub(crate) fn map_material(
         target_layer_height_mm: opt_mm(raw.layer_height_mm, &raw_id, "layerHeightMm")?,
     };
 
-    let scale_compensation_pct = match raw.scale_compensation_pct {
+    let scale_compensation_pct = match &raw.scale_compensation_pct {
         Some(scale) => Some(map_scale(scale, &raw_id)?),
         None => None,
     };
@@ -192,9 +222,11 @@ pub(crate) fn map_material(
     };
 
     // DragonFruit carries the exposure and motion settings on the
-    // material; we apply the same block to every printer it is valid
-    // for. bottom_layer_count is kept both here and in the defaults.
-    let per_printer_settings = MaterialPerPrinter {
+    // material rather than the printer. The exposures are the same
+    // whatever the machine; the motion is not, so it is resolved per
+    // preset below. bottom_layer_count is kept both here and in the
+    // defaults.
+    let shared = MaterialPerPrinter {
         normal_exposure_sec: opt_sec(raw.normal_exposure_sec, &raw_id, "normalExposureSec")?,
         bottom_exposure_sec: opt_sec(raw.bottom_exposure_sec, &raw_id, "bottomExposureSec")?,
         bottom_layer_count: raw.bottom_layer_count,
@@ -204,9 +236,9 @@ pub(crate) fn map_material(
         bottom_wait_before_cure_sec: None,
         bottom_wait_after_cure_sec: None,
         bottom_wait_after_lift_sec: None,
-        lift_distance_mm: opt_mm(raw.lift_distance_mm, &raw_id, "liftDistanceMm")?,
-        lift_speed_mm_min: opt_speed(raw.lift_speed_mm_min, &raw_id, "liftSpeedMmMin")?,
-        retract_speed_mm_min: opt_speed(raw.retract_speed_mm_min, &raw_id, "retractSpeedMmMin")?,
+        lift_distance_mm: None,
+        lift_speed_mm_min: None,
+        retract_speed_mm_min: None,
         bottom_lift_distance_mm: None,
         bottom_lift_speed_mm_min: None,
         bottom_retract_speed_mm_min: None,
@@ -218,16 +250,20 @@ pub(crate) fn map_material(
 
     let mut per_printer = BTreeMap::new();
     for preset in &raw.valid_for_presets {
-        let printer_id =
-            presets
-                .printer(preset)
-                .ok_or_else(|| MaterialMapError::UnknownPreset {
-                    id: raw_id.clone(),
-                    preset: preset.clone(),
-                })?;
+        let entry = presets
+            .get(preset)
+            .ok_or_else(|| MaterialMapError::UnknownPreset {
+                id: raw_id.clone(),
+                preset: preset.clone(),
+            })?;
+        let motion = Motion::of(
+            &raw,
+            raw.local_settings_by_output.get(&entry.container),
+            &raw_id,
+        )?;
         per_printer.insert(
-            CalibrationTarget::from(printer_id.clone()),
-            per_printer_settings,
+            CalibrationTarget::from(entry.printer.clone()),
+            motion.into_block(shared),
         );
     }
 
@@ -246,6 +282,93 @@ pub(crate) fn map_material(
         physical: MaterialPhysical::default(),
         per_printer,
     })
+}
+
+/// How the platform moves over a layer, for one machine.
+///
+/// The record states this twice: once flat at its top level, and once
+/// per container under `localSettingsByOutput`, where the bottom layers
+/// get their own set. The container's is the one a machine follows.
+struct Motion {
+    lift_distance_mm: Option<PositiveFiniteMm>,
+    lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    bottom_lift_distance_mm: Option<PositiveFiniteMm>,
+    bottom_lift_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+    bottom_retract_speed_mm_min: Option<PositiveFiniteMmPerMin>,
+}
+
+impl Motion {
+    /// Read the motion for the container `over` applies to, falling back
+    /// to the record's flat fields when the record states none for it.
+    ///
+    /// A distance here is the whole rise. The source splits it into the
+    /// slow peel and the fast remainder, which add up: its own flat
+    /// `liftDistanceMm` equals the sum of the 2, and a machine that moves
+    /// in one go writes a second distance of 0.
+    fn of(
+        raw: &RawMaterial,
+        over: Option<&RawOverride>,
+        id: &str,
+    ) -> Result<Self, MaterialMapError> {
+        let Some(over) = over else {
+            return Ok(Self {
+                lift_distance_mm: opt_mm(raw.lift_distance_mm, id, "liftDistanceMm")?,
+                lift_speed_mm_min: opt_speed(raw.lift_speed_mm_min, id, "liftSpeedMmMin")?,
+                retract_speed_mm_min: opt_speed(raw.retract_speed_mm_min, id, "retractSpeedMmMin")?,
+                bottom_lift_distance_mm: None,
+                bottom_lift_speed_mm_min: None,
+                bottom_retract_speed_mm_min: None,
+            });
+        };
+        Ok(Self {
+            lift_distance_mm: opt_mm(
+                total(over.lift_distance_mm, over.lift_distance_2_mm),
+                id,
+                "liftDistanceMm",
+            )?,
+            lift_speed_mm_min: opt_speed(over.lift_speed_mm_min, id, "liftSpeedMmMin")?,
+            retract_speed_mm_min: opt_speed(over.retract_speed_mm_min, id, "retractSpeedMmMin")?,
+            bottom_lift_distance_mm: opt_mm(
+                total(over.bottom_lift_distance_mm, over.bottom_lift_distance_2_mm),
+                id,
+                "bottomLiftDistanceMm",
+            )?,
+            bottom_lift_speed_mm_min: opt_speed(
+                over.bottom_lift_speed_mm_min,
+                id,
+                "bottomLiftSpeedMmMin",
+            )?,
+            bottom_retract_speed_mm_min: opt_speed(
+                over.bottom_retract_speed_mm_min,
+                id,
+                "bottomRetractSpeedMmMin",
+            )?,
+        })
+    }
+
+    /// Put this motion into `block`, which carries everything a machine
+    /// does not change.
+    fn into_block(self, block: MaterialPerPrinter) -> MaterialPerPrinter {
+        MaterialPerPrinter {
+            lift_distance_mm: self.lift_distance_mm,
+            lift_speed_mm_min: self.lift_speed_mm_min,
+            retract_speed_mm_min: self.retract_speed_mm_min,
+            bottom_lift_distance_mm: self.bottom_lift_distance_mm,
+            bottom_lift_speed_mm_min: self.bottom_lift_speed_mm_min,
+            bottom_retract_speed_mm_min: self.bottom_retract_speed_mm_min,
+            ..block
+        }
+    }
+}
+
+/// Add a quantity's 2 stages, treating an absent stage as 0 and an
+/// absent pair as no value at all.
+fn total(first: Option<f64>, second: Option<f64>) -> Option<f64> {
+    match (first, second) {
+        (None, None) => None,
+        (first, second) => Some(first.unwrap_or_default() + second.unwrap_or_default()),
+    }
 }
 
 /// Build a non-empty string for `field`, or report it empty.
@@ -312,7 +435,7 @@ fn opt_speed(
 }
 
 /// Map the three scale-compensation axes.
-fn map_scale(raw: RawScaleCompensation, id: &str) -> Result<ScaleCompensation, MaterialMapError> {
+fn map_scale(raw: &RawScaleCompensation, id: &str) -> Result<ScaleCompensation, MaterialMapError> {
     let axis = |value: f64, axis: &'static str| {
         ScaleCompensationPercent::new(value).map_err(|source| MaterialMapError::ScaleCompensation {
             id: id.to_owned(),
@@ -332,15 +455,24 @@ mod tests {
     use sc_print_primitives::PrinterId;
 
     use super::*;
+    use crate::dragonfruit::preset_index::Preset;
 
     /// The machines the fixtures' presets name, as a run's printer
     /// records describe them: one preset per container it writes,
     /// resolving to the machine alone.
     fn presets() -> PresetIndex {
         let mut presets = PresetIndex::default();
-        presets.insert("printer-a-goo", PrinterId::new("printer-a").unwrap());
-        presets.insert("printer-b-ctb", PrinterId::new("printer-b").unwrap());
+        presets.insert("printer-a-goo", preset("printer-a", ".goo"));
+        presets.insert("printer-b-ctb", preset("printer-b", ".ctb"));
+        presets.insert("printer-c-pwmx", preset("printer-c", ".pwmx"));
         presets
+    }
+
+    fn preset(id: &str, container: &str) -> Preset {
+        Preset {
+            printer: PrinterId::new(id).unwrap(),
+            container: container.to_owned(),
+        }
     }
 
     fn map(json: &str) -> Result<MaterialProfile, MaterialMapError> {
@@ -426,6 +558,79 @@ mod tests {
             entry.retract_speed_mm_min,
             Some(PositiveFiniteMmPerMin::new(150.0).unwrap()),
         );
+    }
+
+    /// A record as the source ships one: the flat fields carry the whole
+    /// rise, and each container it is calibrated for carries the split
+    /// the machine follows, plus the bottom layers' own set. `.ctb` here
+    /// is a machine that moves in one go, written as a second stage of 0.
+    const WITH_OVERRIDES: &str = r#"{
+        "templateId": "split-405", "profileVersion": 1,
+        "name": "Split", "brand": "TestResin", "resinFamily": "standard",
+        "validForPresets": ["printer-a-goo", "printer-b-ctb", "printer-c-pwmx"],
+        "layerHeightMm": 0.05, "normalExposureSec": 2.0, "bottomExposureSec": 25.0,
+        "bottomLayerCount": 5,
+        "liftDistanceMm": 7.0, "liftSpeedMmMin": 45.0, "retractSpeedMmMin": 240.0,
+        "localSettingsByOutput": {
+            ".goo": {
+                "liftDistanceMm": 3.0, "liftDistance2Mm": 4.0,
+                "liftSpeedMmMin": 45.0, "liftSpeed2MmMin": 240.0,
+                "retractSpeedMmMin": 240.0, "retractSpeed2MmMin": 60.0,
+                "bottomLiftDistanceMm": 3.0, "bottomLiftDistance2Mm": 4.0,
+                "bottomLiftSpeedMmMin": 40.0, "bottomRetractSpeedMmMin": 210.0
+            },
+            ".ctb": {
+                "liftDistanceMm": 8.0, "liftDistance2Mm": 0.0,
+                "liftSpeedMmMin": 50.0, "retractSpeedMmMin": 200.0,
+                "bottomLiftDistanceMm": 8.0, "bottomLiftDistance2Mm": 0.0,
+                "bottomLiftSpeedMmMin": 35.0, "bottomRetractSpeedMmMin": 180.0
+            }
+        }
+    }"#;
+
+    fn block_of(profile: &MaterialProfile, id: &str) -> MaterialPerPrinter {
+        profile.per_printer[&CalibrationTarget::from(PrinterId::new(id).unwrap())]
+    }
+
+    #[test]
+    fn each_machine_takes_the_block_of_the_container_it_writes() {
+        let profile = map(WITH_OVERRIDES).unwrap();
+
+        let goo = block_of(&profile, "printer-a");
+        assert_eq!(goo.lift_distance_mm.map(|v| v.value()), Some(7.0));
+        assert_eq!(goo.lift_speed_mm_min.map(|v| v.value()), Some(45.0));
+        assert_eq!(goo.retract_speed_mm_min.map(|v| v.value()), Some(240.0));
+        assert_eq!(goo.bottom_lift_distance_mm.map(|v| v.value()), Some(7.0));
+        assert_eq!(goo.bottom_lift_speed_mm_min.map(|v| v.value()), Some(40.0));
+        assert_eq!(
+            goo.bottom_retract_speed_mm_min.map(|v| v.value()),
+            Some(210.0)
+        );
+
+        let ctb = block_of(&profile, "printer-b");
+        assert_eq!(ctb.lift_distance_mm.map(|v| v.value()), Some(8.0));
+        assert_eq!(ctb.lift_speed_mm_min.map(|v| v.value()), Some(50.0));
+        assert_eq!(ctb.retract_speed_mm_min.map(|v| v.value()), Some(200.0));
+        assert_eq!(ctb.bottom_lift_distance_mm.map(|v| v.value()), Some(8.0));
+        assert_eq!(ctb.bottom_lift_speed_mm_min.map(|v| v.value()), Some(35.0));
+        assert_eq!(
+            ctb.bottom_retract_speed_mm_min.map(|v| v.value()),
+            Some(180.0)
+        );
+    }
+
+    #[test]
+    fn a_container_the_record_says_nothing_about_falls_back_to_the_flat_fields() {
+        let profile = map(WITH_OVERRIDES).unwrap();
+
+        let pwmx = block_of(&profile, "printer-c");
+        assert_eq!(pwmx.lift_distance_mm.map(|v| v.value()), Some(7.0));
+        assert_eq!(pwmx.lift_speed_mm_min.map(|v| v.value()), Some(45.0));
+        assert_eq!(pwmx.retract_speed_mm_min.map(|v| v.value()), Some(240.0));
+        // The flat fields state no bottom motion at all.
+        assert_eq!(pwmx.bottom_lift_distance_mm, None);
+        assert_eq!(pwmx.bottom_lift_speed_mm_min, None);
+        assert_eq!(pwmx.bottom_retract_speed_mm_min, None);
     }
 
     #[test]
