@@ -177,14 +177,94 @@ impl ProfileReader for DragonFruitReader {
     type Error = DragonFruitError;
 
     fn read(&self, inputs: &[&Path]) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
-        let mut profiles = Vec::new();
-        for input in inputs {
-            for file in json_files(input)? {
-                read_file(&file, &mut profiles)?;
-            }
-        }
+        let collected = collect_records(inputs)?;
+        let mut profiles = map_printers(collected.printers)?;
+        profiles.extend(map_materials(collected.materials)?);
         merge_records(profiles)
     }
+}
+
+/// One record as read, with where it came from so a failure to map it
+/// can say which record it was.
+struct CollectedRecord<T> {
+    record: T,
+    path: PathBuf,
+    index: usize,
+}
+
+/// Every record the inputs hold, split by kind.
+#[derive(Default)]
+struct Collected {
+    printers: Vec<CollectedRecord<RawPrinter>>,
+    materials: Vec<CollectedRecord<RawMaterial>>,
+}
+
+/// Read every input path into its records, a path being a file or a
+/// directory of `.json` files.
+fn collect_records(inputs: &[&Path]) -> Result<Collected, DragonFruitError> {
+    let mut collected = Collected::default();
+    for input in inputs {
+        for file in json_files(input)? {
+            let from_file = collect_file(&file)?;
+            collected.printers.extend(from_file.printers);
+            collected.materials.extend(from_file.materials);
+        }
+    }
+    Ok(collected)
+}
+
+/// Map every collected printer record, resolving each one's image
+/// reference against the directory of the file it came from.
+fn map_printers(
+    records: Vec<CollectedRecord<RawPrinter>>,
+) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+    let mut profiles = Vec::with_capacity(records.len());
+    for CollectedRecord {
+        record,
+        path,
+        index,
+    } in records
+    {
+        let mapped = map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
+            path: path.clone(),
+            index,
+            source,
+        })?;
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        let image_source = mapped
+            .image_ref
+            .as_deref()
+            .map(|reference| resolve_image(base, reference));
+        profiles.push(ConvertedProfile::Printer(ConvertedPrinter {
+            profile: mapped.profile,
+            image_source,
+        }));
+    }
+    Ok(profiles)
+}
+
+/// Map every collected material record.
+fn map_materials(
+    records: Vec<CollectedRecord<RawMaterial>>,
+) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
+    records
+        .into_iter()
+        .map(
+            |CollectedRecord {
+                 record,
+                 path,
+                 index,
+             }| {
+                map_material(record)
+                    .map(ConvertedProfile::Material)
+                    .map_err(|source| DragonFruitError::MapMaterial {
+                        path,
+                        index,
+                        source,
+                    })
+            },
+        )
+        .collect()
 }
 
 /// Fold records that describe the same thing into one profile.
@@ -365,13 +445,13 @@ impl RecordKind {
     }
 }
 
-/// Parse one DragonFruit file (an array of records) and append the
-/// profiles its records convert to. An empty array contributes nothing;
-/// a record that announces neither kind is an error naming its position.
+/// Parse one DragonFruit file (an array of records) into its typed
+/// records. An empty array contributes nothing; a record that announces
+/// neither kind is an error naming its position.
 ///
 /// Every record is classified on its own, so one file may hold both
 /// kinds.
-fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), DragonFruitError> {
+fn collect_file(path: &Path) -> Result<Collected, DragonFruitError> {
     let bytes = fs::read(path).map_err(|source| DragonFruitError::ReadFile {
         path: path.to_owned(),
         source,
@@ -381,36 +461,19 @@ fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), Dr
             path: path.to_owned(),
             source,
         })?;
-    let base = path.parent().unwrap_or_else(|| Path::new(""));
+    let mut collected = Collected::default();
     for (index, value) in values.into_iter().enumerate() {
         match RecordKind::of(&value) {
-            Some(kind @ RecordKind::Printer) => {
-                let record: RawPrinter = parse_record(value, path, index, kind)?;
-                let mapped =
-                    map_printer(record).map_err(|source| DragonFruitError::MapPrinter {
-                        path: path.to_owned(),
-                        index,
-                        source,
-                    })?;
-                let image_source = mapped
-                    .image_ref
-                    .as_deref()
-                    .map(|reference| resolve_image(base, reference));
-                profiles.push(ConvertedProfile::Printer(ConvertedPrinter {
-                    profile: mapped.profile,
-                    image_source,
-                }));
-            }
-            Some(kind @ RecordKind::Material) => {
-                let record: RawMaterial = parse_record(value, path, index, kind)?;
-                let profile =
-                    map_material(record).map_err(|source| DragonFruitError::MapMaterial {
-                        path: path.to_owned(),
-                        index,
-                        source,
-                    })?;
-                profiles.push(ConvertedProfile::Material(profile));
-            }
+            Some(kind @ RecordKind::Printer) => collected.printers.push(CollectedRecord {
+                record: parse_record(value, path, index, kind)?,
+                path: path.to_owned(),
+                index,
+            }),
+            Some(kind @ RecordKind::Material) => collected.materials.push(CollectedRecord {
+                record: parse_record(value, path, index, kind)?,
+                path: path.to_owned(),
+                index,
+            }),
             None => {
                 return Err(DragonFruitError::UnrecognisedRecord {
                     path: path.to_owned(),
@@ -419,7 +482,7 @@ fn read_file(path: &Path, profiles: &mut Vec<ConvertedProfile>) -> Result<(), Dr
             }
         }
     }
-    Ok(())
+    Ok(collected)
 }
 
 /// Deserialise one classified record, tagging a failure with the file,
@@ -552,6 +615,36 @@ mod tests {
             DragonFruitError::MapPrinter { index, .. } => assert_eq!(index, 1),
             other => panic!("expected MapPrinter, got {other}"),
         }
+    }
+
+    #[test]
+    fn every_printer_is_mapped_before_any_material() {
+        let dir = tempdir().unwrap();
+        // Both records are unmappable, and the files are walked in name
+        // order, so whichever error surfaces names the phase that ran
+        // first.
+        fs::write(
+            dir.path().join("a-materials.json"),
+            r#"[{
+                "templateId": "brandless", "profileVersion": 1,
+                "name": "Brandless", "brand": "", "resinFamily": "standard"
+            }]"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b-printers.json"),
+            r#"[{
+                "presetId": "nameless", "profileVersion": 1,
+                "manufacturer": "", "family": "Series", "name": "nameless",
+                "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+                "pixelSize": { "x": 100.0, "y": 100.0 },
+                "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+            }]"#,
+        )
+        .unwrap();
+
+        let err = DragonFruitReader::new().read(&[dir.path()]).unwrap_err();
+        assert!(matches!(err, DragonFruitError::MapPrinter { .. }), "{err}");
     }
 
     /// The same machine as the source ships it for 2 containers: one
