@@ -32,7 +32,7 @@ use crate::reader::{ProfileReader, SourceReading};
 use crate::source_note::SourceNote;
 use material::{MaterialMapError, RawMaterial, map_material};
 use preset_index::{Preset, PresetIndex};
-use printer::{PrinterMapError, RawPrinter, map_printer};
+use printer::{Classification, MappedPrinter, PrinterMapError, RawPrinter, map_printer};
 
 /// Reads DragonFruit plugin JSON into our domain profiles.
 #[derive(Clone, Debug, Default)]
@@ -271,18 +271,19 @@ fn map_printers(
             source,
         })?;
         let printer = mapped.profile.identity.id.clone();
-        let splits_travel = match library {
-            None => false,
-            Some(library) => library.splits_travel(&printer).unwrap_or_else(|| {
-                let note = SourceNote::MachineOutsideTheLibrary {
-                    printer: printer.clone(),
-                };
-                if !notes.contains(&note) {
-                    notes.push(note);
-                }
-                false
-            }),
+        let mut note = |note: SourceNote| {
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
         };
+        let ours = library.and_then(|library| library.splits_travel(&printer));
+        if library.is_some() && ours.is_none() {
+            note(SourceNote::MachineOutsideTheLibrary {
+                printer: printer.clone(),
+            });
+        }
+        report_classification(&mapped, &printer, ours, &mut note);
+        let splits_travel = ours.unwrap_or(false);
         presets.insert(
             &mapped.preset_id,
             Preset {
@@ -306,6 +307,48 @@ fn map_printers(
         presets,
         notes,
     })
+}
+
+/// Say what the source claims about a machine that our own profile does
+/// not carry: how it separates a layer, and how deep its panel is.
+///
+/// `ours` is what our library says about the travel, absent when it does
+/// not hold the machine, in which case there is nothing to disagree
+/// with.
+fn report_classification(
+    mapped: &MappedPrinter,
+    printer: &PrinterId,
+    ours: Option<bool>,
+    note: &mut impl FnMut(SourceNote),
+) {
+    match &mapped.classification {
+        Some(Classification::TiltingVat) => note(SourceNote::TiltingVat {
+            printer: printer.clone(),
+        }),
+        Some(Classification::Unrecognised(classification)) => {
+            note(SourceNote::UnrecognisedClassification {
+                printer: printer.clone(),
+                classification: classification.clone(),
+            });
+        }
+        Some(classification) => {
+            if let Some(theirs) = classification.splits_travel()
+                && ours.is_some_and(|ours| ours != theirs)
+            {
+                note(SourceNote::TravelSplitDisagrees {
+                    printer: printer.clone(),
+                    source_splits: theirs,
+                });
+            }
+        }
+        None => {}
+    }
+    if let Some(bits) = mapped.panel_bits {
+        note(SourceNote::PanelBitDepth {
+            printer: printer.clone(),
+            bits,
+        });
+    }
 }
 
 /// Map every collected material record against the machines the run's
@@ -970,6 +1013,96 @@ mod tests {
             }
             other => panic!("expected one printer, got {other:?}"),
         }
+    }
+
+    /// A record carrying the 2 keys we read only to report: the
+    /// classification of how the machine separates a layer, and the
+    /// panel's bit depth.
+    fn classified_record(name: &str, mode: &str, bit_depth: &str) -> String {
+        format!(
+            r#"[{{
+                "presetId": "{name}-goo", "profileVersion": 1,
+                "manufacturer": "TestCorp", "family": "Series", "name": "{name}",
+                "antiAliasing": true,
+                {bit_depth}
+                "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                "display": {{
+                    "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo",
+                    "settingsMode": "{mode}"
+                }}
+            }}]"#
+        )
+    }
+
+    fn read_one(dir: &Path, json: &str) -> SourceReading {
+        let file = dir.join("printers.json");
+        fs::write(&file, json).unwrap();
+        DragonFruitReader::new().read(&[file.as_path()]).unwrap()
+    }
+
+    /// We have no way to describe a vat that tilts, so the profile
+    /// written for one describes a platform that lifts. The run says so.
+    #[test]
+    fn a_tilting_vat_machine_converts_and_is_reported() {
+        let dir = tempdir().unwrap();
+
+        let reading = read_one(dir.path(), &classified_record("tilter", "tilting", ""));
+
+        assert_eq!(ids(&reading.profiles), vec!["testcorp-tilter"]);
+        assert!(
+            reading.notes.contains(&SourceNote::TiltingVat {
+                printer: PrinterId::new("testcorp-tilter").unwrap(),
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    #[test]
+    fn a_classification_this_converter_does_not_know_is_reported_verbatim() {
+        let dir = tempdir().unwrap();
+
+        let reading = read_one(dir.path(), &classified_record("future", "peristaltic", ""));
+
+        assert!(
+            reading
+                .notes
+                .contains(&SourceNote::UnrecognisedClassification {
+                    printer: PrinterId::new("testcorp-future").unwrap(),
+                    classification: "peristaltic".to_owned(),
+                }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    #[test]
+    fn a_stated_panel_bit_depth_is_reported() {
+        let dir = tempdir().unwrap();
+        let json = classified_record("shallow", "twostage", r#""bitDepth": { "bits": 3 },"#);
+
+        let reading = read_one(dir.path(), &json);
+
+        assert!(
+            reading.notes.contains(&SourceNote::PanelBitDepth {
+                printer: PrinterId::new("testcorp-shallow").unwrap(),
+                bits: 3,
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    /// Without a library there is nothing to disagree with, so the only
+    /// note is the one saying the library is missing.
+    #[test]
+    fn a_classification_alone_raises_no_disagreement() {
+        let dir = tempdir().unwrap();
+
+        let reading = read_one(dir.path(), &classified_record("plain", "twostage", ""));
+
+        assert_eq!(reading.notes, vec![SourceNote::NoPrinterLibrary]);
     }
 
     fn material_for(template_id: &str, name: &str, preset: &str, normal_exposure: f64) -> String {

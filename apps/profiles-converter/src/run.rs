@@ -370,6 +370,62 @@ bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retr
         );
     }
 
+    /// Write the printer library a run would produce from `json`, with
+    /// `two_stage_lift` set as a curator would set it.
+    fn library_declaring(dir: &Path, json: &str, splits: bool) -> PathBuf {
+        let printers = dir.join("declared-printers.json");
+        fs::write(&printers, json).unwrap();
+        let library = dir.join("declared-library");
+        run(&request(vec![printers], library.clone(), false)).unwrap();
+        if splits {
+            let path = library.join("printers").join("testcorp-e2e.toml");
+            let declared = fs::read_to_string(&path)
+                .unwrap()
+                .replace("two_stage_lift = false", "two_stage_lift = true");
+            fs::write(&path, declared).unwrap();
+        }
+        library
+    }
+
+    #[test]
+    fn a_source_that_splits_the_travel_of_a_machine_we_do_not_is_reported() {
+        let dir = tempdir().unwrap();
+        let library = library_declaring(dir.path(), PRINTER_JSON, false);
+        let printers = dir.path().join("printers.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_consulting(vec![printers], out, library)).unwrap();
+
+        assert_eq!(
+            report.notes,
+            vec![SourceNote::TravelSplitDisagrees {
+                printer: sc_print_primitives::PrinterId::new("testcorp-e2e").unwrap(),
+                source_splits: true,
+            }],
+        );
+    }
+
+    #[test]
+    fn a_machine_we_split_that_the_source_moves_in_one_go_is_reported() {
+        let dir = tempdir().unwrap();
+        let single = PRINTER_JSON.replace("twostage", "simple");
+        let library = library_declaring(dir.path(), &single, true);
+        let printers = dir.path().join("printers.json");
+        fs::write(&printers, &single).unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_consulting(vec![printers], out, library)).unwrap();
+
+        assert_eq!(
+            report.notes,
+            vec![SourceNote::TravelSplitDisagrees {
+                printer: sc_print_primitives::PrinterId::new("testcorp-e2e").unwrap(),
+                source_splits: false,
+            }],
+        );
+    }
+
     #[test]
     fn reports_a_read_error_from_a_broken_input() {
         let dir = tempdir().unwrap();

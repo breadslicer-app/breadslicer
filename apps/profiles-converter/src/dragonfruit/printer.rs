@@ -47,11 +47,20 @@ pub(crate) struct RawPrinter {
     has_camera: bool,
     #[serde(rename = "networkSupport", default)]
     network_support: Option<String>,
+    #[serde(rename = "bitDepth", default)]
+    bit_depth: Option<RawBitDepth>,
     #[serde(rename = "buildVolumeMm")]
     build_volume_mm: RawBuildVolume,
     #[serde(rename = "pixelSize", default)]
     pixel_size: Option<RawPixelSize>,
     display: RawDisplay,
+}
+
+/// How many bits a machine's panel drives. The source states it for a
+/// few machines only, alongside prose we do not read.
+#[derive(Debug, Deserialize)]
+struct RawBitDepth {
+    bits: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,10 +88,51 @@ struct RawDisplay {
     output_format: String,
     #[serde(rename = "formatVersion", default)]
     format_version: Option<String>,
+    #[serde(rename = "settingsMode", default)]
+    settings_mode: Option<String>,
     #[serde(rename = "mirrorX", default)]
     mirror_x: bool,
     #[serde(rename = "mirrorY", default)]
     mirror_y: bool,
+}
+
+/// The source's word on how a machine separates a layer.
+///
+/// It is a statement about the settings the source shows for the
+/// machine, not a measurement, so it is reported and never written into
+/// a capability: what a machine can do is ours to say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Classification {
+    /// The platform moves in one go.
+    Single,
+    /// The platform's travel is split into 2 stages.
+    Split,
+    /// The vat tilts instead of the platform peeling off it.
+    TiltingVat,
+    /// A word this converter does not know, kept as the source wrote it
+    /// so a run can report it rather than fail.
+    Unrecognised(String),
+}
+
+impl Classification {
+    fn of(raw: &str) -> Self {
+        match raw {
+            "simple" => Self::Single,
+            "twostage" => Self::Split,
+            "tilting" => Self::TiltingVat,
+            other => Self::Unrecognised(other.to_owned()),
+        }
+    }
+
+    /// Whether the platform crosses its travel in 2 stages, or `None`
+    /// for a classification that does not answer the question.
+    pub(crate) fn splits_travel(&self) -> Option<bool> {
+        match self {
+            Self::Single => Some(false),
+            Self::Split => Some(true),
+            Self::TiltingVat | Self::Unrecognised(_) => None,
+        }
+    }
 }
 
 /// Everything that can go wrong mapping one DragonFruit printer record.
@@ -162,12 +212,19 @@ impl std::error::Error for PrinterMapError {
 /// record's raw `imageAssetPath` (still relative to the source file, for
 /// the caller to resolve) if any, and what a material needs to place its
 /// settings, which is the source's own id for the record and the
-/// container token it names, both as written.
+/// container token it names, both as written. The last 2 fields are what
+/// the source claims about the machine that no profile of ours records.
 pub(crate) struct MappedPrinter {
     pub profile: PrinterProfile,
     pub image_ref: Option<String>,
     pub preset_id: String,
     pub container: String,
+    /// What the source says about how the machine separates a layer,
+    /// which the profile deliberately does not carry.
+    pub classification: Option<Classification>,
+    /// How many bits the source says the panel drives, which no profile
+    /// of ours records.
+    pub panel_bits: Option<u32>,
 }
 
 /// Convert one DragonFruit printer record into a [`MappedPrinter`].
@@ -281,6 +338,8 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
         image_ref,
         preset_id: raw_id,
         container,
+        classification: raw.display.settings_mode.as_deref().map(Classification::of),
+        panel_bits: raw.bit_depth.map(|depth| depth.bits),
     })
 }
 
@@ -395,6 +454,99 @@ mod tests {
         let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
         assert_eq!(mapped.image_ref.as_deref(), Some("./assets/with-image.png"));
         assert_eq!(mapped.profile.identity.image_asset_path, None);
+    }
+
+    /// The source classifies the settings surface it shows for a
+    /// machine, which is its word on how the platform separates a layer.
+    #[test]
+    fn the_classification_the_source_gives_is_read_and_not_written() {
+        let record = |mode: &str| {
+            format!(
+                r#"{{
+                    "presetId": "classified", "profileVersion": 1,
+                    "manufacturer": "TestCorp", "family": "Series", "name": "Classified",
+                    "antiAliasing": true,
+                    "buildVolumeMm": {{ "width": 100.0, "depth": 100.0, "height": 40.0 }},
+                    "pixelSize": {{ "x": 100.0, "y": 100.0 }},
+                    "display": {{
+                        "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo",
+                        "settingsMode": "{mode}"
+                    }}
+                }}"#
+            )
+        };
+        let mapped =
+            |mode: &str| map_printer(serde_json::from_str(&record(mode)).unwrap()).unwrap();
+
+        assert_eq!(
+            mapped("simple").classification,
+            Some(Classification::Single)
+        );
+        assert_eq!(
+            mapped("twostage").classification,
+            Some(Classification::Split)
+        );
+        assert_eq!(
+            mapped("tilting").classification,
+            Some(Classification::TiltingVat),
+        );
+        // Whatever the source says, the capability stays a curator's to
+        // set from the manufacturer's own material.
+        assert!(!mapped("twostage").profile.capabilities.two_stage_lift);
+    }
+
+    #[test]
+    fn a_classification_this_converter_does_not_know_survives_as_the_word_it_is() {
+        let json = r#"{
+            "presetId": "future", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Future",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": {
+                "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo",
+                "settingsMode": "peristaltic"
+            }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+
+        assert_eq!(
+            mapped.classification,
+            Some(Classification::Unrecognised("peristaltic".to_owned())),
+        );
+    }
+
+    #[test]
+    fn a_record_that_states_no_classification_gives_none() {
+        let json = r#"{
+            "presetId": "plain", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Plain",
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+
+        assert_eq!(mapped.classification, None);
+        assert_eq!(mapped.panel_bits, None);
+    }
+
+    /// The panel's bit depth is a record's own key, next to the
+    /// anti-aliasing flag our grayscale capability comes from.
+    #[test]
+    fn the_panels_bit_depth_is_read_and_the_grayscale_flag_still_comes_from_anti_aliasing() {
+        let json = r#"{
+            "presetId": "shallow", "profileVersion": 1,
+            "manufacturer": "TestCorp", "family": "Series", "name": "Shallow",
+            "antiAliasing": true,
+            "bitDepth": { "bits": 3, "description": "3-bit color depth, suboptimal for grayscale" },
+            "buildVolumeMm": { "width": 100.0, "depth": 100.0, "height": 40.0 },
+            "pixelSize": { "x": 100.0, "y": 100.0 },
+            "display": { "resolutionX": 1000, "resolutionY": 1000, "outputFormat": ".goo" }
+        }"#;
+        let mapped = map_printer(serde_json::from_str(json).unwrap()).unwrap();
+
+        assert_eq!(mapped.panel_bits, Some(3));
+        assert!(mapped.profile.capabilities.supports_grayscale);
     }
 
     #[test]
