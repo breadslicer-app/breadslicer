@@ -42,6 +42,13 @@ pub enum SourceNote {
     /// The source states how many bits a machine's panel drives, which
     /// no profile of ours records.
     PanelBitDepth { printer: PrinterId, bits: u32 },
+    /// A resin's records spell its name 2 ways. They are one resin, so
+    /// one spelling reaches the profile.
+    NameSpelledDifferently {
+        material: MaterialId,
+        kept: String,
+        passed_over: String,
+    },
     /// A resin's records give one machine a different value from
     /// another for a field a profile carries once, so the profile
     /// carries none of them.
@@ -95,6 +102,15 @@ impl fmt::Display for SourceNote {
                 f,
                 "the source states a {bits}-bit panel for {:?}, which our profiles do not record: their grayscale support comes from the anti-aliasing flag alone",
                 printer.as_str(),
+            ),
+            Self::NameSpelledDifferently {
+                material,
+                kept,
+                passed_over,
+            } => write!(
+                f,
+                "the source spells {:?} both {kept:?} and {passed_over:?}; the profile carries the first",
+                material.as_str(),
             ),
             Self::DefaultVariesByMachine { material, field } => write!(
                 f,
@@ -163,6 +179,21 @@ mod tests {
         }
         .to_string();
         assert!(message.contains("\"peristaltic\""), "{message}");
+    }
+
+    #[test]
+    fn a_second_spelling_note_shows_both_spellings() {
+        let message = SourceNote::NameSpelledDifferently {
+            material: MaterialId::new("sirayatech-blu-clear-v2-emerald-blue").unwrap(),
+            kept: "Blu (Clear V2 / Emerald Blue)".to_owned(),
+            passed_over: "Blu (Clear V2/Emerald Blue)".to_owned(),
+        }
+        .to_string();
+        assert!(
+            message.contains("Blu (Clear V2 / Emerald Blue)"),
+            "{message}"
+        );
+        assert!(message.contains("Blu (Clear V2/Emerald Blue)"), "{message}");
     }
 
     #[test]

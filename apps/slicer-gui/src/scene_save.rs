@@ -737,7 +737,7 @@ mod scene_save_tests {
             let target = dir.path().join("widget.3mf");
 
             let printer = printer_id("elegoo-mars-5");
-            let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
+            let resin = material_id("siraya-tech-craft-high-clear");
 
             let doc = SceneDocument::new();
             // No project data: `selected_printer` stays `None`,
@@ -796,7 +796,7 @@ mod scene_save_tests {
             let target = dir.path().join("widget.3mf");
 
             let printer = printer_id("elegoo-mars-5");
-            let resin = material_id("sirayatech-craft-ultra-clear-saturn4");
+            let resin = material_id("siraya-tech-craft-high-clear");
 
             let doc = SceneDocument::new();
             doc.install_graph(one_object_graph(), source);

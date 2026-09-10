@@ -309,7 +309,7 @@ mod reloaded_slices_tests {
         use sc_sl1cer::geom2d::Point2D;
 
         let printer = PrinterId::new("elegoo-mars-5").expect("valid id");
-        let resin = MaterialId::new("sirayatech-craft-ultra-clear-saturn4").expect("valid id");
+        let resin = MaterialId::new("siraya-tech-craft-high-clear").expect("valid id");
 
         let placement = Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
             [

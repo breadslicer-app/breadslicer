@@ -1,0 +1,34 @@
+[identity]
+id = "siraya-tech-tenacious-flex-black-50um-1"
+brand = "Siraya Tech"
+family = "flexible"
+name = "Tenacious Flex Black- 50um*1"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[defaults.scale_compensation_pct]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[physical]
+
+[per_printer.elegoo-saturn-4-ultra-16k]
+normal_exposure_sec = 3.6
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.0
+wait_after_cure_sec = 1.0
+wait_after_lift_sec = 0.0
+lift_distance_mm = 4.05
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 4.05
+bottom_lift_speed_mm_min = 45.0
+bottom_retract_speed_mm_min = 240.0
+light_pwm = 100.0

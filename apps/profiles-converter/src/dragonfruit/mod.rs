@@ -473,10 +473,27 @@ fn merge_material_into(
     incoming: MaterialProfile,
     note: &mut impl FnMut(SourceNote),
 ) -> Result<(), DragonFruitError> {
-    if existing.identity != incoming.identity || existing.intent != incoming.intent {
+    if existing.intent != incoming.intent {
         return Err(DragonFruitError::ConflictingMaterial {
             id: existing.identity.id.as_str().to_owned(),
             conflict: MaterialConflict::SharedFields,
+        });
+    }
+    if existing.identity != incoming.identity {
+        // 2 records that reach the same id are the same resin, so a
+        // name that differs is a spelling, not a disagreement.
+        let mut spelled_alike = incoming.identity.clone();
+        spelled_alike.name = existing.identity.name.clone();
+        if existing.identity != spelled_alike {
+            return Err(DragonFruitError::ConflictingMaterial {
+                id: existing.identity.id.as_str().to_owned(),
+                conflict: MaterialConflict::SharedFields,
+            });
+        }
+        note(SourceNote::NameSpelledDifferently {
+            material: existing.identity.id.clone(),
+            kept: existing.identity.name.as_str().to_owned(),
+            passed_over: incoming.identity.name.as_str().to_owned(),
         });
     }
     if existing.defaults != incoming.defaults {
@@ -1255,6 +1272,53 @@ mod tests {
             }
             other => panic!("expected 2 printers and one merged material, got {other:?}"),
         }
+    }
+
+    /// One resin, spelled 2 ways by records that agree on everything
+    /// else. The first spelling read is the profile's, and the run says
+    /// what it passed over.
+    #[test]
+    fn one_resin_spelled_2_ways_keeps_the_first_spelling() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        let record = |key: &str, name: &str, preset: &str| {
+            format!(
+                r#"[{{
+                    "templateId": "{key}", "profileVersion": 1,
+                    "name": "{name}", "brand": "TestResin", "resinFamily": "standard",
+                    "validForPresets": ["{preset}"],
+                    "layerHeightMm": 0.05, "normalExposureSec": 2.4,
+                    "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                    "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+                }}]"#
+            )
+        };
+        let spaced = "Blu (Clear V2 / Emerald Blue)";
+        let tight = "Blu (Clear V2/Emerald Blue)";
+        fs::write(
+            dir.path().join("a.json"),
+            record("b-a", spaced, "printer-a"),
+        )
+        .unwrap();
+        fs::write(dir.path().join("b.json"), record("b-b", tight, "printer-b")).unwrap();
+
+        let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match reading.profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.name.as_str(), spaced);
+                assert_eq!(material.per_printer.len(), 2);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+        assert!(
+            reading.notes.contains(&SourceNote::NameSpelledDifferently {
+                material: MaterialId::new("testresin-blu-clear-v2-emerald-blue").unwrap(),
+                kept: spaced.to_owned(),
+                passed_over: tight.to_owned(),
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
     }
 
     /// A number that changes with the machine is not a default. Every
