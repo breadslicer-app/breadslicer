@@ -8,8 +8,9 @@
 use std::fs;
 use std::path::PathBuf;
 
+use sc_print_primitives::MaterialId;
 use sc_print_profiles::{MaterialPhysical, MaterialProfile, load_material_profile_from_path};
-use sc_profiles_converter::material_curation::MaterialCuration;
+use sc_profiles_converter::material_curation::{MaterialCuration, MaterialStatus};
 use sc_profiles_converter::source_note::SourceNote;
 
 /// The material profiles we write ourselves, which name no product and
@@ -22,6 +23,14 @@ const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
     // resin, so the rest of the line's figure would be wrong rather
     // than approximate.
     "siraya-tech-craft-glow-in-dark",
+];
+
+/// The resins the source still publishes that we decline to ship.
+const DISCARDED: [&str; 2] = [
+    // The vendor's discontinued plant-based Easy line, which their
+    // dataset still tunes for 21 machines.
+    "siraya-tech-easy-grey",
+    "siraya-tech-easy-obsidian-black",
 ];
 
 /// The curated figures this converter ships.
@@ -100,6 +109,35 @@ fn every_curated_entry_states_a_figure_and_where_it_came_from() {
         assert!(
             !entry.read_on.is_empty(),
             "{id} does not say when its sheet was read"
+        );
+    }
+}
+
+#[test]
+fn the_resins_we_reject_are_discarded_with_the_reason_recorded() {
+    let curation = curation();
+
+    for id in DISCARDED {
+        let material = MaterialId::new(id).unwrap();
+        let entry = curation
+            .of(&material)
+            .unwrap_or_else(|| panic!("{id} has no entry, so a conversion would write it"));
+
+        assert!(entry.discarded, "{id} is not discarded");
+        assert_eq!(entry.status, MaterialStatus::Discontinued, "{id}");
+        assert!(!entry.source.is_empty(), "{id} names no evidence");
+    }
+}
+
+#[test]
+fn no_profile_we_ship_is_one_the_curation_discards() {
+    let curation = curation();
+
+    for profile in bundled_materials() {
+        assert!(
+            !curation.discards(&profile.identity.id),
+            "{} is both shipped and discarded",
+            profile.identity.id
         );
     }
 }

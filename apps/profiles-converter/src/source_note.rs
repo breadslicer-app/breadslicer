@@ -78,6 +78,12 @@ pub enum SourceNote {
     /// Our curation says nothing about a resin the run wrote, so the
     /// profile carries only what the source states.
     NoCurationForMaterial { material: MaterialId },
+    /// Our curation rejects a resin the source still publishes, so the
+    /// run wrote no profile for it.
+    MaterialDiscarded {
+        material: MaterialId,
+        status: &'static str,
+    },
 }
 
 impl fmt::Display for SourceNote {
@@ -161,6 +167,11 @@ impl fmt::Display for SourceNote {
             Self::NoCurationForMaterial { material } => write!(
                 f,
                 "our curation says nothing about {:?}, so it carries only what its source states",
+                material.as_str(),
+            ),
+            Self::MaterialDiscarded { material, status } => write!(
+                f,
+                "our curation discards {:?} ({status}), so no profile was written for it",
                 material.as_str(),
             ),
         }
@@ -266,6 +277,18 @@ mod tests {
         );
         assert!(message.contains("bottom_layer_count"), "{message}");
         assert!(message.contains("calibration block"), "{message}");
+    }
+
+    #[test]
+    fn a_discarded_resin_note_says_why_it_was_dropped() {
+        let message = SourceNote::MaterialDiscarded {
+            material: MaterialId::new("sirayatech-easy-grey").unwrap(),
+            status: "discontinued",
+        }
+        .to_string();
+        assert!(message.contains("sirayatech-easy-grey"), "{message}");
+        assert!(message.contains("discontinued"), "{message}");
+        assert!(message.contains("no profile was written"), "{message}");
     }
 
     #[test]

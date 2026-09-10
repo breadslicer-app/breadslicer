@@ -88,10 +88,43 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         }
     };
     let mut notes = std::mem::take(&mut reading.notes);
+    notes.extend(discard(&mut reading.profiles, curation.as_ref()));
     notes.extend(curate(&mut reading.profiles, curation.as_ref()));
     let written = write_profiles(&reading.profiles, request.out(), request.with_images())
         .map_err(RunError::Write)?;
     Ok(RunReport { written, notes })
+}
+
+/// Drop every material our own curation rejects, reporting each one.
+///
+/// A source keeps publishing tunings for resins that are no longer
+/// worth shipping, and only a person can say which. Dropping them here
+/// rather than after the write is what stops a regeneration from
+/// resurrecting a profile somebody deleted on purpose. It runs before
+/// the curation below, so a dropped resin raises no notes about
+/// figures no profile will carry.
+fn discard(
+    profiles: &mut Vec<ConvertedProfile>,
+    curation: Option<&MaterialCuration>,
+) -> Vec<SourceNote> {
+    let Some(curation) = curation else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    profiles.retain(|profile| {
+        let ConvertedProfile::Material(material) = profile else {
+            return true;
+        };
+        let Some(entry) = curation.of(&material.identity.id).filter(|e| e.discarded) else {
+            return true;
+        };
+        notes.push(SourceNote::MaterialDiscarded {
+            material: material.identity.id.clone(),
+            status: entry.status.as_str(),
+        });
+        false
+    });
+    notes
 }
 
 /// Fill in what our own curation knows and the sources do not, over
@@ -433,6 +466,63 @@ light_pwm = 100.0
                 },
             ],
         );
+    }
+
+    #[test]
+    fn a_resin_our_curation_discards_is_not_written() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(
+            &curated,
+            "[testcorp-resin]\nsource = \"https://testcorp.example/easy\"\nread_on = \"2026-09-10\"\nstatus = \"discontinued\"\ndiscarded = true\n",
+        )
+        .unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_curating(
+            vec![printers, materials],
+            out.clone(),
+            curated,
+        ))
+        .unwrap();
+
+        assert_eq!(report.written.materials, 0);
+        assert!(!out.join("materials").join("testcorp-resin.toml").exists());
+        assert_eq!(
+            report.notes,
+            vec![
+                SourceNote::NoPrinterLibrary,
+                SourceNote::MaterialDiscarded {
+                    material: sc_print_primitives::MaterialId::new("testcorp-resin").unwrap(),
+                    status: "discontinued",
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn discarding_a_resin_leaves_the_printers_alone() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(
+            &curated,
+            "[testcorp-resin]\nsource = \"s\"\nread_on = \"d\"\ndiscarded = true\n",
+        )
+        .unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_curating(vec![printers, materials], out, curated)).unwrap();
+
+        assert_eq!(report.written.printers, 1);
+        assert_eq!(report.written.materials, 0);
     }
 
     #[test]

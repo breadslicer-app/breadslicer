@@ -1,9 +1,14 @@
-# Resin figures that no source dataset publishes, keyed by the material
-# id the converter derives from a record's brand and name.
+# What we know about a resin that no source dataset states, keyed by the
+# material id the converter derives from a record's brand and name.
 #
-# `source` is the vendor sheet a figure was read off, and `read_on` the
-# day it was read, so a sheet the vendor has since revised can be told
-# apart from a transcription error.
+# `source` is the vendor page a statement was read off, and `read_on`
+# the day it was read, so a page the vendor has since revised can be
+# told apart from a transcription error.
+#
+# `discarded = true` drops the resin from a conversion instead of
+# writing a profile for it. `status` says what the vendor does with it,
+# which is a separate question: a resin nobody sells any more can still
+# be worth a profile to whoever holds a bottle.
 #
 # One resin the bundle carries is deliberately absent. Craft (Glow in
 # Dark) takes no figure because its strontium aluminate pigment is far
@@ -72,6 +77,24 @@ physical = { cured_density_g_per_cm3 = 1.2 }
 source = "https://siraya.tech/pages/creative-resin-craft-ultra-clear-tds"
 read_on = "2026-09-10"
 physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+# The vendor's plant-based Easy line, which they no longer sell: as of
+# 2026-09-10 its product pages returned 404, it was absent from the
+# store catalogue, and no data sheet for it had ever been published.
+# Distinct from Blu Easy above and Tenacious Easy below, which are the
+# easy to print variants of those lines and are still sold.
+
+[siraya-tech-easy-grey]
+source = "https://siraya.tech/pages/easy-user-guide"
+read_on = "2026-09-10"
+status = "discontinued"
+discarded = true
+
+[siraya-tech-easy-obsidian-black]
+source = "https://siraya.tech/pages/easy-user-guide"
+read_on = "2026-09-10"
+status = "discontinued"
+discarded = true
 
 # One upstream record truncated this resin's name as of 2026-09-10, and
 # the converter keeps both spellings apart, so both take the same sheet.

@@ -24,15 +24,44 @@ use serde::Deserialize;
 
 use crate::source_note::SourceNote;
 
+/// What the vendor does with a resin.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialStatus {
+    /// The vendor still sells it.
+    #[default]
+    Current,
+    /// The vendor has stopped selling it.
+    Discontinued,
+}
+
+impl MaterialStatus {
+    /// Spell this status the way the curated file does.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Discontinued => "discontinued",
+        }
+    }
+}
+
 /// One resin as our own curation describes it.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CuratedMaterial {
-    /// Where the figures below were published.
+    /// Where the statements below were published.
     pub source: String,
-    /// The day that page was read, so a figure can be re-checked
-    /// against a sheet the vendor has since revised.
+    /// The day that page was read, so a statement can be re-checked
+    /// against a page the vendor has since revised.
     pub read_on: String,
+    /// What the vendor does with this resin.
+    #[serde(default)]
+    pub status: MaterialStatus,
+    /// Whether we decline to ship a profile for this resin. Our own
+    /// decision, separate from [`Self::status`]: a resin nobody sells
+    /// any more can still be worth a profile to whoever holds a bottle.
+    #[serde(default)]
+    pub discarded: bool,
     /// The `[physical]` section a profile of this resin carries.
     #[serde(default)]
     pub physical: MaterialPhysical,
@@ -106,6 +135,11 @@ impl MaterialCuration {
     /// What the file states about the resin `id` names, if anything.
     pub fn of(&self, id: &MaterialId) -> Option<&CuratedMaterial> {
         self.entries.get(id)
+    }
+
+    /// Whether we decline to ship a profile for the resin `id` names.
+    pub fn discards(&self, id: &MaterialId) -> bool {
+        self.entries.get(id).is_some_and(|entry| entry.discarded)
     }
 
     /// Fill the sections our curation owns in `profile`, and report
@@ -328,6 +362,53 @@ physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
         assert_eq!(profile.physical.liquid_density_g_per_cm3, density(1.05));
         assert_eq!(profile.physical.cured_density_g_per_cm3, density(1.2));
         assert_eq!(notes, Vec::new());
+    }
+
+    #[test]
+    fn a_resin_is_shipped_unless_the_entry_discards_it() {
+        let curation = curation_of(CURATED).unwrap();
+
+        let id = MaterialId::new("testcorp-resin").unwrap();
+        assert!(!curation.discards(&id));
+        assert_eq!(curation.of(&id).unwrap().status, MaterialStatus::Current);
+        assert!(!curation.discards(&MaterialId::new("testcorp-absent").unwrap()));
+    }
+
+    #[test]
+    fn an_entry_can_discard_a_resin_and_say_what_became_of_it() {
+        let curation = curation_of(
+            "[testcorp-resin]\nsource = \"s\"\nread_on = \"d\"\nstatus = \"discontinued\"\ndiscarded = true\n",
+        )
+        .unwrap();
+
+        let entry = curation
+            .of(&MaterialId::new("testcorp-resin").unwrap())
+            .unwrap();
+
+        assert!(entry.discarded);
+        assert_eq!(entry.status, MaterialStatus::Discontinued);
+        assert_eq!(entry.status.as_str(), "discontinued");
+        assert!(curation.discards(&MaterialId::new("testcorp-resin").unwrap()));
+    }
+
+    #[test]
+    fn a_status_the_vocabulary_does_not_hold_is_refused() {
+        let err = curation_of(
+            "[testcorp-resin]\nsource = \"s\"\nread_on = \"d\"\nstatus = \"withdrawn\"\n",
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, MaterialCurationError::Parse { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_discontinued_resin_is_still_shipped_unless_we_discard_it() {
+        let curation = curation_of(
+            "[testcorp-resin]\nsource = \"s\"\nread_on = \"d\"\nstatus = \"discontinued\"\n",
+        )
+        .unwrap();
+
+        assert!(!curation.discards(&MaterialId::new("testcorp-resin").unwrap()));
     }
 
     #[test]
