@@ -234,7 +234,10 @@ impl fmt::Display for MaterialMapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidId { id, source } => {
-                write!(f, "material {id:?}: invalid template id: {source}")
+                write!(
+                    f,
+                    "material {id:?}: its brand and name spell no id: {source}"
+                )
             }
             Self::EmptyField { id, field } => {
                 write!(f, "material {id:?}: field {field:?} is empty")
@@ -290,6 +293,9 @@ impl std::error::Error for MaterialMapError {
 /// Convert one DragonFruit material record into a [`MaterialProfile`],
 /// keying its calibration blocks to the machines `presets` names.
 ///
+/// The profile is named after the resin, so the records of one resin
+/// converge on one profile with a block per machine.
+///
 /// The record points at printers by the source's preset ids, which carry
 /// the output container the preset writes; ours name the machine alone.
 /// So a record whose presets are absent from `presets` cannot be mapped,
@@ -298,15 +304,17 @@ pub(crate) fn map_material(
     raw: RawMaterial,
     presets: &PresetIndex,
 ) -> Result<MaterialProfile, MaterialMapError> {
-    let id = MaterialId::new(&raw.template_id).map_err(|source| MaterialMapError::InvalidId {
-        id: raw.template_id.clone(),
-        source,
-    })?;
     let raw_id = raw.template_id.clone();
 
     let brand = non_empty(&raw.brand, &raw_id, "brand")?;
     let name = non_empty(&raw.name, &raw_id, "name")?;
     let family = non_empty(&raw.resin_family, &raw_id, "resinFamily")?;
+    let id = material_id_of(brand.as_str(), name.as_str()).map_err(|source| {
+        MaterialMapError::InvalidId {
+            id: raw_id.clone(),
+            source,
+        }
+    })?;
 
     let intent = MaterialIntent {
         target_energy_density_mj_per_cm2: None,
@@ -567,6 +575,22 @@ fn total(first: Option<f64>, second: Option<f64>) -> Option<f64> {
     }
 }
 
+/// Name a resin the way a printer profile names a machine: from what
+/// the record calls it, never from the key the source files it under.
+///
+/// The source files one record per machine a resin is tuned for, so its
+/// key carries the machine and cannot identify the resin.
+fn material_id_of(brand: &str, name: &str) -> Result<MaterialId, InvalidProfileId> {
+    let parts = format!("{brand} {name}");
+    let slug = parts
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-");
+    MaterialId::new(&slug)
+}
+
 /// Build a non-empty string for `field`, or report it empty.
 fn non_empty(
     value: &str,
@@ -752,7 +776,7 @@ mod tests {
         let profile = map(FULL).unwrap();
         assert_eq!(
             profile.identity.id,
-            MaterialId::new("standard-405").unwrap()
+            MaterialId::new("testresin-standard-405").unwrap(),
         );
         assert_eq!(profile.identity.brand.as_str(), "TestResin");
         assert_eq!(profile.identity.family.as_str(), "standard");
@@ -1048,16 +1072,46 @@ mod tests {
         assert!(profile.per_printer.is_empty());
     }
 
+    /// The source files a resin under one id per machine it is tuned
+    /// for. That is their filing, not the resin's identity: ours names
+    /// the resin, the way a printer id names the machine.
     #[test]
-    fn an_invalid_template_id_is_rejected() {
+    fn a_resin_is_identified_by_its_brand_and_name() {
         let json = r#"{
-            "templateId": "Bad_Id", "profileVersion": 1,
-            "name": "Bad", "brand": "Default", "resinFamily": "standard"
+            "templateId": "sirayatech-blu-obsidian-black-v3-saturn-4", "profileVersion": 1,
+            "name": "Blu (Obsidian Black/V3)", "brand": "Siraya Tech", "resinFamily": "standard"
+        }"#;
+        let profile = map(json).unwrap();
+
+        assert_eq!(
+            profile.identity.id.as_str(),
+            "siraya-tech-blu-obsidian-black-v3",
+        );
+    }
+
+    #[test]
+    fn a_brand_and_name_that_spell_no_id_are_rejected() {
+        let json = r#"{
+            "templateId": "resin", "profileVersion": 1,
+            "name": "???", "brand": "!!!", "resinFamily": "standard"
         }"#;
         assert!(matches!(
             map(json).unwrap_err(),
             MaterialMapError::InvalidId { .. },
         ));
+    }
+
+    /// A record whose filing key breaks our grammar still converts:
+    /// nothing of ours is derived from it.
+    #[test]
+    fn a_filing_key_we_could_not_use_as_an_id_is_no_obstacle() {
+        let json = r#"{
+            "templateId": "Bad_Id", "profileVersion": 1,
+            "name": "Bad", "brand": "Default", "resinFamily": "standard"
+        }"#;
+        let profile = map(json).unwrap();
+
+        assert_eq!(profile.identity.id.as_str(), "default-bad");
     }
 
     #[test]

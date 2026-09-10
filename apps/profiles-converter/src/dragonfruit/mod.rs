@@ -23,7 +23,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use sc_print_primitives::{MaterialId, PrinterId};
-use sc_print_profiles::MaterialProfile;
+use sc_print_profiles::{MaterialDefaults, MaterialProfile};
 use serde_json::Value;
 
 use crate::printer_library::PrinterLibrary;
@@ -200,10 +200,14 @@ impl ProfileReader for DragonFruitReader {
         if self.printers.is_none() {
             notes.insert(0, SourceNote::NoPrinterLibrary);
         }
-        Ok(SourceReading {
-            profiles: merge_records(profiles)?,
-            notes,
-        })
+        let mut merged = Vec::new();
+        let profiles = merge_records(profiles, &mut |note| {
+            if !merged.contains(&note) {
+                merged.push(note);
+            }
+        })?;
+        notes.extend(merged);
+        Ok(SourceReading { profiles, notes })
     }
 }
 
@@ -394,6 +398,7 @@ fn map_materials(
 /// those containers.
 fn merge_records(
     profiles: Vec<ConvertedProfile>,
+    note: &mut impl FnMut(SourceNote),
 ) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
     let mut printers: BTreeMap<PrinterId, ConvertedPrinter> = BTreeMap::new();
     let mut materials: BTreeMap<MaterialId, MaterialProfile> = BTreeMap::new();
@@ -412,7 +417,9 @@ fn merge_records(
                     Entry::Vacant(slot) => {
                         slot.insert(incoming);
                     }
-                    Entry::Occupied(mut slot) => merge_material_into(slot.get_mut(), incoming)?,
+                    Entry::Occupied(mut slot) => {
+                        merge_material_into(slot.get_mut(), incoming, note)?;
+                    }
                 }
             }
         }
@@ -464,14 +471,32 @@ fn merge_printer_into(
 fn merge_material_into(
     existing: &mut MaterialProfile,
     incoming: MaterialProfile,
+    note: &mut impl FnMut(SourceNote),
 ) -> Result<(), DragonFruitError> {
-    if existing.identity != incoming.identity
-        || existing.intent != incoming.intent
-        || existing.defaults != incoming.defaults
-    {
+    if existing.identity != incoming.identity || existing.intent != incoming.intent {
         return Err(DragonFruitError::ConflictingMaterial {
             id: existing.identity.id.as_str().to_owned(),
             conflict: MaterialConflict::SharedFields,
+        });
+    }
+    if existing.defaults != incoming.defaults {
+        // A bottom layer count that changes with the machine is the one
+        // difference a profile can absorb, because every block carries
+        // its own copy of it.
+        let without_count = |defaults: MaterialDefaults| MaterialDefaults {
+            bottom_layer_count: None,
+            ..defaults
+        };
+        if without_count(existing.defaults) != without_count(incoming.defaults) {
+            return Err(DragonFruitError::ConflictingMaterial {
+                id: existing.identity.id.as_str().to_owned(),
+                conflict: MaterialConflict::SharedFields,
+            });
+        }
+        existing.defaults.bottom_layer_count = None;
+        note(SourceNote::DefaultVariesByMachine {
+            material: existing.identity.id.clone(),
+            field: "bottom_layer_count",
         });
     }
     for (printer_id, settings) in incoming.per_printer {
@@ -857,7 +882,7 @@ mod tests {
             .profiles;
         match profiles.as_slice() {
             [ConvertedProfile::Material(material)] => {
-                assert_eq!(material.identity.id.as_str(), "standard-405");
+                assert_eq!(material.identity.id.as_str(), "testresin-standard-405");
             }
             other => panic!("expected one material, got {other:?}"),
         }
@@ -936,7 +961,7 @@ mod tests {
                 ConvertedProfile::Material(material),
             ] => {
                 assert_eq!(printer.profile.identity.id.as_str(), "testcorp-printer-a");
-                assert_eq!(material.identity.id.as_str(), "standard-405");
+                assert_eq!(material.identity.id.as_str(), "testresin-standard-405");
             }
             other => panic!("expected one printer and one material, got {other:?}"),
         }
@@ -1171,13 +1196,109 @@ mod tests {
             .profiles;
         match profiles.as_slice() {
             [_, _, ConvertedProfile::Material(material)] => {
-                assert_eq!(material.identity.id.as_str(), "blu");
+                assert_eq!(material.identity.id.as_str(), "testresin-blu");
                 let printers: Vec<&str> =
                     material.per_printer.keys().map(|id| id.as_str()).collect();
                 assert_eq!(printers, vec!["testcorp-printer-a", "testcorp-printer-b"]);
             }
             other => panic!("expected 2 printers and one merged material, got {other:?}"),
         }
+    }
+
+    /// The source files one resin once per machine, under a key that
+    /// carries the machine. Ours is one profile whatever they file.
+    #[test]
+    fn one_resin_filed_under_two_keys_becomes_one_profile_with_a_block_each() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        fs::write(
+            dir.path().join("a.json"),
+            format!(
+                "[{}]",
+                material_for("blu-printer-a", "Blu", "printer-a", 2.4)
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            format!(
+                "[{}]",
+                material_for("blu-printer-b", "Blu", "printer-b", 3.0)
+            ),
+        )
+        .unwrap();
+
+        let profiles = DragonFruitReader::new()
+            .read(&[dir.path()])
+            .unwrap()
+            .profiles;
+        match profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "testresin-blu");
+                let exposures: Vec<(&str, Option<f64>)> = material
+                    .per_printer
+                    .iter()
+                    .map(|(printer, block)| {
+                        (
+                            printer.as_str(),
+                            block.normal_exposure_sec.map(|value| value.value()),
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    exposures,
+                    vec![
+                        ("testcorp-printer-a", Some(2.4)),
+                        ("testcorp-printer-b", Some(3.0)),
+                    ],
+                );
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+    }
+
+    /// A number that changes with the machine is not a default. Every
+    /// block carries its own, so the profile keeps none and says so.
+    #[test]
+    fn a_bottom_layer_count_that_differs_per_machine_leaves_the_defaults() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        let record = |key: &str, preset: &str, bottom: u32| {
+            format!(
+                r#"[{{
+                    "templateId": "{key}", "profileVersion": 1,
+                    "name": "Rebound 55A Black", "brand": "TestResin", "resinFamily": "flexible",
+                    "validForPresets": ["{preset}"],
+                    "layerHeightMm": 0.05, "normalExposureSec": 5.3,
+                    "bottomExposureSec": 30.0, "bottomLayerCount": {bottom},
+                    "liftDistanceMm": 6.0, "liftSpeedMmMin": 32.0, "retractSpeedMmMin": 200.0
+                }}]"#
+            )
+        };
+        fs::write(dir.path().join("a.json"), record("r-a", "printer-a", 3)).unwrap();
+        fs::write(dir.path().join("b.json"), record("r-b", "printer-b", 4)).unwrap();
+
+        let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match reading.profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.defaults.bottom_layer_count, None);
+                let counts: Vec<Option<u32>> = material
+                    .per_printer
+                    .values()
+                    .map(|block| block.bottom_layer_count)
+                    .collect();
+                assert_eq!(counts, vec![Some(3), Some(4)]);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+        assert!(
+            reading.notes.contains(&SourceNote::DefaultVariesByMachine {
+                material: MaterialId::new("testresin-rebound-55a-black").unwrap(),
+                field: "bottom_layer_count",
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
     }
 
     #[test]
@@ -1189,9 +1310,18 @@ mod tests {
             format!("[{}]", material_for("blu", "Blu", "printer-a", 2.4)),
         )
         .unwrap();
+        // One resin by brand and name, but the 2 records disagree on a
+        // field a profile carries once.
         fs::write(
             dir.path().join("b.json"),
-            format!("[{}]", material_for("blu", "Renamed", "printer-b", 2.4)),
+            r#"[{
+                "templateId": "blu-b", "profileVersion": 1,
+                "name": "Blu", "brand": "TestResin", "resinFamily": "flexible",
+                "validForPresets": ["printer-b"],
+                "layerHeightMm": 0.05, "normalExposureSec": 2.4,
+                "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+            }]"#,
         )
         .unwrap();
 

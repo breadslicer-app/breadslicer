@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use sc_print_primitives::PrinterId;
+use sc_print_primitives::{MaterialId, PrinterId};
 
 /// One thing a reader observed while converting.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +42,13 @@ pub enum SourceNote {
     /// The source states how many bits a machine's panel drives, which
     /// no profile of ours records.
     PanelBitDepth { printer: PrinterId, bits: u32 },
+    /// A resin's records give one machine a different value from
+    /// another for a field a profile carries once, so the profile
+    /// carries none of them.
+    DefaultVariesByMachine {
+        material: MaterialId,
+        field: &'static str,
+    },
 }
 
 impl fmt::Display for SourceNote {
@@ -88,6 +95,11 @@ impl fmt::Display for SourceNote {
                 f,
                 "the source states a {bits}-bit panel for {:?}, which our profiles do not record: their grayscale support comes from the anti-aliasing flag alone",
                 printer.as_str(),
+            ),
+            Self::DefaultVariesByMachine { material, field } => write!(
+                f,
+                "the source gives {:?} a different {field} per machine, so its defaults carry none and every calibration block keeps its own",
+                material.as_str(),
             ),
         }
     }
@@ -151,6 +163,21 @@ mod tests {
         }
         .to_string();
         assert!(message.contains("\"peristaltic\""), "{message}");
+    }
+
+    #[test]
+    fn a_varying_default_says_where_the_value_still_lives() {
+        let message = SourceNote::DefaultVariesByMachine {
+            material: MaterialId::new("sirayatech-rebound-55a-black").unwrap(),
+            field: "bottom_layer_count",
+        }
+        .to_string();
+        assert!(
+            message.contains("sirayatech-rebound-55a-black"),
+            "{message}"
+        );
+        assert!(message.contains("bottom_layer_count"), "{message}");
+        assert!(message.contains("calibration block"), "{message}");
     }
 
     #[test]

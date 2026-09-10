@@ -244,12 +244,12 @@ format = \"goo\"
         );
 
         let material_toml =
-            fs::read_to_string(out.join("materials").join("testcorp-resin-e2e.toml")).unwrap();
+            fs::read_to_string(out.join("materials").join("testcorp-resin.toml")).unwrap();
         assert_eq!(
             material_toml,
             "\
 [identity]
-id = \"testcorp-resin-e2e\"
+id = \"testcorp-resin\"
 brand = \"TestCorp\"
 family = \"standard\"
 name = \"Resin\"
@@ -312,12 +312,12 @@ light_pwm = 100.0
 
         assert!(report.notes.is_empty(), "notes: {:?}", report.notes);
         let material_toml =
-            fs::read_to_string(out.join("materials").join("testcorp-resin-e2e.toml")).unwrap();
+            fs::read_to_string(out.join("materials").join("testcorp-resin.toml")).unwrap();
         assert_eq!(
             material_toml,
             "\
 [identity]
-id = \"testcorp-resin-e2e\"
+id = \"testcorp-resin\"
 brand = \"TestCorp\"
 family = \"standard\"
 name = \"Resin\"
