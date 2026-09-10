@@ -20,6 +20,9 @@ pub enum SourceNote {
     /// No printer library was given, so nothing said which machines
     /// split their travel and no calibration block was split.
     NoPrinterLibrary,
+    /// No material curation was given, so nothing filled the fields the
+    /// sources do not publish.
+    NoMaterialCuration,
     /// The library holds no profile for a machine the source describes,
     /// so what that machine can do is unknown.
     MachineOutsideTheLibrary { printer: PrinterId },
@@ -62,6 +65,19 @@ pub enum SourceNote {
         material: MaterialId,
         field: &'static str,
     },
+    /// Our own curation and the source both state a field, and they
+    /// disagree. Ours is what the profile carries, because the source
+    /// curates as we do while our figure comes from the manufacturer.
+    CurationOverridesTheSource {
+        material: MaterialId,
+        field: &'static str,
+        kept: String,
+        source_states: String,
+        sheet: String,
+    },
+    /// Our curation says nothing about a resin the run wrote, so the
+    /// profile carries only what the source states.
+    NoCurationForMaterial { material: MaterialId },
 }
 
 impl fmt::Display for SourceNote {
@@ -69,6 +85,9 @@ impl fmt::Display for SourceNote {
         match self {
             Self::NoPrinterLibrary => f.write_str(
                 "no printer library was given, so no calibration block carries a second travel stage",
+            ),
+            Self::NoMaterialCuration => f.write_str(
+                "no material curation was given, so no profile carries a figure its source does not publish",
             ),
             Self::MachineOutsideTheLibrary { printer } => write!(
                 f,
@@ -126,6 +145,22 @@ impl fmt::Display for SourceNote {
             Self::DefaultVariesByMachine { material, field } => write!(
                 f,
                 "the source gives {:?} a different {field} per machine, so its defaults carry none and every calibration block keeps its own",
+                material.as_str(),
+            ),
+            Self::CurationOverridesTheSource {
+                material,
+                field,
+                kept,
+                source_states,
+                sheet,
+            } => write!(
+                f,
+                "the source states a {field} of {source_states} for {:?}; the profile carries our own {kept}, read from {sheet}",
+                material.as_str(),
+            ),
+            Self::NoCurationForMaterial { material } => write!(
+                f,
+                "our curation says nothing about {:?}, so it carries only what its source states",
                 material.as_str(),
             ),
         }

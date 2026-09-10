@@ -16,18 +16,21 @@ use std::path::{Path, PathBuf};
 
 use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
 use crate::format::SourceFormat;
+use crate::material_curation::{MaterialCuration, MaterialCurationError};
 use crate::printer_library::{PrinterLibrary, PrinterLibraryError};
+use crate::profile::ConvertedProfile;
 use crate::reader::ProfileReader;
 use crate::request::ConversionRequest;
 use crate::source_note::SourceNote;
 use crate::writer::{WriteError, WriteReport, write_profiles};
 
-/// Returned by [`run`] when reading a source, opening the printer
-/// library, or writing the output fails.
+/// Returned by [`run`] when reading a source, opening one of our own
+/// inputs, or writing the output fails.
 #[derive(Debug)]
 pub enum RunError {
     Read(DragonFruitError),
     PrinterLibrary(PrinterLibraryError),
+    MaterialCuration(MaterialCurationError),
     Write(WriteError),
 }
 
@@ -36,6 +39,7 @@ impl fmt::Display for RunError {
         match self {
             Self::Read(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
+            Self::MaterialCuration(err) => write!(f, "{err}"),
             Self::Write(err) => write!(f, "{err}"),
         }
     }
@@ -46,6 +50,7 @@ impl std::error::Error for RunError {
         match self {
             Self::Read(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
+            Self::MaterialCuration(err) => Some(err),
             Self::Write(err) => Some(err),
         }
     }
@@ -68,7 +73,12 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         .map(PrinterLibrary::open)
         .transpose()
         .map_err(RunError::PrinterLibrary)?;
-    let reading = match request.format() {
+    let curation = request
+        .material_curation()
+        .map(MaterialCuration::open)
+        .transpose()
+        .map_err(RunError::MaterialCuration)?;
+    let mut reading = match request.format() {
         SourceFormat::DragonFruit => {
             let reader = match printers {
                 Some(printers) => DragonFruitReader::consulting(printers),
@@ -77,12 +87,38 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
             reader.read(&paths).map_err(RunError::Read)?
         }
     };
+    let mut notes = std::mem::take(&mut reading.notes);
+    notes.extend(curate(&mut reading.profiles, curation.as_ref()));
     let written = write_profiles(&reading.profiles, request.out(), request.with_images())
         .map_err(RunError::Write)?;
-    Ok(RunReport {
-        written,
-        notes: reading.notes,
-    })
+    Ok(RunReport { written, notes })
+}
+
+/// Fill in what our own curation knows and the sources do not, over
+/// every material the read produced.
+///
+/// This is the pipeline's step rather than a reader's, because what a
+/// resin weighs has nothing to do with how any source is read, and
+/// every source format needs it. A run that converted no material is
+/// told nothing about a missing curation, since there is nothing it
+/// could have filled.
+fn curate(
+    profiles: &mut [ConvertedProfile],
+    curation: Option<&MaterialCuration>,
+) -> Vec<SourceNote> {
+    let mut materials = profiles.iter_mut().filter_map(|profile| match profile {
+        ConvertedProfile::Material(material) => Some(material),
+        ConvertedProfile::Printer(_) => None,
+    });
+    let Some(curation) = curation else {
+        return match materials.next() {
+            Some(_) => vec![SourceNote::NoMaterialCuration],
+            None => Vec::new(),
+        };
+    };
+    materials
+        .flat_map(|material| curation.apply(material))
+        .collect()
 }
 
 #[cfg(test)]
@@ -101,6 +137,7 @@ mod tests {
             out,
             with_images,
             printer_library: None,
+            material_curation: None,
         })
         .unwrap()
     }
@@ -117,6 +154,24 @@ mod tests {
             out,
             with_images: false,
             printer_library: Some(printer_library),
+            material_curation: None,
+        })
+        .unwrap()
+    }
+
+    /// The same request, filling in what our own curation knows.
+    fn request_curating(
+        inputs: Vec<PathBuf>,
+        out: PathBuf,
+        material_curation: PathBuf,
+    ) -> ConversionRequest {
+        ConversionRequest::from_raw(RawCliArgs {
+            format: SourceFormat::DragonFruit,
+            inputs,
+            out,
+            with_images: false,
+            printer_library: None,
+            material_curation: Some(material_curation),
         })
         .unwrap()
     }
@@ -281,6 +336,119 @@ light_pwm = 100.0
         );
     }
 
+    /// Convert the same pair with our own curation to hand, which is
+    /// the only thing that puts a density into a resin: no source
+    /// publishes one.
+    #[test]
+    fn our_curation_puts_the_densities_the_source_lacks_into_the_resin() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(
+            &curated,
+            "\
+[testcorp-resin]
+source = \"https://testcorp.example/resin-tds\"
+read_on = \"2026-09-10\"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+",
+        )
+        .unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_curating(
+            vec![printers, materials],
+            out.clone(),
+            curated,
+        ))
+        .unwrap();
+
+        assert_eq!(report.notes, vec![SourceNote::NoPrinterLibrary]);
+        let material_toml =
+            fs::read_to_string(out.join("materials").join("testcorp-resin.toml")).unwrap();
+        assert_eq!(
+            material_toml,
+            "\
+[identity]
+id = \"testcorp-resin\"
+brand = \"TestCorp\"
+family = \"standard\"
+name = \"Resin\"
+profile_version = \"2.0.0\"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+bottom_layer_count = 5
+
+[physical]
+liquid_density_g_per_cm3 = 1.1
+cured_density_g_per_cm3 = 1.15
+
+[per_printer.testcorp-e2e]
+normal_exposure_sec = 2.0
+bottom_exposure_sec = 25.0
+bottom_layer_count = 5
+wait_before_cure_sec = 0.0
+wait_after_cure_sec = 2.0
+wait_after_lift_sec = 0.0
+lift_distance_mm = 7.0
+lift_speed_mm_min = 45.0
+retract_speed_mm_min = 240.0
+bottom_lift_distance_mm = 7.0
+bottom_lift_speed_mm_min = 40.0
+bottom_retract_speed_mm_min = 210.0
+light_pwm = 100.0
+",
+        );
+    }
+
+    #[test]
+    fn a_resin_our_curation_does_not_cover_is_reported() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(
+            &curated,
+            "[testcorp-other]\nsource = \"s\"\nread_on = \"d\"\n",
+        )
+        .unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_curating(vec![printers, materials], out, curated)).unwrap();
+
+        assert_eq!(
+            report.notes,
+            vec![
+                SourceNote::NoPrinterLibrary,
+                SourceNote::NoCurationForMaterial {
+                    material: sc_print_primitives::MaterialId::new("testcorp-resin").unwrap(),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn a_curation_that_does_not_parse_fails_the_run() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(&curated, "[testcorp-resin]\nviscosity = 60\n").unwrap();
+        let out = dir.path().join("library");
+
+        let err = run(&request_curating(vec![printers], out, curated)).unwrap_err();
+
+        assert!(matches!(err, RunError::MaterialCuration(_)), "{err}");
+    }
+
     /// Convert the same pair against a library that says the machine
     /// splits its travel, which is the only thing that puts a second
     /// stage into a resin's block.
@@ -310,7 +478,7 @@ light_pwm = 100.0
         ))
         .unwrap();
 
-        assert!(report.notes.is_empty(), "notes: {:?}", report.notes);
+        assert_eq!(report.notes, vec![SourceNote::NoMaterialCuration]);
         let material_toml =
             fs::read_to_string(out.join("materials").join("testcorp-resin.toml")).unwrap();
         assert_eq!(

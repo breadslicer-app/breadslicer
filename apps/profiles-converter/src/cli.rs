@@ -29,6 +29,7 @@ pub struct RawCliArgs {
     pub out: PathBuf,
     pub with_images: bool,
     pub printer_library: Option<PathBuf>,
+    pub material_curation: Option<PathBuf>,
 }
 
 /// Build the parser for the converter's command line.
@@ -57,6 +58,12 @@ pub fn cli_parser() -> OptionParser<RawCliArgs> {
         )
         .argument::<PathBuf>("DIR")
         .optional();
+    let material_curation = long("material-curation")
+        .help(
+            "File stating what we know about a resin that no source publishes, such as its densities. Without it, those fields are left empty.",
+        )
+        .argument::<PathBuf>("FILE")
+        .optional();
 
     construct!(RawCliArgs {
         format,
@@ -64,6 +71,7 @@ pub fn cli_parser() -> OptionParser<RawCliArgs> {
         out,
         with_images,
         printer_library,
+        material_curation,
     })
     .to_options()
     .descr(
@@ -101,6 +109,7 @@ mod tests {
                 out: PathBuf::from("/dst"),
                 with_images: false,
                 printer_library: None,
+                material_curation: None,
             },
         );
     }
@@ -117,6 +126,8 @@ mod tests {
             "--with-images",
             "--printer-library",
             "/lib",
+            "--material-curation",
+            "/lib/materials.toml",
             "-o",
             "/dst",
         ])
@@ -129,6 +140,7 @@ mod tests {
                 out: PathBuf::from("/dst"),
                 with_images: true,
                 printer_library: Some(PathBuf::from("/lib")),
+                material_curation: Some(PathBuf::from("/lib/materials.toml")),
             },
         );
     }

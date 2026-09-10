@@ -29,6 +29,7 @@ pub struct ConversionRequest {
     out: PathBuf,
     with_images: bool,
     printer_library: Option<PathBuf>,
+    material_curation: Option<PathBuf>,
 }
 
 /// Returned by [`ConversionRequest::from_raw`] when no input path was
@@ -55,6 +56,7 @@ impl ConversionRequest {
             out: raw.out,
             with_images: raw.with_images,
             printer_library: raw.printer_library,
+            material_curation: raw.material_curation,
         })
     }
 
@@ -84,19 +86,31 @@ impl ConversionRequest {
         self.printer_library.as_deref()
     }
 
+    /// The file stating what we know that no source publishes, if one
+    /// was given.
+    pub fn material_curation(&self) -> Option<&Path> {
+        self.material_curation.as_deref()
+    }
+
     /// A one-line human-facing description of what this request covers.
     pub fn summary(&self) -> String {
-        let printers = match &self.printer_library {
-            Some(path) => path.display().to_string(),
-            None => "none".to_owned(),
-        };
+        let printers = describe(self.printer_library.as_deref());
+        let curation = describe(self.material_curation.as_deref());
         format!(
-            "format: {}; inputs: {}; output: {}; images: {}; printer library: {printers}",
+            "format: {}; inputs: {}; output: {}; images: {}; printer library: {printers}; material curation: {curation}",
             self.format,
             self.inputs.iter().count(),
             self.out.display(),
             if self.with_images { "on" } else { "off" },
         )
+    }
+}
+
+/// How an optional path reads in a summary line.
+fn describe(path: Option<&Path>) -> String {
+    match path {
+        Some(path) => path.display().to_string(),
+        None => "none".to_owned(),
     }
 }
 
@@ -111,6 +125,7 @@ mod tests {
             out: PathBuf::from("/dst"),
             with_images: false,
             printer_library: None,
+            material_curation: None,
         }
     }
 
@@ -130,7 +145,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             request.summary(),
-            "format: dragonfruit; inputs: 2; output: /dst; images: off; printer library: none",
+            "format: dragonfruit; inputs: 2; output: /dst; images: off; printer library: none; material curation: none",
         );
     }
 
@@ -144,9 +159,27 @@ mod tests {
         .unwrap();
         assert_eq!(
             request.summary(),
-            "format: dragonfruit; inputs: 1; output: /dst; images: off; printer library: /lib",
+            "format: dragonfruit; inputs: 1; output: /dst; images: off; printer library: /lib; material curation: none",
         );
         assert_eq!(request.printer_library(), Some(Path::new("/lib")));
+    }
+
+    #[test]
+    fn summary_names_the_material_curation_when_one_is_given() {
+        let request = ConversionRequest::from_raw(RawCliArgs {
+            inputs: vec![PathBuf::from("/src/a.json")],
+            material_curation: Some(PathBuf::from("/data/materials.toml")),
+            ..raw()
+        })
+        .unwrap();
+        assert_eq!(
+            request.summary(),
+            "format: dragonfruit; inputs: 1; output: /dst; images: off; printer library: none; material curation: /data/materials.toml",
+        );
+        assert_eq!(
+            request.material_curation(),
+            Some(Path::new("/data/materials.toml")),
+        );
     }
 
     #[test]
@@ -159,7 +192,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             request.summary(),
-            "format: dragonfruit; inputs: 1; output: /dst; images: on; printer library: none",
+            "format: dragonfruit; inputs: 1; output: /dst; images: on; printer library: none; material curation: none",
         );
     }
 }

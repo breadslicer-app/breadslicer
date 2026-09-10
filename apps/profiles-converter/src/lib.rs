@@ -16,6 +16,7 @@
 pub mod cli;
 pub mod dragonfruit;
 pub mod format;
+pub mod material_curation;
 pub mod printer_library;
 pub mod profile;
 pub mod reader;
