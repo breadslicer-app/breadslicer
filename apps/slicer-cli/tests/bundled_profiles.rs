@@ -251,6 +251,53 @@ fn every_printer_the_vendor_splits_the_travel_for_declares_it() {
     }
 }
 
+/// The one bundled printer with the given id.
+fn bundled_printer(id: &str) -> PrinterProfile {
+    bundled_printers()
+        .into_iter()
+        .find(|printer| printer.identity.id.as_str() == id)
+        .unwrap_or_else(|| panic!("{id} is a printer we ship"))
+}
+
+/// The Mars 5's build height in millimetres, as ELEGOO publishes it.
+///
+/// Pinned here because the catalogue the converter reads stated 165 as
+/// of 2026-09-10, which is the Mars 5 Ultra's figure, and a ceiling
+/// that high accepts scenes the machine cannot print.
+const MARS_5_BUILD_HEIGHT_MM: f64 = 150.0;
+
+#[test]
+fn the_mars_5_builds_no_taller_than_elegoo_publishes() {
+    assert_eq!(
+        bundled_printer("elegoo-mars-5")
+            .hardware
+            .build_volume()
+            .z_mm(),
+        MARS_5_BUILD_HEIGHT_MM,
+    );
+}
+
+/// Every format the Mars 5 Ultra takes, in the order its profile
+/// lists them.
+///
+/// Pinned here because the catalogue the converter reads stated a
+/// single format per machine as of 2026-09-10, so a re-import would
+/// drop whichever it does not name.
+const MARS_5_ULTRA_OUTPUT_FORMATS: [&str; 2] = ["ctb", "goo"];
+
+#[test]
+fn the_mars_5_ultra_keeps_every_format_we_bind_it_to() {
+    let ultra = bundled_printer("elegoo-mars-5-ultra");
+    let declared: Vec<&str> = ultra
+        .capabilities
+        .output_formats
+        .iter()
+        .map(|binding| binding.format.as_canonical())
+        .collect();
+
+    assert_eq!(declared, MARS_5_ULTRA_OUTPUT_FORMATS);
+}
+
 #[test]
 fn every_bundled_printer_id_is_the_machine_it_names() {
     for printer in bundled_printers() {
