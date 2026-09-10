@@ -1,0 +1,127 @@
+[identity]
+id = "elegoo-water-washable-resin-black-50um"
+brand = "ELEGOO"
+family = "standard"
+name = "Water Washable Resin (Black, 50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[physical]
+
+[per_printer.elegoo-jupiter]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 65.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
+
+[per_printer.elegoo-jupiter-se]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 85.0
+retract_speed_mm_min = 70.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 300.0, retract_speed_mm_min = 300.0 }
+
+[per_printer.elegoo-mars-2-pro]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 80.0
+retract_speed_mm_min = 210.0
+
+[per_printer.elegoo-mars-3]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 80.0
+retract_speed_mm_min = 210.0
+
+[per_printer.elegoo-mars-3-pro]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 5.0
+lift_speed_mm_min = 80.0
+retract_speed_mm_min = 210.0
+
+[per_printer.elegoo-mars-4]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer.elegoo-mars-4-dlp]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 1.0
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer.elegoo-mars-4-ultra]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer.elegoo-mars-5]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 37.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer.elegoo-saturn-2]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 30.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 65.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
+
+[per_printer.elegoo-saturn-3]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 65.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
+
+[per_printer.elegoo-saturn-3-ultra]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 1.0
+lift_distance_mm = 3.0
+lift_speed_mm_min = 90.0
+retract_speed_mm_min = 90.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 320.0, retract_speed_mm_min = 320.0 }
+
+[per_printer.elegoo-saturn-4]
+normal_exposure_sec = 3.0
+bottom_exposure_sec = 35.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 65.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
