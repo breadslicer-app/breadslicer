@@ -1,0 +1,200 @@
+# Resin figures that no source dataset publishes, keyed by the material
+# id the converter derives from a record's brand and name.
+#
+# `source` is the vendor sheet a figure was read off, and `read_on` the
+# day it was read, so a sheet the vendor has since revised can be told
+# apart from a transcription error.
+#
+# One resin the bundle carries is deliberately absent. Craft (Glow in
+# Dark) takes no figure because its strontium aluminate pigment is far
+# denser than the base resin, which makes the line's value wrong rather
+# than approximate.
+
+[siraya-tech-blu-clear-v2-emerald-blue]
+source = "https://siraya.tech/pages/blu-tough-resin-tds-for-regular-blu"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-blu-easy-grey]
+source = "https://siraya.tech/pages/blu-tough-blu-easy-grey-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-blu-lava-black]
+source = "https://siraya.tech/pages/blu-tough-blu-lava-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-blu-lava-grey]
+source = "https://siraya.tech/pages/blu-tough-blu-lava-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-blu-nylon-black]
+source = "https://siraya.tech/pages/blu-tough-nylon-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-blu-nylon-mecha]
+source = "https://siraya.tech/pages/wear-resistant-blu-nylon-mecha-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.15, cured_density_g_per_cm3 = 1.25 }
+
+[siraya-tech-blu-obsidian-black-v3]
+source = "https://siraya.tech/pages/blu-tough-resin-tds-for-regular-blu"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-build-sonic-grey-smoky-black]
+source = "https://siraya.tech/pages/build-resin-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+# As of 2026-09-10 the Cast sheet tabulated Purple apart from the two
+# blues, and neither table carried a liquid density row.
+
+[siraya-tech-cast-purple]
+source = "https://siraya.tech/pages/cast-castable-resin-tds"
+read_on = "2026-09-10"
+physical = { cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-cast-royal-blu]
+source = "https://siraya.tech/pages/cast-castable-resin-tds"
+read_on = "2026-09-10"
+physical = { cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-cast-true-blue]
+source = "https://siraya.tech/pages/cast-castable-resin-tds"
+read_on = "2026-09-10"
+physical = { cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-craft-high-clear]
+source = "https://siraya.tech/pages/creative-resin-craft-ultra-clear-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+# One upstream record truncated this resin's name as of 2026-09-10, and
+# the converter keeps both spellings apart, so both take the same sheet.
+
+[siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-gr]
+source = "https://siraya.tech/pages/abs-like-fast-resin-tds-for-basic-fast"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-grey]
+source = "https://siraya.tech/pages/abs-like-fast-resin-tds-for-basic-fast"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-fast-mecha-white]
+source = "https://siraya.tech/pages/fast-mecha-white-tds-abs-like-scratch-resistant-resin"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.15, cured_density_g_per_cm3 = 1.25 }
+
+[siraya-tech-fast-navy-grey]
+source = "https://siraya.tech/pages/abs-like-fast-resin-tds-for-basic-fast"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-fast-tough-grey]
+source = "https://siraya.tech/pages/abs-like-fast-tough-tds-abslike-upgrade"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-fast-tough-navy-grey]
+source = "https://siraya.tech/pages/abs-like-fast-tough-tds-abslike-upgrade"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-magna-durable-black]
+source = "https://siraya.tech/pages/siraya-tech-magna-durable-resin-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-magna-durable-clear]
+source = "https://siraya.tech/pages/siraya-tech-magna-durable-resin-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-magna-durable-grey]
+source = "https://siraya.tech/pages/siraya-tech-magna-durable-resin-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-rebound-55a-black]
+source = "https://siraya.tech/pages/siraya-tech-rebound-55a-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.11, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-sculpt-clear]
+source = "https://siraya.tech/pages/high-temperature-resistant-sculpt-grey-and-clear-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.13, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-sculpt-dark-grey]
+source = "https://siraya.tech/pages/high-temperature-resistant-sculpt-grey-and-clear-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.13, cured_density_g_per_cm3 = 1.2 }
+
+# The heaviest figures the vendor publishes anywhere, and the reason
+# this resin gets its own sheet rather than the rest of the Sculpt line.
+
+[siraya-tech-sculpt-ultra-white]
+source = "https://siraya.tech/pages/high-temperature-resistant-sculpt-ultra-white-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.22, cured_density_g_per_cm3 = 1.6 }
+
+[siraya-tech-simple-clear-grey-smoky-black]
+source = "https://siraya.tech/pages/simple-water-washable-resin-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-simple-grey-clear-smoky-black]
+source = "https://siraya.tech/pages/simple-water-washable-resin-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-simple-v2-aqua-grey]
+source = "https://siraya.tech/pages/simple-water-washable-v2-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-simple-v2-grey]
+source = "https://siraya.tech/pages/simple-water-washable-v2-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-tenacious-clear]
+source = "https://siraya.tech/pages/65d-flexible-resin-tenacious-clear-and-obsidian-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-tenacious-easy-grey]
+source = "https://siraya.tech/pages/flexible-model-resin-tenacious-easy-grey-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-tenacious-easy-navy-grey]
+source = "https://siraya.tech/pages/flexible-model-resin-tenacious-easy-grey-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
+
+[siraya-tech-tenacious-flex-black]
+source = "https://siraya.tech/pages/70a-flexible-resin-tenacious-flex-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-tenacious-flex-black-50um-1]
+source = "https://siraya.tech/pages/70a-flexible-resin-tenacious-flex-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-tenacious-lava-black]
+source = "https://siraya.tech/pages/tenacious-lava-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+
+[siraya-tech-tenacious-obsidian-black]
+source = "https://siraya.tech/pages/65d-flexible-resin-tenacious-clear-and-obsidian-black-tds"
+read_on = "2026-09-10"
+physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
