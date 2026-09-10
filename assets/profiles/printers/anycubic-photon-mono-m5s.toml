@@ -34,4 +34,6 @@ version = "pm5s"
 
 [constraints]
 
+[defaults]
+
 [time_calibration]

@@ -21,8 +21,8 @@ use sc_print_primitives::{
     PrinterId, ZeroPixelExtentError,
 };
 use sc_print_profiles::{
-    EnvelopeAxisMismatch, PrinterCapabilities, PrinterConstraints, PrinterHardware,
-    PrinterIdentity, PrinterProfile, PrinterTimeCalibration,
+    EnvelopeAxisMismatch, PrinterCapabilities, PrinterConstraints, PrinterDefaults,
+    PrinterHardware, PrinterIdentity, PrinterProfile, PrinterTimeCalibration,
 };
 use semver::Version;
 use serde::Deserialize;
@@ -331,6 +331,7 @@ pub(crate) fn map_printer(raw: RawPrinter) -> Result<MappedPrinter, PrinterMapEr
             lift_distance_max_mm: None,
             light_intensity_mw_per_cm2: None,
         },
+        defaults: PrinterDefaults::default(),
         time_calibration: PrinterTimeCalibration::default(),
     };
     Ok(MappedPrinter {

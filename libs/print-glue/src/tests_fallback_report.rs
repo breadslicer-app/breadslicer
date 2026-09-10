@@ -240,6 +240,91 @@ fn a_bare_calibration_falls_back_on_every_optional_value_in_a_fixed_order() {
     );
 }
 
+/// The same bare calibration, minus the 2 figures no source
+/// publishes, which is what a converted vendor sheet produces.
+const MATERIAL_WITHOUT_THE_UNPUBLISHED_TOML: &str = r#"
+[identity]
+id = "elegoo-standard-resin-grey-50um"
+brand = "ELEGOO"
+family = "standard"
+name = "Standard Resin (Grey, 50 um)"
+profile_version = "1.0.0"
+
+[intent]
+target_layer_height_mm = 0.05
+
+[defaults]
+
+[per_printer.elegoo-mars-5]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 32.0
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+"#;
+
+#[test]
+fn a_bottom_layer_count_nobody_published_is_reported_as_this_slicer_s() {
+    let used = fallbacks_used(&config(MATERIAL_WITHOUT_THE_UNPUBLISHED_TOML));
+
+    let count = used
+        .iter()
+        .find(|used| used.field == ResolvedField::BottomLayerCount)
+        .expect("nothing supplied it, so the print runs on a fallback");
+    assert_eq!(count.kind, FallbackKind::SlicerDefault);
+    assert_eq!(count.resolved_to, 5.0);
+    assert!(count.to_string().contains("no calibrated value"), "{count}");
+}
+
+#[test]
+fn a_machine_that_states_its_own_bottom_layer_count_is_reported_as_the_machine_s() {
+    let mut printer: PrinterProfile = toml_edit::de::from_str(PRINTER_TOML).unwrap();
+    printer.defaults.bottom_layer_count = Some(9);
+    let material: MaterialProfile =
+        toml_edit::de::from_str(MATERIAL_WITHOUT_THE_UNPUBLISHED_TOML).unwrap();
+    let resolved = sc_print_profiles::resolve(
+        &printer,
+        &EffectiveMaterial::from(material),
+        &SceneOverrides::default(),
+    )
+    .unwrap();
+
+    let count = fallbacks_used(&resolved)
+        .into_iter()
+        .find(|used| used.field == ResolvedField::BottomLayerCount)
+        .expect("the machine supplied it, which is still not calibration");
+    assert_eq!(count.kind, FallbackKind::MachineDefault);
+    assert_eq!(count.resolved_to, 9.0);
+}
+
+#[test]
+fn an_unmeasured_shrinkage_is_reported_as_no_compensation() {
+    let used = fallbacks_used(&config(MATERIAL_WITHOUT_THE_UNPUBLISHED_TOML));
+
+    let scale = used
+        .iter()
+        .find(|used| used.field == ResolvedField::ScaleCompensationPct)
+        .expect("nobody measured it");
+    assert_eq!(scale.kind, FallbackKind::NoCompensation);
+    assert_eq!(scale.resolved_to, 0.0);
+}
+
+#[test]
+fn the_report_names_the_uncalibrated_values_it_counted() {
+    let lines = fallback_report_lines(&config(MATERIAL_WITHOUT_THE_UNPUBLISHED_TOML));
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("this slicer's default")),
+        "{lines:?}",
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("no compensation")),
+        "{lines:?}",
+    );
+}
+
 #[test]
 fn a_fully_calibrated_resin_falls_back_on_nothing() {
     assert!(fallbacks_used(&config(FULLY_CALIBRATED_MATERIAL_TOML)).is_empty());

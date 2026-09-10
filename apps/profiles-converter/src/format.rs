@@ -18,6 +18,8 @@ use std::str::FromStr;
 pub enum SourceFormat {
     /// The DragonFruit slicer's plugin JSON profiles.
     DragonFruit,
+    /// ELEGOO's published resin settings spreadsheet.
+    ElegooSettingsSheet,
 }
 
 impl SourceFormat {
@@ -25,6 +27,7 @@ impl SourceFormat {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::DragonFruit => "dragonfruit",
+            Self::ElegooSettingsSheet => "elegoo-settings",
         }
     }
 }
@@ -46,7 +49,7 @@ impl fmt::Display for UnknownSourceFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "unknown source format \"{}\"; supported: dragonfruit",
+            "unknown source format \"{}\"; supported: dragonfruit, elegoo-settings",
             self.got,
         )
     }
@@ -60,6 +63,7 @@ impl FromStr for SourceFormat {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "dragonfruit" => Ok(Self::DragonFruit),
+            "elegoo-settings" => Ok(Self::ElegooSettingsSheet),
             other => Err(UnknownSourceFormat {
                 got: other.to_owned(),
             }),
@@ -85,6 +89,25 @@ mod tests {
     #[test]
     fn display_matches_as_str() {
         assert_eq!(SourceFormat::DragonFruit.to_string(), "dragonfruit");
+    }
+
+    #[test]
+    fn parses_the_elegoo_settings_token() {
+        assert_eq!(
+            "elegoo-settings".parse(),
+            Ok(SourceFormat::ElegooSettingsSheet)
+        );
+        assert_eq!(
+            SourceFormat::ElegooSettingsSheet.to_string(),
+            "elegoo-settings"
+        );
+    }
+
+    #[test]
+    fn every_format_round_trips_through_its_token() {
+        for format in [SourceFormat::DragonFruit, SourceFormat::ElegooSettingsSheet] {
+            assert_eq!(format.as_str().parse(), Ok(format));
+        }
     }
 
     #[test]

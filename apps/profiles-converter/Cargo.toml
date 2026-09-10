@@ -15,10 +15,12 @@ sc-print-profiles.workspace = true
 
 anyhow.workspace = true
 nonempty-collections.workspace = true
+quick-xml.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
+zip.workspace = true
 
 bpaf = "0.9.24"
 

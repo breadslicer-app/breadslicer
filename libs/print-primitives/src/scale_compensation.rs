@@ -108,3 +108,13 @@ pub struct ScaleCompensation {
     pub y: ScaleCompensationPercent,
     pub z: ScaleCompensationPercent,
 }
+
+impl ScaleCompensation {
+    /// The compensation that changes no dimension, which is what a
+    /// print runs when nobody has measured the shrinkage.
+    pub const NONE: Self = Self {
+        x: ScaleCompensationPercent(0.0),
+        y: ScaleCompensationPercent(0.0),
+        z: ScaleCompensationPercent(0.0),
+    };
+}

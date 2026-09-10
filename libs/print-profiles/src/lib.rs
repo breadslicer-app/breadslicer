@@ -44,6 +44,7 @@ pub mod package;
 mod policy;
 pub mod printer_capabilities;
 pub mod printer_constraints;
+pub mod printer_defaults;
 pub mod printer_hardware;
 pub mod printer_identity;
 pub mod printer_profile;
@@ -91,16 +92,19 @@ pub use package::{
 };
 pub use printer_capabilities::PrinterCapabilities;
 pub use printer_constraints::PrinterConstraints;
+pub use printer_defaults::PrinterDefaults;
 pub use printer_hardware::{EnvelopeAxisMismatch, PrinterHardware};
 pub use printer_identity::PrinterIdentity;
 pub use printer_profile::{PrinterProfile, PrinterProfileReservedInstanceSection};
 pub use printer_time_calibration::PrinterTimeCalibration;
 pub use profile_libraries::{ProfileLibraries, ProfileSource};
 pub use resolve_error::ResolveError;
-pub use resolve_warning::{IntentSource, ResolveWarning, SnapReason};
+pub use resolve_warning::{FallbackLevel, IntentSource, ResolveWarning, SnapReason};
 pub use resolved_field::ResolvedField;
 pub use resolved_print_config::ResolvedPrintConfig;
-pub use resolver::{resolve, resolve_layer_height, snap_to_z_step};
+pub use resolver::{
+    UNCALIBRATED_BOTTOM_LAYER_COUNT, resolve, resolve_layer_height, snap_to_z_step,
+};
 pub use scene_overrides::SceneOverrides;
 pub use second_travel_stage::SecondTravelStage;
 pub use value_source::ValueSource;

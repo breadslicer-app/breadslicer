@@ -7,7 +7,9 @@
 
 use std::fmt;
 
-use sc_print_profiles::{MaterialResolved, ResolvedField, ResolvedPrintConfig};
+use sc_print_profiles::{
+    FallbackLevel, MaterialResolved, ResolveWarning, ResolvedField, ResolvedPrintConfig,
+};
 
 /// What the resolver put in place of a value no profile named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +23,15 @@ pub enum FallbackKind {
     /// The resin's vendor published no figure, so a value typical of
     /// the material class stands in.
     TypicalResin,
+    /// Nothing about the resin stated it, so the machine's own
+    /// expectation stands in.
+    MachineDefault,
+    /// Neither the resin nor the machine stated it, so this slicer's
+    /// own figure stands in.
+    SlicerDefault,
+    /// Nobody measured the shrinkage, so the print runs the dimensions
+    /// as modelled.
+    NoCompensation,
 }
 
 impl fmt::Display for FallbackKind {
@@ -30,6 +41,9 @@ impl fmt::Display for FallbackKind {
             Self::FullPower => "full power",
             Self::NormalCounterpart => "the normal-layer value",
             Self::TypicalResin => "a typical photopolymer",
+            Self::MachineDefault => "the machine's own default",
+            Self::SlicerDefault => "this slicer's default",
+            Self::NoCompensation => "no compensation",
         })
     }
 }
@@ -51,7 +65,12 @@ impl FallbackKind {
     /// properties.
     fn nothing_found(self) -> &'static str {
         match self {
-            Self::NoDwell | Self::FullPower | Self::NormalCounterpart => "no calibrated value",
+            Self::NoDwell
+            | Self::FullPower
+            | Self::NormalCounterpart
+            | Self::MachineDefault
+            | Self::SlicerDefault
+            | Self::NoCompensation => "no calibrated value",
             Self::TypicalResin => "no published figure",
         }
     }
@@ -176,7 +195,7 @@ const FALLBACKS: [(ResolvedField, FallbackKind, ResolvedValue); 15] = [
 /// by whoever wrote the resin, so it is not listed here; only the
 /// substitutions the resolver makes on its own are.
 pub fn fallbacks_used(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
-    FALLBACKS
+    let mut used: Vec<FallbackUsed> = FALLBACKS
         .into_iter()
         .filter(|(field, _, _)| {
             !config
@@ -191,7 +210,46 @@ pub fn fallbacks_used(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
                 kind,
             })
         })
+        .collect();
+    used.extend(uncalibrated(config));
+    used
+}
+
+/// The values the resolver filled because nothing about the resin
+/// stated them.
+///
+/// These are not in [`FALLBACKS`] because the table pairs a field with
+/// one substitution, while these have levels: the machine may state a
+/// figure, and this slicer answers when it does not. The resolver knows
+/// which level answered and says so in its warnings.
+fn uncalibrated(config: &ResolvedPrintConfig) -> Vec<FallbackUsed> {
+    config
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            ResolveWarning::UncalibratedFallback { field, from } => Some(FallbackUsed {
+                field: *field,
+                resolved_to: uncalibrated_value(*field, &config.material_resolved)?,
+                kind: match from {
+                    FallbackLevel::Machine => FallbackKind::MachineDefault,
+                    FallbackLevel::Slicer => FallbackKind::SlicerDefault,
+                    FallbackLevel::Unadjusted => FallbackKind::NoCompensation,
+                },
+            }),
+            _ => None,
+        })
         .collect()
+}
+
+/// What one of those fields resolved to.
+fn uncalibrated_value(field: ResolvedField, material: &MaterialResolved) -> Option<f64> {
+    match field {
+        ResolvedField::BottomLayerCount => Some(f64::from(material.bottom_layer_count)),
+        // Compound, but every axis carries the same figure whenever
+        // this fallback is the one that filled it.
+        ResolvedField::ScaleCompensationPct => Some(material.scale_compensation_pct.x.value()),
+        _ => None,
+    }
 }
 
 /// Render the uncalibrated values as the block a frontend shows

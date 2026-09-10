@@ -14,12 +14,12 @@ use super::override_record::OverrideRecord;
 use super::printer_constraints::PrinterConstraints;
 use super::printer_profile::PrinterProfile;
 use super::resolve_error::ResolveError;
-use super::resolve_warning::{IntentSource, ResolveWarning, SnapReason};
+use super::resolve_warning::{FallbackLevel, IntentSource, ResolveWarning, SnapReason};
 use super::resolved_field::ResolvedField;
 use super::resolved_print_config::ResolvedPrintConfig;
 use super::resolver::{
-    PickedValues, apply_constraints, apply_scene_overrides, pick_and_derive_material, resolve,
-    resolve_layer_height, snap_to_z_step,
+    PickedValues, UNCALIBRATED_BOTTOM_LAYER_COUNT, apply_constraints, apply_scene_overrides,
+    pick_and_derive_material, resolve, resolve_layer_height, snap_to_z_step,
 };
 use super::scene_overrides::SceneOverrides;
 use super::second_travel_stage::SecondTravelStage;
@@ -80,6 +80,103 @@ fn printer_with_light_intensity() -> PrinterProfile {
 
 fn printer_without_light_intensity() -> PrinterProfile {
     toml_edit::de::from_str(PRINTER_WITHOUT_LIGHT_INTENSITY).unwrap()
+}
+
+/// A resin that names itself and nothing a print needs, which is what
+/// a source that publishes no bottom layer count converts to.
+const RESIN_STATING_NOTHING: &str = r#"
+[identity]
+id = "testcorp-resin"
+brand = "TestCorp"
+family = "standard"
+name = "Resin"
+profile_version = "1.0.0"
+
+[intent]
+
+[defaults]
+"#;
+
+#[test]
+fn a_bottom_layer_count_nobody_states_comes_from_this_slicer_and_is_reported() {
+    let (picked, warnings, records) = pick_and_derive_material(
+        &printer_with_light_intensity(),
+        &material(RESIN_STATING_NOTHING),
+    );
+
+    assert_eq!(
+        picked.bottom_layer_count,
+        Some(UNCALIBRATED_BOTTOM_LAYER_COUNT),
+    );
+    assert!(warnings.contains(&ResolveWarning::UncalibratedFallback {
+        field: ResolvedField::BottomLayerCount,
+        from: FallbackLevel::Slicer,
+    }));
+    assert!(
+        !records
+            .iter()
+            .any(|record| record.field == ResolvedField::BottomLayerCount),
+        "a fallback is not a value anybody chose",
+    );
+}
+
+#[test]
+fn a_machine_that_states_its_own_bottom_layer_count_supplies_it_instead() {
+    let mut printer = printer_with_light_intensity();
+    printer.defaults.bottom_layer_count = Some(9);
+
+    let (picked, warnings, _) =
+        pick_and_derive_material(&printer, &material(RESIN_STATING_NOTHING));
+
+    assert_eq!(picked.bottom_layer_count, Some(9));
+    assert!(warnings.contains(&ResolveWarning::UncalibratedFallback {
+        field: ResolvedField::BottomLayerCount,
+        from: FallbackLevel::Machine,
+    }));
+}
+
+#[test]
+fn a_resin_that_states_its_own_bottom_layer_count_reaches_no_fallback() {
+    let toml = RESIN_STATING_NOTHING.replace("[defaults]", "[defaults]\nbottom_layer_count = 3");
+    let mut printer = printer_with_light_intensity();
+    printer.defaults.bottom_layer_count = Some(9);
+
+    let (picked, warnings, _) = pick_and_derive_material(&printer, &material(&toml));
+
+    assert_eq!(picked.bottom_layer_count, Some(3));
+    assert!(!warnings.iter().any(|warning| matches!(
+        warning,
+        ResolveWarning::UncalibratedFallback {
+            field: ResolvedField::BottomLayerCount,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn a_resin_stating_nothing_resolves_rather_than_failing() {
+    let resolved = resolve(
+        &printer_with_light_intensity(),
+        &material(
+            &RESIN_STATING_NOTHING
+                .replace("[intent]", "[intent]\ntarget_layer_height_mm = 0.05")
+                .replace(
+                    "[defaults]",
+                    "[defaults]\n\n[per_printer.elegoo-saturn-4-ultra]\nnormal_exposure_sec = 2.5\nbottom_exposure_sec = 30.0\nlift_distance_mm = 5.0\nlift_speed_mm_min = 120.0\nretract_speed_mm_min = 150.0",
+                ),
+        ),
+        &SceneOverrides::default(),
+    )
+    .expect("a resin that states no bottom layer count is still printable");
+
+    assert_eq!(
+        resolved.material_resolved.bottom_layer_count,
+        UNCALIBRATED_BOTTOM_LAYER_COUNT,
+    );
+    assert_eq!(
+        resolved.material_resolved.scale_compensation_pct,
+        ScaleCompensation::NONE,
+    );
 }
 
 const PRINTER_WITHOUT_SPLIT_TRAVEL: &str = r#"
@@ -479,7 +576,15 @@ retract_speed_mm_min = 150.0
     assert_eq!(picked.lift_distance_mm.map(|v| v.value()), Some(5.0));
     assert_eq!(picked.lift_speed_mm_min.map(|v| v.value()), Some(120.0));
     assert_eq!(picked.retract_speed_mm_min.map(|v| v.value()), Some(150.0));
-    assert!(warnings.is_empty());
+    // A calibration block states no shrinkage, so the only thing left
+    // to fall back on is running the dimensions as modelled.
+    assert_eq!(
+        warnings,
+        vec![ResolveWarning::UncalibratedFallback {
+            field: ResolvedField::ScaleCompensationPct,
+            from: FallbackLevel::Unadjusted,
+        }],
+    );
     assert_eq!(records.len(), 6);
     assert!(
         records
@@ -797,7 +902,7 @@ normal_exposure_sec = 2.5
     assert!(picked.lift_distance_mm.is_none());
     assert!(picked.lift_speed_mm_min.is_none());
     assert!(picked.retract_speed_mm_min.is_none());
-    assert!(picked.scale_compensation_pct.is_none());
+    assert_eq!(picked.scale_compensation_pct, Some(ScaleCompensation::NONE));
     assert_eq!(
         warnings
             .iter()
@@ -1060,9 +1165,27 @@ profile_version = "1.0.0"
     assert!(picked.layer_height_mm.is_none());
     assert!(picked.normal_exposure_sec.is_none());
     assert!(picked.bottom_exposure_sec.is_none());
-    assert!(picked.bottom_layer_count.is_none());
-    assert!(warnings.is_empty());
-    assert!(records.is_empty());
+    // The 2 a print cannot run without are filled by the fallback
+    // layer, which says so; nothing else is picked.
+    assert_eq!(
+        picked.bottom_layer_count,
+        Some(UNCALIBRATED_BOTTOM_LAYER_COUNT),
+    );
+    assert_eq!(picked.scale_compensation_pct, Some(ScaleCompensation::NONE));
+    assert_eq!(
+        warnings,
+        vec![
+            ResolveWarning::UncalibratedFallback {
+                field: ResolvedField::BottomLayerCount,
+                from: FallbackLevel::Slicer,
+            },
+            ResolveWarning::UncalibratedFallback {
+                field: ResolvedField::ScaleCompensationPct,
+                from: FallbackLevel::Unadjusted,
+            },
+        ],
+    );
+    assert!(records.is_empty(), "a fallback is nobody's choice");
 }
 
 fn empty_constraints() -> PrinterConstraints {

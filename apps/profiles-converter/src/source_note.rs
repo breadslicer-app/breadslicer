@@ -84,6 +84,28 @@ pub enum SourceNote {
         material: MaterialId,
         status: &'static str,
     },
+    /// The source calibrates a machine we ship no profile for.
+    RowsForAMachineWeDoNotShip { model: String, rows: usize },
+    /// The source names a machine this converter has never seen, so
+    /// what it publishes has changed shape.
+    RowsForAnUnknownModel { model: String, rows: usize },
+    /// The source states settings without saying which resin they are
+    /// for.
+    RowsNamingNoResin { rows: usize },
+    /// The source restricts some settings to a printing mode, which no
+    /// profile of ours can hold.
+    RowsRestrictedToASpeedMode { advice: String, rows: usize },
+    /// The source states no travel for a machine, which every
+    /// calibration block needs, so that machine gets none.
+    RowsStatingNoTravel { model: String, rows: usize },
+    /// The source states a value this converter cannot read.
+    RowsWeCannotRead { model: String, rows: usize },
+    /// The source states one machine's calibration for one resin twice,
+    /// with different values, so the profile carries neither.
+    RowsDisagree {
+        material: MaterialId,
+        printer: PrinterId,
+    },
 }
 
 impl fmt::Display for SourceNote {
@@ -173,6 +195,36 @@ impl fmt::Display for SourceNote {
                 f,
                 "our curation discards {:?} ({status}), so no profile was written for it",
                 material.as_str(),
+            ),
+            Self::RowsForAMachineWeDoNotShip { model, rows } => write!(
+                f,
+                "{rows} row(s) calibrate {model:?}, a machine we ship no printer profile for",
+            ),
+            Self::RowsForAnUnknownModel { model, rows } => write!(
+                f,
+                "{rows} row(s) name {model:?}, a machine this converter does not know: the source has changed shape",
+            ),
+            Self::RowsNamingNoResin { rows } => write!(
+                f,
+                "{rows} row(s) state settings without naming the resin they are for",
+            ),
+            Self::RowsRestrictedToASpeedMode { advice, rows } => write!(
+                f,
+                "{rows} row(s) hold only for {advice:?}, which no profile of ours can express, so they were passed over",
+            ),
+            Self::RowsStatingNoTravel { model, rows } => write!(
+                f,
+                "{rows} row(s) state no travel for {model:?}, which every calibration block needs, so it has none",
+            ),
+            Self::RowsWeCannotRead { model, rows } => write!(
+                f,
+                "{rows} row(s) for {model:?} state a value this converter cannot read",
+            ),
+            Self::RowsDisagree { material, printer } => write!(
+                f,
+                "the source calibrates {:?} for {:?} twice with different values, so the profile carries neither",
+                material.as_str(),
+                printer.as_str(),
             ),
         }
     }

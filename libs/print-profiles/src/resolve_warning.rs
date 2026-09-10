@@ -32,6 +32,12 @@ pub enum ResolveWarning {
     DefaultUsed {
         field: ResolvedField,
     },
+    /// Nothing about the resin stated the field, so it was filled from
+    /// the level named here rather than from any calibration.
+    UncalibratedFallback {
+        field: ResolvedField,
+        from: FallbackLevel,
+    },
     /// The material has no calibration block for the printer; the
     /// values came from its `generic-machine` block.
     GenericCalibrationUsed,
@@ -39,6 +45,31 @@ pub enum ResolveWarning {
     /// that does not split its travel, so the stage was dropped and
     /// the platform makes the whole move at once.
     SecondTravelStageUnsupported,
+}
+
+/// Where a value came from when no calibration supplied it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FallbackLevel {
+    /// The printer profile's own `[defaults]`, which is the machine
+    /// manufacturer's expectation rather than anything measured for
+    /// the resin in the vat.
+    Machine,
+    /// This slicer's own figure, used when neither the resin nor the
+    /// machine states one.
+    Slicer,
+    /// The value that adjusts nothing, for a field whose absence means
+    /// no adjustment rather than a number nobody supplied.
+    Unadjusted,
+}
+
+impl std::fmt::Display for FallbackLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Machine => "the machine's own default",
+            Self::Slicer => "this slicer's default",
+            Self::Unadjusted => "no adjustment at all",
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,6 +135,9 @@ impl std::fmt::Display for ResolveWarning {
             }
             Self::DefaultUsed { field } => {
                 write!(f, "field '{field}' fell back to material default")
+            }
+            Self::UncalibratedFallback { field, from } => {
+                write!(f, "field '{field}' is uncalibrated; it came from {from}")
             }
             Self::GenericCalibrationUsed => f.write_str(
                 "no calibration block for this printer; the generic machine block was used",

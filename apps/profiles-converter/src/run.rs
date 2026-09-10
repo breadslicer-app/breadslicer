@@ -15,6 +15,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
+use crate::elegoo_settings::{ElegooSettingsError, ElegooSettingsReader};
 use crate::format::SourceFormat;
 use crate::material_curation::{MaterialCuration, MaterialCurationError};
 use crate::printer_library::{PrinterLibrary, PrinterLibraryError};
@@ -29,6 +30,7 @@ use crate::writer::{WriteError, WriteReport, write_profiles};
 #[derive(Debug)]
 pub enum RunError {
     Read(DragonFruitError),
+    ElegooSettings(ElegooSettingsError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
     Write(WriteError),
@@ -38,6 +40,7 @@ impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read(err) => write!(f, "{err}"),
+            Self::ElegooSettings(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
             Self::Write(err) => write!(f, "{err}"),
@@ -49,6 +52,7 @@ impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Read(err) => Some(err),
+            Self::ElegooSettings(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
             Self::Write(err) => Some(err),
@@ -86,6 +90,9 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
             };
             reader.read(&paths).map_err(RunError::Read)?
         }
+        SourceFormat::ElegooSettingsSheet => ElegooSettingsReader
+            .read(&paths)
+            .map_err(RunError::ElegooSettings)?,
     };
     let mut notes = std::mem::take(&mut reading.notes);
     notes.extend(discard(&mut reading.profiles, curation.as_ref()));
@@ -326,6 +333,8 @@ has_camera = false
 format = \"goo\"
 
 [constraints]
+
+[defaults]
 
 [time_calibration]
 ",

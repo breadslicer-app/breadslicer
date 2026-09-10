@@ -15,6 +15,7 @@
 
 pub mod cli;
 pub mod dragonfruit;
+pub mod elegoo_settings;
 pub mod format;
 pub mod material_curation;
 pub mod printer_library;

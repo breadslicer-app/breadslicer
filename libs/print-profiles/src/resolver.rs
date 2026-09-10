@@ -39,6 +39,12 @@
 //!   the picked value, emits an `OverrideRecord` with the prior
 //!   value captured, and re-runs the per-field policy chain so
 //!   that the override is itself constrained.
+//! - Fill what nothing about the resin stated, from the printer's
+//!   own `[defaults]` or from this project's figure, each reported as
+//!   [`ResolveWarning::UncalibratedFallback`] so a caller can say the
+//!   print is running on a number nobody measured. Only
+//!   `bottom_layer_count` needs this, because a print cannot run
+//!   without one and no source publishes it.
 //! - Assemble the resolved configuration. Any required field
 //!   still unset surfaces as
 //!   [`ResolveError::MissingRequiredField`]; a wait still unset
@@ -72,9 +78,10 @@ use crate::policy::{
 };
 use crate::printer_capabilities::PrinterCapabilities;
 use crate::printer_constraints::PrinterConstraints;
+use crate::printer_defaults::PrinterDefaults;
 use crate::printer_profile::PrinterProfile;
 use crate::resolve_error::ResolveError;
-use crate::resolve_warning::{IntentSource, ResolveWarning};
+use crate::resolve_warning::{FallbackLevel, IntentSource, ResolveWarning};
 use crate::resolved_field::ResolvedField;
 use crate::resolved_print_config::ResolvedPrintConfig;
 use crate::scene_overrides::SceneOverrides;
@@ -144,6 +151,7 @@ pub(crate) fn pick_and_derive_material(
         &mut warnings,
         &mut records,
     );
+    apply_uncalibrated_fallbacks(&printer.defaults, &mut picked, &mut warnings);
 
     (picked, warnings, records)
 }
@@ -359,6 +367,48 @@ fn apply_physical(
             source: ValueSource::Default,
             prior_value: None,
             final_value: value.value(),
+        });
+    }
+}
+
+/// How many layers take the bottom exposure when nothing else says.
+///
+/// The figure this project ships for a resin nobody has calibrated,
+/// which is what the generic material profiles carry. A print that runs
+/// on it is reported as uncalibrated, because plate adhesion is a
+/// property of the resin and the machine together.
+pub const UNCALIBRATED_BOTTOM_LAYER_COUNT: u32 = 5;
+
+/// Fill what neither the resin nor its defaults stated, from the
+/// machine's own expectation or, failing that, from ours.
+///
+/// No [`OverrideRecord`] is written for these, because a record means
+/// somebody chose the value for this print. These are what happens when
+/// nobody did, and the warning is how a caller learns it.
+fn apply_uncalibrated_fallbacks(
+    defaults: &PrinterDefaults,
+    picked: &mut PickedValues,
+    warnings: &mut Vec<ResolveWarning>,
+) {
+    if picked.bottom_layer_count.is_none() {
+        let (value, from) = match defaults.bottom_layer_count {
+            Some(value) => (value, FallbackLevel::Machine),
+            None => (UNCALIBRATED_BOTTOM_LAYER_COUNT, FallbackLevel::Slicer),
+        };
+        picked.bottom_layer_count = Some(value);
+        warnings.push(ResolveWarning::UncalibratedFallback {
+            field: ResolvedField::BottomLayerCount,
+            from,
+        });
+    }
+    if picked.scale_compensation_pct.is_none() {
+        // Unstated shrinkage means none was measured, not that a
+        // figure is missing, so the print runs the dimensions as
+        // modelled and the report says the print is uncompensated.
+        picked.scale_compensation_pct = Some(ScaleCompensation::NONE);
+        warnings.push(ResolveWarning::UncalibratedFallback {
+            field: ResolvedField::ScaleCompensationPct,
+            from: FallbackLevel::Unadjusted,
         });
     }
 }
@@ -1028,12 +1078,10 @@ fn assemble(
             .ok_or(ResolveError::MissingRequiredField {
                 field: ResolvedField::BottomExposureSec,
             })?;
-    let bottom_layer_count =
-        picked
-            .bottom_layer_count
-            .ok_or(ResolveError::MissingRequiredField {
-                field: ResolvedField::BottomLayerCount,
-            })?;
+    // Never missing: a fallback fills it when nothing calibrated does.
+    let bottom_layer_count = picked
+        .bottom_layer_count
+        .unwrap_or(UNCALIBRATED_BOTTOM_LAYER_COUNT);
     let lift_distance_mm = picked
         .lift_distance_mm
         .ok_or(ResolveError::MissingRequiredField {
@@ -1050,12 +1098,10 @@ fn assemble(
             .ok_or(ResolveError::MissingRequiredField {
                 field: ResolvedField::RetractSpeedMmMin,
             })?;
-    let scale_compensation_pct =
-        picked
-            .scale_compensation_pct
-            .ok_or(ResolveError::MissingRequiredField {
-                field: ResolvedField::ScaleCompensationPct,
-            })?;
+    // Never missing: an unstated compensation resolves to none.
+    let scale_compensation_pct = picked
+        .scale_compensation_pct
+        .unwrap_or(ScaleCompensation::NONE);
     let wait_before_cure_sec = picked
         .wait_before_cure_sec
         .unwrap_or(NonNegativeFiniteSec::ZERO);
