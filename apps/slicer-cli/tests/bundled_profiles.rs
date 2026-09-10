@@ -298,6 +298,27 @@ fn the_mars_5_ultra_keeps_every_format_we_bind_it_to() {
     assert_eq!(declared, MARS_5_ULTRA_OUTPUT_FORMATS);
 }
 
+/// Pinned because the catalogue the converter reads stated
+/// `mirrorX: false` for the Mars 2 Pro as of 2026-09-10, alone among
+/// the ELEGOO machines it describes, and a part that comes out
+/// mirrored is a failure nothing in the chain reports.
+#[test]
+fn every_elegoo_printer_mirrors_x_and_not_y() {
+    for printer in bundled_printers() {
+        if printer.identity.manufacturer.as_str() != "ELEGOO" {
+            continue;
+        }
+        let mirror = printer.hardware.mirror();
+        assert!(
+            mirror.x && !mirror.y,
+            "{}: ELEGOO machines mirror in X only, this one mirrors x={} y={}",
+            printer.identity.id.as_str(),
+            mirror.x,
+            mirror.y,
+        );
+    }
+}
+
 #[test]
 fn every_bundled_printer_id_is_the_machine_it_names() {
     for printer in bundled_printers() {
