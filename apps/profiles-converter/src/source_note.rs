@@ -210,7 +210,7 @@ impl fmt::Display for SourceNote {
             ),
             Self::RowsRestrictedToASpeedMode { advice, rows } => write!(
                 f,
-                "{rows} row(s) hold only for {advice:?}, which no profile of ours can express, so they were passed over",
+                "{rows} row(s) hold only for {advice:?}, which no profile of ours can express, so their settings were written without that qualification",
             ),
             Self::RowsStatingNoTravel { model, rows } => write!(
                 f,
@@ -352,5 +352,91 @@ mod tests {
         .to_string();
         assert!(message.contains("3-bit panel"), "{message}");
         assert!(message.contains("anti-aliasing flag"), "{message}");
+    }
+
+    /// The rows are read: what the profile cannot hold is the condition
+    /// the source attaches to them, so the note must not claim the
+    /// settings were dropped.
+    #[test]
+    fn a_speed_mode_note_says_the_settings_were_kept_without_their_condition() {
+        let message = SourceNote::RowsRestrictedToASpeedMode {
+            advice: "NOTE: This parameter works for Standard Resin+ Normal Speed".to_owned(),
+            rows: 2,
+        }
+        .to_string();
+        assert!(
+            message.contains("Standard Resin+ Normal Speed"),
+            "{message}"
+        );
+        assert!(
+            message.contains("written without that qualification"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_machine_we_do_not_ship_is_named_with_its_row_count() {
+        let message = SourceNote::RowsForAMachineWeDoNotShip {
+            model: "ELEGOO Saturn 8K".to_owned(),
+            rows: 71,
+        }
+        .to_string();
+        assert!(message.contains("71 row(s)"), "{message}");
+        assert!(message.contains("ELEGOO Saturn 8K"), "{message}");
+    }
+
+    #[test]
+    fn an_unknown_model_note_says_the_source_has_changed_shape() {
+        let message = SourceNote::RowsForAnUnknownModel {
+            model: "ELEGOO Mars 9".to_owned(),
+            rows: 4,
+        }
+        .to_string();
+        assert!(message.contains("ELEGOO Mars 9"), "{message}");
+        assert!(message.contains("changed shape"), "{message}");
+    }
+
+    #[test]
+    fn rows_naming_no_resin_are_counted() {
+        let message = SourceNote::RowsNamingNoResin { rows: 3 }.to_string();
+        assert!(message.contains("3 row(s)"), "{message}");
+        assert!(message.contains("without naming the resin"), "{message}");
+    }
+
+    #[test]
+    fn a_machine_stating_no_travel_is_told_it_gets_no_block() {
+        let message = SourceNote::RowsStatingNoTravel {
+            model: "ELEGOO Mars 5 Ultra".to_owned(),
+            rows: 107,
+        }
+        .to_string();
+        assert!(message.contains("ELEGOO Mars 5 Ultra"), "{message}");
+        assert!(message.contains("calibration block"), "{message}");
+    }
+
+    #[test]
+    fn an_unreadable_value_names_the_machine_whose_rows_hold_it() {
+        let message = SourceNote::RowsWeCannotRead {
+            model: "ELEGOO Mars 4".to_owned(),
+            rows: 1,
+        }
+        .to_string();
+        assert!(message.contains("ELEGOO Mars 4"), "{message}");
+        assert!(message.contains("cannot read"), "{message}");
+    }
+
+    #[test]
+    fn a_conflict_names_both_the_resin_and_the_machine_left_uncalibrated() {
+        let message = SourceNote::RowsDisagree {
+            material: MaterialId::new("elegoo-standard-resin-translucent-50um").unwrap(),
+            printer: PrinterId::new("elegoo-saturn-3").unwrap(),
+        }
+        .to_string();
+        assert!(
+            message.contains("elegoo-standard-resin-translucent-50um"),
+            "{message}"
+        );
+        assert!(message.contains("elegoo-saturn-3"), "{message}");
+        assert!(message.contains("carries neither"), "{message}");
     }
 }
