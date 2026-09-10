@@ -25,13 +25,25 @@ const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
     "siraya-tech-craft-glow-in-dark",
 ];
 
-/// Resins exempted from the curation by their brand, because nobody has
-/// gone looking for what that vendor publishes yet.
+/// Resins nobody has gone looking for figures for yet, as tests over
+/// the ids they claim.
+const UNRESEARCHED: [fn(&str) -> bool; 0] = [];
+
+/// Resins whose vendor publishes no density for any of them, as tests
+/// over the ids they claim.
 ///
-/// TODO: temporary. Drop this exemption, and the filter that reads it,
-/// once ELEGOO's published data sheets have been read and their resins
-/// carry curated figures or a named reason to have none.
-const UNRESEARCHED_ID_PREFIX: &str = "elegoo-";
+/// ELEGOO: as of 2026-09-10 their 4 resin safety sheets answer
+/// "Density: Not available", and no product page in either of their
+/// stores states one or carries a specification table.
+const NO_PUBLISHED_DENSITY: [fn(&str) -> bool; 1] = [|id| id.starts_with("elegoo-")];
+
+/// Say whether a resin may ship with no entry in the curation.
+fn exempt_from_curation(id: &str) -> bool {
+    UNRESEARCHED
+        .iter()
+        .chain(NO_PUBLISHED_DENSITY.iter())
+        .any(|belongs_to_the_set| belongs_to_the_set(id))
+}
 
 /// The resins the source still publishes that we decline to ship, each
 /// with what its vendor still does with the product.
@@ -97,7 +109,7 @@ fn the_curation_we_ship_covers_every_resin_but_the_ones_with_no_sheet() {
         .iter()
         .filter(|profile| curation.of(&profile.identity.id).is_none())
         .map(|profile| profile.identity.id.as_str().to_owned())
-        .filter(|id| !id.starts_with(UNRESEARCHED_ID_PREFIX))
+        .filter(|id| !exempt_from_curation(id))
         .collect();
     uncurated.sort();
 
