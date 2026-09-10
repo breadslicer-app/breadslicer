@@ -12,8 +12,9 @@ published by the Open Resin Alliance:
 Both repositories are published under the MIT license with identical
 license texts, reproduced verbatim in `LICENSE-MIT.txt`. Every image
 in this directory was verified byte-identical to its upstream
-counterpart on 2026-08-02; only the file names differ, renamed to
-match this repository's printer profile ids.
+counterpart on 2026-08-02, and `elegoo-mars-2-pro.png` on 2026-09-10;
+only the file names differ, renamed to match this repository's printer
+profile ids.
 
 Upstream has no dedicated photo for 3 of the bundled printer
 variants; their files are copies of a sibling model's image:

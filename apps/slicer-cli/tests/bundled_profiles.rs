@@ -320,6 +320,27 @@ fn every_elegoo_printer_mirrors_x_and_not_y() {
 }
 
 #[test]
+fn every_bundled_printer_declares_an_image_we_ship() {
+    let root = bundled_profiles_dir();
+    for printer in bundled_printers() {
+        let id = printer.identity.id.as_str().to_owned();
+        // Our own stand-in, so there is no machine to photograph.
+        if id == "generic-machine" {
+            continue;
+        }
+        let image = printer
+            .identity
+            .image_asset_path
+            .unwrap_or_else(|| panic!("{id} declares no image"));
+        assert!(
+            image.resolve_in(&root).is_file(),
+            "{id}: \"{}\" is not a file in the library",
+            image.as_str(),
+        );
+    }
+}
+
+#[test]
 fn every_bundled_printer_id_is_the_machine_it_names() {
     for printer in bundled_printers() {
         let id = printer.identity.id.as_str();

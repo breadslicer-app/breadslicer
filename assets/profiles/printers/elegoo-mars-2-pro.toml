@@ -4,6 +4,7 @@ manufacturer = "ELEGOO"
 family = "Mars"
 name = "Mars 2 Pro"
 profile_version = "1.0.0"
+image_asset_path = "images/elegoo-mars-2-pro.png"
 
 [hardware.build_volume]
 x_mm = 130.56
