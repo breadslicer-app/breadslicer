@@ -33,12 +33,23 @@ const RESINS_WITHOUT_A_FIGURE: [&str; 1] = [
 /// carry curated figures or a named reason to have none.
 const UNRESEARCHED_ID_PREFIX: &str = "elegoo-";
 
-/// The resins the source still publishes that we decline to ship.
-const DISCARDED: [&str; 2] = [
+/// The resins the source still publishes that we decline to ship, each
+/// with what its vendor still does with the product.
+const DISCARDED: [(&str, MaterialStatus); 4] = [
     // The vendor's discontinued plant-based Easy line, which their
     // dataset still tunes for 21 machines.
-    "siraya-tech-easy-grey",
-    "siraya-tech-easy-obsidian-black",
+    ("siraya-tech-easy-grey", MaterialStatus::Discontinued),
+    (
+        "siraya-tech-easy-obsidian-black",
+        MaterialStatus::Discontinued,
+    ),
+    // Sold, and their settings hold only for hollow models printed in
+    // fast mode, which a profile cannot say.
+    (
+        "elegoo-rapid-standard-photopolymer-resin-grey-100um",
+        MaterialStatus::Current,
+    ),
+    ("elegoo-standard-resin-grey-100um", MaterialStatus::Current),
 ];
 
 /// The curated figures this converter ships.
@@ -126,14 +137,14 @@ fn every_curated_entry_states_a_figure_and_where_it_came_from() {
 fn the_resins_we_reject_are_discarded_with_the_reason_recorded() {
     let curation = curation();
 
-    for id in DISCARDED {
+    for (id, status) in DISCARDED {
         let material = MaterialId::new(id).unwrap();
         let entry = curation
             .of(&material)
             .unwrap_or_else(|| panic!("{id} has no entry, so a conversion would write it"));
 
         assert!(entry.discarded, "{id} is not discarded");
-        assert_eq!(entry.status, MaterialStatus::Discontinued, "{id}");
+        assert_eq!(entry.status, status, "{id}");
         assert!(!entry.source.is_empty(), "{id} names no evidence");
     }
 }

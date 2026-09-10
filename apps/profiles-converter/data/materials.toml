@@ -15,6 +15,21 @@
 # denser than the base resin, which makes the line's value wrong rather
 # than approximate.
 
+# ELEGOO publishes these 2 only as fast-mode settings for hollow models
+# with walls over 2 mm and drain holes. Every row behind them states
+# that condition, a profile has nowhere to hold it, and their travel on
+# a solid model invites a suction failure.
+
+[elegoo-rapid-standard-photopolymer-resin-grey-100um]
+source = "https://eu.elegoo.com/es-se/blogs/3d-printer-user-guide/hoja-de-configuracion-de-resina-de-impresoras-elegoo"
+read_on = "2026-09-10"
+discarded = true
+
+[elegoo-standard-resin-grey-100um]
+source = "https://eu.elegoo.com/es-se/blogs/3d-printer-user-guide/hoja-de-configuracion-de-resina-de-impresoras-elegoo"
+read_on = "2026-09-10"
+discarded = true
+
 [siraya-tech-blu-clear-v2-emerald-blue]
 source = "https://siraya.tech/pages/blu-tough-resin-tds-for-regular-blu"
 read_on = "2026-09-10"
