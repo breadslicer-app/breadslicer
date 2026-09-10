@@ -17,6 +17,7 @@ y = 0.0
 z = 0.0
 
 [physical]
+cured_density_g_per_cm3 = 1.2
 
 [per_printer.elegoo-mars-3]
 normal_exposure_sec = 5.5
