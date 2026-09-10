@@ -290,6 +290,14 @@ impl std::error::Error for MaterialMapError {
     }
 }
 
+/// The outcome of mapping a material record: the domain profile, and the
+/// printing advice the source glued onto its name, which no profile of
+/// ours records.
+pub(crate) struct MappedMaterial {
+    pub profile: MaterialProfile,
+    pub advice: Option<String>,
+}
+
 /// Convert one DragonFruit material record into a [`MaterialProfile`],
 /// keying its calibration blocks to the machines `presets` names.
 ///
@@ -303,11 +311,12 @@ impl std::error::Error for MaterialMapError {
 pub(crate) fn map_material(
     raw: RawMaterial,
     presets: &PresetIndex,
-) -> Result<MaterialProfile, MaterialMapError> {
+) -> Result<MappedMaterial, MaterialMapError> {
     let raw_id = raw.template_id.clone();
 
     let brand = non_empty(&raw.brand, &raw_id, "brand")?;
-    let name = non_empty(&raw.name, &raw_id, "name")?;
+    let (resin, advice) = split_advice(&raw.name);
+    let name = non_empty(resin, &raw_id, "name")?;
     let family = non_empty(&raw.resin_family, &raw_id, "resinFamily")?;
     let id = material_id_of(brand.as_str(), name.as_str()).map_err(|source| {
         MaterialMapError::InvalidId {
@@ -378,20 +387,23 @@ pub(crate) fn map_material(
         );
     }
 
-    Ok(MaterialProfile {
-        extension: false,
-        identity: MaterialIdentity {
-            id,
-            brand,
-            family,
-            name,
-            profile_version: Version::new(raw.profile_version, 0, 0),
+    Ok(MappedMaterial {
+        advice: advice.map(str::to_owned),
+        profile: MaterialProfile {
+            extension: false,
+            identity: MaterialIdentity {
+                id,
+                brand,
+                family,
+                name,
+                profile_version: Version::new(raw.profile_version, 0, 0),
+            },
+            intent,
+            defaults,
+            // The source format publishes no densities.
+            physical: MaterialPhysical::default(),
+            per_printer,
         },
-        intent,
-        defaults,
-        // The source format publishes no densities.
-        physical: MaterialPhysical::default(),
-        per_printer,
     })
 }
 
@@ -591,6 +603,28 @@ fn material_id_of(brand: &str, name: &str) -> Result<MaterialId, InvalidProfileI
     MaterialId::new(&slug)
 }
 
+/// Split a source name into what names the resin and the printing
+/// advice the source glues onto it for some machines.
+///
+/// The source attaches advice with a hyphen, `Blu Nylon Black-(Use Extra
+/// Heavy support)`, and attaches a colour or a version with a space,
+/// `Blu (Lava Black)`, which is what tells 2 resins apart.
+fn split_advice(name: &str) -> (&str, Option<&str>) {
+    let trimmed = name.trim_end();
+    let Some(rest) = trimmed.strip_suffix(')') else {
+        return (name, None);
+    };
+    let Some(open) = rest.rfind("-(") else {
+        return (name, None);
+    };
+    let named = rest[..open].trim_end();
+    let advice = rest[open + 2..].trim();
+    if named.is_empty() || advice.is_empty() {
+        return (name, None);
+    }
+    (named, Some(advice))
+}
+
 /// Build a non-empty string for `field`, or report it empty.
 fn non_empty(
     value: &str,
@@ -750,7 +784,7 @@ mod tests {
     }
 
     fn map_with(json: &str, presets: &PresetIndex) -> Result<MaterialProfile, MaterialMapError> {
-        map_material(serde_json::from_str(json).unwrap(), presets)
+        map_material(serde_json::from_str(json).unwrap(), presets).map(|mapped| mapped.profile)
     }
 
     const FULL: &str = r#"{
@@ -1087,6 +1121,44 @@ mod tests {
             profile.identity.id.as_str(),
             "siraya-tech-blu-obsidian-black-v3",
         );
+    }
+
+    /// The source glues printing advice to the name on some machines.
+    /// It names no resin, so it names no profile either.
+    #[test]
+    fn advice_glued_to_the_name_does_not_make_a_second_resin() {
+        let record = |name: &str| {
+            format!(
+                r#"{{
+                    "templateId": "key", "profileVersion": 1,
+                    "name": "{name}", "brand": "Siraya Tech", "resinFamily": "standard"
+                }}"#
+            )
+        };
+        let plain = map(&record("Blu Nylon Black")).unwrap();
+        let advised = map(&record("Blu Nylon Black-(Use Extra Heavy support)")).unwrap();
+
+        assert_eq!(plain.identity.id, advised.identity.id);
+        assert_eq!(plain.identity.id.as_str(), "siraya-tech-blu-nylon-black");
+    }
+
+    /// A parenthetical the source attaches with a space is the colour or
+    /// the version, which is what makes 2 resins 2 resins.
+    #[test]
+    fn a_colour_stays_part_of_the_resin_it_names() {
+        let record = |name: &str| {
+            format!(
+                r#"{{
+                    "templateId": "key", "profileVersion": 1,
+                    "name": "{name}", "brand": "Siraya Tech", "resinFamily": "standard"
+                }}"#
+            )
+        };
+        let black = map(&record("Blu (Lava Black)")).unwrap();
+        let grey = map(&record("Blu (Lava Grey)")).unwrap();
+
+        assert_ne!(black.identity.id, grey.identity.id);
+        assert_eq!(black.identity.id.as_str(), "siraya-tech-blu-lava-black");
     }
 
     #[test]

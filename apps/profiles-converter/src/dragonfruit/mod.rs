@@ -22,7 +22,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::{MaterialId, NonEmptyString, PrinterId};
 use sc_print_profiles::{MaterialDefaults, MaterialProfile};
 use serde_json::Value;
 
@@ -194,19 +194,24 @@ impl ProfileReader for DragonFruitReader {
     fn read(&self, inputs: &[&Path]) -> Result<SourceReading, DragonFruitError> {
         let collected = collect_records(inputs)?;
         let printers = map_printers(collected.printers, self.printers.as_ref())?;
-        let mut profiles = printers.profiles;
-        profiles.extend(map_materials(collected.materials, &printers.presets)?);
         let mut notes = printers.notes;
         if self.printers.is_none() {
             notes.insert(0, SourceNote::NoPrinterLibrary);
         }
-        let mut merged = Vec::new();
-        let profiles = merge_records(profiles, &mut |note| {
-            if !merged.contains(&note) {
-                merged.push(note);
+        let mut about_materials = Vec::new();
+        let mut note = |note: SourceNote| {
+            if !about_materials.contains(&note) {
+                about_materials.push(note);
             }
-        })?;
-        notes.extend(merged);
+        };
+        let mut profiles = printers.profiles;
+        profiles.extend(map_materials(
+            collected.materials,
+            &printers.presets,
+            &mut note,
+        )?);
+        let profiles = merge_records(profiles, &mut note)?;
+        notes.extend(about_materials);
         Ok(SourceReading { profiles, notes })
     }
 }
@@ -360,25 +365,30 @@ fn report_classification(
 fn map_materials(
     records: Vec<CollectedRecord<RawMaterial>>,
     presets: &PresetIndex,
+    note: &mut impl FnMut(SourceNote),
 ) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
-    records
-        .into_iter()
-        .map(
-            |CollectedRecord {
-                 record,
-                 path,
-                 index,
-             }| {
-                map_material(record, presets)
-                    .map(ConvertedProfile::Material)
-                    .map_err(|source| DragonFruitError::MapMaterial {
-                        path,
-                        index,
-                        source,
-                    })
-            },
-        )
-        .collect()
+    let mut profiles = Vec::with_capacity(records.len());
+    for CollectedRecord {
+        record,
+        path,
+        index,
+    } in records
+    {
+        let mapped =
+            map_material(record, presets).map_err(|source| DragonFruitError::MapMaterial {
+                path,
+                index,
+                source,
+            })?;
+        if let Some(advice) = mapped.advice {
+            note(SourceNote::AdviceInTheName {
+                material: mapped.profile.identity.id.clone(),
+                advice,
+            });
+        }
+        profiles.push(ConvertedProfile::Material(mapped.profile));
+    }
+    Ok(profiles)
 }
 
 /// Fold records that describe the same thing into one profile.
@@ -402,6 +412,7 @@ fn merge_records(
 ) -> Result<Vec<ConvertedProfile>, DragonFruitError> {
     let mut printers: BTreeMap<PrinterId, ConvertedPrinter> = BTreeMap::new();
     let mut materials: BTreeMap<MaterialId, MaterialProfile> = BTreeMap::new();
+    let mut names: BTreeMap<MaterialId, Vec<(NonEmptyString, usize)>> = BTreeMap::new();
     for profile in profiles {
         match profile {
             ConvertedProfile::Printer(incoming) => {
@@ -413,6 +424,10 @@ fn merge_records(
                 }
             }
             ConvertedProfile::Material(incoming) => {
+                count_name(
+                    names.entry(incoming.identity.id.clone()).or_default(),
+                    &incoming.identity.name,
+                );
                 match materials.entry(incoming.identity.id.clone()) {
                     Entry::Vacant(slot) => {
                         slot.insert(incoming);
@@ -423,6 +438,9 @@ fn merge_records(
                 }
             }
         }
+    }
+    for (id, counted) in names {
+        settle_name(materials.get_mut(&id), &counted, note);
     }
     let mut merged: Vec<ConvertedProfile> = printers
         .into_values()
@@ -468,6 +486,48 @@ fn merge_printer_into(
 
 /// Merge `incoming` into `existing`, which share a material id, or report
 /// the first disagreement.
+/// Add one record's spelling of a name to `counted`, keeping the order
+/// the spellings were first read in.
+fn count_name(counted: &mut Vec<(NonEmptyString, usize)>, name: &NonEmptyString) {
+    match counted.iter_mut().find(|(seen, _)| seen == name) {
+        Some((_, times)) => *times += 1,
+        None => counted.push((name.clone(), 1)),
+    }
+}
+
+/// Give the profile the name most of its records use, and report every
+/// other spelling.
+///
+/// The odd spelling out is a mistake in one record rather than a second
+/// name, so the count decides it; spellings that tie keep the one read
+/// first.
+fn settle_name(
+    profile: Option<&mut MaterialProfile>,
+    counted: &[(NonEmptyString, usize)],
+    note: &mut impl FnMut(SourceNote),
+) {
+    let Some(profile) = profile else {
+        return;
+    };
+    let Some((kept, _)) = counted.iter().fold(
+        None,
+        |best: Option<&(NonEmptyString, usize)>, candidate| match best {
+            Some(best) if best.1 >= candidate.1 => Some(best),
+            _ => Some(candidate),
+        },
+    ) else {
+        return;
+    };
+    profile.identity.name = kept.clone();
+    for (spelling, _) in counted.iter().filter(|(spelling, _)| spelling != kept) {
+        note(SourceNote::NameSpelledDifferently {
+            material: profile.identity.id.clone(),
+            kept: kept.as_str().to_owned(),
+            passed_over: spelling.as_str().to_owned(),
+        });
+    }
+}
+
 fn merge_material_into(
     existing: &mut MaterialProfile,
     incoming: MaterialProfile,
@@ -481,7 +541,8 @@ fn merge_material_into(
     }
     if existing.identity != incoming.identity {
         // 2 records that reach the same id are the same resin, so a
-        // name that differs is a spelling, not a disagreement.
+        // name that differs is a spelling, settled once every record has
+        // been counted.
         let mut spelled_alike = incoming.identity.clone();
         spelled_alike.name = existing.identity.name.clone();
         if existing.identity != spelled_alike {
@@ -490,11 +551,6 @@ fn merge_material_into(
                 conflict: MaterialConflict::SharedFields,
             });
         }
-        note(SourceNote::NameSpelledDifferently {
-            material: existing.identity.id.clone(),
-            kept: existing.identity.name.as_str().to_owned(),
-            passed_over: incoming.identity.name.as_str().to_owned(),
-        });
     }
     if existing.defaults != incoming.defaults {
         // A bottom layer count that changes with the machine is the one
@@ -1274,33 +1330,44 @@ mod tests {
         }
     }
 
-    /// One resin, spelled 2 ways by records that agree on everything
-    /// else. The first spelling read is the profile's, and the run says
-    /// what it passed over.
+    fn named_record(key: &str, name: &str, preset: &str) -> String {
+        format!(
+            r#"[{{
+                "templateId": "{key}", "profileVersion": 1,
+                "name": "{name}", "brand": "TestResin", "resinFamily": "standard",
+                "validForPresets": ["{preset}"],
+                "layerHeightMm": 0.05, "normalExposureSec": 2.4,
+                "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
+                "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
+            }}]"#
+        )
+    }
+
+    /// One resin, mistyped by one record of 3. The odd one out is the
+    /// mistake, whether or not it is read first.
     #[test]
-    fn one_resin_spelled_2_ways_keeps_the_first_spelling() {
+    fn one_resin_spelled_2_ways_takes_the_spelling_most_records_use() {
         let dir = tempdir().unwrap();
         printers_for_both_presets(dir.path());
-        let record = |key: &str, name: &str, preset: &str| {
-            format!(
-                r#"[{{
-                    "templateId": "{key}", "profileVersion": 1,
-                    "name": "{name}", "brand": "TestResin", "resinFamily": "standard",
-                    "validForPresets": ["{preset}"],
-                    "layerHeightMm": 0.05, "normalExposureSec": 2.4,
-                    "bottomExposureSec": 26.0, "bottomLayerCount": 5, "liftDistanceMm": 6.0,
-                    "liftSpeedMmMin": 65.0, "retractSpeedMmMin": 150.0
-                }}]"#
-            )
-        };
         let spaced = "Blu (Clear V2 / Emerald Blue)";
         let tight = "Blu (Clear V2/Emerald Blue)";
+        // The mistyped one is read first, so first-read and majority
+        // disagree.
         fs::write(
             dir.path().join("a.json"),
-            record("b-a", spaced, "printer-a"),
+            named_record("b-a", tight, "printer-a"),
         )
         .unwrap();
-        fs::write(dir.path().join("b.json"), record("b-b", tight, "printer-b")).unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            named_record("b-b", spaced, "printer-b"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("c.json"),
+            named_record("b-c", spaced, "printer-b"),
+        )
+        .unwrap();
 
         let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
         match reading.profiles.as_slice() {
@@ -1315,6 +1382,47 @@ mod tests {
                 material: MaterialId::new("testresin-blu-clear-v2-emerald-blue").unwrap(),
                 kept: spaced.to_owned(),
                 passed_over: tight.to_owned(),
+            }),
+            "notes: {:?}",
+            reading.notes,
+        );
+    }
+
+    /// On some machines the source glues printing advice to the name.
+    /// It is the same resin, and the advice is not what it is called, so
+    /// it reaches the run's notes and not the profile.
+    #[test]
+    fn a_resin_advised_on_one_machine_is_still_one_resin() {
+        let dir = tempdir().unwrap();
+        printers_for_both_presets(dir.path());
+        fs::write(
+            dir.path().join("a.json"),
+            named_record(
+                "b-a",
+                "Blu Nylon Black-(Use Extra Heavy support)",
+                "printer-a",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            named_record("b-b", "Blu Nylon Black", "printer-b"),
+        )
+        .unwrap();
+
+        let reading = DragonFruitReader::new().read(&[dir.path()]).unwrap();
+        match reading.profiles.as_slice() {
+            [_, _, ConvertedProfile::Material(material)] => {
+                assert_eq!(material.identity.id.as_str(), "testresin-blu-nylon-black");
+                assert_eq!(material.identity.name.as_str(), "Blu Nylon Black");
+                assert_eq!(material.per_printer.len(), 2);
+            }
+            other => panic!("expected 2 printers and one merged material, got {other:?}"),
+        }
+        assert!(
+            reading.notes.contains(&SourceNote::AdviceInTheName {
+                material: MaterialId::new("testresin-blu-nylon-black").unwrap(),
+                advice: "Use Extra Heavy support".to_owned(),
             }),
             "notes: {:?}",
             reading.notes,

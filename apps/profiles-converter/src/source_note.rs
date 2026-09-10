@@ -49,6 +49,12 @@ pub enum SourceNote {
         kept: String,
         passed_over: String,
     },
+    /// The source glues printing advice onto a resin's name for some
+    /// machines. It names no resin, and no field of ours records it.
+    AdviceInTheName {
+        material: MaterialId,
+        advice: String,
+    },
     /// A resin's records give one machine a different value from
     /// another for a field a profile carries once, so the profile
     /// carries none of them.
@@ -109,7 +115,12 @@ impl fmt::Display for SourceNote {
                 passed_over,
             } => write!(
                 f,
-                "the source spells {:?} both {kept:?} and {passed_over:?}; the profile carries the first",
+                "the source spells {:?} both {kept:?} and {passed_over:?}; the profile carries the spelling most of its records use",
+                material.as_str(),
+            ),
+            Self::AdviceInTheName { material, advice } => write!(
+                f,
+                "the source's name for {:?} carries the advice {advice:?}, which no profile of ours records",
                 material.as_str(),
             ),
             Self::DefaultVariesByMachine { material, field } => write!(
@@ -194,6 +205,17 @@ mod tests {
             "{message}"
         );
         assert!(message.contains("Blu (Clear V2/Emerald Blue)"), "{message}");
+    }
+
+    #[test]
+    fn an_advice_note_carries_the_advice_itself() {
+        let message = SourceNote::AdviceInTheName {
+            material: MaterialId::new("sirayatech-blu-nylon-black").unwrap(),
+            advice: "Use Extra Heavy support".to_owned(),
+        }
+        .to_string();
+        assert!(message.contains("sirayatech-blu-nylon-black"), "{message}");
+        assert!(message.contains("Use Extra Heavy support"), "{message}");
     }
 
     #[test]
