@@ -38,7 +38,7 @@ const HEADER: [&str; 11] = [
 /// to handle: a split travel, a machine that moves in one go, one cell
 /// naming 2 machines, a machine that plans its own motion, a span a
 /// spreadsheet program rewrote as a date, the one written-out date, a
-/// row qualified by a printing mode, a machine we ship nothing for, and
+/// row carrying advice, a machine we ship nothing for, and
 /// the one pair of rows that contradict each other.
 const ROWS: [[&str; 11]; 12] = [
     [
@@ -413,12 +413,6 @@ fn the_run_reports_every_row_it_could_not_use() {
         )),
         "{notes:?}",
     );
-    assert!(
-        notes
-            .iter()
-            .any(|note| matches!(note, SourceNote::RowsRestrictedToASpeedMode { rows: 1, .. })),
-        "{notes:?}",
-    );
 }
 
 #[test]
@@ -519,14 +513,28 @@ fn a_row_under_a_merged_machine_and_resin_calibrates_that_machine() {
 }
 
 #[test]
-fn a_note_merged_over_a_section_qualifies_every_row_it_spans() {
-    let (_out, _dir, notes) = convert_merged(&MERGED, &MERGES);
+fn a_note_merged_over_a_section_reaches_every_row_it_spans() {
+    let (out, _dir, _notes) = convert_merged(&MERGED, &MERGES);
 
-    assert!(
-        notes.contains(&SourceNote::RowsRestrictedToASpeedMode {
-            advice: "NOTE: This parameter works for Standard Resin+ Normal Speed".to_owned(),
-            rows: 2,
-        }),
-        "{notes:?}",
+    let mars_4_ultra = CalibrationTarget::from_printer(
+        &sc_print_primitives::PrinterId::new("elegoo-mars-4-ultra").unwrap(),
     );
+    for colour in ["grey", "black"] {
+        let path = out
+            .join("materials")
+            .join(format!("elegoo-standard-resin-{colour}-50um.toml"));
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains(
+                "# NOTE: This parameter works for Standard Resin+ Normal Speed\n[per_printer.elegoo-mars-4-ultra]\n"
+            ),
+            "{colour}:\n{written}",
+        );
+        let profile = load_material_profile_from_path(&path).unwrap();
+        assert_eq!(
+            profile.notes.get(&mars_4_ultra).map(String::as_str),
+            Some("NOTE: This parameter works for Standard Resin+ Normal Speed"),
+            "{colour}",
+        );
+    }
 }

@@ -126,6 +126,21 @@ fn fold_into(resin: &mut MaterialProfile, alias: MaterialProfile) -> Result<(), 
             Entry::Occupied(slot) => return Err(FoldConflict::Machine(slot.key().clone())),
         }
     }
+    // A block's note comes with it, and 2 different notes on one
+    // machine are both kept.
+    for (machine, note) in alias.notes {
+        match resin.notes.entry(machine) {
+            Entry::Vacant(slot) => {
+                slot.insert(note);
+            }
+            Entry::Occupied(mut slot) if *slot.get() != note => {
+                let kept = slot.get_mut();
+                kept.push('\n');
+                kept.push_str(&note);
+            }
+            Entry::Occupied(_) => {}
+        }
+    }
     Ok(())
 }
 
@@ -140,6 +155,7 @@ fn resin_fields(profile: &MaterialProfile, identity: &MaterialIdentity) -> Mater
             ..profile.identity.clone()
         },
         per_printer: BTreeMap::new(),
+        notes: BTreeMap::new(),
         ..profile.clone()
     }
 }
@@ -241,6 +257,86 @@ mod material_fold_tests {
         .unwrap();
 
         assert_eq!(materials(&profiles)[0].per_printer.len(), 1);
+    }
+
+    /// Fold an alias that calibrates `machines` and notes `noted`.
+    fn fold_with_a_noted_alias(
+        machines: &[(&str, f64)],
+        noted: &str,
+    ) -> BTreeMap<CalibrationTarget, String> {
+        let mut alias: MaterialProfile =
+            toml_edit::de::from_str(&resin_toml("testcorp-resin-gr", "Resin Gr", machines))
+                .unwrap();
+        alias
+            .notes
+            .insert(machine(noted), "Works for fast printing.".to_owned());
+        let (profiles, _) = fold(
+            vec![
+                resin("testcorp-resin", "Resin", &[("testcorp-a", 2.0)]),
+                ConvertedProfile::Material(alias),
+            ],
+            Some(&curation()),
+        )
+        .unwrap();
+        materials(&profiles)[0].notes.clone()
+    }
+
+    #[test]
+    fn a_machine_the_alias_brings_keeps_its_note() {
+        let notes = fold_with_a_noted_alias(&[("testcorp-b", 3.0)], "testcorp-b");
+
+        assert_eq!(
+            notes.get(&machine("testcorp-b")).map(String::as_str),
+            Some("Works for fast printing."),
+        );
+    }
+
+    #[test]
+    fn a_note_on_a_machine_both_calibrate_alike_is_kept() {
+        let notes = fold_with_a_noted_alias(&[("testcorp-a", 2.0)], "testcorp-a");
+
+        assert_eq!(
+            notes.get(&machine("testcorp-a")).map(String::as_str),
+            Some("Works for fast printing."),
+        );
+    }
+
+    #[test]
+    fn different_notes_on_one_machine_are_both_kept() {
+        let mut kept: MaterialProfile = toml_edit::de::from_str(&resin_toml(
+            "testcorp-resin",
+            "Resin",
+            &[("testcorp-a", 2.0)],
+        ))
+        .unwrap();
+        kept.notes
+            .insert(machine("testcorp-a"), "Keep the vat warm.".to_owned());
+        let mut alias: MaterialProfile = toml_edit::de::from_str(&resin_toml(
+            "testcorp-resin-gr",
+            "Resin Gr",
+            &[("testcorp-a", 2.0)],
+        ))
+        .unwrap();
+        alias
+            .notes
+            .insert(machine("testcorp-a"), "Works for fast printing.".to_owned());
+
+        let (profiles, _) = fold(
+            vec![
+                ConvertedProfile::Material(kept),
+                ConvertedProfile::Material(alias),
+            ],
+            Some(&curation()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            materials(&profiles)[0]
+                .notes
+                .get(&machine("testcorp-a"))
+                .map(String::as_str),
+            Some("Keep the vat warm.\nWorks for fast printing."),
+        );
     }
 
     #[test]

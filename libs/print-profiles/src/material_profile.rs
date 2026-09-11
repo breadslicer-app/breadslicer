@@ -52,6 +52,12 @@ pub struct MaterialProfile {
     /// Calibration blocks by target; the generic machine's block, when
     /// present, orders first.
     pub per_printer: BTreeMap<CalibrationTarget, MaterialPerPrinter>,
+    /// Notes on calibration blocks, by the machine each calibrates. The
+    /// file carries each as comment lines above its block, so a note
+    /// changes no setting, and one for a machine without a block is
+    /// not written.
+    #[serde(skip)]
+    pub notes: BTreeMap<CalibrationTarget, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +140,9 @@ impl TryFrom<RawMaterialProfile> for MaterialProfile {
             defaults: raw.defaults,
             physical: raw.physical,
             per_printer,
+            // Comments never reach serde; the loader reads the notes
+            // from the document itself.
+            notes: BTreeMap::new(),
         })
     }
 }

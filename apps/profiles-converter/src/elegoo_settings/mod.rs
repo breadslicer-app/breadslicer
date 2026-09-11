@@ -128,6 +128,8 @@ struct Resin {
     identity: MaterialIdentity,
     height: PositiveFiniteMm,
     blocks: BTreeMap<CalibrationTarget, Slot>,
+    /// What the sheet's Notes column says for each machine.
+    notes: BTreeMap<CalibrationTarget, String>,
 }
 
 /// What is known about one machine's calibration for one resin.
@@ -143,7 +145,6 @@ enum Slot {
 struct Run {
     resins: BTreeMap<MaterialId, Resin>,
     skipped: BTreeMap<Skipped, usize>,
-    advice: BTreeMap<String, usize>,
     conflicts: Vec<(MaterialId, PrinterId)>,
 }
 
@@ -186,13 +187,6 @@ impl Run {
         if resin.is_empty() {
             return self.skip(Skipped::NoResin);
         }
-        if !note.is_empty() {
-            // The note qualifies the settings rather than replacing
-            // them, and no field of ours holds a printing mode. Passing
-            // the row over would drop the resins that carry one, so it
-            // is read and the qualification is reported.
-            *self.advice.entry(tidy(note)).or_default() += 1;
-        }
         let printers = match machines_named_by(model) {
             Machines::Ours(ids) => ids,
             Machines::NotOurs => return self.skip(Skipped::MachineNotShipped(model.to_owned())),
@@ -210,10 +204,17 @@ impl Run {
             identity: identity_of(&id, resin, colour, height),
             height,
             blocks: BTreeMap::new(),
+            notes: BTreeMap::new(),
         });
         for printer in printers {
             let id_of_printer = PrinterId::new(printer).expect("the map holds only ids we ship");
             let target = CalibrationTarget::from_printer(&id_of_printer);
+            if !note.is_empty() {
+                entry
+                    .notes
+                    .entry(target.clone())
+                    .or_insert_with(|| tidy(note));
+            }
             match entry.blocks.get(&target) {
                 Some(Slot::Agreed(seen)) if **seen != block => {
                     entry.blocks.insert(target, Slot::Disagreed);
@@ -242,11 +243,6 @@ impl Run {
             .map(|(reason, rows)| reason.into_note(rows))
             .collect();
         notes.extend(
-            self.advice
-                .into_iter()
-                .map(|(advice, rows)| SourceNote::RowsRestrictedToASpeedMode { advice, rows }),
-        );
-        notes.extend(
             self.conflicts
                 .into_iter()
                 .map(|(material, printer)| SourceNote::RowsDisagree { material, printer }),
@@ -263,6 +259,11 @@ impl Run {
                         Slot::Disagreed => None,
                     })
                     .collect();
+                let block_notes: BTreeMap<CalibrationTarget, String> = resin
+                    .notes
+                    .into_iter()
+                    .filter(|(target, _)| per_printer.contains_key(target))
+                    .collect();
                 (!per_printer.is_empty()).then(|| {
                     ConvertedProfile::Material(MaterialProfile {
                         extension: false,
@@ -274,6 +275,7 @@ impl Run {
                         defaults: MaterialDefaults::default(),
                         physical: MaterialPhysical::default(),
                         per_printer,
+                        notes: block_notes,
                     })
                 })
             })
@@ -471,10 +473,26 @@ fn sec(value: f64) -> Option<PositiveFiniteSec> {
     PositiveFiniteSec::new(value).ok()
 }
 
-/// One line of text, with the line breaks a cell may carry folded into
-/// single spaces so a note reads as a sentence.
+/// Fold `value` onto one line, turning the line breaks a cell may carry
+/// into single spaces so a note reads as a sentence, and each full-width
+/// form into the ASCII character it stands for.
 fn tidy(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .map(ascii_of_full_width)
+        .collect()
+}
+
+/// Map a full-width form to the ASCII character it stands for, leaving
+/// any other character as it is.
+fn ascii_of_full_width(c: char) -> char {
+    match c {
+        '\u{ff01}'..='\u{ff5e}' => char::from_u32(u32::from(c) - 0xfee0).unwrap_or(c),
+        _ => c,
+    }
 }
 
 /// A pause the schema accepts, which unlike an exposure may be 0.
@@ -724,19 +742,42 @@ mod elegoo_settings_tests {
     }
 
     #[test]
-    fn a_row_qualified_by_a_printing_mode_is_read_and_the_qualification_reported() {
+    fn a_row_carrying_a_note_writes_it_above_the_block_it_calibrates() {
         let mut noted = MARS_5;
-        noted[2] = "NOTE: \nThis parameter works for Standard Resin+ Normal Speed";
+        noted[2] = "NOTE: \nThis parameter works for Standard Resin+ Fast Speed(Hollow model, wall thickness\u{ff1e}2mm)";
         let reading = read(&[noted]);
 
-        assert_eq!(reading.profiles.len(), 1);
+        let profile = only_material(&reading);
+        let mars_5 = CalibrationTarget::from_printer(&PrinterId::new("elegoo-mars-5").unwrap());
         assert_eq!(
-            reading.notes,
-            vec![SourceNote::RowsRestrictedToASpeedMode {
-                advice: "NOTE: This parameter works for Standard Resin+ Normal Speed".to_owned(),
-                rows: 1,
-            }],
+            profile.notes.get(&mars_5).map(String::as_str),
+            Some(
+                "NOTE: This parameter works for Standard Resin+ Fast Speed(Hollow model, wall thickness>2mm)"
+            ),
         );
+        assert_eq!(reading.notes, Vec::new());
+    }
+
+    #[test]
+    fn a_note_on_a_row_naming_2_machines_goes_above_both_blocks() {
+        let mut noted = MARS_3;
+        noted[2] = "NOTE: This parameter works for Standard Resin+ Normal Speed";
+        let reading = read(&[noted]);
+
+        let profile = only_material(&reading);
+        assert_eq!(profile.notes.len(), 2, "{:?}", profile.notes);
+    }
+
+    #[test]
+    fn a_note_leaves_with_a_block_the_rows_disagree_on() {
+        let mut noted = MARS_5;
+        noted[2] = "NOTE: This parameter works for Standard Resin+ Normal Speed";
+        let mut other = MARS_5;
+        other[5] = "3-3.5";
+        let reading = read(&[noted, other, MARS_3]);
+
+        let profile = only_material(&reading);
+        assert!(profile.notes.is_empty(), "{:?}", profile.notes);
     }
 
     #[test]

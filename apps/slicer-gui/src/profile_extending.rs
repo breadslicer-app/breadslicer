@@ -130,6 +130,7 @@ pub(crate) fn build_extension_update(
             defaults: MaterialDefaults::default(),
             physical: MaterialPhysical::default(),
             per_printer: BTreeMap::new(),
+            notes: BTreeMap::new(),
         },
     };
     extension.per_printer.insert(target.clone(), values);

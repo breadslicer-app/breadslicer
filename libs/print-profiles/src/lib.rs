@@ -25,6 +25,7 @@
 //!   per-value provenance and warnings.
 
 pub mod calibration_coverage;
+mod calibration_notes;
 pub mod calibration_target;
 pub mod effective_material;
 pub mod generic_machine;

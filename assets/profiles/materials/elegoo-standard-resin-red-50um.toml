@@ -30,6 +30,7 @@ lift_speed_mm_min = 75.0
 retract_speed_mm_min = 75.0
 second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
 
+# NOTE: This parameter works for Standard Resin+ Normal Speed
 [per_printer.elegoo-mars-4-ultra]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0
@@ -66,6 +67,7 @@ lift_speed_mm_min = 65.0
 retract_speed_mm_min = 65.0
 second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
 
+# NOTE: This parameter works for Standard Resin+ Normal Speed
 [per_printer.elegoo-saturn-3-ultra]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0

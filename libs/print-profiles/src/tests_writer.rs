@@ -5,6 +5,7 @@
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
+use crate::calibration_target::CalibrationTarget;
 use crate::loader::{
     load_material_extension_from_library, load_material_profile_from_path,
     load_printer_profile_from_path,
@@ -192,6 +193,69 @@ fn save_to_path_round_trips_a_second_stage() {
     save_material_profile_to_path(&path, &original).unwrap();
     let loaded = load_material_profile_from_path(&path).unwrap();
     assert_eq!(loaded, original);
+}
+
+/// The machine the fixtures above calibrate.
+fn saturn_4() -> CalibrationTarget {
+    CalibrationTarget::from_printer(&PrinterId::new("elegoo-saturn-4-ctb").unwrap())
+}
+
+#[test]
+fn save_to_path_writes_a_note_as_comment_lines_above_its_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let mut profile = parse(WITH_PER_PRINTER_TOML);
+    profile.notes.insert(
+        saturn_4(),
+        "Works for fast printing.\nKeep the vat warm.".to_owned(),
+    );
+
+    save_material_profile_to_path(&path, &profile).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains(
+            "\n# Works for fast printing.\n# Keep the vat warm.\n[per_printer.elegoo-saturn-4-ctb]\n"
+        ),
+        "written file:\n{written}"
+    );
+}
+
+#[test]
+fn save_to_path_round_trips_a_note_and_writes_it_back_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let again = dir.path().join("again.toml");
+    let mut profile = parse(WITH_PER_PRINTER_TOML);
+    profile
+        .notes
+        .insert(saturn_4(), "Works for fast printing.".to_owned());
+
+    save_material_profile_to_path(&path, &profile).unwrap();
+    let loaded = load_material_profile_from_path(&path).unwrap();
+    save_material_profile_to_path(&again, &loaded).unwrap();
+
+    assert_eq!(loaded, profile);
+    assert_eq!(
+        std::fs::read_to_string(&again).unwrap(),
+        std::fs::read_to_string(&path).unwrap(),
+    );
+}
+
+#[test]
+fn save_to_path_writes_no_note_for_a_machine_the_profile_does_not_calibrate() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.toml");
+    let mut profile = parse(WITH_PER_PRINTER_TOML);
+    profile.notes.insert(
+        CalibrationTarget::from_printer(&PrinterId::new("elegoo-mars-5").unwrap()),
+        "Works for fast printing.".to_owned(),
+    );
+
+    save_material_profile_to_path(&path, &profile).unwrap();
+
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(!written.contains('#'), "written file:\n{written}");
 }
 
 #[test]

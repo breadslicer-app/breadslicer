@@ -12,6 +12,7 @@ target_layer_height_mm = 0.1
 
 [physical]
 
+# NOTE: This parameter works for Standard Resin+ Fast Speed(Hollow model, wall thickness>2mm, model has holes)
 [per_printer.elegoo-mars-4-ultra]
 normal_exposure_sec = 3.5
 bottom_exposure_sec = 40.0
@@ -21,6 +22,7 @@ lift_speed_mm_min = 300.0
 retract_speed_mm_min = 300.0
 second_travel = { lift_distance_mm = 2.0, lift_speed_mm_min = 1000.0, retract_speed_mm_min = 1000.0 }
 
+# NOTE: This parameter works for Standard Resin+ Fast Speed(Hollow model, wall thickness>2mm, model has holes)
 [per_printer.elegoo-saturn-3-ultra]
 normal_exposure_sec = 3.5
 bottom_exposure_sec = 40.0

@@ -9,6 +9,7 @@ use std::path::Path;
 
 use sc_print_primitives::{MaterialId, PrinterId};
 
+use super::calibration_target::CalibrationTarget;
 use super::loader::{
     LoadMaterialExtensionError, LoadMaterialProfileByIdError, LoadMaterialProfileError,
     LoadMaterialProfileErrorKind, LoadPrinterProfileByIdError, LoadPrinterProfileError,
@@ -137,6 +138,26 @@ fn load_material_profile_from_path_parses_a_valid_fixture() {
     let profile = load_material_profile_from_path(&path).unwrap();
     assert_eq!(profile.identity.brand.as_str(), "Siraya Tech");
     assert!(profile.per_printer.is_empty());
+}
+
+#[test]
+fn load_material_profile_reads_the_comment_lines_above_a_block_as_its_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let toml = format!(
+        "# About the whole file, not a block.\n{VALID_MATERIAL_TOML}\n\
+         # Works for fast printing.\n# Keep the vat warm.\n\
+         [per_printer.elegoo-saturn-4-ultra]\nnormal_exposure_sec = 2.5\n"
+    );
+    let path = write_temp_file(dir.path(), "material.toml", &toml);
+
+    let profile = load_material_profile_from_path(&path).unwrap();
+
+    let saturn = CalibrationTarget::from_printer(&PrinterId::new("elegoo-saturn-4-ultra").unwrap());
+    assert_eq!(
+        profile.notes.get(&saturn).map(String::as_str),
+        Some("Works for fast printing.\nKeep the vat warm."),
+    );
+    assert_eq!(profile.notes.len(), 1, "{:?}", profile.notes);
 }
 
 #[test]

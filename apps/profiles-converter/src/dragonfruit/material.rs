@@ -403,6 +403,7 @@ pub(crate) fn map_material(
             // The source format publishes no densities.
             physical: MaterialPhysical::default(),
             per_printer,
+            notes: BTreeMap::new(),
         },
     })
 }

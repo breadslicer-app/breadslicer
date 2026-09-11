@@ -175,7 +175,8 @@ pub fn load_printer_profile_from_path(
 /// Read a TOML material profile from the given path. Returns
 /// [`LoadMaterialProfileError`] when the file cannot be read or the
 /// contents do not parse as a valid [`MaterialProfile`] (including
-/// when a reserved section is present).
+/// when a reserved section is present). The comment lines above each
+/// calibration block become that block's note.
 pub fn load_material_profile_from_path(
     path: &Path,
 ) -> Result<MaterialProfile, LoadMaterialProfileError> {
@@ -183,10 +184,16 @@ pub fn load_material_profile_from_path(
         path: path.to_owned(),
         kind: LoadMaterialProfileErrorKind::Io(err),
     })?;
-    toml_edit::de::from_str(&contents).map_err(|err| LoadMaterialProfileError {
+    let parse_error = |err: toml_edit::de::Error| LoadMaterialProfileError {
         path: path.to_owned(),
         kind: LoadMaterialProfileErrorKind::TomlParse(err),
-    })
+    };
+    let mut profile: MaterialProfile = toml_edit::de::from_str(&contents).map_err(parse_error)?;
+    let document: toml_edit::DocumentMut = contents
+        .parse()
+        .map_err(|err: toml_edit::TomlError| parse_error(err.into()))?;
+    profile.notes = crate::calibration_notes::read(&document);
+    Ok(profile)
 }
 
 /// Load a printer profile from a library directory by id. Resolves

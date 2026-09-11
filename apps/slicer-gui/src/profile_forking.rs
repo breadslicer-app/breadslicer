@@ -125,6 +125,17 @@ pub(crate) fn build_fork(
                     .map(|block| (target.clone(), *block))
             })
             .collect::<BTreeMap<_, _>>(),
+        // A block's note comes with the block.
+        notes: parts
+            .blocks
+            .iter()
+            .filter_map(|target| {
+                source
+                    .notes
+                    .get(target)
+                    .map(|note| (target.clone(), note.clone()))
+            })
+            .collect(),
     })
 }
 

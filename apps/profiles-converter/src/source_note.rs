@@ -98,9 +98,6 @@ pub enum SourceNote {
     /// The source states settings without saying which resin they are
     /// for.
     RowsNamingNoResin { rows: usize },
-    /// The source restricts some settings to a printing mode, which no
-    /// profile of ours can hold.
-    RowsRestrictedToASpeedMode { advice: String, rows: usize },
     /// The source states no travel for a machine, which every
     /// calibration block needs, so that machine gets none.
     RowsStatingNoTravel { model: String, rows: usize },
@@ -219,10 +216,6 @@ impl fmt::Display for SourceNote {
             Self::RowsNamingNoResin { rows } => write!(
                 f,
                 "{rows} row(s) state settings without naming the resin they are for",
-            ),
-            Self::RowsRestrictedToASpeedMode { advice, rows } => write!(
-                f,
-                "{rows} row(s) hold only for {advice:?}, which no profile of ours can express, so their settings were written without that qualification",
             ),
             Self::RowsStatingNoTravel { model, rows } => write!(
                 f,
@@ -377,26 +370,6 @@ mod tests {
         .to_string();
         assert!(message.contains("3-bit panel"), "{message}");
         assert!(message.contains("anti-aliasing flag"), "{message}");
-    }
-
-    /// The rows are read: what the profile cannot hold is the condition
-    /// the source attaches to them, so the note must not claim the
-    /// settings were dropped.
-    #[test]
-    fn a_speed_mode_note_says_the_settings_were_kept_without_their_condition() {
-        let message = SourceNote::RowsRestrictedToASpeedMode {
-            advice: "NOTE: This parameter works for Standard Resin+ Normal Speed".to_owned(),
-            rows: 2,
-        }
-        .to_string();
-        assert!(
-            message.contains("Standard Resin+ Normal Speed"),
-            "{message}"
-        );
-        assert!(
-            message.contains("written without that qualification"),
-            "{message}"
-        );
     }
 
     #[test]

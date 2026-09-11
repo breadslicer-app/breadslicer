@@ -128,6 +128,7 @@ fn material_document(
     let mut doc: toml_edit::DocumentMut =
         serialised.parse().map_err(BuildDocumentError::Reparse)?;
     inline_calibration_composites(&mut doc);
+    crate::calibration_notes::write(&mut doc, &profile.notes);
     Ok(doc)
 }
 
