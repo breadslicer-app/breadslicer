@@ -47,7 +47,7 @@ fn exempt_from_curation(id: &str) -> bool {
 
 /// The resins the source still publishes that we decline to ship, each
 /// with what its vendor still does with the product.
-const DISCARDED: [(&str, MaterialStatus); 4] = [
+const DISCARDED: [(&str, MaterialStatus); 2] = [
     // The vendor's discontinued plant-based Easy line, which their
     // dataset still tunes for 21 machines.
     ("siraya-tech-easy-grey", MaterialStatus::Discontinued),
@@ -55,13 +55,6 @@ const DISCARDED: [(&str, MaterialStatus); 4] = [
         "siraya-tech-easy-obsidian-black",
         MaterialStatus::Discontinued,
     ),
-    // Sold, and their settings hold only for hollow models printed in
-    // fast mode, which a profile cannot say.
-    (
-        "elegoo-rapid-standard-photopolymer-resin-grey-100um",
-        MaterialStatus::Current,
-    ),
-    ("elegoo-standard-resin-grey-100um", MaterialStatus::Current),
 ];
 
 /// Each id the source derives for a resin it names 2 ways, and the id
