@@ -200,8 +200,9 @@ const ROWS: [[&str; 11]; 12] = [
 ];
 
 /// Write a workbook holding one worksheet of `rows` under the vendor's
-/// header, which is the shape this reader is handed.
-fn workbook(path: &Path, rows: &[[&str; 11]]) {
+/// header, which is the shape this reader is handed, showing each range
+/// in `merges` as one cell.
+fn workbook(path: &Path, rows: &[[&str; 11]], merges: &[&str]) {
     let mut xml = String::from(r#"<?xml version="1.0"?><worksheet><sheetData>"#);
     let opening = ["The optimal printing environment temperature is 25-30 C."];
     for (index, cells) in std::iter::once(&opening[..])
@@ -220,7 +221,11 @@ fn workbook(path: &Path, rows: &[[&str; 11]]) {
         }
         xml.push_str("</row>");
     }
-    xml.push_str("</sheetData></worksheet>");
+    xml.push_str("</sheetData><mergeCells>");
+    for merge in merges {
+        xml.push_str(&format!(r#"<mergeCell ref="{merge}"/>"#));
+    }
+    xml.push_str("</mergeCells></worksheet>");
 
     let mut archive = zip::ZipWriter::new(File::create(path).unwrap());
     archive
@@ -256,9 +261,18 @@ fn escape(value: &str) -> String {
 /// Convert a workbook of `rows` into a fresh library, and say what the
 /// run reported.
 fn convert(rows: &[[&str; 11]]) -> (PathBuf, tempfile::TempDir, Vec<SourceNote>) {
+    convert_merged(rows, &[])
+}
+
+/// Convert a workbook of `rows` that shows each range in `merges` as one
+/// cell.
+fn convert_merged(
+    rows: &[[&str; 11]],
+    merges: &[&str],
+) -> (PathBuf, tempfile::TempDir, Vec<SourceNote>) {
     let dir = tempfile::tempdir().unwrap();
     let sheet = dir.path().join("settings.xlsx");
-    workbook(&sheet, rows);
+    workbook(&sheet, rows, merges);
     let out = dir.path().join("library");
     let request = ConversionRequest::from_raw(RawCliArgs {
         format: SourceFormat::ElegooSettingsSheet,
@@ -425,4 +439,94 @@ fn a_file_that_is_not_a_workbook_fails_the_run_rather_than_writing_nothing() {
     let err = run(&request).unwrap_err();
 
     assert!(err.to_string().contains("not a spreadsheet"), "{err}");
+}
+
+/// Rows the published sheet lays out under merged cells, as its file
+/// stores them: rows 272 and 273, whose machine and resin are stated
+/// once over both, and rows 512 and 513, whose note is stated once over
+/// the section it opens.
+const MERGED: [[&str; 11]; 4] = [
+    [
+        "ELEGOO Mars 4 DLP",
+        "Standard Resin",
+        "",
+        "Translucent",
+        "30-35",
+        "3-3.5",
+        "0.05",
+        "2+3",
+        "75+230",
+        "230+75",
+        "1.0",
+    ],
+    [
+        "", "", "", "clear", "35-40", "45816.0", "0.05", "2+3", "75+230", "230+75", "1.0",
+    ],
+    [
+        "ELEGOO Mars 4 Ultra",
+        "Standard Resin",
+        "NOTE: \nThis parameter works for Standard Resin+ Normal Speed",
+        "Grey",
+        "25-30",
+        "2.5-3",
+        "0.05",
+        "2+3",
+        "75+230",
+        "230+75",
+        "0.5",
+    ],
+    [
+        "ELEGOO Mars 4 Ultra",
+        "Standard Resin",
+        "",
+        "Black",
+        "25-30",
+        "3-3.5",
+        "0.05",
+        "2+3",
+        "75+230",
+        "230+75",
+        "0.5",
+    ],
+];
+
+/// The ranges those rows are merged over, below the note and the header
+/// the workbook opens with.
+const MERGES: [&str; 3] = ["A3:A4", "B3:B4", "C5:C6"];
+
+#[test]
+fn a_row_under_a_merged_machine_and_resin_calibrates_that_machine() {
+    let (out, _dir, notes) = convert_merged(&MERGED, &MERGES);
+
+    let profile = load_material_profile_from_path(
+        &out.join("materials")
+            .join("elegoo-standard-resin-clear-50um.toml"),
+    )
+    .unwrap_or_else(|err| panic!("the merged row wrote no resin: {err}"));
+    let printer = sc_print_primitives::PrinterId::new("elegoo-mars-4-dlp").unwrap();
+    assert!(
+        profile
+            .per_printer
+            .contains_key(&CalibrationTarget::from_printer(&printer)),
+        "the merged row calibrates nothing on the Mars 4 DLP",
+    );
+    assert!(
+        !notes
+            .iter()
+            .any(|note| matches!(note, SourceNote::RowsNamingNoResin { .. })),
+        "{notes:?}",
+    );
+}
+
+#[test]
+fn a_note_merged_over_a_section_qualifies_every_row_it_spans() {
+    let (_out, _dir, notes) = convert_merged(&MERGED, &MERGES);
+
+    assert!(
+        notes.contains(&SourceNote::RowsRestrictedToASpeedMode {
+            advice: "NOTE: This parameter works for Standard Resin+ Normal Speed".to_owned(),
+            rows: 2,
+        }),
+        "{notes:?}",
+    );
 }

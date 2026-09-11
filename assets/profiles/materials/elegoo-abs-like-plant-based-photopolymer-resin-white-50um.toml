@@ -45,6 +45,15 @@ lift_distance_mm = 5.0
 lift_speed_mm_min = 80.0
 retract_speed_mm_min = 210.0
 
+[per_printer.elegoo-mars-4-dlp]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+wait_before_cure_sec = 1.0
+lift_distance_mm = 2.0
+lift_speed_mm_min = 75.0
+retract_speed_mm_min = 75.0
+second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
 [per_printer.elegoo-mars-4-max]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 30.0

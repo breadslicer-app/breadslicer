@@ -24,10 +24,13 @@ const SHEET_PART: &str = "xl/worksheets/sheet1.xml";
 /// Where a cell's text lives when the cell holds an index into it.
 const STRINGS_PART: &str = "xl/sharedStrings.xml";
 
-/// One worksheet's cells, row by row, each row indexed by column.
+/// One worksheet's cells, row by row, each row indexed by column, as the
+/// sheet shows them: a cell under a merged range holds that range's
+/// value.
 ///
-/// A row is as long as its rightmost non-empty cell, so a short row is
-/// a row whose trailing cells are empty.
+/// Row `n` of the sheet sits at index `n - 1`, so a row the file leaves
+/// out is an empty row here. A row is as long as its rightmost non-empty
+/// cell, so a short row is a row whose trailing cells are empty.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sheet {
     rows: Vec<Vec<String>>,
@@ -173,7 +176,8 @@ enum CellKind {
     Literal,
 }
 
-/// The rows of one worksheet, with every cell resolved to its text.
+/// Read the rows of one worksheet, every cell resolved to its text and
+/// every merged range spread over the cells it covers.
 fn worksheet(
     bytes: &[u8],
     strings: &[String],
@@ -182,6 +186,7 @@ fn worksheet(
     let mut buffer = Vec::new();
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
+    let mut merges: Vec<Merge> = Vec::new();
     let mut column = 0usize;
     let mut kind = CellKind::Literal;
     let mut reading_value = false;
@@ -189,13 +194,26 @@ fn worksheet(
     loop {
         match reader.read_event_into(&mut buffer)? {
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
-                b"row" => row = Vec::new(),
+                b"row" => {
+                    // The file leaves out rows with nothing in them, and
+                    // a merge names rows by number, so the gap is kept.
+                    if let Some(number) = attribute(&e, b"r").and_then(|r| r.parse::<usize>().ok())
+                    {
+                        rows.resize(rows.len().max(number.saturating_sub(1)), Vec::new());
+                    }
+                    row = Vec::new();
+                }
                 b"c" => {
                     column = column_of(&e);
                     kind = kind_of(&e);
                     value.clear();
                 }
                 b"v" | b"t" => reading_value = true,
+                b"mergeCell" => {
+                    if let Some(merge) = attribute(&e, b"ref").as_deref().and_then(merge_of) {
+                        merges.push(merge);
+                    }
+                }
                 _ => {}
             },
             Event::Text(t) if reading_value => value.push_str(&t.decode()?),
@@ -209,7 +227,49 @@ fn worksheet(
             _ => {}
         }
     }
+    for merge in &merges {
+        spread(&mut rows, merge);
+    }
     Ok(rows)
+}
+
+/// A range of cells the sheet shows as one, holding the value of its
+/// top-left cell. Rows and columns count from 0, both ends included.
+struct Merge {
+    top: usize,
+    left: usize,
+    bottom: usize,
+    right: usize,
+}
+
+/// Read the range an `A1:B2` style reference names.
+fn merge_of(reference: &str) -> Option<Merge> {
+    let (first, last) = reference.split_once(':')?;
+    let (left, top) = cell_at(first)?;
+    let (right, bottom) = cell_at(last)?;
+    Some(Merge {
+        top,
+        left,
+        bottom,
+        right,
+    })
+}
+
+/// Copy `merge`'s value into every cell it covers, which is how the
+/// sheet shows it.
+///
+/// A range whose first cell is empty is left alone, so no row grows
+/// past its last non-empty cell.
+fn spread(rows: &mut [Vec<String>], merge: &Merge) {
+    let value = match rows.get(merge.top).and_then(|row| row.get(merge.left)) {
+        Some(value) if !value.is_empty() => value.clone(),
+        _ => return,
+    };
+    for row in rows.iter_mut().take(merge.bottom + 1).skip(merge.top) {
+        for column in merge.left..=merge.right {
+            place(row, column, value.clone());
+        }
+    }
 }
 
 /// The text a cell holds, following its own index when it has one.
@@ -238,22 +298,42 @@ fn place(row: &mut Vec<String>, column: usize, value: String) {
 /// Absent or unreadable, it is the next column after the row's last, so
 /// a sheet without references still reads left to right.
 fn column_of(cell: &BytesStart<'_>) -> usize {
-    let reference = cell
-        .attributes()
-        .flatten()
-        .find(|attr| attr.key.local_name().as_ref() == b"r")
-        .and_then(|attr| String::from_utf8(attr.value.into_owned()).ok())
-        .unwrap_or_default();
+    let reference = attribute(cell, b"r").unwrap_or_default();
     let letters: String = reference
         .chars()
         .take_while(char::is_ascii_alphabetic)
         .collect();
+    column_named(&letters)
+}
+
+/// Find the column and row an `A1` style reference names, both counted
+/// from 0.
+fn cell_at(reference: &str) -> Option<(usize, usize)> {
+    let (letters, number) = reference.split_at(reference.find(|c: char| c.is_ascii_digit())?);
+    if letters.is_empty() || !letters.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let row = number.parse::<usize>().ok()?.checked_sub(1)?;
+    Some((column_named(letters), row))
+}
+
+/// Count which column `letters` name, from 0 for `A`.
+fn column_named(letters: &str) -> usize {
     letters
         .bytes()
         .fold(0usize, |acc, byte| {
             acc * 26 + usize::from(byte.to_ascii_uppercase() - b'A') + 1
         })
         .saturating_sub(1)
+}
+
+/// Read `element`'s attribute `name`, if it carries one.
+fn attribute(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {
+    element
+        .attributes()
+        .flatten()
+        .find(|attr| attr.key.local_name().as_ref() == name)
+        .and_then(|attr| String::from_utf8(attr.value.into_owned()).ok())
 }
 
 /// Whether a cell's value is its text or an index into the strings.
@@ -331,6 +411,74 @@ mod sheet_tests {
         );
 
         assert_eq!(rows[0], vec![""]);
+    }
+
+    #[test]
+    fn a_merged_cell_reads_as_its_value_in_every_row_it_spans() {
+        let rows = rows_of(
+            r#"<worksheet><sheetData>
+  <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>Grey</v></c></row>
+  <row r="2"><c r="B2"><v>Black</v></c></row>
+</sheetData><mergeCells count="1"><mergeCell ref="A1:A2"/></mergeCells></worksheet>"#,
+            STRINGS,
+        );
+
+        assert_eq!(rows[1], vec!["ELEGOO Mars 5", "Black"]);
+    }
+
+    #[test]
+    fn a_merged_cell_reads_as_its_value_in_every_column_it_spans() {
+        let rows = rows_of(
+            r#"<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>1</v></c></row></sheetData><mergeCells><mergeCell ref="A1:C1"/></mergeCells></worksheet>"#,
+            STRINGS,
+        );
+
+        assert_eq!(rows[0], vec!["Standard Resin"; 3]);
+    }
+
+    #[test]
+    fn a_merge_whose_first_cell_is_empty_leaves_the_rows_it_spans_alone() {
+        let rows = rows_of(
+            r#"<worksheet><sheetData><row r="1"><c r="A1"><v>x</v></c></row><row r="2"><c r="A2"><v>y</v></c></row></sheetData><mergeCells><mergeCell ref="C1:C2"/></mergeCells></worksheet>"#,
+            "<sst/>",
+        );
+
+        assert_eq!(rows[1], vec!["y"]);
+    }
+
+    #[test]
+    fn a_row_the_sheet_leaves_out_keeps_its_place() {
+        let rows = rows_of(
+            r#"<worksheet><sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="3"><c r="A3"><v>3</v></c></row></sheetData></worksheet>"#,
+            "<sst/>",
+        );
+
+        assert_eq!(rows, vec![vec!["1"], vec![], vec!["3"]]);
+    }
+
+    #[test]
+    fn a_merge_lands_on_the_rows_it_names_when_the_sheet_leaves_some_out() {
+        let rows = rows_of(
+            r#"<worksheet><sheetData><row r="2"><c r="A2"><v>x</v></c></row><row r="4"><c r="B4"><v>y</v></c></row></sheetData><mergeCells><mergeCell ref="A2:A4"/></mergeCells></worksheet>"#,
+            "<sst/>",
+        );
+
+        assert_eq!(rows[3], vec!["x", "y"]);
+    }
+
+    #[test]
+    fn a_reference_reads_as_its_column_and_row_counted_from_0() {
+        assert_eq!(cell_at("A1"), Some((0, 0)));
+        assert_eq!(cell_at("AA12"), Some((26, 11)));
+    }
+
+    #[test]
+    fn a_reference_that_names_no_cell_reads_as_none() {
+        for reference in ["", "A", "12", "A0", "$A$1", "A-1"] {
+            assert_eq!(cell_at(reference), None, "{reference:?}");
+        }
+        assert!(merge_of("A1").is_none());
+        assert!(merge_of("A1:B").is_none());
     }
 
     #[test]

@@ -21,6 +21,15 @@ lift_speed_mm_min = 65.0
 retract_speed_mm_min = 65.0
 second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
 
+[per_printer.elegoo-jupiter-se]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 85.0
+retract_speed_mm_min = 70.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 300.0, retract_speed_mm_min = 300.0 }
+
 [per_printer.elegoo-mars-2-pro]
 normal_exposure_sec = 2.5
 bottom_exposure_sec = 35.0
@@ -89,6 +98,15 @@ lift_distance_mm = 2.0
 lift_speed_mm_min = 75.0
 retract_speed_mm_min = 75.0
 second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 230.0, retract_speed_mm_min = 230.0 }
+
+[per_printer.elegoo-saturn-2]
+normal_exposure_sec = 2.5
+bottom_exposure_sec = 30.0
+wait_before_cure_sec = 0.5
+lift_distance_mm = 3.0
+lift_speed_mm_min = 65.0
+retract_speed_mm_min = 65.0
+second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 180.0 }
 
 [per_printer.elegoo-saturn-3]
 normal_exposure_sec = 2.8
