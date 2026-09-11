@@ -65,12 +65,19 @@ pub struct CuratedMaterial {
     /// The `[physical]` section a profile of this resin carries.
     #[serde(default)]
     pub physical: MaterialPhysical,
+    /// Other ids a source derives for this same resin, because its
+    /// records spell the name more than one way. A profile under one of
+    /// them is folded into this resin's.
+    #[serde(default)]
+    pub aliases: Vec<MaterialId>,
 }
 
 /// Every resin the curated file describes, by the id we give it.
 #[derive(Clone, Debug, Default)]
 pub struct MaterialCuration {
     entries: BTreeMap<MaterialId, CuratedMaterial>,
+    /// Each alias, and the id of the entry that lists it.
+    filed_under: BTreeMap<MaterialId, MaterialId>,
 }
 
 /// Returned by [`MaterialCuration::open`] when the curated file cannot
@@ -86,6 +93,9 @@ pub enum MaterialCurationError {
         path: PathBuf,
         source: toml_edit::de::Error,
     },
+    /// An alias has an entry of its own, or 2 entries list it, so which
+    /// resin it names cannot be told.
+    AmbiguousAlias { path: PathBuf, alias: MaterialId },
 }
 
 impl fmt::Display for MaterialCurationError {
@@ -99,6 +109,12 @@ impl fmt::Display for MaterialCurationError {
             Self::Parse { path, source } => {
                 write!(f, "failed to parse {}: {source}", path.display())
             }
+            Self::AmbiguousAlias { path, alias } => write!(
+                f,
+                "{} lists {:?} as an alias, but it also has an entry of its own or another entry lists it too",
+                path.display(),
+                alias.as_str(),
+            ),
         }
     }
 }
@@ -108,6 +124,7 @@ impl std::error::Error for MaterialCurationError {
         match self {
             Self::Read { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
+            Self::AmbiguousAlias { .. } => None,
         }
     }
 }
@@ -124,12 +141,28 @@ impl MaterialCuration {
             path: path.to_path_buf(),
             source,
         })?;
-        let entries =
-            toml_edit::de::from_str(&text).map_err(|source| MaterialCurationError::Parse {
+        let entries: BTreeMap<MaterialId, CuratedMaterial> = toml_edit::de::from_str(&text)
+            .map_err(|source| MaterialCurationError::Parse {
                 path: path.to_path_buf(),
                 source,
             })?;
-        Ok(Self { entries })
+        let mut filed_under = BTreeMap::new();
+        for (id, entry) in &entries {
+            for alias in &entry.aliases {
+                if entries.contains_key(alias)
+                    || filed_under.insert(alias.clone(), id.clone()).is_some()
+                {
+                    return Err(MaterialCurationError::AmbiguousAlias {
+                        path: path.to_path_buf(),
+                        alias: alias.clone(),
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            entries,
+            filed_under,
+        })
     }
 
     /// What the file states about the resin `id` names, if anything.
@@ -140,6 +173,12 @@ impl MaterialCuration {
     /// Whether we decline to ship a profile for the resin `id` names.
     pub fn discards(&self, id: &MaterialId) -> bool {
         self.entries.get(id).is_some_and(|entry| entry.discarded)
+    }
+
+    /// Look up the id a resin is curated under, when a source derived
+    /// `id` for it from another spelling of its name.
+    pub fn filed_under(&self, id: &MaterialId) -> Option<&MaterialId> {
+        self.filed_under.get(id)
     }
 
     /// Fill the sections our curation owns in `profile`, and report
@@ -425,5 +464,57 @@ physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.15 }
             }],
         );
         assert_eq!(profile.physical, MaterialPhysical::default());
+    }
+
+    #[test]
+    fn an_alias_is_filed_under_the_entry_that_lists_it() {
+        let curation =
+            curation_of(&format!("{CURATED}aliases = [\"testcorp-resin-gr\"]\n")).unwrap();
+
+        assert_eq!(
+            curation.filed_under(&MaterialId::new("testcorp-resin-gr").unwrap()),
+            Some(&MaterialId::new("testcorp-resin").unwrap()),
+        );
+        assert_eq!(
+            curation.filed_under(&MaterialId::new("testcorp-resin").unwrap()),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_alias_with_an_entry_of_its_own_is_refused() {
+        let err = curation_of(&format!(
+            "{CURATED}aliases = [\"testcorp-resin-gr\"]\n\n[testcorp-resin-gr]\nsource = \"s\"\nread_on = \"d\"\n"
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, MaterialCurationError::AmbiguousAlias { alias, .. } if alias.as_str() == "testcorp-resin-gr"),
+            "{err}",
+        );
+    }
+
+    #[test]
+    fn an_entry_listing_itself_as_an_alias_is_refused() {
+        let err = curation_of(&format!("{CURATED}aliases = [\"testcorp-resin\"]\n")).unwrap_err();
+
+        assert!(
+            matches!(err, MaterialCurationError::AmbiguousAlias { .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn an_alias_2_entries_list_is_refused() {
+        let err = curation_of(&format!(
+            "{CURATED}aliases = [\"testcorp-resin-gr\"]\n\n[testcorp-other]\nsource = \"s\"\nread_on = \"d\"\naliases = [\"testcorp-resin-gr\"]\n"
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(err, MaterialCurationError::AmbiguousAlias { .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("testcorp-resin-gr"), "{err}");
     }
 }

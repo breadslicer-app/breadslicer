@@ -18,6 +18,7 @@ use crate::dragonfruit::{DragonFruitError, DragonFruitReader};
 use crate::elegoo_settings::{ElegooSettingsError, ElegooSettingsReader};
 use crate::format::SourceFormat;
 use crate::material_curation::{MaterialCuration, MaterialCurationError};
+use crate::material_fold::{FoldError, fold};
 use crate::printer_library::{PrinterLibrary, PrinterLibraryError};
 use crate::profile::ConvertedProfile;
 use crate::reader::ProfileReader;
@@ -26,13 +27,14 @@ use crate::source_note::SourceNote;
 use crate::writer::{WriteError, WriteReport, write_profiles};
 
 /// Returned by [`run`] when reading a source, opening one of our own
-/// inputs, or writing the output fails.
+/// inputs, applying our curation, or writing the output fails.
 #[derive(Debug)]
 pub enum RunError {
     Read(DragonFruitError),
     ElegooSettings(ElegooSettingsError),
     PrinterLibrary(PrinterLibraryError),
     MaterialCuration(MaterialCurationError),
+    Fold(FoldError),
     Write(WriteError),
 }
 
@@ -43,6 +45,7 @@ impl fmt::Display for RunError {
             Self::ElegooSettings(err) => write!(f, "{err}"),
             Self::PrinterLibrary(err) => write!(f, "{err}"),
             Self::MaterialCuration(err) => write!(f, "{err}"),
+            Self::Fold(err) => write!(f, "{err}"),
             Self::Write(err) => write!(f, "{err}"),
         }
     }
@@ -55,6 +58,7 @@ impl std::error::Error for RunError {
             Self::ElegooSettings(err) => Some(err),
             Self::PrinterLibrary(err) => Some(err),
             Self::MaterialCuration(err) => Some(err),
+            Self::Fold(err) => Some(err),
             Self::Write(err) => Some(err),
         }
     }
@@ -82,7 +86,7 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
         .map(MaterialCuration::open)
         .transpose()
         .map_err(RunError::MaterialCuration)?;
-    let mut reading = match request.format() {
+    let reading = match request.format() {
         SourceFormat::DragonFruit => {
             let reader = match printers {
                 Some(printers) => DragonFruitReader::consulting(printers),
@@ -94,11 +98,16 @@ pub fn run(request: &ConversionRequest) -> Result<RunReport, RunError> {
             .read(&paths)
             .map_err(RunError::ElegooSettings)?,
     };
-    let mut notes = std::mem::take(&mut reading.notes);
-    notes.extend(discard(&mut reading.profiles, curation.as_ref()));
-    notes.extend(curate(&mut reading.profiles, curation.as_ref()));
-    let written = write_profiles(&reading.profiles, request.out(), request.with_images())
-        .map_err(RunError::Write)?;
+    let mut notes = reading.notes;
+    // Folding comes first, so the resin a profile joins decides whether
+    // it is discarded and what figures it carries.
+    let (mut profiles, folded) =
+        fold(reading.profiles, curation.as_ref()).map_err(RunError::Fold)?;
+    notes.extend(folded);
+    notes.extend(discard(&mut profiles, curation.as_ref()));
+    notes.extend(curate(&mut profiles, curation.as_ref()));
+    let written =
+        write_profiles(&profiles, request.out(), request.with_images()).map_err(RunError::Write)?;
     Ok(RunReport { written, notes })
 }
 
@@ -702,5 +711,98 @@ bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retr
 
         let err = run(&request(vec![input], out, false)).unwrap_err();
         assert!(matches!(err, RunError::Read(_)));
+    }
+
+    /// Give the resin record above a second spelling of its name.
+    fn spelled_otherwise(json: &str) -> String {
+        json.replace("testcorp-resin-e2e", "testcorp-resin-gr-e2e")
+            .replace("\"name\": \"Resin\"", "\"name\": \"Resin Gr\"")
+    }
+
+    /// Our curation, filing the second spelling under the first.
+    const CURATED_WITH_AN_ALIAS: &str = "\
+[testcorp-resin]
+source = \"https://testcorp.example/resin-tds\"
+read_on = \"2026-09-10\"
+physical = { cured_density_g_per_cm3 = 1.15 }
+aliases = [\"testcorp-resin-gr\"]
+";
+
+    /// Pin the fold before the curation: the resin the second spelling
+    /// joins is the one whose figures it ends up carrying.
+    #[test]
+    fn a_resin_the_source_names_2_ways_is_written_once_under_the_id_we_file_it_under() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        let otherwise = dir.path().join("materials-gr.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        fs::write(&otherwise, spelled_otherwise(MATERIAL_JSON)).unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(&curated, CURATED_WITH_AN_ALIAS).unwrap();
+        let out = dir.path().join("library");
+
+        let report = run(&request_curating(
+            vec![printers, materials, otherwise],
+            out.clone(),
+            curated,
+        ))
+        .unwrap();
+
+        assert_eq!(report.written.materials, 1);
+        assert!(
+            !out.join("materials")
+                .join("testcorp-resin-gr.toml")
+                .exists()
+        );
+        let written =
+            fs::read_to_string(out.join("materials").join("testcorp-resin.toml")).unwrap();
+        assert!(
+            written.contains("cured_density_g_per_cm3 = 1.15"),
+            "{written}"
+        );
+        assert_eq!(
+            report.notes,
+            vec![
+                SourceNote::NoPrinterLibrary,
+                SourceNote::MaterialFolded {
+                    material: sc_print_primitives::MaterialId::new("testcorp-resin-gr").unwrap(),
+                    into: sc_print_primitives::MaterialId::new("testcorp-resin").unwrap(),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn a_resin_named_2_ways_that_calibrates_one_machine_2_ways_fails_the_run() {
+        let dir = tempdir().unwrap();
+        let printers = dir.path().join("printers.json");
+        let materials = dir.path().join("materials.json");
+        let otherwise = dir.path().join("materials-gr.json");
+        fs::write(&printers, PRINTER_JSON).unwrap();
+        fs::write(&materials, MATERIAL_JSON).unwrap();
+        fs::write(
+            &otherwise,
+            spelled_otherwise(MATERIAL_JSON)
+                .replace("\"normalExposureSec\": 2.0", "\"normalExposureSec\": 3.6"),
+        )
+        .unwrap();
+        let curated = dir.path().join("materials.toml");
+        fs::write(&curated, CURATED_WITH_AN_ALIAS).unwrap();
+        let out = dir.path().join("library");
+
+        let err = run(&request_curating(
+            vec![printers, materials, otherwise],
+            out.clone(),
+            curated,
+        ))
+        .unwrap_err();
+
+        assert!(matches!(err, RunError::Fold(_)), "{err}");
+        assert!(
+            !out.join("materials").exists(),
+            "a refused fold writes nothing"
+        );
     }
 }

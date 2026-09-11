@@ -18,6 +18,7 @@ pub mod dragonfruit;
 pub mod elegoo_settings;
 pub mod format;
 pub mod material_curation;
+pub mod material_fold;
 pub mod printer_library;
 pub mod profile;
 pub mod reader;

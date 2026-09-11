@@ -84,6 +84,12 @@ pub enum SourceNote {
         material: MaterialId,
         status: &'static str,
     },
+    /// Our curation files a resin the source named another way under
+    /// the id it is curated as, so its machines joined that profile.
+    MaterialFolded {
+        material: MaterialId,
+        into: MaterialId,
+    },
     /// The source calibrates a machine we ship no profile for.
     RowsForAMachineWeDoNotShip { model: String, rows: usize },
     /// The source names a machine this converter has never seen, so
@@ -195,6 +201,12 @@ impl fmt::Display for SourceNote {
                 f,
                 "our curation discards {:?} ({status}), so no profile was written for it",
                 material.as_str(),
+            ),
+            Self::MaterialFolded { material, into } => write!(
+                f,
+                "our curation files {:?} under {:?}, so what it calibrates was written into that profile",
+                material.as_str(),
+                into.as_str(),
             ),
             Self::RowsForAMachineWeDoNotShip { model, rows } => write!(
                 f,
@@ -341,6 +353,19 @@ mod tests {
         assert!(message.contains("sirayatech-easy-grey"), "{message}");
         assert!(message.contains("discontinued"), "{message}");
         assert!(message.contains("no profile was written"), "{message}");
+    }
+
+    #[test]
+    fn a_folded_resin_note_names_both_ids() {
+        let message = SourceNote::MaterialFolded {
+            material: MaterialId::new("siraya-tech-simple-grey-clear-smoky-black").unwrap(),
+            into: MaterialId::new("siraya-tech-simple-clear-grey-smoky-black").unwrap(),
+        }
+        .to_string();
+        assert!(
+            message.contains("\"siraya-tech-simple-grey-clear-smoky-black\" under \"siraya-tech-simple-clear-grey-smoky-black\""),
+            "{message}"
+        );
     }
 
     #[test]
