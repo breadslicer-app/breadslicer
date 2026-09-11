@@ -64,6 +64,21 @@ const DISCARDED: [(&str, MaterialStatus); 4] = [
     ("elegoo-standard-resin-grey-100um", MaterialStatus::Current),
 ];
 
+/// Each id the source derives for a resin it names 2 ways, and the id
+/// we file that resin under.
+const ALIASES: [(&str, &str); 2] = [
+    // The Jupiter records list the colours in another order.
+    (
+        "siraya-tech-simple-grey-clear-smoky-black",
+        "siraya-tech-simple-clear-grey-smoky-black",
+    ),
+    // One record cuts the name off mid-word.
+    (
+        "siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-gr",
+        "siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-grey",
+    ),
+];
+
 /// The curated figures this converter ships.
 fn curation() -> MaterialCuration {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -158,6 +173,33 @@ fn the_resins_we_reject_are_discarded_with_the_reason_recorded() {
         assert!(entry.discarded, "{id} is not discarded");
         assert_eq!(entry.status, status, "{id}");
         assert!(!entry.source.is_empty(), "{id} names no evidence");
+    }
+}
+
+#[test]
+fn every_resin_the_source_names_2_ways_is_filed_under_one_id() {
+    let curation = curation();
+
+    for (alias, resin) in ALIASES {
+        assert_eq!(
+            curation.filed_under(&MaterialId::new(alias).unwrap()),
+            Some(&MaterialId::new(resin).unwrap()),
+            "{alias} is not filed under {resin}, so a conversion would write it apart",
+        );
+    }
+}
+
+#[test]
+fn no_profile_we_ship_is_under_an_id_the_curation_files_elsewhere() {
+    let curation = curation();
+
+    for profile in bundled_materials() {
+        assert_eq!(
+            curation.filed_under(&profile.identity.id),
+            None,
+            "{} is shipped under an id the curation files under another",
+            profile.identity.id
+        );
     }
 }
 

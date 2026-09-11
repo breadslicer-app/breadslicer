@@ -10,6 +10,10 @@
 # which is a separate question: a resin nobody sells any more can still
 # be worth a profile to whoever holds a bottle.
 #
+# `aliases` lists the other ids a source derives for the same resin when
+# its records spell the name more than one way. A conversion folds the
+# profiles under those ids into this one, so the resin is written once.
+#
 # One resin the bundle carries is deliberately absent. Craft (Glow in
 # Dark) takes no figure because its strontium aluminate pigment is far
 # denser than the base resin, which makes the line's value wrong rather
@@ -111,18 +115,14 @@ read_on = "2026-09-10"
 status = "discontinued"
 discarded = true
 
-# One upstream record truncated this resin's name as of 2026-09-10, and
-# the converter keeps both spellings apart, so both take the same sheet.
-
-[siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-gr]
-source = "https://siraya.tech/pages/abs-like-fast-resin-tds-for-basic-fast"
-read_on = "2026-09-10"
-physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+# As of 2026-09-10 the Saturn 4 Ultra record cut this name off at
+# "Metal Gr", which the vendor's sheet spells out as Metal Grey.
 
 [siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-grey]
 source = "https://siraya.tech/pages/abs-like-fast-resin-tds-for-basic-fast"
 read_on = "2026-09-10"
 physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+aliases = ["siraya-tech-fast-grey-white-green-smoky-black-creamy-metal-gr"]
 
 [siraya-tech-fast-mecha-white]
 source = "https://siraya.tech/pages/fast-mecha-white-tds-abs-like-scratch-resistant-resin"
@@ -182,15 +182,14 @@ source = "https://siraya.tech/pages/high-temperature-resistant-sculpt-ultra-whit
 read_on = "2026-09-10"
 physical = { liquid_density_g_per_cm3 = 1.22, cured_density_g_per_cm3 = 1.6 }
 
+# As of 2026-09-10 the Jupiter records listed the colours as Grey,
+# Clear, Smoky Black. The vendor's sheet and store both put Clear first.
+
 [siraya-tech-simple-clear-grey-smoky-black]
 source = "https://siraya.tech/pages/simple-water-washable-resin-tds"
 read_on = "2026-09-10"
 physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
-
-[siraya-tech-simple-grey-clear-smoky-black]
-source = "https://siraya.tech/pages/simple-water-washable-resin-tds"
-read_on = "2026-09-10"
-physical = { liquid_density_g_per_cm3 = 1.1, cured_density_g_per_cm3 = 1.2 }
+aliases = ["siraya-tech-simple-grey-clear-smoky-black"]
 
 [siraya-tech-simple-v2-aqua-grey]
 source = "https://siraya.tech/pages/simple-water-washable-v2-tds"
