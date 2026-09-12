@@ -97,6 +97,8 @@ pub fn has_active_matcher(
     coverage(entry, extension, printer) != CalibrationCoverage::None
 }
 
+const PLACEHOLDER_BRAND: &str = "Default";
+
 /// The merged printer and material profiles available to the GUI.
 ///
 /// Printers are held sorted by `(manufacturer, name)`; materials by
@@ -201,6 +203,18 @@ impl ProfileCatalog {
         self.printers
             .iter()
             .map(|entry| entry.manufacturer.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Lists the distinct resin brands across all materials, sorted.
+    /// The placeholder brand of the generic profiles is not among them.
+    pub fn brands(&self) -> Vec<String> {
+        self.materials
+            .iter()
+            .map(|entry| entry.brand.clone())
+            .filter(|brand| brand.as_str() != PLACEHOLDER_BRAND)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()

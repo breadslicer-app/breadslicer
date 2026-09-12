@@ -494,6 +494,39 @@ fn manufacturers_are_sorted_and_deduplicated() {
 }
 
 #[test]
+fn brands_are_sorted_and_deduplicated() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(bundled.path(), "z1", "Zeta", "One", "standard", &[]);
+    write_material(bundled.path(), "a1", "Alpha", "One", "standard", &[]);
+    write_material(bundled.path(), "a2", "Alpha", "Two", "standard", &[]);
+
+    let catalog = catalog_from(None, bundled.path());
+    assert_eq!(
+        catalog.brands(),
+        vec!["Alpha".to_owned(), "Zeta".to_owned()]
+    );
+}
+
+#[test]
+fn the_placeholder_brand_is_not_offered_as_a_brand() {
+    let bundled = tempfile::tempdir().unwrap();
+    write_material(
+        bundled.path(),
+        "generic",
+        "Default",
+        "Generic",
+        "standard",
+        &[],
+    );
+    write_material(bundled.path(), "real", "Alpha", "One", "standard", &[]);
+
+    let catalog = catalog_from(None, bundled.path());
+    assert_eq!(catalog.brands(), vec!["Alpha".to_owned()]);
+    // The resin itself stays listed; only the filter ignores its brand.
+    assert_eq!(catalog.materials().len(), 2);
+}
+
+#[test]
 fn a_malformed_profile_is_skipped_without_dropping_the_valid_ones() {
     let bundled = tempfile::tempdir().unwrap();
     write_printer(
