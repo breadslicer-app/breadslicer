@@ -16,7 +16,7 @@ use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
 
 use super::header::{FILE_MAGIC, SizedPreviews, write_header};
-use super::payload::encode_payload;
+use super::payload::{encode_payload, reverse_rows};
 use super::record::write_layer;
 use crate::preview::{PreviewSizeMismatch, PrintPreviews};
 use crate::print_program::PrintProgram;
@@ -27,8 +27,8 @@ const FOOTER_PADDING: [u8; 3] = [0x00, 0x00, 0x00];
 /// Write `stack` as a GOO V3.0 file running the schedule in
 /// `program`, whose records pair with the stack's layers in order.
 ///
-/// The first row of every layer image is the plate's minimum Y edge,
-/// which no print has yet checked against the panel. The raster
+/// The first row of every layer image is the plate's maximum Y edge,
+/// the order this container stores its previews in. The raster
 /// setup's mirror flags, which the header declares, are what turns an
 /// image around.
 ///
@@ -68,10 +68,12 @@ pub fn write_file(
 
     write_header(program, previews, out)?;
     let mut image = Vec::new();
+    let mut rows = Vec::new();
     for (layer, contours) in program.layers.iter().zip(stack.layers()) {
         let pixels = rasterize_layer(contours, &pixel_map, raster.aa(), raster.min_alpha_pct());
+        reverse_rows(pixels.runs(), raster.pixel_resolution().x(), &mut rows);
         image.clear();
-        encode_payload(pixels.runs(), &mut image);
+        encode_payload(&rows, &mut image);
         write_layer(layer, park_z_mm, &image, out)?;
     }
     out.write_all(&FOOTER_PADDING)?;

@@ -248,10 +248,12 @@ fn the_images_shrink_with_the_shapes_that_produced_them() {
 }
 
 #[test]
-fn the_first_rows_written_are_the_plate_minimum_y() {
+fn the_first_rows_written_are_the_plate_maximum_y() {
     // A rectangle over x in [-4, -2] and y in [-4, -3] mm. The
     // projection puts the plate's minimum corner at pixel (0, 0), so
-    // it covers columns 2 to 5 and rows 2 and 3.
+    // it covers columns 2 to 5 and the 3rd and 4th rows up from the
+    // plate's minimum Y. The container stores rows from the maximum Y
+    // down, which puts those at indices 16 and 17 of 20.
     let program = program(vec![layer(0.1, 2.5)]);
     let stack = ContourStack::new_unchecked(vec![rect_layer(0.05, (-4.0, -2.0), (-4.0, -3.0))]);
     let bytes = written(&program, &stack);
@@ -274,7 +276,7 @@ fn the_first_rows_written_are_the_plate_minimum_y() {
         }
     }
 
-    assert_eq!(rows, vec![2, 3]);
+    assert_eq!(rows, vec![16, 17]);
     assert_eq!(columns, vec![2, 3, 4, 5]);
 }
 
