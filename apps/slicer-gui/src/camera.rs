@@ -14,7 +14,10 @@ const MAX_DISTANCE_FACTOR: f32 = 50.0;
 /// `2 * view_radius` gives `0.02 * view_radius`; this leaves headroom
 /// for unions that exceed the envelope on one axis).
 const NEAR_PLANE_SAFETY_FACTOR: f32 = 0.03;
-const DEFAULT_YAW: f32 = 0.6749;
+/// Azimuth the workspace opens at. Lands in the `-X`, `-Y` quadrant so
+/// the first thing on screen is the machine's front, the side the
+/// operator stands at and the one [`AxisView::Front`] looks from.
+const DEFAULT_YAW: f32 = 0.6749 - std::f32::consts::PI;
 const DEFAULT_PITCH: f32 = 0.6669;
 pub(crate) const DEFAULT_DISTANCE_FACTOR: f32 = 3.0;
 
@@ -227,6 +230,28 @@ mod tests {
     }
 
     #[test]
+    fn default_view_opens_on_the_front_left() {
+        let cam = OrbitCamera::new(Vec3::new(5.0, 7.0, 1.0), 10.0);
+        let offset = cam.eye() - cam.target;
+        assert!(
+            offset.x < 0.0 && offset.y < 0.0 && offset.z > 0.0,
+            "the eye must open above the front-left quadrant, got {offset}"
+        );
+    }
+
+    #[test]
+    fn frame_scene_returns_to_the_front_left_view() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 10.0);
+        cam.orbit(500.0, 60.0, 100.0);
+        cam.frame_scene();
+        let offset = cam.eye() - cam.target;
+        assert!(
+            offset.x < 0.0 && offset.y < 0.0 && offset.z > 0.0,
+            "framing must come back to the front-left quadrant, got {offset}"
+        );
+    }
+
+    #[test]
     fn orbit_clamps_pitch() {
         let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
         cam.orbit(0.0, 1e6, 100.0);
@@ -251,6 +276,16 @@ mod tests {
         assert_approx_eq!(f32, cam.target.x, t0.x, epsilon = 1e-4);
         assert_approx_eq!(f32, cam.target.y, t0.y, epsilon = 1e-4);
         assert_approx_eq!(f32, cam.target.z, t0.z, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn axis_front_looks_along_plus_y() {
+        let mut cam = OrbitCamera::new(Vec3::ZERO, 1.0);
+        cam.set_axis_view(AxisView::Front);
+        let offset = cam.eye() - cam.target;
+        assert!(offset.y < 0.0);
+        assert!(-offset.y > offset.x.abs() * 100.0);
+        assert!(-offset.y > offset.z.abs() * 100.0);
     }
 
     #[test]

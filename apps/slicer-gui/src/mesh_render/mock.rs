@@ -50,12 +50,16 @@ pub(crate) struct MockRenderArgs {
 }
 
 /// Recorded arguments of a single [`MockRenderer::preview_pixels`]
-/// call: the size asked for, which is what callers of the preview
-/// path are checked on.
+/// call: the size asked for and where the camera stood, which is what
+/// callers of the preview path are checked on.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MockPreviewArgs {
     pub(crate) width: u32,
     pub(crate) height: u32,
+    /// Eye position relative to the point the camera looked at, so a
+    /// test can tell which side of the print the picture was taken
+    /// from without reconstructing the framing.
+    pub(crate) eye_offset: Vec3,
 }
 
 /// Shared recording / configuration cell for a [`MockRenderer`].
@@ -190,12 +194,16 @@ impl MeshRenderer for MockRenderer {
         &mut self,
         _graph: &Scene,
         _build_volume: BuildVolume,
-        _camera: &OrbitCamera,
+        camera: &OrbitCamera,
         width: u32,
         height: u32,
     ) -> Result<Option<FramePixels>, RenderError> {
         let mut s = self.state.borrow_mut();
-        s.preview_calls.push(MockPreviewArgs { width, height });
+        s.preview_calls.push(MockPreviewArgs {
+            width,
+            height,
+            eye_offset: camera.eye() - camera.target,
+        });
         s.next_preview_frames.pop_front().unwrap_or(Ok(None))
     }
 }

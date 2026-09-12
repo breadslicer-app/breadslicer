@@ -92,6 +92,26 @@ fn each_preview_is_drawn_at_the_size_its_container_fixes() {
 }
 
 #[test]
+fn the_file_picture_is_taken_from_the_front_of_the_print() {
+    let state = state_with_a_scene();
+    state
+        .borrow_mut()
+        .next_preview_frames
+        .extend([Ok(Some(frame(4, 2))), Ok(Some(frame(8, 4)))]);
+
+    previews_from(&state).expect("both frames came back");
+
+    let calls = &state.borrow().preview_calls;
+    for call in calls {
+        assert!(
+            call.eye_offset.y < 0.0,
+            "the picture in the file must look at the print's front, not its back: {}",
+            call.eye_offset
+        );
+    }
+}
+
+#[test]
 fn the_alpha_channel_is_dropped_on_the_way_into_the_file() {
     let state = state_with_a_scene();
     state
