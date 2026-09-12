@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-09 12:12+0200\n"
+"POT-Creation-Date: 2026-09-12 12:11+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,77 +17,72 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:505 src/preferences_window.rs:530
+#: src/preferences_window.rs:499 src/preferences_window.rs:524
 msgctxt "FileDialog"
 msgid "Profile package"
 msgstr ""
 
-#: src/preferences_window.rs:551
+#: src/preferences_window.rs:545
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:553
+#: src/preferences_window.rs:547
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:557 src/preferences_window.rs:1341
+#: src/preferences_window.rs:551 src/preferences_window.rs:1335
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:749 src/preferences_window.rs:1741
+#: src/preferences_window.rs:743 src/preferences_window.rs:1604
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:975
+#: src/preferences_window.rs:969
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1074
+#: src/preferences_window.rs:1068
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1323
+#: src/preferences_window.rs:1317
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1330
+#: src/preferences_window.rs:1324
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1335
+#: src/preferences_window.rs:1329
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1337
+#: src/preferences_window.rs:1331
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1534
-msgctxt "PreferencesPage"
-msgid "All"
-msgstr ""
-
-#: src/preferences_window.rs:1891
+#: src/preferences_window.rs:1754
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1917
+#: src/preferences_window.rs:1780
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
@@ -581,7 +576,12 @@ msgctxt "MaterialForm"
 msgid "Fill all three values of {}, or leave all three empty"
 msgstr ""
 
-#: src/app_state.rs:452 src/lib.rs:276
+#: src/preferences_filters.rs:58
+msgctxt "PreferencesPage"
+msgid "All"
+msgstr ""
+
+#: src/app_state.rs:452 src/lib.rs:277
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
@@ -803,7 +803,7 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:281
+#: src/lib.rs:282
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."

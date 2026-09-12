@@ -39,6 +39,7 @@ pub mod mesh_render;
 mod pending_load;
 mod picking;
 mod preferences_bus;
+mod preferences_filters;
 mod preferences_window;
 mod print_file_preview;
 mod print_format;
