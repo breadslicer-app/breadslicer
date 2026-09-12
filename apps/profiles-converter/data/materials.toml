@@ -19,6 +19,13 @@
 # denser than the base resin, which makes the line's value wrong rather
 # than approximate.
 
+# ELEGOO states no density anywhere in the settings sheet. Obtained from
+# the manual bundled with the Mars 5, which ships with a bottle of this resin.
+[elegoo-rapid-standard-photopolymer-resin-grey-100um]
+source = "ELEGOO Mars 5 user manual, printed copy shipped with the machine"
+read_on = "2026-09-12"
+physical = { liquid_density_g_per_cm3 = 1.1 }
+
 [siraya-tech-blu-clear-v2-emerald-blue]
 source = "https://siraya.tech/pages/blu-tough-resin-tds-for-regular-blu"
 read_on = "2026-09-10"

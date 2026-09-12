@@ -11,6 +11,7 @@ target_layer_height_mm = 0.1
 [defaults]
 
 [physical]
+liquid_density_g_per_cm3 = 1.1
 
 # NOTE: This parameter works for Fast Resin + Fast Speed(Hollow model, wall thickness>2mm, model has holes)
 [per_printer.elegoo-mars-4-ultra]

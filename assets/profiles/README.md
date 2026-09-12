@@ -57,6 +57,10 @@ Those pages state no density and no bottom layer count, so the ELEGOO
 profiles carry neither, and the slicer reports the value it puts in
 their place.
 
+Some exceptions:
+- Rapid Standard (Grey): ELEGOO ships a bottle of it with the Mars 5
+  and prints its figures in that machine's manual.
+
 `standard-405` and `abs-like-405` are generic profiles, not associated
 to any real resin.
 
