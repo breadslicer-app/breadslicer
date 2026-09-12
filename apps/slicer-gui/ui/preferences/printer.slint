@@ -6,6 +6,7 @@
 import { Button, LineEdit, ScrollView, Palette } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 import { FavouriteStar } from "./favourite-star.slint";
+import { FilterTabs } from "./filter-tabs.slint";
 
 // One printer tile. `id-index` is the printer's index in the Rust
 // catalog and the stable handle carried through selection callbacks;
@@ -51,24 +52,12 @@ export component PrinterPreferences inherits PreferencesPage {
     property <length> tile-h: 148px;
     property <length> tile-gap: 12px;
 
-    // Manufacturer filter as a horizontal tab bar; scrolls sideways
-    // when the maker list is wide. Pinned height with no vertical
-    // stretch so the gallery below is the only child that grows.
-    ScrollView {
-        vertical-stretch: 0;
-        min-height: 40px;
-        max-height: 40px;
-        HorizontalLayout {
-            spacing: 6px;
-            alignment: start;
-            for maker[i] in root.manufacturer-tabs: Button {
-                text: maker;
-                primary: i == root.current-manufacturer-index;
-                clicked => {
-                    root.current-manufacturer-index = i;
-                    root.manufacturer-tab-changed(i);
-                }
-            }
+    FilterTabs {
+        tabs: root.manufacturer-tabs;
+        current-index: root.current-manufacturer-index;
+        tab-changed(i) => {
+            root.current-manufacturer-index = i;
+            root.manufacturer-tab-changed(i);
         }
     }
 

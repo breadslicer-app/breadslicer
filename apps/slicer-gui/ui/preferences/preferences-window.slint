@@ -42,6 +42,9 @@ export component PreferencesWindow inherits Window {
 
     in property <[ResinRow]> resin-rows;
     in-out property <int> selected-resin-index: -1;
+    in property <[string]> resin-brand-tabs;
+    in-out property <int> current-brand-index: 0;
+    in property <string> resin-search-text;
     // The pills' effective font size, resolved from rem against this
     // window; the Rust side measures pill labels at exactly this size.
     out property <length> pill-font-size: 0.75rem;
@@ -54,6 +57,8 @@ export component PreferencesWindow inherits Window {
     callback printer-search-changed(string);
     callback printer-selected(int);
     callback printer-favourite-toggled(int);
+    callback brand-tab-changed(int);
+    callback resin-search-changed(string);
     callback resin-selected(int);
     callback resin-favourite-toggled(int);
     callback pill-width-changed(int, bool, length);
@@ -136,6 +141,15 @@ export component PreferencesWindow inherits Window {
             if(side-bar.current-item == 2) : ResinPreferences {
                 resin-rows: root.resin-rows;
                 selected-resin-index <=> root.selected-resin-index;
+                brand-tabs: root.resin-brand-tabs;
+                current-brand-index <=> root.current-brand-index;
+                search-text: root.resin-search-text;
+                brand-tab-changed(i) => {
+                    root.brand-tab-changed(i);
+                }
+                search-changed(t) => {
+                    root.resin-search-changed(t);
+                }
                 resin-selected(i) => {
                     root.resin-selected(i);
                 }

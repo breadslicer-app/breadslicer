@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-09-09 10:12+0000\n"
+"POT-Creation-Date: 2026-09-12 10:24+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -188,37 +188,37 @@ msgctxt "ReplaceSceneDialog"
 msgid "Cancel"
 msgstr ""
 
-#: ui/preferences/printer.slint:24
+#: ui/preferences/printer.slint:25
 msgctxt "PreferencesPage"
 msgid "Printer"
 msgstr ""
 
-#: ui/preferences/printer.slint:76
+#: ui/preferences/printer.slint:65
 msgctxt "PreferencesPage"
 msgid "Search models"
 msgstr ""
 
-#: ui/preferences/printer.slint:78
+#: ui/preferences/printer.slint:67
 msgctxt "PreferencesPage"
 msgid "Search printer models"
 msgstr ""
 
-#: ui/preferences/printer.slint:164
+#: ui/preferences/printer.slint:153
 msgctxt "PreferencesPage"
 msgid "No image"
 msgstr ""
 
-#: ui/preferences/printer.slint:177 ui/preferences/resin.slint:223
+#: ui/preferences/printer.slint:166 ui/preferences/resin.slint:253
 msgctxt "PreferencesPage"
 msgid "custom"
 msgstr ""
 
-#: ui/preferences/printer.slint:204 ui/preferences/resin.slint:291
+#: ui/preferences/printer.slint:193 ui/preferences/resin.slint:321
 msgctxt "PreferencesPage"
 msgid "Import package..."
 msgstr ""
 
-#: ui/preferences/printer.slint:210
+#: ui/preferences/printer.slint:199
 msgctxt "PreferencesPage"
 msgid "Export printers..."
 msgstr ""
@@ -253,52 +253,62 @@ msgctxt "SlicingPreferences"
 msgid "Anti-aliasing"
 msgstr ""
 
-#: ui/preferences/resin.slint:49
+#: ui/preferences/resin.slint:50
 msgctxt "PreferencesPage"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/resin.slint:128 ui/preferences/resin.slint:268
+#: ui/preferences/resin.slint:128
+msgctxt "PreferencesPage"
+msgid "Search resins"
+msgstr ""
+
+#: ui/preferences/resin.slint:130
+msgctxt "PreferencesPage"
+msgid "Search resins by brand, name or family"
+msgstr ""
+
+#: ui/preferences/resin.slint:158 ui/preferences/resin.slint:298
 msgctxt "PreferencesPage"
 msgid "View"
 msgstr ""
 
-#: ui/preferences/resin.slint:134
+#: ui/preferences/resin.slint:164
 msgctxt "PreferencesPage"
 msgid "Fork..."
 msgstr ""
 
-#: ui/preferences/resin.slint:140
+#: ui/preferences/resin.slint:170
 msgctxt "PreferencesPage"
 msgid "Extend..."
 msgstr ""
 
-#: ui/preferences/resin.slint:146 ui/preferences/resin.slint:274
+#: ui/preferences/resin.slint:176 ui/preferences/resin.slint:304
 msgctxt "PreferencesPage"
 msgid "Edit"
 msgstr ""
 
-#: ui/preferences/resin.slint:152
+#: ui/preferences/resin.slint:182
 msgctxt "PreferencesPage"
 msgid "Delete..."
 msgstr ""
 
-#: ui/preferences/resin.slint:237
+#: ui/preferences/resin.slint:267
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: ui/preferences/resin.slint:239
+#: ui/preferences/resin.slint:269
 msgctxt "PreferencesPage"
 msgid "Generic calibration"
 msgstr ""
 
-#: ui/preferences/resin.slint:240
+#: ui/preferences/resin.slint:270
 msgctxt "PreferencesPage"
 msgid "Calibration: {}"
 msgstr ""
 
-#: ui/preferences/resin.slint:297
+#: ui/preferences/resin.slint:327
 msgctxt "PreferencesPage"
 msgid "Export materials..."
 msgstr ""
@@ -308,27 +318,27 @@ msgctxt "PreferencesWindow"
 msgid "Preferences"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:87
+#: ui/preferences/preferences-window.slint:92
 msgctxt "PreferencesMenu"
 msgid "Preferences Sections"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:89
+#: ui/preferences/preferences-window.slint:94
 msgctxt "PreferencesMenu"
 msgid "UI & Theme"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:90
+#: ui/preferences/preferences-window.slint:95
 msgctxt "PreferencesMenu"
 msgid "Printer"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:91
+#: ui/preferences/preferences-window.slint:96
 msgctxt "PreferencesMenu"
 msgid "Resin"
 msgstr ""
 
-#: ui/preferences/preferences-window.slint:92
+#: ui/preferences/preferences-window.slint:97
 msgctxt "PreferencesMenu"
 msgid "Slicing"
 msgstr ""

@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Button, ListView, Palette } from "std-widgets.slint";
+import { Button, LineEdit, ListView, Palette } from "std-widgets.slint";
 import { PreferencesPage } from "./preferences-page.slint";
 import { FavouriteStar } from "./favourite-star.slint";
+import { FilterTabs } from "./filter-tabs.slint";
 
 // Kind of a calibration tag; decides its colors.
 export enum PillKind {
@@ -52,7 +53,18 @@ export component ResinPreferences inherits PreferencesPage {
     in property <[ResinRow]> resin-rows;
     // Catalog index of the selected resin, or -1 when none is chosen.
     in-out property <int> selected-resin-index: -1;
+    in property <[string]> brand-tabs;
+    in-out property <int> current-brand-index: 0;
+    in property <string> search-text;
 
+    // A `text:` binding is dropped once the user types in the field, so
+    // an external update needs its own assignment.
+    changed search-text => {
+        search-input.text = root.search-text;
+    }
+
+    callback brand-tab-changed(int);
+    callback search-changed(string);
     callback resin-selected(int);
     // Toggle the resin's global favourite status. Carries the catalog
     // index; base and extension rows share it, so the favourite is
@@ -101,6 +113,24 @@ export component ResinPreferences inherits PreferencesPage {
             return Palette.color-scheme == ColorScheme.dark ? #f2b4bc : #8a1c28;
         }
         return Palette.foreground.transparentize(0.45);
+    }
+
+    FilterTabs {
+        tabs: root.brand-tabs;
+        current-index: root.current-brand-index;
+        tab-changed(i) => {
+            root.current-brand-index = i;
+            root.brand-tab-changed(i);
+        }
+    }
+
+    search-input := LineEdit {
+        placeholder-text: @tr("PreferencesPage" => "Search resins");
+        text: root.search-text;
+        accessible-label: @tr("PreferencesPage" => "Search resins by brand, name or family");
+        edited(t) => {
+            root.search-changed(t);
+        }
     }
 
     ListView {

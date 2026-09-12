@@ -33,8 +33,10 @@ use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
 use crate::preferences_filters::{
-    PrinterCardData, apply_thumbnails_to_visible, build_card_data, build_manufacturer_tabs,
-    selected_manufacturer, set_visible_cards, tab_index_for_label, tab_label,
+    PrinterCardData, ResinFilterData, apply_thumbnails_to_visible, build_brand_tabs,
+    build_card_data, build_manufacturer_tabs, build_resin_filter_data, selected_brand,
+    selected_manufacturer, set_visible_cards, set_visible_resin_rows, tab_index_for_label,
+    tab_label, visible_material_mask,
 };
 use crate::profile_catalog::{
     MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry, ProfileCatalog,
@@ -55,6 +57,20 @@ use crate::window_prefs::WindowPreferences;
 use crate::{
     ExtendDialog, ForkDialog, PillKind, PreferencesWindow, ProfileViewDialog, ResinPill, ResinRow,
 };
+
+/// View-local state of the resin list: every derived row in tier
+/// order, the filter data for the materials those rows index into, the
+/// tab labels, and the active filter. Never reaches the bus.
+///
+/// `rows` and `filter_data` are rebuilt together from one catalog, so a
+/// row's `id_index` always indexes `filter_data`.
+struct ResinView {
+    rows: Vec<ResinRow>,
+    filter_data: Vec<ResinFilterData>,
+    tabs: Vec<String>,
+    current_tab: i32,
+    search_lower: String,
+}
 
 /// Bundle of a `PreferencesWindow` and its bus subscription. Drop
 /// drops the subscription so the listener is removed as soon as the
@@ -92,9 +108,29 @@ pub(crate) fn build_preferences_window(
 
     let snapshot = bus.snapshot();
     prefs.apply_preferences(&snapshot);
+
+    // Start on the selected resin's brand tab rather than "All", the
+    // way the gallery starts on the selected printer's manufacturer.
+    // Resolved before the first derivation, which pushes through this
+    // filter.
+    let brand_tabs = build_brand_tabs(&catalog);
+    let initial_brand_tab = tab_index_for_label(
+        &brand_tabs,
+        selected_brand(catalog.materials(), snapshot.default_resin.as_ref()).as_deref(),
+    );
+    prefs.set_current_brand_index(initial_brand_tab);
+    prefs.set_resin_brand_tabs(string_model(&brand_tabs));
+    let resin_view = Rc::new(RefCell::new(ResinView {
+        rows: Vec::new(),
+        filter_data: Vec::new(),
+        tabs: brand_tabs,
+        current_tab: initial_brand_tab,
+        search_lower: String::new(),
+    }));
+
     // Selection first: the visible-cards pass below reads the selected
     // printer index back from the window.
-    apply_printing(&prefs, &snapshot, &catalog, &pill_layout);
+    apply_printing(&prefs, &snapshot, &catalog, &pill_layout, &resin_view);
 
     // Start on the selected printer's manufacturer tab rather than
     // "All", so the printer chosen in the persisted settings is in
@@ -106,7 +142,7 @@ pub(crate) fn build_preferences_window(
     current_tab.set(initial_tab);
     prefs.set_current_manufacturer_index(initial_tab);
 
-    set_tabs_model(&prefs, &tabs.borrow());
+    prefs.set_manufacturer_tabs(string_model(&tabs.borrow()));
     set_visible_cards(
         &prefs,
         &all_cards.borrow(),
@@ -140,6 +176,7 @@ pub(crate) fn build_preferences_window(
         let search_lower = search_lower.clone();
         let thumbnail_timer = thumbnail_timer.clone();
         let pill_layout = pill_layout.clone();
+        let resin_view = resin_view.clone();
         Rc::new(move || {
             let Some(w) = prefs_weak.upgrade() else {
                 return;
@@ -148,11 +185,21 @@ pub(crate) fn build_preferences_window(
             *all_cards.borrow_mut() =
                 build_card_data(catalog.printers(), &bus.snapshot().favourite_printers);
             *tabs.borrow_mut() = build_manufacturer_tabs(&catalog);
+            // An import can add a brand, which shifts every tab index
+            // after it, so the active tab is re-resolved by its label.
+            {
+                let mut view = resin_view.borrow_mut();
+                let active = tab_label(&view.tabs, view.current_tab).map(str::to_owned);
+                view.tabs = build_brand_tabs(&catalog);
+                view.current_tab = tab_index_for_label(&view.tabs, active.as_deref());
+                w.set_current_brand_index(view.current_tab);
+                w.set_resin_brand_tabs(string_model(&view.tabs));
+            }
             // Selection first: catalog indices may have shifted, and
             // the visible-cards pass reads the selected printer index
             // back from the window.
-            apply_printing(&w, &bus.snapshot(), &catalog, &pill_layout);
-            set_tabs_model(&w, &tabs.borrow());
+            apply_printing(&w, &bus.snapshot(), &catalog, &pill_layout, &resin_view);
+            w.set_manufacturer_tabs(string_model(&tabs.borrow()));
             set_visible_cards(
                 &w,
                 &all_cards.borrow(),
@@ -243,6 +290,32 @@ pub(crate) fn build_preferences_window(
                     tab_label(&tabs.borrow(), current_tab.get()),
                     &search_lower.borrow(),
                 );
+            }
+        }
+    });
+
+    prefs.on_brand_tab_changed({
+        let prefs_weak = prefs_weak.clone();
+        let resin_view = resin_view.clone();
+        move |index| {
+            resin_view.borrow_mut().current_tab = index;
+            if let Some(w) = prefs_weak.upgrade() {
+                push_visible_resins(&w, &resin_view.borrow());
+            }
+        }
+    });
+
+    prefs.on_resin_search_changed({
+        let prefs_weak = prefs_weak.clone();
+        let resin_view = resin_view.clone();
+        move |text| {
+            resin_view.borrow_mut().search_lower = text.to_lowercase();
+            if let Some(w) = prefs_weak.upgrade() {
+                // Without this the box would come back empty over a
+                // still filtered list when the section is rebuilt on a
+                // sidebar switch.
+                w.set_resin_search_text(text);
+                push_visible_resins(&w, &resin_view.borrow());
             }
         }
     });
@@ -351,16 +424,16 @@ pub(crate) fn build_preferences_window(
         let catalog_handle = catalog_handle.clone();
         let bus = bus.clone();
         let pill_layout = pill_layout.clone();
+        let resin_view = resin_view.clone();
+        let ctx = ReflowContext {
+            prefs_weak,
+            catalog_handle,
+            bus,
+            layout: pill_layout,
+            resin: resin_view,
+        };
         move |id_index, is_extension, width| {
-            reflow_row_pills(
-                &prefs_weak,
-                &catalog_handle,
-                &bus,
-                &pill_layout,
-                id_index,
-                is_extension,
-                width,
-            );
+            reflow_row_pills(&ctx, id_index, is_extension, width);
         }
     });
 
@@ -455,11 +528,12 @@ pub(crate) fn build_preferences_window(
         let prefs_weak = prefs_weak.clone();
         let catalog_handle = catalog_handle.clone();
         let pill_layout = pill_layout.clone();
+        let resin_view = resin_view.clone();
         move |snap, _change| {
             if let Some(w) = prefs_weak.upgrade() {
                 w.apply_preferences(snap);
                 let catalog = catalog_handle.borrow().clone();
-                apply_printing(&w, snap, &catalog, &pill_layout);
+                apply_printing(&w, snap, &catalog, &pill_layout, &resin_view);
             }
         }
     });
@@ -471,12 +545,13 @@ pub(crate) fn build_preferences_window(
     })
 }
 
-fn set_tabs_model(window: &PreferencesWindow, tabs: &[String]) {
-    window.set_manufacturer_tabs(ModelRc::new(VecModel::from(
-        tabs.iter()
+fn string_model(values: &[String]) -> ModelRc<SharedString> {
+    ModelRc::new(VecModel::from(
+        values
+            .iter()
             .map(|s| SharedString::from(s.as_str()))
             .collect::<Vec<_>>(),
-    )));
+    ))
 }
 
 fn refresh_catalog(handle: &Rc<RefCell<Rc<ProfileCatalog>>>) {
@@ -1370,6 +1445,7 @@ fn apply_printing(
     snap: &PreferencesSnapshot,
     catalog: &ProfileCatalog,
     layout: &PillLayout,
+    resin: &Rc<RefCell<ResinView>>,
 ) {
     layout.font_px.set(window.get_pill_font_size());
     // The gallery highlights, the calibration affordances, and the
@@ -1392,15 +1468,29 @@ fn apply_printing(
         .unwrap_or(-1);
     window.set_selected_resin_index(resin_index);
 
-    let rows = derive_resin_view(
-        catalog.materials(),
-        catalog.extensions(),
-        catalog.printers(),
-        effective_printer.as_ref(),
-        &snap.favourite_resins,
-        layout,
+    {
+        let mut view = resin.borrow_mut();
+        view.rows = derive_resin_view(
+            catalog.materials(),
+            catalog.extensions(),
+            catalog.printers(),
+            effective_printer.as_ref(),
+            &snap.favourite_resins,
+            layout,
+        );
+        view.filter_data = build_resin_filter_data(catalog.materials());
+    }
+    push_visible_resins(window, &resin.borrow());
+}
+
+/// Pushes the rows the active brand tab and search text keep.
+fn push_visible_resins(window: &PreferencesWindow, view: &ResinView) {
+    let mask = visible_material_mask(
+        &view.filter_data,
+        tab_label(&view.tabs, view.current_tab),
+        &view.search_lower,
     );
-    window.set_resin_rows(ModelRc::new(VecModel::from(rows)));
+    set_visible_resin_rows(window, &view.rows, &mask);
 }
 
 /// The `(card index, thumbnail path)` pairs that need decoding. Indices
@@ -1622,18 +1712,21 @@ fn derive_resin_view(
     matched_rows
 }
 
+/// What a pill reflow reads beyond the row that reported its width.
+struct ReflowContext {
+    prefs_weak: slint::Weak<PreferencesWindow>,
+    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
+    bus: Rc<PreferencesBus>,
+    layout: Rc<PillLayout>,
+    resin: Rc<RefCell<ResinView>>,
+}
+
 /// Re-lays one row's pills against its freshly reported pill area
 /// width, updating the row in place (which keeps the ListView scroll
 /// position). Sub-pixel report jitter is ignored.
-fn reflow_row_pills(
-    prefs_weak: &slint::Weak<PreferencesWindow>,
-    catalog_handle: &Rc<RefCell<Rc<ProfileCatalog>>>,
-    bus: &Rc<PreferencesBus>,
-    layout: &Rc<PillLayout>,
-    id_index: i32,
-    is_extension: bool,
-    width: f32,
-) {
+fn reflow_row_pills(ctx: &ReflowContext, id_index: i32, is_extension: bool, width: f32) {
+    let layout = &ctx.layout;
+    let resin = &ctx.resin;
     let key = (id_index, is_extension);
     {
         let mut widths = layout.widths.borrow_mut();
@@ -1642,17 +1735,17 @@ fn reflow_row_pills(
         }
         widths.insert(key, width);
     }
-    let Some(window) = prefs_weak.upgrade() else {
+    let Some(window) = ctx.prefs_weak.upgrade() else {
         return;
     };
     layout.font_px.set(window.get_pill_font_size());
-    let catalog = catalog_handle.borrow().clone();
+    let catalog = ctx.catalog_handle.borrow().clone();
     let Some(entry) = catalog.materials().get(id_index as usize) else {
         return;
     };
     let extension = catalog.extension_for(&entry.id);
     let default_printer =
-        catalog.effective_default_printer(bus.snapshot().default_printer.as_ref());
+        catalog.effective_default_printer(ctx.bus.snapshot().default_printer.as_ref());
     let pills = row_pill_list(
         entry,
         extension,
@@ -1661,6 +1754,17 @@ fn reflow_row_pills(
         is_extension,
     );
     let lines = pill_lines_model(chunk_pills(pills, width, &|text| layout.measure(text)));
+
+    // The cached row feeds every later filter push, so it has to carry
+    // the new lines too.
+    if let Some(cached) = resin
+        .borrow_mut()
+        .rows
+        .iter_mut()
+        .find(|row| row.id_index == id_index && row.is_extension == is_extension)
+    {
+        cached.pill_lines = lines.clone();
+    }
 
     let rows = window.get_resin_rows();
     for position in 0..rows.row_count() {
