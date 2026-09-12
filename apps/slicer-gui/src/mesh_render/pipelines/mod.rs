@@ -11,6 +11,7 @@
 
 pub(super) mod cap;
 pub(super) mod gizmo;
+pub(super) mod label;
 pub(super) mod mesh;
 pub(super) mod outline;
 pub(super) mod plate;

@@ -5009,6 +5009,7 @@ dependencies = [
  "serde",
  "slint",
  "slint-build",
+ "swash",
  "sys-locale",
  "tempfile",
  "toml",

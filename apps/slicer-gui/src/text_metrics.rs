@@ -10,7 +10,7 @@
 //! screen. Used by the resin list to lay pill tags out in lines
 //! against the actual available width instead of estimating.
 
-static UI_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSans-Variable.ttf");
+pub(crate) static UI_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSans-Variable.ttf");
 
 /// Measures text widths by shaping against the bundled UI font.
 pub(crate) struct TextMeasurer {

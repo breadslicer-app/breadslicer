@@ -687,7 +687,8 @@ fn plate_buffers_are_refused_typed_on_a_tiny_buffer_device() {
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
-    let err = PlateBuffers::create(&device, &queue, TEST_BV, Some(FRONT_TAB))
+    let tab = FrontTab::around_label(4.0);
+    let err = PlateBuffers::create(&device, &queue, TEST_BV, Some(tab))
         .err()
         .expect("the tiny-buffer device refuses the plate geometry");
     assert!(
@@ -1345,6 +1346,54 @@ fn render_plate_only_under_default_limits() {
         .render(None, TEST_BV, &camera, 64, 64)
         .expect("render is not refused")
         .expect("second plate-only render should succeed");
+}
+
+/// A label installed before the frame reaches the plate as a tab and
+/// a textured quad over it, and holds across a second frame.
+#[test]
+fn render_with_a_front_label_under_default_limits() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        .expect("Renderer::new under the test device");
+    let (centre, radius) = TEST_BV.framing(None);
+    let camera = OrbitCamera::new(centre, radius);
+
+    let mut build = || crate::front_label::rasterise_label("FRONT");
+    renderer
+        .update_front_label(1, &mut build)
+        .expect("the label is not refused");
+    for _ in 0..2 {
+        let _ = renderer
+            .render(None, TEST_BV, &camera, 64, 64)
+            .expect("render is not refused")
+            .expect("a labelled plate should draw");
+    }
+}
+
+/// A word that rasterises to nothing leaves the plate bare: no label,
+/// and no tab to carry one.
+#[test]
+fn a_label_with_no_ink_leaves_the_plate_without_a_tab() {
+    let Some((device, queue)) = shared_test_device() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
+        .expect("Renderer::new under the test device");
+    let (centre, radius) = TEST_BV.framing(None);
+    let camera = OrbitCamera::new(centre, radius);
+
+    let mut build = || crate::front_label::rasterise_label("   ");
+    renderer
+        .update_front_label(1, &mut build)
+        .expect("an inkless label is not an error");
+    let _ = renderer
+        .render(None, TEST_BV, &camera, 64, 64)
+        .expect("render is not refused")
+        .expect("a bare plate should still draw");
 }
 
 #[test]

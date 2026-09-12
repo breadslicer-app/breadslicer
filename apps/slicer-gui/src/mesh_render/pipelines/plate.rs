@@ -39,6 +39,7 @@ use super::super::device_ops::{scoped, upload_static_buffer};
 use super::super::error::{RenderAllocation, RenderError};
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
+use super::label::{LabelVertex, label_quad};
 use super::mesh::MeshPipeline;
 use crate::build_volume::BuildVolume;
 
@@ -90,27 +91,85 @@ const FRONT_TAB_CORNER_RADIUS_MM: f32 = 2.0;
 /// Tessellation per rounded tab corner.
 const FRONT_TAB_CORNER_SEGMENTS: u32 = 6;
 
+/// How far the front tab reaches out from the plate's edge, mm.
+const FRONT_TAB_DEPTH_MM: f32 = 4.0;
+/// Cap height the label is drawn at, mm.
+const FRONT_TAB_TEXT_HEIGHT_MM: f32 = 3.75;
+/// Clearance between the label's ink and the tab's slanted ends, mm.
+const FRONT_TAB_SIDE_MARGIN_MM: f32 = 3.75;
+
 /// Footprint of the trapezium hanging off the front (`-Y`) edge of the
-/// plate, in millimetres. The half width is measured from the plate's
-/// centre line and applies to the attached edge; the outer edge is
-/// narrower by [`FRONT_TAB_SLANT_FRACTION`].
+/// plate: the label's ink box in millimetres, which the tab wraps in
+/// margins. The half width is measured from the plate's centre line
+/// and applies to the attached edge; the outer edge is narrower by
+/// [`FRONT_TAB_SLANT_FRACTION`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::mesh_render) struct FrontTab {
-    half_width_mm: f32,
-    depth_mm: f32,
+    text_half_width_mm: f32,
+    text_height_mm: f32,
 }
 
-pub(in crate::mesh_render) const FRONT_TAB: FrontTab = FrontTab::new(16.0, 8.0);
-
 impl FrontTab {
-    /// Constructs from the tab's two lengths. Both must be strictly
-    /// positive and finite; release builds trust the caller.
-    pub(in crate::mesh_render) const fn new(half_width_mm: f32, depth_mm: f32) -> Self {
-        debug_assert!(half_width_mm > 0.0 && depth_mm > 0.0);
+    /// Constructs around an ink box of the given half width and
+    /// height. Both must be strictly positive and finite; release
+    /// builds trust the caller.
+    pub(in crate::mesh_render) const fn new(text_half_width_mm: f32, text_height_mm: f32) -> Self {
+        debug_assert!(text_half_width_mm > 0.0 && text_height_mm > 0.0);
         Self {
-            half_width_mm,
-            depth_mm,
+            text_half_width_mm,
+            text_height_mm,
         }
+    }
+
+    /// Sizes a tab around a label of the given width over height.
+    pub(in crate::mesh_render) fn around_label(aspect: f32) -> Self {
+        Self::new(
+            0.5 * FRONT_TAB_TEXT_HEIGHT_MM * aspect,
+            FRONT_TAB_TEXT_HEIGHT_MM,
+        )
+    }
+
+    /// Returns the half width of the edge the tab hangs from. The
+    /// margin is taken at the narrow outer edge, which the slant
+    /// brings closest to the word.
+    fn half_width_mm(&self) -> f32 {
+        self.text_half_width_mm / (1.0 - FRONT_TAB_SLANT_FRACTION) + FRONT_TAB_SIDE_MARGIN_MM
+    }
+
+    /// Returns how far the tab reaches out from the plate's edge.
+    fn depth_mm(&self) -> f32 {
+        FRONT_TAB_DEPTH_MM
+    }
+
+    /// Returns the half width the tab is actually built at: a label
+    /// too long for the plate is cut to the straight run of its front
+    /// edge, `front_edge_half_span_mm`.
+    fn fitted_half_width_mm(&self, front_edge_half_span_mm: f32) -> f32 {
+        self.half_width_mm().min(front_edge_half_span_mm)
+    }
+
+    /// Returns where the ink lands, as `[min_x, min_y, max_x, max_y]`
+    /// in world mm. The ink keeps its shape when the tab is cut to
+    /// fit, shrinking with it.
+    pub(in crate::mesh_render) fn text_box(
+        &self,
+        front_edge_y_mm: f32,
+        front_edge_half_span_mm: f32,
+    ) -> [f32; 4] {
+        let scale = (self.fitted_half_width_mm(front_edge_half_span_mm) / self.half_width_mm())
+            .clamp(0.0, 1.0);
+        let half_width = self.text_half_width_mm * scale;
+        let half_height = 0.5 * self.text_height_mm * scale;
+        // Midway across the whole border: from the build area's edge,
+        // `PLATE_OVERHANG_MM` inwards of the plate's, out to the
+        // tab's. Not midway across the tab alone.
+        let centre_y = front_edge_y_mm + 0.5 * (PLATE_OVERHANG_MM - self.depth_mm());
+        [
+            -half_width,
+            centre_y - half_height,
+            half_width,
+            centre_y + half_height,
+        ]
     }
 }
 
@@ -368,6 +427,9 @@ pub(in crate::mesh_render) struct PlateBuffers {
     /// `top_pipeline` after the mesh pass; the plate shader gates
     /// each fragment on the matching bit of `face_breach_mask`.
     pub(in crate::mesh_render) wall_index_buffer: wgpu::Buffer,
+    /// Vertex buffer for the front label's quad; `None` when the
+    /// plate carries no tab.
+    pub(in crate::mesh_render) label_vertex_buffer: Option<wgpu::Buffer>,
     pub(in crate::mesh_render) top_index_count: u32,
     pub(in crate::mesh_render) solid_index_count: u32,
     pub(in crate::mesh_render) bottom_index_count: u32,
@@ -435,10 +497,24 @@ impl PlateBuffers {
             wgpu::BufferUsages::INDEX,
         )
         .map_err(refused)?;
+        let label_vertex_buffer = geom
+            .label_quad
+            .map(|quad| {
+                upload_static_buffer(
+                    device,
+                    queue,
+                    "mesh-viewer front label vbo",
+                    bytemuck::cast_slice(&quad),
+                    wgpu::BufferUsages::VERTEX,
+                )
+            })
+            .transpose()
+            .map_err(refused)?;
         Ok(Self {
             build_volume,
             front_tab,
             vertex_buffer,
+            label_vertex_buffer,
             top_index_buffer,
             solid_index_buffer,
             bottom_index_buffer,
@@ -464,6 +540,9 @@ pub(in crate::mesh_render) struct PlateGeometry {
     pub(in crate::mesh_render) bottom_indices: Vec<u32>,
     pub(in crate::mesh_render) cage_indices: Vec<u32>,
     pub(in crate::mesh_render) wall_indices: Vec<u32>,
+    /// The quad the front label draws on, alongside the tab that
+    /// carries it.
+    pub(in crate::mesh_render) label_quad: Option<[LabelVertex; 6]>,
 }
 
 /// Build the per-`BuildVolume` static geometry for the 3D plate slab
@@ -790,13 +869,14 @@ pub(in crate::mesh_render) fn plate_geometry(
         wall_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    if let Some(tab) = front_tab {
+    let label_quad = front_tab.map(|tab| {
         let front = front_tab_geometry(tab, -outer_d, outer_w - radius, vertices.len() as u32);
         vertices.extend(front.vertices);
         top_indices.extend(front.top_indices);
         solid_indices.extend(front.solid_indices);
         bottom_indices.extend(front.bottom_indices);
-    }
+        label_quad(tab.text_box(-outer_d, outer_w - radius))
+    });
 
     PlateGeometry {
         vertices,
@@ -805,6 +885,7 @@ pub(in crate::mesh_render) fn plate_geometry(
         bottom_indices,
         cage_indices,
         wall_indices,
+        label_quad,
     }
 }
 
@@ -854,10 +935,10 @@ fn front_tab_geometry(
     front_edge_half_span_mm: f32,
     base_index: u32,
 ) -> FrontTabGeometry {
-    let inner_half = tab.half_width_mm.min(front_edge_half_span_mm);
+    let inner_half = tab.fitted_half_width_mm(front_edge_half_span_mm);
     let outer_half = inner_half * (1.0 - FRONT_TAB_SLANT_FRACTION);
     let y_inner = front_edge_y_mm;
-    let y_outer = front_edge_y_mm - tab.depth_mm;
+    let y_outer = front_edge_y_mm - tab.depth_mm();
     let attached_left = Vec2::new(-inner_half, y_inner);
     let outer_left = Vec2::new(-outer_half, y_outer);
     let outer_right = Vec2::new(outer_half, y_outer);
@@ -932,8 +1013,9 @@ fn front_tab_geometry(
 
     // The front edge either side of the tab, wound like the plate's
     // own panels, walking +X.
-    let (left_end_top, right_end_top) = (base_index + 4 * len, base_index + 4 * len + 1);
-    let (left_end_bot, right_end_bot) = (base_index + 4 * len + 2, base_index + 4 * len + 3);
+    let ends = base_index + 4 * len;
+    let (left_end_top, right_end_top) = (ends, ends + 1);
+    let (left_end_bot, right_end_bot) = (ends + 2, ends + 3);
     let (attached_left_top, attached_left_bot) = (side_top, side_bot);
     let (attached_right_top, attached_right_bot) = (side_top + len - 1, side_bot + len - 1);
     solid_indices.extend_from_slice(&[
@@ -1181,8 +1263,13 @@ mod plate_geometry_tests {
         }
     }
 
+    /// A tab whose margins bring it to 20 mm half width, the
+    /// footprint the geometry tests measure against.
     fn tab() -> FrontTab {
-        FrontTab::new(20.0, 10.0)
+        FrontTab::new(
+            (20.0 - FRONT_TAB_SIDE_MARGIN_MM) * (1.0 - FRONT_TAB_SLANT_FRACTION),
+            FRONT_TAB_TEXT_HEIGHT_MM,
+        )
     }
 
     /// Points at the first front-tab vertex; the tab comes last.
@@ -1204,6 +1291,35 @@ mod plate_geometry_tests {
             .collect()
     }
 
+    /// Collects the front edge's own wall triangles, as `(x, z)`.
+    fn front_wall(g: &PlateGeometry) -> Vec<[Vec2; 3]> {
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+        g.solid_indices
+            .chunks(3)
+            .map(|tri| {
+                let corner = |k: usize| g.vertices[tri[k] as usize].position;
+                [corner(0), corner(1), corner(2)]
+            })
+            .filter(|tri| tri.iter().all(|p| (p[1] - front_y).abs() < 1e-4))
+            .map(|tri| tri.map(|p| Vec2::new(p[0], p[2])))
+            .collect()
+    }
+
+    /// True when any triangle of `wall` covers `point`.
+    fn walled_at(wall: &[[Vec2; 3]], point: Vec2) -> bool {
+        wall.iter().any(|tri| {
+            let side = |a: Vec2, b: Vec2| (b - a).perp_dot(point - a);
+            let (first, second, third) = (
+                side(tri[0], tri[1]),
+                side(tri[1], tri[2]),
+                side(tri[2], tri[0]),
+            );
+            (first >= 0.0 && second >= 0.0 && third >= 0.0)
+                || (first <= 0.0 && second <= 0.0 && third <= 0.0)
+        })
+    }
+
+    /// Lowest and highest value the geometry reaches on one axis.
     fn extent(g: &PlateGeometry, axis: usize) -> (f32, f32) {
         g.vertices
             .iter()
@@ -1221,7 +1337,7 @@ mod plate_geometry_tests {
         assert_eq!(extent(&tabbed, 2), extent(&plain, 2));
         let (y_min, y_max) = extent(&tabbed, 1);
         assert_approx_eq!(f32, y_max, extent(&plain, 1).1);
-        assert_approx_eq!(f32, y_min, -(30.0 + PLATE_OVERHANG_MM + 10.0));
+        assert_approx_eq!(f32, y_min, -(30.0 + PLATE_OVERHANG_MM + FRONT_TAB_DEPTH_MM));
     }
 
     #[test]
@@ -1302,7 +1418,7 @@ mod plate_geometry_tests {
         let g = plate_geometry(vol(), Some(tab()));
         let outline = tab_outline(&g);
         let outer_half = 20.0 * (1.0 - FRONT_TAB_SLANT_FRACTION);
-        let y_outer = -(30.0 + PLATE_OVERHANG_MM) - 10.0;
+        let y_outer = -(30.0 + PLATE_OVERHANG_MM) - FRONT_TAB_DEPTH_MM;
 
         for sharp in [
             Vec2::new(-outer_half, y_outer),
@@ -1338,7 +1454,10 @@ mod plate_geometry_tests {
 
     #[test]
     fn a_tab_wider_than_the_front_edge_is_clamped_to_its_straight_run() {
-        let g = plate_geometry(vol(), Some(FrontTab::new(1_000.0, 10.0)));
+        let g = plate_geometry(
+            vol(),
+            Some(FrontTab::new(1_000.0, FRONT_TAB_TEXT_HEIGHT_MM)),
+        );
         let straight_run = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
 
         for v in &g.vertices[tab_off()..] {
@@ -1356,7 +1475,8 @@ mod plate_geometry_tests {
         let tabbed = plate_geometry(vol(), Some(tab()));
 
         let n = tab_outline_len();
-        // 4 outline copies plus the edge's 2 far ends, top and bottom.
+        // 4 outline copies, the edge's 2 far ends top and bottom, and
+        // the tab's 2 ends carried down to the plate's underside.
         assert_eq!(tabbed.vertices.len(), plain.vertices.len() + 4 * n + 4);
         assert_eq!(tabbed.cage_indices, plain.cage_indices);
         assert_eq!(tabbed.wall_indices, plain.wall_indices);
@@ -1376,7 +1496,8 @@ mod plate_geometry_tests {
         let n = tab_outline_len();
 
         // The plate drops the whole front-edge panel; the tab walls
-        // its own outward edges and the two stretches left over.
+        // its own outward edges, the two stretches left over, and the
+        // strip of edge below itself.
         assert_eq!(
             tabbed.solid_indices.len(),
             plain.solid_indices.len() - 6 + 6 * (n - 1) + 12
@@ -1386,10 +1507,39 @@ mod plate_geometry_tests {
     #[test]
     fn no_wall_stands_between_the_tab_and_the_plate() {
         let g = plate_geometry(vol(), Some(tab()));
-        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+        let wall = front_wall(&g);
+
+        for x in [-19.0, 0.0, 19.0] {
+            for z in [-0.5, -0.5 * PLATE_THICKNESS_MM, -PLATE_THICKNESS_MM + 0.5] {
+                assert!(
+                    !walled_at(&wall, Vec2::new(x, z)),
+                    "a wall at x = {x}, z = {z} stands between the tab and the plate"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_front_edge_stays_walled_either_side_of_the_tab() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let wall = front_wall(&g);
         let span = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
 
-        // Panels lying wholly in the front edge's plane, as x ranges.
+        for z in [-0.5, -0.5 * PLATE_THICKNESS_MM, -PLATE_THICKNESS_MM + 0.5] {
+            for x in [-span + 0.5, -21.0, 21.0, span - 0.5] {
+                assert!(
+                    walled_at(&wall, Vec2::new(x, z)),
+                    "the front edge has a hole at x = {x}, z = {z}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_front_wall_reaches_corner_to_corner() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+        let span = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
         let walled: Vec<(f32, f32)> = g
             .solid_indices
             .chunks(3)
@@ -1408,12 +1558,6 @@ mod plate_geometry_tests {
             .collect();
 
         assert!(!walled.is_empty(), "the front edge lost all of its wall");
-        for (lo, hi) in &walled {
-            assert!(
-                *hi <= -20.0 + 1e-4 || *lo >= 20.0 - 1e-4,
-                "a wall runs from x = {lo} to x = {hi}, through where the tab attaches"
-            );
-        }
         // What the tab does not cover is still walled, corner to
         // corner, so the slab keeps one closed skin.
         for (reach, expected) in [
@@ -1498,6 +1642,63 @@ mod plate_geometry_tests {
         for tri in g.bottom_indices[plain_bottom..].chunks(3) {
             assert_eq!(g.vertices[tri[0] as usize].kind, KIND_PLATE_BOTTOM);
         }
+    }
+
+    #[test]
+    fn a_longer_word_widens_the_tab_without_deepening_it() {
+        let short = FrontTab::around_label(2.0);
+        let long = FrontTab::around_label(9.0);
+
+        assert!(long.half_width_mm() > short.half_width_mm());
+        assert_approx_eq!(f32, long.depth_mm(), short.depth_mm());
+    }
+
+    #[test]
+    fn the_word_stays_on_the_border_whatever_its_length() {
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+        let span = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
+
+        for aspect in [1.0, 4.7, 9.0, 20.0] {
+            let tab = FrontTab::around_label(aspect);
+            let [_, min_y, max_x, max_y] = tab.text_box(front_y, span);
+
+            // Within the border, and no wider than the tab.
+            assert!(min_y > front_y - tab.depth_mm());
+            assert!(max_y < front_y + PLATE_OVERHANG_MM);
+            assert!(
+                max_x <= tab.fitted_half_width_mm(span),
+                "at aspect {aspect} the word runs wider than its tab"
+            );
+        }
+    }
+
+    #[test]
+    fn the_word_keeps_its_shape_when_the_tab_is_cut_to_fit() {
+        let tab = FrontTab::around_label(6.0);
+        let front_y = -68.0;
+        let roomy = tab.text_box(front_y, 1_000.0);
+        let cramped = tab.text_box(front_y, 0.5 * tab.half_width_mm());
+
+        let shape = |b: [f32; 4]| (b[2] - b[0]) / (b[3] - b[1]);
+        assert!(cramped[2] - cramped[0] < roomy[2] - roomy[0]);
+        assert_approx_eq!(f32, shape(cramped), shape(roomy), epsilon = 1e-4);
+    }
+
+    #[test]
+    fn the_word_sits_across_the_middle_of_the_plates_border() {
+        let tab = FrontTab::around_label(4.0);
+        let front_y = -68.0;
+        let [min_x, min_y, max_x, max_y] = tab.text_box(front_y, 1_000.0);
+
+        assert_approx_eq!(f32, min_x, -max_x);
+        // Halfway between the build area's edge and the tab's, not
+        // halfway across the tab.
+        assert_approx_eq!(
+            f32,
+            0.5 * (min_y + max_y),
+            front_y + 0.5 * (PLATE_OVERHANG_MM - tab.depth_mm())
+        );
+        assert_approx_eq!(f32, max_y - min_y, FRONT_TAB_TEXT_HEIGHT_MM);
     }
 
     #[test]

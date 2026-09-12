@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-12 12:11+0200\n"
+"POT-Creation-Date: 2026-09-12 16:12+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,102 +17,107 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/preferences_window.rs:499 src/preferences_window.rs:524
+#: src/preferences_window.rs:574 src/preferences_window.rs:599
 msgctxt "FileDialog"
 msgid "Profile package"
 msgstr ""
 
-#: src/preferences_window.rs:545
+#: src/preferences_window.rs:620
 msgctxt "PreferencesPage"
 msgid "Overwrite"
 msgstr ""
 
-#: src/preferences_window.rs:547
+#: src/preferences_window.rs:622
 msgctxt "PreferencesPage"
 msgid "Overwrite existing profiles?"
 msgstr ""
 
-#: src/preferences_window.rs:551 src/preferences_window.rs:1335
+#: src/preferences_window.rs:626 src/preferences_window.rs:1410
 msgctxt "PreferencesPage"
 msgid "Cancel"
 msgstr ""
 
-#: src/preferences_window.rs:743 src/preferences_window.rs:1604
+#: src/preferences_window.rs:818 src/preferences_window.rs:1694
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "{} (extended)"
 msgstr ""
 
-#: src/preferences_window.rs:969
+#: src/preferences_window.rs:1044
 #, rust-format
 msgctxt "ForkDialog"
 msgid "{} (fork)"
 msgstr ""
 
-#: src/preferences_window.rs:1068
+#: src/preferences_window.rs:1143
 msgctxt "ProfileViewDialog"
 msgid ""
 "The forked profile is already in your library. Close keeps it unchanged."
 msgstr ""
 
-#: src/preferences_window.rs:1317
+#: src/preferences_window.rs:1392
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting the extension of {} removes every calibration pair it adds."
 msgstr ""
 
-#: src/preferences_window.rs:1324
+#: src/preferences_window.rs:1399
 #, rust-format
 msgctxt "PreferencesPage"
 msgid "Deleting {} removes the custom profile file."
 msgstr ""
 
-#: src/preferences_window.rs:1329
+#: src/preferences_window.rs:1404
 msgctxt "PreferencesPage"
 msgid "Delete"
 msgstr ""
 
-#: src/preferences_window.rs:1331
+#: src/preferences_window.rs:1406
 msgctxt "PreferencesPage"
 msgid "Delete profile?"
 msgstr ""
 
-#: src/preferences_window.rs:1754
+#: src/preferences_window.rs:1858
 msgctxt "PreferencesPage"
 msgid "Generic"
 msgstr ""
 
-#: src/preferences_window.rs:1780
+#: src/preferences_window.rs:1884
 msgctxt "PreferencesPage"
 msgid "No calibration data"
 msgstr ""
 
-#: src/viewport/controller.rs:786
+#: src/viewport/controller.rs:788
 msgctxt "ErrorDialog"
 msgid "Edit failed"
 msgstr ""
 
-#: src/viewport/controller.rs:790
+#: src/viewport/controller.rs:792
 msgctxt "ErrorDialog"
 msgid "The scene rejected the last edit; nothing was changed."
 msgstr ""
 
-#: src/viewport/controller.rs:1161
+#: src/viewport/controller.rs:1163
 msgctxt "ErrorDialog"
 msgid "The 3D view could not start"
 msgstr ""
 
-#: src/viewport/controller.rs:1162
+#: src/viewport/controller.rs:1164
 msgctxt "ErrorDialog"
 msgid "Files cannot be opened in this window."
 msgstr ""
 
-#: src/viewport/controller.rs:1489
+#: src/viewport/controller.rs:1418
+msgctxt "MeshViewer"
+msgid "FRONT"
+msgstr ""
+
+#: src/viewport/controller.rs:1502
 msgctxt "ErrorDialog"
 msgid "Failed to display the 3D model"
 msgstr ""
 
-#: src/viewport/controller.rs:1493
+#: src/viewport/controller.rs:1506
 msgctxt "ErrorDialog"
 msgid "The rendered texture could not be handed to the UI."
 msgstr ""
@@ -576,12 +581,12 @@ msgctxt "MaterialForm"
 msgid "Fill all three values of {}, or leave all three empty"
 msgstr ""
 
-#: src/preferences_filters.rs:58
+#: src/preferences_filters.rs:59
 msgctxt "PreferencesPage"
 msgid "All"
 msgstr ""
 
-#: src/app_state.rs:452 src/lib.rs:277
+#: src/app_state.rs:452 src/lib.rs:278
 msgctxt "ErrorDialog"
 msgid "The graphics device was lost"
 msgstr ""
@@ -803,7 +808,7 @@ msgctxt "ErrorDialog"
 msgid "File is {} MiB, which exceeds the {} MiB limit."
 msgstr ""
 
-#: src/lib.rs:282
+#: src/lib.rs:283
 msgctxt "ErrorDialog"
 msgid ""
 "The application has to close; restart it once the graphics driver is back."

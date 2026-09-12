@@ -18,6 +18,7 @@ use super::scene_upload::GpuScene;
 use super::{FramePixels, RenderError, Renderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
+use crate::front_label::LabelRaster;
 use crate::slice_cap::CapRaster;
 
 pub(crate) trait MeshRenderer {
@@ -50,6 +51,16 @@ pub(crate) trait MeshRenderer {
         &mut self,
         key: Option<u64>,
         build: &mut dyn FnMut() -> Option<CapRaster>,
+    ) -> Result<(), RenderError>;
+
+    /// Refresh the plate's front label for the word identified by
+    /// `key`. `build` is called to rasterise it only when `key`
+    /// differs from the current label; without a label the plate
+    /// carries no tab either.
+    fn update_front_label(
+        &mut self,
+        key: u64,
+        build: &mut dyn FnMut() -> Option<LabelRaster>,
     ) -> Result<(), RenderError>;
 
     /// Run the per-frame render pass. Returns `Ok(None)` when the
@@ -105,6 +116,14 @@ impl MeshRenderer for Renderer {
         build: &mut dyn FnMut() -> Option<CapRaster>,
     ) -> Result<(), RenderError> {
         Renderer::update_cap(self, key, build)
+    }
+
+    fn update_front_label(
+        &mut self,
+        key: u64,
+        build: &mut dyn FnMut() -> Option<LabelRaster>,
+    ) -> Result<(), RenderError> {
+        Renderer::update_front_label(self, key, build)
     }
 
     fn render(

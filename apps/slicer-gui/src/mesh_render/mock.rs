@@ -28,6 +28,7 @@ use super::scene_upload::GpuScene;
 use super::{FramePixels, MeshRenderer, RenderError, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
+use crate::front_label::LabelRaster;
 use crate::slice_cap::CapRaster;
 
 /// Recorded arguments of a single [`MockRenderer::render`] call.
@@ -86,6 +87,9 @@ pub(crate) struct MockRendererState {
     /// `Ok(None)` (the mock cannot construct a `wgpu::Texture`).
     pub(crate) next_render_errors: VecDeque<RenderError>,
     pub(crate) preview_calls: Vec<MockPreviewArgs>,
+    /// Every `update_front_label` call: the key, and the size of the
+    /// raster its closure produced.
+    pub(crate) front_label_calls: Vec<(u64, Option<(u32, u32)>)>,
     /// Queue of `preview_pixels` results: each call pops the front.
     /// An empty queue (the default) returns `Ok(None)`, the answer
     /// of a renderer with nothing to draw.
@@ -106,6 +110,7 @@ impl MockRendererState {
             next_render_errors: VecDeque::new(),
             preview_calls: Vec::new(),
             next_preview_frames: VecDeque::new(),
+            front_label_calls: Vec::new(),
         }))
     }
 }
@@ -155,6 +160,18 @@ impl MeshRenderer for MockRenderer {
     ) -> Result<(), RenderError> {
         // The slice-view cap is a GPU-only concern; the mock holds no
         // texture state, so this is a no-op.
+        Ok(())
+    }
+
+    fn update_front_label(
+        &mut self,
+        key: u64,
+        build: &mut dyn FnMut() -> Option<LabelRaster>,
+    ) -> Result<(), RenderError> {
+        // Unlike the cap, the raster is built: it is the caller's
+        // word going through the font, which a test can check.
+        let size = build().map(|raster| (raster.width, raster.height));
+        self.state.borrow_mut().front_label_calls.push((key, size));
         Ok(())
     }
 

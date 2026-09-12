@@ -18,6 +18,8 @@
 //! abstraction leak.
 
 use std::cell::Cell;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use slint::ComponentHandle;
@@ -1407,6 +1409,17 @@ impl ViewportController {
                 .flatten()
         };
         match renderer.update_cap(cap_key, &mut build_cap) {
+            Ok(()) | Err(RenderError::DeviceLost) => {}
+            Err(err) => self.session.loader().note_render_failure(&err),
+        }
+
+        // The word on the plate's front tab, keyed on the text so a
+        // language change rebuilds it and an orbit does not.
+        let front_word = ctr!("MeshViewer", "FRONT");
+        let mut hasher = DefaultHasher::new();
+        front_word.as_str().hash(&mut hasher);
+        let mut build_label = || crate::front_label::rasterise_label(front_word.as_str());
+        match renderer.update_front_label(hasher.finish(), &mut build_label) {
             Ok(()) | Err(RenderError::DeviceLost) => {}
             Err(err) => self.session.loader().note_render_failure(&err),
         }

@@ -14,6 +14,7 @@ use slint::wgpu_29::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
+use crate::front_label::LabelRaster;
 use crate::gizmo::axis::ALL_AXES;
 use crate::slice_cap::CapRaster;
 
@@ -46,9 +47,10 @@ use gizmo_entries::{
 pub use gizmo_entries::{GizmoDragVisual, GizmoFrame, GizmoHover, GizmoVisibility};
 use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
+use pipelines::label::LabelPipeline;
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
-use pipelines::plate::{FRONT_TAB, FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
+use pipelines::plate::{FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
 pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
@@ -175,6 +177,9 @@ struct Pipelines {
     /// The slice-view cap pipeline, immutable after construction.
     cap: CapPipeline,
     cap_state: CapState,
+    /// The plate-label pipeline, immutable after construction.
+    label: LabelPipeline,
+    label_state: LabelState,
     /// Cached plate geometry for the current `BuildVolume`. `None`
     /// until the first render call; rebuilt when the per-frame
     /// `BuildVolume` differs from the cached one.
@@ -199,6 +204,39 @@ impl CapState {
         match self {
             Self::Off => None,
             Self::Shown { key, .. } | Self::Refused { key } => Some(*key),
+        }
+    }
+}
+
+/// State of the plate label's texture, keyed by the word it was last
+/// built for. The bind group keeps the texture and its view alive,
+/// and the tab it is drawn on is sized by that same word.
+enum LabelState {
+    Off,
+    Shown {
+        key: u64,
+        tab: FrontTab,
+        bind_group: wgpu::BindGroup,
+    },
+    Refused {
+        key: u64,
+    },
+}
+
+impl LabelState {
+    fn key(&self) -> Option<u64> {
+        match self {
+            Self::Off => None,
+            Self::Shown { key, .. } | Self::Refused { key } => Some(*key),
+        }
+    }
+
+    /// Returns the tab carrying the label, `None` when there is no
+    /// label to carry: the tab exists for the word.
+    fn tab(&self) -> Option<FrontTab> {
+        match self {
+            Self::Shown { tab, .. } => Some(*tab),
+            Self::Off | Self::Refused { .. } => None,
         }
     }
 }
@@ -256,6 +294,7 @@ impl Renderer {
             GizmoPipeline::create(&device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
         let plate = PlatePipeline::create(&device, &mesh).map_err(at(RendererStage::Plate))?;
         let cap = CapPipeline::create(&device, &mesh).map_err(at(RendererStage::Cap))?;
+        let label = LabelPipeline::create(&device, &mesh).map_err(at(RendererStage::Label))?;
         let max_texture_side = device.limits().max_texture_dimension_2d;
 
         Ok(Self {
@@ -274,6 +313,8 @@ impl Renderer {
                 plate,
                 cap,
                 cap_state: CapState::Off,
+                label,
+                label_state: LabelState::Off,
                 plate_buffers: None,
             },
             scene: None,
@@ -480,12 +521,55 @@ impl Renderer {
         }
     }
 
+    /// Refresh the plate label for the word identified by `key`.
+    /// `build` produces the coverage raster only when `key` differs
+    /// from the current label, so a camera orbit skips the rasterise.
+    /// A `build` yielding `None`, or a refused upload, leaves the
+    /// plate without a label and therefore without its tab.
+    pub(crate) fn update_front_label(
+        &mut self,
+        key: u64,
+        build: &mut dyn FnMut() -> Option<LabelRaster>,
+    ) -> Result<(), RenderError> {
+        if self.pipelines.label_state.key() == Some(key) {
+            return Ok(());
+        }
+        if self.core.device_loss.is_lost() {
+            return Err(RenderError::DeviceLost);
+        }
+        let Some(raster) = build() else {
+            self.pipelines.label_state = LabelState::Off;
+            return Ok(());
+        };
+        let tab = FrontTab::around_label(raster.aspect());
+        match self.upload_label_texture(&raster) {
+            Ok(bind_group) => {
+                self.pipelines.label_state = LabelState::Shown {
+                    key,
+                    tab,
+                    bind_group,
+                };
+                Ok(())
+            }
+            Err(err) => {
+                self.pipelines.label_state = LabelState::Refused { key };
+                Err(err)
+            }
+        }
+    }
+
     /// Upload a coverage raster as an R8 texture and build the cap's
-    /// group-1 bind group. Each row is padded to wgpu's copy alignment,
-    /// as `write_texture` requires.
+    /// group-1 bind group.
     fn upload_cap_texture(&self, raster: &CapRaster) -> Result<wgpu::BindGroup, RenderError> {
         scoped(&self.core.device, || {
-            self.upload_cap_texture_unscoped(raster)
+            self.coverage_bind_group(
+                "cap",
+                &raster.coverage,
+                raster.width,
+                raster.height,
+                &self.pipelines.cap.texture_bind_group_layout,
+                &self.pipelines.cap.sampler,
+            )
         })
         .map_err(|source| RenderError::DeviceRefused {
             what: RenderAllocation::CapTexture,
@@ -493,11 +577,39 @@ impl Renderer {
         })
     }
 
-    fn upload_cap_texture_unscoped(&self, raster: &CapRaster) -> wgpu::BindGroup {
-        let width = raster.width;
-        let height = raster.height;
+    /// Upload a label raster as an R8 texture and build the label's
+    /// group-1 bind group.
+    fn upload_label_texture(&self, raster: &LabelRaster) -> Result<wgpu::BindGroup, RenderError> {
+        scoped(&self.core.device, || {
+            self.coverage_bind_group(
+                "front label",
+                &raster.coverage,
+                raster.width,
+                raster.height,
+                &self.pipelines.label.texture_bind_group_layout,
+                &self.pipelines.label.sampler,
+            )
+        })
+        .map_err(|source| RenderError::DeviceRefused {
+            what: RenderAllocation::LabelTexture,
+            source,
+        })
+    }
+
+    /// Upload a single-channel coverage bitmap as an R8 texture and
+    /// bind it with `sampler`. Each row is padded to wgpu's copy
+    /// alignment, as `write_texture` requires.
+    fn coverage_bind_group(
+        &self,
+        name: &str,
+        coverage: &[u8],
+        width: u32,
+        height: u32,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
         let texture = self.core.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mesh-viewer cap texture"),
+            label: Some(&format!("mesh-viewer {name} texture")),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -517,8 +629,7 @@ impl Renderer {
         for row in 0..height as usize {
             let src = row * width as usize;
             let dst = row * padded_bpr as usize;
-            padded[dst..dst + width as usize]
-                .copy_from_slice(&raster.coverage[src..src + width as usize]);
+            padded[dst..dst + width as usize].copy_from_slice(&coverage[src..src + width as usize]);
         }
         self.core.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -544,8 +655,8 @@ impl Renderer {
         self.core
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("mesh-viewer cap texture bg"),
-                layout: &self.pipelines.cap.texture_bind_group_layout,
+                label: Some(&format!("mesh-viewer {name} texture bg")),
+                layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -553,7 +664,7 @@ impl Renderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.pipelines.cap.sampler),
+                        resource: wgpu::BindingResource::Sampler(sampler),
                     },
                 ],
             })
@@ -662,7 +773,8 @@ impl Renderer {
 
         self.ensure_msaa(width, height)?;
         self.ensure_targets(width, height)?;
-        let plate_buffers = self.ensure_plate_buffers(build_volume, Some(FRONT_TAB))?;
+        let plate_buffers =
+            self.ensure_plate_buffers(build_volume, self.pipelines.label_state.tab())?;
         let plate_buffers = &plate_buffers;
         let installed = self.scene.as_ref();
         let msaa = self.target_manager.msaa.as_ref().unwrap();
@@ -802,6 +914,7 @@ impl Renderer {
                 self.record_plate_solid(&mut pass, plate_buffers);
                 self.record_plate_top(&mut pass, plate_buffers);
                 self.record_cage(&mut pass, plate_buffers);
+                self.record_front_label(&mut pass, plate_buffers);
             }
 
             if scene_for_draws && let Some(inst) = installed {
@@ -886,6 +999,24 @@ impl Renderer {
             wgpu::IndexFormat::Uint32,
         );
         pass.draw_indexed(0..plate_buffers.cage_index_count, 0, 0..1);
+    }
+
+    /// The word on the plate's front tab, over the tab's own top
+    /// face. Binds its own vertex buffer at slot 0, so the plate
+    /// draws that share the plate's must come before it.
+    fn record_front_label(&self, pass: &mut wgpu::RenderPass<'_>, plate_buffers: &PlateBuffers) {
+        let LabelState::Shown { bind_group, .. } = &self.pipelines.label_state else {
+            return;
+        };
+        let Some(quad) = &plate_buffers.label_vertex_buffer else {
+            return;
+        };
+        pass.set_pipeline(&self.pipelines.label.pipeline);
+        pass.set_bind_group(0, &self.pipelines.label.uniforms_bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, quad.slice(..));
+        pass.set_stencil_reference(0);
+        pass.draw(0..6, 0..1);
     }
 
     /// One draw call per installed scene object. The models bind

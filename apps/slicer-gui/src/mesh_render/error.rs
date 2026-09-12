@@ -18,6 +18,7 @@ pub enum RendererStage {
     Gizmo,
     Plate,
     Cap,
+    Label,
 }
 
 impl fmt::Display for RendererStage {
@@ -29,6 +30,7 @@ impl fmt::Display for RendererStage {
             Self::Gizmo => "gizmo pipeline",
             Self::Plate => "build plate pipeline",
             Self::Cap => "slice cap pipeline",
+            Self::Label => "plate label pipeline",
         })
     }
 }
@@ -66,6 +68,7 @@ pub enum RenderAllocation {
     MsaaTargets,
     ColourTargets,
     CapTexture,
+    LabelTexture,
     ReadbackBuffer,
 }
 
@@ -76,6 +79,7 @@ impl fmt::Display for RenderAllocation {
             Self::MsaaTargets => "multisample buffers",
             Self::ColourTargets => "output image",
             Self::CapTexture => "slice cap texture",
+            Self::LabelTexture => "plate label texture",
             Self::ReadbackBuffer => "image readback buffer",
         })
     }
