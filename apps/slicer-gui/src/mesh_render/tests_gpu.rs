@@ -687,7 +687,7 @@ fn plate_buffers_are_refused_typed_on_a_tiny_buffer_device() {
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
-    let err = PlateBuffers::create(&device, &queue, TEST_BV)
+    let err = PlateBuffers::create(&device, &queue, TEST_BV, Some(FRONT_TAB))
         .err()
         .expect("the tiny-buffer device refuses the plate geometry");
     assert!(

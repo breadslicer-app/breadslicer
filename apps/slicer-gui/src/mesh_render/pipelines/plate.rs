@@ -32,6 +32,7 @@ use std::borrow::Cow;
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
+use glam::Vec2;
 use slint::wgpu_29::wgpu;
 
 use super::super::device_ops::{scoped, upload_static_buffer};
@@ -80,6 +81,38 @@ const PLATE_CORNER_RADIUS_MM: f32 = 6.0;
 /// smoother corner, more triangles. 8 segments = a 90 degree arc
 /// stepped at 11.25 degrees, smooth at default zoom.
 const PLATE_CORNER_SEGMENTS: u32 = 8;
+/// How much narrower the front tab's outer edge is than the plate
+/// edge it hangs from, as a fraction of the latter.
+const FRONT_TAB_SLANT_FRACTION: f32 = 0.15;
+/// Corner radius (XY) of the front tab's two outer corners, mm. The
+/// two attached ones stay sharp: they run into the plate's edge.
+const FRONT_TAB_CORNER_RADIUS_MM: f32 = 2.0;
+/// Tessellation per rounded tab corner.
+const FRONT_TAB_CORNER_SEGMENTS: u32 = 6;
+
+/// Footprint of the trapezium hanging off the front (`-Y`) edge of the
+/// plate, in millimetres. The half width is measured from the plate's
+/// centre line and applies to the attached edge; the outer edge is
+/// narrower by [`FRONT_TAB_SLANT_FRACTION`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::mesh_render) struct FrontTab {
+    half_width_mm: f32,
+    depth_mm: f32,
+}
+
+pub(in crate::mesh_render) const FRONT_TAB: FrontTab = FrontTab::new(16.0, 8.0);
+
+impl FrontTab {
+    /// Constructs from the tab's two lengths. Both must be strictly
+    /// positive and finite; release builds trust the caller.
+    pub(in crate::mesh_render) const fn new(half_width_mm: f32, depth_mm: f32) -> Self {
+        debug_assert!(half_width_mm > 0.0 && depth_mm > 0.0);
+        Self {
+            half_width_mm,
+            depth_mm,
+        }
+    }
+}
 
 /// Bind-group indices for the plate pipeline. Variant order must
 /// match `shaders/plate.wgsl`'s `@group(N)` decls and the layout
@@ -316,14 +349,16 @@ impl PlatePipeline {
     }
 }
 
-/// GPU resources for one specific [`BuildVolume`]: one vertex buffer
-/// holding all plate + cage geometry, plus four index buffers (top
-/// face, plate sides, bottom face, cage edges). The bottom face is
-/// indexed separately because it draws through its own pipeline.
-/// Cloning copies wgpu handles (reference counted), not GPU memory.
+/// GPU resources for one specific [`BuildVolume`] and front tab: one
+/// vertex buffer holding all plate + cage geometry, plus four index
+/// buffers (top face, plate sides, bottom face, cage edges). The
+/// bottom face is indexed separately because it draws through its own
+/// pipeline. Cloning copies wgpu handles (reference counted), not GPU
+/// memory.
 #[derive(Clone)]
 pub(in crate::mesh_render) struct PlateBuffers {
     pub(in crate::mesh_render) build_volume: BuildVolume,
+    pub(in crate::mesh_render) front_tab: Option<FrontTab>,
     pub(in crate::mesh_render) vertex_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) top_index_buffer: wgpu::Buffer,
     pub(in crate::mesh_render) solid_index_buffer: wgpu::Buffer,
@@ -345,12 +380,13 @@ impl PlateBuffers {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         build_volume: BuildVolume,
+        front_tab: Option<FrontTab>,
     ) -> Result<Self, RenderError> {
         let refused = |source| RenderError::DeviceRefused {
             what: RenderAllocation::PlateGeometry,
             source,
         };
-        let geom = plate_geometry(build_volume);
+        let geom = plate_geometry(build_volume, front_tab);
         let vertex_buffer = upload_static_buffer(
             device,
             queue,
@@ -401,6 +437,7 @@ impl PlateBuffers {
         .map_err(refused)?;
         Ok(Self {
             build_volume,
+            front_tab,
             vertex_buffer,
             top_index_buffer,
             solid_index_buffer,
@@ -465,7 +502,15 @@ pub(in crate::mesh_render) struct PlateGeometry {
 ///   through the translucent fragment-shader branch).
 /// - `[8+12n+1..8+12n+9]`: 8 cage corners (4 at `Z = 0`, 4 at
 ///   `Z = H`), kind = cage.
-pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> PlateGeometry {
+/// - `[8+12n+9..8+12n+29]`: the 5 envelope-wall quads, 4 corners
+///   each.
+/// - `[8+12n+29..]`: the front tab when one is asked for, its
+///   outline repeated once per kind it is drawn with (top border,
+///   side top, side bottom, bottom).
+pub(in crate::mesh_render) fn plate_geometry(
+    build_volume: BuildVolume,
+    front_tab: Option<FrontTab>,
+) -> PlateGeometry {
     let lo = build_volume.envelope_min_mm();
     let hi = build_volume.envelope_max_mm();
     let half_w = 0.5 * build_volume.width_mm();
@@ -688,7 +733,13 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
     // top edge from the side-top vertex range and the bottom edge
     // from the side-bottom vertex range. Wound CCW from outside the
     // plate so the front face is the visible one.
+    // Straight front edge, between the two -Y arcs. The tab walls it
+    // instead: a wall here would stand inside the merged slab.
+    let front_segment = 3 * arc_pts - 1;
     for i in 0..outline_len_u32 {
+        if front_tab.is_some() && i == front_segment {
+            continue;
+        }
         let next = (i + 1) % outline_len_u32;
         let t_i = side_top_off + i;
         let t_n = side_top_off + next;
@@ -739,6 +790,14 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         wall_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    if let Some(tab) = front_tab {
+        let front = front_tab_geometry(tab, -outer_d, outer_w - radius, vertices.len() as u32);
+        vertices.extend(front.vertices);
+        top_indices.extend(front.top_indices);
+        solid_indices.extend(front.solid_indices);
+        bottom_indices.extend(front.bottom_indices);
+    }
+
     PlateGeometry {
         vertices,
         top_indices,
@@ -746,6 +805,157 @@ pub(in crate::mesh_render) fn plate_geometry(build_volume: BuildVolume) -> Plate
         bottom_indices,
         cage_indices,
         wall_indices,
+    }
+}
+
+/// The front tab's share of the plate streams, indices already offset
+/// by the `base_index` given to [`front_tab_geometry`].
+struct FrontTabGeometry {
+    vertices: Vec<PlateVertex>,
+    top_indices: Vec<u32>,
+    solid_indices: Vec<u32>,
+    bottom_indices: Vec<u32>,
+}
+
+/// Rounds off the corner at `corner`, between the edges from
+/// `previous` and to `next`, into `FRONT_TAB_CORNER_SEGMENTS + 1`
+/// points running in the outline's direction. Both edges must be
+/// longer than the setback `radius / tan(half the interior angle)`,
+/// or neighbouring fillets overlap.
+fn rounded_corner(previous: Vec2, corner: Vec2, next: Vec2, radius: f32) -> Vec<Vec2> {
+    let back_along = (previous - corner).normalize();
+    let on_along = (next - corner).normalize();
+    let half_angle = 0.5 * back_along.angle_to(on_along).abs();
+    let centre = corner + (back_along + on_along).normalize() * (radius / half_angle.sin());
+    let setback = radius / half_angle.tan();
+    let from = ((corner + back_along * setback) - centre).to_angle();
+    let to = ((corner + on_along * setback) - centre).to_angle();
+    // A fillet sweeps under a half turn, so wrap to the short way.
+    let span =
+        (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+
+    (0..=FRONT_TAB_CORNER_SEGMENTS)
+        .map(|i| {
+            let t = i as f32 / FRONT_TAB_CORNER_SEGMENTS as f32;
+            centre + Vec2::from_angle(from + span * t) * radius
+        })
+        .collect()
+}
+
+/// Build the trapezium hanging off the plate's front edge, a slab of
+/// the plate's own thickness, plus the wall for the stretches of that
+/// edge it leaves uncovered: the caller walls none of it.
+///
+/// `front_edge_half_span_mm` is the straight run of that edge between
+/// the corner arcs; a wider tab is clamped to it.
+fn front_tab_geometry(
+    tab: FrontTab,
+    front_edge_y_mm: f32,
+    front_edge_half_span_mm: f32,
+    base_index: u32,
+) -> FrontTabGeometry {
+    let inner_half = tab.half_width_mm.min(front_edge_half_span_mm);
+    let outer_half = inner_half * (1.0 - FRONT_TAB_SLANT_FRACTION);
+    let y_inner = front_edge_y_mm;
+    let y_outer = front_edge_y_mm - tab.depth_mm;
+    let attached_left = Vec2::new(-inner_half, y_inner);
+    let outer_left = Vec2::new(-outer_half, y_outer);
+    let outer_right = Vec2::new(outer_half, y_outer);
+    let attached_right = Vec2::new(inner_half, y_inner);
+
+    // CCW from +Z, from the attached edge's -X end. The attached
+    // corners stay sharp.
+    let radius = FRONT_TAB_CORNER_RADIUS_MM;
+    let outline: Vec<Vec2> = std::iter::once(attached_left)
+        .chain(rounded_corner(
+            attached_left,
+            outer_left,
+            outer_right,
+            radius,
+        ))
+        .chain(rounded_corner(
+            outer_left,
+            outer_right,
+            attached_right,
+            radius,
+        ))
+        .chain(std::iter::once(attached_right))
+        .collect();
+    let len = outline.len() as u32;
+
+    let mut vertices = Vec::with_capacity(4 * outline.len() + 4);
+    for (kind, z) in [
+        (KIND_PLATE_TOP_BORDER, 0.0),
+        (KIND_PLATE_SIDE, 0.0),
+        (KIND_PLATE_SIDE, -PLATE_THICKNESS_MM),
+        (KIND_PLATE_BOTTOM, -PLATE_THICKNESS_MM),
+    ] {
+        for point in &outline {
+            vertices.push(PlateVertex {
+                position: [point.x, point.y, z],
+                kind,
+            });
+        }
+    }
+    // The far ends of the plate's front edge.
+    for z in [0.0, -PLATE_THICKNESS_MM] {
+        for x in [-front_edge_half_span_mm, front_edge_half_span_mm] {
+            vertices.push(PlateVertex {
+                position: [x, y_inner, z],
+                kind: KIND_PLATE_SIDE,
+            });
+        }
+    }
+
+    let top = base_index;
+    let side_top = base_index + len;
+    let side_bot = base_index + 2 * len;
+    let bottom = base_index + 3 * len;
+
+    // The outline is convex, so both faces fan from its first point.
+    let mut top_indices = Vec::with_capacity(3 * outline.len());
+    let mut bottom_indices = Vec::with_capacity(3 * outline.len());
+    for i in 1..len - 1 {
+        top_indices.extend_from_slice(&[top, top + i, top + i + 1]);
+        // Wound against the top face: front-facing from below. Every
+        // corner is `KIND_PLATE_BOTTOM`, so any may lead.
+        bottom_indices.extend_from_slice(&[bottom, bottom + i + 1, bottom + i]);
+    }
+
+    // No panel on the closing edge: it would be interior.
+    let mut solid_indices = Vec::with_capacity(6 * outline.len() + 12);
+    for i in 0..len - 1 {
+        let (t_i, t_n) = (side_top + i, side_top + i + 1);
+        let (b_i, b_n) = (side_bot + i, side_bot + i + 1);
+        solid_indices.extend_from_slice(&[t_i, b_i, b_n, t_i, b_n, t_n]);
+    }
+
+    // The front edge either side of the tab, wound like the plate's
+    // own panels, walking +X.
+    let (left_end_top, right_end_top) = (base_index + 4 * len, base_index + 4 * len + 1);
+    let (left_end_bot, right_end_bot) = (base_index + 4 * len + 2, base_index + 4 * len + 3);
+    let (attached_left_top, attached_left_bot) = (side_top, side_bot);
+    let (attached_right_top, attached_right_bot) = (side_top + len - 1, side_bot + len - 1);
+    solid_indices.extend_from_slice(&[
+        left_end_top,
+        left_end_bot,
+        attached_left_bot,
+        left_end_top,
+        attached_left_bot,
+        attached_left_top,
+        attached_right_top,
+        attached_right_bot,
+        right_end_bot,
+        attached_right_top,
+        right_end_bot,
+        right_end_top,
+    ]);
+
+    FrontTabGeometry {
+        vertices,
+        top_indices,
+        solid_indices,
+        bottom_indices,
     }
 }
 
@@ -775,7 +985,7 @@ mod plate_geometry_tests {
     #[test]
     fn vertex_buffer_has_inner_quad_border_dups_three_outlines_a_centre_eight_cage_and_five_walls()
     {
-        let g = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0));
+        let g = plate_geometry(BuildVolume::new(192.0, 120.0, 200.0), None);
         let n = outline_len();
         // 5 envelope walls add 20 vertices (4 per quad).
         assert_eq!(g.vertices.len(), 8 + 3 * n + 1 + 8 + 20);
@@ -819,7 +1029,7 @@ mod plate_geometry_tests {
 
     #[test]
     fn inner_top_corners_are_envelope_corners_at_z_zero() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         for v in &g.vertices[..4] {
             assert_eq!(v.position[2], 0.0);
             assert_eq!(v.position[0].abs(), 50.0);
@@ -835,7 +1045,7 @@ mod plate_geometry_tests {
     fn outline_extends_overhang_beyond_envelope() {
         // The outline's bounding box should be the build envelope
         // expanded by `PLATE_OVERHANG_MM` on each axis.
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let n = outline_len();
         let outline = &g.vertices[8..8 + n];
         let max_x = outline
@@ -852,7 +1062,7 @@ mod plate_geometry_tests {
 
     #[test]
     fn outline_has_thickness_between_top_and_bottom_copies() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let n = outline_len();
         let side_top_off = 8 + n;
         let side_bot_off = side_top_off + n;
@@ -872,7 +1082,7 @@ mod plate_geometry_tests {
         // KIND_PLATE_TOP_BORDER. If any inner-corner FLOOR vertex
         // sneaks in, flat interpolation would bleed the grid into
         // the rounded ring.
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         // Skip the inner quad's first 6 indices (2 triangles).
         let ring_indices = &g.top_indices[6..];
         for tri in ring_indices.chunks(3) {
@@ -888,7 +1098,7 @@ mod plate_geometry_tests {
 
     #[test]
     fn cage_uses_low_and_high_z_layers() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let off = cage_off() as usize;
         for v in &g.vertices[off..off + 4] {
             assert_eq!(v.position[2], 0.0);
@@ -900,14 +1110,14 @@ mod plate_geometry_tests {
 
     #[test]
     fn cage_index_count_is_twelve_edges() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         // Two indices per edge, 12 edges = 24 indices.
         assert_eq!(g.cage_indices.len(), 24);
     }
 
     #[test]
     fn cage_indices_reference_only_cage_vertices() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let off = cage_off();
         for idx in g.cage_indices {
             assert!(
@@ -922,7 +1132,7 @@ mod plate_geometry_tests {
         // Inner quad: 2 triangles = 6 indices. Outer border ring:
         // per inner corner, `segments` arc triangles + 2 strip
         // triangles = 3 * (segments + 2) indices, times 4 corners.
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let segments = PLATE_CORNER_SEGMENTS;
         let expected = 6 + 4 * 3 * (segments + 2) as usize;
         assert_eq!(g.top_indices.len(), expected);
@@ -931,7 +1141,7 @@ mod plate_geometry_tests {
     #[test]
     fn solid_indices_cover_side_panels_only() {
         // Sides: outline_len quads = 6 * n indices.
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let n = outline_len();
         assert_eq!(g.solid_indices.len(), 6 * n);
     }
@@ -943,7 +1153,7 @@ mod plate_geometry_tests {
         // provoking vertex with KIND_PLATE_BOTTOM. Any other
         // ordering would route the fan through the wrong fragment-
         // shader branch (loses translucency).
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let n = outline_len();
         assert_eq!(g.bottom_indices.len(), 3 * n);
         let bottom_centre = 8 + 3 * outline_len() as u32;
@@ -955,13 +1165,13 @@ mod plate_geometry_tests {
     #[test]
     fn wall_indices_cover_five_quads() {
         // 5 quads, 2 triangles per quad, 3 indices per triangle.
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         assert_eq!(g.wall_indices.len(), 30);
     }
 
     #[test]
     fn wall_indices_reference_only_wall_vertices() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let off = wall_off();
         for idx in &g.wall_indices {
             assert!(
@@ -971,9 +1181,328 @@ mod plate_geometry_tests {
         }
     }
 
+    fn tab() -> FrontTab {
+        FrontTab::new(20.0, 10.0)
+    }
+
+    /// Points at the first front-tab vertex; the tab comes last.
+    fn tab_off() -> usize {
+        wall_off() as usize + 20
+    }
+
+    /// Counts the tab outline's points: 2 attached corners plus a
+    /// rounded corner each side.
+    fn tab_outline_len() -> usize {
+        2 + 2 * (FRONT_TAB_CORNER_SEGMENTS + 1) as usize
+    }
+
+    /// Reads the tab's outline back off its top-border copy.
+    fn tab_outline(g: &PlateGeometry) -> Vec<Vec2> {
+        g.vertices[tab_off()..tab_off() + tab_outline_len()]
+            .iter()
+            .map(|v| Vec2::new(v.position[0], v.position[1]))
+            .collect()
+    }
+
+    fn extent(g: &PlateGeometry, axis: usize) -> (f32, f32) {
+        g.vertices
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(v.position[axis]), hi.max(v.position[axis]))
+            })
+    }
+
+    #[test]
+    fn the_front_tab_reaches_past_the_plate_on_minus_y_only() {
+        let plain = plate_geometry(vol(), None);
+        let tabbed = plate_geometry(vol(), Some(tab()));
+
+        assert_eq!(extent(&tabbed, 0), extent(&plain, 0));
+        assert_eq!(extent(&tabbed, 2), extent(&plain, 2));
+        let (y_min, y_max) = extent(&tabbed, 1);
+        assert_approx_eq!(f32, y_max, extent(&plain, 1).1);
+        assert_approx_eq!(f32, y_min, -(30.0 + PLATE_OVERHANG_MM + 10.0));
+    }
+
+    #[test]
+    fn the_front_tab_repeats_its_outline_once_per_kind_it_draws_with() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let block = tab_outline_len();
+        let tab_vertices = &g.vertices[tab_off()..];
+
+        assert_eq!(tab_vertices.len(), 4 * block + 4);
+        for v in &tab_vertices[4 * block..] {
+            assert_eq!(v.kind, KIND_PLATE_SIDE);
+            assert_approx_eq!(f32, v.position[1], -(30.0 + PLATE_OVERHANG_MM));
+        }
+        let tab_vertices = &tab_vertices[..4 * block];
+        for (offset, expected) in [
+            (0, KIND_PLATE_TOP_BORDER),
+            (block, KIND_PLATE_SIDE),
+            (2 * block, KIND_PLATE_SIDE),
+            (3 * block, KIND_PLATE_BOTTOM),
+        ] {
+            for v in &tab_vertices[offset..offset + block] {
+                assert_eq!(v.kind, expected);
+            }
+        }
+        for i in 0..block {
+            for copy in [block, 2 * block, 3 * block] {
+                assert_eq!(
+                    tab_vertices[i].position[..2],
+                    tab_vertices[i + copy].position[..2]
+                );
+            }
+        }
+        for v in &tab_vertices[..2 * block] {
+            assert_approx_eq!(f32, v.position[2], 0.0);
+        }
+        for v in &tab_vertices[2 * block..] {
+            assert_approx_eq!(f32, v.position[2], -PLATE_THICKNESS_MM);
+        }
+    }
+
+    #[test]
+    fn the_front_tab_narrows_on_its_way_out() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let outline = tab_outline(&g);
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+
+        // The outline runs from one attached corner round to the
+        // other, so the outer edge is what lies between them.
+        assert_approx_eq!(f32, outline[0].x, -20.0);
+        assert_approx_eq!(f32, outline[0].y, front_y);
+        assert_approx_eq!(f32, outline[outline.len() - 1].x, 20.0);
+        assert_approx_eq!(f32, outline[outline.len() - 1].y, front_y);
+        let widest_outer = outline[1..outline.len() - 1]
+            .iter()
+            .map(|p| p.x.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            widest_outer < 20.0,
+            "the tab must narrow past its attached edge, widest outer x = {widest_outer}"
+        );
+    }
+
+    #[test]
+    fn the_front_tab_keeps_sharp_corners_where_it_meets_the_plate() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let outline = tab_outline(&g);
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+
+        // Rounding these two would leave a notch against the plate.
+        for corner in [outline[0], outline[outline.len() - 1]] {
+            assert_approx_eq!(f32, corner.x.abs(), 20.0);
+            assert_approx_eq!(f32, corner.y, front_y);
+        }
+    }
+
+    #[test]
+    fn the_front_tab_rounds_its_two_outer_corners() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let outline = tab_outline(&g);
+        let outer_half = 20.0 * (1.0 - FRONT_TAB_SLANT_FRACTION);
+        let y_outer = -(30.0 + PLATE_OVERHANG_MM) - 10.0;
+
+        for sharp in [
+            Vec2::new(-outer_half, y_outer),
+            Vec2::new(outer_half, y_outer),
+        ] {
+            let nearest = outline
+                .iter()
+                .map(|p| p.distance(sharp))
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                nearest > 0.1,
+                "outline still touches the sharp corner at {sharp}"
+            );
+            assert!(
+                nearest < FRONT_TAB_CORNER_RADIUS_MM,
+                "outline cuts {nearest} mm off the corner at {sharp}, more than the radius"
+            );
+        }
+    }
+
+    #[test]
+    fn the_front_tab_outline_stays_convex() {
+        // A fillet swept the wrong way round would double back and
+        // put a loop in the face fan.
+        let g = plate_geometry(vol(), Some(tab()));
+        let outline = tab_outline(&g);
+
+        for window in outline.windows(3) {
+            let turn = (window[1] - window[0]).perp_dot(window[2] - window[1]);
+            assert!(turn > 0.0, "outline turns right at {}", window[1]);
+        }
+    }
+
+    #[test]
+    fn a_tab_wider_than_the_front_edge_is_clamped_to_its_straight_run() {
+        let g = plate_geometry(vol(), Some(FrontTab::new(1_000.0, 10.0)));
+        let straight_run = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
+
+        for v in &g.vertices[tab_off()..] {
+            assert!(
+                v.position[0].abs() <= straight_run + 1e-4,
+                "tab corner at x = {} runs past the plate's straight front edge",
+                v.position[0]
+            );
+        }
+    }
+
+    #[test]
+    fn the_front_tab_only_appends_to_the_plate_faces() {
+        let plain = plate_geometry(vol(), None);
+        let tabbed = plate_geometry(vol(), Some(tab()));
+
+        let n = tab_outline_len();
+        // 4 outline copies plus the edge's 2 far ends, top and bottom.
+        assert_eq!(tabbed.vertices.len(), plain.vertices.len() + 4 * n + 4);
+        assert_eq!(tabbed.cage_indices, plain.cage_indices);
+        assert_eq!(tabbed.wall_indices, plain.wall_indices);
+        for (tabbed_stream, plain_stream, added) in [
+            (&tabbed.top_indices, &plain.top_indices, 3 * (n - 2)),
+            (&tabbed.bottom_indices, &plain.bottom_indices, 3 * (n - 2)),
+        ] {
+            assert_eq!(tabbed_stream.len(), plain_stream.len() + added);
+            assert_eq!(tabbed_stream[..plain_stream.len()], plain_stream[..]);
+        }
+    }
+
+    #[test]
+    fn the_tab_takes_over_the_front_edge_wall() {
+        let plain = plate_geometry(vol(), None);
+        let tabbed = plate_geometry(vol(), Some(tab()));
+        let n = tab_outline_len();
+
+        // The plate drops the whole front-edge panel; the tab walls
+        // its own outward edges and the two stretches left over.
+        assert_eq!(
+            tabbed.solid_indices.len(),
+            plain.solid_indices.len() - 6 + 6 * (n - 1) + 12
+        );
+    }
+
+    #[test]
+    fn no_wall_stands_between_the_tab_and_the_plate() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let front_y = -(30.0 + PLATE_OVERHANG_MM);
+        let span = 50.0 + PLATE_OVERHANG_MM - PLATE_CORNER_RADIUS_MM;
+
+        // Panels lying wholly in the front edge's plane, as x ranges.
+        let walled: Vec<(f32, f32)> = g
+            .solid_indices
+            .chunks(3)
+            .map(|tri| {
+                tri.iter()
+                    .map(|i| g.vertices[*i as usize].position)
+                    .collect::<Vec<[f32; 3]>>()
+            })
+            .filter(|tri| tri.iter().all(|p| (p[1] - front_y).abs() < 1e-4))
+            .map(|tri| {
+                (
+                    tri.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min),
+                    tri.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max),
+                )
+            })
+            .collect();
+
+        assert!(!walled.is_empty(), "the front edge lost all of its wall");
+        for (lo, hi) in &walled {
+            assert!(
+                *hi <= -20.0 + 1e-4 || *lo >= 20.0 - 1e-4,
+                "a wall runs from x = {lo} to x = {hi}, through where the tab attaches"
+            );
+        }
+        // What the tab does not cover is still walled, corner to
+        // corner, so the slab keeps one closed skin.
+        for (reach, expected) in [
+            (
+                walled
+                    .iter()
+                    .map(|(lo, _)| *lo)
+                    .fold(f32::INFINITY, f32::min),
+                -span,
+            ),
+            (
+                walled
+                    .iter()
+                    .map(|(_, hi)| *hi)
+                    .fold(f32::NEG_INFINITY, f32::max),
+                span,
+            ),
+            (
+                walled
+                    .iter()
+                    .map(|(_, hi)| *hi)
+                    .filter(|hi| *hi < 0.0)
+                    .fold(f32::NEG_INFINITY, f32::max),
+                -20.0,
+            ),
+            (
+                walled
+                    .iter()
+                    .map(|(lo, _)| *lo)
+                    .filter(|lo| *lo > 0.0)
+                    .fold(f32::INFINITY, f32::min),
+                20.0,
+            ),
+        ] {
+            assert_approx_eq!(f32, reach, expected, epsilon = 1e-4);
+        }
+    }
+
+    #[test]
+    fn front_tab_indices_stay_inside_the_vertex_buffer() {
+        let g = plate_geometry(vol(), Some(tab()));
+        let count = g.vertices.len() as u32;
+
+        for idx in g
+            .top_indices
+            .iter()
+            .chain(&g.solid_indices)
+            .chain(&g.bottom_indices)
+        {
+            assert!(*idx < count, "index {idx} past the {count} vertices");
+        }
+    }
+
+    #[test]
+    fn the_front_tab_faces_turn_away_from_the_slab() {
+        let plain = plate_geometry(vol(), None);
+        let g = plate_geometry(vol(), Some(tab()));
+        let winding = |tri: &[u32]| {
+            let p: Vec<[f32; 3]> = tri
+                .iter()
+                .map(|i| g.vertices[*i as usize].position)
+                .collect();
+            (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0])
+        };
+
+        for tri in g.top_indices[plain.top_indices.len()..].chunks(3) {
+            assert!(winding(tri) > 0.0, "the tab's top face must face +Z");
+        }
+        // The bottom pipeline culls back faces, so the bottom has to
+        // wind the other way round or it disappears from below and
+        // shows through the plate from above.
+        for tri in g.bottom_indices[plain.bottom_indices.len()..].chunks(3) {
+            assert!(winding(tri) < 0.0, "the tab's bottom face must face -Z");
+        }
+    }
+
+    #[test]
+    fn the_front_tab_bottom_leads_with_a_bottom_kind_vertex() {
+        let plain_bottom = plate_geometry(vol(), None).bottom_indices.len();
+        let g = plate_geometry(vol(), Some(tab()));
+
+        for tri in g.bottom_indices[plain_bottom..].chunks(3) {
+            assert_eq!(g.vertices[tri[0] as usize].kind, KIND_PLATE_BOTTOM);
+        }
+    }
+
     #[test]
     fn wall_vertices_sit_on_their_envelope_face() {
-        let g = plate_geometry(vol());
+        let g = plate_geometry(vol(), None);
         let lo = vol().envelope_min_mm();
         let hi = vol().envelope_max_mm();
         let off = wall_off() as usize;

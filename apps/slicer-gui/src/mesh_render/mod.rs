@@ -48,7 +48,7 @@ use pipelines::cap::CapPipeline;
 use pipelines::gizmo::{GizmoBindGroup, GizmoPipeline};
 use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
-use pipelines::plate::{PlateBindGroup, PlateBuffers, PlatePipeline};
+use pipelines::plate::{FRONT_TAB, FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
 pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub(crate) use renderer_trait::MeshRenderer;
@@ -419,18 +419,26 @@ impl Renderer {
     }
 
     /// Lazily create or rebuild the plate's GPU buffers. The cache
-    /// key is the `BuildVolume`; a different value triggers a
-    /// rebuild so a runtime envelope change reaches the next frame.
-    /// On `Err` the cache is empty, so the next frame retries. The
-    /// returned value clones the cached wgpu handles (reference
-    /// counted), so no borrow of `self` outlives the call.
+    /// key is the `BuildVolume` plus the front tab's footprint; a
+    /// different value triggers a rebuild so a runtime envelope
+    /// change reaches the next frame. On `Err` the cache is empty, so
+    /// the next frame retries. The returned value clones the cached
+    /// wgpu handles (reference counted), so no borrow of `self`
+    /// outlives the call.
     fn ensure_plate_buffers(
         &mut self,
         build_volume: BuildVolume,
+        front_tab: Option<FrontTab>,
     ) -> Result<PlateBuffers, RenderError> {
         let buffers = match self.pipelines.plate_buffers.take() {
-            Some(cached) if cached.build_volume == build_volume => cached,
-            _ => PlateBuffers::create(&self.core.device, &self.core.queue, build_volume)?,
+            Some(cached)
+                if cached.build_volume == build_volume && cached.front_tab == front_tab =>
+            {
+                cached
+            }
+            _ => {
+                PlateBuffers::create(&self.core.device, &self.core.queue, build_volume, front_tab)?
+            }
         };
         Ok(self.pipelines.plate_buffers.insert(buffers).clone())
     }
@@ -654,7 +662,7 @@ impl Renderer {
 
         self.ensure_msaa(width, height)?;
         self.ensure_targets(width, height)?;
-        let plate_buffers = self.ensure_plate_buffers(build_volume)?;
+        let plate_buffers = self.ensure_plate_buffers(build_volume, Some(FRONT_TAB))?;
         let plate_buffers = &plate_buffers;
         let installed = self.scene.as_ref();
         let msaa = self.target_manager.msaa.as_ref().unwrap();

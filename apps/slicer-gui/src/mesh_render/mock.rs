@@ -56,9 +56,7 @@ pub(crate) struct MockRenderArgs {
 pub(crate) struct MockPreviewArgs {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    /// Eye position relative to the point the camera looked at, so a
-    /// test can tell which side of the print the picture was taken
-    /// from without reconstructing the framing.
+    /// Eye position relative to the point the camera looked at.
     pub(crate) eye_offset: Vec3,
 }
 
