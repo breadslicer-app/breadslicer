@@ -10,7 +10,10 @@
 //! than laid out in a fixed order, so a writer measures the chain
 //! before it writes the header that points into it.
 
+pub mod header;
 pub mod layout;
 
+#[cfg(test)]
+mod tests_header;
 #[cfg(test)]
 mod tests_layout;

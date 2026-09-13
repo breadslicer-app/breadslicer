@@ -13,6 +13,7 @@
 pub mod rle15;
 pub mod rle7;
 pub mod v5;
+pub mod wire;
 
 #[cfg(test)]
 mod tests_rle15;
