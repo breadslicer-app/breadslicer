@@ -17,6 +17,7 @@ pub mod page_address;
 pub mod resin_parameters;
 pub mod rle15;
 pub mod rle7;
+pub mod totals;
 pub mod v5;
 pub mod v5enc;
 pub mod wire;
@@ -64,3 +65,5 @@ mod tests_resin_parameters;
 mod tests_rle15;
 #[cfg(test)]
 mod tests_rle7;
+#[cfg(test)]
+mod tests_totals;

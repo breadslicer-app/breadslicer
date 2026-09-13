@@ -14,6 +14,7 @@ use std::io::{self, Write};
 
 use super::layout::Layout;
 use crate::ctb::disclaimer::DISCLAIMER_SIZE;
+use crate::ctb::totals::still_time_sec;
 use crate::ctb::wire::{write_f32, write_u32, write_zeros};
 use crate::layer_values::LayerValues;
 use crate::print_program::PrintProgram;
@@ -58,21 +59,6 @@ pub fn write_print_parameters_v4(
     write_u32(out, DISCLAIMER_SIZE)?;
     write_u32(out, layout.resin_parameters)?;
     write_zeros(out, RESERVED_BYTES)
-}
-
-/// Every second of the print the platform spends still: the
-/// exposures and the waits, with none of the travel.
-fn still_time_sec(program: &PrintProgram) -> f32 {
-    program
-        .layers
-        .iter()
-        .map(|layer| {
-            layer.exposure_sec.value()
-                + layer.wait_before_cure_sec.value()
-                + layer.wait_after_cure_sec.value()
-                + layer.wait_after_lift_sec.value()
-        })
-        .sum::<f64>() as f32
 }
 
 fn layer_count(program: &PrintProgram) -> u32 {

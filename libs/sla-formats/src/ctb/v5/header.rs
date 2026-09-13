@@ -14,6 +14,7 @@ use std::io::{self, Write};
 
 use super::layout::{Layout, PRINT_PARAMETERS_SIZE, SLICER_INFO_SIZE};
 use crate::ctb::LIGHT_OFF_SEC;
+use crate::ctb::totals::overall_height_mm;
 use crate::ctb::wire::{write_f32, write_u16, write_u32};
 use crate::layer_values::LayerValues;
 use crate::print_program::PrintProgram;
@@ -85,12 +86,4 @@ pub fn write_header(
     write_u32(out, LAYER_XOR_KEY)?;
     write_u32(out, layout.slicer_info)?;
     write_u32(out, SLICER_INFO_SIZE)
-}
-
-/// How far the platform travels over the whole print.
-fn overall_height_mm(program: &PrintProgram) -> f32 {
-    program
-        .layers
-        .last()
-        .map_or(0.0, |layer| layer.slab_top_mm.value() as f32)
 }
