@@ -27,6 +27,7 @@ pub mod debug;
 pub mod error;
 pub mod format;
 pub mod goo;
+pub(crate) mod layer_values;
 pub mod options;
 pub mod preview;
 pub mod print_program;
@@ -35,6 +36,8 @@ pub mod raster_setup;
 pub mod threemf;
 pub mod write;
 
+#[cfg(test)]
+mod tests_layer_values;
 #[cfg(test)]
 mod tests_preview;
 #[cfg(test)]

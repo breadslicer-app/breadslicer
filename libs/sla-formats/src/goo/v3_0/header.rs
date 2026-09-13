@@ -13,8 +13,8 @@ use std::io::{self, Write};
 
 use sc_print_primitives::AaLevel;
 
-use super::record::LayerValues;
 use super::wire::{write_f32, write_flag, write_text, write_u16, write_u32, write_zeros};
+use crate::layer_values::LayerValues;
 use crate::preview::{PreviewImage, PreviewSize, PreviewSizeMismatch, PreviewSizes, PrintPreviews};
 use crate::print_program::PrintProgram;
 

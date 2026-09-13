@@ -7,7 +7,7 @@ use sc_print_primitives::{
     LightPwm, NonNegativeFiniteSec, PositiveFiniteMm, PositiveFiniteMmPerMin, PositiveFiniteSec,
 };
 
-use super::record::{LayerValues, RECORD_SIZE, pwm_byte, write_layer};
+use super::record::{RECORD_SIZE, write_layer};
 use crate::print_program::{LayerProgram, MotionStage};
 
 const PARK_Z_MM: f32 = 150.0;
@@ -148,17 +148,4 @@ fn the_length_field_counts_the_whole_image() {
 fn a_delimiter_closes_the_layer() {
     let bytes = written(&layer(), &[0x55, 0xFF]);
     assert_eq!(&bytes[bytes.len() - 2..], &[0x0D, 0x0A]);
-}
-
-#[test]
-fn a_layer_that_is_absent_reads_as_zeros() {
-    assert_eq!(LayerValues::of(None), LayerValues::default());
-}
-
-#[test]
-fn the_duty_cycle_spans_the_byte_range() {
-    assert_eq!(pwm_byte(LightPwm::FULL), 255);
-    assert_eq!(pwm_byte(LightPwm::new(0.0).unwrap()), 0);
-    assert_eq!(pwm_byte(LightPwm::new(50.0).unwrap()), 128);
-    assert_eq!(pwm_byte(LightPwm::new(20.0).unwrap()), 51);
 }
