@@ -26,6 +26,22 @@ pub enum AaLevel {
     X8,
 }
 
+impl AaLevel {
+    /// Report how many samples per pixel this level takes.
+    ///
+    /// Printer file formats record this number rather than the level
+    /// itself, and `Off` is 1 sample rather than none.
+    #[must_use]
+    pub const fn factor(self) -> u8 {
+        match self {
+            Self::Off => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+        }
+    }
+}
+
 /// Returned when [`AaLevel::from_str`] receives an unknown name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnknownAaLevel {

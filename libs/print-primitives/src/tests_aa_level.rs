@@ -16,6 +16,14 @@ fn aa_level_from_str_parses_canonical_names() {
 }
 
 #[test]
+fn aa_level_factor_counts_the_samples_per_pixel() {
+    assert_eq!(AaLevel::Off.factor(), 1);
+    assert_eq!(AaLevel::X2.factor(), 2);
+    assert_eq!(AaLevel::X4.factor(), 4);
+    assert_eq!(AaLevel::X8.factor(), 8);
+}
+
+#[test]
 fn aa_level_from_str_rejects_numeric_shorthand() {
     for s in ["0", "2", "4", "8"] {
         let err = AaLevel::from_str(s).unwrap_err();

@@ -11,8 +11,6 @@
 
 use std::io::{self, Write};
 
-use sc_print_primitives::AaLevel;
-
 use super::wire::{write_f32, write_flag, write_text, write_u16, write_u32, write_zeros};
 use crate::layer_values::LayerValues;
 use crate::preview::{PreviewImage, PreviewSize, PreviewSizeMismatch, PreviewSizes, PrintPreviews};
@@ -131,7 +129,7 @@ pub fn write_header(
     write_text(out, program.machine_name.as_str(), 32)?;
     write_text(out, program.machine_name.as_str(), 32)?;
     write_text(out, program.material_name.as_str(), 32)?;
-    write_u16(out, anti_aliasing_factor(raster.aa()))?;
+    write_u16(out, u16::from(raster.aa().factor()))?;
     write_u16(out, GREY_LEVEL)?;
     write_u16(out, BLUR_LEVEL)?;
     match previews {
@@ -207,15 +205,6 @@ fn write_preview(out: &mut impl Write, image: &PreviewImage) -> io::Result<()> {
 }
 
 /// Report the super-sampling factor the raster was produced at.
-fn anti_aliasing_factor(aa: AaLevel) -> u16 {
-    match aa {
-        AaLevel::Off => 1,
-        AaLevel::X2 => 2,
-        AaLevel::X4 => 4,
-        AaLevel::X8 => 8,
-    }
-}
-
 /// Narrow a pixel count to the 16 bits the header gives an axis.
 fn resolution_axis(pixels: u32) -> u16 {
     u16::try_from(pixels).unwrap_or(u16::MAX)
