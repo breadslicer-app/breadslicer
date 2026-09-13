@@ -22,6 +22,8 @@ pub mod settings;
 #[cfg(test)]
 mod tests_file;
 #[cfg(test)]
+mod tests_fixture;
+#[cfg(test)]
 mod tests_header;
 #[cfg(test)]
 mod tests_layer_record;
