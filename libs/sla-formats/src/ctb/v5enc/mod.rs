@@ -15,6 +15,7 @@
 pub mod header;
 pub mod layer_record;
 pub mod layout;
+pub mod preview_record;
 pub mod settings;
 
 #[cfg(test)]
@@ -23,5 +24,7 @@ mod tests_header;
 mod tests_layer_record;
 #[cfg(test)]
 mod tests_layout;
+#[cfg(test)]
+mod tests_preview_record;
 #[cfg(test)]
 mod tests_settings;
