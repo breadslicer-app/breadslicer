@@ -12,8 +12,20 @@
 
 pub mod header;
 pub mod layout;
+pub mod print_parameters;
+pub mod slicer_info;
+
+/// The container carries a single light-off delay and 3 separate
+/// waits with nothing to select between them, and a layer program
+/// holds the waits. Every delay slot is written zero so that only one
+/// of the 2 schemes describes the pause.
+pub(crate) const LIGHT_OFF_SEC: f32 = 0.0;
 
 #[cfg(test)]
 mod tests_header;
 #[cfg(test)]
 mod tests_layout;
+#[cfg(test)]
+mod tests_print_parameters;
+#[cfg(test)]
+mod tests_slicer_info;

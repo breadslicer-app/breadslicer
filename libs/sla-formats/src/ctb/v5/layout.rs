@@ -37,9 +37,12 @@ pub struct VariableSections {
 }
 
 /// Where every section of a plain v5 file begins, as absolute file
-/// offsets.
+/// offsets, and the lengths it was measured from. Blocks that record
+/// a section's length as well as its address read both from here, so
+/// the two cannot come from different measurements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
+    pub variable: VariableSections,
     pub large_preview_record: u32,
     pub large_preview_image: u32,
     pub small_preview_record: u32,
@@ -76,6 +79,7 @@ impl Layout {
         let layer_data = layer_table + LAYER_TABLE_RECORD_SIZE * variable.layer_count;
 
         Self {
+            variable,
             large_preview_record,
             large_preview_image,
             small_preview_record,

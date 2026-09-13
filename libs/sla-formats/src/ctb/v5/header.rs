@@ -12,6 +12,7 @@
 
 use std::io::{self, Write};
 
+use super::LIGHT_OFF_SEC;
 use super::layout::{Layout, PRINT_PARAMETERS_SIZE, SLICER_INFO_SIZE};
 use crate::ctb::wire::{write_f32, write_u16, write_u32};
 use crate::layer_values::LayerValues;
@@ -30,11 +31,6 @@ const LEVEL_SET_COUNT: u32 = 1;
 /// Zero disables the obfuscation of the layer images, which is what
 /// lets a writer produce this format without the vendor's cipher.
 const LAYER_XOR_KEY: u32 = 0;
-
-/// The container carries a single light-off delay and 3 separate
-/// waits with nothing to select between them. The waits are what a
-/// layer program holds and what this writer fills.
-const LIGHT_OFF_SEC: f32 = 0.0;
 
 /// Write the header for `program`, recording the offsets `layout`
 /// measured.
