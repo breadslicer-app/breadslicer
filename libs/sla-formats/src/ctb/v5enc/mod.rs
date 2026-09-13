@@ -13,11 +13,14 @@
 //! signature and checksum closing the file.
 
 pub mod header;
+pub mod layer_record;
 pub mod layout;
 pub mod settings;
 
 #[cfg(test)]
 mod tests_header;
+#[cfg(test)]
+mod tests_layer_record;
 #[cfg(test)]
 mod tests_layout;
 #[cfg(test)]
