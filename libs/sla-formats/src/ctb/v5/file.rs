@@ -34,11 +34,9 @@ use crate::ctb::rle7;
 use crate::ctb::rle15;
 use crate::ctb::wire::write_zeros;
 use crate::error::WriteFailure;
-use crate::preview::{PreviewImage, PreviewSize, PreviewSizeMismatch, PrintPreviews};
+use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::PrintProgram;
 use crate::row_order::reverse_rows;
-
-const CHANNELS: usize = 3;
 
 /// Write `stack` as a plain CTB v5 file running the schedule in
 /// `program`, whose records pair with the stack's layers in order.
@@ -78,13 +76,13 @@ pub fn write_file(
     let black_small;
     let (large, small) = match previews {
         Some(previews) => {
-            check_size(&previews.large, PREVIEW_SIZES.large)?;
-            check_size(&previews.small, PREVIEW_SIZES.small)?;
+            previews.large.check_size(PREVIEW_SIZES.large)?;
+            previews.small.check_size(PREVIEW_SIZES.small)?;
             (&previews.large, &previews.small)
         }
         None => {
-            black_large = black_frame(PREVIEW_SIZES.large)?;
-            black_small = black_frame(PREVIEW_SIZES.small)?;
+            black_large = PreviewImage::black(PREVIEW_SIZES.large);
+            black_small = PreviewImage::black(PREVIEW_SIZES.small);
             (&black_large, &black_small)
         }
     };
@@ -149,25 +147,6 @@ pub fn write_file(
     out.write_all(&table)?;
     out.seek(SeekFrom::End(0))?;
     Ok(())
-}
-
-fn check_size(image: &PreviewImage, size: PreviewSize) -> Result<(), PreviewSizeMismatch> {
-    if image.width() == size.width && image.height() == size.height {
-        return Ok(());
-    }
-    Err(PreviewSizeMismatch {
-        expected_width: size.width,
-        expected_height: size.height,
-        actual_width: image.width(),
-        actual_height: image.height(),
-    })
-}
-
-/// A frame the machine shows as an unrendered thumbnail.
-fn black_frame(size: PreviewSize) -> io::Result<PreviewImage> {
-    let pixels = size.width as usize * size.height as usize;
-    PreviewImage::new(size.width, size.height, vec![0; pixels * CHANNELS])
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))
 }
 
 /// Narrow a length to the 32 bits every count in this container has.

@@ -86,6 +86,36 @@ impl PreviewImage {
         Ok(Self { width, height, rgb })
     }
 
+    /// Build a frame of `size` with nothing in it, which a machine
+    /// shows as an empty thumbnail. A container has no way to say a
+    /// preview is absent, so this is what an unrendered one becomes.
+    pub fn black(size: PreviewSize) -> Self {
+        let pixels = size.width as usize * size.height as usize;
+        Self {
+            width: size.width,
+            height: size.height,
+            rgb: vec![0; pixels * CHANNELS],
+        }
+    }
+
+    /// Check that this rendering is exactly `size`.
+    ///
+    /// # Errors
+    ///
+    /// [`PreviewSizeMismatch`] when it is not. Resampling belongs to
+    /// whoever rendered the image, so a near miss is refused.
+    pub fn check_size(&self, size: PreviewSize) -> Result<(), PreviewSizeMismatch> {
+        if self.width == size.width && self.height == size.height {
+            return Ok(());
+        }
+        Err(PreviewSizeMismatch {
+            expected_width: size.width,
+            expected_height: size.height,
+            actual_width: self.width,
+            actual_height: self.height,
+        })
+    }
+
     /// Report the width in pixels.
     #[inline]
     pub fn width(&self) -> u32 {

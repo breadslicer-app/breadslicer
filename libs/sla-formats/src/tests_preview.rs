@@ -3,7 +3,47 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::preview::{PixelCountMismatch, PreviewImage, PreviewSizeMismatch};
+use crate::preview::{PixelCountMismatch, PreviewImage, PreviewSize, PreviewSizeMismatch};
+
+const SIZE: PreviewSize = PreviewSize {
+    width: 400,
+    height: 300,
+};
+
+#[test]
+fn a_black_frame_is_the_size_it_was_asked_for_and_holds_nothing() {
+    let frame = PreviewImage::black(SIZE);
+
+    assert_eq!(frame.width(), 400);
+    assert_eq!(frame.height(), 300);
+    assert_eq!(frame.rgb().len(), 400 * 300 * 3);
+    assert!(frame.rgb().iter().all(|byte| *byte == 0));
+}
+
+#[test]
+fn a_frame_of_the_right_size_passes_its_check() {
+    assert!(PreviewImage::black(SIZE).check_size(SIZE).is_ok());
+}
+
+#[test]
+fn a_near_miss_is_refused_with_both_sizes_named() {
+    let size = PreviewSize {
+        width: 400,
+        height: 301,
+    };
+
+    let err = PreviewImage::black(size).check_size(SIZE).unwrap_err();
+
+    assert_eq!(
+        err,
+        PreviewSizeMismatch {
+            expected_width: 400,
+            expected_height: 300,
+            actual_width: 400,
+            actual_height: 301,
+        },
+    );
+}
 
 #[test]
 fn an_image_reports_the_size_and_pixels_it_was_given() {

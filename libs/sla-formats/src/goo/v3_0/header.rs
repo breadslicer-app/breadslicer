@@ -76,25 +76,13 @@ impl<'a> SizedPreviews<'a> {
     /// not the one the container fixes. Resampling belongs to
     /// whoever rendered the image, so a near miss is refused.
     pub fn check(previews: &'a PrintPreviews) -> Result<Self, PreviewSizeMismatch> {
-        check_size(&previews.small, PREVIEW_SIZES.small)?;
-        check_size(&previews.large, PREVIEW_SIZES.large)?;
+        previews.small.check_size(PREVIEW_SIZES.small)?;
+        previews.large.check_size(PREVIEW_SIZES.large)?;
         Ok(Self {
             small: &previews.small,
             large: &previews.large,
         })
     }
-}
-
-fn check_size(image: &PreviewImage, size: PreviewSize) -> Result<(), PreviewSizeMismatch> {
-    if image.width() == size.width && image.height() == size.height {
-        return Ok(());
-    }
-    Err(PreviewSizeMismatch {
-        expected_width: size.width,
-        expected_height: size.height,
-        actual_width: image.width(),
-        actual_height: image.height(),
-    })
 }
 
 /// Write the whole header for `program`, previews included. Without
