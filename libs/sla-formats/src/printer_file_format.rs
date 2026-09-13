@@ -17,7 +17,7 @@ use std::path::Path;
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding};
 
-use crate::ctb::v5::preview_record::PREVIEW_SIZES as CTB_V5_PREVIEW_SIZES;
+use crate::ctb::PREVIEW_SIZES as CTB_PREVIEW_SIZES;
 use crate::goo::v3_0::header::PREVIEW_SIZES as GOO_V3_0_PREVIEW_SIZES;
 use crate::preview::PreviewSizes;
 
@@ -124,7 +124,7 @@ impl PrinterFileFormat {
     pub fn preview_sizes(self) -> Option<PreviewSizes> {
         match self {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
-            Self::Ctb(CtbVariant::PlainV5) => Some(CTB_V5_PREVIEW_SIZES),
+            Self::Ctb(CtbVariant::PlainV5) => Some(CTB_PREVIEW_SIZES),
             Self::Goo(GooVersion::V5_1) | Self::Ctb(CtbVariant::EncryptedV5) => None,
         }
     }

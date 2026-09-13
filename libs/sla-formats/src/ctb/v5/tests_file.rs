@@ -23,7 +23,7 @@ use super::layout::{
     DISCLAIMER_SIZE, HEADER_SIZE, LAYER_RECORD_SIZE, LAYER_TABLE_RECORD_SIZE,
     PRINT_PARAMETERS_SIZE, PRINT_PARAMETERS_V4_SIZE, SLICER_INFO_SIZE,
 };
-use super::preview_record::PREVIEW_SIZES;
+use crate::ctb::PREVIEW_SIZES;
 use crate::error::WriteFailure;
 use crate::preview::{PreviewImage, PreviewSize, PrintPreviews};
 use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};

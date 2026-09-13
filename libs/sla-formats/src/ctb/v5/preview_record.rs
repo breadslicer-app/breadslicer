@@ -12,24 +12,9 @@
 use std::io::{self, Write};
 
 use crate::ctb::wire::{write_u32, write_zeros};
-use crate::preview::{PreviewImage, PreviewSize, PreviewSizes};
+use crate::preview::PreviewImage;
 
 const RESERVED_BYTES: usize = 16;
-
-/// The sizes this writer renders at. The container fixes neither, so
-/// these are the writer's own choice: they are what the
-/// reverse-engineering sources report and what third-party readers
-/// expect to find.
-pub const PREVIEW_SIZES: PreviewSizes = PreviewSizes {
-    small: PreviewSize {
-        width: 200,
-        height: 125,
-    },
-    large: PreviewSize {
-        width: 400,
-        height: 300,
-    },
-};
 
 /// Write the record for `image`, whose encoded `blob` starts at
 /// `blob_offset` in the file.

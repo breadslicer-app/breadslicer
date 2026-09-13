@@ -21,17 +21,6 @@ pub mod print_parameters_v4;
 pub mod resin_parameters;
 pub mod slicer_info;
 
-/// The container carries a single light-off delay and 3 separate
-/// waits with nothing to select between them, and a layer program
-/// holds the waits. Every delay slot is written zero so that only one
-/// of the 2 schemes describes the pause.
-pub(crate) const LIGHT_OFF_SEC: f32 = 0.0;
-
-/// The blocks report material in millilitres and grams per
-/// millilitre, while a print program measures it in cubic
-/// millimetres.
-pub(crate) const MM3_PER_ML: f64 = 1000.0;
-
 #[cfg(test)]
 mod tests_disclaimer;
 #[cfg(test)]

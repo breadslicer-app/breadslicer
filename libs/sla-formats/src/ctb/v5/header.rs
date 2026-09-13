@@ -12,8 +12,8 @@
 
 use std::io::{self, Write};
 
-use super::LIGHT_OFF_SEC;
 use super::layout::{Layout, PRINT_PARAMETERS_SIZE, SLICER_INFO_SIZE};
+use crate::ctb::LIGHT_OFF_SEC;
 use crate::ctb::wire::{write_f32, write_u16, write_u32};
 use crate::layer_values::LayerValues;
 use crate::print_program::PrintProgram;

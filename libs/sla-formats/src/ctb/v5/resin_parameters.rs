@@ -12,8 +12,8 @@
 
 use std::io::{self, Write};
 
-use super::MM3_PER_ML;
 use super::layout::Layout;
+use crate::ctb::MM3_PER_ML;
 use crate::ctb::wire::{write_f32, write_u32};
 use crate::print_program::PrintProgram;
 

@@ -12,8 +12,8 @@
 
 use std::io::{self, Write};
 
-use super::{LIGHT_OFF_SEC, MM3_PER_ML};
 use crate::ctb::wire::{write_f32, write_u32, write_zeros};
+use crate::ctb::{LIGHT_OFF_SEC, MM3_PER_ML};
 use crate::layer_values::LayerValues;
 use crate::print_program::PrintProgram;
 
