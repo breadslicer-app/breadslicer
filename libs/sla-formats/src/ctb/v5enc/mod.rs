@@ -12,7 +12,10 @@
 //! pass of encryption over part of some layer images, and a
 //! signature and checksum closing the file.
 
+pub mod header;
 pub mod layout;
 
+#[cfg(test)]
+mod tests_header;
 #[cfg(test)]
 mod tests_layout;
