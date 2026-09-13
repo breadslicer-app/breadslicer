@@ -160,14 +160,14 @@ mod print_format_tests {
 
     #[test]
     fn a_declared_format_without_a_writer_is_named_in_the_note_not_the_dropdown() {
-        let declared = declared(&[binding(FormatKind::Ctb, Some("v5enc")), goo_v3_0()]);
+        let declared = declared(&[binding(FormatKind::Goo, Some("v5.1")), goo_v3_0()]);
         let model = print_format_model(&declared, None);
 
         assert_eq!(model.options.len(), 1);
         assert_eq!(model.options[0].binding, goo_v3_0());
         assert_eq!(
             model.refusals,
-            vec!["ctb@v5enc: this build cannot write it yet"],
+            vec!["goo@v5.1: this build cannot write it yet"],
         );
     }
 
@@ -217,9 +217,9 @@ mod print_format_tests {
 
     #[test]
     fn a_remembered_binding_without_a_writer_falls_back_to_the_first_writable() {
-        let ctb = binding(FormatKind::Ctb, Some("v5enc"));
-        let declared = declared(&[goo_v3_0(), ctb.clone()]);
-        let model = print_format_model(&declared, Some(&ctb));
+        let unwritable = binding(FormatKind::Goo, Some("v5.1"));
+        let declared = declared(&[goo_v3_0(), unwritable.clone()]);
+        let model = print_format_model(&declared, Some(&unwritable));
 
         assert_eq!(model.options.len(), 1);
         assert_eq!(model.selected, 0);
@@ -238,7 +238,7 @@ mod print_format_tests {
     #[test]
     fn the_dropdown_keeps_the_order_the_profile_declares() {
         let declared = declared(&[
-            binding(FormatKind::Ctb, Some("v5enc")),
+            binding(FormatKind::Goo, Some("v5.1")),
             goo_v3_0(),
             binding(FormatKind::Unknown("azf".to_owned()), Some("pm7")),
         ]);
@@ -248,7 +248,7 @@ mod print_format_tests {
         assert_eq!(
             model.refusals,
             vec![
-                "ctb@v5enc: this build cannot write it yet".to_owned(),
+                "goo@v5.1: this build cannot write it yet".to_owned(),
                 "azf@pm7: unknown format \"azf\"".to_owned(),
             ],
         );

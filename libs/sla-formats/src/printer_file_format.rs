@@ -108,7 +108,7 @@ impl PrinterFileFormat {
     pub fn has_writer(self) -> bool {
         matches!(
             self,
-            Self::Goo(GooVersion::V3_0) | Self::Ctb(CtbVariant::PlainV5)
+            Self::Goo(GooVersion::V3_0) | Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5)
         )
     }
 
@@ -124,8 +124,8 @@ impl PrinterFileFormat {
     pub fn preview_sizes(self) -> Option<PreviewSizes> {
         match self {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
-            Self::Ctb(CtbVariant::PlainV5) => Some(CTB_PREVIEW_SIZES),
-            Self::Goo(GooVersion::V5_1) | Self::Ctb(CtbVariant::EncryptedV5) => None,
+            Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => Some(CTB_PREVIEW_SIZES),
+            Self::Goo(GooVersion::V5_1) => None,
         }
     }
 
@@ -331,15 +331,15 @@ mod printer_file_format_tests {
     }
 
     #[test]
-    fn this_build_writes_goo_v3_0_and_plain_ctb_v5() {
-        assert!(PrinterFileFormat::Goo(GooVersion::V3_0).has_writer());
-        assert!(PrinterFileFormat::Ctb(CtbVariant::PlainV5).has_writer());
+    fn this_build_writes_goo_v3_0_and_both_ctb_v5_variants() {
         for format in [
-            PrinterFileFormat::Goo(GooVersion::V5_1),
+            PrinterFileFormat::Goo(GooVersion::V3_0),
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5),
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
         ] {
-            assert!(!format.has_writer(), "{format}");
+            assert!(format.has_writer(), "{format}");
         }
+        assert!(!PrinterFileFormat::Goo(GooVersion::V5_1).has_writer());
     }
 
     #[test]
@@ -404,9 +404,13 @@ mod printer_file_format_tests {
             PrinterFileFormat::Goo(GooVersion::V5_1).preview_sizes(),
             None,
         );
+    }
+
+    #[test]
+    fn both_ctb_variants_render_at_the_same_sizes() {
         assert_eq!(
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5).preview_sizes(),
-            None,
+            PrinterFileFormat::Ctb(CtbVariant::PlainV5).preview_sizes(),
         );
     }
 }

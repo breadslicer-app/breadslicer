@@ -1192,9 +1192,9 @@ fn a_revision_without_a_writer_is_refused_by_name() {
         .arg("--source")
         .arg(fixture_path("cube.stl"))
         .arg("--target")
-        .arg(dir.path().join("plate.ctb"))
+        .arg(dir.path().join("plate.goo"))
         .arg("--target-format")
-        .arg("ctb@v5enc")
+        .arg("goo@v5.1")
         .arg("--printer-profile")
         .arg("slicer-cli-e2e-test")
         .arg("--material-profile")
@@ -1202,7 +1202,35 @@ fn a_revision_without_a_writer_is_refused_by_name() {
         .env("SC_SLICER_ASSETS_DIR", profiles_dir())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("ctb@v5enc"));
+        .stderr(predicate::str::contains("goo@v5.1"));
+}
+
+/// The printer declares the plain revision, so naming the encrypted
+/// one is the case the spelling exists for.
+#[test]
+fn spelling_the_encrypted_ctb_revision_overrides_the_printer() {
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("plate.ctb");
+    let bytes = slice_cube_to(&target, Some("ctb@v5enc"));
+
+    assert_eq!(
+        &bytes[0..4],
+        &[0x07, 0x01, 0xFD, 0x12],
+        "the encrypted magic",
+    );
+    assert_eq!(
+        u32::from_le_bytes(bytes[16..20].try_into().unwrap()),
+        5,
+        "the revision named on the flag",
+    );
+
+    let signature_at = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
+    let signature_size = u32::from_le_bytes(bytes[20..24].try_into().unwrap()) as usize;
+    assert_eq!(
+        bytes.len(),
+        signature_at + signature_size + 4,
+        "the signature and its checksum close the file",
+    );
 }
 
 #[test]

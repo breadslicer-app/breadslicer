@@ -151,13 +151,13 @@ fn the_previews_for_a_printer_file_are_drawn_at_the_sizes_that_format_fixes() {
 
 #[test]
 fn a_format_this_build_cannot_write_asks_for_no_previews() {
-    use sc_sla_formats::{CtbVariant, PrinterFileFormat};
+    use sc_sla_formats::{GooVersion, PrinterFileFormat};
 
     let (ctrl, state) = fixture();
     state.borrow_mut().scene_bounds_value = Some((glam::Vec3::ZERO, glam::Vec3::splat(10.0)));
     ctrl.install_graph_for_test(Scene::new());
 
-    let previews = ctrl.print_file_previews(PrinterFileFormat::Ctb(CtbVariant::EncryptedV5));
+    let previews = ctrl.print_file_previews(PrinterFileFormat::Goo(GooVersion::V5_1));
 
     assert!(previews.is_none());
     assert!(state.borrow().preview_calls.is_empty());

@@ -171,19 +171,15 @@ fn a_ctb_program_that_does_not_match_the_stack_leaves_the_target_alone() {
 #[test]
 fn a_format_without_a_writer_is_refused_and_writes_nothing() {
     let dir = tempdir().unwrap();
-    for format in [
-        PrinterFileFormat::Goo(GooVersion::V5_1),
-        PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
-    ] {
-        let out = dir.path().join(format!("{format}.out"));
-        let err = write_printer_file(&stack(1), &out, format, &program(1), None).unwrap_err();
+    let format = PrinterFileFormat::Goo(GooVersion::V5_1);
+    let out = dir.path().join(format!("{format}.out"));
+    let err = write_printer_file(&stack(1), &out, format, &program(1), None).unwrap_err();
 
-        assert!(
-            matches!(err, WriterError::PrinterFormatNotImplemented { format: refused } if refused == format),
-            "{format}: {err}",
-        );
-        assert!(!out.exists(), "{format} left a file behind");
-    }
+    assert!(
+        matches!(err, WriterError::PrinterFormatNotImplemented { format: refused } if refused == format),
+        "{format}: {err}",
+    );
+    assert!(!out.exists(), "{format} left a file behind");
 }
 
 #[test]

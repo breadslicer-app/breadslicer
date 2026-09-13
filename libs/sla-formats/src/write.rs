@@ -14,6 +14,7 @@ use std::path::Path;
 use sc_sl1cer::contour::ContourStack;
 
 use crate::ctb::v5 as ctb_v5;
+use crate::ctb::v5enc as ctb_v5enc;
 use crate::error::WriterError;
 use crate::format::Format;
 use crate::goo::v3_0;
@@ -106,8 +107,10 @@ pub fn write_printer_file(
         PrinterFileFormat::Ctb(CtbVariant::PlainV5) => {
             ctb_v5::file::write_file(program, previews, stack, &mut out)?;
         }
-        PrinterFileFormat::Goo(GooVersion::V5_1)
-        | PrinterFileFormat::Ctb(CtbVariant::EncryptedV5) => {
+        PrinterFileFormat::Ctb(CtbVariant::EncryptedV5) => {
+            ctb_v5enc::file::write_file(program, previews, stack, &mut out)?;
+        }
+        PrinterFileFormat::Goo(GooVersion::V5_1) => {
             return Err(WriterError::PrinterFormatNotImplemented { format });
         }
     }

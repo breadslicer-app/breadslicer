@@ -343,12 +343,12 @@ mod target_format_tests {
 
     #[test]
     fn a_declared_revision_without_a_writer_is_refused_by_name() {
-        let declared = declared(&[binding("ctb", Some("v5enc"))]);
-        let err = settle_for_printer(TargetFormat::from_str("ctb").unwrap(), &declared)
+        let declared = declared(&[binding("goo", Some("v5.1"))]);
+        let err = settle_for_printer(TargetFormat::from_str("goo").unwrap(), &declared)
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("ctb@v5enc"), "{err}");
+        assert!(err.contains("goo@v5.1"), "{err}");
     }
 
     #[test]
