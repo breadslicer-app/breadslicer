@@ -30,7 +30,9 @@ pub const LAYER_TABLE_RECORD_SIZE: u32 = 36;
 pub struct VariableSections {
     pub large_preview_bytes: u32,
     pub small_preview_bytes: u32,
-    /// Including the terminator this revision requires.
+    /// The name's own bytes. Sections abut and a string carries no
+    /// terminator, so this is exactly the length the slicer info
+    /// records.
     pub machine_name_bytes: u32,
     pub resin_parameters_bytes: u32,
     pub layer_count: u32,

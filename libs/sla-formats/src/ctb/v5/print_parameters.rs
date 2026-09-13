@@ -12,7 +12,7 @@
 
 use std::io::{self, Write};
 
-use super::LIGHT_OFF_SEC;
+use super::{LIGHT_OFF_SEC, MM3_PER_ML};
 use crate::ctb::wire::{write_f32, write_u32, write_zeros};
 use crate::layer_values::LayerValues;
 use crate::print_program::PrintProgram;
@@ -21,7 +21,6 @@ use crate::print_program::PrintProgram;
 /// displays this.
 const RESIN_COST: f32 = 0.0;
 
-const MM3_PER_ML: f64 = 1000.0;
 const PADDING_BYTES: usize = 16;
 
 /// Write the print parameters for `program`.
