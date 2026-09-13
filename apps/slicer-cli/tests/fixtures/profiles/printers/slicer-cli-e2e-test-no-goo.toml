@@ -1,0 +1,27 @@
+# Fake printer profile used only by the slicer-cli end-to-end tests.
+# Identical to slicer-cli-e2e-test except that it declares no GOO
+# output, so asking it for one has to be refused by name.
+
+[identity]
+id = "slicer-cli-e2e-test-no-goo"
+manufacturer = "SoulCrafted"
+family = "E2E"
+name = "E2E Test Printer Without GOO"
+profile_version = "1.0.0"
+
+[hardware]
+build_volume = { x_mm = 5.0, y_mm = 5.0, z_mm = 50.0 }
+pixel_resolution = { x = 500, y = 500 }
+pixel_size_microns = { x = 10.0, y = 10.0 }
+mirror = { x = false, y = false }
+
+[capabilities]
+output_formats = [
+  { format = "png_per_layer" },
+  { format = "ctb", version = "v5" },
+]
+supports_grayscale = true
+two_stage_lift = false
+has_camera = false
+
+[constraints]

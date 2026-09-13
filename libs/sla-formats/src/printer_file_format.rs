@@ -142,18 +142,17 @@ impl PrinterFileFormat {
     }
 }
 
-/// Name the printer file an output path's extension asks for.
+/// Name the container family an output path's extension asks for.
 ///
-/// An extension names a container family, not a revision: `.goo` is
-/// shared by V3.0 and V5.1, and `.ctb` by the plain and the encrypted
-/// variant. `.goo` therefore resolves only because one GOO revision
-/// has a writer here, while `.ctb` resolves to nothing: its two
-/// variants are told apart by a binding's version string, which a
-/// file name does not carry.
-pub fn printer_file_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
+/// An extension never names a revision: `.goo` is shared by V3.0 and
+/// V5.1, and `.ctb` by the plain and the encrypted variant. The
+/// revision comes from a binding's version string, which a printer
+/// declares and a file name does not carry.
+pub fn printer_file_family_from_path(path: &Path) -> Option<FormatKind> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
-        "goo" => Some(PrinterFileFormat::Goo(GooVersion::V3_0)),
+        "goo" => Some(FormatKind::Goo),
+        "ctb" => Some(FormatKind::Ctb),
         _ => None,
     }
 }
@@ -301,35 +300,34 @@ mod printer_file_format_tests {
     }
 
     #[test]
-    fn a_dot_goo_path_names_the_revision_this_build_writes() {
+    fn each_printer_file_extension_names_its_family() {
         assert_eq!(
-            printer_file_format_from_path(Path::new("plate.goo")),
-            Some(PrinterFileFormat::Goo(GooVersion::V3_0)),
+            printer_file_family_from_path(Path::new("plate.goo")),
+            Some(FormatKind::Goo),
+        );
+        assert_eq!(
+            printer_file_family_from_path(Path::new("plate.ctb")),
+            Some(FormatKind::Ctb),
         );
     }
 
     #[test]
     fn extension_matching_ignores_case() {
         assert_eq!(
-            printer_file_format_from_path(Path::new("PLATE.GOO")),
-            Some(PrinterFileFormat::Goo(GooVersion::V3_0)),
+            printer_file_family_from_path(Path::new("PLATE.GOO")),
+            Some(FormatKind::Goo),
         );
     }
 
     #[test]
-    fn a_dot_ctb_path_names_no_variant() {
-        assert_eq!(printer_file_format_from_path(Path::new("plate.ctb")), None);
-    }
-
-    #[test]
     fn a_path_carrying_another_extension_names_no_printer_file() {
-        assert_eq!(printer_file_format_from_path(Path::new("plate.svg")), None);
-        assert_eq!(printer_file_format_from_path(Path::new("plate.3mf")), None);
+        assert_eq!(printer_file_family_from_path(Path::new("plate.svg")), None);
+        assert_eq!(printer_file_family_from_path(Path::new("plate.3mf")), None);
     }
 
     #[test]
     fn a_path_without_an_extension_names_no_printer_file() {
-        assert_eq!(printer_file_format_from_path(Path::new("plate")), None);
+        assert_eq!(printer_file_family_from_path(Path::new("plate")), None);
     }
 
     #[test]

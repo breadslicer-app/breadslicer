@@ -35,7 +35,9 @@ use sc_sla_formats::{
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::config::profile_ref::{MaterialProfileRef, PrinterProfileRef};
-use crate::config::target_format::{ACCEPTED_TARGET_FORMATS, TargetFormat};
+use crate::config::target_format::{
+    ACCEPTED_TARGET_FORMATS, SettledTarget, TargetFormat, settle_for_printer,
+};
 use crate::filesystem::{
     ensure_distinct_files, validate_sourcefile_path, validate_targetfile_path,
 };
@@ -87,6 +89,8 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
     };
 
     let printer = load_printer_profile(&args.printer_profile, libraries)?;
+    let target_format = settle_for_printer(target_format, &printer.capabilities.output_formats)
+        .map_err(|err| anyhow!("cannot write \"{}\": {err}", target_path.display()))?;
     let (material, issues) = load_material_profile(&args.material_profile, libraries)?;
     for issue in &issues {
         eprintln!("warning: {issue}");
@@ -159,16 +163,16 @@ pub(crate) fn slice(args: SliceArgs, libraries: &ProfileLibraries) -> Result<()>
 
     let options = WriterOptions::from_profile(plate.profile(), VERSION);
     match target_format {
-        TargetFormat::Slices(Format::ThreeMf) => {
+        SettledTarget::Slices(Format::ThreeMf) => {
             write_scene_slices(&scene, plate.leaves(), &target_path, &options)?;
         }
-        TargetFormat::Slices(
+        SettledTarget::Slices(
             format @ (Format::SvgPerLayer | Format::SvgCombined | Format::PngPerLayer),
         ) => {
             let stack = merge_plate(plate)?;
             write_slice(&stack, &target_path, format, &options)?;
         }
-        TargetFormat::PrinterFile(format) => {
+        SettledTarget::PrinterFile(format) => {
             let config = resolve_print_config(&printer, &material, args.layer_height)?;
             report_fallbacks(&config, &mut std::io::stderr());
             let program = print_program_for(&scene, &config, &plate)?;
