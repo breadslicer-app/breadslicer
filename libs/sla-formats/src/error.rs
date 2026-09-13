@@ -19,9 +19,62 @@ use sc_scene::SceneError;
 use sc_scene::node::NodeId;
 
 use crate::format::Format;
-use crate::goo::v3_0::file::WriteFailure;
 use crate::preview::PreviewSizeMismatch;
 use crate::printer_file_format::PrinterFileFormat;
+
+/// How writing one printer file can fail, before the dispatcher's
+/// own vocabulary of output paths and unimplemented formats. Every
+/// container's writer reports these 3 and nothing wider.
+#[derive(Debug)]
+pub enum WriteFailure {
+    /// The print program and the contour stack describe different
+    /// numbers of layers.
+    LayerCountMismatch {
+        program_layers: usize,
+        stack_layers: usize,
+    },
+    /// A supplied preview is not the size the container fixes.
+    PreviewSize(PreviewSizeMismatch),
+    Io(io::Error),
+}
+
+impl fmt::Display for WriteFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LayerCountMismatch {
+                program_layers,
+                stack_layers,
+            } => write!(
+                f,
+                "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
+            ),
+            Self::PreviewSize(err) => err.fmt(f),
+            Self::Io(err) => write!(f, "writing the file failed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for WriteFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::PreviewSize(err) => Some(err),
+            Self::LayerCountMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<io::Error> for WriteFailure {
+    fn from(err: io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<PreviewSizeMismatch> for WriteFailure {
+    fn from(err: PreviewSizeMismatch) -> Self {
+        Self::PreviewSize(err)
+    }
+}
 
 #[derive(Debug)]
 pub enum WriterError {

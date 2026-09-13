@@ -13,10 +13,11 @@ use sc_sl1cer::contour::{ClosedRing, ContourLayer, ContourStack, Polygon};
 use sc_sl1cer::geom2d::Point2D;
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
-use super::file::{WriteFailure, write_file};
+use super::file::write_file;
 use super::header::{FILE_MAGIC, HEADER_SIZE};
 use super::record::RECORD_SIZE;
 use super::test_decode::decode_chunks;
+use crate::error::WriteFailure;
 use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;

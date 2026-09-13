@@ -8,8 +8,7 @@
 //! Layers are rasterised and encoded one at a time, so the largest
 //! buffer alive is a single layer's image.
 
-use std::fmt;
-use std::io::{self, Write};
+use std::io::Write;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::pixel_map::PixelMap;
@@ -18,7 +17,8 @@ use sc_sl1cer::raster::rasterize_layer;
 use super::header::{FILE_MAGIC, SizedPreviews, write_header};
 use super::payload::encode_payload;
 use super::record::write_layer;
-use crate::preview::{PreviewSizeMismatch, PrintPreviews};
+use crate::error::WriteFailure;
+use crate::preview::PrintPreviews;
 use crate::print_program::PrintProgram;
 use crate::row_order::reverse_rows;
 
@@ -80,55 +80,4 @@ pub fn write_file(
     out.write_all(&FOOTER_PADDING)?;
     out.write_all(&FILE_MAGIC)?;
     Ok(())
-}
-
-#[derive(Debug)]
-pub enum WriteFailure {
-    /// The print program and the contour stack describe different
-    /// numbers of layers.
-    LayerCountMismatch {
-        program_layers: usize,
-        stack_layers: usize,
-    },
-    /// A supplied preview is not the size this container fixes.
-    PreviewSize(PreviewSizeMismatch),
-    Io(io::Error),
-}
-
-impl fmt::Display for WriteFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::LayerCountMismatch {
-                program_layers,
-                stack_layers,
-            } => write!(
-                f,
-                "the print program holds {program_layers} layer(s) and the contour stack {stack_layers}",
-            ),
-            Self::PreviewSize(err) => err.fmt(f),
-            Self::Io(err) => write!(f, "writing the file failed: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for WriteFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(err) => Some(err),
-            Self::PreviewSize(err) => Some(err),
-            Self::LayerCountMismatch { .. } => None,
-        }
-    }
-}
-
-impl From<io::Error> for WriteFailure {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
-    }
-}
-
-impl From<PreviewSizeMismatch> for WriteFailure {
-    fn from(err: PreviewSizeMismatch) -> Self {
-        Self::PreviewSize(err)
-    }
 }
