@@ -10,9 +10,11 @@
 //! than laid out in a fixed order, so a writer measures the chain
 //! before it writes the header that points into it.
 
+pub mod disclaimer;
 pub mod header;
 pub mod layout;
 pub mod print_parameters;
+pub mod print_parameters_v4;
 pub mod slicer_info;
 
 /// The container carries a single light-off delay and 3 separate
@@ -22,10 +24,14 @@ pub mod slicer_info;
 pub(crate) const LIGHT_OFF_SEC: f32 = 0.0;
 
 #[cfg(test)]
+mod tests_disclaimer;
+#[cfg(test)]
 mod tests_header;
 #[cfg(test)]
 mod tests_layout;
 #[cfg(test)]
 mod tests_print_parameters;
+#[cfg(test)]
+mod tests_print_parameters_v4;
 #[cfg(test)]
 mod tests_slicer_info;
