@@ -13,6 +13,7 @@
 pub mod disclaimer;
 pub mod header;
 pub mod layout;
+pub mod preview_record;
 pub mod print_parameters;
 pub mod print_parameters_v4;
 pub mod resin_parameters;
@@ -35,6 +36,8 @@ mod tests_disclaimer;
 mod tests_header;
 #[cfg(test)]
 mod tests_layout;
+#[cfg(test)]
+mod tests_preview_record;
 #[cfg(test)]
 mod tests_print_parameters;
 #[cfg(test)]
