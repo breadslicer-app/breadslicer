@@ -18,6 +18,7 @@ pub mod resin_parameters;
 pub mod rle15;
 pub mod rle7;
 pub mod v5;
+pub mod v5enc;
 pub mod wire;
 
 use crate::preview::{PreviewSize, PreviewSizes};
