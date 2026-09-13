@@ -22,6 +22,7 @@ sc-sl1cer.workspace = true
 
 aes.workspace = true
 cbc.workspace = true
+crc32fast.workspace = true
 png = "0.18.1"
 sha2.workspace = true
 

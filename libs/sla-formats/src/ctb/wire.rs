@@ -40,3 +40,19 @@ pub fn write_zeros(out: &mut impl Write, count: usize) -> io::Result<()> {
     io::copy(&mut io::repeat(0).take(count as u64), out)?;
     Ok(())
 }
+
+/// Narrow a length or an address to the 32 bits this container
+/// counts it in, naming `what` was too large for it.
+///
+/// # Errors
+///
+/// [`io::ErrorKind::InvalidInput`] when it does not fit, which for
+/// an address means the file outgrew what its own fields can reach.
+pub fn counted(value: impl TryInto<u32>, what: &str) -> io::Result<u32> {
+    value.try_into().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{what} does not fit the 32 bits this container counts it in"),
+        )
+    })
+}

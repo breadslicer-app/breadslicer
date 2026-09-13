@@ -12,6 +12,8 @@
 //! decides is whether a machine accepts the file.
 
 use aes::Aes256;
+#[cfg(test)]
+use aes::cipher::BlockModeDecrypt;
 use aes::cipher::{Array, BlockModeEncrypt, KeyIvInit};
 use sha2::{Digest, Sha256};
 
@@ -44,6 +46,22 @@ pub fn encrypt_in_place<const N: usize>(data: &mut [u8; N]) {
     let (blocks, _) = data.as_chunks_mut::<BLOCK_BYTES>();
     cbc::Encryptor::<Aes256>::new(&KEY.into(), &IV.into())
         .encrypt_blocks(Array::cast_slice_from_core_mut(blocks));
+}
+
+/// Undo [`encrypt_in_place`], which exists so that a test can read
+/// back what a writer produced the way a machine would.
+#[cfg(test)]
+pub(crate) fn decrypt_in_place<const N: usize>(data: &mut [u8; N]) {
+    const {
+        assert!(
+            N.is_multiple_of(BLOCK_BYTES),
+            "an encrypted range is whole blocks"
+        )
+    };
+
+    let (blocks, _) = data.as_chunks_mut::<BLOCK_BYTES>();
+    cbc::Decryptor::<Aes256>::new(&KEY.into(), &IV.into())
+        .decrypt_blocks(Array::cast_slice_from_core_mut(blocks));
 }
 
 /// Sign `value`, which the file also states in the clear so that the

@@ -14,7 +14,7 @@
 //! one at a time, so the largest buffer alive is a single layer's
 //! image beside the table.
 
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::pixel_map::PixelMap;
@@ -32,7 +32,7 @@ use crate::ctb::disclaimer::write_disclaimer;
 use crate::ctb::resin_parameters::{byte_length, write_resin_parameters};
 use crate::ctb::rle7;
 use crate::ctb::rle15;
-use crate::ctb::wire::write_zeros;
+use crate::ctb::wire::{counted, write_zeros};
 use crate::error::WriteFailure;
 use crate::preview::{PreviewImage, PrintPreviews};
 use crate::print_program::PrintProgram;
@@ -147,14 +147,4 @@ pub fn write_file(
     out.write_all(&table)?;
     out.seek(SeekFrom::End(0))?;
     Ok(())
-}
-
-/// Narrow a length to the 32 bits every count in this container has.
-fn counted(length: usize, what: &str) -> io::Result<u32> {
-    u32::try_from(length).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{what} is longer than its length field can count"),
-        )
-    })
 }

@@ -5005,6 +5005,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "cbc",
+ "crc32fast",
  "png 0.18.1",
  "proptest",
  "sc-3mf",
