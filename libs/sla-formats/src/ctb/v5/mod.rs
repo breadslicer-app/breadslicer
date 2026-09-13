@@ -12,6 +12,7 @@
 
 pub mod disclaimer;
 pub mod header;
+pub mod layer_record;
 pub mod layout;
 pub mod preview_record;
 pub mod print_parameters;
@@ -34,6 +35,8 @@ pub(crate) const MM3_PER_ML: f64 = 1000.0;
 mod tests_disclaimer;
 #[cfg(test)]
 mod tests_header;
+#[cfg(test)]
+mod tests_layer_record;
 #[cfg(test)]
 mod tests_layout;
 #[cfg(test)]

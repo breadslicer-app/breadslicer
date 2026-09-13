@@ -25,6 +25,10 @@ pub const PRINT_PARAMETERS_V4_SIZE: u32 = 464;
 /// One entry of the table the machine reads to find a layer.
 pub const LAYER_TABLE_RECORD_SIZE: u32 = 36;
 
+/// The fuller record repeated immediately before a layer's own
+/// image: the table's 36 bytes again, then 48 more of motion.
+pub const LAYER_RECORD_SIZE: u32 = 84;
+
 /// The lengths the format leaves to the writer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VariableSections {
