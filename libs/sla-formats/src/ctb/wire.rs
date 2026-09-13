@@ -26,6 +26,11 @@ pub fn write_u32(out: &mut impl Write, value: u32) -> io::Result<()> {
 }
 
 #[inline]
+pub fn write_u64(out: &mut impl Write, value: u64) -> io::Result<()> {
+    out.write_all(&value.to_le_bytes())
+}
+
+#[inline]
 pub fn write_f32(out: &mut impl Write, value: f32) -> io::Result<()> {
     out.write_all(&value.to_le_bytes())
 }

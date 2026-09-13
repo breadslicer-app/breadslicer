@@ -14,8 +14,11 @@
 
 pub mod header;
 pub mod layout;
+pub mod settings;
 
 #[cfg(test)]
 mod tests_header;
 #[cfg(test)]
 mod tests_layout;
+#[cfg(test)]
+mod tests_settings;
