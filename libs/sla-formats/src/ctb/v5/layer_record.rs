@@ -15,6 +15,7 @@ use std::io::{self, Write};
 
 use super::layout::LAYER_RECORD_SIZE;
 use crate::ctb::LIGHT_OFF_SEC;
+use crate::ctb::page_address::PageAddress;
 use crate::ctb::wire::{write_f32, write_u32, write_zeros};
 use crate::layer_values::LayerValues;
 use crate::print_program::LayerProgram;
@@ -22,23 +23,18 @@ use crate::print_program::LayerProgram;
 const RESERVED_BYTES: usize = 8;
 
 /// Where a layer's image sits and how long it is.
-///
-/// Addresses are 32-bit and these files may pass 4 GiB, so a record
-/// stores a page number beside an offset inside that page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageLocation {
-    page: u32,
-    offset: u32,
+    address: PageAddress,
     length: u32,
 }
 
 impl ImageLocation {
-    /// Split an absolute file address into the page and offset a
-    /// record stores.
+    /// Locate an image of `length` bytes at an absolute file
+    /// `address`.
     pub fn new(address: u64, length: u32) -> Self {
         Self {
-            page: (address >> u32::BITS) as u32,
-            offset: address as u32,
+            address: PageAddress::of(address),
             length,
         }
     }
@@ -59,9 +55,9 @@ pub fn write_table_record(
     write_f32(out, layer.slab_top_mm.value() as f32)?;
     write_f32(out, values.exposure_sec)?;
     write_f32(out, LIGHT_OFF_SEC)?;
-    write_u32(out, image.offset)?;
+    write_u32(out, image.address.offset)?;
     write_u32(out, image.length)?;
-    write_u32(out, image.page)?;
+    write_u32(out, image.address.page)?;
     write_u32(out, LAYER_RECORD_SIZE)?;
     write_zeros(out, RESERVED_BYTES)
 }
