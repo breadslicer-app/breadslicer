@@ -9,7 +9,6 @@ use sc_print_primitives::{
 };
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
-use super::layout::{Layout, VariableSections};
 use super::resin_parameters::{byte_length, write_resin_parameters};
 use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;
@@ -17,6 +16,10 @@ use crate::raster_setup::RasterSetup;
 const MATERIAL: &str = "Magna Durable";
 const MACHINE: &str = "ELEGOO Jupiter SE";
 const FIXED_SIZE: usize = 40;
+
+/// Where a real file puts the block, so the addresses under test are
+/// as far from zero as they are in a file.
+const BLOCK_ADDRESS: u32 = 84_259;
 
 fn mm(value: f64) -> PositiveFiniteMm {
     PositiveFiniteMm::new(value).unwrap()
@@ -76,19 +79,9 @@ fn program() -> PrintProgram {
     }
 }
 
-fn layout(program: &PrintProgram) -> Layout {
-    Layout::plan(VariableSections {
-        large_preview_bytes: 5_000,
-        small_preview_bytes: 900,
-        machine_name_bytes: u32::try_from(MACHINE.len()).unwrap(),
-        resin_parameters_bytes: byte_length(program),
-        layer_count: 1,
-    })
-}
-
 fn written(program: &PrintProgram) -> Vec<u8> {
     let mut bytes = Vec::new();
-    write_resin_parameters(program, &layout(program), &mut bytes).unwrap();
+    write_resin_parameters(program, BLOCK_ADDRESS, &mut bytes).unwrap();
     bytes
 }
 
@@ -117,22 +110,20 @@ fn the_length_is_the_fixed_part_plus_the_three_strings() {
 
 #[test]
 fn each_address_is_followed_by_its_own_length() {
-    let program = program();
-    let bytes = written(&program);
-    let base = layout(&program).resin_parameters;
+    let bytes = written(&program());
+    let first = BLOCK_ADDRESS + FIXED_SIZE as u32;
 
-    assert_eq!(u32_at(&bytes, 8), base + FIXED_SIZE as u32);
+    assert_eq!(u32_at(&bytes, 8), first);
     assert_eq!(u32_at(&bytes, 12), MATERIAL.len() as u32);
-    assert_eq!(u32_at(&bytes, 16), base + FIXED_SIZE as u32 + 13);
+    assert_eq!(u32_at(&bytes, 16), first + 13);
     assert_eq!(u32_at(&bytes, 20), MATERIAL.len() as u32);
-    assert_eq!(u32_at(&bytes, 24), base + FIXED_SIZE as u32 + 26);
+    assert_eq!(u32_at(&bytes, 24), first + 26);
     assert_eq!(u32_at(&bytes, 28), MACHINE.len() as u32);
 }
 
 #[test]
 fn the_addresses_are_spaced_by_the_lengths_they_declare() {
-    let program = program();
-    let bytes = written(&program);
+    let bytes = written(&program());
 
     assert_eq!(u32_at(&bytes, 16) - u32_at(&bytes, 8), u32_at(&bytes, 12));
     assert_eq!(u32_at(&bytes, 24) - u32_at(&bytes, 16), u32_at(&bytes, 20));
@@ -140,8 +131,7 @@ fn the_addresses_are_spaced_by_the_lengths_they_declare() {
 
 #[test]
 fn the_strings_are_packed_with_no_terminator_between_them() {
-    let program = program();
-    let bytes = written(&program);
+    let bytes = written(&program());
     let expected = format!("{MATERIAL}{MATERIAL}{MACHINE}");
 
     assert_eq!(&bytes[FIXED_SIZE..], expected.as_bytes());

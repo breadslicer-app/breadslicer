@@ -17,7 +17,6 @@ pub mod layout;
 pub mod preview_record;
 pub mod print_parameters;
 pub mod print_parameters_v4;
-pub mod resin_parameters;
 pub mod slicer_info;
 
 #[cfg(test)]
@@ -34,7 +33,5 @@ mod tests_preview_record;
 mod tests_print_parameters;
 #[cfg(test)]
 mod tests_print_parameters_v4;
-#[cfg(test)]
-mod tests_resin_parameters;
 #[cfg(test)]
 mod tests_slicer_info;

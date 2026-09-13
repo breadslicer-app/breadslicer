@@ -26,10 +26,10 @@ use super::layout::{LAYER_RECORD_SIZE, LAYER_TABLE_RECORD_SIZE, Layout, Variable
 use super::preview_record::write_preview_record;
 use super::print_parameters::write_print_parameters;
 use super::print_parameters_v4::write_print_parameters_v4;
-use super::resin_parameters::{byte_length, write_resin_parameters};
 use super::slicer_info::write_slicer_info;
 use crate::ctb::PREVIEW_SIZES;
 use crate::ctb::disclaimer::write_disclaimer;
+use crate::ctb::resin_parameters::{byte_length, write_resin_parameters};
 use crate::ctb::rle7;
 use crate::ctb::rle15;
 use crate::ctb::wire::write_zeros;
@@ -113,7 +113,7 @@ pub fn write_file(
     out.write_all(machine_name)?;
     write_disclaimer(out)?;
     write_print_parameters_v4(program, &layout, out)?;
-    write_resin_parameters(program, &layout, out)?;
+    write_resin_parameters(program, layout.resin_parameters, out)?;
 
     let table_bytes = LAYER_TABLE_RECORD_SIZE as usize * program.layers.len();
     write_zeros(out, table_bytes)?;

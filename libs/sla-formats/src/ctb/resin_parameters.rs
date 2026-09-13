@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! The variable-length block format version 5 added.
+//! The variable-length block format version 5 added, in both its
+//! plain and its encrypted shape.
 //!
 //! 40 fixed bytes then 3 strings laid end to end. Each address is
 //! followed by its own length and a string carries no terminator, so
@@ -12,7 +13,6 @@
 
 use std::io::{self, Write};
 
-use super::layout::Layout;
 use crate::ctb::MM3_PER_ML;
 use crate::ctb::wire::{write_f32, write_u32};
 use crate::print_program::PrintProgram;
@@ -30,19 +30,19 @@ pub fn byte_length(program: &PrintProgram) -> u32 {
     FIXED_SIZE + text_len(first) + text_len(second) + text_len(third)
 }
 
-/// Write the resin parameters for `program`, whose own address
-/// `layout` holds because the block locates its strings absolutely.
+/// Write the resin parameters for `program`, which the file puts at
+/// `block_address` and whose strings are located absolutely.
 ///
 /// # Errors
 ///
 /// Propagates `out`'s failures.
 pub fn write_resin_parameters(
     program: &PrintProgram,
-    layout: &Layout,
+    block_address: u32,
     out: &mut impl Write,
 ) -> io::Result<()> {
     let texts = strings(program);
-    let mut address = layout.resin_parameters + FIXED_SIZE;
+    let mut address = block_address + FIXED_SIZE;
 
     write_u32(out, 0)?;
     out.write_all(&COLOUR_BGRA)?;

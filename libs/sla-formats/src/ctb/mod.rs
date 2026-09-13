@@ -13,6 +13,7 @@
 pub mod cipher;
 pub mod disclaimer;
 pub mod layer_xor;
+pub mod resin_parameters;
 pub mod rle15;
 pub mod rle7;
 pub mod v5;
@@ -53,6 +54,8 @@ mod tests_cipher;
 mod tests_disclaimer;
 #[cfg(test)]
 mod tests_layer_xor;
+#[cfg(test)]
+mod tests_resin_parameters;
 #[cfg(test)]
 mod tests_rle15;
 #[cfg(test)]
