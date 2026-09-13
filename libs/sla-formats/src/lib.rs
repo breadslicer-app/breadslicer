@@ -33,6 +33,7 @@ pub mod preview;
 pub mod print_program;
 pub mod printer_file_format;
 pub mod raster_setup;
+pub(crate) mod row_order;
 pub mod threemf;
 pub mod write;
 
@@ -42,6 +43,8 @@ mod tests_layer_values;
 mod tests_preview;
 #[cfg(test)]
 mod tests_printer_file;
+#[cfg(test)]
+mod tests_row_order;
 #[cfg(test)]
 mod tests_threemf;
 

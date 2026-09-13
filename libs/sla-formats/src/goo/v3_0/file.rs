@@ -16,10 +16,11 @@ use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
 
 use super::header::{FILE_MAGIC, SizedPreviews, write_header};
-use super::payload::{encode_payload, reverse_rows};
+use super::payload::encode_payload;
 use super::record::write_layer;
 use crate::preview::{PreviewSizeMismatch, PrintPreviews};
 use crate::print_program::PrintProgram;
+use crate::row_order::reverse_rows;
 
 /// Precedes the magic that closes the file.
 const FOOTER_PADDING: [u8; 3] = [0x00, 0x00, 0x00];
