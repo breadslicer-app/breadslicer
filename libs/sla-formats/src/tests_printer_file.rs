@@ -15,7 +15,7 @@ use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 use tempfile::tempdir;
 
 use crate::error::WriterError;
-use crate::print_program::{LayerProgram, MotionStage, PrintProgram};
+use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 use crate::printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat};
 use crate::raster_setup::RasterSetup;
 use crate::write::write_printer_file;
@@ -75,7 +75,10 @@ fn program(layer_count: usize) -> PrintProgram {
         volume_mm3: VolumeMm3::ZERO,
         mass_g: MassG::ZERO,
         print_time_sec: NonNegativeFiniteSec::ZERO,
-        created_at: NonEmptyString::new("2026-09-04 21:07:00").unwrap(),
+        created_at: CreationTime {
+            rendered: NonEmptyString::new("2026-09-04 21:07:00").unwrap(),
+            unix_sec: 1_788_721_620,
+        },
         slicer_version: "0.0.12",
     }
 }

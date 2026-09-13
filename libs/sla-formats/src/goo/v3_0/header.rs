@@ -127,7 +127,7 @@ pub fn write_header(
     out.write_all(&FILE_MAGIC)?;
     write_text(out, SOFTWARE_NAME, 32)?;
     write_text(out, program.slicer_version, 24)?;
-    write_text(out, program.created_at.as_str(), 24)?;
+    write_text(out, program.created_at.rendered.as_str(), 24)?;
     write_text(out, program.machine_name.as_str(), 32)?;
     write_text(out, program.machine_name.as_str(), 32)?;
     write_text(out, program.material_name.as_str(), 32)?;

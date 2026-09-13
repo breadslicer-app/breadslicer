@@ -15,6 +15,17 @@ use sc_print_primitives::{
 
 use crate::raster_setup::RasterSetup;
 
+/// When a file was written, in the 2 shapes these containers store.
+///
+/// GOO keeps a free-form string it never parses; CTB keeps seconds
+/// since the unix epoch, which its machine's browser sorts by. Both
+/// describe the same moment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreationTime {
+    pub rendered: NonEmptyString,
+    pub unix_sec: u64,
+}
+
 /// One stage of build-platform travel.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotionStage {
@@ -65,7 +76,6 @@ pub struct PrintProgram {
     /// How long the whole print is expected to take, likewise for
     /// display.
     pub print_time_sec: NonNegativeFiniteSec,
-    /// Creation time, rendered the way the file records it.
-    pub created_at: NonEmptyString,
+    pub created_at: CreationTime,
     pub slicer_version: &'static str,
 }

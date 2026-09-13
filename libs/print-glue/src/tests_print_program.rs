@@ -17,7 +17,7 @@ use sc_print_profiles::{
 use sc_scene::node::LeafPayload;
 use sc_scene::{Scene, SceneError};
 use sc_sl1cer::profile::{AaLevel, LayerSchedule, PackingMode, SliceProfile};
-use sc_sla_formats::PrintProgram;
+use sc_sla_formats::{CreationTime, PrintProgram};
 
 use super::print_program::{
     SlabTopOutOfRange, UnprojectablePrint, creation_time_now, project_to_print_program,
@@ -361,9 +361,13 @@ fn scene() -> Scene {
 }
 
 const CREATED_AT: &str = "2026-09-04 17:31:02";
+const CREATED_AT_UNIX_SEC: u64 = 1_788_708_662;
 
-fn created_at() -> NonEmptyString {
-    NonEmptyString::new(CREATED_AT).unwrap()
+fn created_at() -> CreationTime {
+    CreationTime {
+        rendered: NonEmptyString::new(CREATED_AT).unwrap(),
+        unix_sec: CREATED_AT_UNIX_SEC,
+    }
 }
 
 fn program(printer_toml: &str, total_layers: u32) -> PrintProgram {
@@ -495,7 +499,10 @@ fn the_machine_and_material_names_come_from_the_profiles() {
 
 #[test]
 fn the_creation_time_is_the_callers() {
-    assert_eq!(program(PRINTER_TOML, 20).created_at.as_str(), CREATED_AT);
+    let created_at = program(PRINTER_TOML, 20).created_at;
+
+    assert_eq!(created_at.rendered.as_str(), CREATED_AT);
+    assert_eq!(created_at.unix_sec, CREATED_AT_UNIX_SEC);
 }
 
 #[test]
@@ -898,8 +905,8 @@ fn a_scene_that_cannot_be_measured_stops_the_projection() {
 fn the_creation_time_renders_as_a_date_and_a_wall_clock_time() {
     const SEPARATORS: [(usize, char); 5] = [(4, '-'), (7, '-'), (10, ' '), (13, ':'), (16, ':')];
 
-    let rendered = creation_time_now();
-    let text = rendered.as_str();
+    let now = creation_time_now();
+    let text = now.rendered.as_str();
 
     assert_eq!(text.len(), 19, "text: {text}");
     for (index, separator) in SEPARATORS {
@@ -918,6 +925,27 @@ fn the_creation_time_renders_as_a_date_and_a_wall_clock_time() {
             "position {index} of {text} should be a digit",
         );
     }
+}
+
+#[test]
+fn the_creation_time_counts_the_same_moment_in_seconds() {
+    // 2026-01-01, comfortably behind any clock that can build this.
+    const A_PAST_MOMENT: u64 = 1_767_225_600;
+
+    let now = creation_time_now();
+    let year: i32 = now.rendered.as_str()[..4]
+        .parse()
+        .expect("4 leading digits");
+
+    assert!(now.unix_sec > A_PAST_MOMENT, "seconds: {}", now.unix_sec);
+    // 2 renderings of one instant, so the epoch seconds must land in
+    // the year the text names.
+    let seconds_in_year = 365 * 24 * 60 * 60;
+    let years_since_1970 = (now.unix_sec / seconds_in_year) as i32 + 1970;
+    assert!(
+        (year - years_since_1970).abs() <= 1,
+        "text says {year}, seconds say about {years_since_1970}",
+    );
 }
 
 #[test]

@@ -48,7 +48,7 @@ pub use options::WriterOptions;
 pub use preview::{
     PixelCountMismatch, PreviewImage, PreviewSize, PreviewSizeMismatch, PreviewSizes, PrintPreviews,
 };
-pub use print_program::{LayerProgram, MotionStage, PrintProgram};
+pub use print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{
     CtbVariant, GooVersion, PrinterFileFormat, UnresolvedBinding, printer_file_format_from_path,
 };

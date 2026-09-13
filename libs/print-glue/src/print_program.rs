@@ -17,7 +17,7 @@ use sc_print_profiles::{MaterialResolved, ResolvedPrintConfig};
 use sc_scene::Scene;
 use sc_scene::SceneError;
 use sc_sl1cer::profile::SliceProfile;
-use sc_sla_formats::{LayerProgram, MotionStage, PrintProgram, RasterSetup};
+use sc_sla_formats::{CreationTime, LayerProgram, MotionStage, PrintProgram, RasterSetup};
 
 const SEC_PER_MIN: f64 = 60.0;
 
@@ -86,9 +86,8 @@ impl std::error::Error for UnprojectablePrint {
 /// Build the [`PrintProgram`] for a scene under a resolved
 /// configuration, one record per layer of `profile`'s schedule.
 ///
-/// `scene` must be the one that was sliced, `profile` the one the
-/// contours were sliced under, and `created_at` must already be
-/// rendered the way the target file records a creation time.
+/// `scene` must be the one that was sliced and `profile` the one the
+/// contours were sliced under.
 ///
 /// The reported volume is everything `scene` encloses, so geometry
 /// the machine will not reach still counts towards it, and the
@@ -106,7 +105,7 @@ pub fn project_to_print_program(
     scene: &Scene,
     config: &ResolvedPrintConfig,
     profile: &SliceProfile,
-    created_at: NonEmptyString,
+    created_at: CreationTime,
     slicer_version: &'static str,
 ) -> Result<PrintProgram, UnprojectablePrint> {
     let material = &config.material_resolved;
@@ -210,15 +209,19 @@ fn travel_duration_sec(stage: MotionStage) -> f64 {
     stage.distance_mm.value() / stage.speed_mm_min.value() * SEC_PER_MIN
 }
 
-/// Render the current local time as a printer file's creation time.
+/// Take the current local time as a printer file's creation time.
 ///
-/// These formats carry the creation time as a free-form string, so its
-/// shape is the writer's to choose. This is the one this workspace
-/// writes, and the rendering [`project_to_print_program`] expects
-/// `created_at` to arrive in.
-pub fn creation_time_now() -> NonEmptyString {
-    let rendered = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    NonEmptyString::new(&rendered).expect("a formatted timestamp is never empty")
+/// The rendering is the writer's to choose, since the formats that
+/// keep one as text never parse it back; this is the one this
+/// workspace writes. A clock set before the unix epoch yields 0
+/// seconds, which is what the oldest real files carry anyway.
+pub fn creation_time_now() -> CreationTime {
+    let now = Local::now();
+    let rendered = now.format("%Y-%m-%d %H:%M:%S").to_string();
+    CreationTime {
+        rendered: NonEmptyString::new(&rendered).expect("a formatted timestamp is never empty"),
+        unix_sec: u64::try_from(now.timestamp()).unwrap_or_default(),
+    }
 }
 
 /// The three pauses one layer's record carries.

@@ -11,7 +11,7 @@ use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
 use super::header::{FILE_MAGIC, HEADER_SIZE, SizedPreviews, write_header};
 use crate::preview::{PreviewImage, PrintPreviews};
-use crate::print_program::{LayerProgram, MotionStage, PrintProgram};
+use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;
 
 const PLATE_X_MM: f64 = 143.43;
@@ -91,7 +91,10 @@ fn program(layers: Vec<LayerProgram>) -> PrintProgram {
         volume_mm3: VolumeMm3::new(VOLUME_MM3).unwrap(),
         mass_g: MassG::new(MASS_G).unwrap(),
         print_time_sec: wait(PRINT_TIME_SEC),
-        created_at: NonEmptyString::new("2026-09-04 17:31:02").unwrap(),
+        created_at: CreationTime {
+            rendered: NonEmptyString::new("2026-09-04 17:31:02").unwrap(),
+            unix_sec: 1_788_708_662,
+        },
         slicer_version: "0.0.12",
     }
 }

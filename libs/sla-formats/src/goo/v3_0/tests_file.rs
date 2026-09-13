@@ -18,7 +18,7 @@ use super::header::{FILE_MAGIC, HEADER_SIZE};
 use super::record::RECORD_SIZE;
 use super::test_decode::decode_chunks;
 use crate::preview::{PreviewImage, PrintPreviews};
-use crate::print_program::{LayerProgram, MotionStage, PrintProgram};
+use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;
 
 const PLATE_MM: f64 = 10.0;
@@ -76,7 +76,10 @@ fn program(layers: Vec<LayerProgram>) -> PrintProgram {
         volume_mm3: VolumeMm3::ZERO,
         mass_g: MassG::ZERO,
         print_time_sec: NonNegativeFiniteSec::ZERO,
-        created_at: NonEmptyString::new("2026-09-04 20:41:00").unwrap(),
+        created_at: CreationTime {
+            rendered: NonEmptyString::new("2026-09-04 20:41:00").unwrap(),
+            unix_sec: 1_788_719_660,
+        },
         slicer_version: "0.0.12",
     }
 }
