@@ -206,8 +206,7 @@ mod print_format_tests {
     #[test]
     fn the_remembered_binding_selects_its_own_option() {
         // Two bindings that differ only in how they spell the version,
-        // which is the one way a profile can declare two writable
-        // formats while GOO V3.0 is the only one with a writer.
+        // so both resolve to the same writable format.
         let upper = binding(FormatKind::Goo, Some("V3.0"));
         let declared = declared(&[goo_v3_0(), upper.clone()]);
         let model = print_format_model(&declared, Some(&upper));
@@ -218,7 +217,7 @@ mod print_format_tests {
 
     #[test]
     fn a_remembered_binding_without_a_writer_falls_back_to_the_first_writable() {
-        let ctb = binding(FormatKind::Ctb, Some("v5"));
+        let ctb = binding(FormatKind::Ctb, Some("v5enc"));
         let declared = declared(&[goo_v3_0(), ctb.clone()]);
         let model = print_format_model(&declared, Some(&ctb));
 

@@ -13,13 +13,14 @@ use std::path::Path;
 
 use sc_sl1cer::contour::ContourStack;
 
+use crate::ctb::v5 as ctb_v5;
 use crate::error::WriterError;
 use crate::format::Format;
 use crate::goo::v3_0;
 use crate::options::WriterOptions;
 use crate::preview::PrintPreviews;
 use crate::print_program::PrintProgram;
-use crate::printer_file_format::PrinterFileFormat;
+use crate::printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat};
 
 /// Write a sliced contour stack to disk using `format`'s writer.
 ///
@@ -98,7 +99,18 @@ pub fn write_printer_file(
     validate_file_output_path(output, format)?;
 
     let mut out = BufWriter::new(File::create(output)?);
-    v3_0::file::write_file(program, previews, stack, &mut out)?;
+    match format {
+        PrinterFileFormat::Goo(GooVersion::V3_0) => {
+            v3_0::file::write_file(program, previews, stack, &mut out)?;
+        }
+        PrinterFileFormat::Ctb(CtbVariant::PlainV5) => {
+            ctb_v5::file::write_file(program, previews, stack, &mut out)?;
+        }
+        PrinterFileFormat::Goo(GooVersion::V5_1)
+        | PrinterFileFormat::Ctb(CtbVariant::EncryptedV5) => {
+            return Err(WriterError::PrinterFormatNotImplemented { format });
+        }
+    }
     out.flush().map_err(WriterError::Io)
 }
 

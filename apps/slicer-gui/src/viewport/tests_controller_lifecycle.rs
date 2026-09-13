@@ -157,7 +157,7 @@ fn a_format_this_build_cannot_write_asks_for_no_previews() {
     state.borrow_mut().scene_bounds_value = Some((glam::Vec3::ZERO, glam::Vec3::splat(10.0)));
     ctrl.install_graph_for_test(Scene::new());
 
-    let previews = ctrl.print_file_previews(PrinterFileFormat::Ctb(CtbVariant::PlainV5));
+    let previews = ctrl.print_file_previews(PrinterFileFormat::Ctb(CtbVariant::EncryptedV5));
 
     assert!(previews.is_none());
     assert!(state.borrow().preview_calls.is_empty());

@@ -17,6 +17,7 @@ use std::path::Path;
 
 use sc_print_primitives::{FormatKind, OutputFormatBinding};
 
+use crate::ctb::v5::preview_record::PREVIEW_SIZES as CTB_V5_PREVIEW_SIZES;
 use crate::goo::v3_0::header::PREVIEW_SIZES as GOO_V3_0_PREVIEW_SIZES;
 use crate::preview::PreviewSizes;
 
@@ -105,7 +106,10 @@ impl PrinterFileFormat {
     /// callers that offer a choice need to tell the two apart before
     /// [`write_printer_file`](crate::write_printer_file) refuses.
     pub fn has_writer(self) -> bool {
-        matches!(self, Self::Goo(GooVersion::V3_0))
+        matches!(
+            self,
+            Self::Goo(GooVersion::V3_0) | Self::Ctb(CtbVariant::PlainV5)
+        )
     }
 
     /// Report the sizes this format fixes for the previews it
@@ -113,10 +117,15 @@ impl PrinterFileFormat {
     ///
     /// `None` for a format with no writer in this build: the sizes
     /// belong to the container's layout, which arrives with it.
+    ///
+    /// GOO fixes its 2 sizes. CTB does not, since each of its preview
+    /// records carries its own, so what it reports is the size its
+    /// writer renders at.
     pub fn preview_sizes(self) -> Option<PreviewSizes> {
         match self {
             Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
-            Self::Goo(GooVersion::V5_1) | Self::Ctb(_) => None,
+            Self::Ctb(CtbVariant::PlainV5) => Some(CTB_V5_PREVIEW_SIZES),
+            Self::Goo(GooVersion::V5_1) | Self::Ctb(CtbVariant::EncryptedV5) => None,
         }
     }
 
@@ -324,11 +333,11 @@ mod printer_file_format_tests {
     }
 
     #[test]
-    fn goo_v3_0_is_the_one_format_this_build_writes() {
+    fn this_build_writes_goo_v3_0_and_plain_ctb_v5() {
         assert!(PrinterFileFormat::Goo(GooVersion::V3_0).has_writer());
+        assert!(PrinterFileFormat::Ctb(CtbVariant::PlainV5).has_writer());
         for format in [
             PrinterFileFormat::Goo(GooVersion::V5_1),
-            PrinterFileFormat::Ctb(CtbVariant::PlainV5),
             PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
         ] {
             assert!(!format.has_writer(), "{format}");
@@ -371,13 +380,34 @@ mod printer_file_format_tests {
     }
 
     #[test]
+    fn plain_ctb_v5_declares_the_sizes_its_writer_renders_at() {
+        let sizes = PrinterFileFormat::Ctb(CtbVariant::PlainV5)
+            .preview_sizes()
+            .expect("the plain v5 writer carries previews");
+        assert_eq!(
+            sizes.small,
+            PreviewSize {
+                width: 200,
+                height: 125
+            }
+        );
+        assert_eq!(
+            sizes.large,
+            PreviewSize {
+                width: 400,
+                height: 300
+            }
+        );
+    }
+
+    #[test]
     fn a_format_without_a_writer_declares_no_preview_sizes() {
         assert_eq!(
             PrinterFileFormat::Goo(GooVersion::V5_1).preview_sizes(),
             None,
         );
         assert_eq!(
-            PrinterFileFormat::Ctb(CtbVariant::PlainV5).preview_sizes(),
+            PrinterFileFormat::Ctb(CtbVariant::EncryptedV5).preview_sizes(),
             None,
         );
     }

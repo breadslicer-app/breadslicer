@@ -21,6 +21,10 @@ use crate::raster_setup::RasterSetup;
 use crate::write::write_printer_file;
 
 const GOO_V3_0: PrinterFileFormat = PrinterFileFormat::Goo(GooVersion::V3_0);
+const CTB_V5: PrinterFileFormat = PrinterFileFormat::Ctb(CtbVariant::PlainV5);
+/// `0x12FD0106` little-endian, which opens every plain file at
+/// format version 4 and 5.
+const CTB_MAGIC: [u8; 4] = [0x06, 0x01, 0xFD, 0x12];
 const HEADER_SIZE: usize = 195_477;
 const FILE_MAGIC: [u8; 8] = [0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00];
 
@@ -123,11 +127,52 @@ fn goo_v3_0_overwrites_a_file_that_is_already_there() {
 }
 
 #[test]
+fn ctb_v5_writes_a_file_that_opens_with_its_magic() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("job.ctb");
+    write_printer_file(&stack(2), &out, CTB_V5, &program(2), None).unwrap();
+    let bytes = fs::read(&out).unwrap();
+
+    assert_eq!(&bytes[0..4], &CTB_MAGIC);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 5);
+    assert_eq!(u32::from_le_bytes(bytes[68..72].try_into().unwrap()), 2);
+}
+
+#[test]
+fn ctb_v5_overwrites_a_file_that_is_already_there() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("job.ctb");
+    fs::write(&out, b"stale").unwrap();
+    write_printer_file(&stack(1), &out, CTB_V5, &program(1), None).unwrap();
+
+    assert_eq!(&fs::read(&out).unwrap()[0..4], &CTB_MAGIC);
+}
+
+#[test]
+fn a_ctb_program_that_does_not_match_the_stack_leaves_the_target_alone() {
+    let dir = tempdir().unwrap();
+    let out = dir.path().join("job.ctb");
+    fs::write(&out, b"precious").unwrap();
+    let err = write_printer_file(&stack(3), &out, CTB_V5, &program(2), None).unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            WriterError::ProgramLayerCountMismatch {
+                program_layers: 2,
+                stack_layers: 3,
+            },
+        ),
+        "{err}",
+    );
+    assert_eq!(fs::read(&out).unwrap(), b"precious");
+}
+
+#[test]
 fn a_format_without_a_writer_is_refused_and_writes_nothing() {
     let dir = tempdir().unwrap();
     for format in [
         PrinterFileFormat::Goo(GooVersion::V5_1),
-        PrinterFileFormat::Ctb(CtbVariant::PlainV5),
         PrinterFileFormat::Ctb(CtbVariant::EncryptedV5),
     ] {
         let out = dir.path().join(format!("{format}.out"));
