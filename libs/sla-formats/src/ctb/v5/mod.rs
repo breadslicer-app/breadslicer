@@ -11,6 +11,7 @@
 //! before it writes the header that points into it.
 
 pub mod disclaimer;
+pub mod file;
 pub mod header;
 pub mod layer_record;
 pub mod layout;
@@ -33,6 +34,8 @@ pub(crate) const MM3_PER_ML: f64 = 1000.0;
 
 #[cfg(test)]
 mod tests_disclaimer;
+#[cfg(test)]
+mod tests_file;
 #[cfg(test)]
 mod tests_header;
 #[cfg(test)]
