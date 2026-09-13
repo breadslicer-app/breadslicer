@@ -18,9 +18,11 @@
 //! per-leaf stacks instead of the merged one), and GOO under [`goo`],
 //! reached through [`write_printer_file`] with the machine program
 //! beside the geometry, and the [`preview`] images the machine
-//! displays when the caller has rendered them. SL1 and CTB are still
-//! to come.
+//! displays when the caller has rendered them. [`ctb`] holds the
+//! codec its writers are built on and nothing that writes a file yet;
+//! SL1 is still to come.
 
+pub mod ctb;
 pub mod debug;
 pub mod error;
 pub mod format;
