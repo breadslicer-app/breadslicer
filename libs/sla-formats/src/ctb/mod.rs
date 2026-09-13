@@ -12,6 +12,7 @@
 
 pub mod rle15;
 pub mod rle7;
+pub mod v5;
 
 #[cfg(test)]
 mod tests_rle15;
