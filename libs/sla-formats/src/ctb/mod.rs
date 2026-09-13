@@ -11,6 +11,7 @@
 //! little-endian except a layer run's length.
 
 pub mod cipher;
+pub mod disclaimer;
 pub mod layer_xor;
 pub mod rle15;
 pub mod rle7;
@@ -48,6 +49,8 @@ pub(crate) const MM3_PER_ML: f64 = 1000.0;
 
 #[cfg(test)]
 mod tests_cipher;
+#[cfg(test)]
+mod tests_disclaimer;
 #[cfg(test)]
 mod tests_layer_xor;
 #[cfg(test)]

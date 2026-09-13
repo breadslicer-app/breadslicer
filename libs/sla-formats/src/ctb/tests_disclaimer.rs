@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::disclaimer::write_disclaimer;
-use super::layout::DISCLAIMER_SIZE;
+use super::disclaimer::{DISCLAIMER_SIZE, write_disclaimer};
 
 fn written() -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -13,7 +12,7 @@ fn written() -> Vec<u8> {
 }
 
 #[test]
-fn the_block_is_the_size_the_layout_reserves_for_it() {
+fn the_block_is_the_size_the_layouts_reserve_for_it() {
     assert_eq!(written().len(), DISCLAIMER_SIZE as usize);
 }
 

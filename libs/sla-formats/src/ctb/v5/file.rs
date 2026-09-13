@@ -20,7 +20,6 @@ use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::pixel_map::PixelMap;
 use sc_sl1cer::raster::rasterize_layer;
 
-use super::disclaimer::write_disclaimer;
 use super::header::write_header;
 use super::layer_record::{ImageLocation, write_layer_record, write_table_record};
 use super::layout::{LAYER_RECORD_SIZE, LAYER_TABLE_RECORD_SIZE, Layout, VariableSections};
@@ -30,6 +29,7 @@ use super::print_parameters_v4::write_print_parameters_v4;
 use super::resin_parameters::{byte_length, write_resin_parameters};
 use super::slicer_info::write_slicer_info;
 use crate::ctb::PREVIEW_SIZES;
+use crate::ctb::disclaimer::write_disclaimer;
 use crate::ctb::rle7;
 use crate::ctb::rle15;
 use crate::ctb::wire::write_zeros;

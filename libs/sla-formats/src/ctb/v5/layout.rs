@@ -13,14 +13,14 @@
 //! constant here, and each block's own tests pin what it writes
 //! against the constant it claims.
 
+use crate::ctb::disclaimer::DISCLAIMER_SIZE;
+
 /// Bytes from the start of the file to the first preview record.
 pub const HEADER_SIZE: u32 = 112;
 /// Width, height, and the offset and length of one preview image.
 pub const PREVIEW_RECORD_SIZE: u32 = 32;
 pub const PRINT_PARAMETERS_SIZE: u32 = 60;
 pub const SLICER_INFO_SIZE: u32 = 76;
-/// The vendor copyright text every file of this family carries.
-pub const DISCLAIMER_SIZE: u32 = 320;
 pub const PRINT_PARAMETERS_V4_SIZE: u32 = 464;
 /// One entry of the table the machine reads to find a layer.
 pub const LAYER_TABLE_RECORD_SIZE: u32 = 36;

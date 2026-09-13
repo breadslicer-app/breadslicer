@@ -4,9 +4,10 @@
  */
 
 use super::layout::{
-    DISCLAIMER_SIZE, HEADER_SIZE, LAYER_TABLE_RECORD_SIZE, Layout, PREVIEW_RECORD_SIZE,
-    PRINT_PARAMETERS_SIZE, PRINT_PARAMETERS_V4_SIZE, SLICER_INFO_SIZE, VariableSections,
+    HEADER_SIZE, LAYER_TABLE_RECORD_SIZE, Layout, PREVIEW_RECORD_SIZE, PRINT_PARAMETERS_SIZE,
+    PRINT_PARAMETERS_V4_SIZE, SLICER_INFO_SIZE, VariableSections,
 };
+use crate::ctb::disclaimer::DISCLAIMER_SIZE;
 
 /// Lengths that are all distinct, so a test can tell which one an
 /// offset moved by.

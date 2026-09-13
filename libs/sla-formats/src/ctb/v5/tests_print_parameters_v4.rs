@@ -9,8 +9,9 @@ use sc_print_primitives::{
 };
 use sc_sl1cer::profile::{LayerSchedule, PackingMode, SliceProfile};
 
-use super::layout::{DISCLAIMER_SIZE, Layout, PRINT_PARAMETERS_V4_SIZE, VariableSections};
+use super::layout::{Layout, PRINT_PARAMETERS_V4_SIZE, VariableSections};
 use super::print_parameters_v4::write_print_parameters_v4;
+use crate::ctb::disclaimer::DISCLAIMER_SIZE;
 use crate::print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 use crate::raster_setup::RasterSetup;
 

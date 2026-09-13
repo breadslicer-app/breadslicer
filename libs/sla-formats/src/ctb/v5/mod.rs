@@ -10,7 +10,6 @@
 //! than laid out in a fixed order, so a writer measures the chain
 //! before it writes the header that points into it.
 
-pub mod disclaimer;
 pub mod file;
 pub mod header;
 pub mod layer_record;
@@ -21,8 +20,6 @@ pub mod print_parameters_v4;
 pub mod resin_parameters;
 pub mod slicer_info;
 
-#[cfg(test)]
-mod tests_disclaimer;
 #[cfg(test)]
 mod tests_file;
 #[cfg(test)]

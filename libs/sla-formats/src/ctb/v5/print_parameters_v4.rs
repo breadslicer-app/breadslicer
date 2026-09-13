@@ -12,7 +12,8 @@
 
 use std::io::{self, Write};
 
-use super::layout::{DISCLAIMER_SIZE, Layout};
+use super::layout::Layout;
+use crate::ctb::disclaimer::DISCLAIMER_SIZE;
 use crate::ctb::wire::{write_f32, write_u32, write_zeros};
 use crate::layer_values::LayerValues;
 use crate::print_program::PrintProgram;
