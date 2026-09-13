@@ -10,7 +10,10 @@
 //! whether the settings block is encrypted. Everything multi-byte is
 //! little-endian except a layer run's length.
 
+pub mod rle15;
 pub mod rle7;
 
+#[cfg(test)]
+mod tests_rle15;
 #[cfg(test)]
 mod tests_rle7;
