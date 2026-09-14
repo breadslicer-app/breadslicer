@@ -27,6 +27,11 @@ const APPLICATION: &str = "soulcrafted-slicer";
 #[cfg(not(target_os = "linux"))]
 const APPLICATION: &str = "slicer";
 
+/// Shared by the desktop entry basename, the AppStream component id
+/// and the Wayland `app_id`. A window advertising anything else cannot
+/// be matched back to the launcher entry by the desktop shell.
+pub const APP_ID: &str = "it.soulcrafted.slicer";
+
 /// The per-user platform directories for this application, or `None`
 /// when no home directory can be resolved.
 pub fn project_dirs() -> Option<ProjectDirs> {

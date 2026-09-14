@@ -4,10 +4,11 @@
  */
 
 use std::fs;
+use std::path::Path;
 
 use tempfile::tempdir;
 
-use super::{all_app_dirs, bundled_data_dirs, home_dir, project_dirs};
+use super::{APP_ID, all_app_dirs, bundled_data_dirs, home_dir, project_dirs};
 
 #[test]
 fn all_app_dirs_returns_every_existing_base_in_order() {
@@ -66,6 +67,17 @@ fn home_dir_is_absolute_when_resolved() {
     if let Some(home) = home_dir() {
         assert!(home.is_absolute(), "home dir should be absolute: {home:?}");
     }
+}
+
+#[test]
+fn app_id_names_the_shipped_desktop_entry() {
+    // A window's `app_id` is paired with the launcher by this file's
+    // basename, so a rename on either side breaks the pairing without
+    // any build or run time complaint.
+    let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/shared")
+        .join(format!("{APP_ID}.desktop"));
+    assert!(entry.is_file(), "no desktop entry at {entry:?}");
 }
 
 #[test]

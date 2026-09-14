@@ -65,6 +65,7 @@ mod slice_projection;
 mod slice_result;
 mod slice_run;
 mod slice_selection;
+mod startup_token;
 mod support_gen_run;
 #[cfg(test)]
 mod tests_mesh_loader;
@@ -104,6 +105,11 @@ use crate::mesh_loader::is_supported_mesh_extension;
 /// path (or one empty window if none were supplied) and runs the
 /// event loop.
 pub fn run() -> Result<(), Box<dyn Error>> {
+    // First statement of the process: taking the token clears it from
+    // the environment, which is only safe before wgpu and the drivers
+    // below it start threads.
+    let startup_token = startup_token::take_from_env();
+
     // Build the wgpu Instance/Adapter/Device/Queue once up front and
     // hand them to Slint via `WGPUConfiguration::Manual` so every
     // top-level Window shares the same Device. Letting Slint pick
@@ -221,7 +227,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
              with the Skia renderer; the variable is ignored."
         );
     }
-    slint::BackendSelector::new()
+    let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("skia".into())
         .require_wgpu_29(slint::wgpu_29::WGPUConfiguration::Manual {
@@ -229,8 +235,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             adapter,
             device,
             queue,
-        })
-        .select()?;
+        });
+    startup_token::attach(selector, startup_token).select()?;
+
+    // Winit calls `set_app_id` only when Slint hands it a name, and
+    // the Wayland path has no argv[0] fallback like X11 does. With no
+    // id the shell cannot pair the window with the desktop entry, so
+    // the launch it started holds its busy cursor until it times out.
+    slint::set_xdg_app_id(sc_app_paths::APP_ID)?;
 
     let app = AppState::new(device_loss.clone())?;
 
