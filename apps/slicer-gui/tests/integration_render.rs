@@ -42,7 +42,7 @@ use sc_slicer_gui::mesh_render::{
     DeviceLoss, DeviceToken, Renderer, SceneRender, scene_upload::GpuScene,
 };
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 /// Backends the sweep covers: everything wgpu was compiled with except
 /// the GL/EGL fallback, which the GUI does not ship on. `Backends::all()`

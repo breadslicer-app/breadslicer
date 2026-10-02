@@ -49,7 +49,7 @@ use sc_mesh_formats::messages::{
 use sc_mesh_spatial::SceneSpatial;
 use sc_project_formats::{ForeignDialect, ProfileRefWarning, ProjectPayload, ReadProjectWarning};
 use slint::ComponentHandle;
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use crate::MainWindow;
 use crate::error_dialog::{DialogManager, format_anyhow_chain};

@@ -14,7 +14,7 @@ use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::transform::AffineTransform3D;
 use sc_mesh_core::transform::Transform3D;
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError};
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::device_loss::DeviceLoss;
 use super::device_ops::create_buffer_reporting;
@@ -197,20 +197,14 @@ fn upload_buffer(
         if device_loss.is_lost() {
             return Err(DeviceLostDuringUpload.into());
         }
-        // wgpu panics, instead of reporting, when a buffer on a lost
-        // device is mapped. The closure owns nothing that a panic could
-        // leave half-written; wgpu-core has already returned its error
-        // by the time the API layer panics.
-        let written = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            buffer
-                .get_mapped_range_mut(..)
-                .slice(..contents.len())
-                .copy_from_slice(contents);
-            buffer.unmap();
-        }));
-        if written.is_err() {
-            return Err(DeviceLostDuringUpload.into());
-        }
+        // The buffer is mapped at creation over its whole aligned size,
+        // so a map error can only come from a lost device.
+        buffer
+            .get_mapped_range_mut(..)
+            .map_err(|_| DeviceLostDuringUpload)?
+            .slice(..contents.len())
+            .copy_from_slice(contents);
+        buffer.unmap();
     }
     Ok(buffer)
 }

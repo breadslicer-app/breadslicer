@@ -43,7 +43,7 @@ swash = { version = "0.2.10", default-features = false, features = [
     "scale",
 ] }
 # Slint's default feature set minus FemtoVG renderer.
-slint = { version = "1.17.0", default-features = false, features = [
+slint = { version = "1.18.1", default-features = false, features = [
     "accessibility",
     "backend-winit",
     "compat-1-2",
@@ -51,11 +51,11 @@ slint = { version = "1.17.0", default-features = false, features = [
     "renderer-skia",
     "renderer-software",
     "std",
-    "unstable-wgpu-29",
+    "unstable-wgpu-30",
     "unstable-winit-030",
 ] }
 # Note: keep wgpu version in sync with that used by Sling.
-wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
 pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"
@@ -63,7 +63,7 @@ toml = "1.1.2"
 
 
 [build-dependencies]
-slint-build = "1.17.0"
+slint-build = "1.18.1"
 toml = "1.1.2"
 
 [target.'cfg(windows)'.build-dependencies]

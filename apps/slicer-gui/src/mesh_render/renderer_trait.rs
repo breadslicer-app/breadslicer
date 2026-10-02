@@ -12,7 +12,7 @@
 use anyhow::Result;
 use glam::Vec3;
 use sc_scene::Scene;
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::scene_upload::GpuScene;
 use super::{FramePixels, RenderError, Renderer, SceneRender};

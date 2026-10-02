@@ -29,7 +29,7 @@ use sc_slicer_gui::graphics_adapter::{
     select_adapter_and_device_with,
 };
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 /// The single backend Slint's Skia renderer accepts on this platform,
 /// mirroring the selection `run()` makes. Testing the adapter choice on

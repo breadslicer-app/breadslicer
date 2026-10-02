@@ -116,7 +116,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // `Automatic` triggers a full Vulkan ICD re-enumeration per
     // window (4-5 stalls of ~225 ms each on NVIDIA, measured), which
     // makes "New Window" feel like it hangs.
-    use slint::wgpu_29::wgpu;
+    use slint::wgpu_30::wgpu;
 
     // Slint's Skia renderer only wires one wgpu backend per platform:
     // Dx12 on Windows, Vulkan on Linux, Metal on macOS. An instance
@@ -230,7 +230,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("skia".into())
-        .require_wgpu_29(slint::wgpu_29::WGPUConfiguration::Manual {
+        .require_wgpu_30(slint::wgpu_30::WGPUConfiguration::Manual {
             instance,
             adapter,
             device,

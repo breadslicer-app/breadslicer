@@ -10,7 +10,7 @@ use anyhow::Result;
 use glam::{Mat4, Vec3};
 use sc_scene::Scene;
 use sc_scene::node::NodeId;
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};

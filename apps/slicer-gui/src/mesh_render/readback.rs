@@ -6,7 +6,7 @@
 //! Copying a drawn frame off the GPU, for the frames that are not
 //! going on screen.
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::device_ops::scoped;
 use super::error::{RenderAllocation, RenderError};
@@ -111,7 +111,11 @@ pub(super) fn read_target_rgba(
         }
     }
 
-    let mapped = slice.get_mapped_range();
+    let mapped = slice
+        .get_mapped_range()
+        .map_err(|err| RenderError::ReadbackFailed {
+            reason: err.to_string(),
+        })?;
     let mut rgba = Vec::with_capacity((row_bytes * height) as usize);
     for row in mapped.chunks_exact(stride as usize) {
         rgba.extend_from_slice(&row[..row_bytes as usize]);

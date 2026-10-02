@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_formats::messages::{LoadObjWarning, SceneLoadWarning, SharedVertexLeaf};
 use sc_scene::{NodeId, Scene};
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use crate::error_dialog::DialogManager;
 use crate::graphics_status::GraphicsUnavailable;

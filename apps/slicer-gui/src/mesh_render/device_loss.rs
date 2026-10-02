@@ -8,7 +8,7 @@
 //! with the reason, and read before the device is touched. That
 //! callback is wgpu's only signal of a loss; error scopes and the
 //! uncaptured-error handler never see it, resources created afterwards
-//! are silently invalid, and the next buffer map panics.
+//! are silently invalid, and the next buffer map fails.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};

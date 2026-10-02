@@ -23,7 +23,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use slint::ComponentHandle;
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::camera_controller::CameraController;
 #[cfg(test)]

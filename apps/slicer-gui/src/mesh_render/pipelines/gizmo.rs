@@ -13,7 +13,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroU64;
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::super::device_ops::scoped;
 use super::super::gizmo_buffers::GizmoBuffers;
@@ -109,11 +109,11 @@ impl GizmoPipeline {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
+                    buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: size_of::<GizmoVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                    }],
+                    })],
                 },
                 primitive: wgpu::PrimitiveState {
                     topology,

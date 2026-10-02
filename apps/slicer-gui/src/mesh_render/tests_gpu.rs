@@ -244,7 +244,10 @@ fn read_buffer_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::B
     rx.recv()
         .expect("readback map_async sender dropped")
         .expect("readback map_async failed");
-    let data = slice.get_mapped_range().to_vec();
+    let data = slice
+        .get_mapped_range()
+        .expect("readback mapped range")
+        .to_vec();
     readback.unmap();
     data
 }
@@ -420,14 +423,14 @@ fn gpu_scene_build_on_a_destroyed_device_is_refused_before_the_map_when_flagged(
 }
 
 #[test]
-fn gpu_scene_build_on_a_destroyed_device_turns_the_map_panic_into_an_error_when_unflagged() {
+fn gpu_scene_build_on_a_destroyed_device_turns_the_map_failure_into_an_error_when_unflagged() {
     let Some((device, _flagged)) = destroyed_test_device() else {
         eprintln!("skipping: no wgpu adapter available in this environment");
         return;
     };
     // A clear flag is a loss nobody has been told about yet: the
-    // buffer map inside wgpu panics, and that panic must come back
-    // as the error, not end the thread.
+    // buffer map inside wgpu fails, and that failure must come back
+    // as the typed error.
     let unflagged = DeviceLoss::default();
     let graph = graph_with_one_leaf_of_faces(4);
     let Err(err) = GpuScene::build(&device, DeviceToken::next(), &graph, &unflagged) else {
@@ -660,6 +663,7 @@ fn create_buffer_reporting_yields_a_usable_buffer_within_the_limit() {
     .expect("a buffer at max_buffer_size is accepted");
     buffer
         .get_mapped_range_mut(..)
+        .expect("a buffer mapped at creation")
         .copy_from_slice(&[7u8; SMALL_BUFFER_LIMIT as usize]);
     buffer.unmap();
     assert_eq!(buffer.size(), SMALL_BUFFER_LIMIT);
@@ -1658,7 +1662,10 @@ fn read_target_back(
     rx.recv()
         .expect("readback map_async sender dropped")
         .expect("readback map_async failed");
-    let data = slice.get_mapped_range().to_vec();
+    let data = slice
+        .get_mapped_range()
+        .expect("readback mapped range")
+        .to_vec();
     readback.unmap();
     data
 }

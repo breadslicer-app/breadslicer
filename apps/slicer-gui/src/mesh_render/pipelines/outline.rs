@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::super::TEXTURE_FORMAT;
 use super::super::device_ops::scoped;

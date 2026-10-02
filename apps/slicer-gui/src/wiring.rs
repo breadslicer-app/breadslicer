@@ -122,7 +122,7 @@ fn install_rendering_notifier(
     ui.window()
         .set_rendering_notifier(move |state, api| match state {
             slint::RenderingState::RenderingSetup => match api {
-                slint::GraphicsAPI::WGPU29 { device, queue, .. } => {
+                slint::GraphicsAPI::WGPU30 { device, queue, .. } => {
                     ctrl.handle_rendering_setup(device.clone(), queue.clone());
                 }
                 // Slint hands over whatever the surface it built runs

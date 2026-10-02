@@ -27,7 +27,7 @@ use sc_project_formats::{
     is_supported_scene_file_extension, load_scene,
 };
 use sc_scene::Scene;
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use crate::build_volume::BuildVolume;
 use crate::graphics_status::GraphicsUnavailable;

@@ -11,7 +11,7 @@ use sc_mesh_fixtures::unit_cube_mesh;
 use sc_scene::Scene;
 use sc_scene::node::LeafPayload;
 use sc_sla_formats::{PreviewSize, PreviewSizes};
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 use std::sync::Arc;
 
 use crate::build_volume::HARDCODED_DEFAULT_BUILD_VOLUME;

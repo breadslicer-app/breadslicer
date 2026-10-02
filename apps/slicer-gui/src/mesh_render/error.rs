@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 /// The part of the renderer whose construction the device refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

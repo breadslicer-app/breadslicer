@@ -37,7 +37,7 @@
 
 use std::time::Duration;
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 /// Environment variable that forces a specific adapter by name. Same
 /// name and same case-insensitive substring matching as wgpu's own

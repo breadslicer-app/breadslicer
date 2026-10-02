@@ -33,7 +33,7 @@ use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::super::device_ops::{scoped, upload_static_buffer};
 use super::super::error::{RenderAllocation, RenderError};
@@ -266,11 +266,11 @@ impl PlatePipeline {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
+                    buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: size_of::<PlateVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
-                    }],
+                    })],
                 },
                 primitive: wgpu::PrimitiveState {
                     topology,
@@ -348,11 +348,11 @@ impl PlatePipeline {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<PlateVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
-                }],
+                })],
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,

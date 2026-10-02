@@ -17,7 +17,7 @@
 use std::borrow::Cow;
 use std::num::NonZeroU64;
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;

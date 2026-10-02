@@ -11,7 +11,7 @@
 //! `matches` helpers let the renderer cheaply skip the rebuild when the
 //! cached size already matches.
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 use super::device_ops::scoped;
 use super::error::{RenderAllocation, RenderError};

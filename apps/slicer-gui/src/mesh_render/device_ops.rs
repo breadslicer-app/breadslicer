@@ -6,7 +6,7 @@
 //! Device operations whose refusal comes back as a value instead of
 //! going to the device's uncaptured-error handler.
 
-use slint::wgpu_29::wgpu;
+use slint::wgpu_30::wgpu;
 
 /// Runs `body` with every wgpu error it raises on this thread captured,
 /// and returns the first one. Nesting is fine: the innermost scope

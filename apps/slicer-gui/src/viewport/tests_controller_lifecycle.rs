@@ -48,7 +48,7 @@ fn post_renderer_install_resets_the_loader_upload_failure_counter() {
 #[test]
 fn post_renderer_install_ends_the_loader_render_failure_run() {
     use crate::mesh_render::{RenderAllocation, RenderError};
-    use slint::wgpu_29::wgpu;
+    use slint::wgpu_30::wgpu;
     let (ctrl, _state) = fixture();
     ctrl.loader()
         .note_render_failure(&RenderError::DeviceRefused {
@@ -67,7 +67,7 @@ fn post_renderer_install_ends_the_loader_render_failure_run() {
 fn post_renderer_refused_records_the_reason_and_drains_the_parked_path() {
     use crate::graphics_status::GraphicsUnavailable;
     use crate::mesh_render::{RendererInitError, RendererStage};
-    use slint::wgpu_29::wgpu;
+    use slint::wgpu_30::wgpu;
     let (ctrl, _state) = fixture();
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("parked.stl");

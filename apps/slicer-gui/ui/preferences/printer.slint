@@ -81,14 +81,14 @@ export component PrinterPreferences inherits PreferencesPage {
         property <int> columns: Math.max(1, Math.floor((self.visible-width + root.tile-gap) / (root.tile-w + root.tile-gap)));
         property <length> row-width: self.columns * root.tile-w + (self.columns - 1) * root.tile-gap;
         property <length> x-offset: Math.max(0px, (self.visible-width - self.row-width) / 2);
-        viewport-height: Math.ceil(root.printer-cards.length / self.columns) * (root.tile-h + root.tile-gap);
+        content-height: Math.ceil(root.printer-cards.length / self.columns) * (root.tile-h + root.tile-gap);
 
         // Centres the selected printer's row in the viewport, clamped
         // to the scrollable range.
         function centre-selected() {
             if (root.selected-visible-index >= 0 && self.visible-width > 0px) {
-                self.viewport-y = -Math.min(
-                    Math.max(0px, self.viewport-height - self.visible-height),
+                self.content-y = -Math.min(
+                    Math.max(0px, self.content-height - self.visible-height),
                     Math.max(0px,
                         Math.floor(root.selected-visible-index / self.columns)
                             * (root.tile-h + root.tile-gap)
