@@ -12,11 +12,11 @@ import { FilterTabs } from "./filter-tabs.slint";
 export enum PillKind {
     // Calibration for the configured default printer.
     our-printer,
-    // The generic calibration, applying as a fallback to any printer
-    // without a specific block.
+    // The generic calibration, applying as a fallback to any printer without a
+    // specific block.
     generic,
-    // Calibration for another printer. Also used for every tag when no
-    // default printer is configured, so the whole list renders dim.
+    // Calibration for another printer. Also used for every tag when no default
+    // printer is configured, so the whole list renders dim.
     other,
     // Salient marker for a profile without any calibration data.
     no-data,
@@ -29,10 +29,9 @@ export struct ResinPill {
     kind: PillKind,
 }
 
-// One resin row. `id-index` is the material's index in the Rust
-// catalog and the stable handle carried through the callbacks; an
-// extension row shares its parent's index, so selecting either row
-// selects the same resin.
+// One resin row. `id-index` is the material's index in the Rust catalog and the
+// stable handle carried through the callbacks; an extension row shares its
+// parent's index, so selecting either row selects the same resin.
 export struct ResinRow {
     name: string,
     brand: string,
@@ -56,8 +55,8 @@ export component ResinPreferences inherits PreferencesPage {
     in-out property <int> current-brand-index: 0;
     in property <string> search-text;
 
-    // A `text:` binding is dropped once the user types in the field, so
-    // an external update needs its own assignment.
+    // A `text:` binding is dropped once the user types in the field, so an
+    // external update needs its own assignment.
     changed search-text => {
         search-input.text = root.search-text;
     }
@@ -65,24 +64,23 @@ export component ResinPreferences inherits PreferencesPage {
     callback brand-tab-changed(int);
     callback search-changed(string);
     callback resin-selected(int);
-    // Toggle the resin's global favourite status. Carries the catalog
-    // index; base and extension rows share it, so the favourite is
-    // per-material.
+    // Toggle the resin's global favourite status. Carries the catalog index;
+    // base and extension rows share it, so the favourite is per-material.
     callback favourite-toggled(int);
     callback view-requested(int);
     callback fork-requested(int);
     callback extend-requested(int);
-    // Edit and Delete carry whether the request came from an
-    // extension row: the same catalog index then targets the
-    // extension file instead of the full profile.
+    // Edit and Delete carry whether the request came from an extension row:
+    // the same catalog index then targets the extension file instead of the
+    // full profile.
     callback edit-requested(int, bool);
     callback delete-requested(int, bool);
     callback import-requested();
     callback export-materials-requested();
 
-    // Tag palette: green shade for the default printer's tag,
-    // yellow/orange for generic, gray for unmatched printers, red for
-    // the no-data marker; light and dark variants follow the theme.
+    // Tag palette: green shade for the default printer's tag, yellow/orange for
+    // generic, gray for unmatched printers, red for the no-data marker; light
+    // and dark variants follow the theme.
     pure function pill-background(kind: PillKind) -> brush {
         if (kind == PillKind.our-printer) {
             return Palette.color-scheme == ColorScheme.dark ? #1d4a29 : #cdeed6;
@@ -169,13 +167,12 @@ export component ResinPreferences inherits PreferencesPage {
                     }
                 }
 
-                // Behind the row content so the row buttons, drawn on
-                // top, still receive their own clicks while a click
-                // anywhere else on the row selects the resin. The
-                // TouchArea grabs presses of every button, so the
-                // right-click that would open the surrounding
-                // ContextMenuArea never reaches it; the menu is opened
-                // explicitly instead.
+                // Behind the row content so the row buttons, drawn on top,
+                // still receive their own clicks while a click anywhere else on
+                // the row selects the resin. The TouchArea grabs presses of
+                // every button, so the right-click that would open the
+                // surrounding ContextMenuArea never reaches it; the menu is
+                // opened explicitly instead.
                 TouchArea {
                     clicked => {
                         root.selected-resin-index = row.id-index;
@@ -230,8 +227,8 @@ export component ResinPreferences inherits PreferencesPage {
                                 color: Palette.foreground.transparentize(0.4);
                                 vertical-alignment: center;
                             }
-                            // The custom mark: set apart from the
-                            // calibration tags, own color family.
+                            // The custom mark: set apart from the calibration
+                            // tags, own color family.
                             if row.is-custom: Rectangle {
                                 background: Palette.color-scheme == ColorScheme.dark ? #3d2a5e : #e6dcf5;
                                 border-radius: 4px;
@@ -246,13 +243,10 @@ export component ResinPreferences inherits PreferencesPage {
                             }
                         }
 
-                        // Without pills there is no flexbox: an empty one
-                        // reports a maximum width of 0, and the action
-                        // buttons then stretch over the row. Slint
-                        // measures the height of a conditional flexbox at
-                        // its preferred width, not at its real width; the
-                        // pin to its own preferred height, which uses the
-                        // real width, keeps the row height correct.
+                        // An empty flexbox has a maximum width of 0, and the
+                        // action buttons then stretch over the row. Slint
+                        // measures the height of a conditional flexbox at its
+                        // preferred width, not at its real width.
                         if row.pills.length > 0: FlexboxLayout {
                             height: self.preferred-height;
                             spacing: 4px;
