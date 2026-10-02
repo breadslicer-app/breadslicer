@@ -3,8 +3,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-05-21 18:10+0000\n"
-"PO-Revision-Date: 2026-10-02 16:38+0000\n"
-"Last-Translator: Andres Correa Casablanca <andreu@ctrlback.coop>\n"
+"PO-Revision-Date: 2026-10-03 15:02+0000\n"
+"Last-Translator: SomeTr <sometr@noreply.codeberg.org>\n"
 "Language-Team: Ukrainian <https://translate.codeberg.org/projects/"
 "soulcrafted-slicer/slicer-gui/uk/>\n"
 "Language: uk\n"
@@ -381,12 +381,12 @@ msgstr ""
 #: ui/mesh-viewer.slint:464
 msgctxt "MeshViewer"
 msgid "Copy"
-msgstr ""
+msgstr "Копіювати"
 
 #: ui/mesh-viewer.slint:490
 msgctxt "MeshViewer"
 msgid "Paste"
-msgstr ""
+msgstr "Вставити"
 
 #: src/viewport/controller.rs:944
 msgctxt "ErrorDialog"
