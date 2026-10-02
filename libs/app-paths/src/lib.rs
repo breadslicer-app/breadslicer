@@ -7,9 +7,9 @@
 //!
 //! Single owner of the SoulCrafted Slicer's identity (reverse-DNS
 //! `it.soulcrafted.slicer`; the `directories` qualifier / organization
-//! / application triple) and of the directories derived from it: the
-//! per-user platform directories and the installed read-only data root
-//! that packaged builds ship.
+//! / application triple) and of the directories derived from it: the per-user
+//! platform directories and the installed read-only data root that packaged
+//! builds ship.
 
 use std::path::{Path, PathBuf};
 
@@ -27,34 +27,33 @@ const APPLICATION: &str = "soulcrafted-slicer";
 #[cfg(not(target_os = "linux"))]
 const APPLICATION: &str = "slicer";
 
-/// Shared by the desktop entry basename, the AppStream component id
-/// and the Wayland `app_id`. A window advertising anything else cannot
-/// be matched back to the launcher entry by the desktop shell.
+/// Shared by the desktop entry basename, the AppStream component id and the
+/// Wayland `app_id`. A window advertising anything else cannot be matched back
+/// to the launcher entry by the desktop shell.
 pub const APP_ID: &str = "it.soulcrafted.slicer";
 
-/// The per-user platform directories for this application, or `None`
-/// when no home directory can be resolved.
+/// The per-user platform directories for this application, or `None` when no
+/// home directory can be resolved.
 pub fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
 }
 
-/// The current user's home directory, or `None` when it cannot be
-/// resolved. Used as the fallback starting location for file dialogs.
+/// The current user's home directory, or `None` when it cannot be resolved.
+/// Used as the fallback starting location for file dialogs.
 pub fn home_dir() -> Option<PathBuf> {
     UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
 }
 
-/// Every read-only data root a build can ship, highest precedence
-/// first: the installed roots (each existing `<base>/<application>`
-/// across the system data directories on Linux, or executable-relative
-/// on macOS / Windows) followed by the source-tree `assets/` root when
-/// it exists.
+/// Every read-only data root a build can ship, highest precedence first:
+/// the installed roots (each existing `<base>/<application>` across the system
+/// data directories on Linux, the bundle's `Contents/Resources` or an
+/// executable-relative directory on macOS, executable-relative on Windows)
+/// followed by the source-tree `assets/` root when it exists.
 ///
-/// The user's writable library (`XDG_DATA_HOME`, resolved via
-/// [`project_dirs`]) is deliberately absent here: it is a distinct,
-/// user-owned layer the profile loader merges on top of these roots.
-/// Keeping it out is what stops a bundled lookup from resolving to the
-/// user's own library.
+/// The user's writable library (`XDG_DATA_HOME`, resolved via [`project_dirs`])
+/// is deliberately absent here: it is a distinct, user-owned layer the profile
+/// loader merges on top of these roots. Keeping it out is what stops a bundled
+/// lookup from resolving to the user's own library.
 pub fn bundled_data_dirs() -> Vec<PathBuf> {
     let mut roots = installed_data_dirs();
     let dev = dev_assets_dir();
@@ -72,7 +71,7 @@ fn installed_data_dirs() -> Vec<PathBuf> {
 }
 
 /// macOS / Windows: every existing data directory relative to the
-/// running executable (beside the binary, or under a sibling `share/`).
+/// running executable.
 #[cfg(not(target_os = "linux"))]
 fn installed_data_dirs() -> Vec<PathBuf> {
     let Ok(exe) = std::env::current_exe() else {
@@ -81,13 +80,39 @@ fn installed_data_dirs() -> Vec<PathBuf> {
     let Some(dir) = exe.parent() else {
         return Vec::new();
     };
-    all_app_dirs(&[dir.to_path_buf(), dir.join("share")], APPLICATION)
+    all_app_dirs(&exe_relative_bases(dir), APPLICATION)
 }
 
-/// The system XDG data directories: each `XDG_DATA_DIRS` entry (or the
-/// spec defaults `/usr/local/share:/usr/share`). `XDG_DATA_HOME` is not
-/// among them: it is the writable per-user location (the user profile
-/// library), never an install root.
+/// Lists where an installed build can keep its data, highest precedence first.
+/// Returns candidates: whether each one exists is the caller's to check.
+#[cfg(target_os = "macos")]
+fn exe_relative_bases(exe_dir: &Path) -> Vec<PathBuf> {
+    let mut bases = Vec::with_capacity(3);
+    // A packaged build keeps its data in the bundle's `Contents/Resources` and
+    // never beside the binary: the signature seals `Contents/`, and Apple keeps
+    // non-executable payload out of `Contents/MacOS/`. Reached through the
+    // parent rather than by appending `..`, so that the bases stay canonical.
+    if let Some(contents) = exe_dir.parent() {
+        bases.push(contents.join("Resources"));
+    }
+    // Unpackaged layouts: a build directory or an archive holding the binaries
+    // beside their data, with no bundle around either.
+    bases.push(exe_dir.to_path_buf());
+    bases.push(exe_dir.join("share"));
+    bases
+}
+
+/// Lists where an installed build can keep its data, highest precedence first.
+/// Returns candidates: whether each one exists is the caller's to check.
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
+fn exe_relative_bases(exe_dir: &Path) -> Vec<PathBuf> {
+    vec![exe_dir.to_path_buf(), exe_dir.join("share")]
+}
+
+/// The system XDG data directories: each `XDG_DATA_DIRS` entry (or the spec
+/// defaults `/usr/local/share:/usr/share`). `XDG_DATA_HOME` is not among them:
+/// it is the writable per-user location (the user profile library), never an
+/// install root.
 #[cfg(target_os = "linux")]
 fn data_search_bases() -> Vec<PathBuf> {
     let dirs = std::env::var_os("XDG_DATA_DIRS")
