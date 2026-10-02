@@ -14,8 +14,8 @@ workspace = true
 
 [dependencies]
 sc-geom-transport-inprocess = { path = "../sc-geom-transport-inprocess", version = "0.0.1" }
-sc-mesh-core = { path = "../../mesh-core", version = "0.1.0" }
-sc-mesh-spatial = { path = "../../mesh-spatial", version = "0.1.0" }
-sc-scene = { path = "../../scene", version = "0.1.0" }
+sc-mesh-core = { path = "../../mesh-core", version = "0.2.0" }
+sc-mesh-spatial = { path = "../../mesh-spatial", version = "0.2.0" }
+sc-scene = { path = "../../scene", version = "0.2.0" }
 
 [dev-dependencies]

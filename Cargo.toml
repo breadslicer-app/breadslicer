@@ -42,20 +42,20 @@ debug = false
 strip = true
 
 [workspace.dependencies]
-sc-3mf = { path = "libs/3mf", version = "0.1.0" }
-sc-app-paths = { path = "libs/app-paths", version = "0.1.0" }
-sc-mesh-core = { path = "libs/mesh-core", version = "0.1.0" }
-sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.1.0" }
-sc-mesh-formats = { path = "libs/mesh-formats", version = "0.1.0" }
-sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.1.0" }
-sc-print-glue = { path = "libs/print-glue", version = "0.1.0" }
-sc-print-primitives = { path = "libs/print-primitives", version = "0.1.0" }
-sc-print-profiles = { path = "libs/print-profiles", version = "0.2.0" }
-sc-project-formats = { path = "libs/project-formats", version = "0.1.0" }
-sc-scene = { path = "libs/scene", version = "0.1.0" }
-sc-scene-edit = { path = "libs/scene-edit", version = "0.1.0" }
-sc-sl1cer = { path = "libs/sl1cer", version = "0.1.0" }
-sc-sla-formats = { path = "libs/sla-formats", version = "0.1.0" }
+sc-3mf = { path = "libs/3mf", version = "0.2.0" }
+sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
+sc-mesh-core = { path = "libs/mesh-core", version = "0.2.0" }
+sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.2.0" }
+sc-mesh-formats = { path = "libs/mesh-formats", version = "0.2.0" }
+sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.2.0" }
+sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
+sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
+sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
+sc-project-formats = { path = "libs/project-formats", version = "0.2.0" }
+sc-scene = { path = "libs/scene", version = "0.2.0" }
+sc-scene-edit = { path = "libs/scene-edit", version = "0.2.0" }
+sc-sl1cer = { path = "libs/sl1cer", version = "0.2.0" }
+sc-sla-formats = { path = "libs/sla-formats", version = "0.2.0" }
 
 sc-geom = { path = "libs/sc-geom", version = "0.0.2" }
 
