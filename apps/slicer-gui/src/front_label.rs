@@ -12,7 +12,7 @@
 use swash::FontRef;
 use swash::scale::{Render, ScaleContext, Source};
 
-use crate::text_metrics::UI_FONT;
+static UI_FONT: &[u8] = include_bytes!("../assets/fonts/NotoSans-Variable.ttf");
 
 /// Pixels per em the label rasterises at. Sets the texture's
 /// resolution alone; how large the word lands in the world is the

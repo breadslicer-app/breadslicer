@@ -45,9 +45,6 @@ export component PreferencesWindow inherits Window {
     in property <[string]> resin-brand-tabs;
     in-out property <int> current-brand-index: 0;
     in property <string> resin-search-text;
-    // The pills' effective font size, resolved from rem against this
-    // window; the Rust side measures pill labels at exactly this size.
-    out property <length> pill-font-size: 0.75rem;
 
     callback close-requested();
     callback theme-changed(ThemePreference);
@@ -61,7 +58,6 @@ export component PreferencesWindow inherits Window {
     callback resin-search-changed(string);
     callback resin-selected(int);
     callback resin-favourite-toggled(int);
-    callback pill-width-changed(int, bool, length);
     callback view-requested(int);
     callback fork-requested(int);
     callback extend-requested(int);
@@ -155,9 +151,6 @@ export component PreferencesWindow inherits Window {
                 }
                 favourite-toggled(i) => {
                     root.resin-favourite-toggled(i);
-                }
-                pill-width-changed(i, ext, w) => {
-                    root.pill-width-changed(i, ext, w);
                 }
                 view-requested(i) => {
                     root.view-requested(i);

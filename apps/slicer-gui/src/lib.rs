@@ -77,7 +77,6 @@ mod tests_scene_dirty;
 mod tests_scene_loader;
 #[cfg(test)]
 mod tests_slice_result;
-mod text_metrics;
 mod viewport;
 mod window_icon;
 mod window_prefs;
