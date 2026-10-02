@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use core::f32;
 use std::cmp::Ordering;
 use std::fmt;
 
