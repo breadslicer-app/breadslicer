@@ -61,18 +61,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"
 toml = "1.1.2"
 
-
-# Receiving the open-documents Apple Event, which is how macOS hands over the
-# files opened from the Finder. These 3 are the versions Slint's winit backend
-# already resolves, so they add no second copy of anything.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6.4"
-# The `objc2-core-services` feature carries the Apple Event types that
-# `setEventHandler:` is declared with. It is off by default, and turning it on
-# does add objc2-core-services and objc2-security to the tree. The alternative,
-# sending the message by hand, drops the 2 crates and the compiler's check of
-# the selector's signature with them.
 objc2-foundation = { version = "0.3.2", features = ["objc2-core-services"] }
 
 [build-dependencies]

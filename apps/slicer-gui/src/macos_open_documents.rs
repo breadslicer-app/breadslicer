@@ -165,13 +165,17 @@ fn supported_paths_in(event: &NSAppleEventDescriptor) -> Vec<PathBuf> {
     paths
 }
 
-/// Hands `paths` to the sink from the event loop rather than from the handler.
-/// The launch event arrives while AppKit is still starting the application,
-/// which is not a point at which to open windows.
+/// Gives `paths` to the sink that `install` registered. An empty list is
+/// dropped.
+///
+/// The sink does not run before this returns; it runs on a later turn of the
+/// event loop, and a failure to reach the loop is reported but not returned.
 fn deliver(paths: Vec<PathBuf>) {
     if paths.is_empty() {
         return;
     }
+    // The launch event arrives while AppKit is still starting the application,
+    // which is not a point at which to open windows.
     let posted = slint::invoke_from_event_loop(move || {
         SINK.with_borrow(|slot| {
             if let Some(sink) = slot {
