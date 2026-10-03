@@ -3,26 +3,24 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Procedural geometry for the gizmo handles, all in **handle-local
-//! space**: pivot at origin, primary axis along +X. The renderer
-//! draws each buffer three times, rotating onto +X / +Y / +Z; per-axis
-//! tint uniforms colour each draw.
+//! Procedural geometry for the gizmo handles, all in **handle-local space**:
+//! pivot at origin, primary axis along +X. The renderer draws each buffer three
+//! times, rotating onto +X / +Y / +Z; per-axis tint uniforms colour each draw.
 //!
 //! Two topologies are produced:
 //!
 //! - `LineList`: 1-pixel handle lines:
-//!   - [`build_axis_shaft_line_geometry`]: pivot → cone base, one
-//!     segment.
-//!   - [`build_rotate_arc_line_geometry`]: polyline approximating the
-//!     90° arc around +X.
+//!   - [`build_axis_shaft_line_geometry`]: pivot → cone base, one segment.
+//!   - [`build_rotate_arc_line_geometry`]: polyline approximating the 90° arc
+//!     around +X.
 //!
 //! - `TriangleList`: solid pieces that act as click targets:
-//!   - [`build_axis_cone_tip_geometry`]: 12-sided cone capping the
-//!     shaft (translate handle).
-//!   - [`build_axis_scale_cube_geometry`]: axis-aligned cube at the
-//!     shaft midpoint (per-axis scale handle).
-//!   - [`build_rotate_cones_geometry`]: two-cone spindle at the arc
-//!     midpoint (rotate-drag handle).
+//!   - [`build_axis_cone_tip_geometry`]: 12-sided cone capping the shaft
+//!     (translate handle).
+//!   - [`build_axis_scale_cube_geometry`]: axis-aligned cube at the shaft
+//!     midpoint (per-axis scale handle).
+//!   - [`build_rotate_cones_geometry`]: two-cone spindle at the arc midpoint
+//!     (rotate-drag handle).
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
@@ -39,10 +37,10 @@ pub(crate) struct GizmoVertex {
 }
 
 /// Handle-local x-coord at which the cone base sits. Shaft occupies
-/// `[0.0, 1.0]`; cone occupies `[1.0, 1.18]`. The hit-test in
-/// `gizmo::hit_test` extends the cylinder to 1.25 × shaft length so
-/// a click anywhere up to and slightly past the cone tip registers
-/// as a shaft hit; no separate ray-vs-cone path needed.
+/// `[0.0, 1.0]`; cone occupies `[1.0, 1.18]`. The hit-test in `gizmo::hit_test`
+/// extends the cylinder to 1.25 times the shaft length so a click anywhere up
+/// to and slightly past the cone tip registers as a shaft hit; no separate
+/// ray-vs-cone path needed.
 const SHAFT_LENGTH: f32 = 1.0;
 const CONE_BASE_X: f32 = SHAFT_LENGTH;
 const CONE_TIP_X: f32 = 1.18;
@@ -50,25 +48,29 @@ const CONE_BASE_RADIUS: f32 = 0.07;
 
 const CONE_SIDES: u32 = 12;
 
-/// Side length, in handle-local space, of the per-axis midpoint scale
-/// cube. The shaft is 1.0 unit long in handle-local space and
-/// `HANDLE_PIXEL_LENGTH` pixels long on screen, so the world-to-pixel
-/// ratio is `1.0 / HANDLE_PIXEL_LENGTH`; multiplying by the cube's
-/// screen-pixel size gives its handle-local size.
+/// Side length, in handle-local space, of the per-axis midpoint scale cube. The
+/// shaft is 1.0 unit long in handle-local space and `HANDLE_PIXEL_LENGTH`
+/// pixels long on screen, so the world-to-pixel ratio is
+/// `1.0 / HANDLE_PIXEL_LENGTH`; multiplying by the cube's screen-pixel size
+/// gives its handle-local size.
 const MIDPOINT_CUBE_SIDE_LOCAL: f32 = AXIS_SCALE_CUBE_PIXELS / HANDLE_PIXEL_LENGTH;
 
-/// Major (circle) radius of the rotate arc in handle-local space.
-/// Already a fraction of the shaft length, which is 1.0 in this
-/// space, so the constant maps 1:1.
+/// Major (circle) radius of the rotate arc in handle-local space. Already a
+/// fraction of the shaft length, which is 1.0 in this space, so the constant
+/// maps 1:1.
 const ROTATE_ARC_RADIUS_LOCAL: f32 = ROTATE_ARC_RADIUS_FRACTION;
 
-/// Number of segments along the rotate arc's 90° major sweep. 32
-/// segments is a clean compromise between visual smoothness for a
-/// 1-pixel polyline and per-axis vertex count.
+/// Number of segments along the rotate arc's 90° major sweep. 32 segments is a
+/// clean compromise between visual smoothness for a 1-pixel polyline and
+/// per-axis vertex count.
 const ROTATE_ARC_SEGMENTS: u32 = 32;
 
-/// Builds the axis shaft as a single `LineList` segment from the
-/// gizmo origin to the cone base.
+/// Angle about +X from the rotate arc midpoint to each rotate cone tip. It puts
+/// the tip on the arc, `ROTATE_CONE_LENGTH` away from the midpoint along it.
+const ROTATE_CONE_TIP_ANGLE: f32 = ROTATE_CONE_LENGTH / ROTATE_ARC_RADIUS_LOCAL;
+
+/// Builds the axis shaft as a single `LineList` segment from the gizmo origin
+/// to the cone base.
 pub(crate) fn build_axis_shaft_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let vertices = vec![
         GizmoVertex {
@@ -82,8 +84,8 @@ pub(crate) fn build_axis_shaft_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// Builds the translate cone tip: a 12-sided solid cone whose base
-/// sits at the shaft tip and whose apex points along +X.
+/// Builds the translate cone tip: a 12-sided solid cone whose base sits at the
+/// shaft tip and whose apex points along +X.
 pub(crate) fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((CONE_SIDES + 1) as usize);
     let mut indices = Vec::with_capacity((CONE_SIDES * 3) as usize);
@@ -100,9 +102,9 @@ pub(crate) fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
         position: [CONE_TIP_X, 0.0, 0.0],
     });
 
-    // CCW-from-outside for each cone side: (base[i], base[i+1], tip).
-    // The base ring-cap is omitted; the cone's bottom is hidden by
-    // the shaft line ending at the cone base.
+    // CCW-from-outside for each cone side: (base[i], base[i+1], tip). The base
+    // ring-cap is omitted; the cone's bottom is hidden by the shaft line ending
+    // at the cone base.
     for i in 0..CONE_SIDES {
         let next = (i + 1) % CONE_SIDES;
         indices.extend_from_slice(&[i, next, tip]);
@@ -111,8 +113,8 @@ pub(crate) fn build_axis_cone_tip_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// Builds the per-axis scale cube: an axis-aligned cube centred at
-/// the shaft midpoint along +X, side length `MIDPOINT_CUBE_SIDE_LOCAL`.
+/// Builds the per-axis scale cube: an axis-aligned cube centred at the shaft
+/// midpoint along +X, side length `MIDPOINT_CUBE_SIDE_LOCAL`.
 pub(crate) fn build_axis_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity(8);
     let mut indices = Vec::with_capacity(36);
@@ -126,11 +128,10 @@ pub(crate) fn build_axis_scale_cube_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// Builds the rotate arc as a `LineList` polyline approximating a
-/// 90° sweep around +X, centred on +Y in the YZ plane. The renderer
-/// composes a per-frame X-roll to swing the arc onto the camera-
-/// facing quadrant before the per-axis world rotation maps it onto
-/// X / Y / Z.
+/// Builds the rotate arc as a `LineList` polyline approximating a 90° sweep
+/// around +X, centred on +Y in the YZ plane. The renderer composes a per-frame
+/// X-roll to swing the arc onto the camera-facing quadrant before the per-axis
+/// world rotation maps it onto X / Y / Z.
 pub(crate) fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let arc_span = std::f32::consts::FRAC_PI_2;
     let step = arc_span / ROTATE_ARC_SEGMENTS as f32;
@@ -154,62 +155,49 @@ pub(crate) fn build_rotate_arc_line_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// Builds the rotate-handle two-cone spindle in handle-local space.
-/// Two cones share their bases at the arc's camera-facing midpoint
-/// `(0, R, 0)` (where `R = ROTATE_ARC_RADIUS_LOCAL`), tips at
-/// `(0, R, ±ROTATE_CONE_LENGTH)`, i.e. along ±Z, the arc tangent at
-/// the midpoint. The base disc therefore lies in the handle-local XY
-/// plane, perpendicular to the arc curve at that point.
+/// Builds the rotate-handle two-cone spindle in handle-local space. Two cones
+/// share their bases at the arc's camera-facing midpoint `(0, R, 0)` (where
+/// `R = ROTATE_ARC_RADIUS_LOCAL`). The base disc lies in the handle-local XY
+/// plane, perpendicular to the arc at that point. Each tip sits on the arc,
+/// `ROTATE_CONE_TIP_ANGLE` away from the midpoint, so the cones lean slightly
+/// toward the arc centre.
 ///
-/// The renderer composes the same per-frame X-roll used for the arc
-/// polyline to swing the spindle onto the camera-facing direction
-/// before the world-axis rotation lifts it onto +X / +Y / +Z. This
-/// is the *active* rotate handle (the click target for rotate drag).
+/// The renderer composes the same per-frame X-roll used for the arc polyline to
+/// swing the spindle onto the camera-facing direction before the world-axis
+/// rotation lifts it onto +X / +Y / +Z. This is the *active* rotate handle (the
+/// click target for rotate drag).
 pub(crate) fn build_rotate_cones_geometry() -> (Vec<GizmoVertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((CONE_SIDES * 2 + 2) as usize);
     let mut indices = Vec::with_capacity((CONE_SIDES * 6) as usize);
     let midpoint = Vec3::new(0.0, ROTATE_ARC_RADIUS_LOCAL, 0.0);
-    let axis = Vec3::Z;
-    let basis_a = Vec3::X;
-    let basis_b = Vec3::Y;
-    append_cone(
-        &mut vertices,
-        &mut indices,
-        midpoint,
-        axis,
-        basis_a,
-        basis_b,
-        ROTATE_CONE_LENGTH,
-        ROTATE_CONE_RADIUS,
-    );
-    append_cone(
-        &mut vertices,
-        &mut indices,
-        midpoint,
-        -axis,
-        basis_a,
-        basis_b,
-        ROTATE_CONE_LENGTH,
-        ROTATE_CONE_RADIUS,
-    );
+    let (sin, cos) = ROTATE_CONE_TIP_ANGLE.sin_cos();
+    for side in [1.0, -1.0] {
+        let tip = Vec3::new(0.0, cos, side * sin) * ROTATE_ARC_RADIUS_LOCAL;
+        append_cone(
+            &mut vertices,
+            &mut indices,
+            midpoint,
+            Vec3::X,
+            Vec3::Y,
+            ROTATE_CONE_RADIUS,
+            tip,
+        );
+    }
     (vertices, indices)
 }
 
-/// Appends one solid cone to `vertices` / `indices`. The cone has
-/// its base centred at `base_centre`, base ring in the plane spanned
-/// by `basis_a` / `basis_b` (both unit, both perpendicular to
-/// `axis_dir`), and tip at `base_centre + axis_dir * length`.
-/// CCW-from-outside winding for `axis × basis_a = basis_b`.
-#[allow(clippy::too_many_arguments)]
+/// Appends one solid cone to `vertices` / `indices`, with its base ring centred
+/// at `base_centre` in the plane spanned by the orthogonal unit vectors
+/// `basis_a` / `basis_b`, and its apex at `tip`. The apex can be off the base
+/// normal, which gives an oblique cone. Triangles wind CCW seen from outside.
 fn append_cone(
     vertices: &mut Vec<GizmoVertex>,
     indices: &mut Vec<u32>,
     base_centre: Vec3,
-    axis_dir: Vec3,
     basis_a: Vec3,
     basis_b: Vec3,
-    length: f32,
     radius: f32,
+    tip: Vec3,
 ) {
     let base_start = vertices.len() as u32;
     for i in 0..CONE_SIDES {
@@ -221,11 +209,10 @@ fn append_cone(
         });
     }
     let tip_index = vertices.len() as u32;
-    let tip = base_centre + axis_dir * length;
     vertices.push(GizmoVertex {
         position: [tip.x, tip.y, tip.z],
     });
-    let positive = axis_dir.dot(basis_a.cross(basis_b)) > 0.0;
+    let positive = (tip - base_centre).dot(basis_a.cross(basis_b)) > 0.0;
     for i in 0..CONE_SIDES {
         let next = (i + 1) % CONE_SIDES;
         if positive {
@@ -236,11 +223,10 @@ fn append_cone(
     }
 }
 
-/// Appends a 6-face axis-aligned cube to `vertices` / `indices`,
-/// centred at `centre`, with side length `side`. Eight shared corner
-/// vertices, twelve triangles. CCW-from-outside winding so the cube
-/// renders correctly under the same `cull_mode: Back` /
-/// `front_face: Ccw` pipeline state used elsewhere.
+/// Appends a 6-face axis-aligned cube to `vertices` / `indices`, centred at
+/// `centre`, with side length `side`. Eight shared corner vertices, twelve
+/// triangles. CCW-from-outside winding so the cube renders correctly under the
+/// same `cull_mode: Back` / `front_face: Ccw` pipeline state used elsewhere.
 fn append_axis_aligned_cube(
     vertices: &mut Vec<GizmoVertex>,
     indices: &mut Vec<u32>,
@@ -333,9 +319,9 @@ mod axis_cone_tip_tests {
             let p2 = Vec3::from(v[tri[2] as usize].position);
             let centroid = (p0 + p1 + p2) / 3.0;
             let n = (p1 - p0).cross(p2 - p0).normalize();
-            // Outward at the cone side is the radial-plus-axial blend;
-            // at any centroid it has positive dot product with both
-            // +X (axial) and the YZ-plane radial.
+            // Outward at the cone side is the radial-plus-axial blend; at any
+            // centroid it has positive dot product with both +X (axial) and the
+            // YZ-plane radial.
             let radial = Vec3::new(0.0, centroid.y, centroid.z);
             assert!(n.x > 0.0 || n.dot(radial) > 0.0);
         }
@@ -409,8 +395,8 @@ mod rotate_arc_line_tests {
         let r = ROTATE_ARC_RADIUS_LOCAL;
         for vert in &v {
             let p = Vec3::from(vert.position);
-            // Polyline lies in the YZ plane (handle-local +X = 0)
-            // and traces a circle of radius r.
+            // Polyline lies in the YZ plane (handle-local +X = 0) and traces a
+            // circle of radius r.
             assert_approx_eq!(f32, p.x, 0.0, epsilon = 1e-5);
             assert_approx_eq!(f32, p.y.hypot(p.z), r, epsilon = 1e-5);
         }
@@ -465,35 +451,31 @@ mod rotate_cones_tests {
     }
 
     #[test]
-    fn tips_extend_along_arc_tangent_at_midpoint() {
-        // Bases share the arc midpoint (0, R, 0); tips run along ±Z
-        // (the arc tangent at that point), not along ±X (the rotation
-        // axis). The two tips are the last vertex of each cone block.
+    fn tips_lie_on_the_arc_one_cone_length_from_the_midpoint() {
+        // The two tips are the last vertex of each cone block. Each one sits on
+        // the arc circle, ROTATE_CONE_LENGTH away from the midpoint (0, R, 0)
+        // measured along the arc, on opposite sides of it.
         let (v, _) = build_rotate_cones_geometry();
         let r = ROTATE_ARC_RADIUS_LOCAL;
         let l = ROTATE_CONE_LENGTH;
 
         let tip_a = Vec3::from(v[CONE_SIDES as usize].position);
         let tip_b = Vec3::from(v[(CONE_SIDES * 2 + 1) as usize].position);
-
-        assert_approx_eq!(f32, tip_a.x, 0.0, epsilon = 1e-5);
-        assert_approx_eq!(f32, tip_a.y, r, epsilon = 1e-5);
-        assert_approx_eq!(f32, tip_a.z.abs(), l, epsilon = 1e-5);
-
-        assert_approx_eq!(f32, tip_b.x, 0.0, epsilon = 1e-5);
-        assert_approx_eq!(f32, tip_b.y, r, epsilon = 1e-5);
-        assert_approx_eq!(f32, tip_b.z.abs(), l, epsilon = 1e-5);
-
-        // The two tips are on opposite sides of the midpoint along Z.
+        for tip in [tip_a, tip_b] {
+            assert_approx_eq!(f32, tip.x, 0.0, epsilon = 1e-5);
+            assert_approx_eq!(f32, tip.y.hypot(tip.z), r, epsilon = 1e-5);
+            let arc_length = r * tip.z.atan2(tip.y).abs();
+            assert_approx_eq!(f32, arc_length, l, epsilon = 1e-5);
+        }
         assert!(tip_a.z * tip_b.z < 0.0);
     }
 
     #[test]
     fn base_ring_sits_in_xy_plane_through_midpoint() {
-        // Each cone block is `CONE_SIDES` base ring vertices followed
-        // by one tip vertex, so the second cone's ring starts at
-        // `CONE_SIDES + 1`. With axis = ±Z the ring lies in the plane
-        // z = 0, centred at (0, R, 0) with radius ROTATE_CONE_RADIUS.
+        // Each cone block is `CONE_SIDES` base ring vertices followed by one
+        // tip vertex, so the second cone's ring starts at `CONE_SIDES + 1`. The
+        // ring basis is X / Y, so the ring lies in the plane z = 0, centred at
+        // (0, R, 0) with radius ROTATE_CONE_RADIUS.
         let (v, _) = build_rotate_cones_geometry();
         let r = ROTATE_ARC_RADIUS_LOCAL;
         let cone_r = ROTATE_CONE_RADIUS;
@@ -503,6 +485,41 @@ mod rotate_cones_tests {
                 assert_approx_eq!(f32, p.z, 0.0, epsilon = 1e-5);
                 let radial = (p - Vec3::new(0.0, r, 0.0)).length();
                 assert_approx_eq!(f32, radial, cone_r, epsilon = 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn cones_stay_inside_the_hit_cylinder() {
+        // The rotate hit test uses a cylinder along the arc tangent (+Z)
+        // through the midpoint, with ROTATE_CONE_RADIUS and
+        // ±ROTATE_CONE_LENGTH. The cones and the cylinder are convex, so
+        // checking the vertices is enough.
+        let (v, _) = build_rotate_cones_geometry();
+        let r = ROTATE_ARC_RADIUS_LOCAL;
+        for vert in &v {
+            let p = Vec3::from(vert.position);
+            assert!(p.x.hypot(p.y - r) <= ROTATE_CONE_RADIUS + 1e-6);
+            assert!(p.z.abs() <= ROTATE_CONE_LENGTH + 1e-6);
+        }
+    }
+
+    #[test]
+    fn every_triangle_winds_ccw_outward() {
+        // Each cone is convex, so every face normal points away from its
+        // centroid, which is 1/4 of the way from the base centre to the tip.
+        let (v, indices) = build_rotate_cones_geometry();
+        let midpoint = Vec3::new(0.0, ROTATE_ARC_RADIUS_LOCAL, 0.0);
+        let block = CONE_SIDES as usize + 1;
+        for (cone, tris) in indices.chunks(CONE_SIDES as usize * 3).enumerate() {
+            let tip = Vec3::from(v[cone * block + CONE_SIDES as usize].position);
+            let centroid = midpoint + (tip - midpoint) * 0.25;
+            for tri in tris.as_chunks::<3>().0 {
+                let p0 = Vec3::from(v[tri[0] as usize].position);
+                let p1 = Vec3::from(v[tri[1] as usize].position);
+                let p2 = Vec3::from(v[tri[2] as usize].position);
+                let n = (p1 - p0).cross(p2 - p0);
+                assert!(n.dot(p0 - centroid) > 0.0);
             }
         }
     }
