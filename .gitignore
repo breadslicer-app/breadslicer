@@ -1,5 +1,8 @@
 .vscode/
 
+# Macos
+.DS_Store
+
 # Build artifacts
 /target
 /apps/*/i18n/*/LC_MESSAGES/*.mo

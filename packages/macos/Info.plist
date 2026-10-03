@@ -24,6 +24,25 @@
 	<string>SoulCrafted Slicer</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>3D model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>3mf</string>
+				<string>obj</string>
+				<string>stl</string>
+				<string>stla</string>
+				<string>stlb</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.graphics-design</string>
 	<!-- Checked against `rustc --print deployment-target` at build time: the
